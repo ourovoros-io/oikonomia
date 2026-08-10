@@ -3,6 +3,7 @@ import { FileUp, Loader2, Sparkles } from 'lucide-react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { api, type AnalyzerStatus, type DocumentSuggestion } from '../lib/api'
 import { isTauri, type CommandError } from '../lib/tauri'
+import { fileToBase64, mimeFromName } from '../lib/files'
 import { cn } from './ui'
 
 type Props = {
@@ -10,33 +11,6 @@ type Props = {
   disabled?: boolean
   onSuggestion: (suggestion: DocumentSuggestion) => void
   onError: (message: string) => void
-}
-
-function mimeFromName(name: string, fallback = ''): string {
-  const lower = name.toLowerCase()
-  if (lower.endsWith('.pdf')) return 'application/pdf'
-  if (lower.endsWith('.png')) return 'image/png'
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
-  if (lower.endsWith('.webp')) return 'image/webp'
-  if (lower.endsWith('.txt')) return 'text/plain'
-  return fallback || 'application/octet-stream'
-}
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result
-      if (typeof result !== 'string') {
-        reject(new Error('Could not read file'))
-        return
-      }
-      const comma = result.indexOf(',')
-      resolve(comma >= 0 ? result.slice(comma + 1) : result)
-    }
-    reader.onerror = () => reject(new Error('Could not read file'))
-    reader.readAsDataURL(file)
-  })
 }
 
 export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: Props) {
