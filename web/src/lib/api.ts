@@ -186,6 +186,21 @@ export const api = {
     reference?: string | null
     lines: CreateJournalLine[]
   }) => call<PostedEntryView>('entry_post', { input }),
+  /** Simple-form posting: the kind → debit/credit mapping lives in Rust. */
+  entryPostSimple: (input: {
+    entity_id: string
+    kind: 'expense' | 'income' | 'bill' | 'transfer'
+    bill_status: 'paid' | 'unpaid' | 'pay_existing' | null
+    entry_date: string
+    description: string
+    reference: string | null
+    amount_minor: number
+    category_account_id: string | null
+    wallet_account_id: string | null
+    payable_account_id: string | null
+    from_account_id: string | null
+    to_account_id: string | null
+  }) => call<PostedEntryView>('entry_post_simple', { input }),
   entryVoid: (id: string) => call<{ original_id: string; reverse_id: string }>('entry_void', { id }),
 
   reportTrialBalance: (entityId: string, asOf: string) =>

@@ -16,7 +16,7 @@ import {
   type Entity,
   type PostedEntryView,
 } from '../lib/api'
-import { parseMajorToMinor } from '../lib/money'
+import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentDropZone } from '../components/DocumentDropZone'
 import {
@@ -100,14 +100,8 @@ export function TransactionsPage({ entity }: Props) {
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
-  /** Hide voided originals and VOID: reverse entries from the main list. */
-  const visibleEntries = useMemo(
-    () =>
-      entries.filter(
-        (e) => !e.is_voided && !e.entry.description.startsWith('VOID:'),
-      ),
-    [entries],
-  )
+  /** Hide voided pairs; the backend marks both sides via is_voided. */
+  const visibleEntries = useMemo(() => entries.filter((e) => !e.is_voided), [entries])
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
@@ -184,49 +178,6 @@ export function TransactionsPage({ entity }: Props) {
     applyKindDefaults(next, accounts)
   }
 
-  function buildLines(minor: number): { account_id: string; debit_minor: number; credit_minor: number }[] {
-    if (kind === 'expense') {
-      // Dr expense, Cr wallet
-      return [
-        { account_id: categoryId, debit_minor: minor, credit_minor: 0 },
-        { account_id: walletId, debit_minor: 0, credit_minor: minor },
-      ]
-    }
-    if (kind === 'income') {
-      // Dr wallet, Cr income
-      return [
-        { account_id: walletId, debit_minor: minor, credit_minor: 0 },
-        { account_id: categoryId, debit_minor: 0, credit_minor: minor },
-      ]
-    }
-    if (kind === 'bill') {
-      if (billStatus === 'paid') {
-        // Paid now: Dr expense, Cr bank/card
-        return [
-          { account_id: categoryId, debit_minor: minor, credit_minor: 0 },
-          { account_id: walletId, debit_minor: 0, credit_minor: minor },
-        ]
-      }
-      if (billStatus === 'unpaid') {
-        // Owe it: Dr expense, Cr bills payable
-        return [
-          { account_id: categoryId, debit_minor: minor, credit_minor: 0 },
-          { account_id: payableId, debit_minor: 0, credit_minor: minor },
-        ]
-      }
-      // Pay existing bill: Dr payable, Cr bank
-      return [
-        { account_id: payableId, debit_minor: minor, credit_minor: 0 },
-        { account_id: walletId, debit_minor: 0, credit_minor: minor },
-      ]
-    }
-    // transfer: Dr to, Cr from
-    return [
-      { account_id: toId, debit_minor: minor, credit_minor: 0 },
-      { account_id: fromId, debit_minor: 0, credit_minor: minor },
-    ]
-  }
-
   function validateSelection(): string | null {
     if (kind === 'expense' || kind === 'income') {
       if (!categoryId || !walletId || categoryId === walletId) {
@@ -269,9 +220,11 @@ export function TransactionsPage({ entity }: Props) {
     if (s.description) setDescription(s.description)
     else if (s.merchant) setDescription(s.merchant)
     if (s.reference) setReference(s.reference)
-    if (s.amount_minor != null && s.amount_minor > 0) {
-      const major = (s.amount_minor / 100).toFixed(2)
-      setAmount(major)
+    // The analyzer emits 2-exponent minor units; the backend already clears
+    // amounts for other currencies — this guard is defense in depth.
+    const digits = currencyFractionDigits(entity?.base_currency ?? 'EUR')
+    if (s.amount_minor != null && s.amount_minor > 0 && digits === 2) {
+      setAmount((s.amount_minor / 100).toFixed(2))
     }
     if (s.category_account_id) setCategoryId(s.category_account_id)
     if (s.wallet_account_id) setWalletId(s.wallet_account_id)
@@ -299,12 +252,19 @@ export function TransactionsPage({ entity }: Props) {
     setBusy(true)
     setError(null)
     try {
-      const posted = await api.entryPost({
+      const posted = await api.entryPostSimple({
         entity_id: entity.id,
+        kind,
+        bill_status: kind === 'bill' ? billStatus : null,
         entry_date: date,
         description: description.trim(),
         reference: reference.trim() || null,
-        lines: buildLines(minor),
+        amount_minor: minor,
+        category_account_id: categoryId || null,
+        wallet_account_id: walletId || null,
+        payable_account_id: payableId || null,
+        from_account_id: fromId || null,
+        to_account_id: toId || null,
       })
       if (linkedDocumentId) {
         try {
@@ -336,14 +296,7 @@ export function TransactionsPage({ entity }: Props) {
       await api.entryVoid(id)
       setVoidId(null)
       // Drop from UI immediately so the row disappears even before reload finishes.
-      setEntries((prev) =>
-        prev.filter(
-          (e) =>
-            e.entry.id !== id &&
-            !e.is_voided &&
-            !e.entry.description.startsWith('VOID:'),
-        ),
-      )
+      setEntries((prev) => prev.filter((e) => e.entry.id !== id && !e.is_voided))
       await reload()
     } catch (err) {
       setError((err as CommandError).message || 'Failed to delete entry')

@@ -4,11 +4,13 @@ import {
   Building2,
   Clock,
   FileQuestion,
+  KeyRound,
   Timer,
   Trash2,
   User,
 } from 'lucide-react'
 import { api, type ChartTemplate, type Entity } from '../lib/api'
+import { vaultChangePassword } from '../lib/tauri'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
@@ -29,6 +31,7 @@ type Props = {
   entities: Entity[]
   onEntitiesChange: () => Promise<void>
   onSelectEntity: (id: string) => void
+  onLockTimeoutChange?: (secs: number) => void
 }
 
 const TEMPLATES: Array<{
@@ -64,8 +67,14 @@ const LOCK_PRESETS = [
   { mins: 60, label: '1 hour' },
 ]
 
-export function SettingsPage({ entities, onEntitiesChange, onSelectEntity }: Props) {
+export function SettingsPage({
+  entities,
+  onEntitiesChange,
+  onSelectEntity,
+  onLockTimeoutChange,
+}: Props) {
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState('EUR')
   const [template, setTemplate] = useState<ChartTemplate>('personal')
@@ -74,6 +83,10 @@ export function SettingsPage({ entities, onEntitiesChange, onSelectEntity }: Pro
   const [lockBusy, setLockBusy] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+  const [oldPassword, setOldPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordBusy, setPasswordBusy] = useState(false)
 
   useEffect(() => {
     void api
@@ -128,12 +141,42 @@ export function SettingsPage({ entities, onEntitiesChange, onSelectEntity }: Pro
     setLockBusy(true)
     setError(null)
     try {
-      await api.setLockTimeout(Math.round(mins * 60))
+      const secs = Math.round(mins * 60)
+      await api.setLockTimeout(secs)
       setLockMins(mins)
+      onLockTimeoutChange?.(secs)
     } catch (err) {
       setError((err as CommandError).message)
     } finally {
       setLockBusy(false)
+    }
+  }
+
+  async function onChangePassword(ev: FormEvent) {
+    ev.preventDefault()
+    setError(null)
+    setNotice(null)
+
+    if (newPassword !== confirmPassword) {
+      setError('New passwords do not match')
+      return
+    }
+    if (newPassword.length < 12) {
+      setError('Use at least 12 characters for the new password')
+      return
+    }
+
+    setPasswordBusy(true)
+    try {
+      await vaultChangePassword(oldPassword, newPassword)
+      setOldPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setNotice('Password changed. The vault is re-encrypted under the new password.')
+    } catch (err) {
+      setError((err as CommandError).message || 'Could not change the password')
+    } finally {
+      setPasswordBusy(false)
     }
   }
 
@@ -147,6 +190,11 @@ export function SettingsPage({ entities, onEntitiesChange, onSelectEntity }: Pro
       />
 
       <ErrorBanner message={error} />
+      {notice ? (
+        <div className="rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]">
+          {notice}
+        </div>
+      ) : null}
 
       <ConfirmDialog
         open={pendingDelete !== null}
@@ -191,6 +239,57 @@ export function SettingsPage({ entities, onEntitiesChange, onSelectEntity }: Pro
             </Button>
           ))}
         </div>
+      </Card>
+
+      <Card padding="lg">
+        <div className="mb-5 flex items-center gap-3">
+          <IconBadge tone="accent" size="sm">
+            <KeyRound className="size-4" />
+          </IconBadge>
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--color-fg)]">Master password</h3>
+            <p className="text-xs text-[var(--color-muted)]">
+              Re-encrypts the vault. There is no recovery if the new password is lost.
+            </p>
+          </div>
+        </div>
+        <form onSubmit={onChangePassword} className="grid gap-4 sm:grid-cols-3">
+          <Field label="Current password">
+            <Input
+              type="password"
+              autoComplete="current-password"
+              value={oldPassword}
+              onChange={(e) => setOldPassword(e.target.value)}
+              required
+              minLength={12}
+            />
+          </Field>
+          <Field label="New password">
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              required
+              minLength={12}
+            />
+          </Field>
+          <Field label="Confirm new password">
+            <Input
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              minLength={12}
+            />
+          </Field>
+          <div className="sm:col-span-3">
+            <Button type="submit" disabled={passwordBusy}>
+              {passwordBusy ? 'Re-encrypting…' : 'Change password'}
+            </Button>
+          </div>
+        </form>
       </Card>
 
       <Card padding="lg">

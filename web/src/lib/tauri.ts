@@ -56,6 +56,23 @@ export async function vaultUnlock(password: string): Promise<VaultStatus> {
   }
 }
 
+export async function vaultChangePassword(
+  oldPassword: string,
+  newPassword: string,
+): Promise<VaultStatus> {
+  if (!isTauri()) {
+    throw asCommandError(new Error('Vault commands require the desktop app'))
+  }
+  try {
+    return await invoke<VaultStatus>('vault_change_password', {
+      old: oldPassword,
+      new: newPassword,
+    })
+  } catch (err) {
+    throw asCommandError(err)
+  }
+}
+
 export async function vaultLock(): Promise<VaultStatus> {
   if (!isTauri()) {
     return 'locked'

@@ -113,7 +113,7 @@ export function DashboardPage({ entity }: Props) {
 
   const activity = useMemo(() => {
     return entries
-      .filter((e) => !e.is_voided && !e.entry.description.startsWith('VOID:'))
+      .filter((e) => !e.is_voided)
       .slice(0, 8)
       .map((e) => inferActivity(e, accounts))
   }, [entries, accounts])

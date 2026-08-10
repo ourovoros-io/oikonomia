@@ -12,8 +12,10 @@ import {
 } from 'lucide-react'
 import { UnlockScreen } from './components/UnlockScreen'
 import { Button, Select, cn } from './components/ui'
+import { listen } from '@tauri-apps/api/event'
 import {
   appInfo,
+  isTauri,
   vaultLock,
   vaultStatus,
   type AppInfo,
@@ -86,16 +88,48 @@ export default function App() {
     void refresh()
   }, [refresh])
 
+  // The Rust watchdog is the authority on idle locking; it emits this event
+  // when it closes the vault so the UI drops to the unlock screen.
+  useEffect(() => {
+    if (!isTauri()) return
+
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+
+    void listen('vault-locked', () => {
+      setStatus('locked')
+      setEntities([])
+      setEntityId(null)
+    }).then((fn) => {
+      if (cancelled) fn()
+      else unlisten = fn
+    })
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
+
+  // Fast-path idle timer, plus a throttled heartbeat so the Rust watchdog
+  // counts UI activity (mouse/keyboard) as activity, not just commands.
   useEffect(() => {
     if (status !== 'unlocked') return
 
     let timer: ReturnType<typeof setTimeout> | null = null
+    let lastHeartbeat = 0
 
     const reset = () => {
       if (timer) clearTimeout(timer)
       timer = setTimeout(() => {
         void vaultLock().then((s) => setStatus(s))
       }, lockTimeoutSecs * 1000)
+
+      const now = Date.now()
+      if (now - lastHeartbeat > 60_000) {
+        lastHeartbeat = now
+        void vaultStatus().catch(() => undefined)
+      }
     }
 
     const events = ['mousemove', 'keydown', 'click', 'scroll'] as const
@@ -256,6 +290,7 @@ export default function App() {
             {active === 'settings' ? (
               <SettingsPage
                 entities={entities}
+                onLockTimeoutChange={setLockTimeoutSecs}
                 onEntitiesChange={async () => {
                   try {
                     await loadEntities()
