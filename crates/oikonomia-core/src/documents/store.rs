@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::domain::{Account, AccountId, AccountType, EntityId, JournalEntryId};
 use crate::error::{Error, Result};
 use crate::ledger::list_accounts;
-use crate::util::now_utc_string;
+use crate::util::{now_utc_string, parse_uuid};
 
 /// Document primary key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -43,6 +43,8 @@ pub struct DocumentMeta {
     pub mime_type: String,
     /// Byte length.
     pub size_bytes: i64,
+    /// RFC 3339 creation time.
+    pub created_at: String,
 }
 
 /// Max upload size (8 MiB) — keeps vault lean and model latency reasonable.
@@ -125,6 +127,7 @@ pub fn save_document(
         filename: name.to_owned(),
         mime_type: mime,
         size_bytes,
+        created_at: created,
     })
 }
 
@@ -142,6 +145,134 @@ pub fn link_document_to_entry(
         .execute(
             "UPDATE documents SET entry_id = ?1 WHERE id = ?2",
             rusqlite::params![entry_id.0.to_string(), document_id.0.to_string()],
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+    if n == 0 {
+        return Err(Error::NotFound("document".into()));
+    }
+    Ok(())
+}
+
+type MetaColumns = (String, String, Option<String>, String, String, i64, String);
+
+fn meta_from_columns(raw: MetaColumns) -> Result<DocumentMeta> {
+    let (id_s, entity_s, entry_s, filename, mime_type, size_bytes, created_at) = raw;
+    Ok(DocumentMeta {
+        id: DocumentId(parse_uuid(&id_s)?),
+        entity_id: EntityId(parse_uuid(&entity_s)?),
+        entry_id: entry_s
+            .as_deref()
+            .map(parse_uuid)
+            .transpose()?
+            .map(JournalEntryId),
+        filename,
+        mime_type,
+        size_bytes,
+        created_at,
+    })
+}
+
+/// All documents for an entity, newest first (metadata only — no blobs).
+///
+/// # Errors
+///
+/// DB errors.
+pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<DocumentMeta>> {
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT id, entity_id, entry_id, filename, mime_type, size_bytes, created_at
+            FROM documents
+            WHERE entity_id = ?1
+            ORDER BY created_at DESC
+            ",
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let rows = stmt
+        .query_map([entity_id.0.to_string()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let mut out = Vec::new();
+    for row in rows {
+        let raw = row.map_err(|err| Error::Io(err.to_string()))?;
+        out.push(meta_from_columns(raw)?);
+    }
+    Ok(out)
+}
+
+/// One document's metadata plus raw bytes (for viewing/export).
+///
+/// # Errors
+///
+/// Not found or DB error.
+pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, Vec<u8>)> {
+    let (raw, data) = conn
+        .query_row(
+            "
+            SELECT id, entity_id, entry_id, filename, mime_type, size_bytes, created_at, data
+            FROM documents
+            WHERE id = ?1
+            ",
+            [id.0.to_string()],
+            |row| {
+                Ok((
+                    (
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, String>(6)?,
+                    ),
+                    row.get::<_, Vec<u8>>(7)?,
+                ))
+            },
+        )
+        .map_err(|err| match err {
+            rusqlite::Error::QueryReturnedNoRows => Error::NotFound("document".into()),
+            other => Error::Io(other.to_string()),
+        })?;
+
+    Ok((meta_from_columns(raw)?, data))
+}
+
+/// Permanently remove a document blob. Linked entries are unaffected.
+///
+/// # Errors
+///
+/// Not found or DB error.
+pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
+    let n = conn
+        .execute("DELETE FROM documents WHERE id = ?1", [id.0.to_string()])
+        .map_err(|err| Error::Io(err.to_string()))?;
+    if n == 0 {
+        return Err(Error::NotFound("document".into()));
+    }
+    Ok(())
+}
+
+/// Detach a document from its entry; the file stays in the vault as an orphan.
+///
+/// # Errors
+///
+/// Not found or DB error.
+pub fn unlink_document(conn: &Connection, id: DocumentId) -> Result<()> {
+    let n = conn
+        .execute(
+            "UPDATE documents SET entry_id = NULL WHERE id = ?1",
+            [id.0.to_string()],
         )
         .map_err(|err| Error::Io(err.to_string()))?;
     if n == 0 {
