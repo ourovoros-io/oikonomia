@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
-import { Building2, KeyRound, Shield } from 'lucide-react'
+import { KeyRound, Shield } from 'lucide-react'
+import { Logo } from './Logo'
 import type { VaultStatus } from '../lib/tauri'
 import { vaultInit, vaultUnlock, type CommandError } from '../lib/tauri'
 import { Button, ErrorBanner, Field, Input } from './ui'
@@ -45,9 +46,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
     <div className="flex h-full items-center justify-center bg-[var(--color-canvas)] px-4">
       <div className="w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
-          <span className="mb-4 flex size-12 items-center justify-center rounded-2xl bg-[var(--color-accent)] text-white shadow-lg shadow-[var(--color-accent)]/20">
-            <Building2 className="size-6" strokeWidth={1.75} />
-          </span>
+          <Logo className="mb-4 size-14 rounded-2xl shadow-lg shadow-[var(--color-accent)]/20" />
           <h1 className="text-2xl font-semibold tracking-tight">
             {isSetup ? 'Create your vault' : 'Welcome back'}
           </h1>

@@ -1,4 +1,12 @@
-# Oikonomia
+<p align="center">
+  <img src="docs/assets/logo.svg" width="140"
+       alt="Oikonomia logo: a Greek temple whose doorway is a keyhole">
+</p>
+
+<h1 align="center">Oikonomia</h1>
+
+<p align="center"><em>οἶκος (house) + νόμος (order) — the temple mark is two
+columns (double-entry) around a keyhole doorway (the encrypted vault).</em></p>
 
 Local-only personal and company finance: **double-entry** multi-entity books,
 **encrypted at rest**, with a Stripe-inspired desktop UI (dark mode first).

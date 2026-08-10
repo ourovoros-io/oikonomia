@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   BookOpen,
-  Building2,
   LayoutDashboard,
   Lock,
   Moon,
@@ -10,6 +9,7 @@ import {
   Sun,
   Wallet,
 } from 'lucide-react'
+import { Logo } from './components/Logo'
 import { UnlockScreen } from './components/UnlockScreen'
 import { Button, Select, cn } from './components/ui'
 import { listen } from '@tauri-apps/api/event'
@@ -180,9 +180,7 @@ export default function App() {
     <div className="flex h-full min-h-0 bg-[var(--color-canvas)] text-[var(--color-fg)]">
       <aside className="flex w-[var(--sidebar-w)] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
         <div className="flex h-14 items-center gap-2.5 border-b border-[var(--color-border)] px-4">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-[var(--color-accent)] text-white shadow-sm shadow-[var(--color-accent)]/30">
-            <Building2 className="size-4" strokeWidth={2} />
-          </span>
+          <Logo className="size-8 shrink-0 rounded-lg shadow-sm shadow-[var(--color-accent)]/30" />
           <div className="min-w-0 leading-tight">
             <div className="truncate text-sm font-semibold tracking-tight">Oikonomia</div>
             <div className="truncate text-[11px] text-[var(--color-muted)]">Local ledger</div>
