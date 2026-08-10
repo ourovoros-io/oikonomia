@@ -43,7 +43,8 @@ pub struct DocumentMeta {
     pub mime_type: String,
     /// Byte length.
     pub size_bytes: i64,
-    /// RFC 3339 creation time.
+    /// Creation instant as the app-wide `unix:<seconds>` ordering key
+    /// (see `now_utc_string`); not a display date — the UI formats it.
     pub created_at: String,
 }
 
@@ -178,13 +179,16 @@ fn meta_from_columns(raw: MetaColumns) -> Result<DocumentMeta> {
 ///
 /// DB errors.
 pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<DocumentMeta>> {
+    // Order by created_at DESC, rowid DESC for deterministic insertion-recency order.
+    // now_utc_string has 1-second granularity, so multiple documents saved in the same
+    // second may tie on created_at; rowid tie-break ensures deterministic order.
     let mut stmt = conn
         .prepare(
             "
             SELECT id, entity_id, entry_id, filename, mime_type, size_bytes, created_at
             FROM documents
             WHERE entity_id = ?1
-            ORDER BY created_at DESC
+            ORDER BY created_at DESC, rowid DESC
             ",
         )
         .map_err(|err| Error::Io(err.to_string()))?;

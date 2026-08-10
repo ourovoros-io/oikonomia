@@ -194,3 +194,17 @@ fn delete_and_unlink_missing_document_return_not_found() {
     assert!(delete_document(conn, missing).is_err());
     assert!(unlink_document(conn, missing).is_err());
 }
+
+#[test]
+fn list_documents_is_newest_first() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+
+    let first = save_document(conn, entity_id, "first.txt", "text/plain", b"1").expect("save");
+    let second = save_document(conn, entity_id, "second.txt", "text/plain", b"2").expect("save");
+
+    let listed = list_documents(conn, entity_id).expect("list");
+    assert_eq!(listed[0].id, second.id, "most recent save first");
+    assert_eq!(listed[1].id, first.id);
+}
