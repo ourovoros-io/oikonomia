@@ -36,8 +36,8 @@ cd web && npm install && npm run dev
 cd web && npm test        # vitest: money parsing, date normalization
 cd web && npm run build
 
-# Full desktop app
-cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
+# Full desktop app (from the repo root; `make app` does the same)
+cargo tauri dev
 ```
 
 ## Pre-commit hooks
