@@ -1,17 +1,28 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, FileText, Plus, Trash2 } from 'lucide-react'
+import {
+  ArrowDownLeft,
+  ArrowLeftRight,
+  ArrowUpRight,
+  FileText,
+  Paperclip,
+  Plus,
+  Trash2,
+} from 'lucide-react'
 import {
   api,
   formatDate,
   formatMoney,
   todayISO,
   type Account,
+  type DocumentMeta,
   type Entity,
   type PostedEntryView,
 } from '../lib/api'
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentDropZone } from '../components/DocumentDropZone'
+import { DocumentViewerModal } from '../components/DocumentViewerModal'
+import { EntryDetailModal } from '../components/EntryDetailModal'
 import { Modal } from '../components/Modal'
 import {
   Button,
@@ -87,11 +98,45 @@ export function TransactionsPage({ entity }: Props) {
   const [voidBusy, setVoidBusy] = useState(false)
   const [linkedDocumentId, setLinkedDocumentId] = useState<string | null>(null)
   const [scanNotes, setScanNotes] = useState<string | null>(null)
+  const [docs, setDocs] = useState<DocumentMeta[]>([])
+  const [detailId, setDetailId] = useState<string | null>(null)
+  const [viewerDocId, setViewerDocId] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [accountFilter, setAccountFilter] = useState('')
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
   /** Hide voided pairs; the backend marks both sides via is_voided. */
   const visibleEntries = useMemo(() => entries.filter((e) => !e.is_voided), [entries])
+
+  // Debounce typing so each keystroke doesn't hit SQLite.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300)
+    return () => clearTimeout(t)
+  }, [search])
+
+  const docsByEntry = useMemo(() => {
+    const map = new Map<string, DocumentMeta[]>()
+    for (const d of docs) {
+      if (!d.entry_id) continue
+      const list = map.get(d.entry_id) ?? []
+      list.push(d)
+      map.set(d.entry_id, list)
+    }
+    return map
+  }, [docs])
+
+  const detailView = useMemo(
+    () => visibleEntries.find((e) => e.entry.id === detailId) ?? null,
+    [visibleEntries, detailId],
+  )
+
+  const filtersActive = Boolean(
+    debouncedSearch.trim() || fromDate || toDate || accountFilter,
+  )
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
@@ -141,9 +186,19 @@ export function TransactionsPage({ entity }: Props) {
 
   async function reload() {
     if (!entity) return
-    const [e, a] = await Promise.all([api.entryList(entity.id), api.accountList(entity.id)])
+    const [e, a, d] = await Promise.all([
+      api.entryList(entity.id, {
+        search: debouncedSearch.trim() || undefined,
+        from: fromDate || undefined,
+        to: toDate || undefined,
+        accountId: accountFilter || undefined,
+      }),
+      api.accountList(entity.id),
+      api.documentList(entity.id),
+    ])
     setEntries(e)
     setAccounts(a)
+    setDocs(d)
     if (!categoryId && !walletId) {
       applyKindDefaults(kind, a)
     }
@@ -153,11 +208,12 @@ export function TransactionsPage({ entity }: Props) {
     if (!entity) {
       setEntries([])
       setAccounts([])
+      setDocs([])
       return
     }
     void reload().catch((err) => setError((err as CommandError).message))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entity?.id])
+  }, [entity?.id, debouncedSearch, fromDate, toDate, accountFilter])
 
   function setKindAndDefaults(next: EntryKind) {
     setKind(next)
@@ -307,6 +363,34 @@ export function TransactionsPage({ entity }: Props) {
         }}
         onError={(msg) => setError(msg)}
       />
+
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Search" className="min-w-[220px] flex-1">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Description, reference, memo…"
+          />
+        </Field>
+        <Field label="From" className="w-40">
+          <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        </Field>
+        <Field label="To" className="w-40">
+          <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        </Field>
+        <Field label="Account" className="w-56">
+          <Select value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}>
+            <option value="">All accounts</option>
+            {accounts
+              .filter((a) => a.is_active)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.code} · {a.name}
+                </option>
+              ))}
+          </Select>
+        </Field>
+      </div>
 
       <Modal
         open={showForm}
@@ -545,7 +629,30 @@ export function TransactionsPage({ entity }: Props) {
         </form>
       </Modal>
 
-      {visibleEntries.length === 0 ? (
+      <EntryDetailModal
+        view={detailView}
+        accounts={accountMap}
+        documents={detailId ? (docsByEntry.get(detailId) ?? []) : []}
+        currency={ccy}
+        onClose={() => setDetailId(null)}
+        onView={(id) => setViewerDocId(id)}
+        onChanged={reload}
+        onError={(msg) => setError(msg)}
+      />
+
+      <DocumentViewerModal
+        documentId={viewerDocId}
+        onClose={() => setViewerDocId(null)}
+        onError={(msg) => setError(msg)}
+      />
+
+      {visibleEntries.length === 0 && filtersActive ? (
+        <EmptyState
+          icon={<FileText className="size-5" />}
+          title="No matching entries"
+          body="No entries match the current search or filters."
+        />
+      ) : visibleEntries.length === 0 ? (
         <EmptyState
           icon={<ArrowLeftRight className="size-5" />}
           title="No transactions yet"
@@ -603,7 +710,8 @@ export function TransactionsPage({ entity }: Props) {
               return (
                 <li
                   key={view.entry.id}
-                  className="flex items-center gap-4 px-5 py-3.5 transition hover:bg-[var(--color-surface-2)]/50"
+                  onClick={() => setDetailId(view.entry.id)}
+                  className="flex cursor-pointer items-center gap-4 px-5 py-3.5 transition hover:bg-[var(--color-surface-2)]/50"
                 >
                   <IconBadge tone={tone}>
                     {kindLabel === 'income' ? (
@@ -626,6 +734,12 @@ export function TransactionsPage({ entity }: Props) {
                       {parts}
                     </div>
                   </div>
+                  {(docsByEntry.get(view.entry.id)?.length ?? 0) > 0 ? (
+                    <Paperclip
+                      className="size-3.5 shrink-0 text-[var(--color-muted)]"
+                      aria-label="Has attached document"
+                    />
+                  ) : null}
                   <div
                     className={cn(
                       'shrink-0 text-sm font-semibold tabular-nums',
@@ -644,7 +758,10 @@ export function TransactionsPage({ entity }: Props) {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 shrink-0"
-                    onClick={() => setVoidId(view.entry.id)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setVoidId(view.entry.id)
+                    }}
                     aria-label="Delete entry"
                     title="Delete"
                   >
