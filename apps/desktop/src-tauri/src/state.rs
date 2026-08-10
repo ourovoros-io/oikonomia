@@ -152,12 +152,12 @@ pub fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
     }
 
     // 3) Fallback next to executable
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let near = parent.join("resources/ocr");
-            if near.join("text-detection.rten").is_file() {
-                return near;
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        let near = parent.join("resources/ocr");
+        if near.join("text-detection.rten").is_file() {
+            return near;
         }
     }
 

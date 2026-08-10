@@ -16,10 +16,11 @@ tauri-build = { version = "2.6.2", features = [] }
 
 [dependencies]
 oikonomia-core = { workspace = true }
+macos-dock-icon = { path = "../../../crates/macos-dock-icon" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
-tauri = { version = "2.11.2", features = [] }
+tauri = { version = "2.11.2", features = ["tray-icon", "image-png"] }
 tauri-plugin-log = "2"
 log = "0.4"
 thiserror = { workspace = true }

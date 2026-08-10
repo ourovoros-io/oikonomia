@@ -9,6 +9,7 @@
 mod commands;
 mod error;
 mod state;
+mod tray;
 
 use state::{AppState, resolve_ocr_model_dir};
 use tauri::Manager;
@@ -22,6 +23,12 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
+            // The bundled .app gets its Dock icon from icon.icns; dev mode runs
+            // the bare binary, so set the icon at runtime as well.
+            macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
+
+            tray::init(app)?;
+
             let resource_dir = app.path().resource_dir().ok();
             let ocr_dir = resolve_ocr_model_dir(resource_dir);
             log::info!("OCR model dir: {}", ocr_dir.display());
@@ -77,6 +84,27 @@ pub fn run() {
             commands::document_analyze_path,
             commands::document_link_entry,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to start Oikonomia");
+        .on_window_event(|window, event| {
+            // Closing the window hides it to the tray instead of quitting;
+            // Quit lives in the tray menu (or Cmd+Q).
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+
+                if let Err(err) = window.hide() {
+                    log::warn!("failed to hide window on close: {err}");
+                }
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("failed to start Oikonomia")
+        .run(|app, event| {
+            // Clicking the Dock icon while the window is hidden reopens it.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                tray::show_main_window(app);
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
