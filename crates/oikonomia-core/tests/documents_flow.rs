@@ -3,10 +3,10 @@
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
 use oikonomia_core::documents::{
-    DocumentId, delete_document, get_document, link_document_to_entry, list_documents,
-    save_document, unlink_document,
+    DocumentId, attach_document, delete_document, get_document, link_document_to_entry,
+    list_documents, save_document, unlink_document,
 };
-use oikonomia_core::domain::{ChartTemplate, EntityId};
+use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, create_entity, delete_entity, list_accounts,
     list_entities, post_entry,
@@ -23,10 +23,14 @@ fn setup_vault() -> (TempDir, Vault) {
 }
 
 fn setup_entity(conn: &Connection) -> EntityId {
+    setup_named_entity(conn, "Docs")
+}
+
+fn setup_named_entity(conn: &Connection, name: &str) -> EntityId {
     create_entity(
         conn,
         &CreateEntity {
-            name: "Docs".into(),
+            name: name.into(),
             base_currency: "EUR".into(),
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
@@ -34,6 +38,43 @@ fn setup_entity(conn: &Connection) -> EntityId {
     )
     .expect("entity")
     .id
+}
+
+/// Post a trivial balanced expense entry so a document has something to
+/// attach to. Mirrors the setup in `unlink_orphans_but_preserves_document`.
+fn post_expense_entry(
+    conn: &Connection,
+    entity_id: EntityId,
+    description: &str,
+) -> oikonomia_core::ledger::PostedEntryView {
+    let accounts = list_accounts(conn, entity_id).expect("accounts");
+    let checking = accounts.iter().find(|a| a.code == "1010").expect("1010");
+    let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
+
+    post_entry(
+        conn,
+        &PostJournal {
+            entity_id,
+            entry_date: "2026-03-01".into(),
+            description: description.into(),
+            reference: None,
+            lines: vec![
+                CreateJournalLine {
+                    account_id: food.id,
+                    debit_minor: 500,
+                    credit_minor: 0,
+                    memo: None,
+                },
+                CreateJournalLine {
+                    account_id: checking.id,
+                    debit_minor: 0,
+                    credit_minor: 500,
+                    memo: None,
+                },
+            ],
+        },
+    )
+    .expect("post")
 }
 
 #[test]
@@ -207,4 +248,67 @@ fn list_documents_is_newest_first() {
     let listed = list_documents(conn, entity_id).expect("list");
     assert_eq!(listed[0].id, second.id, "most recent save first");
     assert_eq!(listed[1].id, first.id);
+}
+
+#[test]
+fn attach_document_saves_links_and_skips_analysis() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    let entry = post_expense_entry(conn, entity_id, "Lunch invoice");
+
+    let meta = attach_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "inv.txt",
+        "text/plain",
+        b"total 5",
+    )
+    .expect("attach");
+    assert_eq!(meta.entry_id, Some(entry.entry.id));
+
+    let listed = list_documents(conn, entity_id).expect("list");
+    assert_eq!(
+        listed[0].entry_id,
+        Some(entry.entry.id),
+        "linked in one step"
+    );
+
+    let analysis: Option<String> = conn
+        .query_row(
+            "SELECT analysis_json FROM documents WHERE id = ?1",
+            [meta.id.0.to_string()],
+            |row| row.get(0),
+        )
+        .expect("row");
+    assert!(analysis.is_none(), "attach must not run analysis");
+}
+
+#[test]
+fn attach_document_rejects_missing_and_wrong_entity_entry() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_a = setup_entity(conn);
+    let entity_b = setup_named_entity(conn, "Other");
+
+    let missing = JournalEntryId::new();
+    assert!(
+        attach_document(conn, entity_a, missing, "a.txt", "text/plain", b"data").is_err(),
+        "missing entry must fail"
+    );
+
+    let entry_b = post_expense_entry(conn, entity_b, "Other book expense");
+    assert!(
+        attach_document(
+            conn,
+            entity_a,
+            entry_b.entry.id,
+            "b.txt",
+            "text/plain",
+            b"data"
+        )
+        .is_err(),
+        "entry from a different book must fail"
+    );
 }

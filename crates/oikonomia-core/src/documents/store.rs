@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::domain::{Account, AccountId, AccountType, EntityId, JournalEntryId};
 use crate::error::{Error, Result};
-use crate::ledger::list_accounts;
+use crate::ledger::{get_entry, list_accounts};
 use crate::util::{now_utc_string, parse_uuid};
 
 /// Document primary key.
@@ -152,6 +152,41 @@ pub fn link_document_to_entry(
         return Err(Error::NotFound("document".into()));
     }
     Ok(())
+}
+
+/// Validate, store, and link a document to an existing entry in one
+/// transaction (no OCR — analysis belongs to the drop-zone flow).
+///
+/// # Errors
+///
+/// [`Error::NotFound`] for a missing entry, [`Error::Validation`] for an
+/// entry in a different book or an invalid file, plus DB errors.
+pub fn attach_document(
+    conn: &Connection,
+    entity_id: EntityId,
+    entry_id: JournalEntryId,
+    filename: &str,
+    mime_type: &str,
+    data: &[u8],
+) -> Result<DocumentMeta> {
+    let entry = get_entry(conn, entry_id)?;
+    if entry.entry.entity_id != entity_id {
+        return Err(Error::Validation(
+            "entry belongs to a different book".into(),
+        ));
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let meta = save_document(&tx, entity_id, filename, mime_type, data)?;
+    link_document_to_entry(&tx, meta.id, entry_id)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+
+    Ok(DocumentMeta {
+        entry_id: Some(entry_id),
+        ..meta
+    })
 }
 
 type MetaColumns = (String, String, Option<String>, String, String, i64, String);

@@ -5,8 +5,9 @@ use crate::state::AppState;
 use base64::Engine;
 use oikonomia_core::documents::{
     AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, analyze_document_bytes,
-    analyzer_status, delete_document, get_document, link_document_to_entry, list_documents,
-    save_analysis_json, save_document, suggest_accounts_for_entity, unlink_document,
+    analyzer_status, attach_document, delete_document, get_document, link_document_to_entry,
+    list_documents, save_analysis_json, save_document, suggest_accounts_for_entity,
+    unlink_document,
 };
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
 use oikonomia_core::error::Error as CoreError;
@@ -686,22 +687,7 @@ pub async fn document_attach(
 
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
-
-        // 404 on a bad entry before storing anything.
-        get_entry(conn, entry_id)?;
-
-        // Save + link atomically so a failure can't leave a half-attached file.
-        let tx = conn
-            .unchecked_transaction()
-            .map_err(|err| CoreError::Io(err.to_string()))?;
-        let meta = save_document(&tx, entity_id, &filename, &mime_type, &data)?;
-        link_document_to_entry(&tx, meta.id, entry_id)?;
-        tx.commit().map_err(|err| CoreError::Io(err.to_string()))?;
-
-        Ok(DocumentMeta {
-            entry_id: Some(entry_id),
-            ..meta
-        })
+        attach_document(conn, entity_id, entry_id, &filename, &mime_type, &data)
     })
     .await
 }

@@ -15,7 +15,7 @@ pub use analyze::{
 };
 pub use ocr::OcrModelPaths;
 pub use store::{
-    DocumentId, DocumentMeta, MAX_DOCUMENT_BYTES, delete_document, get_document,
+    DocumentId, DocumentMeta, MAX_DOCUMENT_BYTES, attach_document, delete_document, get_document,
     link_document_to_entry, list_documents, resolve_mime, save_analysis_json, save_document,
     suggest_accounts_for_entity, unlink_document, validate_document_file,
 };
