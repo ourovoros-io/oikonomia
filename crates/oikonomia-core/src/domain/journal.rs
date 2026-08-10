@@ -64,6 +64,7 @@ pub struct JournalEntry {
     /// Owning entity.
     pub entity_id: EntityId,
     /// Accounting date.
+    #[serde(with = "crate::util::serde_date")]
     pub entry_date: Date,
     /// User-facing description.
     pub description: String,

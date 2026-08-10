@@ -36,6 +36,7 @@ pub struct TrialBalance {
     /// Entity id.
     pub entity_id: EntityId,
     /// As-of date.
+    #[serde(with = "crate::util::serde_date")]
     pub as_of: Date,
     /// Lines with activity or non-zero balance.
     pub lines: Vec<ReportLine>,
@@ -51,8 +52,10 @@ pub struct PnL {
     /// Entity id.
     pub entity_id: EntityId,
     /// From date.
+    #[serde(with = "crate::util::serde_date")]
     pub from: Date,
     /// To date.
+    #[serde(with = "crate::util::serde_date")]
     pub to: Date,
     /// Income lines.
     pub income: Vec<ReportLine>,
@@ -83,6 +86,7 @@ pub struct BalanceSheet {
     /// Entity id.
     pub entity_id: EntityId,
     /// As-of date.
+    #[serde(with = "crate::util::serde_date")]
     pub as_of: Date,
     /// Assets.
     pub assets: BalanceSheetSection,

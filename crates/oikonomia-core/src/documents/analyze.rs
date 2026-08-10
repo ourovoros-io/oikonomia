@@ -195,6 +195,15 @@ pub fn analyze_document_bytes(
         );
     }
 
+    // Document dates (issue or due date) often fall outside the current month;
+    // say so, or the entry seems to vanish from the dashboard after posting.
+    if let Some(date) = suggestion.entry_date.as_deref() {
+        suggestion.notes = format!(
+            "{} Entry will be dated {date} (from the document) and counts toward that month — adjust the date if you want it in a different period.",
+            suggestion.notes
+        );
+    }
+
     Ok(suggestion)
 }
 

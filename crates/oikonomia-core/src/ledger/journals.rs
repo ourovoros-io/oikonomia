@@ -59,6 +59,7 @@ pub struct RegisterLine {
     /// Entry id.
     pub entry_id: JournalEntryId,
     /// Date.
+    #[serde(with = "crate::util::serde_date")]
     pub entry_date: Date,
     /// Description.
     pub description: String,

@@ -54,6 +54,34 @@ pub fn parse_date(s: &str) -> Result<Date> {
         .map_err(|_| Error::Validation(format!("invalid date: {s}")))
 }
 
+/// ISO `YYYY-MM-DD` (de)serialization for `time::Date` fields crossing IPC.
+///
+/// The `time` crate's derive-default serializes `Date` as `[year, ordinal]`,
+/// which the frontend cannot render.
+pub mod serde_date {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use time::Date;
+
+    /// Serialize a date as `YYYY-MM-DD`.
+    ///
+    /// # Errors
+    ///
+    /// Serializer errors only.
+    pub fn serialize<S: Serializer>(date: &Date, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&super::format_date(*date))
+    }
+
+    /// Deserialize a `YYYY-MM-DD` date.
+    ///
+    /// # Errors
+    ///
+    /// Invalid date text.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        super::parse_date(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 /// Current UTC timestamp as RFC3339-ish SQL text.
 #[must_use]
 pub fn now_utc_string() -> String {
@@ -66,4 +94,27 @@ pub fn now_utc_string() -> String {
 
     // Enough for ordering; not used for accounting dates.
     format!("unix:{secs}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Dated {
+        #[serde(with = "super::serde_date")]
+        date: time::Date,
+    }
+
+    #[test]
+    fn serde_date_round_trips_as_iso_string() {
+        let date = parse_date("2026-08-10").unwrap_or(time::Date::MIN);
+        let json = serde_json::to_string(&Dated { date }).unwrap_or_default();
+        assert_eq!(json, r#"{"date":"2026-08-10"}"#);
+
+        let back: Result<Dated> =
+            serde_json::from_str(&json).map_err(|e| Error::Validation(e.to_string()));
+        assert_eq!(back.map(|d| d.date), Ok(date));
+    }
 }
