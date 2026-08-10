@@ -722,7 +722,11 @@ export function TransactionsPage({ entity }: Props) {
                       <ArrowLeftRight className="size-4" />
                     )}
                   </IconBadge>
-                  <div className="min-w-0 flex-1">
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 text-left"
+                    onClick={() => setDetailId(view.entry.id)}
+                  >
                     <div className="truncate text-sm font-medium text-[var(--color-fg)]">
                       {view.entry.description}
                     </div>
@@ -733,7 +737,7 @@ export function TransactionsPage({ entity }: Props) {
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       {parts}
                     </div>
-                  </div>
+                  </button>
                   {(docsByEntry.get(view.entry.id)?.length ?? 0) > 0 ? (
                     <Paperclip
                       className="size-3.5 shrink-0 text-[var(--color-muted)]"

@@ -46,8 +46,14 @@ export function EntryDetailModal({
   if (!view) return null
   const entry = view.entry
 
+  // One operation at a time: busyId is shared by export and unlink, so a
+  // second action while either is in flight must be refused, not just
+  // silently overwrite the flag and re-enable controls mid-operation.
+  const anyBusy = attachBusy || busyId !== null
+
   async function onAttach(file: File) {
     if (!view) return
+    if (anyBusy) return
     // Resource guard only — the backend enforces the same cap.
     if (file.size > 8 * 1024 * 1024) {
       onError('File too large (max 8 MB)')
@@ -73,6 +79,7 @@ export function EntryDetailModal({
 
   async function confirmUnlink() {
     if (!unlinkId) return
+    if (busyId !== null) return
     setBusyId(unlinkId)
     try {
       await api.documentUnlink(unlinkId)
@@ -86,6 +93,7 @@ export function EntryDetailModal({
   }
 
   async function onExport(id: string) {
+    if (busyId !== null) return
     setBusyId(id)
     try {
       await api.documentExport(id)
@@ -101,7 +109,9 @@ export function EntryDetailModal({
       open
       title={entry.description}
       description={`${formatDate(entry.entry_date)}${entry.reference ? ` · Ref ${entry.reference}` : ''}`}
-      onClose={onClose}
+      onClose={() => {
+        if (!anyBusy) onClose()
+      }}
     >
       <ConfirmDialog
         open={unlinkId !== null}
@@ -109,7 +119,9 @@ export function EntryDetailModal({
         body="The file stays in your vault under Documents as unlinked — nothing is deleted."
         confirmLabel="Remove"
         busy={busyId !== null && busyId === unlinkId}
-        onCancel={() => setUnlinkId(null)}
+        onCancel={() => {
+          if (busyId === null) setUnlinkId(null)
+        }}
         onConfirm={() => void confirmUnlink()}
       />
 
@@ -159,6 +171,7 @@ export function EntryDetailModal({
               variant="secondary"
               size="sm"
               busy={attachBusy}
+              disabled={anyBusy}
               onClick={() => fileRef.current?.click()}
             >
               <Plus className="size-3.5" />
@@ -169,6 +182,7 @@ export function EntryDetailModal({
               type="file"
               accept="image/png,image/jpeg,image/webp,application/pdf,text/plain,.pdf,.png,.jpg,.jpeg,.webp,.txt"
               className="hidden"
+              disabled={anyBusy}
               onChange={(e) => {
                 const file = e.target.files?.[0]
                 if (file) void onAttach(file)
@@ -207,6 +221,7 @@ export function EntryDetailModal({
                     size="icon"
                     className="h-8 w-8"
                     busy={busyId === doc.id}
+                    disabled={anyBusy}
                     onClick={() => void onExport(doc.id)}
                     aria-label="Save a copy"
                     title="Save a copy"
@@ -217,6 +232,7 @@ export function EntryDetailModal({
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8"
+                    disabled={anyBusy}
                     onClick={() => setUnlinkId(doc.id)}
                     aria-label="Remove attachment"
                     title="Remove"
