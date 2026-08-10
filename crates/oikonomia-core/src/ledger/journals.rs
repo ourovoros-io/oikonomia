@@ -90,12 +90,10 @@ pub fn list_entries(
     from: Option<&str>,
     to: Option<&str>,
 ) -> Result<Vec<PostedEntryView>> {
-    if let Some(f) = from {
-        let _ = parse_date(f)?;
-    }
-    if let Some(t) = to {
-        let _ = parse_date(t)?;
-    }
+    // Normalize before binding: SQL compares date TEXT lexicographically, so a
+    // lenient input like `2026-3-5` must become `2026-03-05` first.
+    let from = from.map(parse_date).transpose()?.map(format_date);
+    let to = to.map(parse_date).transpose()?.map(format_date);
 
     let mut stmt = conn
         .prepare(
@@ -372,14 +370,10 @@ pub fn account_register(
     to: Option<&str>,
 ) -> Result<Vec<RegisterLine>> {
     let account = get_account(conn, account_id)?;
-    if let Some(f) = from {
-        let _ = parse_date(f)?;
-    }
-    if let Some(t) = to {
-        let _ = parse_date(t)?;
-    }
+    let from = from.map(parse_date).transpose()?.map(format_date);
+    let to = to.map(parse_date).transpose()?.map(format_date);
 
-    let mut running = if let Some(from) = from {
+    let mut running = if let Some(from) = from.as_deref() {
         let prior_sql = format!(
             "
             SELECT COALESCE(SUM(jl.debit_minor),0), COALESCE(SUM(jl.credit_minor),0)

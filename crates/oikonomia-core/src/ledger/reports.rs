@@ -111,7 +111,7 @@ pub struct DashboardSummary {
     pub expenses: i64,
     /// Net income in period.
     pub net_income: i64,
-    /// Recent entries (up to 8).
+    /// Posted, non-voided entries in the period.
     pub recent_entry_count: usize,
 }
 
@@ -122,42 +122,15 @@ pub struct DashboardSummary {
 /// Validation or DB errors.
 pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<TrialBalance> {
     let as_of_d = parse_date(as_of)?;
-    let as_of_s = format_date(as_of_d);
     let _ = get_entity(conn, entity_id)?;
 
-    let sql = format!(
-        "
-        SELECT a.code, a.name, a.account_type,
-               COALESCE(SUM(jl.debit_minor), 0),
-               COALESCE(SUM(jl.credit_minor), 0)
-        FROM accounts a
-        LEFT JOIN journal_lines jl ON jl.account_id = a.id
-        LEFT JOIN journal_entries je ON je.id = jl.entry_id
-            AND je.status = 'posted'
-            AND {ACTIVE_ENTRY_PREDICATE}
-            AND je.entry_date <= ?2
-        WHERE a.entity_id = ?1
-        GROUP BY a.id
-        ORDER BY a.sort_order, a.code
-        "
-    );
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    let rows = stmt
-        .query_map(
-            rusqlite::params![entity_id.0.to_string(), as_of_s],
-            map_report_line,
-        )
-        .map_err(|err| Error::Io(err.to_string()))?;
+    let all_lines = account_activity_lines(conn, entity_id, None, None, as_of_d)?;
 
     let mut lines = Vec::new();
     let mut total_debits = 0_i64;
     let mut total_credits = 0_i64;
 
-    for row in rows {
-        let line = row.map_err(|err| Error::Io(err.to_string()))?;
+    for line in all_lines {
         if line.debit_minor == 0 && line.credit_minor == 0 {
             continue;
         }
@@ -299,14 +272,22 @@ pub fn dashboard_summary(
     let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], to_d)?;
     let income = sum_types_in_range(conn, entity_id, &[AccountType::Income], from_d, to_d)?;
     let expenses = sum_types_in_range(conn, entity_id, &[AccountType::Expense], from_d, to_d)?;
+    let count_sql = format!(
+        "
+        SELECT COUNT(1) FROM journal_entries je
+        WHERE je.entity_id = ?1 AND je.status = 'posted'
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND je.entry_date >= ?2 AND je.entry_date <= ?3
+        "
+    );
     let count: i64 = conn
         .query_row(
-            "
-            SELECT COUNT(1) FROM journal_entries
-            WHERE entity_id = ?1 AND status = 'posted'
-              AND entry_date >= ?2 AND entry_date <= ?3
-            ",
-            rusqlite::params![entity_id.0.to_string(), from, to],
+            &count_sql,
+            rusqlite::params![
+                entity_id.0.to_string(),
+                format_date(from_d),
+                format_date(to_d)
+            ],
             |row| row.get(0),
         )
         .map_err(|err| Error::Io(err.to_string()))?;
@@ -322,27 +303,38 @@ pub fn dashboard_summary(
     })
 }
 
-fn period_lines(
+/// Per-account debit/credit sums over posted, non-voided entries in a window.
+///
+/// The entry-level predicates live in an inner join inside the subquery, so a
+/// line whose entry falls outside the window contributes nothing — accounts
+/// with no matching activity still appear with zero sums via the outer join.
+fn account_activity_lines(
     conn: &Connection,
     entity_id: EntityId,
-    account_type: AccountType,
-    from: Date,
+    account_type: Option<AccountType>,
+    from: Option<Date>,
     to: Date,
 ) -> Result<Vec<ReportLine>> {
     let sql = format!(
         "
         SELECT a.code, a.name, a.account_type,
-               COALESCE(SUM(jl.debit_minor), 0),
-               COALESCE(SUM(jl.credit_minor), 0)
+               COALESCE(t.debits, 0),
+               COALESCE(t.credits, 0)
         FROM accounts a
-        LEFT JOIN journal_lines jl ON jl.account_id = a.id
-        LEFT JOIN journal_entries je ON je.id = jl.entry_id
-            AND je.status = 'posted'
-            AND {ACTIVE_ENTRY_PREDICATE}
-            AND je.entry_date >= ?2
-            AND je.entry_date <= ?3
-        WHERE a.entity_id = ?1 AND a.account_type = ?4
-        GROUP BY a.id
+        LEFT JOIN (
+            SELECT jl.account_id,
+                   SUM(jl.debit_minor) AS debits,
+                   SUM(jl.credit_minor) AS credits
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE je.status = 'posted'
+              AND {ACTIVE_ENTRY_PREDICATE}
+              AND (?2 IS NULL OR je.entry_date >= ?2)
+              AND je.entry_date <= ?3
+            GROUP BY jl.account_id
+        ) t ON t.account_id = a.id
+        WHERE a.entity_id = ?1
+          AND (?4 IS NULL OR a.account_type = ?4)
         ORDER BY a.sort_order, a.code
         "
     );
@@ -354,9 +346,9 @@ fn period_lines(
         .query_map(
             rusqlite::params![
                 entity_id.0.to_string(),
-                format_date(from),
+                from.map(format_date),
                 format_date(to),
-                account_type_str(account_type)
+                account_type.map(account_type_str),
             ],
             map_report_line,
         )
@@ -364,12 +356,23 @@ fn period_lines(
 
     let mut lines = Vec::new();
     for row in rows {
-        let line = row.map_err(|err| Error::Io(err.to_string()))?;
-        if line.balance_minor != 0 || line.debit_minor != 0 || line.credit_minor != 0 {
-            lines.push(line);
-        }
+        lines.push(row.map_err(|err| Error::Io(err.to_string()))?);
     }
     Ok(lines)
+}
+
+fn period_lines(
+    conn: &Connection,
+    entity_id: EntityId,
+    account_type: AccountType,
+    from: Date,
+    to: Date,
+) -> Result<Vec<ReportLine>> {
+    let lines = account_activity_lines(conn, entity_id, Some(account_type), Some(from), to)?;
+    Ok(lines
+        .into_iter()
+        .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)
+        .collect())
 }
 
 fn as_of_lines(
@@ -378,16 +381,11 @@ fn as_of_lines(
     account_type: AccountType,
     as_of: Date,
 ) -> Result<Vec<ReportLine>> {
-    period_lines(
-        conn,
-        entity_id,
-        account_type,
-        // from earliest: use a very early date for cumulative as-of via period trick
-        // Better: dedicated query with only upper bound
-        Date::from_calendar_date(1970, time::Month::January, 1)
-            .map_err(|_| Error::Validation("internal date error".into()))?,
-        as_of,
-    )
+    let lines = account_activity_lines(conn, entity_id, Some(account_type), None, as_of)?;
+    Ok(lines
+        .into_iter()
+        .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)
+        .collect())
 }
 
 fn fiscal_year_start(as_of: Date, start_month: u8) -> Date {
