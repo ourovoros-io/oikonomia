@@ -22,6 +22,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // The bundled .app gets its Dock icon from icon.icns; dev mode runs
             // the bare binary, so set the icon at runtime as well.
@@ -88,6 +89,7 @@ pub fn run() {
             commands::document_delete,
             commands::document_unlink,
             commands::document_attach,
+            commands::document_export,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it to the tray instead of quitting;

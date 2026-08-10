@@ -256,6 +256,7 @@ export const api = {
     mimeType: string
     dataBase64: string
   }) => call<DocumentMeta>('document_attach', input),
+  documentExport: (documentId: string) => call<string | null>('document_export', { documentId }),
 }
 
 export type AnalyzerStatus = {

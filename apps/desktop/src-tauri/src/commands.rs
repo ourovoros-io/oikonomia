@@ -705,3 +705,46 @@ pub async fn document_attach(
     })
     .await
 }
+
+/// Export a document to a user-chosen path. This is the only path by which
+/// decrypted bytes reach disk, and it always goes through an explicit
+/// native save dialog.
+#[tauri::command]
+pub async fn document_export(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    document_id: DocumentId,
+) -> CommandResult<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let (meta, data) = with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        get_document(conn, document_id)
+    })
+    .await?;
+
+    // The blocking dialog must stay off the async runtime workers.
+    let picked = await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        Ok(app
+            .dialog()
+            .file()
+            .set_file_name(meta.filename.as_str())
+            .blocking_save_file())
+    }))
+    .await?;
+
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let path = file_path.into_path().map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("invalid save location: {e}"),
+    })?;
+
+    std::fs::write(&path, &data).map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("could not save file: {e}"),
+    })?;
+
+    Ok(Some(path.display().to_string()))
+}
