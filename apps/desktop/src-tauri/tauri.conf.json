@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../../../web/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev --prefix /Users/georgiosdelkos/Documents/Github/GeorgiosDelkos/oikonomia/web",
-    "beforeBuildCommand": "npm run build --prefix /Users/georgiosdelkos/Documents/Github/GeorgiosDelkos/oikonomia/web"
+    "beforeDevCommand": "npm run dev --prefix ../../../web",
+    "beforeBuildCommand": "npm run build --prefix ../../../web"
   },
   "app": {
     "windows": [
