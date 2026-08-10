@@ -66,12 +66,21 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
     })
 }
 
-/// Create entity and seed chart of accounts from template.
+/// Create entity and seed chart of accounts from template, atomically.
 ///
 /// # Errors
 ///
 /// Validation or DB errors.
 pub fn create_entity(conn: &Connection, input: &CreateEntity) -> Result<Entity> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let entity = create_entity_in_tx(&tx, input)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(entity)
+}
+
+fn create_entity_in_tx(conn: &Connection, input: &CreateEntity) -> Result<Entity> {
     let name = input.name.trim();
     if name.is_empty() {
         return Err(Error::Validation("entity name is required".into()));
@@ -177,12 +186,22 @@ pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
     Ok(())
 }
 
-/// Permanently delete an entity and all of its accounts and journal data.
+/// Permanently delete an entity and all of its accounts, documents, and
+/// journal data in one transaction.
 ///
 /// # Errors
 ///
 /// Not found or DB error.
 pub fn delete_entity(conn: &Connection, id: EntityId) -> Result<()> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    delete_entity_in_tx(&tx, id)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(())
+}
+
+fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
     let id_s = id.0.to_string();
 
     // Ensure it exists and is not already gone.
@@ -217,11 +236,12 @@ pub fn delete_entity(conn: &Connection, id: EntityId) -> Result<()> {
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
-    conn.execute("DELETE FROM journal_entries WHERE entity_id = ?1", [&id_s])
+    // Documents reference journal_entries (entry_id FK), so they must go first.
+    conn.execute("DELETE FROM documents WHERE entity_id = ?1", [&id_s])
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    // documents table exists from schema v3; ignore if missing on very old DBs
-    let _ = conn.execute("DELETE FROM documents WHERE entity_id = ?1", [&id_s]);
+    conn.execute("DELETE FROM journal_entries WHERE entity_id = ?1", [&id_s])
+        .map_err(|err| Error::Io(err.to_string()))?;
 
     conn.execute("DELETE FROM accounts WHERE entity_id = ?1", [&id_s])
         .map_err(|err| Error::Io(err.to_string()))?;

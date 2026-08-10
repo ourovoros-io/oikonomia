@@ -188,12 +188,25 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
     })
 }
 
-/// Validate and post a journal entry.
+/// Validate and post a journal entry atomically.
 ///
 /// # Errors
 ///
 /// Unbalanced, wrong entity, or DB errors.
 pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let view = insert_posted_entry(&tx, input)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(view)
+}
+
+/// Insert header + lines without transaction management.
+///
+/// Callers own the transaction: [`post_entry`] and [`void_entry`] wrap this so
+/// a failure mid-insert can never leave a partial posted entry behind.
+fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
     let description = input.description.trim();
     if description.is_empty() {
         return Err(Error::Validation("description is required".into()));
@@ -280,10 +293,21 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 
 /// Void a posted entry by posting a reverse entry and linking `voided_by`.
 ///
+/// The reverse insert and both link updates happen in one transaction.
+///
 /// # Errors
 ///
 /// Already voided, not found, or DB error.
 pub fn void_entry(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let result = void_entry_in_tx(&tx, id)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(result)
+}
+
+fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
     let view = get_entry(conn, id)?;
     if view.is_voided {
         return Err(Error::Validation("entry is already voided".into()));
@@ -312,7 +336,7 @@ pub fn void_entry(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
-    let reverse = post_entry(conn, &reverse_input)?;
+    let reverse = insert_posted_entry(conn, &reverse_input)?;
 
     // Link original → reverse (original is voided).
     conn.execute(
