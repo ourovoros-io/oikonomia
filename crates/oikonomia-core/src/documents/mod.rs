@@ -3,6 +3,7 @@
 //! No cloud APIs. No Ollama. Models ship with the application (~12 MB).
 
 mod analyze;
+mod brands;
 mod invoice;
 mod ocr;
 mod pdf_repair;

@@ -154,15 +154,15 @@ fn collapse_spaced_decimals(text: &str) -> String {
 }
 
 fn is_utility_bill(lower: &str) -> bool {
+    // Strong utility markers only. Loose tokens ("ηλεκτρ", "έναντι") used to
+    // misfire on unrelated documents — a software company's own sales invoice
+    // matched via "ΗΛΕΚΤΡΟΝΙΚΩΝ ΣΥΣΤΗΜΑΤΩΝ" in its line of business.
     lower.contains("kwh")
         || lower.contains("ρεύμα")
         || lower.contains("ρευμα")
-        || lower.contains("ηλεκτρ")
         || lower.contains("εκκαθαριστικ")
-        || lower.contains("zenith")
-        || lower.contains("zeniθ")
         || lower.contains("δεδδηε")
-        || lower.contains("δεδδηε")
+        || lower.contains("ηκασπ")
         || lower.contains("φυσικού αερίου")
         || lower.contains("φυσικου αεριου")
         || lower.contains("φυσικό αέριο")
@@ -171,17 +171,19 @@ fn is_utility_bill(lower: &str) -> bool {
         || lower.contains("προμηθεια φ.α")
         || lower.contains("χρέωση προμήθειας φ.α")
         || lower.contains("gas simple")
-        || lower.contains("ngs")
         || lower.contains("myon")
         || lower.contains("κωδικός παροχής")
         || lower.contains("κωδικος παροχης")
-        || lower.contains("έναντι")
-        || lower.contains("εναντι")
         || lower.contains("ύδρευσ")
         || lower.contains("υδρευσ")
         || lower.contains("power business")
-        || lower.contains("προμήθεια ρεύματος")
-        || lower.contains("προμηθεια ρευματος")
+}
+
+/// Sales invoice issued by the book's owner: the counterparty block is
+/// labeled "Στοιχεία Πελάτη".
+fn is_sales_invoice(lower: &str) -> bool {
+    (lower.contains("στοιχεία πελάτη") || lower.contains("στοιχεια πελατη"))
+        && (lower.contains("τιμολόγιο") || lower.contains("τιμολογιο") || lower.contains("invoice"))
 }
 
 fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
@@ -200,7 +202,8 @@ fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
     }
 
     // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
-    let sales = lower.contains("τιμολόγιο παροχ")
+    let sales = is_sales_invoice(lower)
+        || lower.contains("τιμολόγιο παροχ")
         || lower.contains("παροχή υπηρεσι")
         || lower.contains("ενδοκοινοτικ")
         || (lower.contains("sales invoice"))
@@ -221,8 +224,19 @@ fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
         || lower.contains("please pay");
 
     if sales && !purchase {
-        (EntryKindSuggestion::Income, unpaid)
-    } else if unpaid {
+        return (EntryKindSuggestion::Income, unpaid);
+    }
+
+    // A recognized biller with a known service (telecom etc.) is a bill to
+    // pay even without the utility markers above.
+    if let Some((_, Some(_))) = super::brands::known_brand(lower) {
+        return (
+            EntryKindSuggestion::Bill,
+            unpaid || lower.contains("εξόφληση"),
+        );
+    }
+
+    if unpaid {
         (EntryKindSuggestion::Bill, true)
     } else {
         (EntryKindSuggestion::Expense, false)
@@ -928,60 +942,32 @@ fn take_supply_buf(buf: &str) -> Option<String> {
 }
 
 fn find_merchant(text: &str, lower: &str) -> Option<String> {
-    // Utility suppliers
+    // Outgoing sales invoice: the counterparty is the customer. This runs
+    // before brand recognition because the issuer's payment footer often
+    // names a bank ("PIRAEUS BANK, IBAN …") that must not win.
+    if is_sales_invoice(lower)
+        && let Some(customer) = sales_invoice_customer(text)
+    {
+        return Some(customer);
+    }
+
+    // Known billers: brand tokens that survive text extraction.
+    if let Some((brand, _)) = super::brands::known_brand(lower) {
+        return Some(brand.to_owned());
+    }
+
+    // Unrecognized utility supplier: generic but honest labels.
     if is_utility_bill(lower) {
-        if lower.contains("zenith") || lower.contains("zeniθ") {
-            return Some("ZeniΘ".into());
-        }
-        if lower.contains("gas simple") || lower.contains("ngs") || lower.contains("myon") {
-            return Some("Natural gas (NGS)".into());
-        }
         if lower.contains("φυσικού αερίου")
             || lower.contains("φυσικου αεριου")
             || lower.contains("φυσικό αέριο")
+            || lower.contains("gas simple")
             || lower.contains("προμήθεια φ.α")
         {
             return Some("Natural gas".into());
         }
-        if lower.contains("δεδδηε") {
-            return Some("ΔΕΔΔΗΕ".into());
-        }
-        if lower.contains("δεη") {
-            return Some("ΔΕΗ".into());
-        }
         if lower.contains("power business") {
             return Some("Electricity supplier".into());
-        }
-    }
-
-    // For sales invoices, prefer client (Στοιχεία Πελάτη)
-    if lower.contains("στοιχεία πελάτη") || lower.contains("πελάτη") || lower.contains("customer")
-    {
-        let mut after_client = false;
-        for line in text.lines() {
-            let l = line.to_lowercase();
-            if l.contains("στοιχεία πελάτη") || l.contains("customer") {
-                after_client = true;
-                continue;
-            }
-            if after_client
-                && (l.contains("επωνυμία") || l.contains("επωνυμια") || l.starts_with("name"))
-                && let Some(name) = value_after_colon(line)
-                && name.chars().count() >= 3
-            {
-                return Some(name);
-            }
-            // Next substantial non-label line
-            if after_client
-                && !l.contains("α.φ.μ")
-                && !l.contains("αφμ")
-                && !l.contains("διεύθυν")
-                && line.chars().count() >= 5
-                && line.chars().any(char::is_alphabetic)
-                && !l.ends_with(':')
-            {
-                return Some(line.trim().to_owned());
-            }
         }
     }
 
@@ -1020,6 +1006,44 @@ fn find_merchant(text: &str, lower: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Customer name from the "Στοιχεία Πελάτη" block of a sales invoice.
+fn sales_invoice_customer(text: &str) -> Option<String> {
+    let mut after_client = false;
+
+    for line in text.lines() {
+        let l = line.to_lowercase();
+
+        if l.contains("στοιχεία πελάτη") || l.contains("στοιχεια πελατη") || l.contains("customer")
+        {
+            after_client = true;
+            continue;
+        }
+        if !after_client {
+            continue;
+        }
+
+        if (l.contains("επωνυμία") || l.contains("επωνυμια") || l.starts_with("name"))
+            && let Some(name) = value_after_colon(line)
+            && name.chars().count() >= 3
+        {
+            return Some(name);
+        }
+
+        // Next substantial non-label line
+        if !l.contains("α.φ.μ")
+            && !l.contains("αφμ")
+            && !l.contains("διεύθυν")
+            && line.chars().count() >= 5
+            && line.chars().any(char::is_alphabetic)
+            && !l.ends_with(':')
+        {
+            return Some(line.trim().to_owned());
+        }
+    }
+
+    None
+}
+
 fn value_after_colon(line: &str) -> Option<String> {
     let idx = line.find(':').or_else(|| line.find('：'))?;
     let v = line[idx + 1..].trim();
@@ -1036,15 +1060,28 @@ fn find_description(
     merchant: Option<&str>,
     reference: Option<&str>,
 ) -> Option<String> {
-    if is_utility_bill(lower) {
-        let gas = lower.contains("αέριο")
-            || lower.contains("αεριο")
-            || lower.contains("φ.α")
-            || lower.contains("gas")
-            || lower.contains("ngs");
-        let kind_label = if gas { "Natural gas" } else { "Electricity" };
-        let m = merchant.unwrap_or(kind_label);
-        return Some(format!("{kind_label} bill — {m}"));
+    // Outgoing sales invoice: customer-first title.
+    if is_sales_invoice(lower)
+        && let Some(m) = merchant
+    {
+        return Some(match reference {
+            Some(r) => format!("{m} — Invoice {r}"),
+            None => format!("{m} — Invoice"),
+        });
+    }
+
+    // Recognized biller or utility bill: company-first title with the
+    // service decided by weighted scoring, never by a single keyword.
+    let brand_service = super::brands::known_brand(lower).and_then(|(_, service)| service);
+
+    if is_utility_bill(lower) || brand_service.is_some() {
+        let service = brand_service.or_else(|| super::brands::classify_service(lower));
+        let label = service.map_or("Utility", super::brands::Service::label);
+
+        return Some(match merchant {
+            Some(m) => format!("{m} — {label} bill"),
+            None => format!("{label} bill"),
+        });
     }
 
     // Line-item description under Περιγραφή
@@ -1183,6 +1220,67 @@ B                 51              25/06/2026                     400014111102934
         assert_eq!(parse_money_token("801837924"), None);
         assert_eq!(parse_money_token("400014111102934"), None);
         assert_eq!(parse_money_token("1860,00"), Some(186_000));
+    }
+
+    #[test]
+    fn utility_titles_are_company_first() {
+        // Gas bill whose issuer only appears via the MyON portal branding.
+        let gas = parse_invoice_text(
+            "ΈΝΑΝΤΙ\nΚωδικός Παροχής: 36008034944\nΣυνδέσου στο MyON\n\
+             ΠΡΟΜΗΘΕΙΑ ΦΥΣΙΚΟΥ ΑΕΡΙΟΥ\nΣυνολικό Ποσό Πληρωμής 72,53 €",
+        );
+        assert_eq!(gas.merchant.as_deref(), Some("Volton"));
+        assert_eq!(gas.description.as_deref(), Some("Volton — Gas bill"));
+
+        // Telecom bill: brand implies the service without utility markers.
+        let telecom = parse_invoice_text(
+            "Για αναφορά βλάβης Σταθερού ή Κινητού Nova, καλώ στο 13700.\n\
+             ΚΑΤΑΣΤΗΜΑΤΑ: Nova (μετρητά ή πιστωτική κάρτα)\nΠοσό Πληρωμής 60,10 €",
+        );
+        assert_eq!(telecom.merchant.as_deref(), Some("Nova"));
+        assert_eq!(telecom.description.as_deref(), Some("Nova — Telecom bill"));
+        assert_eq!(telecom.kind, EntryKindSuggestion::Bill);
+    }
+
+    #[test]
+    fn electricity_supplier_beats_grid_operator_and_energy_mix() {
+        // Every Greek electricity bill mentions ΔΕΔΔΗΕ (grid operator) and a
+        // national energy-mix table that includes natural gas; neither may
+        // decide the title.
+        let s = parse_invoice_text(
+            "Εκκαθαριστικός\nΠρομήθεια Ρεύματος ZeniΘ (€): 25,29\n\
+             Δίκτυο ΔΕΔΔΗΕ\nΣύνολο Κατανάλωσης Περιόδου (kWh): 119\n\
+             2. ΦΥΣΙΚΟΥ ΑΕΡΙΟΥ 1410.00 30%\nΣυνολικό Ποσό 76,65 €",
+        );
+        assert_eq!(s.merchant.as_deref(), Some("ZeniΘ"));
+        assert_eq!(s.description.as_deref(), Some("ZeniΘ — Electricity bill"));
+    }
+
+    #[test]
+    fn sales_invoice_titles_carry_the_customer() {
+        let s = parse_invoice_text(
+            "Επωνυμία ΟΥΡΟΒΟΡΟΣ ΜΟΝΟΠΡΟΣΩΠΗ Ι Κ Ε\n\
+             Τιμολόγιο Παροχής / Ενδοκοινοτική Παροχή Υπηρεσιών\n\
+             400014111102934 Επί πιστώσειB 51 25/06/2026\n\
+             Στοιχεία Πελάτη\nΑ.Φ.Μ.: 10341039B\nΕπωνυμία: ACME CONSULTING LTD\n\
+             Πληρωτέο (€): 1860,00",
+        );
+        assert_eq!(s.kind, EntryKindSuggestion::Income);
+        assert_eq!(s.merchant.as_deref(), Some("ACME CONSULTING LTD"));
+        assert!(
+            s.description
+                .as_deref()
+                .is_some_and(|d| d.starts_with("ACME CONSULTING LTD — Invoice")),
+            "description={:?}",
+            s.description
+        );
+
+        // The issuer's payment footer must not hijack the merchant.
+        let with_bank = parse_invoice_text(
+            "Τιμολόγιο Παροχής Υπηρεσιών\nΣτοιχεία Πελάτη\nΕπωνυμία: ACME CONSULTING LTD\n\
+             Πληρωτέο (€): 500,00\nPIRAEUS BANK, GREECE, IBAN: GR7901712150006215162659390",
+        );
+        assert_eq!(with_bank.merchant.as_deref(), Some("ACME CONSULTING LTD"));
     }
 
     /// Excerpt of a `ZeniΘ` electricity settlement bill (payment total 76,65 €).
@@ -1332,13 +1430,12 @@ mod live_fixture {
             "reference={:?}",
             s.reference
         );
-        assert!(
-            s.merchant.as_deref().is_some_and(
-                |m| m.to_lowercase().contains("gas") || m.to_lowercase().contains("ngs")
-            ),
-            "merchant={:?}",
-            s.merchant
+        assert_eq!(
+            s.merchant.as_deref(),
+            Some("Volton"),
+            "MyON portal branding identifies the supplier"
         );
+        assert_eq!(s.description.as_deref(), Some("Volton — Gas bill"));
     }
 
     #[test]

@@ -21,16 +21,16 @@ export function Logo({ className }: Props) {
     <svg viewBox="0 0 512 512" className={className} role="img" aria-label="Oikonomia">
       <defs>
         <linearGradient id={mark} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#a78bfa" />
-          <stop offset="1" stopColor="#6d28d9" />
+          <stop offset="0" stopColor="#6fd695" />
+          <stop offset="1" stopColor="#1b7a45" />
         </linearGradient>
         <linearGradient id={plate} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="#17171d" />
           <stop offset="1" stopColor="#09090b" />
         </linearGradient>
         <radialGradient id={glow} cx="0.5" cy="0.16" r="0.75">
-          <stop offset="0" stopColor="#8b5cf6" stopOpacity="0.28" />
-          <stop offset="1" stopColor="#8b5cf6" stopOpacity="0" />
+          <stop offset="0" stopColor="#35b06b" stopOpacity="0.28" />
+          <stop offset="1" stopColor="#35b06b" stopOpacity="0" />
         </radialGradient>
       </defs>
 

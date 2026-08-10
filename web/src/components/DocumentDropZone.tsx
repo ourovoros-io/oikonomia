@@ -207,7 +207,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
           className="pointer-events-none absolute inset-0 opacity-80"
           style={{
             background:
-              'radial-gradient(900px 280px at 50% -20%, rgba(139,92,246,0.18), transparent 55%)',
+              'radial-gradient(900px 280px at 50% -20%, rgba(53,176,107,0.18), transparent 55%)',
           }}
           aria-hidden
         />

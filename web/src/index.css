@@ -10,24 +10,24 @@
     "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 
-  /* Dark theme (default): violet-tinted neutrals around a violet accent. */
-  --color-canvas: #0b0a10;
-  --color-surface: #121017;
-  --color-surface-2: #18151f;
-  --color-surface-elevated: #1f1b28;
-  --color-border: #272231;
-  --color-border-strong: #383044;
-  --color-muted: #948e9f;
-  --color-fg: #f5f4f7;
-  --color-fg-secondary: #c9c5d1;
-  --color-accent: #8b5cf6;
-  --color-accent-hover: #a78bfa;
-  --color-accent-soft: rgba(139, 92, 246, 0.16);
-  --color-accent-muted: #322254;
+  /* Dark theme (default): green-tinted neutrals around a dollar-green accent. */
+  --color-canvas: #0a0e0b;
+  --color-surface: #101511;
+  --color-surface-2: #151b16;
+  --color-surface-elevated: #1b231d;
+  --color-border: #232c26;
+  --color-border-strong: #344038;
+  --color-muted: #8f9a93;
+  --color-fg: #f4f6f4;
+  --color-fg-secondary: #c5cdc7;
+  --color-accent: #35b06b;
+  --color-accent-hover: #4fc981;
+  --color-accent-soft: rgba(53, 176, 107, 0.16);
+  --color-accent-muted: #1c4a32;
   --color-danger: #f43f5e;
   --color-danger-soft: rgba(244, 63, 94, 0.13);
-  --color-success: #34d399;
-  --color-success-soft: rgba(52, 211, 153, 0.13);
+  --color-success: #2dd4bf;
+  --color-success-soft: rgba(45, 212, 191, 0.13);
   --color-warning: #fbbf24;
   --color-warning-soft: rgba(251, 191, 36, 0.13);
   --color-info: #38bdf8;
@@ -39,25 +39,25 @@
 }
 
 /* Light theme overrides via html:not(.dark) — deeper hues for contrast
-   on white, same violet family. */
+   on white, same green family. */
 html:not(.dark) {
-  --color-canvas: #f7f6fb;
+  --color-canvas: #f6f9f6;
   --color-surface: #ffffff;
-  --color-surface-2: #f1eff7;
-  --color-surface-elevated: #e9e6f3;
-  --color-border: #e5e2ef;
-  --color-border-strong: #d2cde2;
-  --color-muted: #6f6a80;
-  --color-fg: #17131f;
-  --color-fg-secondary: #3d3749;
-  --color-accent: #7c3aed;
-  --color-accent-hover: #6d28d9;
-  --color-accent-soft: rgba(124, 58, 237, 0.1);
-  --color-accent-muted: #ebe4fb;
+  --color-surface-2: #eff4ef;
+  --color-surface-elevated: #e7eee8;
+  --color-border: #e2e9e3;
+  --color-border-strong: #cfdad2;
+  --color-muted: #68766c;
+  --color-fg: #131b15;
+  --color-fg-secondary: #384740;
+  --color-accent: #178a4c;
+  --color-accent-hover: #116e3c;
+  --color-accent-soft: rgba(23, 138, 76, 0.1);
+  --color-accent-muted: #dcf3e6;
   --color-danger: #e11d48;
   --color-danger-soft: rgba(225, 29, 72, 0.08);
-  --color-success: #059669;
-  --color-success-soft: rgba(5, 150, 105, 0.1);
+  --color-success: #0d9488;
+  --color-success-soft: rgba(13, 148, 136, 0.1);
   --color-warning: #d97706;
   --color-warning-soft: rgba(217, 119, 6, 0.1);
   --color-info: #0284c7;

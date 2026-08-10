@@ -99,10 +99,10 @@ export function Hero({
 }) {
   const wash =
     accent === 'success'
-      ? 'radial-gradient(1000px 360px at 12% -10%, rgba(52,211,153,0.18), transparent 55%), radial-gradient(700px 280px at 90% 0%, rgba(139,92,246,0.12), transparent 50%)'
+      ? 'radial-gradient(1000px 360px at 12% -10%, rgba(45,212,191,0.18), transparent 55%), radial-gradient(700px 280px at 90% 0%, rgba(53,176,107,0.12), transparent 50%)'
       : accent === 'neutral'
-        ? 'radial-gradient(1000px 360px at 10% -10%, rgba(139,92,246,0.14), transparent 55%)'
-        : 'radial-gradient(1200px 400px at 10% -10%, rgba(139,92,246,0.3), transparent 55%), radial-gradient(800px 300px at 90% 0%, rgba(56,189,248,0.12), transparent 50%), radial-gradient(600px 260px at 55% 110%, rgba(52,211,153,0.1), transparent 55%)'
+        ? 'radial-gradient(1000px 360px at 10% -10%, rgba(53,176,107,0.16), transparent 55%)'
+        : 'radial-gradient(1200px 400px at 10% -10%, rgba(53,176,107,0.3), transparent 55%), radial-gradient(800px 300px at 90% 0%, rgba(56,189,248,0.12), transparent 50%), radial-gradient(600px 260px at 55% 110%, rgba(45,212,191,0.1), transparent 55%)'
 
   return (
     <div
