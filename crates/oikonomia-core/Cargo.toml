@@ -1,0 +1,33 @@
+[package]
+name = "oikonomia-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Double-entry ledger domain, vault crypto, and reports for Oikonomia"
+
+[dependencies]
+argon2 = { workspace = true }
+base64 = { workspace = true }
+directories = { workspace = true }
+image = { workspace = true }
+ocrs = { workspace = true }
+once_cell = { workspace = true }
+pdf-extract = { workspace = true }
+rand = { workspace = true }
+rten = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

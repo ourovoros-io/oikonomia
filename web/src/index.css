@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  --color-canvas: #09090b;
+  --color-surface: #0f0f12;
+  --color-surface-2: #16161a;
+  --color-surface-elevated: #1c1c22;
+  --color-border: #23232a;
+  --color-border-strong: #33333d;
+  --color-muted: #8b8b96;
+  --color-fg: #f4f4f5;
+  --color-fg-secondary: #c4c4cc;
+  --color-accent: #635bff;
+  --color-accent-hover: #7a73ff;
+  --color-accent-soft: rgba(99, 91, 255, 0.14);
+  --color-accent-muted: #2a2550;
+  --color-danger: #f43f5e;
+  --color-danger-soft: rgba(244, 63, 94, 0.12);
+  --color-success: #34d399;
+  --color-success-soft: rgba(52, 211, 153, 0.12);
+  --color-warning: #fbbf24;
+
+  --radius-control: 0.5rem;
+  --control-h: 2.5rem;
+  --sidebar-w: 15.5rem;
+}
+
+/* Light theme overrides via html:not(.dark) */
+html:not(.dark) {
+  --color-canvas: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #f0f1f4;
+  --color-surface-elevated: #e8eaef;
+  --color-border: #e4e6eb;
+  --color-border-strong: #d0d3db;
+  --color-muted: #6b7280;
+  --color-fg: #111827;
+  --color-fg-secondary: #374151;
+  --color-accent-soft: rgba(99, 91, 255, 0.1);
+  --color-accent-muted: #e8e6ff;
+  --color-danger-soft: rgba(244, 63, 94, 0.08);
+  --color-success-soft: rgba(16, 185, 129, 0.1);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    background: var(--color-canvas);
+    color: var(--color-fg);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Native select chevron space + consistent look */
+  select.ui-select {
+    appearance: none;
+    background-image: none;
+  }
+}

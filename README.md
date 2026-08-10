@@ -1,0 +1,64 @@
+# Oikonomia
+
+Local-only personal and company finance: **double-entry** multi-entity books,
+**encrypted at rest**, with a Stripe-inspired desktop UI (dark mode first).
+
+Stack: **Rust** (`oikonomia-core`) + **Tauri 2** + **React / Vite / Tailwind**.
+
+Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowers/specs/2026-08-10-oikonomia-design.md)
+
+## v1 features
+
+- Encrypted vault (Argon2id → SQLCipher); init / unlock / lock; auto-lock on idle
+- Multi-entity books with personal / company / blank chart templates
+- Chart of accounts (create, deactivate)
+- Journal entries (two-line post + void with reverse)
+- Reports: trial balance, profit & loss, balance sheet
+- Dashboard (MTD income/expense, assets)
+- Dark / light theme; English UI; locale money formatting
+
+## Prerequisites
+
+- Rust stable (1.88+)
+- Node 22+
+- [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode CLT on macOS)
+
+## Develop
+
+```bash
+# Core library tests (domain + vault + ledger)
+cargo test -p oikonomia-core
+cargo clippy -p oikonomia-core --all-targets -- -D warnings
+
+# Frontend
+cd web && npm install && npm run dev
+cd web && npm run build
+
+# Full desktop app
+cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
+```
+
+## Security notes
+
+- Master password is never stored; vault key is derived with Argon2id.
+- Lost password means lost data (no recovery key in v1).
+- Vault files live under the OS app-data directory for `com.georgiosdelkos.oikonomia`.
+- v1 has no network capability in Tauri permissions.
+- On first run you will be warned: choose a strong password.
+
+## Threat model (v1)
+
+**Protects against:** stolen disk / backup of app data, casual browsing of the vault file.  
+**Does not protect against:** malware while unlocked, keyloggers, memory forensics while the app is open.
+
+## Layout
+
+| Path | Role |
+|------|------|
+| `crates/oikonomia-core` | Domain, vault, ledger, reports |
+| `apps/desktop/src-tauri` | Tauri shell + IPC |
+| `web` | React UI |
+
+## Out of v1 (backlog)
+
+Recurring transactions, attachments, budgets, CSV import/export, invoicing, multi-currency, Greek UI, recovery key.

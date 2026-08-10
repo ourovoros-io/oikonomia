@@ -1,0 +1,21 @@
+/** Common ISO currencies for pickers (no free-typing required). */
+export const CURRENCIES = [
+  { code: 'EUR', label: 'Euro' },
+  { code: 'USD', label: 'US Dollar' },
+  { code: 'GBP', label: 'British Pound' },
+  { code: 'CHF', label: 'Swiss Franc' },
+  { code: 'JPY', label: 'Japanese Yen' },
+  { code: 'CAD', label: 'Canadian Dollar' },
+  { code: 'AUD', label: 'Australian Dollar' },
+  { code: 'SEK', label: 'Swedish Krona' },
+  { code: 'NOK', label: 'Norwegian Krone' },
+  { code: 'DKK', label: 'Danish Krone' },
+  { code: 'PLN', label: 'Polish Zloty' },
+  { code: 'CZK', label: 'Czech Koruna' },
+  { code: 'RON', label: 'Romanian Leu' },
+  { code: 'HUF', label: 'Hungarian Forint' },
+  { code: 'TRY', label: 'Turkish Lira' },
+  { code: 'INR', label: 'Indian Rupee' },
+  { code: 'CNY', label: 'Chinese Yuan' },
+  { code: 'BRL', label: 'Brazilian Real' },
+] as const

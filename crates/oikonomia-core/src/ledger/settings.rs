@@ -1,0 +1,57 @@
+//! App settings stored inside the encrypted vault.
+
+use rusqlite::Connection;
+use rusqlite::OptionalExtension;
+
+use crate::error::{Error, Result};
+
+/// Default idle lock timeout: 15 minutes.
+pub const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 15 * 60;
+
+const KEY_LOCK_TIMEOUT: &str = "lock_timeout_secs";
+
+/// Read lock timeout in seconds.
+///
+/// # Errors
+///
+/// DB errors.
+pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = ?1",
+            [KEY_LOCK_TIMEOUT],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    match value {
+        Some(s) => s
+            .parse()
+            .map_err(|_| Error::VaultCorrupt("invalid lock_timeout_secs".into())),
+        None => Ok(DEFAULT_LOCK_TIMEOUT_SECS),
+    }
+}
+
+/// Persist lock timeout (minimum 60 seconds).
+///
+/// # Errors
+///
+/// Validation or DB errors.
+pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
+    if secs < 60 {
+        return Err(Error::Validation(
+            "lock timeout must be at least 60 seconds".into(),
+        ));
+    }
+
+    conn.execute(
+        "
+        INSERT INTO app_settings (key, value) VALUES (?1, ?2)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        ",
+        rusqlite::params![KEY_LOCK_TIMEOUT, secs.to_string()],
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
+    Ok(())
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal local-only capabilities for Oikonomia v1 (no network).",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
