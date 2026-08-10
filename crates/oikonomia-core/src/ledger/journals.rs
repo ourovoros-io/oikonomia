@@ -135,7 +135,30 @@ pub struct VoidResult {
     pub reverse_id: JournalEntryId,
 }
 
-/// List posted entries for an entity (newest first), optional date filter.
+/// Optional predicates for [`list_entries`]; every `None` means "no filter".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EntryFilter {
+    /// Case-insensitive substring over description, reference, and line memos.
+    pub text: Option<String>,
+    /// Inclusive ISO lower bound (`YYYY-MM-DD`).
+    pub date_from: Option<String>,
+    /// Inclusive ISO upper bound.
+    pub date_to: Option<String>,
+    /// Only entries with at least one line on this account.
+    pub account_id: Option<AccountId>,
+}
+
+/// Wrap trimmed user text in `%…%`, escaping LIKE wildcards so `%`/`_`
+/// in a search are literals, not patterns.
+fn like_pattern(text: &str) -> String {
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+/// List posted entries for an entity (newest first) matching `filter`.
 ///
 /// # Errors
 ///
@@ -143,31 +166,60 @@ pub struct VoidResult {
 pub fn list_entries(
     conn: &Connection,
     entity_id: EntityId,
-    from: Option<&str>,
-    to: Option<&str>,
+    filter: &EntryFilter,
 ) -> Result<Vec<PostedEntryView>> {
     // Normalize before binding: SQL compares date TEXT lexicographically, so a
     // lenient input like `2026-3-5` must become `2026-03-05` first.
-    let from = from.map(parse_date).transpose()?.map(format_date);
-    let to = to.map(parse_date).transpose()?.map(format_date);
+    let from = filter
+        .date_from
+        .as_deref()
+        .map(parse_date)
+        .transpose()?
+        .map(format_date);
+    let to = filter
+        .date_to
+        .as_deref()
+        .map(parse_date)
+        .transpose()?
+        .map(format_date);
+
+    let pattern = filter
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(like_pattern);
+    let account = filter.account_id.map(|id| id.0.to_string());
 
     let mut stmt = conn
         .prepare(
             "
-            SELECT id, entity_id, entry_date, description, reference, status, voided_by_entry_id
-            FROM journal_entries
-            WHERE entity_id = ?1
-              AND status = 'posted'
-              AND (?2 IS NULL OR entry_date >= ?2)
-              AND (?3 IS NULL OR entry_date <= ?3)
-            ORDER BY entry_date DESC, created_at DESC
+            SELECT je.id, je.entity_id, je.entry_date, je.description, je.reference,
+                   je.status, je.voided_by_entry_id
+            FROM journal_entries je
+            WHERE je.entity_id = ?1
+              AND je.status = 'posted'
+              AND (?2 IS NULL OR je.entry_date >= ?2)
+              AND (?3 IS NULL OR je.entry_date <= ?3)
+              AND (?4 IS NULL
+                   OR je.description LIKE ?4 ESCAPE '\\'
+                   OR je.reference LIKE ?4 ESCAPE '\\'
+                   OR EXISTS (
+                       SELECT 1 FROM journal_lines jl
+                       WHERE jl.entry_id = je.id AND jl.memo LIKE ?4 ESCAPE '\\'
+                   ))
+              AND (?5 IS NULL OR EXISTS (
+                   SELECT 1 FROM journal_lines jl
+                   WHERE jl.entry_id = je.id AND jl.account_id = ?5
+              ))
+            ORDER BY je.entry_date DESC, je.created_at DESC
             ",
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let rows = stmt
         .query_map(
-            rusqlite::params![entity_id.0.to_string(), from, to],
+            rusqlite::params![entity_id.0.to_string(), from, to, pattern, account],
             |row| {
                 let voided: Option<String> = row.get(6)?;
                 Ok((map_entry_row(row)?, voided.is_some()))

@@ -105,7 +105,7 @@ export function DashboardPage({ entity }: Props) {
       try {
         const [summary, list, accts] = await Promise.all([
           api.dashboardSummary(entity.id, from, to, assetsAsOf),
-          api.entryList(entity.id, from, to),
+          api.entryList(entity.id, { from, to }),
           api.accountList(entity.id),
         ])
         if (!cancelled) {

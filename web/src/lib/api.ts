@@ -177,8 +177,17 @@ export const api = {
   }) => call<Account>('account_update', { input }),
   accountArchive: (id: string) => call<void>('account_archive', { id }),
 
-  entryList: (entityId: string, from?: string, to?: string) =>
-    call<PostedEntryView[]>('entry_list', { entityId, from: from ?? null, to: to ?? null }),
+  entryList: (
+    entityId: string,
+    opts?: { from?: string; to?: string; search?: string; accountId?: string },
+  ) =>
+    call<PostedEntryView[]>('entry_list', {
+      entityId,
+      from: opts?.from ?? null,
+      to: opts?.to ?? null,
+      search: opts?.search ?? null,
+      accountId: opts?.accountId ?? null,
+    }),
   entryPost: (input: {
     entity_id: string
     entry_date: string

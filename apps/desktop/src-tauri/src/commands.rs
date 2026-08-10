@@ -10,12 +10,13 @@ use oikonomia_core::documents::{
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
 use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::{
-    BalanceSheet, CreateAccount, CreateEntity, DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary, PnL,
-    PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine, TrialBalance, UpdateAccount,
-    VoidResult, account_register, archive_account, archive_entity, balance_sheet, create_account,
-    create_entity, dashboard_summary, delete_entity, get_entity, get_entry, get_lock_timeout_secs,
-    list_accounts, list_entities, list_entries, post_entry, post_simple_entry, profit_and_loss,
-    set_lock_timeout_secs, trial_balance, update_account, update_entity, void_entry,
+    BalanceSheet, CreateAccount, CreateEntity, DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary,
+    EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine, TrialBalance,
+    UpdateAccount, VoidResult, account_register, archive_account, archive_entity, balance_sheet,
+    create_account, create_entity, dashboard_summary, delete_entity, get_entity, get_entry,
+    get_lock_timeout_secs, list_accounts, list_entities, list_entries, post_entry,
+    post_simple_entry, profit_and_loss, set_lock_timeout_secs, trial_balance, update_account,
+    update_entity, void_entry,
 };
 use oikonomia_core::vault::{Vault, VaultStatus};
 use serde::Serialize;
@@ -254,17 +255,25 @@ pub async fn account_register_cmd(
 
 // --- Journal ---------------------------------------------------------------
 
-/// List journal entries.
+/// List journal entries matching optional search/date/account filters.
 #[tauri::command]
 pub async fn entry_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: Option<String>,
     to: Option<String>,
+    search: Option<String>,
+    account_id: Option<AccountId>,
 ) -> CommandResult<Vec<PostedEntryView>> {
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
-        list_entries(conn, entity_id, from.as_deref(), to.as_deref())
+        let filter = EntryFilter {
+            text: search,
+            date_from: from,
+            date_to: to,
+            account_id,
+        };
+        list_entries(conn, entity_id, &filter)
     })
     .await
 }

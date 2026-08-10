@@ -6,7 +6,7 @@
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::ledger::SimpleEntryKind::{Bill, Expense, Income, Transfer};
 use oikonomia_core::ledger::{
-    CreateEntity, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity,
+    CreateEntity, EntryFilter, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity,
     dashboard_summary, list_accounts, list_entries, post_simple_entry, void_entry,
 };
 use oikonomia_core::vault::Vault;
@@ -138,9 +138,18 @@ fn dashboard_numbers_hand_checked() {
     );
 
     // The dashboard's Recent Activity list must show everything Transactions shows.
-    let listed = list_entries(conn, e, Some("2026-08-01"), Some("2026-08-31")).expect("list");
+    let listed = list_entries(
+        conn,
+        e,
+        &EntryFilter {
+            date_from: Some("2026-08-01".into()),
+            date_to: Some("2026-08-31".into()),
+            ..EntryFilter::default()
+        },
+    )
+    .expect("list");
     let visible = listed.iter().filter(|v| !v.is_voided).count();
-    let all = list_entries(conn, e, None, None).expect("all");
+    let all = list_entries(conn, e, &EntryFilter::default()).expect("all");
     let visible_all = all.iter().filter(|v| !v.is_voided).count();
 
     assert_eq!(

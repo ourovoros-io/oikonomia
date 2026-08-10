@@ -17,7 +17,7 @@ pub use entities::{
     update_entity,
 };
 pub use journals::{
-    CreateJournalLine, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine,
+    CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine,
     SimpleBillStatus, SimpleEntryKind, VoidResult, account_register, get_entry, list_entries,
     post_entry, post_simple_entry, void_entry,
 };
