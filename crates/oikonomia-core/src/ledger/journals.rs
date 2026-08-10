@@ -440,6 +440,7 @@ fn simple_entry_sides(
                 "transfer source",
                 &[Asset, Liability],
             )?;
+
             if from == to {
                 return Err(Error::Validation(
                     "transfer needs two different accounts".into(),

@@ -338,6 +338,7 @@ fn account_activity_lines(
         ORDER BY a.sort_order, a.code
         "
     );
+
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|err| Error::Io(err.to_string()))?;
