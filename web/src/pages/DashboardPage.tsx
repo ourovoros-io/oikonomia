@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  Calendar,
+  CalendarRange,
   Landmark,
   Receipt,
   Scale,
@@ -17,6 +19,8 @@ import {
   monthEndISO,
   monthStartISO,
   todayISO,
+  yearEndISO,
+  yearStartISO,
   type Account,
   type DashboardSummary,
   type Entity,
@@ -31,11 +35,14 @@ import {
   ListRow,
   MetricCard,
   Panel,
+  Segmented,
   cn,
 } from '../components/ui'
 import type { CommandError } from '../lib/tauri'
 
 type Props = { entity: Entity | null }
+
+type Period = 'month' | 'year'
 
 type ActivityRow = {
   id: string
@@ -75,13 +82,15 @@ export function DashboardPage({ entity }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [period, setPeriod] = useState<Period>('month')
 
-  // Full calendar month, so bills posted with a future due date (common for
-  // scanned utility bills) count toward this month's figures immediately.
+  // Full calendar month or year, so entries dated ahead (common for scanned
+  // bills carrying their due date) count toward the period immediately.
   // Assets stay "as of today".
-  const from = monthStartISO()
-  const to = monthEndISO()
+  const from = period === 'month' ? monthStartISO() : yearStartISO()
+  const to = period === 'month' ? monthEndISO() : yearEndISO()
   const assetsAsOf = todayISO()
+  const periodLabel = period === 'month' ? 'month' : 'year'
 
   useEffect(() => {
     if (!entity) {
@@ -157,7 +166,17 @@ export function DashboardPage({ entity }: Props) {
             {from} → {to} · {ccy}
           </p>
         </div>
-        <div className="text-xs text-[var(--color-muted)]">Encrypted vault · local only</div>
+        <div className="flex flex-col items-end gap-2">
+          <Segmented<Period>
+            value={period}
+            onChange={setPeriod}
+            options={[
+              { id: 'month', label: 'Month', icon: <Calendar className="size-3.5" /> },
+              { id: 'year', label: 'Year', icon: <CalendarRange className="size-3.5" /> },
+            ]}
+          />
+          <div className="text-xs text-[var(--color-muted)]">Encrypted vault · local only</div>
+        </div>
       </div>
 
       <ErrorBanner message={error} />
@@ -167,7 +186,7 @@ export function DashboardPage({ entity }: Props) {
           <div>
             <div className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
               <TrendingUp className="size-4 text-[var(--color-accent)]" />
-              Net this month
+              Net this {periodLabel}
             </div>
             <div
               className={cn(
@@ -178,7 +197,7 @@ export function DashboardPage({ entity }: Props) {
               {loading && !data ? '—' : money(net, true)}
             </div>
             <p className="mt-3 max-w-md text-sm leading-relaxed text-[var(--color-muted)]">
-              Income minus expenses for the current month. Drop bills on Transactions for offline
+              Income minus expenses for the current {periodLabel}. Drop bills on Transactions for offline
               OCR, or post entries manually.
             </p>
             <div className="mt-6 flex flex-wrap items-center gap-4 text-xs text-[var(--color-muted)]">
@@ -188,7 +207,7 @@ export function DashboardPage({ entity }: Props) {
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Receipt className="size-3.5" />
-                {data?.recent_entry_count ?? 0} entries this month
+                {data?.recent_entry_count ?? 0} entries this {periodLabel}
               </span>
             </div>
           </div>
@@ -222,14 +241,14 @@ export function DashboardPage({ entity }: Props) {
         />
         <MetricCard
           label="Income"
-          hint="Month to date"
+          hint={period === 'month' ? 'This month' : 'This year'}
           value={loading && !data ? '—' : money(income)}
           icon={<ArrowDownLeft className="size-4" />}
           accent="success"
         />
         <MetricCard
           label="Expenses"
-          hint="Month to date"
+          hint={period === 'month' ? 'This month' : 'This year'}
           value={loading && !data ? '—' : money(expenses)}
           icon={<ArrowUpRight className="size-4" />}
           accent="danger"
@@ -245,12 +264,12 @@ export function DashboardPage({ entity }: Props) {
 
       <Panel
         title="Recent activity"
-        description="Posted entries this month"
+        description={`Posted entries this ${periodLabel}`}
         icon={<Receipt className="size-4" />}
       >
         {activity.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[var(--color-muted)]">
-            {loading ? 'Loading…' : 'No entries yet this month. Post one under Transactions.'}
+            {loading ? 'Loading…' : `No entries yet this ${periodLabel}. Post one under Transactions.`}
           </div>
         ) : (
           <ul className="divide-y divide-[var(--color-border)]">

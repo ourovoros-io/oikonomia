@@ -289,3 +289,7 @@ export function monthEndISO(): string {
 export function yearStartISO(): string {
   return `${new Date().getFullYear()}-01-01`
 }
+
+export function yearEndISO(): string {
+  return `${new Date().getFullYear()}-12-31`
+}
