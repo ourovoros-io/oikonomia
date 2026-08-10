@@ -16,6 +16,7 @@ import {
   Button,
   EmptyState,
   ErrorBanner,
+  Field,
   Input,
   PageHeader,
   Panel,
@@ -44,6 +45,8 @@ export function DocumentsPage({ entity }: Props) {
 
   const entryById = useMemo(() => new Map(entries.map((e) => [e.entry.id, e])), [entries])
 
+  const anyBusy = busyId !== null || deleteBusy
+
   const linkCandidates = useMemo(() => {
     const q = linkSearch.trim().toLowerCase()
     const pool = entries.filter((e) => !e.is_voided)
@@ -65,6 +68,10 @@ export function DocumentsPage({ entity }: Props) {
   }
 
   useEffect(() => {
+    setViewerDocId(null)
+    setDeleteId(null)
+    setLinkDocId(null)
+    setLinkSearch('')
     if (!entity) {
       setDocs([])
       setEntries([])
@@ -75,7 +82,7 @@ export function DocumentsPage({ entity }: Props) {
   }, [entity?.id])
 
   async function confirmDelete() {
-    if (!deleteId) return
+    if (!deleteId || busyId !== null) return
     setDeleteBusy(true)
     setError(null)
     try {
@@ -90,7 +97,7 @@ export function DocumentsPage({ entity }: Props) {
   }
 
   async function linkTo(entryId: string) {
-    if (!linkDocId) return
+    if (!linkDocId || busyId !== null) return
     setBusyId(linkDocId)
     setError(null)
     try {
@@ -106,6 +113,7 @@ export function DocumentsPage({ entity }: Props) {
   }
 
   async function onExport(id: string) {
+    if (busyId !== null) return
     setBusyId(id)
     try {
       await api.documentExport(id)
@@ -156,16 +164,20 @@ export function DocumentsPage({ entity }: Props) {
         description="Pick the journal entry this file belongs to"
         maxWidth="max-w-xl"
         onClose={() => {
-          setLinkDocId(null)
-          setLinkSearch('')
+          if (busyId === null) {
+            setLinkDocId(null)
+            setLinkSearch('')
+          }
         }}
       >
         <div className="space-y-4">
-          <Input
-            value={linkSearch}
-            onChange={(e) => setLinkSearch(e.target.value)}
-            placeholder="Search by description or date…"
-          />
+          <Field label="Search">
+            <Input
+              value={linkSearch}
+              onChange={(e) => setLinkSearch(e.target.value)}
+              placeholder="Search by description or date…"
+            />
+          </Field>
           {linkCandidates.length === 0 ? (
             <p className="py-6 text-center text-sm text-[var(--color-muted)]">
               No entries match.
@@ -176,7 +188,8 @@ export function DocumentsPage({ entity }: Props) {
                 <li key={v.entry.id}>
                   <button
                     type="button"
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-[var(--color-surface-2)]/60"
+                    disabled={busyId !== null}
+                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-[var(--color-surface-2)]/60 disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={() => void linkTo(v.entry.id)}
                   >
                     <div className="min-w-0 flex-1">
@@ -255,6 +268,7 @@ export function DocumentsPage({ entity }: Props) {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 shrink-0"
+                    disabled={anyBusy}
                     onClick={() => setLinkDocId(doc.id)}
                     aria-label="Link to entry"
                     title="Link to entry"
@@ -265,6 +279,7 @@ export function DocumentsPage({ entity }: Props) {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 shrink-0"
+                    disabled={anyBusy}
                     busy={busyId === doc.id}
                     onClick={() => void onExport(doc.id)}
                     aria-label="Save a copy"
@@ -276,6 +291,7 @@ export function DocumentsPage({ entity }: Props) {
                     variant="ghost"
                     size="icon"
                     className="h-8 w-8 shrink-0"
+                    disabled={anyBusy}
                     onClick={() => setDeleteId(doc.id)}
                     aria-label="Delete document"
                     title="Delete"
