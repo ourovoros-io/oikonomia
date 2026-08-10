@@ -65,13 +65,8 @@ impl AppState {
         f: impl FnOnce(&mut Vault) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
         self.touch();
-        let mut guard = self.vault.lock().map_err(|_| CoreError::VaultLocked)?;
+        let mut guard = lock_vault(&self.vault);
         f(&mut guard)
-    }
-
-    /// Current vault status.
-    pub fn status(&self) -> Result<VaultStatus, CoreError> {
-        self.with_vault(|vault| Ok(vault.status()))
     }
 
     /// Handles for the idle watchdog thread.
@@ -89,6 +84,23 @@ fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+/// Lock the vault mutex, recovering from poisoning.
+///
+/// A panic inside a command closure must not brick the session or disable the
+/// watchdog: recover the guard, force the vault into the safe locked state,
+/// and clear the poison flag so later locks are clean.
+pub fn lock_vault(vault: &Mutex<Vault>) -> std::sync::MutexGuard<'_, Vault> {
+    match vault.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            vault.clear_poison();
+            let mut guard = poisoned.into_inner();
+            guard.lock();
+            guard
+        }
+    }
 }
 
 /// Lock the vault from Rust when idle, regardless of webview state (F5).
@@ -112,7 +124,8 @@ pub fn spawn_auto_lock(
             }
 
             let mut locked_now = false;
-            if let Ok(mut vault) = vault.lock() {
+            {
+                let mut vault = lock_vault(&vault);
                 if vault.status() == VaultStatus::Unlocked {
                     vault.lock();
                     locked_now = true;

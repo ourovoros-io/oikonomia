@@ -359,6 +359,12 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
     }
 
     let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
+    if debit_account == credit_account {
+        return Err(Error::Validation(
+            "entry needs two different accounts".into(),
+        ));
+    }
+
     let lines = vec![
         CreateJournalLine {
             account_id: debit_account,
@@ -429,25 +435,18 @@ fn simple_entry_sides(
             )),
             None => Err(Error::Validation("bill entries need a bill status".into())),
         },
-        SimpleEntryKind::Transfer => {
-            let to = role(
+        SimpleEntryKind::Transfer => Ok((
+            role(
                 input.to_account_id,
                 "transfer destination",
                 &[Asset, Liability],
-            )?;
-            let from = role(
+            )?,
+            role(
                 input.from_account_id,
                 "transfer source",
                 &[Asset, Liability],
-            )?;
-
-            if from == to {
-                return Err(Error::Validation(
-                    "transfer needs two different accounts".into(),
-                ));
-            }
-            Ok((to, from))
-        }
+            )?,
+        )),
     }
 }
 

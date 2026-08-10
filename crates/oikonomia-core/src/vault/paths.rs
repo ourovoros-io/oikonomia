@@ -30,3 +30,13 @@ pub fn vault_db_path(data_dir: &Path) -> PathBuf {
 pub fn vault_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json")
 }
+
+/// Staging path for the next header during a password change.
+///
+/// If the app dies between the `SQLCipher` rekey and the header rename,
+/// [`crate::vault::Vault::unlock`] falls back to this file so the vault stays
+/// openable with the new password.
+#[must_use]
+pub fn vault_staged_header_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("vault.header.json.tmp")
+}

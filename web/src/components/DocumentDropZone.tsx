@@ -62,6 +62,14 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
   const processFile = useCallback(
     async (file: File) => {
       if (disabled || busyRef.current) return
+      // Resource guard only — the backend enforces the same cap (MAX_DOCUMENT_BYTES);
+      // checking here avoids reading a huge file into memory and across IPC first.
+      if (file.size > 8 * 1024 * 1024) {
+        const msg = 'File too large (max 8 MB)'
+        setLocalError(msg)
+        onError(msg)
+        return
+      }
       busyRef.current = true
       setBusy(true)
       setLocalError(null)

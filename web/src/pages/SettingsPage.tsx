@@ -161,10 +161,7 @@ export function SettingsPage({
       setError('New passwords do not match')
       return
     }
-    if (newPassword.length < 12) {
-      setError('Use at least 12 characters for the new password')
-      return
-    }
+    // Password strength rules live in Rust; its Validation error surfaces below.
 
     setPasswordBusy(true)
     try {
@@ -261,7 +258,6 @@ export function SettingsPage({
               value={oldPassword}
               onChange={(e) => setOldPassword(e.target.value)}
               required
-              minLength={12}
             />
           </Field>
           <Field label="New password">
@@ -271,7 +267,6 @@ export function SettingsPage({
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               required
-              minLength={12}
             />
           </Field>
           <Field label="Confirm new password">
@@ -281,7 +276,6 @@ export function SettingsPage({
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
-              minLength={12}
             />
           </Field>
           <div className="sm:col-span-3">

@@ -178,30 +178,6 @@ export function TransactionsPage({ entity }: Props) {
     applyKindDefaults(next, accounts)
   }
 
-  function validateSelection(): string | null {
-    if (kind === 'expense' || kind === 'income') {
-      if (!categoryId || !walletId || categoryId === walletId) {
-        return 'Choose a category and a payment account'
-      }
-    } else if (kind === 'bill') {
-      if (billStatus === 'paid' && (!categoryId || !walletId)) {
-        return 'Choose a bill category and how you paid'
-      }
-      if (billStatus === 'unpaid' && (!categoryId || !payableId)) {
-        return 'Choose a bill category and a bills-payable account'
-      }
-      if (billStatus === 'pay_existing' && (!payableId || !walletId)) {
-        return 'Choose bills payable and the account you paid from'
-      }
-      if (!payableAccounts.length && billStatus !== 'paid') {
-        return 'Add a “Bills Payable” (liability) account under Accounts first'
-      }
-    } else if (!fromId || !toId || fromId === toId) {
-      return 'Choose two different accounts for the transfer'
-    }
-    return null
-  }
-
   function applySuggestion(s: DocumentSuggestion) {
     setShowForm(true)
     setLinkedDocumentId(s.document_id)
@@ -239,15 +215,8 @@ export function TransactionsPage({ entity }: Props) {
       setError('Enter a valid amount (e.g. 25.50 or 25,50)')
       return
     }
-    const selectionError = validateSelection()
-    if (selectionError) {
-      setError(selectionError)
-      return
-    }
-    if (!description.trim()) {
-      setError('Add a short description')
-      return
-    }
+    // Role/account rules live in Rust (post_simple_entry); its Validation
+    // errors surface in the banner below.
 
     setBusy(true)
     setError(null)

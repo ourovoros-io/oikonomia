@@ -9,7 +9,7 @@ use zeroize::Zeroizing;
 
 use super::crypto::{self, VaultKey};
 use super::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
-use super::paths::{vault_db_path, vault_header_path};
+use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
 use crate::error::{Error, Result};
 
 /// Lifecycle status for the vault (serializable to the UI).
@@ -129,25 +129,42 @@ impl Vault {
             .as_ref()
             .ok_or(Error::VaultUninitialized)?
             .clone();
-
-        let key = crypto::derive_key(password, &header)?;
         let db_path = vault_db_path(&self.data_dir);
 
-        match open_sqlcipher(&db_path, &key) {
+        match open_verified(&db_path, password, &header) {
             Ok(conn) => {
-                // Touch the schema to confirm the key works.
-                conn.query_row("SELECT schema_version FROM vault_meta LIMIT 1", [], |row| {
-                    row.get::<_, i64>(0)
-                })
-                .map_err(|_| Error::InvalidPassword)?;
+                // A stale staged header can only be leftover from an
+                // interrupted password change that never rekeyed.
+                let _ = fs::remove_file(vault_staged_header_path(&self.data_dir));
 
                 crate::db::migrate(&conn)?;
                 self.conn = Some(conn);
                 Ok(())
             }
-            Err(Error::InvalidPassword) => Err(Error::InvalidPassword),
+            Err(Error::InvalidPassword) => self.unlock_with_staged_header(password),
             Err(other) => Err(other),
         }
+    }
+
+    /// Recovery path for a password change that died between rekey and rename:
+    /// the database is already under the staged header's key, so accept that
+    /// header and promote it to be the real one.
+    fn unlock_with_staged_header(&mut self, password: &str) -> Result<()> {
+        let staged_path = vault_staged_header_path(&self.data_dir);
+        let raw = fs::read_to_string(&staged_path).map_err(|_| Error::InvalidPassword)?;
+        let staged: VaultHeader = serde_json::from_str(&raw).map_err(|_| Error::InvalidPassword)?;
+
+        let db_path = vault_db_path(&self.data_dir);
+        let conn =
+            open_verified(&db_path, password, &staged).map_err(|_| Error::InvalidPassword)?;
+
+        fs::rename(&staged_path, vault_header_path(&self.data_dir))
+            .map_err(|err| Error::Io(err.to_string()))?;
+
+        crate::db::migrate(&conn)?;
+        self.header = Some(staged);
+        self.conn = Some(conn);
+        Ok(())
     }
 
     /// Close the database connection and forget process-local key material.
@@ -157,18 +174,19 @@ impl Vault {
 
     /// Re-encrypt the vault under a new master password (`SQLCipher` rekey).
     ///
-    /// Closes any open connection first (its page cache would go stale mid-
-    /// rekey), verifies the old password on a fresh connection, stages the new
-    /// header in a temp file, rekeys, then atomically renames the header into
-    /// place — so a crash between the steps leaves the real header still
-    /// matching whichever key the database currently uses. On success the
-    /// vault is left unlocked under the new key.
+    /// Crash-safety protocol: the new header is staged to a temp file before
+    /// the rekey and renamed over the real header after it, and [`Vault::unlock`]
+    /// falls back to the staged header when the real one no longer opens the
+    /// database. Whatever step the process dies at, exactly one of the two
+    /// passwords opens the vault. On success the vault is left unlocked under
+    /// the new key.
     ///
     /// # Errors
     ///
     /// [`Error::VaultUninitialized`], [`Error::InvalidPassword`] for a wrong
     /// old password, [`Error::Validation`] for a weak new password, or
-    /// crypto/I/O failures.
+    /// crypto/I/O failures. A failed verification leaves any open connection
+    /// untouched.
     pub fn change_password(&mut self, old: &str, new: &str) -> Result<()> {
         let header = self
             .header
@@ -177,11 +195,14 @@ impl Vault {
             .clone();
         validate_password(new)?;
 
-        self.conn = None;
-
+        // Verify the old password first — a typo must not lock the vault.
         let old_key = crypto::derive_key(old, &header)?;
         let db_path = vault_db_path(&self.data_dir);
         let conn = open_sqlcipher(&db_path, &old_key)?;
+
+        // Only now drop our own connection: its page cache would go stale
+        // across the rekey below.
+        self.conn = None;
 
         let mut salt = [0u8; SALT_LEN];
         rand::thread_rng().fill_bytes(&mut salt);
@@ -189,10 +210,10 @@ impl Vault {
         let new_key = crypto::derive_key(new, &new_header)?;
 
         let header_path = vault_header_path(&self.data_dir);
-        let tmp_path = header_path.with_extension("json.tmp");
+        let staged_path = vault_staged_header_path(&self.data_dir);
         let header_json =
             serde_json::to_string_pretty(&new_header).map_err(|err| Error::Io(err.to_string()))?;
-        fs::write(&tmp_path, header_json).map_err(|err| Error::Io(err.to_string()))?;
+        fs::write(&staged_path, header_json).map_err(|err| Error::Io(err.to_string()))?;
 
         // Fold WAL pages into the main file so the rekey covers everything.
         conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
@@ -202,7 +223,7 @@ impl Vault {
             .map_err(|err| Error::Crypto(err.to_string()))?;
         drop(conn);
 
-        fs::rename(&tmp_path, &header_path).map_err(|err| Error::Io(err.to_string()))?;
+        fs::rename(&staged_path, &header_path).map_err(|err| Error::Io(err.to_string()))?;
 
         self.header = Some(new_header);
         self.conn = Some(open_sqlcipher(&db_path, &new_key)?);
@@ -235,6 +256,20 @@ fn validate_password(password: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Derive the key for `header` and open the database, verifying the schema
+/// is readable (i.e. the password actually matches this header).
+fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result<Connection> {
+    let key = crypto::derive_key(password, header)?;
+    let conn = open_sqlcipher(db_path, &key)?;
+
+    conn.query_row("SELECT schema_version FROM vault_meta LIMIT 1", [], |row| {
+        row.get::<_, i64>(0)
+    })
+    .map_err(|_| Error::InvalidPassword)?;
+
+    Ok(conn)
 }
 
 fn open_sqlcipher(path: &Path, key: &VaultKey) -> Result<Connection> {

@@ -158,6 +158,19 @@ fn bill_statuses_route_to_payable() {
         matches!(post_simple_entry(conn, &missing), Err(Error::Validation(_))),
         "bill without bill_status must be rejected"
     );
+
+    // Paying a bill from the payable account itself would fake a settlement.
+    let mut circular = base_input(entity_id, SimpleEntryKind::Bill);
+    circular.bill_status = Some(SimpleBillStatus::PayExisting);
+    circular.payable_account_id = Some(acc.bills_payable);
+    circular.wallet_account_id = Some(acc.bills_payable);
+    assert!(
+        matches!(
+            post_simple_entry(conn, &circular),
+            Err(Error::Validation(_))
+        ),
+        "same account on both sides must be rejected"
+    );
 }
 
 #[test]

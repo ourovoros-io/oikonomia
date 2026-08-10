@@ -45,16 +45,58 @@ fn change_password_rejects_wrong_old_and_weak_new() {
         Err(Error::InvalidPassword),
         "wrong old password must be rejected"
     );
+    assert_eq!(
+        vault.status(),
+        VaultStatus::Unlocked,
+        "a failed verification must not lock the vault"
+    );
 
     let weak = vault.change_password(OLD, "short");
     assert!(
         matches!(weak, Err(Error::Validation(_))),
         "weak new password must be rejected, got {weak:?}"
     );
+    assert_eq!(vault.status(), VaultStatus::Unlocked);
 
     // Vault still opens with the old password after failed attempts.
     vault.lock();
     vault.unlock(OLD).expect("old password still valid");
+}
+
+#[test]
+fn interrupted_change_recovers_via_staged_header() {
+    let (dir, mut vault) = init_vault();
+
+    // Complete a change, then reconstruct the crash state: database already
+    // rekeyed, real header still the old one, new header only staged.
+    let header_path = dir.path().join("vault.header.json");
+    let staged_path = dir.path().join("vault.header.json.tmp");
+    let old_header = std::fs::read_to_string(&header_path).expect("read old header");
+
+    vault.change_password(OLD, NEW).expect("change password");
+    drop(vault);
+
+    let new_header = std::fs::read_to_string(&header_path).expect("read new header");
+    std::fs::write(&staged_path, new_header).expect("stage new header");
+    std::fs::write(&header_path, old_header).expect("restore old header");
+
+    let mut recovered = Vault::open_path(dir.path()).expect("reopen");
+    assert!(
+        recovered.unlock(OLD).is_err(),
+        "old password no longer matches the rekeyed database"
+    );
+    recovered
+        .unlock(NEW)
+        .expect("staged-header recovery unlocks");
+    assert!(
+        !staged_path.exists(),
+        "staged header must be promoted to the real header"
+    );
+
+    recovered.lock();
+    recovered
+        .unlock(NEW)
+        .expect("promoted header works on its own");
 }
 
 #[test]

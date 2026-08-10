@@ -8,7 +8,6 @@ use oikonomia_core::documents::{
     link_document_to_entry, save_analysis_json, save_document, suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
-use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::{
     BalanceSheet, CreateAccount, CreateEntity, DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary, PnL,
     PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine, TrialBalance, UpdateAccount,
@@ -35,9 +34,19 @@ pub struct AppInfo {
 // --- Vault -----------------------------------------------------------------
 
 /// Return vault lock lifecycle status.
+///
+/// Async so the frontend's activity heartbeat never blocks the main thread,
+/// even while a long operation (rekey, analysis save) holds the vault mutex.
 #[tauri::command]
-pub fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
-    state.status().map_err(Into::into)
+pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
+    let vault = state.vault();
+    state.touch();
+
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        let guard = crate::state::lock_vault(&vault);
+        Ok(guard.status())
+    }))
+    .await
 }
 
 /// Create a new encrypted vault with the master password.
@@ -54,20 +63,23 @@ pub fn vault_init(state: State<'_, AppState>, password: String) -> CommandResult
 /// Unlock an existing vault.
 #[tauri::command]
 pub fn vault_unlock(state: State<'_, AppState>, password: String) -> CommandResult<VaultStatus> {
-    let status = state.with_vault(|vault| {
+    let (status, secs) = state.with_vault(|vault| {
         vault.unlock(&password)?;
-        Ok(vault.status())
+
+        // Refresh the watchdog's timeout cache from the now-readable settings.
+        // A failed read falls back to the default, but never silently.
+        let secs = match vault.connection().and_then(get_lock_timeout_secs) {
+            Ok(secs) => secs,
+            Err(err) => {
+                log::warn!("could not read lock timeout after unlock, using default: {err}");
+                DEFAULT_LOCK_TIMEOUT_SECS
+            }
+        };
+
+        Ok((vault.status(), secs))
     })?;
 
-    // Refresh the watchdog's timeout cache from the now-readable settings.
-    let secs = state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            get_lock_timeout_secs(conn)
-        })
-        .unwrap_or(DEFAULT_LOCK_TIMEOUT_SECS);
     state.set_lock_timeout_cache(secs);
-
     Ok(status)
 }
 
@@ -81,22 +93,12 @@ pub async fn vault_change_password(
     let vault = state.vault();
     state.touch();
 
-    let joined = tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = vault
-            .lock()
-            .map_err(|_| CommandError::from(CoreError::VaultLocked))?;
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = crate::state::lock_vault(&vault);
         guard.change_password(&old, &new)?;
         Ok(guard.status())
-    })
-    .await;
-
-    match joined {
-        Ok(result) => result,
-        Err(err) => Err(CommandError {
-            code: "io".into(),
-            message: format!("password change task failed: {err}"),
-        }),
-    }
+    }))
+    .await
 }
 
 /// Lock the vault for this session.
@@ -420,6 +422,16 @@ pub async fn document_analyze(
     mime_type: String,
     data_base64: String,
 ) -> CommandResult<DocumentSuggestion> {
+    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
+    // file cannot balloon memory (the drop path gates on fs metadata the same way).
+    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
+    if data_base64.len() > max_base64_len {
+        return Err(CommandError {
+            code: "validation".into(),
+            message: "file too large (max 8 MB)".into(),
+        });
+    }
+
     let data = base64::engine::general_purpose::STANDARD
         .decode(data_base64.trim())
         .map_err(|e| CommandError {
@@ -500,9 +512,7 @@ fn analyze_with_vault(
     data: &[u8],
 ) -> CommandResult<DocumentSuggestion> {
     let (meta, accounts, entity) = {
-        let guard = vault
-            .lock()
-            .map_err(|_| CommandError::from(CoreError::VaultLocked))?;
+        let guard = crate::state::lock_vault(vault);
         let conn = guard.connection()?;
         let entity = get_entity(conn, entity_id)?;
         let meta = save_document(conn, entity_id, filename, mime_type, data)?;
@@ -520,12 +530,16 @@ fn analyze_with_vault(
         Some(model_dir),
     )?;
 
-    if let Ok(json) = serde_json::to_string(&suggestion) {
-        if let Ok(guard) = vault.lock() {
-            if let Ok(conn) = guard.connection() {
-                let _ = save_analysis_json(conn, meta.id, &json);
-            }
-        }
+    // Persist strictly: if the vault locked mid-analysis (watchdog or user),
+    // surface the error instead of silently dropping the analysis snapshot.
+    {
+        let guard = crate::state::lock_vault(vault);
+        let conn = guard.connection()?;
+        let json = serde_json::to_string(&suggestion).map_err(|e| CommandError {
+            code: "io".into(),
+            message: format!("could not serialize analysis: {e}"),
+        })?;
+        save_analysis_json(conn, meta.id, &json)?;
     }
 
     Ok(suggestion)

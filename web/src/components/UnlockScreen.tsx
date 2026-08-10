@@ -26,11 +26,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
       return
     }
 
-    if (password.length < 12) {
-      setError('Use at least 12 characters')
-      return
-    }
-
+    // Password strength rules live in Rust; its Validation error surfaces below.
     setBusy(true)
     try {
       const next = isSetup ? await vaultInit(password) : await vaultUnlock(password)
@@ -82,7 +78,6 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
                   onChange={(e) => setPassword(e.target.value)}
                   className="pl-10"
                   required
-                  minLength={12}
                   autoFocus
                 />
               </div>
@@ -96,7 +91,6 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
                   required
-                  minLength={12}
                 />
               </Field>
             ) : null}
