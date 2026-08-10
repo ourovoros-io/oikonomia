@@ -370,11 +370,12 @@ pub fn dashboard_summary_cmd(
     entity_id: EntityId,
     from: String,
     to: String,
+    assets_as_of: String,
 ) -> CommandResult<DashboardSummary> {
     state
         .with_vault(|vault| {
             let conn = vault.connection()?;
-            dashboard_summary(conn, entity_id, &from, &to)
+            dashboard_summary(conn, entity_id, &from, &to, &assets_as_of)
         })
         .map_err(Into::into)
 }

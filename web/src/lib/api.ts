@@ -209,8 +209,8 @@ export const api = {
     call<PnL>('report_pnl', { entityId, from, to }),
   reportBalanceSheet: (entityId: string, asOf: string) =>
     call<BalanceSheet>('report_balance_sheet', { entityId, asOf }),
-  dashboardSummary: (entityId: string, from: string, to: string) =>
-    call<DashboardSummary>('dashboard_summary_cmd', { entityId, from, to }),
+  dashboardSummary: (entityId: string, from: string, to: string, assetsAsOf: string) =>
+    call<DashboardSummary>('dashboard_summary_cmd', { entityId, from, to, assetsAsOf }),
 
   getLockTimeout: () => call<number>('settings_get_lock_timeout'),
   setLockTimeout: (secs: number) => call<void>('settings_set_lock_timeout', { secs }),
@@ -277,6 +277,13 @@ export function monthStartISO(): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
   return `${y}-${m}-01`
+}
+
+export function monthEndISO(): string {
+  const d = new Date()
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+  const m = String(last.getMonth() + 1).padStart(2, '0')
+  return `${last.getFullYear()}-${m}-${String(last.getDate()).padStart(2, '0')}`
 }
 
 export function yearStartISO(): string {

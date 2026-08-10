@@ -249,7 +249,9 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     })
 }
 
-/// Dashboard summary for period.
+/// Dashboard summary: income/expenses/count over `[from, to]` (typically the
+/// full calendar month, so future-dated bills inside the month are counted),
+/// with assets reported as of `assets_as_of` (typically today).
 ///
 /// # Errors
 ///
@@ -259,17 +261,19 @@ pub fn dashboard_summary(
     entity_id: EntityId,
     from: &str,
     to: &str,
+    assets_as_of: &str,
 ) -> Result<DashboardSummary> {
     let entity = get_entity(conn, entity_id)?;
     let from_d = parse_date(from)?;
     let to_d = parse_date(to)?;
+    let assets_as_of_d = parse_date(assets_as_of)?;
     if from_d > to_d {
         return Err(Error::Validation(
             "from date must be on or before to".into(),
         ));
     }
 
-    let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], to_d)?;
+    let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], assets_as_of_d)?;
     let income = sum_types_in_range(conn, entity_id, &[AccountType::Income], from_d, to_d)?;
     let expenses = sum_types_in_range(conn, entity_id, &[AccountType::Expense], from_d, to_d)?;
     let count_sql = format!(

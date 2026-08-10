@@ -14,6 +14,7 @@ import {
   formatDate,
   formatMoney,
   localeForCurrency,
+  monthEndISO,
   monthStartISO,
   todayISO,
   type Account,
@@ -75,8 +76,12 @@ export function DashboardPage({ entity }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // Full calendar month, so bills posted with a future due date (common for
+  // scanned utility bills) count toward this month's figures immediately.
+  // Assets stay "as of today".
   const from = monthStartISO()
-  const to = todayISO()
+  const to = monthEndISO()
+  const assetsAsOf = todayISO()
 
   useEffect(() => {
     if (!entity) {
@@ -90,7 +95,7 @@ export function DashboardPage({ entity }: Props) {
     void (async () => {
       try {
         const [summary, list, accts] = await Promise.all([
-          api.dashboardSummary(entity.id, from, to),
+          api.dashboardSummary(entity.id, from, to, assetsAsOf),
           api.entryList(entity.id, from, to),
           api.accountList(entity.id),
         ])
