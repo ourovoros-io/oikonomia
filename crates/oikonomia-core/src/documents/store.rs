@@ -48,6 +48,36 @@ pub struct DocumentMeta {
 /// Max upload size (8 MiB) — keeps vault lean and model latency reasonable.
 pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 
+/// Validate a candidate document before its bytes are loaded or stored.
+///
+/// Shared by [`save_document`] and the drop-path command so oversized or
+/// unsupported files are rejected from a `stat` alone, before any read.
+///
+/// # Errors
+///
+/// Returns [`Error::Validation`] for empty/oversized files, blank filenames,
+/// or unsupported MIME types.
+pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Result<()> {
+    if size_bytes == 0 {
+        return Err(Error::Validation("empty file".into()));
+    }
+    if size_bytes > MAX_DOCUMENT_BYTES as u64 {
+        return Err(Error::Validation(format!(
+            "file too large (max {} MB)",
+            MAX_DOCUMENT_BYTES / (1024 * 1024)
+        )));
+    }
+    if filename.trim().is_empty() {
+        return Err(Error::Validation("filename is required".into()));
+    }
+    if !is_allowed_mime(mime) {
+        return Err(Error::Validation(
+            "unsupported file type — use PDF, PNG, JPEG, WebP, or plain text".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Store a document blob (already protected by SQLCipher).
 ///
 /// # Errors
@@ -60,27 +90,9 @@ pub fn save_document(
     mime_type: &str,
     data: &[u8],
 ) -> Result<DocumentMeta> {
-    if data.is_empty() {
-        return Err(Error::Validation("empty file".into()));
-    }
-    if data.len() > MAX_DOCUMENT_BYTES {
-        return Err(Error::Validation(format!(
-            "file too large (max {} MB)",
-            MAX_DOCUMENT_BYTES / (1024 * 1024)
-        )));
-    }
-
     let name = filename.trim();
-    if name.is_empty() {
-        return Err(Error::Validation("filename is required".into()));
-    }
-
     let mime = resolve_mime(mime_type, name);
-    if !is_allowed_mime(&mime) {
-        return Err(Error::Validation(
-            "unsupported file type — use PDF, PNG, JPEG, WebP, or plain text".into(),
-        ));
-    }
+    validate_document_file(name, &mime, data.len() as u64)?;
 
     let id = DocumentId::new();
     let created = now_utc_string();
@@ -207,12 +219,7 @@ pub fn suggest_accounts_for_entity(conn: &Connection, entity_id: EntityId) -> Re
 fn is_allowed_mime(mime: &str) -> bool {
     matches!(
         mime,
-        "application/pdf"
-            | "image/png"
-            | "image/jpeg"
-            | "image/jpg"
-            | "image/webp"
-            | "text/plain"
+        "application/pdf" | "image/png" | "image/jpeg" | "image/jpg" | "image/webp" | "text/plain"
     )
 }
 
@@ -287,10 +294,19 @@ const EXPENSE_KEYWORDS: &[(&str, &[&str])] = &[
     ),
     ("bills", &["bill", "invoice", "receipt"]),
     ("housing", &["rent", "mortgage", "housing"]),
-    ("subscription", &["netflix", "spotify", "subscription", "saas"]),
+    (
+        "subscription",
+        &["netflix", "spotify", "subscription", "saas"],
+    ),
     ("food", &["food", "grocery", "supermarket", "restaurant"]),
-    ("transport", &["fuel", "uber", "taxi", "transport", "parking"]),
-    ("software", &["software", "github", "aws", "cloud", "security", "program"]),
+    (
+        "transport",
+        &["fuel", "uber", "taxi", "transport", "parking"],
+    ),
+    (
+        "software",
+        &["software", "github", "aws", "cloud", "security", "program"],
+    ),
     ("health", &["pharma", "doctor", "health", "clinic"]),
     ("tax", &["tax", "vat", "irs"]),
 ];
@@ -298,7 +314,15 @@ const EXPENSE_KEYWORDS: &[(&str, &[&str])] = &[
 const INCOME_KEYWORDS: &[(&str, &[&str])] = &[
     (
         "sales",
-        &["sales", "service", "security", "advise", "consult", "παροχ", "τιμολ"],
+        &[
+            "sales",
+            "service",
+            "security",
+            "advise",
+            "consult",
+            "παροχ",
+            "τιμολ",
+        ],
     ),
     ("freelance", &["freelance", "project"]),
     ("salary", &["salary", "payroll", "wage"]),
@@ -351,6 +375,23 @@ pub fn match_wallet_account(accounts: &[Account]) -> Option<AccountId> {
         }
     }
     assets.first().map(|a| a.id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_document_file_gates_size_name_and_mime() {
+        assert!(validate_document_file("a.pdf", "application/pdf", 1_000).is_ok());
+        assert!(validate_document_file("a.pdf", "application/pdf", 0).is_err());
+        assert!(
+            validate_document_file("a.pdf", "application/pdf", 20 * 1024 * 1024 * 1024).is_err(),
+            "oversize must fail from metadata alone"
+        );
+        assert!(validate_document_file("  ", "application/pdf", 1_000).is_err());
+        assert!(validate_document_file("a.exe", "application/x-msdownload", 1_000).is_err());
+    }
 }
 
 /// Bills payable / AP liability.

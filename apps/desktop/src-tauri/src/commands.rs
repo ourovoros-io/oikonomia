@@ -4,8 +4,8 @@ use crate::error::CommandResult;
 use crate::state::AppState;
 use base64::Engine;
 use oikonomia_core::documents::{
-    AnalyzerStatus, DocumentSuggestion, analyze_document_bytes, analyzer_status, link_document_to_entry,
-    save_analysis_json, save_document, suggest_accounts_for_entity,
+    AnalyzerStatus, DocumentSuggestion, analyze_document_bytes, analyzer_status,
+    link_document_to_entry, save_analysis_json, save_document, suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
@@ -13,8 +13,8 @@ use oikonomia_core::ledger::{
     RegisterLine, TrialBalance, UpdateAccount, VoidResult, account_register, archive_account,
     archive_entity, balance_sheet, create_account, create_entity, dashboard_summary, delete_entity,
     get_entity, get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries,
-    post_entry, profit_and_loss, set_lock_timeout_secs, trial_balance, update_account, update_entity,
-    void_entry,
+    post_entry, profit_and_loss, set_lock_timeout_secs, trial_balance, update_account,
+    update_entity, void_entry,
 };
 use oikonomia_core::vault::VaultStatus;
 use serde::Serialize;
@@ -368,11 +368,9 @@ pub fn document_analyze(
 ) -> CommandResult<DocumentSuggestion> {
     let data = base64::engine::general_purpose::STANDARD
         .decode(data_base64.trim())
-        .map_err(|e| {
-            crate::error::CommandError {
-                code: "validation".into(),
-                message: format!("invalid file data: {e}"),
-            }
+        .map_err(|e| crate::error::CommandError {
+            code: "validation".into(),
+            message: format!("invalid file data: {e}"),
         })?;
     analyze_bytes(state, entity_id, filename, mime_type, data)
 }
@@ -390,11 +388,20 @@ pub fn document_analyze_path(
         .and_then(|s| s.to_str())
         .unwrap_or("document")
         .to_owned();
-    let data = std::fs::read(&path).map_err(|e| crate::error::CommandError {
+
+    // Reject oversized/unsupported drops from metadata alone — a stray 10 GB
+    // drop must not be read into memory before failing the size cap.
+    let meta = std::fs::metadata(&path).map_err(|e| crate::error::CommandError {
         code: "io".into(),
         message: format!("could not read dropped file: {e}"),
     })?;
     let mime = oikonomia_core::documents::resolve_mime("", &filename);
+    oikonomia_core::documents::validate_document_file(&filename, &mime, meta.len())?;
+
+    let data = std::fs::read(&path).map_err(|e| crate::error::CommandError {
+        code: "io".into(),
+        message: format!("could not read dropped file: {e}"),
+    })?;
     analyze_bytes(state, entity_id, filename, mime, data)
 }
 
