@@ -4,8 +4,9 @@ use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 use base64::Engine;
 use oikonomia_core::documents::{
-    AnalyzerStatus, DocumentSuggestion, analyze_document_bytes, analyzer_status,
-    link_document_to_entry, save_analysis_json, save_document, suggest_accounts_for_entity,
+    AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, analyze_document_bytes,
+    analyzer_status, delete_document, get_document, link_document_to_entry, list_documents,
+    save_analysis_json, save_document, suggest_accounts_for_entity, unlink_document,
 };
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
 use oikonomia_core::error::Error as CoreError;
@@ -585,6 +586,122 @@ pub async fn document_link_entry(
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         link_document_to_entry(conn, document_id, entry_id)
+    })
+    .await
+}
+
+/// Metadata plus base64 payload for the in-app viewer.
+#[derive(Debug, Serialize)]
+pub struct DocumentContent {
+    /// Metadata.
+    pub meta: DocumentMeta,
+    /// Raw bytes, base64-encoded for IPC (bounded by the 8 MiB cap).
+    pub data_base64: String,
+}
+
+/// All stored documents for an entity (metadata only).
+#[tauri::command]
+pub async fn document_list(
+    state: State<'_, AppState>,
+    entity_id: EntityId,
+) -> CommandResult<Vec<DocumentMeta>> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        list_documents(conn, entity_id)
+    })
+    .await
+}
+
+/// One document's bytes for the in-app viewer. Decrypted content crosses
+/// IPC only; nothing is written to disk.
+#[tauri::command]
+pub async fn document_get(
+    state: State<'_, AppState>,
+    document_id: DocumentId,
+) -> CommandResult<DocumentContent> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        let (meta, data) = get_document(conn, document_id)?;
+        Ok(DocumentContent {
+            meta,
+            data_base64: base64::engine::general_purpose::STANDARD.encode(data),
+        })
+    })
+    .await
+}
+
+/// Permanently delete a stored document.
+#[tauri::command]
+pub async fn document_delete(
+    state: State<'_, AppState>,
+    document_id: DocumentId,
+) -> CommandResult<()> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        delete_document(conn, document_id)
+    })
+    .await
+}
+
+/// Detach a document from its entry (file stays in the vault).
+#[tauri::command]
+pub async fn document_unlink(
+    state: State<'_, AppState>,
+    document_id: DocumentId,
+) -> CommandResult<()> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        unlink_document(conn, document_id)
+    })
+    .await
+}
+
+/// Attach a file to an existing posted entry. No OCR pass — analysis only
+/// runs on the drop-zone flow; `analysis_json` stays NULL here.
+#[tauri::command]
+pub async fn document_attach(
+    state: State<'_, AppState>,
+    entity_id: EntityId,
+    entry_id: JournalEntryId,
+    filename: String,
+    mime_type: String,
+    data_base64: String,
+) -> CommandResult<DocumentMeta> {
+    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
+    // file cannot balloon memory (same gate as document_analyze).
+    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
+    if data_base64.len() > max_base64_len {
+        return Err(CommandError {
+            code: "validation".into(),
+            message: "file too large (max 8 MB)".into(),
+        });
+    }
+
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.trim())
+        .map_err(|e| CommandError {
+            code: "validation".into(),
+            message: format!("invalid file data: {e}"),
+        })?;
+
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+
+        // 404 on a bad entry before storing anything.
+        get_entry(conn, entry_id)?;
+
+        // Save + link atomically so a failure can't leave a half-attached file.
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|err| CoreError::Io(err.to_string()))?;
+        let meta = save_document(&tx, entity_id, &filename, &mime_type, &data)?;
+        link_document_to_entry(&tx, meta.id, entry_id)?;
+        tx.commit().map_err(|err| CoreError::Io(err.to_string()))?;
+
+        Ok(DocumentMeta {
+            entry_id: Some(entry_id),
+            ..meta
+        })
     })
     .await
 }

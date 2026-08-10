@@ -83,6 +83,11 @@ pub fn run() {
             commands::document_analyze,
             commands::document_analyze_path,
             commands::document_link_entry,
+            commands::document_list,
+            commands::document_get,
+            commands::document_delete,
+            commands::document_unlink,
+            commands::document_attach,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it to the tray instead of quitting;

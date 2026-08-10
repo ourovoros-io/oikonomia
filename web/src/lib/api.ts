@@ -245,6 +245,17 @@ export const api = {
     }),
   documentLinkEntry: (documentId: string, entryId: string) =>
     call<void>('document_link_entry', { documentId, entryId }),
+  documentList: (entityId: string) => call<DocumentMeta[]>('document_list', { entityId }),
+  documentGet: (documentId: string) => call<DocumentContent>('document_get', { documentId }),
+  documentDelete: (documentId: string) => call<void>('document_delete', { documentId }),
+  documentUnlink: (documentId: string) => call<void>('document_unlink', { documentId }),
+  documentAttach: (input: {
+    entityId: string
+    entryId: string
+    filename: string
+    mimeType: string
+    dataBase64: string
+  }) => call<DocumentMeta>('document_attach', input),
 }
 
 export type AnalyzerStatus = {
@@ -269,6 +280,21 @@ export type DocumentSuggestion = {
   payable_account_id: string | null
   confidence: number
   notes: string
+}
+
+export type DocumentMeta = {
+  id: string
+  entity_id: string
+  entry_id: string | null
+  filename: string
+  mime_type: string
+  size_bytes: number
+  created_at: string
+}
+
+export type DocumentContent = {
+  meta: DocumentMeta
+  data_base64: string
 }
 
 export { formatMoney, formatDate, parseMajorToMinor, localeForCurrency } from './money'
