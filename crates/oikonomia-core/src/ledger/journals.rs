@@ -70,6 +70,61 @@ pub struct RegisterLine {
     pub balance_minor: i64,
 }
 
+/// High-level kind for the simple entry form (no debit/credit knowledge in the UI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SimpleEntryKind {
+    /// Money spent now.
+    Expense,
+    /// Money received.
+    Income,
+    /// A bill: paid, owed, or a payment against an owed bill.
+    Bill,
+    /// Move money between own accounts.
+    Transfer,
+}
+
+/// Payment state for [`SimpleEntryKind::Bill`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SimpleBillStatus {
+    /// Paid immediately from a wallet account.
+    Paid,
+    /// Recorded as owed against a payable account.
+    Unpaid,
+    /// Settle a previously recorded payable from a wallet account.
+    PayExisting,
+}
+
+/// Input for [`post_simple_entry`]: one amount plus role accounts per kind.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostSimpleEntry {
+    /// Entity book.
+    pub entity_id: EntityId,
+    /// Entry kind.
+    pub kind: SimpleEntryKind,
+    /// Required when `kind` is [`SimpleEntryKind::Bill`].
+    pub bill_status: Option<SimpleBillStatus>,
+    /// Accounting date `YYYY-MM-DD`.
+    pub entry_date: String,
+    /// Description.
+    pub description: String,
+    /// Optional reference.
+    pub reference: Option<String>,
+    /// Positive amount in minor units.
+    pub amount_minor: i64,
+    /// Expense or income category account.
+    pub category_account_id: Option<AccountId>,
+    /// Bank / cash / card account.
+    pub wallet_account_id: Option<AccountId>,
+    /// Bills payable / AP liability account.
+    pub payable_account_id: Option<AccountId>,
+    /// Transfer source.
+    pub from_account_id: Option<AccountId>,
+    /// Transfer destination.
+    pub to_account_id: Option<AccountId>,
+}
+
 /// Result of voiding an entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoidResult {
@@ -287,6 +342,112 @@ fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedE
     }
 
     get_entry(conn, entry_id)
+}
+
+/// Build and post the journal entry for a simple-form input.
+///
+/// The kind → debit/credit mapping lives here so the UI never carries
+/// accounting rules; each role account's type is checked before posting.
+///
+/// # Errors
+///
+/// [`Error::Validation`] for missing/mistyped role accounts or a
+/// non-positive amount, plus all [`post_entry`] errors.
+pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
+    if input.amount_minor <= 0 {
+        return Err(Error::Validation("amount must be positive".into()));
+    }
+
+    let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
+    let lines = vec![
+        CreateJournalLine {
+            account_id: debit_account,
+            debit_minor: input.amount_minor,
+            credit_minor: 0,
+            memo: None,
+        },
+        CreateJournalLine {
+            account_id: credit_account,
+            debit_minor: 0,
+            credit_minor: input.amount_minor,
+            memo: None,
+        },
+    ];
+
+    post_entry(
+        conn,
+        &PostJournal {
+            entity_id: input.entity_id,
+            entry_date: input.entry_date.clone(),
+            description: input.description.clone(),
+            reference: input.reference.clone(),
+            lines,
+        },
+    )
+}
+
+/// Resolve the (debit, credit) account pair for a simple entry.
+fn simple_entry_sides(
+    conn: &Connection,
+    input: &PostSimpleEntry,
+) -> Result<(AccountId, AccountId)> {
+    use crate::domain::AccountType::{Asset, Expense, Income, Liability};
+
+    let role = |id: Option<AccountId>, role: &str, allowed: &[crate::domain::AccountType]| {
+        let id = id.ok_or_else(|| Error::Validation(format!("{role} account is required")))?;
+        let account = get_account(conn, id)?;
+        if !allowed.contains(&account.account_type) {
+            return Err(Error::Validation(format!(
+                "{role} account {} has the wrong type for this entry",
+                account.code
+            )));
+        }
+        Ok(id)
+    };
+
+    match input.kind {
+        SimpleEntryKind::Expense => Ok((
+            role(input.category_account_id, "category", &[Expense])?,
+            role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+        )),
+        SimpleEntryKind::Income => Ok((
+            role(input.wallet_account_id, "deposit", &[Asset])?,
+            role(input.category_account_id, "income", &[Income])?,
+        )),
+        SimpleEntryKind::Bill => match input.bill_status {
+            Some(SimpleBillStatus::Paid) => Ok((
+                role(input.category_account_id, "bill category", &[Expense])?,
+                role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+            )),
+            Some(SimpleBillStatus::Unpaid) => Ok((
+                role(input.category_account_id, "bill category", &[Expense])?,
+                role(input.payable_account_id, "bills payable", &[Liability])?,
+            )),
+            Some(SimpleBillStatus::PayExisting) => Ok((
+                role(input.payable_account_id, "bills payable", &[Liability])?,
+                role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+            )),
+            None => Err(Error::Validation("bill entries need a bill status".into())),
+        },
+        SimpleEntryKind::Transfer => {
+            let to = role(
+                input.to_account_id,
+                "transfer destination",
+                &[Asset, Liability],
+            )?;
+            let from = role(
+                input.from_account_id,
+                "transfer source",
+                &[Asset, Liability],
+            )?;
+            if from == to {
+                return Err(Error::Validation(
+                    "transfer needs two different accounts".into(),
+                ));
+            }
+            Ok((to, from))
+        }
+    }
 }
 
 /// Void a posted entry by posting a reverse entry and linking `voided_by`.
