@@ -264,7 +264,7 @@ export function SettingsPage({
             />
           </Field>
           <div className="sm:col-span-3">
-            <Button type="submit" disabled={passwordBusy}>
+            <Button type="submit" busy={passwordBusy}>
               {passwordBusy ? 'Re-encrypting…' : 'Change password'}
             </Button>
           </div>
@@ -318,7 +318,7 @@ export function SettingsPage({
             </div>
           </div>
 
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" busy={busy}>
             {busy ? 'Creating…' : 'Create entity'}
           </Button>
         </form>

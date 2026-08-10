@@ -232,11 +232,11 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
           )}
         </span>
         <p className="pointer-events-none text-sm font-semibold text-[var(--color-fg)]">
-          {busy ? 'Analyzing document…' : 'Drop a bill or receipt here'}
+          {busy ? 'Analyzing document…' : 'Drop a bill, invoice, receipt, or bank statement here'}
         </p>
         <p className="pointer-events-none mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-[var(--color-muted)]">
-          PDF, photos of receipts (PNG/JPEG/WebP), or text. Fully offline OCR for images. Click to
-          choose a file.
+          PDF (invoices, bills, bank statements), photos of receipts (PNG/JPEG/WebP), or text. Fully
+          offline — nothing leaves this device. Click to choose a file.
         </p>
         {status ? (
           <p className="pointer-events-none mx-auto mt-4 inline-flex max-w-lg items-start gap-1.5 text-left text-[11px] leading-snug text-[var(--color-muted)]">

@@ -538,7 +538,7 @@ export function TransactionsPage({ entity }: Props) {
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" busy={busy}>
               {busy ? 'Saving…' : 'Save entry'}
             </Button>
           </div>

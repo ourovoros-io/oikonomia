@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import type {
   ButtonHTMLAttributes,
@@ -146,9 +146,7 @@ export function Panel({
       <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
-          {description ? (
-            <p className="text-xs text-[var(--color-muted)]">{description}</p>
-          ) : null}
+          {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {actions}
@@ -202,9 +200,7 @@ export function CollapsibleSection({
         ) : null}
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
-          {description ? (
-            <p className="text-xs text-[var(--color-muted)]">{description}</p>
-          ) : null}
+          {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
         </div>
         <ChevronDown
           className={cn(
@@ -227,20 +223,24 @@ export function Button({
   variant = 'primary',
   size = 'md',
   className = '',
+  busy = false,
+  disabled,
   children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost'
   size?: 'sm' | 'md' | 'icon'
+  /** Shows a spinner and disables the button while a slow action runs. */
+  busy?: boolean
 }) {
   const styles = {
-    primary:
-      'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] shadow-sm',
+    primary: 'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] shadow-sm',
     secondary:
       'border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-fg-secondary)] hover:border-[var(--color-accent)] hover:text-[var(--color-fg)]',
     danger:
       'border border-transparent bg-[var(--color-danger-soft)] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20',
-    ghost: 'text-[var(--color-muted)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]',
+    ghost:
+      'text-[var(--color-muted)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]',
   }
   const sizes = {
     sm: 'h-8 gap-1.5 px-2.5 text-xs',
@@ -256,8 +256,10 @@ export function Button({
         sizes[size],
         className,
       )}
+      disabled={disabled || busy}
       {...props}
     >
+      {busy ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : null}
       {children}
     </button>
   )
@@ -349,9 +351,7 @@ export function PageHeader({
         ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {meta ? (
-          <div className="text-xs text-[var(--color-muted)]">{meta}</div>
-        ) : null}
+        {meta ? <div className="text-xs text-[var(--color-muted)]">{meta}</div> : null}
         {actions}
       </div>
     </div>
@@ -405,13 +405,7 @@ export function Table({ children }: { children: ReactNode }) {
   )
 }
 
-export function Th({
-  children,
-  className = '',
-}: {
-  children?: ReactNode
-  className?: string
-}) {
+export function Th({ children, className = '' }: { children?: ReactNode; className?: string }) {
   return (
     <th
       className={cn(
@@ -503,8 +497,7 @@ export function MetricCard({
   icon?: ReactNode
   accent?: 'success' | 'danger' | 'accent'
 }) {
-  const tone =
-    accent === 'success' ? 'success' : accent === 'danger' ? 'danger' : 'accent'
+  const tone = accent === 'success' ? 'success' : accent === 'danger' ? 'danger' : 'accent'
   return (
     <div
       className={cn(
@@ -519,7 +512,11 @@ export function MetricCard({
           </div>
           {hint ? <div className="mt-0.5 text-xs text-[var(--color-muted)]">{hint}</div> : null}
         </div>
-        {icon ? <IconBadge tone={tone} size="sm">{icon}</IconBadge> : null}
+        {icon ? (
+          <IconBadge tone={tone} size="sm">
+            {icon}
+          </IconBadge>
+        ) : null}
       </div>
       <div
         className={cn(
@@ -616,13 +613,7 @@ export function FlowBar({
 }
 
 /** List row for activity / entity rows with hover. */
-export function ListRow({
-  children,
-  className = '',
-}: {
-  children: ReactNode
-  className?: string
-}) {
+export function ListRow({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <li
       className={cn(

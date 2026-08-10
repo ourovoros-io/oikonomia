@@ -14,6 +14,7 @@ directories = { workspace = true }
 image = { workspace = true }
 ocrs = { workspace = true }
 pdf-extract = { workspace = true }
+lopdf = { workspace = true }
 rand = { workspace = true }
 rten = { workspace = true }
 rusqlite = { workspace = true }

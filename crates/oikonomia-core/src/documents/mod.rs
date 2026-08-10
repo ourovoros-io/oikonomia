@@ -5,6 +5,7 @@
 mod analyze;
 mod invoice;
 mod ocr;
+mod pdf_repair;
 mod store;
 
 pub use analyze::{

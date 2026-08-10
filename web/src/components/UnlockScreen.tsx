@@ -91,7 +91,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
 
             <ErrorBanner message={error} />
 
-            <Button type="submit" disabled={busy} className="w-full">
+            <Button type="submit" busy={busy} className="w-full">
               {busy ? 'Working…' : isSetup ? 'Create encrypted vault' : 'Unlock'}
             </Button>
           </div>

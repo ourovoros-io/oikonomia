@@ -281,12 +281,70 @@ fn extract_text(filename: &str, mime: &str, data: &[u8]) -> Option<String> {
         return Some(String::from_utf8_lossy(data).into_owned());
     }
     if mime == "application/pdf" || filename.to_ascii_lowercase().ends_with(".pdf") {
-        return pdf_extract::extract_text_from_mem(data).ok().and_then(|t| {
+        return pdf_text(data).and_then(|t| {
             let t = t.trim().to_owned();
             if t.is_empty() { None } else { Some(t) }
         });
     }
     None
+}
+
+/// PDF text extraction hardened for real-world statements and invoices.
+///
+/// Two failure modes show up in the wild, especially with bank statements:
+/// stale xref offsets left behind by stamping/signing tools (lopdf refuses
+/// to load), and malformed font or resource objects that make pdf-extract
+/// panic mid-page. We repair the former and contain the latter, falling
+/// back to page-by-page extraction so one bad page cannot blank the rest.
+fn pdf_text(data: &[u8]) -> Option<String> {
+    if let Some(text) = pdf_text_whole(data).or_else(|| pdf_text_per_page(data)) {
+        return Some(text);
+    }
+
+    let repaired = super::pdf_repair::repair_xref_offsets(data)?;
+
+    pdf_text_whole(&repaired).or_else(|| pdf_text_per_page(&repaired))
+}
+
+/// Whole-document pass. pdf-extract calls `expect` on odd font objects, so
+/// panics are contained here and treated as "no text".
+fn pdf_text_whole(data: &[u8]) -> Option<String> {
+    std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(data).ok())
+        .ok()
+        .flatten()
+}
+
+/// Page-by-page pass: pages whose resources make pdf-extract error or panic
+/// are skipped, and the surviving pages' text is joined.
+fn pdf_text_per_page(data: &[u8]) -> Option<String> {
+    let doc = lopdf::Document::load_mem(data).ok()?;
+    if doc.is_encrypted() {
+        return None;
+    }
+
+    let page_numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
+
+    let mut chunks: Vec<String> = Vec::new();
+    for page in page_numbers {
+        let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut text = String::new();
+            let mut output = pdf_extract::PlainTextOutput::new(&mut text);
+
+            pdf_extract::output_doc_page(&doc, &mut output, page)
+                .ok()
+                .map(|()| text)
+        }));
+
+        if let Ok(Some(text)) = extracted {
+            chunks.push(text);
+        }
+    }
+
+    if chunks.is_empty() {
+        None
+    } else {
+        Some(chunks.join("\n"))
+    }
 }
 
 #[cfg(test)]

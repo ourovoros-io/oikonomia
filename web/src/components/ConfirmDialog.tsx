@@ -58,7 +58,7 @@ export function ConfirmDialog({
           <Button variant="secondary" onClick={onCancel} disabled={busy}>
             Cancel
           </Button>
-          <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} disabled={busy}>
+          <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} busy={busy}>
             {busy ? 'Working…' : confirmLabel}
           </Button>
         </div>

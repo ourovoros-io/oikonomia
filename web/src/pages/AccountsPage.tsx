@@ -207,7 +207,7 @@ export function AccountsPage({ entity }: Props) {
               </Select>
             </Field>
             <div className="flex items-end sm:col-span-3">
-              <Button type="submit" disabled={busy}>
+              <Button type="submit" busy={busy}>
                 {busy ? 'Saving…' : 'Create account'}
               </Button>
             </div>
