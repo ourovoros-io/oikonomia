@@ -316,9 +316,7 @@ mod tests {
 
         assert_eq!(eur.map(|s| s.amount_minor), Ok(Some(4590)));
 
-        let (amount, notes) = jpy
-            .map(|s| (s.amount_minor, s.notes))
-            .unwrap_or((Some(-1), String::new()));
+        let (amount, notes) = jpy.map_or((Some(-1), String::new()), |s| (s.amount_minor, s.notes));
         assert_eq!(amount, None, "JPY amount must not be prefilled");
         assert!(notes.contains("JPY"), "notes explain the skip: {notes}");
     }

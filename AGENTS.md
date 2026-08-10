@@ -35,9 +35,14 @@ cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 - Money is **integer minor units** (`i64`); never `f64` for currency.
 - Posted journal entries: **Σ debits == Σ credits**, ≥ 2 lines, debit XOR credit per line.
-- Business rules live in **`oikonomia-core`**, not the TypeScript UI.
+- Business rules live in **`oikonomia-core`**, not the TypeScript UI. The simple
+  entry form posts through `post_simple_entry` (kind → debit/credit mapping in Rust).
+- Multi-statement ledger writes run inside transactions (`unchecked_transaction`).
+- Report queries put entry predicates in an **inner-join subquery**, never in a
+  `LEFT JOIN ... ON` clause (that pattern silently disables the filters).
 - Vault data is **encrypted at rest**; no plaintext DB on disk.
 - v1 Tauri capabilities: **no network** permission.
+- Idle auto-lock is enforced by the Rust watchdog (`spawn_auto_lock`), not the UI timer.
 - No emojis in UI chrome, code, or commits.
 
 ## Style

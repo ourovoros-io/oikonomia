@@ -2541,7 +2541,6 @@ dependencies = [
  "directories",
  "image",
  "ocrs",
- "once_cell",
  "pdf-extract",
  "rand 0.8.7",
  "rten",

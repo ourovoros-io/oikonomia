@@ -7,18 +7,17 @@
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use image::imageops::{self, FilterType};
 use image::{DynamicImage, ImageReader, RgbImage};
 use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
-use once_cell::sync::Lazy;
 use rten::Model;
 use tracing::info;
 
 use crate::error::{Error, Result};
 
-static ENGINE: Lazy<Mutex<Option<OcrEngine>>> = Lazy::new(|| Mutex::new(None));
+static ENGINE: LazyLock<Mutex<Option<OcrEngine>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Paths to the two shipped `.rten` models.
 #[derive(Debug, Clone)]
@@ -49,10 +48,10 @@ impl OcrModelPaths {
 
 /// True if the OCR engine can be (or already has been) loaded.
 pub fn ocr_available(paths: &OcrModelPaths) -> bool {
-    if let Ok(guard) = ENGINE.lock() {
-        if guard.is_some() {
-            return true;
-        }
+    if let Ok(guard) = ENGINE.lock()
+        && guard.is_some()
+    {
+        return true;
     }
     paths.available()
 }
@@ -118,56 +117,77 @@ pub fn ocr_image_bytes(paths: &OcrModelPaths, data: &[u8]) -> Result<String> {
         .decode()
         .map_err(|e| Error::Analysis(format!("decode image: {e}")))?;
 
-    let prepared = preprocess_for_receipt(dyn_img);
+    let prepared = preprocess_for_receipt(&dyn_img);
     run_ocr_on_rgb(paths, &prepared)
 }
 
-fn preprocess_for_receipt(img: DynamicImage) -> RgbImage {
+/// Scale a dimension, clamped into the valid non-zero range.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "input is an image dimension; the scaled result is clamped to at least 1"
+)]
+fn scaled_side(side: u32, scale: f64) -> u32 {
+    ((f64::from(side) * scale).round() as u32).max(1)
+}
+
+fn preprocess_for_receipt(img: &DynamicImage) -> RgbImage {
     // Convert to luma then back to RGB — OCR is greyscale; colour UIs (screenshots)
     // confuse detection less after this.
-    let gray = img.to_luma8();
-    let (w, h) = gray.dimensions();
-
-    let mut luma = gray;
+    let mut luma = img.to_luma8();
+    let (width, height) = luma.dimensions();
 
     // Phone photos / desktop screenshots: upscale small images; cap huge ones.
-    let min_side = w.min(h);
-    let max_side = w.max(h);
+    let min_side = width.min(height);
+    let max_side = width.max(height);
     if min_side > 0 && min_side < 1200 {
         let scale = 1200.0 / f64::from(min_side);
-        let nw = ((f64::from(w) * scale).round() as u32).max(1);
-        let nh = ((f64::from(h) * scale).round() as u32).max(1);
-        luma = imageops::resize(&luma, nw, nh, FilterType::Lanczos3);
+        luma = imageops::resize(
+            &luma,
+            scaled_side(width, scale),
+            scaled_side(height, scale),
+            FilterType::Lanczos3,
+        );
     } else if max_side > 2800 {
         let scale = 2400.0 / f64::from(max_side);
-        let nw = ((f64::from(w) * scale).round() as u32).max(1);
-        let nh = ((f64::from(h) * scale).round() as u32).max(1);
-        luma = imageops::resize(&luma, nw, nh, FilterType::Triangle);
+        luma = imageops::resize(
+            &luma,
+            scaled_side(width, scale),
+            scaled_side(height, scale),
+            FilterType::Triangle,
+        );
     }
 
     // Contrast + mild unsharp-ish stretch helps faded thermal receipts and UI screenshots.
     // Also lift dark-mode UIs (near-black bg, light text) by auto-inverting when mean is low.
     let mut sum: u64 = 0;
-    for p in luma.pixels() {
-        sum += u64::from(p[0]);
+    for pixel in luma.pixels() {
+        sum += u64::from(pixel[0]);
     }
-    let n = u64::from(luma.width()) * u64::from(luma.height());
-    let mean = if n == 0 { 128 } else { (sum / n) as u8 };
+    let count = u64::from(luma.width()) * u64::from(luma.height());
+    // A mean of u8 pixels always fits u8; try_from guards the impossible case.
+    let mean = sum
+        .checked_div(count)
+        .map_or(128, |m| u8::try_from(m).unwrap_or(u8::MAX));
     let invert = mean < 90; // dark-mode screenshot → invert for black-on-white OCR
 
     let mut rgb = RgbImage::new(luma.width(), luma.height());
     let contrast = 1.35_f32;
     for (x, y, pixel) in luma.enumerate_pixels() {
-        let mut v = f32::from(pixel[0]) / 255.0;
+        let mut value = f32::from(pixel[0]) / 255.0;
         if invert {
-            v = 1.0 - v;
+            value = 1.0 - value;
         }
-        // Contrast around mid-grey
-        v = ((v - 0.5) * contrast + 0.5).clamp(0.0, 1.0);
-        // Soft gamma to open midtones
-        v = v.powf(0.92);
-        let u = (v * 255.0).round() as u8;
-        rgb.put_pixel(x, y, image::Rgb([u, u, u]));
+        // Contrast around mid-grey, then a soft gamma to open midtones.
+        value = ((value - 0.5) * contrast + 0.5).clamp(0.0, 1.0);
+        value = value.powf(0.92);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "value is clamped to [0, 1] before scaling into u8 range"
+        )]
+        let level = (value * 255.0).round() as u8;
+        rgb.put_pixel(x, y, image::Rgb([level, level, level]));
     }
 
     rgb

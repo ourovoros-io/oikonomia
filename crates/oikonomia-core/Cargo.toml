@@ -13,7 +13,6 @@ base64 = { workspace = true }
 directories = { workspace = true }
 image = { workspace = true }
 ocrs = { workspace = true }
-once_cell = { workspace = true }
 pdf-extract = { workspace = true }
 rand = { workspace = true }
 rten = { workspace = true }

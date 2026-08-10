@@ -1,4 +1,4 @@
-//! Master password change: SQLCipher rekey + header salt rotation.
+//! Master password change: `SQLCipher` rekey + header salt rotation.
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 

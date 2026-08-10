@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::domain::{Account, AccountId, AccountType, EntityId, JournalEntryId};
 use crate::error::{Error, Result};
 use crate::ledger::list_accounts;
-use crate::util::{now_utc_string, parse_uuid};
+use crate::util::now_utc_string;
 
 /// Document primary key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -78,7 +78,7 @@ pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Re
     Ok(())
 }
 
-/// Store a document blob (already protected by SQLCipher).
+/// Store a document blob (already protected by `SQLCipher`).
 ///
 /// # Errors
 ///
@@ -94,6 +94,9 @@ pub fn save_document(
     let mime = resolve_mime(mime_type, name);
     validate_document_file(name, &mime, data.len() as u64)?;
 
+    // Validation caps the size at 8 MiB, so the length always fits an i64.
+    let size_bytes = i64::try_from(data.len()).unwrap_or(i64::MAX);
+
     let id = DocumentId::new();
     let created = now_utc_string();
 
@@ -108,7 +111,7 @@ pub fn save_document(
             entity_id.0.to_string(),
             name,
             mime,
-            data.len() as i64,
+            size_bytes,
             data,
             created,
         ],
@@ -121,7 +124,7 @@ pub fn save_document(
         entry_id: None,
         filename: name.to_owned(),
         mime_type: mime,
-        size_bytes: data.len() as i64,
+        size_bytes,
     })
 }
 
@@ -147,61 +150,11 @@ pub fn link_document_to_entry(
     Ok(())
 }
 
-/// Load raw bytes for analysis (used when re-running extraction).
+/// Save analysis JSON snapshot on the document row.
 ///
 /// # Errors
 ///
-/// Not found or DB error.
-#[allow(dead_code)]
-pub fn load_document_bytes(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, Vec<u8>)> {
-    conn.query_row(
-        "
-        SELECT id, entity_id, entry_id, filename, mime_type, size_bytes, data
-        FROM documents WHERE id = ?1
-        ",
-        [id.0.to_string()],
-        |row| {
-            let id = DocumentId(parse_uuid(&row.get::<_, String>(0)?).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    e.to_string(),
-                )))
-            })?);
-            let entity_id = EntityId(parse_uuid(&row.get::<_, String>(1)?).map_err(|e| {
-                rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    e.to_string(),
-                )))
-            })?);
-            let entry_s: Option<String> = row.get(2)?;
-            let entry_id = match entry_s {
-                Some(s) => Some(JournalEntryId(parse_uuid(&s).map_err(|e| {
-                    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        e.to_string(),
-                    )))
-                })?)),
-                None => None,
-            };
-            let meta = DocumentMeta {
-                id,
-                entity_id,
-                entry_id,
-                filename: row.get(3)?,
-                mime_type: row.get(4)?,
-                size_bytes: row.get(5)?,
-            };
-            let data: Vec<u8> = row.get(6)?;
-            Ok((meta, data))
-        },
-    )
-    .map_err(|err| match err {
-        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("document".into()),
-        other => Error::Io(other.to_string()),
-    })
-}
-
-/// Save analysis JSON snapshot on the document row.
+/// DB errors.
 pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Result<()> {
     conn.execute(
         "UPDATE documents SET analysis_json = ?1 WHERE id = ?2",
@@ -212,6 +165,10 @@ pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Resu
 }
 
 /// Active accounts useful for auto-matching.
+///
+/// # Errors
+///
+/// DB errors.
 pub fn suggest_accounts_for_entity(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
     list_accounts(conn, entity_id)
 }
@@ -237,24 +194,29 @@ pub fn resolve_mime(mime_type: &str, filename: &str) -> String {
         };
     }
 
-    let lower = filename.to_ascii_lowercase();
-    if lower.ends_with(".pdf") {
+    if has_extension(filename, "pdf") {
         return "application/pdf".into();
     }
-    if lower.ends_with(".png") {
+    if has_extension(filename, "png") {
         return "image/png".into();
     }
-    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+    if has_extension(filename, "jpg") || has_extension(filename, "jpeg") {
         return "image/jpeg".into();
     }
-    if lower.ends_with(".webp") {
+    if has_extension(filename, "webp") {
         return "image/webp".into();
     }
-    if lower.ends_with(".txt") {
+    if has_extension(filename, "txt") {
         return "text/plain".into();
     }
 
     mime
+}
+
+fn has_extension(filename: &str, ext: &str) -> bool {
+    std::path::Path::new(filename)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }
 
 /// Pick best expense account id from merchant/description hints.
@@ -341,15 +303,17 @@ fn match_account_of_type(
         .collect();
 
     for (account_hint, words) in keywords {
-        if words.iter().any(|w| hints.contains(*w)) {
-            if let Some(acc) = pool.iter().find(|a| {
-                let n = a.name.to_lowercase();
-                n.contains(account_hint)
+        if words.iter().any(|w| hints.contains(*w))
+            && let Some(acc) = pool.iter().find(|a| {
+                let name = a.name.to_lowercase();
+                name.contains(account_hint)
                     || (*account_hint == "sales"
-                        && (n.contains("sales") || n.contains("service") || n.contains("other")))
-            }) {
-                return Some(acc.id);
-            }
+                        && (name.contains("sales")
+                            || name.contains("service")
+                            || name.contains("other")))
+            })
+        {
+            return Some(acc.id);
         }
     }
 
@@ -377,23 +341,6 @@ pub fn match_wallet_account(accounts: &[Account]) -> Option<AccountId> {
     assets.first().map(|a| a.id)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validate_document_file_gates_size_name_and_mime() {
-        assert!(validate_document_file("a.pdf", "application/pdf", 1_000).is_ok());
-        assert!(validate_document_file("a.pdf", "application/pdf", 0).is_err());
-        assert!(
-            validate_document_file("a.pdf", "application/pdf", 20 * 1024 * 1024 * 1024).is_err(),
-            "oversize must fail from metadata alone"
-        );
-        assert!(validate_document_file("  ", "application/pdf", 1_000).is_err());
-        assert!(validate_document_file("a.exe", "application/x-msdownload", 1_000).is_err());
-    }
-}
-
 /// Bills payable / AP liability.
 #[must_use]
 pub fn match_payable_account(accounts: &[Account]) -> Option<AccountId> {
@@ -410,4 +357,21 @@ pub fn match_payable_account(accounts: &[Account]) -> Option<AccountId> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_document_file_gates_size_name_and_mime() {
+        assert!(validate_document_file("a.pdf", "application/pdf", 1_000).is_ok());
+        assert!(validate_document_file("a.pdf", "application/pdf", 0).is_err());
+        assert!(
+            validate_document_file("a.pdf", "application/pdf", 20 * 1024 * 1024 * 1024).is_err(),
+            "oversize must fail from metadata alone"
+        );
+        assert!(validate_document_file("  ", "application/pdf", 1_000).is_err());
+        assert!(validate_document_file("a.exe", "application/x-msdownload", 1_000).is_err());
+    }
 }

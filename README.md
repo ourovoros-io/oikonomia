@@ -9,7 +9,8 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 
 ## v1 features
 
-- Encrypted vault (Argon2id → SQLCipher); init / unlock / lock; auto-lock on idle
+- Encrypted vault (Argon2id → SQLCipher); init / unlock / lock; change master password
+- Auto-lock on idle, enforced by a Rust watchdog thread (survives webview stalls)
 - Multi-entity books with personal / company / blank chart templates
 - Chart of accounts (create, deactivate)
 - Journal entries (two-line post + void with reverse)
@@ -26,12 +27,13 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 ## Develop
 
 ```bash
-# Core library tests (domain + vault + ledger)
+# Core library tests (domain + vault + ledger + reports + documents)
 cargo test -p oikonomia-core
-cargo clippy -p oikonomia-core --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 
 # Frontend
 cd web && npm install && npm run dev
+cd web && npm test        # vitest: money parsing, date normalization
 cd web && npm run build
 
 # Full desktop app
@@ -41,9 +43,13 @@ cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
 ## Security notes
 
 - Master password is never stored; vault key is derived with Argon2id.
+- Password change re-encrypts the vault via SQLCipher rekey (Settings).
 - Lost password means lost data (no recovery key in v1).
 - Vault files live under the OS app-data directory for `com.georgiosdelkos.oikonomia`.
-- v1 has no network capability in Tauri permissions.
+- v1 has no network capability in Tauri permissions; idle auto-lock is enforced
+  from Rust, not the webview.
+- `reqwest` appears in `Cargo.lock` only as an optional, never-enabled Tauri
+  dependency; `cargo tree --target all -i reqwest` confirms it is not built.
 - On first run you will be warned: choose a strong password.
 
 ## Threat model (v1)

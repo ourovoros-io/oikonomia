@@ -24,7 +24,7 @@ pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
     );
     let (kind, bill_unpaid) = classify_kind(&lower_full);
 
-    let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), &kind);
+    let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
     DocumentSuggestion {
         document_id: DocumentId(uuid::Uuid::nil()),
@@ -41,15 +41,15 @@ pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
         wallet_account_id: None,
         payable_account_id: None,
         confidence,
-        notes: build_notes(amount_minor, &kind, bill_unpaid, &lower_full),
+        notes: build_notes(amount_minor, kind, bill_unpaid, &lower_full),
     }
 }
 
 fn normalize(text: &str) -> String {
     // Common OCR / PDF quirks before line-oriented parsing.
-    let mut t = text.replace('\u{00a0}', " ").replace('\r', "\n");
-    // Narrow no-break space, thin space
-    t = t.replace('\u{202f}', " ").replace('\u{2009}', " ");
+    let mut t = text.replace('\r', "\n");
+    // No-break space, narrow no-break space, thin space
+    t = t.replace(['\u{00a0}', '\u{202f}', '\u{2009}'], " ");
     // OCR often inserts spaces around decimal commas/dots: "72 , 53" / "72 . 53"
     t = collapse_spaced_decimals(&t);
     // Euro symbol variants — standalone tokens only, so EUROBANK stays intact.
@@ -93,33 +93,33 @@ fn replace_eur_token(text: &str) -> String {
 fn collapse_spaced_decimals(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(chars.len());
-    let n = chars.len();
+    let len = chars.len();
     let mut i = 0;
-    while i < n {
+    while i < len {
         if chars[i].is_ascii_digit() {
             // Collect a run that may include spaced separators: 1 234 , 56 or 72 , 53
             let start = i;
             let mut j = i;
             let mut buf = String::new();
-            while j < n {
+            while j < len {
                 let c = chars[j];
                 if c.is_ascii_digit() {
                     buf.push(c);
                     j += 1;
                 } else if (c == ',' || c == '.')
-                    && j + 1 < n
+                    && j + 1 < len
                     && (chars[j + 1].is_ascii_digit()
                         || (chars[j + 1].is_whitespace()
-                            && j + 2 < n
+                            && j + 2 < len
                             && chars[j + 2].is_ascii_digit()))
                 {
                     buf.push(c);
                     j += 1;
-                    while j < n && chars[j].is_whitespace() {
+                    while j < len && chars[j].is_whitespace() {
                         j += 1;
                     }
                 } else if c.is_whitespace()
-                    && j + 1 < n
+                    && j + 1 < len
                     && chars[j + 1].is_ascii_digit()
                     && !buf.is_empty()
                 {
@@ -128,7 +128,7 @@ fn collapse_spaced_decimals(text: &str) -> String {
                     // have a decimal sep in buf (unlikely). Conservative: skip lone spaces
                     // between digit groups of length 3.
                     let mut k = j + 1;
-                    while k < n && chars[k].is_ascii_digit() {
+                    while k < len && chars[k].is_ascii_digit() {
                         k += 1;
                     }
                     let group_len = k - (j + 1);
@@ -237,10 +237,10 @@ fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
     }
 
     // 2) Utility bills: vote among € amounts (with date tokens masked).
-    if is_utility_bill(lower) {
-        if let Some(v) = find_utility_payment_total(text) {
-            return Some(v);
-        }
+    if is_utility_bill(lower)
+        && let Some(v) = find_utility_payment_total(text)
+    {
+        return Some(v);
     }
 
     // 3) Line containing "σύνολα" / "totals" — take the largest plausible amount
@@ -249,15 +249,13 @@ fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
         if is_noise_amount_line(&line_l) {
             continue;
         }
-        if line_l.contains("σύνολα") || line_l.contains("συνολα") || line_l.contains("totals")
-        {
-            if let Some(v) = money_amounts_on_line(line)
+        if (line_l.contains("σύνολα") || line_l.contains("συνολα") || line_l.contains("totals"))
+            && let Some(v) = money_amounts_on_line(line)
                 .into_iter()
                 .filter(|a| is_plausible_money(*a) && *a > 0)
                 .max()
-            {
-                return Some(v);
-            }
+        {
+            return Some(v);
         }
     }
 
@@ -474,13 +472,13 @@ fn is_noise_amount_line(line_l: &str) -> bool {
         || line_l.contains("διασύνδεσ")
         || line_l.contains("παραγωγ")
         // Gas volume / calorific tables (not the euro total)
-        || line_l.contains("κατανάλωση") && line_l.contains("x")
-        || line_l.contains("καταναλωση") && (line_l.contains("x") || line_l.contains("×"))
-        || line_l.contains("%")
+        || line_l.contains("κατανάλωση") && line_l.contains('x')
+        || line_l.contains("καταναλωση") && (line_l.contains('x') || line_l.contains('×'))
+        || line_l.contains('%')
         || line_l.contains("x0,")
         || line_l.contains("x 0,")
         || line_l.contains("x0.")
-        || line_l.contains("×")
+        || line_l.contains('×')
 }
 
 fn is_amount_only_line(line: &str) -> bool {
@@ -801,7 +799,7 @@ fn find_invoice_reference(text: &str, lower: &str) -> Option<String> {
             let slice: String = line
                 .chars()
                 .skip(idx)
-                .take_while(|c| c.is_ascii_alphanumeric())
+                .take_while(char::is_ascii_alphanumeric)
                 .collect();
             let up = slice.to_ascii_uppercase();
             if up.len() >= 10
@@ -823,10 +821,10 @@ fn find_invoice_reference(text: &str, lower: &str) -> Option<String> {
                 return Some(n);
             }
             // sometimes values are on the next line
-            if let Some(next) = text.lines().nth(i + 1) {
-                if let Some(n) = long_digit_token(next) {
-                    return Some(n);
-                }
+            if let Some(next) = text.lines().nth(i + 1)
+                && let Some(n) = long_digit_token(next)
+            {
+                return Some(n);
             }
         }
     }
@@ -834,60 +832,49 @@ fn find_invoice_reference(text: &str, lower: &str) -> Option<String> {
     // Explicit invoice / ref labels
     for line in text.lines() {
         let l = line.to_lowercase();
-        if l.contains("invoice")
+        if (l.contains("invoice")
             || l.contains("αρ. παραστατ")
             || l.contains("αριθμός")
             || l.contains("number")
-            || l.contains("ref")
+            || l.contains("ref"))
+            && let Some(n) = long_digit_token(line)
         {
-            if let Some(n) = long_digit_token(line) {
-                return Some(n);
-            }
+            return Some(n);
         }
     }
 
     // Fallback: longest digit run that looks like an invoice id (10–20 digits)
     let mut best: Option<String> = None;
     for line in text.lines() {
-        if let Some(n) = long_digit_token(line) {
-            if n.len() >= 10 {
-                if best.as_ref().map(|b| n.len() > b.len()).unwrap_or(true) {
-                    best = Some(n);
-                }
-            }
+        if let Some(n) = long_digit_token(line)
+            && n.len() >= 10
+            && best.as_ref().is_none_or(|b| n.len() > b.len())
+        {
+            best = Some(n);
         }
     }
     best
 }
 
 fn long_digit_token(line: &str) -> Option<String> {
-    let mut best = None;
+    let mut best: Option<String> = None;
     let mut buf = String::new();
+
+    let take = |buf: &mut String, best: &mut Option<String>| {
+        if buf.len() >= 6 && buf.len() <= 20 && best.as_ref().is_none_or(|b| buf.len() >= b.len()) {
+            *best = Some(buf.clone());
+        }
+        buf.clear();
+    };
+
     for ch in line.chars() {
         if ch.is_ascii_digit() {
             buf.push(ch);
         } else {
-            if buf.len() >= 6 && buf.len() <= 20 {
-                if best
-                    .as_ref()
-                    .map(|b: &String| buf.len() >= b.len())
-                    .unwrap_or(true)
-                {
-                    best = Some(buf.clone());
-                }
-            }
-            buf.clear();
+            take(&mut buf, &mut best);
         }
     }
-    if buf.len() >= 6 && buf.len() <= 20 {
-        if best
-            .as_ref()
-            .map(|b: &String| buf.len() >= b.len())
-            .unwrap_or(true)
-        {
-            best = Some(buf);
-        }
-    }
+    take(&mut buf, &mut best);
     best
 }
 
@@ -979,26 +966,21 @@ fn find_merchant(text: &str, lower: &str) -> Option<String> {
             }
             if after_client
                 && (l.contains("επωνυμία") || l.contains("επωνυμια") || l.starts_with("name"))
+                && let Some(name) = value_after_colon(line)
+                && name.chars().count() >= 3
             {
-                if let Some(name) = value_after_colon(line) {
-                    if name.chars().count() >= 3 {
-                        return Some(name);
-                    }
-                }
+                return Some(name);
             }
-            if after_client {
-                // Next substantial non-label line
-                if !l.contains("α.φ.μ")
-                    && !l.contains("αφμ")
-                    && !l.contains("διεύθυν")
-                    && line.chars().count() >= 5
-                    && line.chars().any(|c| c.is_alphabetic())
-                {
-                    // skip pure labels
-                    if !l.ends_with(':') {
-                        return Some(line.trim().to_owned());
-                    }
-                }
+            // Next substantial non-label line
+            if after_client
+                && !l.contains("α.φ.μ")
+                && !l.contains("αφμ")
+                && !l.contains("διεύθυν")
+                && line.chars().count() >= 5
+                && line.chars().any(char::is_alphabetic)
+                && !l.ends_with(':')
+            {
+                return Some(line.trim().to_owned());
             }
         }
     }
@@ -1007,10 +989,10 @@ fn find_merchant(text: &str, lower: &str) -> Option<String> {
     for line in text.lines() {
         let l = line.to_lowercase();
         if l.contains("επωνυμία") || l.contains("επωνυμια") {
-            if let Some(name) = value_after_colon(line) {
-                if name.chars().count() >= 3 {
-                    return Some(name);
-                }
+            if let Some(name) = value_after_colon(line)
+                && name.chars().count() >= 3
+            {
+                return Some(name);
             }
             // same line after spaces
             let cleaned = line
@@ -1032,7 +1014,7 @@ fn find_merchant(text: &str, lower: &str) -> Option<String> {
         .find(|l| {
             l.chars().count() >= 5
                 && l.chars().count() <= 80
-                && l.chars().any(|c| c.is_alphabetic())
+                && l.chars().any(char::is_alphabetic)
                 && !l.to_lowercase().contains("τιμολόγιο")
         })
         .map(ToOwned::to_owned)
@@ -1086,10 +1068,6 @@ fn find_description(
             {
                 return Some(alpha.to_owned());
             }
-            // only take a few lines after header
-            if line.chars().any(|c| c.is_ascii_digit()) && alpha.chars().count() < 4 {
-                continue;
-            }
         }
     }
 
@@ -1109,7 +1087,7 @@ fn score_confidence(
     amount: Option<i64>,
     date: Option<&String>,
     reference: Option<&String>,
-    kind: &EntryKindSuggestion,
+    kind: EntryKindSuggestion,
 ) -> f32 {
     let mut c = 0.2_f32;
     if amount.is_some() {
@@ -1132,7 +1110,7 @@ fn score_confidence(
 
 fn build_notes(
     amount: Option<i64>,
-    kind: &EntryKindSuggestion,
+    kind: EntryKindSuggestion,
     unpaid: bool,
     lower: &str,
 ) -> String {
@@ -1160,7 +1138,7 @@ fn build_notes(
 mod tests {
     use super::*;
 
-    const SAMPLE_GREEK_INVOICE: &str = r#"
+    const SAMPLE_GREEK_INVOICE: &str = r"
 Επωνυμία                            ΟΥΡΟΒΟΡΟΣ ΜΟΝΟΠΡΟΣΩΠΗ Ι Κ Ε
 Α.Φ.Μ.                             801837924
 Τιμολόγιο Παροχής / Ενδοκοινοτική Παροχή Υπηρεσιών
@@ -1173,7 +1151,7 @@ B                 51              25/06/2026                     400014111102934
                                                                               Σύνολα        0,00          1860,00                           0,00         1860,00
      1860,00               0,00                        0,00                 0,00            0,00              0,00               0,00                 0,00
                                                                                                           Πληρωτέο (€): 1860,00
-"#;
+";
 
     #[test]
     fn greek_service_invoice_total_and_kind() {
@@ -1207,8 +1185,8 @@ B                 51              25/06/2026                     400014111102934
         assert_eq!(parse_money_token("1860,00"), Some(186_000));
     }
 
-    /// Excerpt of a ZeniΘ electricity settlement bill (payment total 76,65 €).
-    const SAMPLE_ZENITH_BILL: &str = r#"
+    /// Excerpt of a `ZeniΘ` electricity settlement bill (payment total 76,65 €).
+    const SAMPLE_ZENITH_BILL: &str = r"
 Εκκαθαριστικός
 ΟΥΡΟΒΟΡΟΣ ΜΟΝΟΠΡΟΣΩΠΗ Ι.Κ.Ε.
 Α.Φ.Μ. 801837924
@@ -1229,7 +1207,7 @@ Power Business Trust 4.0
 RF77901058000022174309305
                                                                                                                          76,65 €
 www.zenith.gr
-"#;
+";
 
     #[test]
     fn zenith_electricity_bill_total() {
@@ -1267,7 +1245,7 @@ www.zenith.gr
     }
 
     /// NGS / Gas Simple Home interim gas bill (Έναντι).
-    const SAMPLE_NGS_GAS_BILL: &str = r#"
+    const SAMPLE_NGS_GAS_BILL: &str = r"
 ΈΝΑΝΤΙ
 ΗΚΑΣΠ:            20190002009749
 Κωδικός Παροχής: NGS000009414
@@ -1286,7 +1264,7 @@ www.zenith.gr
 Κατανάλωση                      01/06/26   30/06/26   30   47,87   11,66500             558,41           0,06648          37,12 €
 Σύνολο Φ.Π.Α. 6%                                                              68,42 x                 6% =                4,11 €
                                                                                                                        72,53 €
-"#;
+";
 
     #[test]
     fn ngs_gas_bill_payment_total() {
@@ -1328,9 +1306,10 @@ www.zenith.gr
 mod live_fixture {
     use super::*;
 
-    /// Text as actually produced by `pdf_extract` on NGS000009414_0113405.pdf
+    /// Text as actually produced by `pdf_extract` on `NGS000009414_0113405.pdf`
     /// (layout is jumbled vs clean pdftotext — this is what the app sees).
     #[test]
+    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn parse_real_ngs_pdf_extract_fixture() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -1372,6 +1351,7 @@ mod live_fixture {
     }
 
     #[test]
+    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn parse_real_ngs_pdf_bytes_end_to_end() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ngs_gas.pdf");
         let Ok(bytes) = std::fs::read(path) else {
