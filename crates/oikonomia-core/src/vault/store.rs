@@ -155,6 +155,60 @@ impl Vault {
         self.conn = None;
     }
 
+    /// Re-encrypt the vault under a new master password (`SQLCipher` rekey).
+    ///
+    /// Closes any open connection first (its page cache would go stale mid-
+    /// rekey), verifies the old password on a fresh connection, stages the new
+    /// header in a temp file, rekeys, then atomically renames the header into
+    /// place — so a crash between the steps leaves the real header still
+    /// matching whichever key the database currently uses. On success the
+    /// vault is left unlocked under the new key.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::VaultUninitialized`], [`Error::InvalidPassword`] for a wrong
+    /// old password, [`Error::Validation`] for a weak new password, or
+    /// crypto/I/O failures.
+    pub fn change_password(&mut self, old: &str, new: &str) -> Result<()> {
+        let header = self
+            .header
+            .as_ref()
+            .ok_or(Error::VaultUninitialized)?
+            .clone();
+        validate_password(new)?;
+
+        self.conn = None;
+
+        let old_key = crypto::derive_key(old, &header)?;
+        let db_path = vault_db_path(&self.data_dir);
+        let conn = open_sqlcipher(&db_path, &old_key)?;
+
+        let mut salt = [0u8; SALT_LEN];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let new_header = VaultHeader::new_with_salt(&salt);
+        let new_key = crypto::derive_key(new, &new_header)?;
+
+        let header_path = vault_header_path(&self.data_dir);
+        let tmp_path = header_path.with_extension("json.tmp");
+        let header_json =
+            serde_json::to_string_pretty(&new_header).map_err(|err| Error::Io(err.to_string()))?;
+        fs::write(&tmp_path, header_json).map_err(|err| Error::Io(err.to_string()))?;
+
+        // Fold WAL pages into the main file so the rekey covers everything.
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+            .map_err(|err| Error::Io(err.to_string()))?;
+        let pragma_key = Zeroizing::new(crypto::key_to_sqlcipher_pragma(&new_key));
+        conn.pragma_update(None, "rekey", pragma_key.as_str())
+            .map_err(|err| Error::Crypto(err.to_string()))?;
+        drop(conn);
+
+        fs::rename(&tmp_path, &header_path).map_err(|err| Error::Io(err.to_string()))?;
+
+        self.header = Some(new_header);
+        self.conn = Some(open_sqlcipher(&db_path, &new_key)?);
+        Ok(())
+    }
+
     /// Borrow the open connection.
     ///
     /// # Errors
