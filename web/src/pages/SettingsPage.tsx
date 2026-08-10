@@ -15,14 +15,13 @@ import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import {
   Button,
-  Card,
   ChoiceCard,
+  CollapsibleSection,
   ErrorBanner,
   Field,
   IconBadge,
   Input,
   PageHeader,
-  Panel,
   Select,
 } from '../components/ui'
 import type { CommandError } from '../lib/tauri'
@@ -210,18 +209,11 @@ export function SettingsPage({
         onConfirm={() => void confirmDelete()}
       />
 
-      <Card padding="lg">
-        <div className="mb-5 flex items-center gap-3">
-          <IconBadge tone="accent" size="sm">
-            <Timer className="size-4" />
-          </IconBadge>
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--color-fg)]">Auto-lock</h3>
-            <p className="text-xs text-[var(--color-muted)]">
-              Lock the vault after idle time
-            </p>
-          </div>
-        </div>
+      <CollapsibleSection
+        title="Auto-lock"
+        description="Lock the vault after idle time"
+        icon={<Timer className="size-4" />}
+      >
         <div className="flex flex-wrap items-center gap-2">
           {LOCK_PRESETS.map((p) => (
             <Button
@@ -236,20 +228,13 @@ export function SettingsPage({
             </Button>
           ))}
         </div>
-      </Card>
+      </CollapsibleSection>
 
-      <Card padding="lg">
-        <div className="mb-5 flex items-center gap-3">
-          <IconBadge tone="accent" size="sm">
-            <KeyRound className="size-4" />
-          </IconBadge>
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--color-fg)]">Master password</h3>
-            <p className="text-xs text-[var(--color-muted)]">
-              Re-encrypts the vault. There is no recovery if the new password is lost.
-            </p>
-          </div>
-        </div>
+      <CollapsibleSection
+        title="Master password"
+        description="Re-encrypts the vault. There is no recovery if the new password is lost."
+        icon={<KeyRound className="size-4" />}
+      >
         <form onSubmit={onChangePassword} className="grid gap-4 sm:grid-cols-3">
           <Field label="Current password">
             <Input
@@ -284,21 +269,13 @@ export function SettingsPage({
             </Button>
           </div>
         </form>
-      </Card>
+      </CollapsibleSection>
 
-      <Card padding="lg">
-        <div className="mb-5 flex items-center gap-3">
-          <IconBadge tone="accent" size="sm">
-            <Building2 className="size-4" />
-          </IconBadge>
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--color-fg)]">New entity</h3>
-            <p className="text-xs text-[var(--color-muted)]">
-              Separate books for personal and company
-            </p>
-          </div>
-        </div>
-
+      <CollapsibleSection
+        title="New entity"
+        description="Separate books for personal and company"
+        icon={<Building2 className="size-4" />}
+      >
         <form onSubmit={onCreate} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Name">
@@ -345,9 +322,9 @@ export function SettingsPage({
             {busy ? 'Creating…' : 'Create entity'}
           </Button>
         </form>
-      </Card>
+      </CollapsibleSection>
 
-      <Panel
+      <CollapsibleSection
         title="Entities"
         description={
           entities.length === 0
@@ -355,6 +332,7 @@ export function SettingsPage({
             : `${entities.length} book${entities.length === 1 ? '' : 's'}`
         }
         icon={<Building2 className="size-4" />}
+        flush
       >
         {entities.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[var(--color-muted)]">
@@ -399,7 +377,7 @@ export function SettingsPage({
             ))}
           </ul>
         )}
-      </Panel>
+      </CollapsibleSection>
     </div>
   )
 }

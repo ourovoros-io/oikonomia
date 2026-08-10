@@ -1,4 +1,5 @@
 import { ChevronDown } from 'lucide-react'
+import { useState } from 'react'
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -155,6 +156,69 @@ export function Panel({
         </div>
       </div>
       {children}
+    </div>
+  )
+}
+
+/**
+ * Collapsible section: header row always visible with a chevron at the end,
+ * body rendered only while expanded. Collapsed by default.
+ */
+export function CollapsibleSection({
+  title,
+  description,
+  icon,
+  defaultOpen = false,
+  flush = false,
+  children,
+}: {
+  title: string
+  description?: string
+  icon?: ReactNode
+  defaultOpen?: boolean
+  /** Body without padding, for lists that manage their own edges. */
+  flush?: boolean
+  children: ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+
+  return (
+    <div
+      className={cn(
+        'overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]',
+        surfaceShadow,
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-[var(--color-surface-2)]/60"
+      >
+        {icon ? (
+          <IconBadge tone="accent" size="sm">
+            {icon}
+          </IconBadge>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
+          {description ? (
+            <p className="text-xs text-[var(--color-muted)]">{description}</p>
+          ) : null}
+        </div>
+        <ChevronDown
+          className={cn(
+            'size-4 shrink-0 text-[var(--color-muted)] transition-transform duration-200',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+
+      {open ? (
+        <div className={cn('border-t border-[var(--color-border)]', !flush && 'p-5 sm:p-6')}>
+          {children}
+        </div>
+      ) : null}
     </div>
   )
 }
