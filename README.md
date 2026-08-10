@@ -40,6 +40,11 @@ cd web && npm run build
 cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
 ```
 
+## Pre-commit hooks
+
+Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
+(cargo fmt, cargo clippy, tsc); `prek run --all-files` checks the whole tree.
+
 ## Security notes
 
 - Master password is never stored; vault key is derived with Argon2id.

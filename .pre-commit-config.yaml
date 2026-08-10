@@ -1,0 +1,25 @@
+# prek / pre-commit config. `prek install` once; `prek run --all-files` to test.
+# Local hooks keep the installed toolchains as the single source of truth —
+# nothing to version-bump, and clippy/fmt/tsc track the repo's own tooling.
+
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: cargo-clippy
+        name: cargo clippy -D warnings
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+      - id: tsc
+        name: tsc -b (web)
+        entry: bash -c 'cd web && npx tsc -b'
+        language: system
+        files: ^web/(.*\.(ts|tsx)|tsconfig.*\.json)$
+        pass_filenames: false
