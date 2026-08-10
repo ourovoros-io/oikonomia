@@ -1,12 +1,13 @@
 <p align="center">
-  <img src="docs/assets/logo.svg" width="140"
-       alt="Oikonomia logo: a Greek temple whose doorway is a keyhole">
+  <img src="docs/assets/logo.svg" width="150"
+       alt="Oikonomia logo: a shield around a Greek house whose doorway is a keyhole with a euro coin">
 </p>
 
 <h1 align="center">Oikonomia</h1>
 
-<p align="center"><em>οἶκος (house) + νόμος (order) — the temple mark is two
-columns (double-entry) around a keyhole doorway (the encrypted vault).</em></p>
+<p align="center"><em>οἶκος (house) + νόμος (order) — a shield (encryption)
+around the oikos: two columns (double-entry) flank a keyhole doorway (the
+vault), with a euro at the door.</em></p>
 
 Local-only personal and company finance: **double-entry** multi-entity books,
 **encrypted at rest**, with a Stripe-inspired desktop UI (dark mode first).
