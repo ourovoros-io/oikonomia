@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { KeyRound, Shield } from 'lucide-react'
+import { KeyRound } from 'lucide-react'
 import { Logo } from './Logo'
 import type { VaultStatus } from '../lib/tauri'
 import { vaultInit, vaultUnlock, type CommandError } from '../lib/tauri'
@@ -52,8 +52,8 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
           </h1>
           <p className="mt-2 max-w-sm text-sm text-[var(--color-muted)]">
             {isSetup
-              ? 'Choose a master password. It is never stored. If you lose it, the books cannot be recovered.'
-              : 'Enter your master password to decrypt this device’s books.'}
+              ? 'Choose a password. It is never stored. If you lose it, the books cannot be recovered.'
+              : 'Enter your password to decrypt this device’s books.'}
           </p>
         </div>
 
@@ -61,13 +61,8 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
           className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
           onSubmit={onSubmit}
         >
-          <div className="mb-5 flex items-center gap-2 text-xs text-[var(--color-muted)]">
-            <Shield className="size-3.5 text-[var(--color-accent)]" strokeWidth={1.75} />
-            Encrypted at rest with SQLCipher
-          </div>
-
           <div className="space-y-4">
-            <Field label="Master password">
+            <Field label="Password">
               <div className="relative">
                 <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
                 <Input

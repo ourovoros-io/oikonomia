@@ -4,33 +4,63 @@
       <stop offset="0" stop-color="#9d97ff"/>
       <stop offset="1" stop-color="#5a51f0"/>
     </linearGradient>
+
+    <!-- Transparent gap ring so the shield badge separates from the house -->
+    <mask id="house-gap">
+      <rect width="512" height="512" fill="white"/>
+      <g transform="translate(306 300) scale(8)">
+        <path fill="black" stroke="black" stroke-width="4" stroke-linejoin="round"
+              d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/>
+      </g>
+    </mask>
+
+    <!-- Euro symbol knocked out of the shield, like the keyhole doorway -->
+    <mask id="euro-cut">
+      <rect width="512" height="512" fill="white"/>
+      <g transform="translate(306 300) scale(8)"
+         fill="none" stroke="black" stroke-width="1.7" stroke-linecap="round">
+        <path d="M 14.87 9.79 A 3.6 3.6 0 1 0 14.87 14.61"/>
+        <path d="M 7.7 11.35 H 12.3"/>
+        <path d="M 7.7 13.05 H 12.3"/>
+      </g>
+    </mask>
   </defs>
 
-  <!-- Pediment: the roof of the oikos -->
-  <path d="M 92 196 L 256 88 L 420 196"
-        fill="none" stroke="url(#oik)" stroke-width="46"
-        stroke-linecap="round" stroke-linejoin="round"/>
+  <g mask="url(#house-gap)">
+    <!-- Pediment: the roof of the oikos -->
+    <path d="M 92 196 L 256 88 L 420 196"
+          fill="none" stroke="url(#oik)" stroke-width="46"
+          stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- Two columns (double-entry) carved from one slab; the void between
-       them is a keyhole doorway (the encrypted vault) -->
-  <path fill-rule="evenodd" fill="url(#oik)" d="
-    M 152 232
-    L 360 232
-    Q 388 232 388 260
-    L 388 398
-    Q 388 412 374 412
-    L 286 412
-    L 286 352
-    Q 298 336 298 316
-    A 42 42 0 1 0 214 316
-    Q 214 336 226 352
-    L 226 412
-    L 138 412
-    Q 124 412 124 398
-    L 124 260
-    Q 124 232 152 232
-    Z"/>
+    <!-- Two columns (double-entry) carved from one slab; the void between
+         them is a keyhole doorway (the encrypted vault) -->
+    <path fill-rule="evenodd" fill="url(#oik)" d="
+      M 152 232
+      L 360 232
+      Q 388 232 388 260
+      L 388 398
+      Q 388 412 374 412
+      L 286 412
+      L 286 352
+      Q 298 336 298 316
+      A 42 42 0 1 0 214 316
+      Q 214 336 226 352
+      L 226 412
+      L 138 412
+      Q 124 412 124 398
+      L 124 260
+      Q 124 232 152 232
+      Z"/>
 
-  <!-- Stylobate: the base every account stands on -->
-  <rect x="100" y="436" width="312" height="44" rx="22" fill="url(#oik)"/>
+    <!-- Stylobate: the base every account stands on -->
+    <rect x="100" y="436" width="312" height="44" rx="22" fill="url(#oik)"/>
+  </g>
+
+  <!-- Shield badge (SQLCipher encryption) guarding the money -->
+  <g mask="url(#euro-cut)">
+    <g transform="translate(306 300) scale(8)">
+      <path fill="url(#oik)"
+            d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z"/>
+    </g>
+  </g>
 </svg>
