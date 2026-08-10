@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   BookOpen,
+  FolderOpen,
   LayoutDashboard,
   Lock,
   Moon,
@@ -25,6 +26,7 @@ import { api, type Entity } from './lib/api'
 import type { CommandError } from './lib/tauri'
 import { DashboardPage } from './pages/DashboardPage'
 import { TransactionsPage } from './pages/TransactionsPage'
+import { DocumentsPage } from './pages/DocumentsPage'
 import { AccountsPage } from './pages/AccountsPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -32,6 +34,7 @@ import { SettingsPage } from './pages/SettingsPage'
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'transactions', label: 'Transactions', icon: Receipt },
+  { id: 'documents', label: 'Documents', icon: FolderOpen },
   { id: 'accounts', label: 'Accounts', icon: Wallet },
   { id: 'reports', label: 'Reports', icon: BookOpen },
   { id: 'settings', label: 'Settings', icon: Settings },
@@ -283,6 +286,7 @@ export default function App() {
 
             {active === 'dashboard' ? <DashboardPage entity={entity} /> : null}
             {active === 'transactions' ? <TransactionsPage entity={entity} /> : null}
+            {active === 'documents' ? <DocumentsPage entity={entity} /> : null}
             {active === 'accounts' ? <AccountsPage entity={entity} /> : null}
             {active === 'reports' ? <ReportsPage entity={entity} /> : null}
             {active === 'settings' ? (
