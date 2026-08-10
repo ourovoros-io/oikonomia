@@ -1,16 +1,23 @@
-//! Process-wide application state (vault handle + OCR model paths).
+//! Process-wide application state: vault handle, OCR model paths, idle lock.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oikonomia_core::error::Error as CoreError;
+use oikonomia_core::ledger::DEFAULT_LOCK_TIMEOUT_SECS;
 use oikonomia_core::vault::{Vault, VaultStatus, default_data_dir};
 
 /// Shared state behind Tauri commands.
 pub struct AppState {
-    vault: Mutex<Vault>,
+    vault: Arc<Mutex<Vault>>,
     /// Directory containing bundled `text-detection.rten` + `text-recognition.rten`.
     ocr_model_dir: PathBuf,
+    /// Seconds since `UNIX_EPOCH` of the last command touching the vault.
+    last_activity: Arc<AtomicU64>,
+    /// Cached idle timeout for the watchdog; the persisted value lives in the vault.
+    lock_timeout_secs: Arc<AtomicU64>,
 }
 
 impl AppState {
@@ -23,8 +30,10 @@ impl AppState {
         let data_dir = default_data_dir()?;
         let vault = Vault::open_path(data_dir)?;
         Ok(Self {
-            vault: Mutex::new(vault),
+            vault: Arc::new(Mutex::new(vault)),
             ocr_model_dir,
+            last_activity: Arc::new(AtomicU64::new(now_secs())),
+            lock_timeout_secs: Arc::new(AtomicU64::new(DEFAULT_LOCK_TIMEOUT_SECS)),
         })
     }
 
@@ -34,11 +43,28 @@ impl AppState {
         &self.ocr_model_dir
     }
 
+    /// Shared vault handle for blocking work off the command thread.
+    #[must_use]
+    pub fn vault(&self) -> Arc<Mutex<Vault>> {
+        Arc::clone(&self.vault)
+    }
+
+    /// Record command activity for the idle watchdog.
+    pub fn touch(&self) {
+        self.last_activity.store(now_secs(), Ordering::Relaxed);
+    }
+
+    /// Cache the idle timeout so the watchdog needs no vault access.
+    pub fn set_lock_timeout_cache(&self, secs: u64) {
+        self.lock_timeout_secs.store(secs, Ordering::Relaxed);
+    }
+
     /// Run a closure with exclusive access to the vault.
     pub fn with_vault<T>(
         &self,
         f: impl FnOnce(&mut Vault) -> Result<T, CoreError>,
     ) -> Result<T, CoreError> {
+        self.touch();
         let mut guard = self.vault.lock().map_err(|_| CoreError::VaultLocked)?;
         f(&mut guard)
     }
@@ -47,6 +73,58 @@ impl AppState {
     pub fn status(&self) -> Result<VaultStatus, CoreError> {
         self.with_vault(|vault| Ok(vault.status()))
     }
+
+    /// Handles for the idle watchdog thread.
+    #[must_use]
+    pub fn watchdog_handles(&self) -> (Arc<Mutex<Vault>>, Arc<AtomicU64>, Arc<AtomicU64>) {
+        (
+            Arc::clone(&self.vault),
+            Arc::clone(&self.last_activity),
+            Arc::clone(&self.lock_timeout_secs),
+        )
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Lock the vault from Rust when idle, regardless of webview state (F5).
+///
+/// The frontend timer is only a fast-path duplicate; this thread guarantees
+/// the vault locks even if the webview throttles timers or stalls. Emits
+/// `vault-locked` so the UI can drop to the unlock screen.
+pub fn spawn_auto_lock(
+    app: tauri::AppHandle,
+    vault: Arc<Mutex<Vault>>,
+    last_activity: Arc<AtomicU64>,
+    lock_timeout_secs: Arc<AtomicU64>,
+) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+
+            let idle = now_secs().saturating_sub(last_activity.load(Ordering::Relaxed));
+            if idle < lock_timeout_secs.load(Ordering::Relaxed) {
+                continue;
+            }
+
+            let mut locked_now = false;
+            if let Ok(mut vault) = vault.lock() {
+                if vault.status() == VaultStatus::Unlocked {
+                    vault.lock();
+                    locked_now = true;
+                }
+            }
+
+            if locked_now {
+                use tauri::Emitter;
+                let _ = app.emit("vault-locked", ());
+            }
+        }
+    });
 }
 
 /// Resolve OCR model directory for dev and packaged builds.

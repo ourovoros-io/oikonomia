@@ -1,6 +1,6 @@
 //! Tauri command handlers (thin wrappers over core + state).
 
-use crate::error::CommandResult;
+use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 use base64::Engine;
 use oikonomia_core::documents::{
@@ -8,16 +8,19 @@ use oikonomia_core::documents::{
     link_document_to_entry, save_analysis_json, save_document, suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
+use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::{
-    BalanceSheet, CreateAccount, CreateEntity, DashboardSummary, PnL, PostJournal, PostedEntryView,
-    RegisterLine, TrialBalance, UpdateAccount, VoidResult, account_register, archive_account,
-    archive_entity, balance_sheet, create_account, create_entity, dashboard_summary, delete_entity,
-    get_entity, get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries,
-    post_entry, profit_and_loss, set_lock_timeout_secs, trial_balance, update_account,
-    update_entity, void_entry,
+    BalanceSheet, CreateAccount, CreateEntity, DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary, PnL,
+    PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine, TrialBalance, UpdateAccount,
+    VoidResult, account_register, archive_account, archive_entity, balance_sheet, create_account,
+    create_entity, dashboard_summary, delete_entity, get_entity, get_entry, get_lock_timeout_secs,
+    list_accounts, list_entities, list_entries, post_entry, post_simple_entry, profit_and_loss,
+    set_lock_timeout_secs, trial_balance, update_account, update_entity, void_entry,
 };
-use oikonomia_core::vault::VaultStatus;
+use oikonomia_core::vault::{Vault, VaultStatus};
 use serde::Serialize;
+use std::path::Path;
+use std::sync::Mutex;
 use tauri::State;
 
 /// Static app metadata for the about screen / diagnostics.
@@ -51,12 +54,49 @@ pub fn vault_init(state: State<'_, AppState>, password: String) -> CommandResult
 /// Unlock an existing vault.
 #[tauri::command]
 pub fn vault_unlock(state: State<'_, AppState>, password: String) -> CommandResult<VaultStatus> {
-    state
+    let status = state.with_vault(|vault| {
+        vault.unlock(&password)?;
+        Ok(vault.status())
+    })?;
+
+    // Refresh the watchdog's timeout cache from the now-readable settings.
+    let secs = state
         .with_vault(|vault| {
-            vault.unlock(&password)?;
-            Ok(vault.status())
+            let conn = vault.connection()?;
+            get_lock_timeout_secs(conn)
         })
-        .map_err(Into::into)
+        .unwrap_or(DEFAULT_LOCK_TIMEOUT_SECS);
+    state.set_lock_timeout_cache(secs);
+
+    Ok(status)
+}
+
+/// Change the master password (requires the current password).
+#[tauri::command]
+pub async fn vault_change_password(
+    state: State<'_, AppState>,
+    old: String,
+    new: String,
+) -> CommandResult<VaultStatus> {
+    let vault = state.vault();
+    state.touch();
+
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = vault
+            .lock()
+            .map_err(|_| CommandError::from(CoreError::VaultLocked))?;
+        guard.change_password(&old, &new)?;
+        Ok(guard.status())
+    })
+    .await;
+
+    match joined {
+        Ok(result) => result,
+        Err(err) => Err(CommandError {
+            code: "io".into(),
+            message: format!("password change task failed: {err}"),
+        }),
+    }
 }
 
 /// Lock the vault for this session.
@@ -248,6 +288,20 @@ pub fn entry_post(
         .map_err(Into::into)
 }
 
+/// Post a simple-form entry (kind + role accounts); line construction is in core.
+#[tauri::command]
+pub fn entry_post_simple(
+    state: State<'_, AppState>,
+    input: PostSimpleEntry,
+) -> CommandResult<PostedEntryView> {
+    state
+        .with_vault(|vault| {
+            let conn = vault.connection()?;
+            post_simple_entry(conn, &input)
+        })
+        .map_err(Into::into)
+}
+
 /// Void an entry (posts reverse).
 #[tauri::command]
 pub fn entry_void(state: State<'_, AppState>, id: JournalEntryId) -> CommandResult<VoidResult> {
@@ -339,12 +393,12 @@ pub fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandResult<u6
 /// Set auto-lock timeout seconds.
 #[tauri::command]
 pub fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            set_lock_timeout_secs(conn, secs)
-        })
-        .map_err(Into::into)
+    state.with_vault(|vault| {
+        let conn = vault.connection()?;
+        set_lock_timeout_secs(conn, secs)
+    })?;
+    state.set_lock_timeout_cache(secs);
+    Ok(())
 }
 
 // --- Documents / bill scan (bundled offline OCR) ---------------------------
@@ -359,7 +413,7 @@ pub fn document_analyzer_status(state: State<'_, AppState>) -> AnalyzerStatus {
 ///
 /// Analysis is fully offline (bundled OCR + heuristics). Nothing is sent to the network.
 #[tauri::command]
-pub fn document_analyze(
+pub async fn document_analyze(
     state: State<'_, AppState>,
     entity_id: EntityId,
     filename: String,
@@ -368,75 +422,113 @@ pub fn document_analyze(
 ) -> CommandResult<DocumentSuggestion> {
     let data = base64::engine::general_purpose::STANDARD
         .decode(data_base64.trim())
-        .map_err(|e| crate::error::CommandError {
+        .map_err(|e| CommandError {
             code: "validation".into(),
             message: format!("invalid file data: {e}"),
         })?;
-    analyze_bytes(state, entity_id, filename, mime_type, data)
+
+    let vault = state.vault();
+    let model_dir = state.ocr_model_dir().clone();
+    state.touch();
+
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        analyze_with_vault(&vault, &model_dir, entity_id, &filename, &mime_type, &data)
+    }))
+    .await
 }
 
 /// Analyze a file from a filesystem path (Tauri native drag-and-drop).
 #[tauri::command]
-pub fn document_analyze_path(
+pub async fn document_analyze_path(
     state: State<'_, AppState>,
     entity_id: EntityId,
     path: String,
 ) -> CommandResult<DocumentSuggestion> {
-    let path = std::path::PathBuf::from(&path);
-    let filename = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("document")
-        .to_owned();
+    let vault = state.vault();
+    let model_dir = state.ocr_model_dir().clone();
+    state.touch();
 
-    // Reject oversized/unsupported drops from metadata alone — a stray 10 GB
-    // drop must not be read into memory before failing the size cap.
-    let meta = std::fs::metadata(&path).map_err(|e| crate::error::CommandError {
-        code: "io".into(),
-        message: format!("could not read dropped file: {e}"),
-    })?;
-    let mime = oikonomia_core::documents::resolve_mime("", &filename);
-    oikonomia_core::documents::validate_document_file(&filename, &mime, meta.len())?;
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(&path);
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("document")
+            .to_owned();
 
-    let data = std::fs::read(&path).map_err(|e| crate::error::CommandError {
-        code: "io".into(),
-        message: format!("could not read dropped file: {e}"),
-    })?;
-    analyze_bytes(state, entity_id, filename, mime, data)
+        // Reject oversized/unsupported drops from metadata alone — a stray
+        // 10 GB drop must not be read into memory before failing the size cap.
+        let meta = std::fs::metadata(&path).map_err(|e| CommandError {
+            code: "io".into(),
+            message: format!("could not read dropped file: {e}"),
+        })?;
+        let mime = oikonomia_core::documents::resolve_mime("", &filename);
+        oikonomia_core::documents::validate_document_file(&filename, &mime, meta.len())?;
+
+        let data = std::fs::read(&path).map_err(|e| CommandError {
+            code: "io".into(),
+            message: format!("could not read dropped file: {e}"),
+        })?;
+        analyze_with_vault(&vault, &model_dir, entity_id, &filename, &mime, &data)
+    }))
+    .await
 }
 
-fn analyze_bytes(
-    state: State<'_, AppState>,
+/// Map a blocking-task join failure into a command error.
+async fn await_blocking<T>(
+    handle: tauri::async_runtime::JoinHandle<CommandResult<T>>,
+) -> CommandResult<T> {
+    match handle.await {
+        Ok(result) => result,
+        Err(err) => Err(CommandError {
+            code: "io".into(),
+            message: format!("background task failed: {err}"),
+        }),
+    }
+}
+
+/// Store, analyze, and annotate a document.
+///
+/// The vault lock is held only while touching the database; the CPU-heavy
+/// OCR/parsing phase runs unlocked so other commands stay responsive (F8).
+fn analyze_with_vault(
+    vault: &Mutex<Vault>,
+    model_dir: &Path,
     entity_id: EntityId,
-    filename: String,
-    mime_type: String,
-    data: Vec<u8>,
+    filename: &str,
+    mime_type: &str,
+    data: &[u8],
 ) -> CommandResult<DocumentSuggestion> {
-    let model_dir = state.ocr_model_dir().clone();
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            let entity = get_entity(conn, entity_id)?;
+    let (meta, accounts, entity) = {
+        let guard = vault
+            .lock()
+            .map_err(|_| CommandError::from(CoreError::VaultLocked))?;
+        let conn = guard.connection()?;
+        let entity = get_entity(conn, entity_id)?;
+        let meta = save_document(conn, entity_id, filename, mime_type, data)?;
+        let accounts = suggest_accounts_for_entity(conn, entity_id)?;
+        (meta, accounts, entity)
+    };
 
-            let meta = save_document(conn, entity_id, &filename, &mime_type, &data)?;
-            let accounts = suggest_accounts_for_entity(conn, entity_id)?;
-            let suggestion = analyze_document_bytes(
-                meta.id,
-                &meta.filename,
-                &meta.mime_type,
-                &data,
-                &accounts,
-                &entity.base_currency,
-                Some(model_dir.as_path()),
-            )?;
+    let suggestion = analyze_document_bytes(
+        meta.id,
+        &meta.filename,
+        &meta.mime_type,
+        data,
+        &accounts,
+        &entity.base_currency,
+        Some(model_dir),
+    )?;
 
-            if let Ok(json) = serde_json::to_string(&suggestion) {
+    if let Ok(json) = serde_json::to_string(&suggestion) {
+        if let Ok(guard) = vault.lock() {
+            if let Ok(conn) = guard.connection() {
                 let _ = save_analysis_json(conn, meta.id, &json);
             }
+        }
+    }
 
-            Ok(suggestion)
-        })
-        .map_err(Into::into)
+    Ok(suggestion)
 }
 
 /// Link a stored document to a journal entry after the user posts.
