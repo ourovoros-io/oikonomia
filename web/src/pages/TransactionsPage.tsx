@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -106,6 +106,7 @@ export function TransactionsPage({ entity }: Props) {
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
+  const prevEntityId = useRef<string | null>(null)
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
@@ -209,7 +210,24 @@ export function TransactionsPage({ entity }: Props) {
       setEntries([])
       setAccounts([])
       setDocs([])
+      prevEntityId.current = null
       return
+    }
+    if (prevEntityId.current !== entity.id) {
+      prevEntityId.current = entity.id
+      setDetailId(null)
+      setViewerDocId(null)
+      // A filter for one book's account must not silently empty another
+      // book's list: reset filters on switch, then let the dep change
+      // re-fire this effect for the single clean fetch.
+      if (search || debouncedSearch || fromDate || toDate || accountFilter) {
+        setSearch('')
+        setDebouncedSearch('')
+        setFromDate('')
+        setToDate('')
+        setAccountFilter('')
+        return
+      }
     }
     void reload().catch((err) => setError((err as CommandError).message))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -634,7 +652,13 @@ export function TransactionsPage({ entity }: Props) {
         accounts={accountMap}
         documents={detailId ? (docsByEntry.get(detailId) ?? []) : []}
         currency={ccy}
-        onClose={() => setDetailId(null)}
+        // DocumentViewerModal stacks on top of this one; both register their
+        // own window keydown handler and see the same pre-event snapshot, so
+        // one Escape must close only the viewer — a second Escape then
+        // closes this detail modal.
+        onClose={() => {
+          if (!viewerDocId) setDetailId(null)
+        }}
         onView={(id) => setViewerDocId(id)}
         onChanged={reload}
         onError={(msg) => setError(msg)}
