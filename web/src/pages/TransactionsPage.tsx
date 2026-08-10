@@ -1,12 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import {
-  ArrowDownLeft,
-  ArrowLeftRight,
-  ArrowUpRight,
-  FileText,
-  Plus,
-  Trash2,
-} from 'lucide-react'
+import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, FileText, Plus, Trash2 } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -19,9 +12,9 @@ import {
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentDropZone } from '../components/DocumentDropZone'
+import { Modal } from '../components/Modal'
 import {
   Button,
-  Card,
   EmptyState,
   ErrorBanner,
   Field,
@@ -57,10 +50,7 @@ function pickDefault(
   return active[0]?.id ?? ''
 }
 
-function accountsOf(
-  accounts: Account[],
-  types: Account['account_type'][],
-): Account[] {
+function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
 
@@ -106,19 +96,17 @@ export function TransactionsPage({ entity }: Props) {
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
   const walletAccounts = useMemo(
-    () => accountsOf(accounts, ['asset', 'liability']).filter((a) => {
-      // Prefer money accounts; exclude pure equity-like names
-      const n = a.name.toLowerCase()
-      if (a.account_type === 'liability') {
-        return (
-          n.includes('card') ||
-          n.includes('payable') ||
-          n.includes('loan') ||
-          n.includes('bill')
-        )
-      }
-      return true
-    }),
+    () =>
+      accountsOf(accounts, ['asset', 'liability']).filter((a) => {
+        // Prefer money accounts; exclude pure equity-like names
+        const n = a.name.toLowerCase()
+        if (a.account_type === 'liability') {
+          return (
+            n.includes('card') || n.includes('payable') || n.includes('loan') || n.includes('bill')
+          )
+        }
+        return true
+      }),
     [accounts],
   )
   const payableAccounts = useMemo(() => {
@@ -142,9 +130,7 @@ export function TransactionsPage({ entity }: Props) {
         pickDefault(list, 'expense', ['utilities', 'bills', 'housing', 'subscription', 'rent']),
       )
       setWalletId(pickDefault(list, 'asset', ['checking', 'bank', 'cash']))
-      setPayableId(
-        pickDefault(list, 'liability', ['bills payable', 'accounts payable', 'payable']),
-      )
+      setPayableId(pickDefault(list, 'liability', ['bills payable', 'accounts payable', 'payable']))
       setBillStatus('paid')
     } else {
       setFromId(pickDefault(list, 'asset', ['checking', 'bank']))
@@ -296,12 +282,12 @@ export function TransactionsPage({ entity }: Props) {
         actions={
           <Button
             onClick={() => {
-              setShowForm((v) => !v)
-              if (!showForm) applyKindDefaults(kind, accounts)
+              applyKindDefaults(kind, accounts)
+              setShowForm(true)
             }}
           >
             <Plus className="size-4" />
-            {showForm ? 'Close' : 'New entry'}
+            New entry
           </Button>
         }
       />
@@ -333,101 +319,162 @@ export function TransactionsPage({ entity }: Props) {
         onError={(msg) => setError(msg)}
       />
 
-      {showForm ? (
-        <Card padding="lg">
-          <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-sm font-semibold text-[var(--color-fg)]">New entry</h3>
-              <p className="text-xs text-[var(--color-muted)]">
-                Pick a type — no debit/credit bookkeeping required
-              </p>
-            </div>
-            <Segmented<EntryKind>
-              value={kind}
-              onChange={setKindAndDefaults}
-              options={[
-                {
-                  id: 'expense',
-                  label: 'Expense',
-                  icon: <ArrowUpRight className="size-3.5" />,
-                },
-                {
-                  id: 'income',
-                  label: 'Income',
-                  icon: <ArrowDownLeft className="size-3.5" />,
-                },
-                {
-                  id: 'bill',
-                  label: 'Bill',
-                  icon: <FileText className="size-3.5" />,
-                },
-                {
-                  id: 'transfer',
-                  label: 'Transfer',
-                  icon: <ArrowLeftRight className="size-3.5" />,
-                },
-              ]}
-            />
-          </div>
+      <Modal
+        open={showForm}
+        title="New entry"
+        description="Pick a type — no debit/credit bookkeeping required"
+        onClose={() => {
+          if (!busy) setShowForm(false)
+        }}
+      >
+        <div className="mb-5">
+          <Segmented<EntryKind>
+            value={kind}
+            onChange={setKindAndDefaults}
+            options={[
+              {
+                id: 'expense',
+                label: 'Expense',
+                icon: <ArrowUpRight className="size-3.5" />,
+              },
+              {
+                id: 'income',
+                label: 'Income',
+                icon: <ArrowDownLeft className="size-3.5" />,
+              },
+              {
+                id: 'bill',
+                label: 'Bill',
+                icon: <FileText className="size-3.5" />,
+              },
+              {
+                id: 'transfer',
+                label: 'Transfer',
+                icon: <ArrowLeftRight className="size-3.5" />,
+              },
+            ]}
+          />
+        </div>
 
-          {scanNotes ? (
-            <div className="mb-5 rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-xs text-[var(--color-fg-secondary)]">
-              {scanNotes}
-              {linkedDocumentId ? (
-                <span className="mt-1 block text-[var(--color-muted)]">
-                  Document stored encrypted in your vault
-                  {amount
-                    ? ` · suggested ${fmtMoney(parseMajorToMinor(amount, ccy) ?? 0, ccy)}`
-                    : ''}
-                  . Review fields, then save.
-                </span>
-              ) : null}
-            </div>
+        {scanNotes ? (
+          <div className="mb-5 rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-xs text-[var(--color-fg-secondary)]">
+            {scanNotes}
+            {linkedDocumentId ? (
+              <span className="mt-1 block text-[var(--color-muted)]">
+                Document stored encrypted in your vault
+                {amount ? ` · suggested ${fmtMoney(parseMajorToMinor(amount, ccy) ?? 0, ccy)}` : ''}
+                . Review fields, then save.
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+
+        <form onSubmit={onPost} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="Date">
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+          </Field>
+          <Field label={`Amount (${ccy})`}>
+            <Input
+              inputMode="decimal"
+              placeholder="25,50 or 25.50"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="tabular-nums"
+              required
+            />
+          </Field>
+          <Field label="Reference (optional)">
+            <Input
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="Invoice #, bill #…"
+            />
+          </Field>
+
+          <Field label="Description" className="sm:col-span-2 lg:col-span-3">
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder={
+                kind === 'bill'
+                  ? 'e.g. Electricity March'
+                  : kind === 'income'
+                    ? 'e.g. March salary'
+                    : kind === 'transfer'
+                      ? 'e.g. Move to savings'
+                      : 'e.g. Groceries'
+              }
+              required
+            />
+          </Field>
+
+          {kind === 'expense' ? (
+            <>
+              <Field label="Category (what for)">
+                <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
+                  {expenseAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} · {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Paid from">
+                <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
+                  {walletAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} · {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </>
           ) : null}
 
-          <form onSubmit={onPost} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Date">
-              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-            </Field>
-            <Field label={`Amount (${ccy})`}>
-              <Input
-                inputMode="decimal"
-                placeholder="25,50 or 25.50"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="tabular-nums"
-                required
-              />
-            </Field>
-            <Field label="Reference (optional)">
-              <Input
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder="Invoice #, bill #…"
-              />
-            </Field>
+          {kind === 'income' ? (
+            <>
+              <Field label="Income type">
+                <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
+                  {incomeAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} · {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Received into">
+                <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
+                  {walletAccounts
+                    .filter((a) => a.account_type === 'asset')
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} · {a.name}
+                      </option>
+                    ))}
+                </Select>
+              </Field>
+            </>
+          ) : null}
 
-            <Field label="Description" className="sm:col-span-2 lg:col-span-3">
-              <Input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={
-                  kind === 'bill'
-                    ? 'e.g. Electricity March'
-                    : kind === 'income'
-                      ? 'e.g. March salary'
-                      : kind === 'transfer'
-                        ? 'e.g. Move to savings'
-                        : 'e.g. Groceries'
-                }
-                required
-              />
-            </Field>
-
-            {kind === 'expense' ? (
-              <>
-                <Field label="Category (what for)">
-                  <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
+          {kind === 'bill' ? (
+            <>
+              <Field label="Bill status" className="sm:col-span-2 lg:col-span-3">
+                <Select
+                  value={billStatus}
+                  onChange={(e) => setBillStatus(e.target.value as BillStatus)}
+                >
+                  <option value="paid">Paid now (from bank/card)</option>
+                  <option value="unpaid">Unpaid — I owe this (bills payable)</option>
+                  <option value="pay_existing">Pay an existing unpaid bill</option>
+                </Select>
+              </Field>
+              {billStatus !== 'pay_existing' ? (
+                <Field label="Bill category">
+                  <Select
+                    value={categoryId}
+                    onChange={(e) => setCategoryId(e.target.value)}
+                    required
+                  >
                     {expenseAccounts.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.code} · {a.name}
@@ -435,7 +482,9 @@ export function TransactionsPage({ entity }: Props) {
                     ))}
                   </Select>
                 </Field>
-                <Field label="Paid from">
+              ) : null}
+              {billStatus === 'paid' || billStatus === 'pay_existing' ? (
+                <Field label={billStatus === 'paid' ? 'Paid from' : 'Pay from'}>
                   <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
                     {walletAccounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -444,130 +493,68 @@ export function TransactionsPage({ entity }: Props) {
                     ))}
                   </Select>
                 </Field>
-              </>
-            ) : null}
-
-            {kind === 'income' ? (
-              <>
-                <Field label="Income type">
-                  <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
-                    {incomeAccounts.map((a) => (
+              ) : null}
+              {billStatus === 'unpaid' || billStatus === 'pay_existing' ? (
+                <Field label="Bills payable account">
+                  <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
+                    {payableAccounts.length === 0 ? (
+                      <option value="">No liability accounts — add one</option>
+                    ) : null}
+                    {payableAccounts.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.code} · {a.name}
                       </option>
                     ))}
                   </Select>
                 </Field>
-                <Field label="Received into">
-                  <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
-                    {walletAccounts
-                      .filter((a) => a.account_type === 'asset')
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} · {a.name}
-                        </option>
-                      ))}
-                  </Select>
-                </Field>
-              </>
-            ) : null}
+              ) : null}
+              {payableAccounts.length === 0 && billStatus !== 'paid' ? (
+                <p className="text-xs text-[var(--color-muted)] sm:col-span-2 lg:col-span-3">
+                  Tip: under Accounts, add a liability named “Bills Payable”. New Personal books
+                  include this by default.
+                </p>
+              ) : null}
+            </>
+          ) : null}
 
-            {kind === 'bill' ? (
-              <>
-                <Field label="Bill status" className="sm:col-span-2 lg:col-span-3">
-                  <Select
-                    value={billStatus}
-                    onChange={(e) => setBillStatus(e.target.value as BillStatus)}
-                  >
-                    <option value="paid">Paid now (from bank/card)</option>
-                    <option value="unpaid">Unpaid — I owe this (bills payable)</option>
-                    <option value="pay_existing">Pay an existing unpaid bill</option>
-                  </Select>
-                </Field>
-                {billStatus !== 'pay_existing' ? (
-                  <Field label="Bill category">
-                    <Select
-                      value={categoryId}
-                      onChange={(e) => setCategoryId(e.target.value)}
-                      required
-                    >
-                      {expenseAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} · {a.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                ) : null}
-                {billStatus === 'paid' || billStatus === 'pay_existing' ? (
-                  <Field label={billStatus === 'paid' ? 'Paid from' : 'Pay from'}>
-                    <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
-                      {walletAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} · {a.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                ) : null}
-                {billStatus === 'unpaid' || billStatus === 'pay_existing' ? (
-                  <Field label="Bills payable account">
-                    <Select
-                      value={payableId}
-                      onChange={(e) => setPayableId(e.target.value)}
-                      required
-                    >
-                      {payableAccounts.length === 0 ? (
-                        <option value="">No liability accounts — add one</option>
-                      ) : null}
-                      {payableAccounts.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} · {a.name}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                ) : null}
-                {payableAccounts.length === 0 && billStatus !== 'paid' ? (
-                  <p className="text-xs text-[var(--color-muted)] sm:col-span-2 lg:col-span-3">
-                    Tip: under Accounts, add a liability named “Bills Payable”. New Personal books
-                    include this by default.
-                  </p>
-                ) : null}
-              </>
-            ) : null}
+          {kind === 'transfer' ? (
+            <>
+              <Field label="From">
+                <Select value={fromId} onChange={(e) => setFromId(e.target.value)} required>
+                  {walletAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} · {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="To">
+                <Select value={toId} onChange={(e) => setToId(e.target.value)} required>
+                  {walletAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} · {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </>
+          ) : null}
 
-            {kind === 'transfer' ? (
-              <>
-                <Field label="From">
-                  <Select value={fromId} onChange={(e) => setFromId(e.target.value)} required>
-                    {walletAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} · {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="To">
-                  <Select value={toId} onChange={(e) => setToId(e.target.value)} required>
-                    {walletAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} · {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </>
-            ) : null}
-
-            <div className="flex items-end sm:col-span-2 lg:col-span-1">
-              <Button type="submit" disabled={busy} className="w-full">
-                {busy ? 'Saving…' : 'Save entry'}
-              </Button>
-            </div>
-          </form>
-        </Card>
-      ) : null}
+          <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2 lg:col-span-3">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setShowForm(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy}>
+              {busy ? 'Saving…' : 'Save entry'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       {visibleEntries.length === 0 ? (
         <EmptyState
@@ -575,7 +562,12 @@ export function TransactionsPage({ entity }: Props) {
           title="No transactions yet"
           body="Use Expense for spending, Income for money in, and Bill for utilities or invoices you need to track."
           action={
-            <Button onClick={() => setShowForm(true)}>
+            <Button
+              onClick={() => {
+                applyKindDefaults(kind, accounts)
+                setShowForm(true)
+              }}
+            >
               <Plus className="size-4" />
               New entry
             </Button>
@@ -605,11 +597,7 @@ export function TransactionsPage({ entity }: Props) {
                     ? amountMinor
                     : amountMinor
               const tone =
-                kindLabel === 'income'
-                  ? 'success'
-                  : kindLabel === 'expense'
-                    ? 'danger'
-                    : 'muted'
+                kindLabel === 'income' ? 'success' : kindLabel === 'expense' ? 'danger' : 'muted'
 
               return (
                 <li
