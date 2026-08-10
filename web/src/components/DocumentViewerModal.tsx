@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Download, Loader2 } from 'lucide-react'
 import { api, type DocumentMeta } from '../lib/api'
 import type { CommandError } from '../lib/tauri'
@@ -54,16 +54,19 @@ export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId])
 
-  const blobUrl = useMemo(() => {
-    if (!bytes || !meta) return null
-    return URL.createObjectURL(new Blob([bytes as BlobPart], { type: meta.mime_type }))
-  }, [bytes, meta])
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
 
+  // Object URLs are real resources: create and revoke in one effect so
+  // StrictMode's double-invoked render helpers cannot leak a registration.
   useEffect(() => {
-    return () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl)
+    if (!bytes || !meta) {
+      setBlobUrl(null)
+      return
     }
-  }, [blobUrl])
+    const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: meta.mime_type }))
+    setBlobUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [bytes, meta])
 
   async function onExport() {
     if (!documentId) return
