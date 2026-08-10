@@ -16,7 +16,12 @@ pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
     let entry_date = find_best_date(&normalized);
     let reference = find_invoice_reference(&normalized, &lower_full);
     let merchant = find_merchant(&normalized, &lower_full);
-    let description = find_description(&normalized, &lower_full, merchant.as_deref(), reference.as_deref());
+    let description = find_description(
+        &normalized,
+        &lower_full,
+        merchant.as_deref(),
+        reference.as_deref(),
+    );
     let (kind, bill_unpaid) = classify_kind(&lower_full);
 
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), &kind);
@@ -47,14 +52,41 @@ fn normalize(text: &str) -> String {
     t = t.replace('\u{202f}', " ").replace('\u{2009}', " ");
     // OCR often inserts spaces around decimal commas/dots: "72 , 53" / "72 . 53"
     t = collapse_spaced_decimals(&t);
-    // Euro symbol variants
-    t = t.replace("EUR", "€").replace("eur", "€");
+    // Euro symbol variants — standalone tokens only, so EUROBANK stays intact.
+    t = replace_eur_token(&t);
 
     t.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Replace a standalone `EUR`/`eur` token with `€`.
+///
+/// A blanket `str::replace` corrupted words containing the trigram
+/// (EUROBANK → €OBANK), which then leaked into merchant/description fields.
+fn replace_eur_token(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let is_eur = i + 2 < chars.len()
+            && chars[i].eq_ignore_ascii_case(&'e')
+            && chars[i + 1].eq_ignore_ascii_case(&'u')
+            && chars[i + 2].eq_ignore_ascii_case(&'r');
+        let boundary_before = i == 0 || !chars[i - 1].is_alphabetic();
+        let boundary_after = i + 3 >= chars.len() || !chars[i + 3].is_alphabetic();
+
+        if is_eur && boundary_before && boundary_after {
+            out.push('€');
+            i += 3;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Collapse "72 , 53" / "72 . 53" → "72,53" / "72.53" (OCR spacing).
@@ -161,7 +193,10 @@ fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
             || lower.contains("εξόφληση μέσω")
             || lower.contains("εμπρόθεσμ");
         // Settlement bills are typically amounts to pay now.
-        return (EntryKindSuggestion::Bill, unpaid || lower.contains("εκκαθαριστικ"));
+        return (
+            EntryKindSuggestion::Bill,
+            unpaid || lower.contains("εκκαθαριστικ"),
+        );
     }
 
     // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
@@ -214,7 +249,8 @@ fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
         if is_noise_amount_line(&line_l) {
             continue;
         }
-        if line_l.contains("σύνολα") || line_l.contains("συνολα") || line_l.contains("totals") {
+        if line_l.contains("σύνολα") || line_l.contains("συνολα") || line_l.contains("totals")
+        {
             if let Some(v) = money_amounts_on_line(line)
                 .into_iter()
                 .filter(|a| is_plausible_money(*a) && *a > 0)
@@ -417,7 +453,8 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
 
 fn is_noise_amount_line(line_l: &str) -> bool {
     // Deposits / guarantees are not the bill total
-    if line_l.contains("εγγύηση") || line_l.contains("εγγυηση") || line_l.contains("deposit") {
+    if line_l.contains("εγγύηση") || line_l.contains("εγγυηση") || line_l.contains("deposit")
+    {
         return true;
     }
     // Rate / volume / dimension lines (not payment total)
@@ -639,8 +676,9 @@ fn find_best_date(text: &str) -> Option<String> {
     for line in text.lines() {
         if line.contains('€') && line_has_date(line) {
             for token in line.split_whitespace() {
-                let t = token
-                    .trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
+                let t = token.trim_matches(|c: char| {
+                    !c.is_ascii_digit() && c != '/' && c != '.' && c != '-'
+                });
                 if let Some(iso) = parse_eu_date(t).or_else(|| parse_iso_date(t)) {
                     return Some(iso);
                 }
@@ -657,8 +695,9 @@ fn find_best_date(text: &str) -> Option<String> {
             || l.contains("due")
         {
             for token in line.split_whitespace() {
-                let t = token
-                    .trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
+                let t = token.trim_matches(|c: char| {
+                    !c.is_ascii_digit() && c != '/' && c != '.' && c != '-'
+                });
                 if let Some(iso) = parse_eu_date(t).or_else(|| parse_iso_date(t)) {
                     return Some(iso);
                 }
@@ -667,7 +706,8 @@ fn find_best_date(text: &str) -> Option<String> {
     }
 
     for token in text.split_whitespace() {
-        let t = token.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
+        let t =
+            token.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
         if let Some(iso) = parse_eu_date(t).or_else(|| parse_iso_date(t)) {
             return Some(iso);
         }
@@ -777,7 +817,8 @@ fn find_invoice_reference(text: &str, lower: &str) -> Option<String> {
     // MARK number on Greek invoices (long digit string near MARK / Α.Α.)
     for (i, line) in text.lines().enumerate() {
         let l = line.to_lowercase();
-        if l.contains("μαρκ") || l.contains("mark") || l.contains("α.α") || l.contains("αα ") {
+        if l.contains("μαρκ") || l.contains("mark") || l.contains("α.α") || l.contains("αα ")
+        {
             if let Some(n) = long_digit_token(line) {
                 return Some(n);
             }
@@ -827,7 +868,11 @@ fn long_digit_token(line: &str) -> Option<String> {
             buf.push(ch);
         } else {
             if buf.len() >= 6 && buf.len() <= 20 {
-                if best.as_ref().map(|b: &String| buf.len() >= b.len()).unwrap_or(true) {
+                if best
+                    .as_ref()
+                    .map(|b: &String| buf.len() >= b.len())
+                    .unwrap_or(true)
+                {
                     best = Some(buf.clone());
                 }
             }
@@ -835,7 +880,11 @@ fn long_digit_token(line: &str) -> Option<String> {
         }
     }
     if buf.len() >= 6 && buf.len() <= 20 {
-        if best.as_ref().map(|b: &String| buf.len() >= b.len()).unwrap_or(true) {
+        if best
+            .as_ref()
+            .map(|b: &String| buf.len() >= b.len())
+            .unwrap_or(true)
+        {
             best = Some(buf);
         }
     }
@@ -845,8 +894,7 @@ fn long_digit_token(line: &str) -> Option<String> {
 /// Alphanumeric supply / point-of-delivery codes (e.g. `NGS000009414`).
 fn alnum_supply_code(line: &str) -> Option<String> {
     for tok in line.split_whitespace() {
-        let t = tok
-            .trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        let t = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
         if t.len() >= 8
             && t.len() <= 24
             && t.chars().any(|c| c.is_ascii_alphabetic())
@@ -929,7 +977,8 @@ fn find_merchant(text: &str, lower: &str) -> Option<String> {
                 after_client = true;
                 continue;
             }
-            if after_client && (l.contains("επωνυμία") || l.contains("επωνυμια") || l.starts_with("name"))
+            if after_client
+                && (l.contains("επωνυμία") || l.contains("επωνυμια") || l.starts_with("name"))
             {
                 if let Some(name) = value_after_colon(line) {
                     if name.chars().count() >= 3 {
@@ -1072,7 +1121,10 @@ fn score_confidence(
     if reference.is_some() {
         c += 0.1;
     }
-    if matches!(kind, EntryKindSuggestion::Income | EntryKindSuggestion::Bill) {
+    if matches!(
+        kind,
+        EntryKindSuggestion::Income | EntryKindSuggestion::Bill
+    ) {
         c += 0.05;
     }
     c.min(0.95)
@@ -1084,9 +1136,8 @@ fn build_notes(
     unpaid: bool,
     lower: &str,
 ) -> String {
-    let mut parts = vec![
-        "Parsed offline with the built-in invoice reader (no internet).".to_owned(),
-    ];
+    let mut parts =
+        vec!["Parsed offline with the built-in invoice reader (no internet).".to_owned()];
     if amount.is_none() {
         parts.push("Could not confidently detect a total — please enter the amount.".into());
     }
@@ -1142,6 +1193,14 @@ B                 51              25/06/2026                     400014111102934
     }
 
     #[test]
+    fn eur_token_replacement_keeps_words() {
+        assert_eq!(replace_eur_token("TOTAL 10 EUR"), "TOTAL 10 €");
+        assert_eq!(replace_eur_token("10eur"), "10€");
+        assert_eq!(replace_eur_token("EUROBANK EUROPE"), "EUROBANK EUROPE");
+        assert_eq!(replace_eur_token("EUR"), "€");
+    }
+
+    #[test]
     fn rejects_afm_as_money() {
         assert_eq!(parse_money_token("801837924"), None);
         assert_eq!(parse_money_token("400014111102934"), None);
@@ -1175,16 +1234,26 @@ www.zenith.gr
     #[test]
     fn zenith_electricity_bill_total() {
         let s = parse_invoice_text(SAMPLE_ZENITH_BILL);
-        assert_eq!(s.amount_minor, Some(7_665), "expected €76.65, got {:?}", s.amount_minor);
+        assert_eq!(
+            s.amount_minor,
+            Some(7_665),
+            "expected €76.65, got {:?}",
+            s.amount_minor
+        );
         assert!(
-            matches!(s.kind, EntryKindSuggestion::Bill | EntryKindSuggestion::Expense),
+            matches!(
+                s.kind,
+                EntryKindSuggestion::Bill | EntryKindSuggestion::Expense
+            ),
             "kind={:?}",
             s.kind
         );
         assert_ne!(s.kind, EntryKindSuggestion::Income);
         assert_eq!(s.entry_date.as_deref(), Some("2026-08-18"));
         assert!(
-            s.merchant.as_deref().is_some_and(|m| m.to_lowercase().contains("zeni")),
+            s.merchant
+                .as_deref()
+                .is_some_and(|m| m.to_lowercase().contains("zeni")),
             "merchant={:?}",
             s.merchant
         );
@@ -1230,15 +1299,18 @@ www.zenith.gr
         );
         assert_ne!(s.kind, EntryKindSuggestion::Income);
         assert!(
-            matches!(s.kind, EntryKindSuggestion::Bill | EntryKindSuggestion::Expense),
+            matches!(
+                s.kind,
+                EntryKindSuggestion::Bill | EntryKindSuggestion::Expense
+            ),
             "kind={:?}",
             s.kind
         );
         assert_eq!(s.entry_date.as_deref(), Some("2026-08-13"));
         assert!(
-            s.merchant
-                .as_deref()
-                .is_some_and(|m| m.to_lowercase().contains("gas") || m.to_lowercase().contains("ngs")),
+            s.merchant.as_deref().is_some_and(
+                |m| m.to_lowercase().contains("gas") || m.to_lowercase().contains("ngs")
+            ),
             "merchant={:?}",
             s.merchant
         );
@@ -1282,9 +1354,9 @@ mod live_fixture {
             s.reference
         );
         assert!(
-            s.merchant
-                .as_deref()
-                .is_some_and(|m| m.to_lowercase().contains("gas") || m.to_lowercase().contains("ngs")),
+            s.merchant.as_deref().is_some_and(
+                |m| m.to_lowercase().contains("gas") || m.to_lowercase().contains("ngs")
+            ),
             "merchant={:?}",
             s.merchant
         );

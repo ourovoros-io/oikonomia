@@ -116,7 +116,6 @@ pub fn analyze_document_bytes(
     default_currency: &str,
     model_dir: Option<&std::path::Path>,
 ) -> Result<DocumentSuggestion> {
-    let _ = default_currency;
     let mime = mime_type.to_ascii_lowercase();
     let is_image = mime.starts_with("image/");
 
@@ -185,7 +184,27 @@ pub fn analyze_document_bytes(
 
     let model = model_label.or_else(|| suggestion.model.clone());
     finalize_suggestion(&mut suggestion, document_id, accounts, source, model);
+
+    // The invoice reader emits 2-exponent minor units (cents). For currencies
+    // with a different exponent the value would be silently wrong, so drop it.
+    if currency_exponent(default_currency) != 2 && suggestion.amount_minor.is_some() {
+        suggestion.amount_minor = None;
+        suggestion.notes = format!(
+            "{} Amount detection assumes 2-decimal currencies; enter the {default_currency} amount manually.",
+            suggestion.notes
+        );
+    }
+
     Ok(suggestion)
+}
+
+/// ISO 4217 minor-unit exponent for the currencies the app offers.
+fn currency_exponent(code: &str) -> u32 {
+    match code.to_ascii_uppercase().as_str() {
+        "JPY" | "KRW" | "VND" | "CLP" | "ISK" => 0,
+        "BHD" | "KWD" | "OMR" | "TND" | "JOD" | "IQD" | "LYD" => 3,
+        _ => 2,
+    }
 }
 
 fn finalize_suggestion(
@@ -264,11 +283,43 @@ fn extract_text(filename: &str, mime: &str, data: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::super::invoice::parse_invoice_text;
+    use super::*;
 
     #[test]
     fn english_total_line() {
         let text = "Invoice\nSubtotal 10,00\nTOTAL 45,90 EUR\nThank you";
         let s = parse_invoice_text(text);
         assert_eq!(s.amount_minor, Some(4590));
+    }
+
+    #[test]
+    fn non_two_exponent_currency_drops_amount() {
+        let text = b"Invoice\nTOTAL 45,90\nThank you";
+        let eur = analyze_document_bytes(
+            DocumentId(uuid::Uuid::nil()),
+            "bill.txt",
+            "text/plain",
+            text,
+            &[],
+            "EUR",
+            None,
+        );
+        let jpy = analyze_document_bytes(
+            DocumentId(uuid::Uuid::nil()),
+            "bill.txt",
+            "text/plain",
+            text,
+            &[],
+            "JPY",
+            None,
+        );
+
+        assert_eq!(eur.map(|s| s.amount_minor), Ok(Some(4590)));
+
+        let (amount, notes) = jpy
+            .map(|s| (s.amount_minor, s.notes))
+            .unwrap_or((Some(-1), String::new()));
+        assert_eq!(amount, None, "JPY amount must not be prefilled");
+        assert!(notes.contains("JPY"), "notes explain the skip: {notes}");
     }
 }
