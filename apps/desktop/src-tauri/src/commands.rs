@@ -8,6 +8,7 @@ use oikonomia_core::documents::{
     link_document_to_entry, save_analysis_json, save_document, suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
+use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::{
     BalanceSheet, CreateAccount, CreateEntity, DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary, PnL,
     PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine, TrialBalance, UpdateAccount,
@@ -51,19 +52,24 @@ pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStat
 
 /// Create a new encrypted vault with the master password.
 #[tauri::command]
-pub fn vault_init(state: State<'_, AppState>, password: String) -> CommandResult<VaultStatus> {
-    state
-        .with_vault(|vault| {
-            vault.init(&password)?;
-            Ok(vault.status())
-        })
-        .map_err(Into::into)
+pub async fn vault_init(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<VaultStatus> {
+    with_vault_blocking(&state, move |vault| {
+        vault.init(&password)?;
+        Ok(vault.status())
+    })
+    .await
 }
 
 /// Unlock an existing vault.
 #[tauri::command]
-pub fn vault_unlock(state: State<'_, AppState>, password: String) -> CommandResult<VaultStatus> {
-    let (status, secs) = state.with_vault(|vault| {
+pub async fn vault_unlock(
+    state: State<'_, AppState>,
+    password: String,
+) -> CommandResult<VaultStatus> {
+    let (status, secs) = with_vault_blocking(&state, move |vault| {
         vault.unlock(&password)?;
 
         // Refresh the watchdog's timeout cache from the now-readable settings.
@@ -77,7 +83,8 @@ pub fn vault_unlock(state: State<'_, AppState>, password: String) -> CommandResu
         };
 
         Ok((vault.status(), secs))
-    })?;
+    })
+    .await?;
 
     state.set_lock_timeout_cache(secs);
     Ok(status)
@@ -103,13 +110,12 @@ pub async fn vault_change_password(
 
 /// Lock the vault for this session.
 #[tauri::command]
-pub fn vault_lock(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
-    state
-        .with_vault(|vault| {
-            vault.lock();
-            Ok(vault.status())
-        })
-        .map_err(Into::into)
+pub async fn vault_lock(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
+    with_vault_blocking(&state, move |vault| {
+        vault.lock();
+        Ok(vault.status())
+    })
+    .await
 }
 
 /// Return build identity (no secrets).
@@ -125,281 +131,277 @@ pub fn app_info() -> AppInfo {
 
 /// List non-archived entities.
 #[tauri::command]
-pub fn entity_list(state: State<'_, AppState>) -> CommandResult<Vec<Entity>> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            list_entities(conn)
-        })
-        .map_err(Into::into)
+pub async fn entity_list(state: State<'_, AppState>) -> CommandResult<Vec<Entity>> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        list_entities(conn)
+    })
+    .await
 }
 
 /// Create entity with chart template.
 #[tauri::command]
-pub fn entity_create(state: State<'_, AppState>, input: CreateEntity) -> CommandResult<Entity> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            create_entity(conn, &input)
-        })
-        .map_err(Into::into)
+pub async fn entity_create(
+    state: State<'_, AppState>,
+    input: CreateEntity,
+) -> CommandResult<Entity> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        create_entity(conn, &input)
+    })
+    .await
 }
 
 /// Rename entity.
 #[tauri::command]
-pub fn entity_update(
+pub async fn entity_update(
     state: State<'_, AppState>,
     id: EntityId,
     name: String,
 ) -> CommandResult<Entity> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            update_entity(conn, id, &name)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        update_entity(conn, id, &name)
+    })
+    .await
 }
 
 /// Archive entity (soft-hide).
 #[tauri::command]
-pub fn entity_archive(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            archive_entity(conn, id)
-        })
-        .map_err(Into::into)
+pub async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        archive_entity(conn, id)
+    })
+    .await
 }
 
 /// Permanently delete an entity and all of its books data.
 #[tauri::command]
-pub fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            delete_entity(conn, id)
-        })
-        .map_err(Into::into)
+pub async fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        delete_entity(conn, id)
+    })
+    .await
 }
 
 // --- Accounts --------------------------------------------------------------
 
 /// List accounts for an entity.
 #[tauri::command]
-pub fn account_list(
+pub async fn account_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<Vec<Account>> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            list_accounts(conn, entity_id)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        list_accounts(conn, entity_id)
+    })
+    .await
 }
 
 /// Create account.
 #[tauri::command]
-pub fn account_create(state: State<'_, AppState>, input: CreateAccount) -> CommandResult<Account> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            create_account(conn, &input)
-        })
-        .map_err(Into::into)
+pub async fn account_create(
+    state: State<'_, AppState>,
+    input: CreateAccount,
+) -> CommandResult<Account> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        create_account(conn, &input)
+    })
+    .await
 }
 
 /// Update account.
 #[tauri::command]
-pub fn account_update(state: State<'_, AppState>, input: UpdateAccount) -> CommandResult<Account> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            update_account(conn, &input)
-        })
-        .map_err(Into::into)
+pub async fn account_update(
+    state: State<'_, AppState>,
+    input: UpdateAccount,
+) -> CommandResult<Account> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        update_account(conn, &input)
+    })
+    .await
 }
 
 /// Archive (deactivate) account.
 #[tauri::command]
-pub fn account_archive(state: State<'_, AppState>, id: AccountId) -> CommandResult<()> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            archive_account(conn, id)
-        })
-        .map_err(Into::into)
+pub async fn account_archive(state: State<'_, AppState>, id: AccountId) -> CommandResult<()> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        archive_account(conn, id)
+    })
+    .await
 }
 
 /// Account register.
 #[tauri::command]
-pub fn account_register_cmd(
+pub async fn account_register_cmd(
     state: State<'_, AppState>,
     account_id: AccountId,
     from: Option<String>,
     to: Option<String>,
 ) -> CommandResult<Vec<RegisterLine>> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            account_register(conn, account_id, from.as_deref(), to.as_deref())
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        account_register(conn, account_id, from.as_deref(), to.as_deref())
+    })
+    .await
 }
 
 // --- Journal ---------------------------------------------------------------
 
 /// List journal entries.
 #[tauri::command]
-pub fn entry_list(
+pub async fn entry_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: Option<String>,
     to: Option<String>,
 ) -> CommandResult<Vec<PostedEntryView>> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            list_entries(conn, entity_id, from.as_deref(), to.as_deref())
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        list_entries(conn, entity_id, from.as_deref(), to.as_deref())
+    })
+    .await
 }
 
 /// Get one entry.
 #[tauri::command]
-pub fn entry_get(state: State<'_, AppState>, id: JournalEntryId) -> CommandResult<PostedEntryView> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            get_entry(conn, id)
-        })
-        .map_err(Into::into)
+pub async fn entry_get(
+    state: State<'_, AppState>,
+    id: JournalEntryId,
+) -> CommandResult<PostedEntryView> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        get_entry(conn, id)
+    })
+    .await
 }
 
 /// Post a balanced journal entry.
 #[tauri::command]
-pub fn entry_post(
+pub async fn entry_post(
     state: State<'_, AppState>,
     input: PostJournal,
 ) -> CommandResult<PostedEntryView> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            post_entry(conn, &input)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        post_entry(conn, &input)
+    })
+    .await
 }
 
 /// Post a simple-form entry (kind + role accounts); line construction is in core.
 #[tauri::command]
-pub fn entry_post_simple(
+pub async fn entry_post_simple(
     state: State<'_, AppState>,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            post_simple_entry(conn, &input)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        post_simple_entry(conn, &input)
+    })
+    .await
 }
 
 /// Void an entry (posts reverse).
 #[tauri::command]
-pub fn entry_void(state: State<'_, AppState>, id: JournalEntryId) -> CommandResult<VoidResult> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            void_entry(conn, id)
-        })
-        .map_err(Into::into)
+pub async fn entry_void(
+    state: State<'_, AppState>,
+    id: JournalEntryId,
+) -> CommandResult<VoidResult> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        void_entry(conn, id)
+    })
+    .await
 }
 
 // --- Reports ---------------------------------------------------------------
 
 /// Trial balance.
 #[tauri::command]
-pub fn report_trial_balance(
+pub async fn report_trial_balance(
     state: State<'_, AppState>,
     entity_id: EntityId,
     as_of: String,
 ) -> CommandResult<TrialBalance> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            trial_balance(conn, entity_id, &as_of)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        trial_balance(conn, entity_id, &as_of)
+    })
+    .await
 }
 
 /// Profit and loss.
 #[tauri::command]
-pub fn report_pnl(
+pub async fn report_pnl(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: String,
     to: String,
 ) -> CommandResult<PnL> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            profit_and_loss(conn, entity_id, &from, &to)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        profit_and_loss(conn, entity_id, &from, &to)
+    })
+    .await
 }
 
 /// Balance sheet.
 #[tauri::command]
-pub fn report_balance_sheet(
+pub async fn report_balance_sheet(
     state: State<'_, AppState>,
     entity_id: EntityId,
     as_of: String,
 ) -> CommandResult<BalanceSheet> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            balance_sheet(conn, entity_id, &as_of)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        balance_sheet(conn, entity_id, &as_of)
+    })
+    .await
 }
 
 /// Dashboard summary.
 #[tauri::command]
-pub fn dashboard_summary_cmd(
+pub async fn dashboard_summary_cmd(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: String,
     to: String,
     assets_as_of: String,
 ) -> CommandResult<DashboardSummary> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            dashboard_summary(conn, entity_id, &from, &to, &assets_as_of)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        dashboard_summary(conn, entity_id, &from, &to, &assets_as_of)
+    })
+    .await
 }
 
 // --- Settings --------------------------------------------------------------
 
 /// Get auto-lock timeout seconds.
 #[tauri::command]
-pub fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandResult<u64> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            get_lock_timeout_secs(conn)
-        })
-        .map_err(Into::into)
+pub async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandResult<u64> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        get_lock_timeout_secs(conn)
+    })
+    .await
 }
 
 /// Set auto-lock timeout seconds.
 #[tauri::command]
-pub fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
-    state.with_vault(|vault| {
+pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         set_lock_timeout_secs(conn, secs)
-    })?;
+    })
+    .await?;
     state.set_lock_timeout_cache(secs);
     Ok(())
 }
@@ -487,6 +489,24 @@ pub async fn document_analyze_path(
     .await
 }
 
+/// Run vault work on the blocking pool: no command ever waits for the vault
+/// mutex on the main thread or an async runtime worker (e.g. while a rekey
+/// holds it for seconds).
+async fn with_vault_blocking<T, F>(state: &State<'_, AppState>, f: F) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut Vault) -> Result<T, CoreError> + Send + 'static,
+{
+    let vault = state.vault();
+    state.touch();
+
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = crate::state::lock_vault(&vault);
+        f(&mut guard).map_err(CommandError::from)
+    }))
+    .await
+}
+
 /// Map a blocking-task join failure into a command error.
 async fn await_blocking<T>(
     handle: tauri::async_runtime::JoinHandle<CommandResult<T>>,
@@ -548,15 +568,14 @@ fn analyze_with_vault(
 
 /// Link a stored document to a journal entry after the user posts.
 #[tauri::command]
-pub fn document_link_entry(
+pub async fn document_link_entry(
     state: State<'_, AppState>,
     document_id: oikonomia_core::documents::DocumentId,
     entry_id: JournalEntryId,
 ) -> CommandResult<()> {
-    state
-        .with_vault(|vault| {
-            let conn = vault.connection()?;
-            link_document_to_entry(conn, document_id, entry_id)
-        })
-        .map_err(Into::into)
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        link_document_to_entry(conn, document_id, entry_id)
+    })
+    .await
 }

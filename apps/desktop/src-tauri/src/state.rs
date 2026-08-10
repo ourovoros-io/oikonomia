@@ -59,16 +59,6 @@ impl AppState {
         self.lock_timeout_secs.store(secs, Ordering::Relaxed);
     }
 
-    /// Run a closure with exclusive access to the vault.
-    pub fn with_vault<T>(
-        &self,
-        f: impl FnOnce(&mut Vault) -> Result<T, CoreError>,
-    ) -> Result<T, CoreError> {
-        self.touch();
-        let mut guard = lock_vault(&self.vault);
-        f(&mut guard)
-    }
-
     /// Handles for the idle watchdog thread.
     #[must_use]
     pub fn watchdog_handles(&self) -> (Arc<Mutex<Vault>>, Arc<AtomicU64>, Arc<AtomicU64>) {
