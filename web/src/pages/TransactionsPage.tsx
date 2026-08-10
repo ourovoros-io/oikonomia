@@ -279,17 +279,6 @@ export function TransactionsPage({ entity }: Props) {
         title="Transactions"
         description="Record money in, money out, bills, and transfers."
         meta="Offline OCR · encrypted docs"
-        actions={
-          <Button
-            onClick={() => {
-              applyKindDefaults(kind, accounts)
-              setShowForm(true)
-            }}
-          >
-            <Plus className="size-4" />
-            New entry
-          </Button>
-        }
       />
 
       <ErrorBanner message={error} />
@@ -578,6 +567,18 @@ export function TransactionsPage({ entity }: Props) {
           title="All entries"
           description={`${visibleEntries.length} posted · ${ccy}`}
           icon={<FileText className="size-4" />}
+          actions={
+            <Button
+              size="sm"
+              onClick={() => {
+                applyKindDefaults(kind, accounts)
+                setShowForm(true)
+              }}
+            >
+              <Plus className="size-3.5" />
+              New entry
+            </Button>
+          }
         >
           <ul className="divide-y divide-[var(--color-border)]">
             {visibleEntries.map((view) => {
