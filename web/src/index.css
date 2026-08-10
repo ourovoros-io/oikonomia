@@ -1,51 +1,67 @@
 @import "tailwindcss";
+@import "@fontsource-variable/inter";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  /* One typeface, no exceptions: Inter Variable is bundled locally
+     (no network) and covers numerals via font-variant-numeric. */
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 
-  --color-canvas: #09090b;
-  --color-surface: #0f0f12;
-  --color-surface-2: #16161a;
-  --color-surface-elevated: #1c1c22;
-  --color-border: #23232a;
-  --color-border-strong: #33333d;
-  --color-muted: #8b8b96;
-  --color-fg: #f4f4f5;
-  --color-fg-secondary: #c4c4cc;
-  --color-accent: #635bff;
-  --color-accent-hover: #7a73ff;
-  --color-accent-soft: rgba(99, 91, 255, 0.14);
-  --color-accent-muted: #2a2550;
+  /* Dark theme (default): violet-tinted neutrals around a violet accent. */
+  --color-canvas: #0b0a10;
+  --color-surface: #121017;
+  --color-surface-2: #18151f;
+  --color-surface-elevated: #1f1b28;
+  --color-border: #272231;
+  --color-border-strong: #383044;
+  --color-muted: #948e9f;
+  --color-fg: #f5f4f7;
+  --color-fg-secondary: #c9c5d1;
+  --color-accent: #8b5cf6;
+  --color-accent-hover: #a78bfa;
+  --color-accent-soft: rgba(139, 92, 246, 0.16);
+  --color-accent-muted: #322254;
   --color-danger: #f43f5e;
-  --color-danger-soft: rgba(244, 63, 94, 0.12);
+  --color-danger-soft: rgba(244, 63, 94, 0.13);
   --color-success: #34d399;
-  --color-success-soft: rgba(52, 211, 153, 0.12);
+  --color-success-soft: rgba(52, 211, 153, 0.13);
   --color-warning: #fbbf24;
+  --color-warning-soft: rgba(251, 191, 36, 0.13);
+  --color-info: #38bdf8;
+  --color-info-soft: rgba(56, 189, 248, 0.13);
 
   --radius-control: 0.5rem;
   --control-h: 2.5rem;
   --sidebar-w: 15.5rem;
 }
 
-/* Light theme overrides via html:not(.dark) */
+/* Light theme overrides via html:not(.dark) — deeper hues for contrast
+   on white, same violet family. */
 html:not(.dark) {
-  --color-canvas: #f6f7f9;
+  --color-canvas: #f7f6fb;
   --color-surface: #ffffff;
-  --color-surface-2: #f0f1f4;
-  --color-surface-elevated: #e8eaef;
-  --color-border: #e4e6eb;
-  --color-border-strong: #d0d3db;
-  --color-muted: #6b7280;
-  --color-fg: #111827;
-  --color-fg-secondary: #374151;
-  --color-accent-soft: rgba(99, 91, 255, 0.1);
-  --color-accent-muted: #e8e6ff;
-  --color-danger-soft: rgba(244, 63, 94, 0.08);
-  --color-success-soft: rgba(16, 185, 129, 0.1);
+  --color-surface-2: #f1eff7;
+  --color-surface-elevated: #e9e6f3;
+  --color-border: #e5e2ef;
+  --color-border-strong: #d2cde2;
+  --color-muted: #6f6a80;
+  --color-fg: #17131f;
+  --color-fg-secondary: #3d3749;
+  --color-accent: #7c3aed;
+  --color-accent-hover: #6d28d9;
+  --color-accent-soft: rgba(124, 58, 237, 0.1);
+  --color-accent-muted: #ebe4fb;
+  --color-danger: #e11d48;
+  --color-danger-soft: rgba(225, 29, 72, 0.08);
+  --color-success: #059669;
+  --color-success-soft: rgba(5, 150, 105, 0.1);
+  --color-warning: #d97706;
+  --color-warning-soft: rgba(217, 119, 6, 0.1);
+  --color-info: #0284c7;
+  --color-info-soft: rgba(2, 132, 199, 0.1);
 }
 
 @layer base {
@@ -58,6 +74,7 @@ html:not(.dark) {
   body {
     margin: 0;
     font-family: var(--font-sans);
+    font-optical-sizing: auto;
     font-size: 14px;
     line-height: 1.45;
     background: var(--color-canvas);

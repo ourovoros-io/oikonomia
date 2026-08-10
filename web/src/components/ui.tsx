@@ -24,7 +24,7 @@ export function IconBadge({
   className = '',
 }: {
   children: ReactNode
-  tone?: 'accent' | 'success' | 'danger' | 'muted'
+  tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted'
   size?: 'sm' | 'md'
   className?: string
 }) {
@@ -32,6 +32,8 @@ export function IconBadge({
     accent: 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]',
     success: 'bg-[var(--color-success-soft)] text-[var(--color-success)]',
     danger: 'bg-[var(--color-danger-soft)] text-[var(--color-danger)]',
+    warning: 'bg-[var(--color-warning-soft)] text-[var(--color-warning)]',
+    info: 'bg-[var(--color-info-soft)] text-[var(--color-info)]',
     muted: 'bg-[var(--color-surface-elevated)] text-[var(--color-muted)]',
   }
   const sizes = {
@@ -97,10 +99,10 @@ export function Hero({
 }) {
   const wash =
     accent === 'success'
-      ? 'radial-gradient(1000px 360px at 12% -10%, rgba(52,211,153,0.18), transparent 55%), radial-gradient(700px 280px at 90% 0%, rgba(99,91,255,0.1), transparent 50%)'
+      ? 'radial-gradient(1000px 360px at 12% -10%, rgba(52,211,153,0.18), transparent 55%), radial-gradient(700px 280px at 90% 0%, rgba(139,92,246,0.12), transparent 50%)'
       : accent === 'neutral'
-        ? 'radial-gradient(1000px 360px at 10% -10%, rgba(99,91,255,0.12), transparent 55%)'
-        : 'radial-gradient(1200px 400px at 10% -10%, rgba(99,91,255,0.28), transparent 55%), radial-gradient(800px 300px at 90% 0%, rgba(52,211,153,0.12), transparent 50%)'
+        ? 'radial-gradient(1000px 360px at 10% -10%, rgba(139,92,246,0.14), transparent 55%)'
+        : 'radial-gradient(1200px 400px at 10% -10%, rgba(139,92,246,0.3), transparent 55%), radial-gradient(800px 300px at 90% 0%, rgba(56,189,248,0.12), transparent 50%), radial-gradient(600px 260px at 55% 110%, rgba(52,211,153,0.1), transparent 55%)'
 
   return (
     <div
@@ -166,6 +168,7 @@ export function CollapsibleSection({
   title,
   description,
   icon,
+  tone = 'accent',
   defaultOpen = false,
   flush = false,
   children,
@@ -173,6 +176,7 @@ export function CollapsibleSection({
   title: string
   description?: string
   icon?: ReactNode
+  tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted'
   defaultOpen?: boolean
   /** Body without padding, for lists that manage their own edges. */
   flush?: boolean
@@ -194,7 +198,7 @@ export function CollapsibleSection({
         className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-[var(--color-surface-2)]/60"
       >
         {icon ? (
-          <IconBadge tone="accent" size="sm">
+          <IconBadge tone={tone} size="sm">
             {icon}
           </IconBadge>
         ) : null}

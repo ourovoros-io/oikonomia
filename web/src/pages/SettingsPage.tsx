@@ -213,6 +213,7 @@ export function SettingsPage({
         title="Auto-lock"
         description="Lock the vault after idle time"
         icon={<Timer className="size-4" />}
+        tone="warning"
       >
         <div className="flex flex-wrap items-center gap-2">
           {LOCK_PRESETS.map((p) => (
@@ -275,6 +276,7 @@ export function SettingsPage({
         title="New entity"
         description="Separate books for personal and company"
         icon={<Building2 className="size-4" />}
+        tone="info"
       >
         <form onSubmit={onCreate} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -332,6 +334,7 @@ export function SettingsPage({
             : `${entities.length} book${entities.length === 1 ? '' : 's'}`
         }
         icon={<Building2 className="size-4" />}
+        tone="success"
         flush
       >
         {entities.length === 0 ? (
