@@ -3,6 +3,7 @@ import {
   buildSimpleEntryInput,
   kindDefaultAccounts,
   lastAccountsMapKey,
+  validateTrayAccounts,
   type AccountLike,
 } from './simpleEntry'
 
@@ -74,3 +75,85 @@ describe('buildSimpleEntryInput', () => {
     expect(input.payable_account_id).toBe('l1')
   })
 })
+
+describe('validateTrayAccounts', () => {
+  const base = {
+    billStatus: 'unpaid' as const,
+    categoryId: 'e1',
+    walletId: 'a1',
+    payableId: 'l1',
+    fromId: 'a1',
+    toId: 'a2',
+  }
+
+  test('expense ok when category and wallet set', () => {
+    expect(validateTrayAccounts({ ...base, kind: 'expense' })).toBeNull()
+  })
+
+  test('expense requires both accounts', () => {
+    expect(validateTrayAccounts({ ...base, kind: 'expense', categoryId: '' })).toBe(
+      'Pick accounts',
+    )
+    expect(validateTrayAccounts({ ...base, kind: 'expense', walletId: '' })).toBe(
+      'Pick accounts',
+    )
+  })
+
+  test('income requires both accounts', () => {
+    expect(validateTrayAccounts({ ...base, kind: 'income', walletId: '' })).toBe(
+      'Pick accounts',
+    )
+  })
+
+  test('bill unpaid needs category + payable', () => {
+    expect(
+      validateTrayAccounts({ ...base, kind: 'bill', billStatus: 'unpaid' }),
+    ).toBeNull()
+    expect(
+      validateTrayAccounts({
+        ...base,
+        kind: 'bill',
+        billStatus: 'unpaid',
+        categoryId: '',
+      }),
+    ).toBe('Pick category')
+    expect(
+      validateTrayAccounts({
+        ...base,
+        kind: 'bill',
+        billStatus: 'unpaid',
+        payableId: '',
+      }),
+    ).toBe('Pick payable')
+  })
+
+  test('bill paid needs category + wallet', () => {
+    expect(
+      validateTrayAccounts({ ...base, kind: 'bill', billStatus: 'paid' }),
+    ).toBeNull()
+    expect(
+      validateTrayAccounts({
+        ...base,
+        kind: 'bill',
+        billStatus: 'paid',
+        walletId: '',
+      }),
+    ).toBe('Pick wallet')
+  })
+
+  test('transfer needs distinct from/to', () => {
+    expect(validateTrayAccounts({ ...base, kind: 'transfer' })).toBeNull()
+    expect(
+      validateTrayAccounts({ ...base, kind: 'transfer', fromId: '' }),
+    ).toBe('Pick different accounts')
+    expect(
+      validateTrayAccounts({
+        ...base,
+        kind: 'transfer',
+        fromId: 'a1',
+        toId: 'a1',
+      }),
+    ).toBe('Pick different accounts')
+  })
+})
+

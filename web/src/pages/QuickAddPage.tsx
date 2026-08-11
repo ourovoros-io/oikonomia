@@ -45,6 +45,7 @@ import {
   buildSimpleEntryInput,
   kindDefaultAccounts,
   lastAccountsMapKey,
+  validateTrayAccounts,
   type AccountLike,
   type BillStatusTray,
   type EntryKind,
@@ -448,21 +449,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     if (file && file.size > 0) void processFile(file, entityId)
   }
 
-  function validateAccounts(): string | null {
-    if ((kind === 'expense' || kind === 'income') && (!categoryId || !walletId)) {
-      return 'Pick accounts'
-    }
-    if (kind === 'bill') {
-      if (!categoryId) return 'Pick category'
-      if (billStatus === 'paid' && !walletId) return 'Pick wallet'
-      if (billStatus === 'unpaid' && !payableId) return 'Pick payable'
-    }
-    if (kind === 'transfer') {
-      if (!fromId || !toId || fromId === toId) return 'Pick different accounts'
-    }
-    return null
-  }
-
   async function onSubmit(ev?: FormEvent) {
     ev?.preventDefault()
     if (!entity || busy || analyzing) return
@@ -471,7 +457,15 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       setError('Invalid amount')
       return
     }
-    const accountErr = validateAccounts()
+    const accountErr = validateTrayAccounts({
+      kind,
+      billStatus,
+      categoryId,
+      walletId,
+      payableId,
+      fromId,
+      toId,
+    })
     if (accountErr) {
       setError(accountErr)
       return
@@ -767,20 +761,17 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
             Cancel
           </Button>
         </div>
-      ) : (
-        <p className="pointer-events-none absolute right-3 bottom-1.5 text-[10px] tracking-wide text-[var(--color-muted)]/70">
+      ) : null}
+
+      {error ? (
+        <p className="shrink-0 truncate text-[11px] text-[var(--color-danger)]" role="alert">
+          {error}
+        </p>
+      ) : reviewing ? null : (
+        <p className="shrink-0 text-right text-[10px] tracking-wide text-[var(--color-muted)]/70">
           Drop receipt
         </p>
       )}
-
-      {error ? (
-        <p
-          className="pointer-events-none absolute inset-x-3 bottom-1 truncate text-center text-[11px] text-[var(--color-danger)]"
-          role="alert"
-        >
-          {error}
-        </p>
-      ) : null}
     </form>
   )
 }

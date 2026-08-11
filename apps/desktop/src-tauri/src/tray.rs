@@ -7,7 +7,8 @@ use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 
 const QUICK_ADD_LABEL: &str = "quick-add";
-/// Match web one-shot command strip (`QUICK_ADD_*` in quickAddWindow.ts).
+/// Idle size — keep in sync with `QUICK_ADD_WIDTH` / `QUICK_ADD_IDLE_HEIGHT`
+/// in `web/src/lib/quickAddWindow.ts` (enforced by `quickAddWindow.test.ts`).
 const QUICK_ADD_WIDTH: f64 = 440.0;
 const QUICK_ADD_HEIGHT: f64 = 132.0;
 
