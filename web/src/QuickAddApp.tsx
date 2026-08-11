@@ -8,8 +8,8 @@ import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
 
 /**
- * Transparent OS window with floating command-strip chrome:
- * tight radius, hairline border, soft elevation, surface fill.
+ * Transparent OS window with Beautiful UI language:
+ * 16px radius, hairline border, deep soft elevation, inset highlight.
  */
 function Shell({
   children,
@@ -23,9 +23,9 @@ function Shell({
       <div
         className={cn(
           'flex h-full w-full flex-col overflow-hidden',
-          'rounded-[10px] border border-[var(--color-border-strong)]/80',
+          'rounded-2xl border border-[var(--color-border-strong)]/70',
           'bg-[var(--color-surface)] text-[var(--color-fg)]',
-          'shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset,0_8px_30px_rgba(0,0,0,0.55)]',
+          'shadow-[0_0_0_1px_var(--color-border)_inset,0_16px_48px_rgba(0,0,0,0.45),0_2px_8px_rgba(0,0,0,0.25)]',
           className,
         )}
       >

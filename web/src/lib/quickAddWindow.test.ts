@@ -11,13 +11,13 @@ import {
  * QUICK_ADD_IDLE_HEIGHT).
  */
 describe('quickAddWindow sizes', () => {
-  test('idle matches Rust tray default (440x132)', () => {
-    expect(QUICK_ADD_WIDTH).toBe(440)
-    expect(QUICK_ADD_IDLE_HEIGHT).toBe(132)
+  test('idle matches Rust tray default (460x148)', () => {
+    expect(QUICK_ADD_WIDTH).toBe(460)
+    expect(QUICK_ADD_IDLE_HEIGHT).toBe(148)
   })
 
   test('review is taller than idle', () => {
-    expect(QUICK_ADD_REVIEW_HEIGHT).toBe(248)
+    expect(QUICK_ADD_REVIEW_HEIGHT).toBe(268)
     expect(QUICK_ADD_REVIEW_HEIGHT).toBeGreaterThan(QUICK_ADD_IDLE_HEIGHT)
   })
 })

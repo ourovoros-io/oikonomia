@@ -74,9 +74,9 @@ const KIND_OPTIONS: Array<{
   { id: 'transfer', label: 'Transfer', short: 'Move', Icon: ArrowLeftRight },
 ]
 
-/** Quiet 32px controls — Vercel-tight, Oikonomia tokens. */
+/** Beautiful-UI inset fields — soft track, quiet border, Oikonomia tokens. */
 const ctl =
-  'h-8 min-w-0 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-canvas)] px-2.5 text-[13px] text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] hover:border-[var(--color-muted)]/70 focus:border-[var(--color-fg)]/40 focus:bg-[var(--color-surface)] disabled:opacity-50'
+  'h-8 min-w-0 w-full rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)] px-3 text-[13px] text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] hover:border-[var(--color-muted)]/40 focus:border-[var(--color-accent)]/50 focus:bg-[var(--color-surface-2)] disabled:opacity-50'
 
 const MAX_DOC_BYTES = 8 * 1024 * 1024
 
@@ -585,7 +585,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative flex h-full min-w-0 flex-col gap-2 overflow-hidden px-2.5 py-2 transition',
+        'relative flex h-full min-w-0 flex-col gap-2.5 overflow-hidden px-3 py-2.5 transition',
         dragOver && 'bg-[var(--color-accent-soft)]/40',
       )}
     >
@@ -600,13 +600,13 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           onChange={(e) => setAmount(e.target.value)}
           className={cn(
             ctl,
-            'h-8 min-h-8 flex-[1.4] text-[15px] font-medium tabular-nums tracking-tight',
+            'h-8 min-h-8 flex-[1.6] rounded-full text-[15px] font-semibold tabular-nums tracking-tight',
           )}
           required
           disabled={formDisabled}
           aria-label={`Amount (${ccy})`}
         />
-        <span className="inline-flex h-8 w-11 shrink-0 items-center justify-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-canvas)] text-[11px] font-medium text-[var(--color-muted)]">
+        <span className="inline-flex h-8 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)] text-[11px] font-medium text-[var(--color-muted)]">
           {ccy}
         </span>
         <Button
@@ -614,7 +614,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           size="sm"
           busy={busy && !analyzing}
           disabled={formDisabled}
-          className="h-8 shrink-0 px-3"
+          className="h-8 shrink-0 rounded-full px-3.5 shadow-[0_0_0_1px_rgba(53,176,107,0.25)]"
         >
           <Check className="size-3.5" strokeWidth={1.75} aria-hidden />
           {reviewing ? 'Confirm & save' : 'Add'}
@@ -730,7 +730,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
 
       {/* Review strip when a document is pending */}
       {reviewing ? (
-        <div className="flex min-h-8 shrink-0 items-center gap-2 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-canvas)] px-2.5">
+        <div className="flex min-h-8 shrink-0 items-center gap-2 rounded-xl border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)] px-3">
           {analyzing ? (
             <>
               <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--color-muted)]" />
@@ -768,7 +768,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           {error}
         </p>
       ) : reviewing ? null : (
-        <p className="shrink-0 text-right text-[10px] tracking-wide text-[var(--color-muted)]/70">
+        <p className="shrink-0 self-end rounded-full border border-[var(--color-border)] bg-[var(--color-canvas)] px-2 py-0.5 text-[10px] tracking-wide text-[var(--color-muted)]/80">
           Drop receipt
         </p>
       )}
@@ -787,7 +787,7 @@ function KindSegment({
 }) {
   return (
     <div
-      className="inline-flex h-8 shrink-0 overflow-hidden rounded-md border border-[var(--color-border-strong)] bg-[var(--color-canvas)] p-0.5"
+      className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)] p-0.5"
       role="radiogroup"
       aria-label="Entry type"
     >
@@ -804,9 +804,9 @@ function KindSegment({
             title={opt.label}
             onClick={() => onChange(opt.id)}
             className={cn(
-              'inline-flex h-full items-center gap-1 rounded-[5px] px-1.5 text-[11px] font-medium transition disabled:opacity-50',
+              'inline-flex h-full items-center gap-1 rounded-full px-2 text-[11px] font-medium transition disabled:opacity-50',
               active
-                ? 'bg-[var(--color-surface-2)] text-[var(--color-fg)]'
+                ? 'bg-[var(--color-surface-elevated)] text-[var(--color-fg)] shadow-[0_1px_0_rgba(255,255,255,0.06)_inset]'
                 : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
             )}
           >
