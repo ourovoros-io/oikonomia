@@ -7,7 +7,10 @@ import { QUICK_ADD_IDLE_HEIGHT, setQuickAddHeight } from './lib/quickAddWindow'
 import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
 
-/** Outer chrome for the transparent tray window (rounded, bordered, elevated). */
+/**
+ * Transparent OS window; chrome matches main app Card/Panel language
+ * (surface, soft border, house radius).
+ */
 function Shell({
   children,
   className,
@@ -20,9 +23,9 @@ function Shell({
       <div
         className={cn(
           'flex h-full w-full flex-col overflow-hidden',
-          'rounded-[12px] border border-[var(--color-border-strong)]',
+          'rounded-2xl border border-[var(--color-border)]',
           'bg-[var(--color-surface)] text-[var(--color-fg)]',
-          'shadow-[0_6px_20px_rgba(0,0,0,0.4)]',
+          'shadow-[0_1px_0_rgba(255,255,255,0.03),0_12px_40px_rgba(0,0,0,0.45)]',
           className,
         )}
       >

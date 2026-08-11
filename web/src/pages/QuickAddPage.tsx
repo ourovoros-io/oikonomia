@@ -37,7 +37,7 @@ import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { QUICK_ADD_IDLE_HEIGHT, setQuickAddHeight } from '../lib/quickAddWindow'
 import { isTauri, type CommandError } from '../lib/tauri'
-import { Button, Input } from '../components/ui'
+import { Button, IconBadge, Input } from '../components/ui'
 import { cn } from '../lib/cn'
 import {
   accountsOf,
@@ -73,12 +73,13 @@ const KIND_OPTIONS: Array<{
   { id: 'transfer', label: 'Transfer', Icon: ArrowLeftRight },
 ]
 
-/** Controls fill the two-row strip; no horizontal scroll. */
+/** Compact control matching ui.tsx `controlBase`, sized for the tray strip. */
 const ctl =
-  'h-8 min-w-0 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-2 text-[11px] leading-none text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/25 disabled:opacity-50'
+  'h-8 min-w-0 w-full rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-2.5 text-xs text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/25 disabled:opacity-50'
 
+/** Choice tile — same selected/hover language as ChoiceCard, tray-sized. */
 const choiceBtn =
-  'flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border px-1 py-1 text-center transition disabled:opacity-50'
+  'flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl border px-1.5 py-1 text-center transition disabled:opacity-50'
 
 const MAX_DOC_BYTES = 8 * 1024 * 1024
 const ROLL_MS = 220
@@ -137,7 +138,7 @@ function pendingDocLabel(source: PendingDocSource): string {
   return parts[parts.length - 1] || source.path
 }
 
-/** Full-height panel body: title row + control row that fills remaining space. */
+/** Title uses Label-style uppercase muted type; body fills remaining height. */
 function Panel({
   icon,
   title,
@@ -150,19 +151,28 @@ function Panel({
   className?: string
 }) {
   return (
-    <div className={cn('flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5', className)}>
-      <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
-        <span className="inline-flex size-4 shrink-0 items-center justify-center text-[var(--color-accent)]">
+    <div className={cn('flex h-full min-w-0 flex-col gap-1.5 overflow-hidden', className)}>
+      <div className="flex h-6 shrink-0 items-center gap-2">
+        <IconBadge tone="accent" size="sm" className="size-6 rounded-md [&_svg]:size-3">
           {icon}
-        </span>
-        <span className="truncate text-[11px] font-semibold tracking-wide text-[var(--color-fg)]">
+        </IconBadge>
+        <span className="truncate text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
           {title}
         </span>
       </div>
-      <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1 overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1.5 overflow-hidden">
         {children}
       </div>
     </div>
+  )
+}
+
+function choiceClass(selected: boolean): string {
+  return cn(
+    choiceBtn,
+    selected
+      ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]/40'
+      : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-muted)]',
   )
 }
 
@@ -656,7 +666,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
 
   if (loading) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-1 text-[11px] text-[var(--color-muted)]">
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-[var(--color-muted)]">
         <Loader2 className="size-4 animate-spin text-[var(--color-accent)]" aria-hidden />
         Loading…
       </div>
@@ -665,15 +675,11 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
 
   if (entities.length === 0) {
     return (
-      <Panel icon={<BookOpen className="size-3.5" aria-hidden />} title="Book">
-        <p className="flex min-w-0 flex-1 items-center truncate text-[11px] text-[var(--color-muted)]">
+      <Panel icon={<BookOpen className="size-3" strokeWidth={1.75} aria-hidden />} title="Book">
+        <p className="flex min-w-0 flex-1 items-center truncate text-xs text-[var(--color-muted)]">
           Create a book first
         </p>
-        <Button
-          size="sm"
-          className="h-8 shrink-0 px-2.5 text-[11px]"
-          onClick={() => void api.openMainWindow()}
-        >
+        <Button size="sm" className="h-8 shrink-0" onClick={() => void api.openMainWindow()}>
           Open
         </Button>
       </Panel>
@@ -684,7 +690,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     switch (s) {
       case 'entity':
         return (
-          <Panel icon={<BookOpen className="size-3.5" aria-hidden />} title="Choose book">
+          <Panel icon={<BookOpen className="size-3" strokeWidth={1.75} aria-hidden />} title="Book">
             {entities.slice(0, 3).map((e) => {
               const active = e.id === entityId
               return (
@@ -694,21 +700,19 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   disabled={formDisabled}
                   onClick={() => void selectEntity(e.id)}
                   title={e.name}
-                  className={cn(
-                    choiceBtn,
-                    active
-                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-                      : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)]/50',
-                  )}
+                  className={choiceClass(active)}
                 >
-                  <BookOpen
+                  <span
                     className={cn(
-                      'size-3.5 shrink-0',
-                      active ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted)]',
+                      'inline-flex size-6 items-center justify-center rounded-md',
+                      active
+                        ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                        : 'bg-[var(--color-surface-elevated)] text-[var(--color-muted)]',
                     )}
-                    aria-hidden
-                  />
-                  <span className="w-full truncate text-[10px] font-semibold text-[var(--color-fg)]">
+                  >
+                    <BookOpen className="size-3" strokeWidth={1.75} aria-hidden />
+                  </span>
+                  <span className="w-full truncate text-[11px] font-medium text-[var(--color-fg)]">
                     {e.name}
                   </span>
                 </button>
@@ -718,7 +722,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               <label className="relative flex min-h-0 min-w-0 flex-1 flex-col">
                 <span className="sr-only">More books</span>
                 <select
-                  className={cn(ctl, 'h-full min-h-8')}
+                  className={cn(ctl, 'ui-select h-full min-h-8 cursor-pointer')}
                   value={
                     entityId && entities.slice(3).some((e) => e.id === entityId) ? entityId : ''
                   }
@@ -741,7 +745,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
 
       case 'kind':
         return (
-          <Panel icon={<Receipt className="size-3.5" aria-hidden />} title="Entry type">
+          <Panel icon={<Receipt className="size-3" strokeWidth={1.75} aria-hidden />} title="Type">
             {KIND_OPTIONS.map((opt) => {
               const active = kind === opt.id
               const Icon = opt.Icon
@@ -751,21 +755,19 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   type="button"
                   disabled={formDisabled}
                   onClick={() => selectKind(opt.id)}
-                  className={cn(
-                    choiceBtn,
-                    active
-                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-                      : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)]/50',
-                  )}
+                  className={choiceClass(active)}
                 >
-                  <Icon
+                  <span
                     className={cn(
-                      'size-3.5 shrink-0',
-                      active ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted)]',
+                      'inline-flex size-6 items-center justify-center rounded-md',
+                      active
+                        ? 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
+                        : 'bg-[var(--color-surface-elevated)] text-[var(--color-muted)]',
                     )}
-                    aria-hidden
-                  />
-                  <span className="w-full truncate text-[10px] font-semibold text-[var(--color-fg)]">
+                  >
+                    <Icon className="size-3" strokeWidth={1.75} aria-hidden />
+                  </span>
+                  <span className="w-full truncate text-[11px] font-medium text-[var(--color-fg)]">
                     {opt.label}
                   </span>
                 </button>
@@ -777,41 +779,38 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       case 'amount':
         return (
           <form
-            className="flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5"
+            className="flex h-full min-w-0 flex-col gap-1.5 overflow-hidden"
             onSubmit={(e) => {
               e.preventDefault()
               advanceFromAmount()
             }}
           >
-            <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
-              <Wallet className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
-              <span className="truncate text-[11px] font-semibold text-[var(--color-fg)]">
+            <div className="flex h-6 shrink-0 items-center gap-2">
+              <IconBadge tone="accent" size="sm" className="size-6 rounded-md [&_svg]:size-3">
+                <Wallet className="size-3" strokeWidth={1.75} aria-hidden />
+              </IconBadge>
+              <span className="truncate text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
                 Amount
               </span>
             </div>
-            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1">
+            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1.5">
               <Input
                 id="quick-add-amount"
                 inputMode="decimal"
                 placeholder="0.00"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="h-full min-h-8 min-w-0 flex-[2] px-2 text-sm tabular-nums"
+                className="h-full min-h-8 min-w-0 flex-[2] px-2.5 text-sm tabular-nums"
                 required
                 disabled={formDisabled}
                 aria-label={`Amount (${ccy})`}
               />
-              <span className="inline-flex h-full min-h-8 shrink-0 items-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-2 text-[11px] font-semibold text-[var(--color-muted)]">
+              <span className="inline-flex h-full min-h-8 shrink-0 items-center rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-2.5 text-xs font-medium text-[var(--color-muted)]">
                 {ccy}
               </span>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={formDisabled}
-                className="h-full min-h-8 shrink-0 gap-1 px-2.5 text-[11px]"
-              >
+              <Button type="submit" size="sm" disabled={formDisabled} className="h-full min-h-8 shrink-0">
                 Next
-                <ChevronRight className="size-3.5" aria-hidden />
+                <ChevronRight className="size-3.5" strokeWidth={1.75} aria-hidden />
               </Button>
             </div>
           </form>
@@ -820,22 +819,24 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       case 'accounts':
         return (
           <form
-            className="flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5"
+            className="flex h-full min-w-0 flex-col gap-1.5 overflow-hidden"
             onSubmit={(e) => {
               e.preventDefault()
               advanceFromAccounts()
             }}
           >
-            <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
-              <Wallet className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
-              <span className="truncate text-[11px] font-semibold text-[var(--color-fg)]">
+            <div className="flex h-6 shrink-0 items-center gap-2">
+              <IconBadge tone="accent" size="sm" className="size-6 rounded-md [&_svg]:size-3">
+                <Wallet className="size-3" strokeWidth={1.75} aria-hidden />
+              </IconBadge>
+              <span className="truncate text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
                 Accounts
               </span>
             </div>
-            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1">
+            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1.5">
               {kind === 'bill' ? (
                 <select
-                  className={cn(ctl, 'h-full min-h-8 w-[4rem] shrink-0')}
+                  className={cn(ctl, 'ui-select h-full min-h-8 w-[4.25rem] shrink-0 cursor-pointer')}
                   value={billStatus}
                   onChange={(e) => setBillStatus(e.target.value as BillStatusTray)}
                   disabled={formDisabled}
@@ -853,7 +854,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   options={expenseAccounts}
                   disabled={formDisabled}
                   label="Category"
-                  icon={<Receipt className="size-3" aria-hidden />}
+                  icon={<Receipt className="size-3" strokeWidth={1.75} aria-hidden />}
                 />
               )}
               {kind === 'income' && (
@@ -863,7 +864,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   options={incomeAccounts}
                   disabled={formDisabled}
                   label="Income"
-                  icon={<ArrowDownLeft className="size-3" aria-hidden />}
+                  icon={<ArrowDownLeft className="size-3" strokeWidth={1.75} aria-hidden />}
                 />
               )}
               {(kind === 'expense' ||
@@ -875,7 +876,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   options={kind === 'income' ? assetWallets : walletAccounts}
                   disabled={formDisabled}
                   label="Wallet"
-                  icon={<Wallet className="size-3" aria-hidden />}
+                  icon={<Wallet className="size-3" strokeWidth={1.75} aria-hidden />}
                 />
               )}
               {kind === 'bill' && billStatus === 'unpaid' && (
@@ -885,7 +886,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   options={payableAccounts}
                   disabled={formDisabled}
                   label="Payable"
-                  icon={<FileText className="size-3" aria-hidden />}
+                  icon={<FileText className="size-3" strokeWidth={1.75} aria-hidden />}
                 />
               )}
               {kind === 'transfer' && (
@@ -896,7 +897,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                     options={transferAccounts}
                     disabled={formDisabled}
                     label="From"
-                    icon={<ArrowUpRight className="size-3" aria-hidden />}
+                    icon={<ArrowUpRight className="size-3" strokeWidth={1.75} aria-hidden />}
                   />
                   <AccountSelect
                     value={toId}
@@ -904,18 +905,13 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                     options={transferAccounts}
                     disabled={formDisabled}
                     label="To"
-                    icon={<ArrowDownLeft className="size-3" aria-hidden />}
+                    icon={<ArrowDownLeft className="size-3" strokeWidth={1.75} aria-hidden />}
                   />
                 </>
               )}
-              <Button
-                type="submit"
-                size="sm"
-                disabled={formDisabled}
-                className="h-full min-h-8 shrink-0 gap-1 px-2.5 text-[11px]"
-              >
+              <Button type="submit" size="sm" disabled={formDisabled} className="h-full min-h-8 shrink-0">
                 Next
-                <ChevronRight className="size-3.5" aria-hidden />
+                <ChevronRight className="size-3.5" strokeWidth={1.75} aria-hidden />
               </Button>
             </div>
           </form>
@@ -924,22 +920,26 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       case 'memo':
         return (
           <form
-            className="flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5"
+            className="flex h-full min-w-0 flex-col gap-1.5 overflow-hidden"
             onSubmit={(e) => {
               e.preventDefault()
               void onSubmit()
             }}
           >
-            <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
-              <MessageSquare className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
-              <span className="truncate text-[11px] font-semibold text-[var(--color-fg)]">Memo</span>
+            <div className="flex h-6 shrink-0 items-center gap-2">
+              <IconBadge tone="accent" size="sm" className="size-6 rounded-md [&_svg]:size-3">
+                <MessageSquare className="size-3" strokeWidth={1.75} aria-hidden />
+              </IconBadge>
+              <span className="truncate text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+                Memo
+              </span>
             </div>
-            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1">
+            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1.5">
               <Input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Optional note"
-                className="h-full min-h-8 min-w-0 flex-1 px-2 text-[11px]"
+                className="h-full min-h-8 min-w-0 flex-1 px-2.5 text-xs"
                 disabled={formDisabled}
               />
               <Button
@@ -947,9 +947,9 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                 size="sm"
                 busy={busy}
                 disabled={formDisabled}
-                className="h-full min-h-8 shrink-0 gap-1 px-2.5 text-[11px]"
+                className="h-full min-h-8 shrink-0"
               >
-                <Check className="size-3.5" aria-hidden />
+                <Check className="size-3.5" strokeWidth={1.75} aria-hidden />
                 Save
               </Button>
             </div>
@@ -959,15 +959,18 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       case 'review':
         if (analyzing) {
           return (
-            <Panel icon={<Loader2 className="size-3.5 animate-spin" aria-hidden />} title="Document">
-              <p className="flex min-w-0 flex-1 items-center truncate text-[11px] text-[var(--color-muted)]">
+            <Panel
+              icon={<Loader2 className="size-3 animate-spin" aria-hidden />}
+              title="Document"
+            >
+              <p className="flex min-w-0 flex-1 items-center truncate text-xs text-[var(--color-muted)]">
                 Analyzing…
               </p>
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
-                className="h-8 shrink-0 px-2 text-[11px]"
+                className="h-8 shrink-0"
                 onClick={onCancelReview}
               >
                 Cancel
@@ -977,34 +980,38 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         }
         return (
           <form
-            className="flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5"
+            className="flex h-full min-w-0 flex-col gap-1.5 overflow-hidden"
             onSubmit={(e) => {
               e.preventDefault()
               void onSubmit()
             }}
           >
-            <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
-              <FileText className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
+            <div className="flex h-6 shrink-0 items-center gap-2">
+              <IconBadge tone="accent" size="sm" className="size-6 rounded-md [&_svg]:size-3">
+                <FileText className="size-3" strokeWidth={1.75} aria-hidden />
+              </IconBadge>
               <span
-                className="min-w-0 flex-1 truncate text-[11px] font-semibold text-[var(--color-fg)]"
+                className="min-w-0 flex-1 truncate text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase"
                 title={pendingDoc ? pendingDocLabel(pendingDoc) : undefined}
               >
                 {pendingDoc ? pendingDocLabel(pendingDoc) : 'Failed'}
               </span>
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
+                className="h-6 shrink-0 px-2 text-[11px]"
                 onClick={onCancelReview}
-                className="shrink-0 text-[10px] font-medium text-[var(--color-muted)] hover:text-[var(--color-fg)]"
               >
                 Clear
-              </button>
+              </Button>
             </div>
-            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1">
+            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1.5">
               <Input
                 inputMode="decimal"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="h-full min-h-8 w-[4.25rem] shrink-0 px-1.5 text-[11px] tabular-nums"
+                className="h-full min-h-8 w-[4.5rem] shrink-0 px-2 text-xs tabular-nums"
                 disabled={formDisabled}
                 required
                 aria-label="Amount"
@@ -1015,7 +1022,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                 options={kind === 'income' ? incomeAccounts : expenseAccounts}
                 disabled={formDisabled}
                 label="Category"
-                icon={<Receipt className="size-3" aria-hidden />}
+                icon={<Receipt className="size-3" strokeWidth={1.75} aria-hidden />}
               />
               {kind === 'bill' && billStatus === 'unpaid' ? (
                 <AccountSelect
@@ -1024,7 +1031,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   options={payableAccounts}
                   disabled={formDisabled}
                   label="Payable"
-                  icon={<FileText className="size-3" aria-hidden />}
+                  icon={<FileText className="size-3" strokeWidth={1.75} aria-hidden />}
                 />
               ) : (
                 <AccountSelect
@@ -1033,7 +1040,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   options={kind === 'income' ? assetWallets : walletAccounts}
                   disabled={formDisabled}
                   label="Wallet"
-                  icon={<Wallet className="size-3" aria-hidden />}
+                  icon={<Wallet className="size-3" strokeWidth={1.75} aria-hidden />}
                 />
               )}
               <Button
@@ -1041,9 +1048,9 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                 size="sm"
                 busy={busy}
                 disabled={formDisabled || !pendingDoc}
-                className="h-full min-h-8 shrink-0 gap-1 px-2 text-[11px]"
+                className="h-full min-h-8 shrink-0"
               >
-                <Check className="size-3.5" aria-hidden />
+                <Check className="size-3.5" strokeWidth={1.75} aria-hidden />
                 Save
               </Button>
             </div>
@@ -1070,8 +1077,8 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative flex h-full min-w-0 items-stretch overflow-hidden px-1.5 py-1 transition',
-        dragOver && 'bg-[var(--color-accent-soft)]/40',
+        'relative flex h-full min-w-0 items-stretch overflow-hidden px-2 py-1.5 transition',
+        dragOver && 'bg-[var(--color-accent-soft)]/50',
       )}
     >
       <button
@@ -1079,15 +1086,15 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         onClick={goBack}
         disabled={!showBack}
         className={cn(
-          'inline-flex w-7 shrink-0 self-stretch items-center justify-center rounded-md transition',
+          'inline-flex w-8 shrink-0 self-stretch items-center justify-center rounded-[var(--radius-control)] transition',
           showBack
-            ? 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]'
+            ? 'text-[var(--color-muted)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]'
             : 'pointer-events-none text-transparent',
         )}
         aria-label="Back"
         tabIndex={showBack ? 0 : -1}
       >
-        <ChevronLeft className="size-4" />
+        <ChevronLeft className="size-4" strokeWidth={1.75} />
       </button>
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -1145,12 +1152,16 @@ function AccountSelect({
     <label className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <span className="sr-only">{label}</span>
       {icon ? (
-        <span className="pointer-events-none absolute left-1.5 top-1/2 z-[1] -translate-y-1/2 text-[var(--color-muted)]">
+        <span className="pointer-events-none absolute top-1/2 left-2 z-[1] -translate-y-1/2 text-[var(--color-muted)]">
           {icon}
         </span>
       ) : null}
       <select
-        className={cn(ctl, 'h-full min-h-8', icon ? 'pl-6' : undefined)}
+        className={cn(
+          ctl,
+          'ui-select h-full min-h-8 cursor-pointer',
+          icon ? 'pl-7' : undefined,
+        )}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
