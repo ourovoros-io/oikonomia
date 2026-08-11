@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Download, Eye, Paperclip, Plus, Trash2 } from 'lucide-react'
+import { Download, Eye, Paperclip, Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -22,6 +22,8 @@ type Props = {
   documents: DocumentMeta[]
   currency: string
   onClose: () => void
+  /** Open the entry in the edit form. */
+  onEdit: () => void
   onView: (documentId: string) => void
   onChanged: () => Promise<void>
   onError: (message: string) => void
@@ -34,6 +36,7 @@ export function EntryDetailModal({
   documents,
   currency,
   onClose,
+  onEdit,
   onView,
   onChanged,
   onError,
@@ -244,6 +247,13 @@ export function EntryDetailModal({
               ))}
             </ul>
           )}
+        </div>
+
+        <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
+          <Button variant="secondary" disabled={anyBusy} onClick={onEdit}>
+            <Pencil className="size-3.5" />
+            Edit entry
+          </Button>
         </div>
       </div>
     </Modal>

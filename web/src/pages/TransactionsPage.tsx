@@ -12,6 +12,7 @@ import {
   api,
   formatDate,
   formatMoney,
+  isoDate,
   todayISO,
   type Account,
   type DocumentMeta,
@@ -98,6 +99,7 @@ export function TransactionsPage({ entity }: Props) {
   const [busy, setBusy] = useState(false)
   const [voidId, setVoidId] = useState<string | null>(null)
   const [voidBusy, setVoidBusy] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [pendingDoc, setPendingDoc] = useState<PendingDocSource | null>(null)
   const [pendingAnalysis, setPendingAnalysis] = useState<string | null>(null)
   const [scanNotes, setScanNotes] = useState<string | null>(null)
@@ -301,7 +303,9 @@ export function TransactionsPage({ entity }: Props) {
         to_account_id: toId || null,
       }
 
-      if (pendingDoc?.kind === 'file') {
+      if (editId) {
+        await api.entryReplaceSimple(editId, input)
+      } else if (pendingDoc?.kind === 'file') {
         const dataBase64 = await fileToBase64(pendingDoc.file)
         await api.entryPostSimpleWithDocument(
           input,
@@ -323,6 +327,7 @@ export function TransactionsPage({ entity }: Props) {
       setPendingDoc(null)
       setPendingAnalysis(null)
       setScanNotes(null)
+      setEditId(null)
       setShowForm(false)
       await reload()
     } catch (err) {
@@ -361,6 +366,46 @@ export function TransactionsPage({ entity }: Props) {
   }
 
   const ccy = entity.base_currency
+
+  /**
+   * Map a posted entry's lines back onto the simple form and open it for
+   * editing. Bills reopen as their expense/transfer equivalent — the journal
+   * lines are identical, so nothing is lost.
+   */
+  function startEdit(view: PostedEntryView) {
+    const debit = view.lines.find((l) => l.debit.amount_minor > 0)
+    const credit = view.lines.find((l) => l.credit.amount_minor > 0)
+    if (!debit || !credit) return
+
+    const debitType = accountMap.get(debit.account_id)?.account_type
+    const creditType = accountMap.get(credit.account_id)?.account_type
+    if (debitType === 'expense') {
+      setKind('expense')
+      setCategoryId(debit.account_id)
+      setWalletId(credit.account_id)
+    } else if (creditType === 'income') {
+      setKind('income')
+      setCategoryId(credit.account_id)
+      setWalletId(debit.account_id)
+    } else {
+      setKind('transfer')
+      setToId(debit.account_id)
+      setFromId(credit.account_id)
+    }
+
+    const digits = currencyFractionDigits(ccy)
+    const amountMinor = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
+    setAmount((amountMinor / 10 ** digits).toFixed(digits))
+    setDate(isoDate(view.entry.entry_date))
+    setDescription(view.entry.description)
+    setReference(view.entry.reference ?? '')
+    setPendingDoc(null)
+    setPendingAnalysis(null)
+    setScanNotes(null)
+    setEditId(view.entry.id)
+    setDetailId(null)
+    setShowForm(true)
+  }
 
   return (
     <div className="space-y-6">
@@ -428,13 +473,18 @@ export function TransactionsPage({ entity }: Props) {
 
       <Modal
         open={showForm}
-        title="New entry"
-        description="Pick a type — no debit/credit bookkeeping required"
+        title={editId ? 'Edit entry' : 'New entry'}
+        description={
+          editId
+            ? 'Replaces the original entry — the books keep an audit trail'
+            : 'Pick a type — no debit/credit bookkeeping required'
+        }
         onClose={() => {
           if (!busy) {
             setShowForm(false)
             setPendingDoc(null)
             setPendingAnalysis(null)
+            setEditId(null)
           }
         }}
       >
@@ -660,12 +710,13 @@ export function TransactionsPage({ entity }: Props) {
                 setShowForm(false)
                 setPendingDoc(null)
                 setPendingAnalysis(null)
+                setEditId(null)
               }}
             >
               Cancel
             </Button>
             <Button type="submit" busy={busy}>
-              {busy ? 'Saving…' : 'Save entry'}
+              {busy ? 'Saving…' : editId ? 'Save changes' : 'Save entry'}
             </Button>
           </div>
         </form>
@@ -681,6 +732,9 @@ export function TransactionsPage({ entity }: Props) {
         // so the detail modal can never close while the viewer sits above it.
         onClose={() => {
           if (!viewerDocId) setDetailId(null)
+        }}
+        onEdit={() => {
+          if (detailView) startEdit(detailView)
         }}
         onView={(id) => setViewerDocId(id)}
         onChanged={reload}

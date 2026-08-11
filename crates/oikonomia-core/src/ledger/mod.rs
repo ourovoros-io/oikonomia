@@ -11,7 +11,7 @@ pub use accounts::{
     CreateAccount, UpdateAccount, archive_account, create_account, get_account, list_accounts,
     update_account,
 };
-pub use balance::{account_balance_as_of, normal_balance};
+pub use balance::{account_balance, account_balance_as_of, normal_balance};
 pub use entities::{
     CreateEntity, archive_entity, create_entity, delete_entity, get_entity, list_entities,
     update_entity,
@@ -20,7 +20,7 @@ pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{
     CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine,
     SimpleBillStatus, SimpleEntryKind, VoidResult, account_register, get_entry, list_entries,
-    post_entry, post_simple_entry, void_entry,
+    post_entry, post_simple_entry, replace_simple_entry, set_account_opening_balance, void_entry,
 };
 pub use reports::{
     BalanceSheet, BalanceSheetSection, DashboardSummary, PnL, ReportLine, TrialBalance,

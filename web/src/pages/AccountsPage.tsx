@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   Banknote,
   CircleOff,
+  Coins,
   CreditCard,
   Landmark,
   PieChart,
@@ -10,7 +11,9 @@ import {
   TrendingUp,
   Wallet,
 } from 'lucide-react'
-import { api, type Account, type AccountType, type Entity } from '../lib/api'
+import { api, formatMoney, todayISO, type Account, type AccountType, type Entity } from '../lib/api'
+import { parseMajorToMinor } from '../lib/money'
+import { Modal } from '../components/Modal'
 import {
   Button,
   Card,
@@ -56,6 +59,12 @@ export function AccountsPage({ entity }: Props) {
   const [name, setName] = useState('')
   const [accountType, setAccountType] = useState<AccountType>('expense')
   const [busy, setBusy] = useState(false)
+  const [balanceAccount, setBalanceAccount] = useState<Account | null>(null)
+  const [balanceAmount, setBalanceAmount] = useState('')
+  const [balanceAsOf, setBalanceAsOf] = useState(todayISO())
+  const [balanceCurrent, setBalanceCurrent] = useState<number | null>(null)
+  const [balanceError, setBalanceError] = useState<string | null>(null)
+  const [balanceBusy, setBalanceBusy] = useState(false)
 
   async function reload() {
     if (!entity) return
@@ -109,6 +118,41 @@ export function AccountsPage({ entity }: Props) {
       await reload()
     } catch (err) {
       setError((err as CommandError).message)
+    }
+  }
+
+  function openBalance(account: Account) {
+    setBalanceAccount(account)
+    setBalanceAmount('')
+    setBalanceAsOf(todayISO())
+    setBalanceCurrent(null)
+    setBalanceError(null)
+    void api
+      .accountBalance(account.id, todayISO())
+      .then(setBalanceCurrent)
+      .catch(() => setBalanceCurrent(null))
+  }
+
+  async function onSetBalance(ev: FormEvent) {
+    ev.preventDefault()
+    if (!balanceAccount || !entity) return
+
+    const minor = parseMajorToMinor(balanceAmount, entity.base_currency)
+    if (minor === null) {
+      setBalanceError('Enter a valid amount (e.g. 2.500,00 — negative allowed)')
+      return
+    }
+
+    setBalanceBusy(true)
+    setBalanceError(null)
+    try {
+      await api.accountSetOpeningBalance(balanceAccount.id, minor, balanceAsOf)
+      setBalanceAccount(null)
+      await reload()
+    } catch (err) {
+      setBalanceError((err as CommandError).message)
+    } finally {
+      setBalanceBusy(false)
     }
   }
 
@@ -215,6 +259,60 @@ export function AccountsPage({ entity }: Props) {
         </Card>
       ) : null}
 
+      <Modal
+        open={balanceAccount !== null}
+        title={balanceAccount ? `Set balance — ${balanceAccount.name}` : 'Set balance'}
+        description="State what the account actually holds; the difference is posted against Opening Balances"
+        maxWidth="max-w-md"
+        onClose={() => {
+          if (!balanceBusy) setBalanceAccount(null)
+        }}
+      >
+        <form onSubmit={onSetBalance} className="space-y-4">
+          <ErrorBanner message={balanceError} className="mb-0" />
+          {balanceCurrent !== null ? (
+            <p className="text-sm text-[var(--color-muted)]">
+              Ledger balance today:{' '}
+              <span className="font-medium tabular-nums text-[var(--color-fg)]">
+                {formatMoney(balanceCurrent, entity.base_currency)}
+              </span>
+            </p>
+          ) : null}
+          <Field label={`Actual balance (${entity.base_currency})`}>
+            <Input
+              inputMode="decimal"
+              placeholder="2.500,00"
+              value={balanceAmount}
+              onChange={(e) => setBalanceAmount(e.target.value)}
+              className="tabular-nums"
+              required
+              autoFocus
+            />
+          </Field>
+          <Field label="As of">
+            <Input
+              type="date"
+              value={balanceAsOf}
+              onChange={(e) => setBalanceAsOf(e.target.value)}
+              required
+            />
+          </Field>
+          <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={balanceBusy}
+              onClick={() => setBalanceAccount(null)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" busy={balanceBusy}>
+              {balanceBusy ? 'Posting…' : 'Set balance'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
       {accounts.length === 0 ? (
         <EmptyState
           icon={<Banknote className="size-5" />}
@@ -258,6 +356,19 @@ export function AccountsPage({ entity }: Props) {
                       {a.is_active ? 'Active' : 'Inactive'}
                     </div>
                   </div>
+                  {a.is_active &&
+                  (a.account_type === 'asset' || a.account_type === 'liability') ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => openBalance(a)}
+                      aria-label={`Set balance for ${a.name}`}
+                      title="Set balance"
+                    >
+                      <Coins className="size-4" />
+                    </Button>
+                  ) : null}
                   {a.is_active && !a.is_system ? (
                     <Button
                       variant="ghost"

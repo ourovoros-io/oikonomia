@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { formatDate, parseMajorToMinor } from './money'
+import { formatDate, isoDate, parseMajorToMinor } from './money'
 
 describe('parseMajorToMinor', () => {
   test('dot and comma decimals', () => {
@@ -45,5 +45,12 @@ describe('formatDate', () => {
 
   test('leaves non-date strings untouched', () => {
     expect(formatDate('yesterday')).toBe('yesterday')
+  })
+})
+
+describe('isoDate', () => {
+  test('normalizes both entry date shapes to ISO', () => {
+    expect(isoDate('2026-03-15T00:00:00')).toBe('2026-03-15')
+    expect(isoDate({ year: 2026, month: 'March', day: 5 })).toBe('2026-03-05')
   })
 })

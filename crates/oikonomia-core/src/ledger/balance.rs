@@ -30,6 +30,18 @@ pub(crate) const ACTIVE_ENTRY_PREDICATE: &str = "
     )
 ";
 
+/// Balance of one account as of an ISO date string, resolving the account's
+/// normal-balance side internally. Convenience wrapper for the IPC layer.
+///
+/// # Errors
+///
+/// Unknown account, invalid date, or DB errors.
+pub fn account_balance(conn: &Connection, account_id: AccountId, as_of: &str) -> Result<i64> {
+    let account = crate::ledger::accounts::get_account(conn, account_id)?;
+    let as_of_d = crate::util::parse_date(as_of)?;
+    account_balance_as_of(conn, account_id, account.account_type, as_of_d)
+}
+
 /// Balance of one account as of `as_of` (inclusive), posted entries only.
 ///
 /// # Errors

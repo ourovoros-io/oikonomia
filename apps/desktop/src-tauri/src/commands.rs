@@ -13,11 +13,11 @@ use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::{
     BalanceSheet, CreateAccount, CreateEntity, DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary,
     EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine, TrialBalance,
-    UpdateAccount, VoidResult, account_register, archive_account, archive_entity, balance_sheet,
-    create_account, create_entity, dashboard_summary, delete_entity, get_entity, get_entry,
-    get_lock_timeout_secs, list_accounts, list_entities, list_entries, post_entry,
-    post_simple_entry, profit_and_loss, set_lock_timeout_secs, trial_balance, update_account,
-    update_entity, void_entry,
+    UpdateAccount, VoidResult, account_balance, account_register, archive_account, archive_entity,
+    balance_sheet, create_account, create_entity, dashboard_summary, delete_entity, get_entity,
+    get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries, post_entry,
+    post_simple_entry, profit_and_loss, replace_simple_entry, set_account_opening_balance,
+    set_lock_timeout_secs, trial_balance, update_account, update_entity, void_entry,
 };
 use oikonomia_core::prefs::{Theme, load_ui_prefs, save_ui_prefs};
 use oikonomia_core::vault::{Vault, VaultStatus};
@@ -255,6 +255,36 @@ pub async fn account_register_cmd(
     .await
 }
 
+/// Signed normal balance of one account as of a date.
+#[tauri::command]
+pub async fn account_balance_cmd(
+    state: State<'_, AppState>,
+    account_id: AccountId,
+    as_of: String,
+) -> CommandResult<i64> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        account_balance(conn, account_id, &as_of)
+    })
+    .await
+}
+
+/// Set an account's balance as of a date by posting the difference against
+/// the book's Opening Balances equity account.
+#[tauri::command]
+pub async fn account_set_opening_balance(
+    state: State<'_, AppState>,
+    account_id: AccountId,
+    target_minor: i64,
+    as_of: String,
+) -> CommandResult<PostedEntryView> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        set_account_opening_balance(conn, account_id, target_minor, &as_of)
+    })
+    .await
+}
+
 // --- Journal ---------------------------------------------------------------
 
 /// List journal entries matching optional search/date/account filters.
@@ -407,6 +437,21 @@ pub async fn entry_post_simple_with_document_path(
         )?;
         Ok(view)
     }))
+    .await
+}
+
+/// Correct a posted entry: void the original and post the replacement in one
+/// transaction; attached documents follow the replacement.
+#[tauri::command]
+pub async fn entry_replace_simple(
+    state: State<'_, AppState>,
+    original_id: JournalEntryId,
+    input: PostSimpleEntry,
+) -> CommandResult<PostedEntryView> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        replace_simple_entry(conn, original_id, &input)
+    })
     .await
 }
 

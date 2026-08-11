@@ -136,44 +136,60 @@ export function formatMoney(
   }
 }
 
-/**
- * Render entry dates from Rust (`YYYY-MM-DD` or `{ year, month, day }`) the
- * European / Greek way: `dd/mm/yyyy`. Display only — anything sent back to
- * the API stays ISO.
- */
-export function formatDate(value: unknown): string {
+// time crate Month may serialize as string name or number.
+const MONTHS: Record<string, number> = {
+  January: 1,
+  February: 2,
+  March: 3,
+  April: 4,
+  May: 5,
+  June: 6,
+  July: 7,
+  August: 8,
+  September: 9,
+  October: 10,
+  November: 11,
+  December: 12,
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+/** Parse a Rust entry date (`YYYY-MM-DD` string or `{ year, month, day }`). */
+function dateParts(value: unknown): { y: number; m: number; d: number } | null {
   if (typeof value === 'string') {
     const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
-    if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`
-    return value
+    if (!iso) return null
+    return { y: Number(iso[1]), m: Number(iso[2]), d: Number(iso[3]) }
   }
   if (value && typeof value === 'object') {
     const o = value as Record<string, unknown>
     const y = o.year
-    // time crate Month may serialize as string name or number
     let m: number | null = null
     if (typeof o.month === 'number') m = o.month
-    else if (typeof o.month === 'string') {
-      const map: Record<string, number> = {
-        January: 1,
-        February: 2,
-        March: 3,
-        April: 4,
-        May: 5,
-        June: 6,
-        July: 7,
-        August: 8,
-        September: 9,
-        October: 10,
-        November: 11,
-        December: 12,
-      }
-      m = map[o.month] ?? null
-    }
+    else if (typeof o.month === 'string') m = MONTHS[o.month] ?? null
     const d = o.day
     if (typeof y === 'number' && m != null && typeof d === 'number') {
-      return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
+      return { y, m, d }
     }
   }
-  return String(value ?? '')
+  return null
+}
+
+/**
+ * Render entry dates from Rust the European / Greek way: `dd/mm/yyyy`.
+ * Display only — anything sent back to the API stays ISO.
+ */
+export function formatDate(value: unknown): string {
+  const p = dateParts(value)
+  if (!p) return typeof value === 'string' ? value : String(value ?? '')
+  return `${pad2(p.d)}/${pad2(p.m)}/${p.y}`
+}
+
+/** Normalize an entry date to ISO `YYYY-MM-DD` (for date inputs). */
+export function isoDate(value: unknown): string {
+  const p = dateParts(value)
+  if (!p) return typeof value === 'string' ? value : ''
+  return `${p.y}-${pad2(p.m)}-${pad2(p.d)}`
 }

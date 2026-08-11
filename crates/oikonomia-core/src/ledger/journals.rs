@@ -9,8 +9,8 @@ use crate::domain::{
     validate_lines_for_post,
 };
 use crate::error::{Error, Result};
-use crate::ledger::accounts::get_account;
-use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, normal_balance};
+use crate::ledger::accounts::{get_account, list_accounts};
+use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, account_balance_as_of, normal_balance};
 use crate::money::Money;
 use crate::util::{format_date, now_utc_string, parse_date, parse_uuid};
 
@@ -587,6 +587,143 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult>
         original_id: id,
         reverse_id: reverse.entry.id,
     })
+}
+
+/// Correct a posted entry: void the original and post the replacement in one
+/// transaction, moving any attached documents to the replacement.
+///
+/// Posted entries stay immutable — an edit is a void plus repost so the audit
+/// trail survives. The UI hides voided pairs, so this reads as an in-place edit.
+///
+/// # Errors
+///
+/// Not found, already voided, entity mismatch, or any posting error.
+pub fn replace_simple_entry(
+    conn: &Connection,
+    original_id: JournalEntryId,
+    input: &PostSimpleEntry,
+) -> Result<PostedEntryView> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let original = get_entry(&tx, original_id)?;
+    if original.entry.entity_id != input.entity_id {
+        return Err(Error::Validation(
+            "entry belongs to a different book".into(),
+        ));
+    }
+
+    void_entry_in_tx(&tx, original_id)?;
+    let replacement = post_simple_entry_unchecked(&tx, input)?;
+
+    tx.execute(
+        "UPDATE documents SET entry_id = ?1 WHERE entry_id = ?2",
+        rusqlite::params![
+            replacement.entry.id.0.to_string(),
+            original_id.0.to_string(),
+        ],
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(replacement)
+}
+
+/// Set an asset or liability account's balance as of a date by posting the
+/// difference against the entity's Opening Balances equity account.
+///
+/// The user states what the account actually holds; the gap between that and
+/// the ledger becomes one adjustment entry, so repeating the call converges on
+/// the stated balance instead of stacking duplicates.
+///
+/// # Errors
+///
+/// Wrong account type, inactive account, no equity account to post against,
+/// a target equal to the current balance, or DB errors.
+pub fn set_account_opening_balance(
+    conn: &Connection,
+    account_id: AccountId,
+    target_minor: i64,
+    as_of: &str,
+) -> Result<PostedEntryView> {
+    use crate::domain::AccountType;
+
+    let account = get_account(conn, account_id)?;
+    if account.account_type != AccountType::Asset && account.account_type != AccountType::Liability
+    {
+        return Err(Error::Validation(
+            "opening balances apply to asset or liability accounts".into(),
+        ));
+    }
+    if !account.is_active {
+        return Err(Error::Validation(format!(
+            "account {} is inactive",
+            account.code
+        )));
+    }
+
+    let as_of_d = parse_date(as_of)?;
+    let current = account_balance_as_of(conn, account_id, account.account_type, as_of_d)?;
+    let delta = target_minor
+        .checked_sub(current)
+        .ok_or(Error::MoneyOverflow)?;
+    if delta == 0 {
+        return Err(Error::Validation(
+            "the account already has this balance".into(),
+        ));
+    }
+
+    // Prefer the system Opening Balances account; fall back to any active
+    // equity account so hand-built (blank template) charts still work.
+    let accounts = list_accounts(conn, account.entity_id)?;
+    let equity = accounts
+        .iter()
+        .find(|a| a.account_type == AccountType::Equity && a.is_system && a.is_active)
+        .or_else(|| {
+            accounts
+                .iter()
+                .find(|a| a.account_type == AccountType::Equity && a.is_active)
+        })
+        .ok_or_else(|| {
+            Error::Validation(
+                "this book has no equity account to post the opening balance against".into(),
+            )
+        })?;
+
+    // A debit-normal account grows by debiting: a positive delta debits the
+    // account and credits equity; every other combination flips the sides.
+    let amount = delta.checked_abs().ok_or(Error::MoneyOverflow)?;
+    let account_on_debit_side = account.account_type.is_debit_normal() == (delta > 0);
+    let (debit_id, credit_id) = if account_on_debit_side {
+        (account.id, equity.id)
+    } else {
+        (equity.id, account.id)
+    };
+
+    post_entry(
+        conn,
+        &PostJournal {
+            entity_id: account.entity_id,
+            entry_date: format_date(as_of_d),
+            description: format!("Opening balance — {}", account.name),
+            reference: None,
+            lines: vec![
+                CreateJournalLine {
+                    account_id: debit_id,
+                    debit_minor: amount,
+                    credit_minor: 0,
+                    memo: None,
+                },
+                CreateJournalLine {
+                    account_id: credit_id,
+                    debit_minor: 0,
+                    credit_minor: amount,
+                    memo: None,
+                },
+            ],
+        },
+    )
 }
 
 /// Account register with running balance (oldest first in range).

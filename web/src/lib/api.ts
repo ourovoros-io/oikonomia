@@ -241,6 +241,9 @@ export const api = {
       analysisJson: analysisJson ?? null,
     }),
   entryVoid: (id: string) => call<{ original_id: string; reverse_id: string }>('entry_void', { id }),
+  /** Edit = void + repost in one transaction; documents follow the new entry. */
+  entryReplaceSimple: (originalId: string, input: SimpleEntryInput) =>
+    call<PostedEntryView>('entry_replace_simple', { originalId, input }),
 
   reportTrialBalance: (entityId: string, asOf: string) =>
     call<TrialBalance>('report_trial_balance', { entityId, asOf }),
@@ -250,6 +253,13 @@ export const api = {
     call<BalanceSheet>('report_balance_sheet', { entityId, asOf }),
   dashboardSummary: (entityId: string, from: string, to: string, assetsAsOf: string) =>
     call<DashboardSummary>('dashboard_summary_cmd', { entityId, from, to, assetsAsOf }),
+
+  /** Signed normal balance of one account as of an ISO date. */
+  accountBalance: (accountId: string, asOf: string) =>
+    call<number>('account_balance_cmd', { accountId, asOf }),
+  /** Set the account's actual balance; Rust posts the delta against equity. */
+  accountSetOpeningBalance: (accountId: string, targetMinor: number, asOf: string) =>
+    call<PostedEntryView>('account_set_opening_balance', { accountId, targetMinor, asOf }),
 
   getLockTimeout: () => call<number>('settings_get_lock_timeout'),
   setLockTimeout: (secs: number) => call<void>('settings_set_lock_timeout', { secs }),
@@ -332,7 +342,7 @@ export type PendingDocSource =
   | { kind: 'file'; file: File }
   | { kind: 'path'; path: string }
 
-export { formatMoney, formatDate, parseMajorToMinor, localeForCurrency } from './money'
+export { formatMoney, formatDate, isoDate, parseMajorToMinor, localeForCurrency } from './money'
 
 export function todayISO(): string {
   const d = new Date()
