@@ -1,12 +1,10 @@
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { isTauri } from './tauri'
 
-/** Compact one-row tray strip. */
-export const QUICK_ADD_WIDTH = 520
-/** Idle / form row height (padding + 32px controls + border). */
-export const QUICK_ADD_IDLE_HEIGHT = 52
-/** Slightly taller when reviewing a dropped document. */
-export const QUICK_ADD_REVIEW_HEIGHT = 88
+/** Compact decision panel — one choice at a time, rolls horizontally. */
+export const QUICK_ADD_WIDTH = 360
+export const QUICK_ADD_IDLE_HEIGHT = 132
+export const QUICK_ADD_REVIEW_HEIGHT = 132
 
 /** Resize the tray quick-add panel (no-op outside Tauri). */
 export async function setQuickAddHeight(height: number): Promise<void> {

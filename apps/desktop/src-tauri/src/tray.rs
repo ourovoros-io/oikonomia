@@ -7,9 +7,9 @@ use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 
 const QUICK_ADD_LABEL: &str = "quick-add";
-/// Match web one-row strip (`QUICK_ADD_WIDTH` / `QUICK_ADD_IDLE_HEIGHT` in TS).
-const QUICK_ADD_WIDTH: f64 = 520.0;
-const QUICK_ADD_HEIGHT: f64 = 52.0;
+/// Match web rolling panel (`QUICK_ADD_WIDTH` / `QUICK_ADD_IDLE_HEIGHT` in TS).
+const QUICK_ADD_WIDTH: f64 = 360.0;
+const QUICK_ADD_HEIGHT: f64 = 132.0;
 
 /// Bring the main window back after it was hidden to the tray.
 pub fn show_main_window(app: &AppHandle) {
