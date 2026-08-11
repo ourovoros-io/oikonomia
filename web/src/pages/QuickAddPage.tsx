@@ -617,7 +617,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           className="h-8 shrink-0 px-3"
         >
           <Check className="size-3.5" strokeWidth={1.75} aria-hidden />
-          Add
+          {reviewing ? 'Confirm & save' : 'Add'}
         </Button>
       </div>
 
