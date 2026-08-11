@@ -4,6 +4,7 @@
 //! with the user's theme before any password has been entered. Nothing stored
 //! here is sensitive.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,30 +13,46 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
 /// UI color theme.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Theme {
     /// Dark theme (the default).
+    #[default]
     Dark,
     /// Light theme.
     Light,
+}
+
+/// Last role-account picks for a single entity+kind tray post.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct LastRoleAccounts {
+    pub category_account_id: Option<String>,
+    pub wallet_account_id: Option<String>,
+    pub payable_account_id: Option<String>,
+    pub from_account_id: Option<String>,
+    pub to_account_id: Option<String>,
 }
 
 /// Non-secret UI preferences.
 ///
 /// Unknown or missing fields fall back to defaults so older and newer app
 /// versions can share the same file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct UiPrefs {
     /// Color theme.
     pub theme: Theme,
+    /// Last entity used in the tray quick-add panel.
+    pub last_entity_id: Option<String>,
+    /// Map key: `"{entity_id}:{kind}"` (kind = expense|income|bill|transfer).
+    pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
 }
 
-impl Default for UiPrefs {
-    fn default() -> Self {
-        Self { theme: Theme::Dark }
-    }
+/// Build the map key for last-used accounts.
+#[must_use]
+pub fn last_accounts_key(entity_id: &str, kind: &str) -> String {
+    format!("{entity_id}:{kind}")
 }
 
 /// Path of the preferences file inside the app data directory.
@@ -81,6 +98,7 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
     use tempfile::tempdir;
 
     #[test]
@@ -100,6 +118,7 @@ mod tests {
 
         let prefs = UiPrefs {
             theme: Theme::Light,
+            ..UiPrefs::default()
         };
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
         assert_eq!(load_ui_prefs(dir.path()), prefs);
@@ -126,8 +145,50 @@ mod tests {
         assert_eq!(
             load_ui_prefs(dir.path()),
             UiPrefs {
-                theme: Theme::Light
+                theme: Theme::Light,
+                ..UiPrefs::default()
             }
         );
+    }
+
+    #[test]
+    fn last_used_round_trips() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let mut last_accounts = BTreeMap::new();
+        last_accounts.insert(
+            "ent-1:expense".to_string(),
+            LastRoleAccounts {
+                category_account_id: Some("cat-1".into()),
+                wallet_account_id: Some("wal-1".into()),
+                payable_account_id: None,
+                from_account_id: None,
+                to_account_id: None,
+            },
+        );
+
+        let prefs = UiPrefs {
+            theme: Theme::Dark,
+            last_entity_id: Some("ent-1".into()),
+            last_accounts_by_entity_kind: last_accounts,
+        };
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+        assert_eq!(load_ui_prefs(dir.path()), prefs);
+    }
+
+    #[test]
+    fn missing_last_used_fields_default() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let json = r#"{ "theme": "light" }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+        let prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs.theme, Theme::Light);
+        assert_eq!(prefs.last_entity_id, None);
+        assert!(prefs.last_accounts_by_entity_kind.is_empty());
     }
 }
