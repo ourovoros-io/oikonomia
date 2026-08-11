@@ -38,3 +38,7 @@ vault.db
 # Test / coverage
 coverage/
 lcov.info
+
+# Git worktrees (local isolation)
+.worktrees/
+.superpowers/
