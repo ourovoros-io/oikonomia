@@ -711,8 +711,8 @@ export function TransactionsPage({ entity }: Props) {
                 setShowForm(true)
               }}
             >
-              <Plus className="size-4" />
-              New entry
+              <Plus className="size-3.5" />
+              New Entry
             </Button>
           }
         />
@@ -720,7 +720,6 @@ export function TransactionsPage({ entity }: Props) {
         <Panel
           title="All entries"
           description={`${visibleEntries.length} posted · ${ccy}`}
-          icon={<FileText className="size-4" />}
           actions={
             <Button
               size="sm"
@@ -729,8 +728,8 @@ export function TransactionsPage({ entity }: Props) {
                 setShowForm(true)
               }}
             >
-              <Plus className="size-3.5" />
-              New entry
+              <Plus className="size-3" />
+              New Entry
             </Button>
           }
         >
