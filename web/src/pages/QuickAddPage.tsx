@@ -6,7 +6,9 @@ import {
   useState,
   type DragEvent,
   type FormEvent,
+  type ReactNode,
 } from 'react'
+import { ChevronLeft, FileUp } from 'lucide-react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import {
   api,
@@ -22,7 +24,6 @@ import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import {
   QUICK_ADD_IDLE_HEIGHT,
-  QUICK_ADD_REVIEW_HEIGHT,
   setQuickAddHeight,
 } from '../lib/quickAddWindow'
 import { isTauri, type CommandError } from '../lib/tauri'
@@ -34,6 +35,7 @@ import {
   buildSimpleEntryInput,
   kindDefaultAccounts,
   lastAccountsMapKey,
+  type AccountLike,
   type BillStatusTray,
   type EntryKind,
 } from '../lib/simpleEntry'
@@ -49,11 +51,14 @@ type Props = {
   onBusyChange?: (busy: boolean) => void
 }
 
-const KIND_OPTIONS: Array<{ id: EntryKind; label: string }> = [
-  { id: 'expense', label: 'Expense' },
-  { id: 'income', label: 'Income' },
-  { id: 'bill', label: 'Bill' },
-  { id: 'transfer', label: 'Transfer' },
+/** One screen at a time — rolling tray flow, no scroll. */
+type Step = 'entity' | 'kind' | 'amount' | 'accounts' | 'memo' | 'review'
+
+const KIND_OPTIONS: Array<{ id: EntryKind; label: string; hint: string }> = [
+  { id: 'expense', label: 'Expense', hint: 'Paid now' },
+  { id: 'income', label: 'Income', hint: 'Received' },
+  { id: 'bill', label: 'Bill', hint: 'Payable' },
+  { id: 'transfer', label: 'Transfer', hint: 'Between accounts' },
 ]
 
 const compactControl =
@@ -116,6 +121,23 @@ function pendingDocLabel(source: PendingDocSource): string {
   return parts[parts.length - 1] || source.path
 }
 
+function stepTitle(step: Step, entityName: string | null): string {
+  switch (step) {
+    case 'entity':
+      return 'Choose book'
+    case 'kind':
+      return entityName ? `Type · ${entityName}` : 'Type'
+    case 'amount':
+      return 'Amount'
+    case 'accounts':
+      return 'Accounts'
+    case 'memo':
+      return 'Memo'
+    case 'review':
+      return 'Review document'
+  }
+}
+
 export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   const [entities, setEntities] = useState<Entity[]>([])
   const [entityId, setEntityId] = useState<string | null>(null)
@@ -123,6 +145,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   const [prefs, setPrefs] = useState<UiPrefs | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [step, setStep] = useState<Step>('kind')
 
   const [kind, setKind] = useState<EntryKind>('expense')
   const [billStatus, setBillStatus] = useState<BillStatusTray>('unpaid')
@@ -140,12 +163,9 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   const [pendingAnalysis, setPendingAnalysis] = useState<string | null>(null)
   const [scanNotes, setScanNotes] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
-  /** True from drop until cancel/success — keeps height after analyzer errors. */
-  const [reviewExpanded, setReviewExpanded] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const busyRef = useRef(false)
   const baseCurrencyRef = useRef('EUR')
-  /** Bumped on cancel so in-flight analyze results are ignored. */
   const analyzeGenRef = useRef(0)
 
   const entity = useMemo(
@@ -164,20 +184,10 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     onBusyChange?.(busy || analyzing)
   }, [busy, analyzing, onBusyChange])
 
-  // Keep panel height in sync with review mode (also re-apply on focus after hide).
   useEffect(() => {
-    void setQuickAddHeight(reviewExpanded ? QUICK_ADD_REVIEW_HEIGHT : QUICK_ADD_IDLE_HEIGHT)
-  }, [reviewExpanded])
+    void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+  }, [])
 
-  useEffect(() => {
-    const onFocus = () => {
-      void setQuickAddHeight(reviewExpanded ? QUICK_ADD_REVIEW_HEIGHT : QUICK_ADD_IDLE_HEIGHT)
-    }
-    window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
-  }, [reviewExpanded])
-
-  // Collapse to idle if this instance unmounts (success remount / lock).
   useEffect(() => {
     return () => {
       void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
@@ -225,7 +235,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     [roleSetters],
   )
 
-  // Initial load: entities + prefs, then accounts for resolved entity.
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -247,6 +256,8 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
             : ents[0]!.id
         setEntityId(preferred)
         await loadAccountsFor(preferred, 'expense', uiPrefs)
+        // Multi-book: start by confirming which book. Single book: jump to type.
+        setStep(ents.length > 1 ? 'entity' : 'kind')
       } catch (err) {
         if (!cancelled) setError((err as CommandError).message)
       } finally {
@@ -258,44 +269,74 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     }
   }, [loadAccountsFor])
 
-  // Focus amount once the form is ready (skip while document review is open).
   useEffect(() => {
-    if (loading || !entityId || reviewExpanded) return
+    if (loading || step !== 'amount') return
     const t = window.setTimeout(() => {
       document.getElementById('quick-add-amount')?.focus()
     }, 0)
     return () => window.clearTimeout(t)
-  }, [loading, entityId, reviewExpanded])
+  }, [loading, step])
 
-  async function onEntityChange(nextId: string) {
+  async function selectEntity(nextId: string) {
     setEntityId(nextId)
     setError(null)
     try {
       await loadAccountsFor(nextId, kind, prefs)
+      setStep('kind')
     } catch (err) {
       setError((err as CommandError).message)
     }
   }
 
-  function onKindChange(next: EntryKind) {
+  function selectKind(next: EntryKind) {
     setKind(next)
     if (next !== 'bill') setBillStatus('unpaid')
     if (!entity || !prefs) {
       applyRoleState(kindDefaultAccounts(next, accounts), roleSetters)
+    } else {
+      const key = lastAccountsMapKey(entity.id, next)
+      const last = prefs.last_accounts_by_entity_kind[key]
+      applyRoleState(resolveRoleAccounts(next, accounts, last), roleSetters)
+    }
+    setStep('amount')
+  }
+
+  function goBack() {
+    setError(null)
+    if (step === 'review') {
+      clearDocumentReview()
+      setStep('kind')
       return
     }
-    const key = lastAccountsMapKey(entity.id, next)
-    const last = prefs.last_accounts_by_entity_kind[key]
-    applyRoleState(resolveRoleAccounts(next, accounts, last), roleSetters)
+    if (step === 'kind' && entities.length > 1) {
+      setStep('entity')
+      return
+    }
+    if (step === 'amount') {
+      setStep('kind')
+      return
+    }
+    if (step === 'accounts') {
+      setStep('amount')
+      return
+    }
+    if (step === 'memo') {
+      setStep('accounts')
+    }
+  }
+
+  function canGoBack(): boolean {
+    if (step === 'entity') return false
+    if (step === 'kind' && entities.length <= 1) return false
+    return true
   }
 
   function applySuggestion(s: DocumentSuggestion, source: PendingDocSource) {
     setPendingDoc(source)
     setPendingAnalysis(JSON.stringify(s))
     setScanNotes(s.notes)
-    setReviewExpanded(true)
+    setStep('review')
 
-    // Analyzer never suggests transfer; tray bill status is unpaid/paid only.
     if (s.kind === 'bill') {
       setKind('bill')
       setBillStatus(s.bill_unpaid ? 'unpaid' : 'paid')
@@ -311,7 +352,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     if (s.description) setDescription(s.description)
     else if (s.merchant) setDescription(s.merchant)
 
-    // Analyzer emits 2-exponent minor units; backend clears non-2-digit currencies.
     const digits = currencyFractionDigits(baseCurrencyRef.current)
     if (s.amount_minor != null && s.amount_minor > 0 && digits === 2) {
       setAmount((s.amount_minor / 100).toFixed(2))
@@ -326,24 +366,21 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     setPendingAnalysis(null)
     setScanNotes(null)
     setAnalyzing(false)
-    setReviewExpanded(false)
     setDragOver(false)
   }
 
   function onCancelReview() {
-    // Allow cancel after analyzer failure or mid-analyze; block only while a post is in flight.
     if (busy && !analyzing) return
     analyzeGenRef.current += 1
     busyRef.current = false
     setBusy(false)
     clearDocumentReview()
     setError(null)
-    void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+    setStep(entities.length > 1 ? 'entity' : 'kind')
   }
 
   const processFile = useCallback(async (file: File, entId: string) => {
     if (busyRef.current) return
-    // Resource guard only — backend enforces the same cap (MAX_DOCUMENT_BYTES).
     if (file.size > MAX_DOC_BYTES) {
       setError('File too large (max 8 MB)')
       return
@@ -353,9 +390,8 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     busyRef.current = true
     setBusy(true)
     setAnalyzing(true)
-    setReviewExpanded(true)
+    setStep('review')
     setError(null)
-    void setQuickAddHeight(QUICK_ADD_REVIEW_HEIGHT)
     try {
       const dataBase64 = await fileToBase64(file)
       const mimeType = file.type || mimeFromName(file.name)
@@ -371,7 +407,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       if (analyzeGenRef.current !== gen) return
       const msg = (err as CommandError).message || 'Could not analyze document'
       setError(msg)
-      // Stay expanded so the error is visible; Cancel collapses.
       setPendingDoc(null)
       setPendingAnalysis(null)
       setScanNotes(null)
@@ -392,9 +427,8 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     busyRef.current = true
     setBusy(true)
     setAnalyzing(true)
-    setReviewExpanded(true)
+    setStep('review')
     setError(null)
-    void setQuickAddHeight(QUICK_ADD_REVIEW_HEIGHT)
     try {
       const suggestion = await api.documentAnalyzePath({ entityId: entId, path })
       if (analyzeGenRef.current !== gen) return
@@ -416,7 +450,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     }
   }, [])
 
-  // Tauri webviews often give empty dataTransfer.files on OS file drops.
   useEffect(() => {
     if (!isTauri() || !entityId || loading) return
 
@@ -473,13 +506,14 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     }
   }
 
-  async function onSubmit(ev: FormEvent) {
-    ev.preventDefault()
+  async function onSubmit(ev?: FormEvent) {
+    ev?.preventDefault()
     if (!entity || busy || analyzing) return
 
     const minor = parseMajorToMinor(amount, entity.base_currency)
     if (minor === null || minor <= 0) {
       setError('Enter a valid amount (e.g. 25.50 or 25,50)')
+      if (step !== 'review') setStep('amount')
       return
     }
 
@@ -529,7 +563,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         from_account_id: fromId || null,
         to_account_id: toId || null,
       }
-      // Prefs are best-effort: a remember failure must not hide a successful post.
       try {
         await api.rememberQuickAdd(entity.id, kind, roles)
         setPrefs((prev) => {
@@ -548,9 +581,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       }
 
       clearDocumentReview()
-      void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
-
-      // Clear busy before success UI so parent Escape/blur are not stuck blocked.
       setBusy(false)
       busyRef.current = false
       onBusyChange?.(false)
@@ -566,6 +596,50 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     }
   }
 
+  function advanceFromAmount() {
+    setError(null)
+    if (!entity) return
+    const minor = parseMajorToMinor(amount, entity.base_currency)
+    if (minor === null || minor <= 0) {
+      setError('Enter a valid amount (e.g. 25.50 or 25,50)')
+      return
+    }
+    setStep('accounts')
+  }
+
+  function advanceFromAccounts() {
+    setError(null)
+    if (kind === 'expense' || kind === 'income') {
+      if (!categoryId || !walletId) {
+        setError('Pick both accounts')
+        return
+      }
+    } else if (kind === 'bill') {
+      if (!categoryId) {
+        setError('Pick a category')
+        return
+      }
+      if (billStatus === 'paid' && !walletId) {
+        setError('Pick the wallet you paid from')
+        return
+      }
+      if (billStatus === 'unpaid' && !payableId) {
+        setError('Pick a payable account')
+        return
+      }
+    } else if (kind === 'transfer') {
+      if (!fromId || !toId) {
+        setError('Pick both accounts')
+        return
+      }
+      if (fromId === toId) {
+        setError('From and To must differ')
+        return
+      }
+    }
+    setStep('memo')
+  }
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-[var(--color-muted)]">
@@ -578,9 +652,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-3 text-center">
         <p className="text-xs text-[var(--color-fg)]">Create an entity in Oikonomia</p>
-        <p className="text-[11px] text-[var(--color-muted)]">
-          Quick add needs at least one book.
-        </p>
+        <p className="text-[11px] text-[var(--color-muted)]">Quick add needs at least one book.</p>
         <Button size="sm" onClick={() => void api.openMainWindow()}>
           Open Oikonomia
         </Button>
@@ -588,7 +660,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     )
   }
 
-  if (!entity) {
+  if (!entity && step !== 'entity') {
     return (
       <div className="flex h-full items-center justify-center text-xs text-[var(--color-muted)]">
         Loading…
@@ -596,21 +668,21 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     )
   }
 
-  const ccy = entity.base_currency
+  const ccy = entity?.base_currency ?? 'EUR'
   const formDisabled = busy || analyzing
+  const showChrome = step !== 'entity' || entities.length > 1
 
   return (
-    <form
-      onSubmit={(e) => void onSubmit(e)}
+    <div
       onDragOver={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        if (!formDisabled) setDragOver(true)
+        if (!formDisabled && entityId) setDragOver(true)
       }}
       onDragEnter={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        if (!formDisabled) setDragOver(true)
+        if (!formDisabled && entityId) setDragOver(true)
       }}
       onDragLeave={(e) => {
         e.preventDefault()
@@ -618,313 +690,761 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'flex h-full flex-col gap-1 overflow-hidden p-1.5 transition',
+        'flex h-full flex-col overflow-hidden p-2 transition',
         dragOver && 'ring-1 ring-inset ring-[var(--color-accent)] bg-[var(--color-accent-soft)]/40',
       )}
     >
-      {/* Kind row */}
-      <div className="inline-flex h-7 w-full items-stretch rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5">
-        {KIND_OPTIONS.map((opt) => {
-          const active = kind === opt.id
+      {showChrome ? (
+        <header className="mb-1.5 flex shrink-0 items-center gap-1">
+          {canGoBack() ? (
+            <button
+              type="button"
+              onClick={goBack}
+              disabled={formDisabled}
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-control)] text-[var(--color-muted)] transition hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)] disabled:opacity-50"
+              aria-label="Back"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+          ) : (
+            <span className="size-7 shrink-0" aria-hidden />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xs font-semibold text-[var(--color-fg)]">
+              {stepTitle(step, entity?.name ?? null)}
+            </p>
+          </div>
+          <StepDots step={step} multiEntity={entities.length > 1} />
+        </header>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {step === 'entity' ? (
+          <EntityStep
+            entities={entities}
+            selectedId={entityId}
+            disabled={formDisabled}
+            onSelect={(id) => void selectEntity(id)}
+          />
+        ) : null}
+
+        {step === 'kind' ? (
+          <KindStep disabled={formDisabled} onSelect={selectKind} />
+        ) : null}
+
+        {step === 'amount' ? (
+          <AmountStep
+            ccy={ccy}
+            amount={amount}
+            date={date}
+            disabled={formDisabled}
+            onAmount={setAmount}
+            onDate={setDate}
+            onNext={advanceFromAmount}
+          />
+        ) : null}
+
+        {step === 'accounts' ? (
+          <AccountsStep
+            kind={kind}
+            billStatus={billStatus}
+            formDisabled={formDisabled}
+            compactControl={compactControl}
+            categoryId={categoryId}
+            walletId={walletId}
+            payableId={payableId}
+            fromId={fromId}
+            toId={toId}
+            expenseAccounts={expenseAccounts}
+            incomeAccounts={incomeAccounts}
+            walletAccounts={walletAccounts}
+            assetWallets={assetWallets}
+            payableAccounts={payableAccounts}
+            transferAccounts={transferAccounts}
+            setBillStatus={setBillStatus}
+            setCategoryId={setCategoryId}
+            setWalletId={setWalletId}
+            setPayableId={setPayableId}
+            setFromId={setFromId}
+            setToId={setToId}
+            onNext={advanceFromAccounts}
+          />
+        ) : null}
+
+        {step === 'memo' ? (
+          <MemoStep
+            description={description}
+            disabled={formDisabled}
+            busy={busy}
+            kind={kind}
+            onDescription={setDescription}
+            onSubmit={() => void onSubmit()}
+          />
+        ) : null}
+
+        {step === 'review' ? (
+          <ReviewStep
+            analyzing={analyzing}
+            pendingDoc={pendingDoc}
+            scanNotes={scanNotes}
+            formDisabled={formDisabled}
+            busy={busy}
+            ccy={ccy}
+            amount={amount}
+            date={date}
+            description={description}
+            kind={kind}
+            billStatus={billStatus}
+            categoryId={categoryId}
+            walletId={walletId}
+            payableId={payableId}
+            expenseAccounts={expenseAccounts}
+            incomeAccounts={incomeAccounts}
+            walletAccounts={walletAccounts}
+            assetWallets={assetWallets}
+            payableAccounts={payableAccounts}
+            compactControl={compactControl}
+            setAmount={setAmount}
+            setDate={setDate}
+            setDescription={setDescription}
+            setBillStatus={setBillStatus}
+            setCategoryId={setCategoryId}
+            setWalletId={setWalletId}
+            setPayableId={setPayableId}
+            onCancel={onCancelReview}
+            onSubmit={() => void onSubmit()}
+          />
+        ) : null}
+      </div>
+
+      {error ? <ErrorBanner message={error} className="mt-1 mb-0 shrink-0 px-2 py-1 text-xs" /> : null}
+
+      {step === 'entity' || step === 'kind' ? (
+        <p className="mt-1 flex shrink-0 items-center justify-center gap-1 text-[10px] text-[var(--color-muted)]/80">
+          <FileUp className="size-3 opacity-70" aria-hidden />
+          Drop a receipt anytime after you pick a book
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function StepDots({ step, multiEntity }: { step: Step; multiEntity: boolean }) {
+  const manual: Step[] = multiEntity
+    ? ['entity', 'kind', 'amount', 'accounts', 'memo']
+    : ['kind', 'amount', 'accounts', 'memo']
+  if (step === 'review') {
+    return (
+      <span className="shrink-0 text-[10px] font-medium text-[var(--color-accent)]">Doc</span>
+    )
+  }
+  const idx = manual.indexOf(step)
+  return (
+    <div className="flex shrink-0 items-center gap-1" aria-hidden>
+      {manual.map((s, i) => (
+        <span
+          key={s}
+          className={cn(
+            'size-1.5 rounded-full transition',
+            i === idx
+              ? 'bg-[var(--color-accent)]'
+              : i < idx
+                ? 'bg-[var(--color-accent)]/50'
+                : 'bg-[var(--color-border-strong)]',
+          )}
+        />
+      ))}
+    </div>
+  )
+}
+
+function EntityStep({
+  entities,
+  selectedId,
+  disabled,
+  onSelect,
+}: {
+  entities: Entity[]
+  selectedId: string | null
+  disabled: boolean
+  onSelect: (id: string) => void
+}) {
+  return (
+    <div className="flex h-full flex-col gap-1">
+      <p className="text-[11px] text-[var(--color-muted)]">Which book is this for?</p>
+      <div className="grid min-h-0 flex-1 grid-cols-2 content-start gap-1.5 overflow-hidden">
+        {entities.slice(0, 4).map((e) => {
+          const active = e.id === selectedId
           return (
             <button
-              key={opt.id}
+              key={e.id}
               type="button"
-              aria-pressed={active}
-              disabled={formDisabled}
-              onClick={() => onKindChange(opt.id)}
+              disabled={disabled}
+              onClick={() => onSelect(e.id)}
               className={cn(
-                'min-w-0 flex-1 rounded-[calc(var(--radius-control)-2px)] px-1 text-[11px] font-medium transition',
+                'rounded-[var(--radius-control)] border px-2 py-2 text-left transition',
                 active
-                  ? 'bg-[var(--color-surface)] text-[var(--color-fg)] shadow-sm'
-                  : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]',
+                  ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                  : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)]/60',
               )}
             >
-              {opt.label}
+              <span className="block truncate text-xs font-medium text-[var(--color-fg)]">
+                {e.name}
+              </span>
+              <span className="block text-[10px] text-[var(--color-muted)]">{e.base_currency}</span>
             </button>
           )
         })}
       </div>
+      {entities.length > 4 ? (
+        <p className="text-[10px] text-[var(--color-muted)]">
+          Showing first 4 books. Open the full app for more.
+        </p>
+      ) : null}
+    </div>
+  )
+}
 
-      {/* Amount + role accounts + date + primary action */}
-      <div className="flex min-w-0 items-center gap-1">
+function KindStep({
+  disabled,
+  onSelect,
+}: {
+  disabled: boolean
+  onSelect: (k: EntryKind) => void
+}) {
+  return (
+    <div className="grid h-full grid-cols-2 content-stretch gap-1.5">
+      {KIND_OPTIONS.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          disabled={disabled}
+          onClick={() => onSelect(opt.id)}
+          className="flex flex-col justify-center rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-2.5 py-2 text-left transition hover:border-[var(--color-accent)]/60 hover:bg-[var(--color-accent-soft)]/40 disabled:opacity-50"
+        >
+          <span className="text-xs font-semibold text-[var(--color-fg)]">{opt.label}</span>
+          <span className="text-[10px] text-[var(--color-muted)]">{opt.hint}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function AmountStep({
+  ccy,
+  amount,
+  date,
+  disabled,
+  onAmount,
+  onDate,
+  onNext,
+}: {
+  ccy: string
+  amount: string
+  date: string
+  disabled: boolean
+  onAmount: (v: string) => void
+  onDate: (v: string) => void
+  onNext: () => void
+}) {
+  return (
+    <form
+      className="flex h-full flex-col justify-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        onNext()
+      }}
+    >
+      <div className="flex items-center gap-2">
         <Input
           id="quick-add-amount"
           inputMode="decimal"
-          placeholder={ccy}
+          placeholder="0.00"
+          value={amount}
+          onChange={(e) => onAmount(e.target.value)}
+          className="h-10 flex-1 px-3 text-base tabular-nums"
+          aria-label={`Amount (${ccy})`}
+          required
+          disabled={disabled}
+          autoFocus
+        />
+        <span className="shrink-0 text-xs font-medium text-[var(--color-muted)]">{ccy}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1 [&_input]:h-8 [&_input]:px-2 [&_input]:pr-8 [&_input]:text-xs [&_button]:h-7 [&_button]:w-7">
+          <DateInput
+            value={date}
+            onChange={onDate}
+            required
+            disabled={disabled}
+            aria-label="Entry date"
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={disabled} className="h-8 shrink-0 px-3">
+          Next
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+function AccountsStep(props: {
+  kind: EntryKind
+  billStatus: BillStatusTray
+  formDisabled: boolean
+  compactControl: string
+  categoryId: string
+  walletId: string
+  payableId: string
+  fromId: string
+  toId: string
+  expenseAccounts: AccountLike[]
+  incomeAccounts: AccountLike[]
+  walletAccounts: AccountLike[]
+  assetWallets: AccountLike[]
+  payableAccounts: AccountLike[]
+  transferAccounts: AccountLike[]
+  setBillStatus: (v: BillStatusTray) => void
+  setCategoryId: (v: string) => void
+  setWalletId: (v: string) => void
+  setPayableId: (v: string) => void
+  setFromId: (v: string) => void
+  setToId: (v: string) => void
+  onNext: () => void
+}) {
+  const {
+    kind,
+    billStatus,
+    formDisabled,
+    compactControl,
+    categoryId,
+    walletId,
+    payableId,
+    fromId,
+    toId,
+    expenseAccounts,
+    incomeAccounts,
+    walletAccounts,
+    assetWallets,
+    payableAccounts,
+    transferAccounts,
+    setBillStatus,
+    setCategoryId,
+    setWalletId,
+    setPayableId,
+    setFromId,
+    setToId,
+    onNext,
+  } = props
+
+  let fields: ReactNode = null
+
+  if (kind === 'expense') {
+    fields = (
+      <>
+        <FieldSelect
+          label="Category"
+          className={compactControl}
+          value={categoryId}
+          onChange={setCategoryId}
+          disabled={formDisabled}
+          options={expenseAccounts}
+          empty="No expense accounts"
+        />
+        <FieldSelect
+          label="Paid from"
+          className={compactControl}
+          value={walletId}
+          onChange={setWalletId}
+          disabled={formDisabled}
+          options={walletAccounts}
+          empty="No wallet accounts"
+        />
+      </>
+    )
+  } else if (kind === 'income') {
+    fields = (
+      <>
+        <FieldSelect
+          label="Income type"
+          className={compactControl}
+          value={categoryId}
+          onChange={setCategoryId}
+          disabled={formDisabled}
+          options={incomeAccounts}
+          empty="No income accounts"
+        />
+        <FieldSelect
+          label="Received into"
+          className={compactControl}
+          value={walletId}
+          onChange={setWalletId}
+          disabled={formDisabled}
+          options={assetWallets}
+          empty="No asset accounts"
+        />
+      </>
+    )
+  } else if (kind === 'bill') {
+    fields = (
+      <>
+        <div className="flex items-center gap-2">
+          <label className="shrink-0 text-[11px] text-[var(--color-muted)]">Status</label>
+          <select
+            className={cn(compactControl, 'flex-1')}
+            value={billStatus}
+            onChange={(e) => setBillStatus(e.target.value as BillStatusTray)}
+            disabled={formDisabled}
+            aria-label="Bill status"
+          >
+            <option value="unpaid">Unpaid</option>
+            <option value="paid">Paid</option>
+          </select>
+        </div>
+        <FieldSelect
+          label="Category"
+          className={compactControl}
+          value={categoryId}
+          onChange={setCategoryId}
+          disabled={formDisabled}
+          options={expenseAccounts}
+          empty="No expense accounts"
+        />
+        {billStatus === 'paid' ? (
+          <FieldSelect
+            label="Paid from"
+            className={compactControl}
+            value={walletId}
+            onChange={setWalletId}
+            disabled={formDisabled}
+            options={walletAccounts}
+            empty="No wallet accounts"
+          />
+        ) : (
+          <FieldSelect
+            label="Payable"
+            className={compactControl}
+            value={payableId}
+            onChange={setPayableId}
+            disabled={formDisabled}
+            options={payableAccounts}
+            empty="No liability accounts"
+          />
+        )}
+      </>
+    )
+  } else {
+    fields = (
+      <>
+        <FieldSelect
+          label="From"
+          className={compactControl}
+          value={fromId}
+          onChange={setFromId}
+          disabled={formDisabled}
+          options={transferAccounts}
+          empty="No asset accounts"
+        />
+        <FieldSelect
+          label="To"
+          className={compactControl}
+          value={toId}
+          onChange={setToId}
+          disabled={formDisabled}
+          options={transferAccounts}
+          empty="No asset accounts"
+        />
+      </>
+    )
+  }
+
+  return (
+    <form
+      className="flex h-full flex-col gap-1.5"
+      onSubmit={(e) => {
+        e.preventDefault()
+        onNext()
+      }}
+    >
+      <div className="flex min-h-0 flex-1 flex-col justify-center gap-1.5 overflow-hidden">
+        {fields}
+      </div>
+      <Button type="submit" size="sm" disabled={formDisabled} className="h-8 shrink-0">
+        Next
+      </Button>
+    </form>
+  )
+}
+
+function FieldSelect({
+  label,
+  className,
+  value,
+  onChange,
+  disabled,
+  options,
+  empty,
+}: {
+  label: string
+  className: string
+  value: string
+  onChange: (v: string) => void
+  disabled: boolean
+  options: AccountLike[]
+  empty: string
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <label className="w-16 shrink-0 text-[11px] text-[var(--color-muted)]">{label}</label>
+      <select
+        className={cn(className, 'flex-1')}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        required
+        disabled={disabled}
+        aria-label={label}
+      >
+        {options.length === 0 ? <option value="">{empty}</option> : null}
+        {options.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function MemoStep({
+  description,
+  disabled,
+  busy,
+  kind,
+  onDescription,
+  onSubmit,
+}: {
+  description: string
+  disabled: boolean
+  busy: boolean
+  kind: EntryKind
+  onDescription: (v: string) => void
+  onSubmit: () => void
+}) {
+  return (
+    <form
+      className="flex h-full flex-col justify-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        onSubmit()
+      }}
+    >
+      <Input
+        value={description}
+        onChange={(e) => onDescription(e.target.value)}
+        placeholder="Memo (optional)"
+        className="h-9 px-3 text-sm"
+        aria-label="Memo"
+        disabled={disabled}
+        autoFocus
+      />
+      <Button type="submit" size="sm" busy={busy} disabled={disabled} className="h-9">
+        Save {kind}
+      </Button>
+    </form>
+  )
+}
+
+function ReviewStep(props: {
+  analyzing: boolean
+  pendingDoc: PendingDocSource | null
+  scanNotes: string | null
+  formDisabled: boolean
+  busy: boolean
+  ccy: string
+  amount: string
+  date: string
+  description: string
+  kind: EntryKind
+  billStatus: BillStatusTray
+  categoryId: string
+  walletId: string
+  payableId: string
+  expenseAccounts: AccountLike[]
+  incomeAccounts: AccountLike[]
+  walletAccounts: AccountLike[]
+  assetWallets: AccountLike[]
+  payableAccounts: AccountLike[]
+  compactControl: string
+  setAmount: (v: string) => void
+  setDate: (v: string) => void
+  setDescription: (v: string) => void
+  setBillStatus: (v: BillStatusTray) => void
+  setCategoryId: (v: string) => void
+  setWalletId: (v: string) => void
+  setPayableId: (v: string) => void
+  onCancel: () => void
+  onSubmit: () => void
+}) {
+  const {
+    analyzing,
+    pendingDoc,
+    scanNotes,
+    formDisabled,
+    busy,
+    ccy,
+    amount,
+    date,
+    description,
+    kind,
+    billStatus,
+    categoryId,
+    walletId,
+    payableId,
+    expenseAccounts,
+    incomeAccounts,
+    walletAccounts,
+    assetWallets,
+    payableAccounts,
+    compactControl,
+    setAmount,
+    setDate,
+    setDescription,
+    setBillStatus,
+    setCategoryId,
+    setWalletId,
+    setPayableId,
+    onCancel,
+    onSubmit,
+  } = props
+
+  if (analyzing) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+        <p className="text-xs text-[var(--color-muted)]">Analyzing document…</p>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel} className="h-7 text-xs">
+          Cancel
+        </Button>
+      </div>
+    )
+  }
+
+  const categoryOpts =
+    kind === 'income' ? incomeAccounts : expenseAccounts
+  const walletOpts = kind === 'income' ? assetWallets : walletAccounts
+
+  return (
+    <form
+      className="flex h-full flex-col gap-1"
+      onSubmit={(e) => {
+        e.preventDefault()
+        onSubmit()
+      }}
+    >
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <p className="truncate text-[11px] font-medium text-[var(--color-fg)]">
+          {pendingDoc ? pendingDocLabel(pendingDoc) : 'Could not analyze'}
+        </p>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          onClick={onCancel}
+          className="h-6 shrink-0 px-1.5 text-[11px]"
+        >
+          Cancel
+        </Button>
+      </div>
+      {scanNotes ? (
+        <p className="truncate text-[10px] text-[var(--color-muted)]">{scanNotes}</p>
+      ) : null}
+      <div className="flex items-center gap-1">
+        <Input
+          inputMode="decimal"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          className="h-8 w-[4.5rem] shrink-0 px-2 text-xs tabular-nums"
+          className="h-7 w-20 shrink-0 px-2 text-xs tabular-nums"
           aria-label={`Amount (${ccy})`}
           required
           disabled={formDisabled}
         />
-
-        {kind === 'expense' ? (
-          <>
-            <select
-              className={cn(compactControl, 'flex-1')}
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              required
-              disabled={formDisabled}
-              aria-label="Category"
-            >
-              {expenseAccounts.length === 0 ? <option value="">No expense accounts</option> : null}
-              {expenseAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={cn(compactControl, 'flex-1')}
-              value={walletId}
-              onChange={(e) => setWalletId(e.target.value)}
-              required
-              disabled={formDisabled}
-              aria-label="Paid from"
-            >
-              {walletAccounts.length === 0 ? <option value="">No wallet accounts</option> : null}
-              {walletAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </>
-        ) : null}
-
-        {kind === 'income' ? (
-          <>
-            <select
-              className={cn(compactControl, 'flex-1')}
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              required
-              disabled={formDisabled}
-              aria-label="Income type"
-            >
-              {incomeAccounts.length === 0 ? <option value="">No income accounts</option> : null}
-              {incomeAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={cn(compactControl, 'flex-1')}
-              value={walletId}
-              onChange={(e) => setWalletId(e.target.value)}
-              required
-              disabled={formDisabled}
-              aria-label="Received into"
-            >
-              {assetWallets.length === 0 ? <option value="">No asset accounts</option> : null}
-              {assetWallets.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </>
-        ) : null}
-
-        {kind === 'bill' ? (
-          <>
-            <select
-              className={cn(compactControl, 'w-[4.25rem] shrink-0')}
-              value={billStatus}
-              onChange={(e) => setBillStatus(e.target.value as BillStatusTray)}
-              disabled={formDisabled}
-              aria-label="Bill status"
-            >
-              <option value="unpaid">Unpaid</option>
-              <option value="paid">Paid</option>
-            </select>
-            <select
-              className={cn(compactControl, 'flex-1')}
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              required
-              disabled={formDisabled}
-              aria-label="Bill category"
-            >
-              {expenseAccounts.length === 0 ? <option value="">No expense accounts</option> : null}
-              {expenseAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-            {billStatus === 'paid' ? (
-              <select
-                className={cn(compactControl, 'flex-1')}
-                value={walletId}
-                onChange={(e) => setWalletId(e.target.value)}
-                required
-                disabled={formDisabled}
-                aria-label="Paid from"
-              >
-                {walletAccounts.length === 0 ? <option value="">No wallet accounts</option> : null}
-                {walletAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <select
-                className={cn(compactControl, 'flex-1')}
-                value={payableId}
-                onChange={(e) => setPayableId(e.target.value)}
-                required
-                disabled={formDisabled}
-                aria-label="Bills payable"
-              >
-                {payableAccounts.length === 0 ? (
-                  <option value="">No liability accounts</option>
-                ) : null}
-                {payableAccounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            )}
-          </>
-        ) : null}
-
-        {kind === 'transfer' ? (
-          <>
-            <select
-              className={cn(compactControl, 'flex-1')}
-              value={fromId}
-              onChange={(e) => setFromId(e.target.value)}
-              required
-              disabled={formDisabled}
-              aria-label="From"
-            >
-              {transferAccounts.length === 0 ? <option value="">No asset accounts</option> : null}
-              {transferAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className={cn(compactControl, 'flex-1')}
-              value={toId}
-              onChange={(e) => setToId(e.target.value)}
-              required
-              disabled={formDisabled}
-              aria-label="To"
-            >
-              {transferAccounts.length === 0 ? <option value="">No asset accounts</option> : null}
-              {transferAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </>
-        ) : null}
-
-        <div className="w-[5.75rem] shrink-0 [&_input]:h-8 [&_input]:px-2 [&_input]:pr-8 [&_input]:text-xs [&_button]:h-7 [&_button]:w-7">
-          <DateInput
-            value={date}
-            onChange={setDate}
-            required
-            disabled={formDisabled}
-            aria-label="Entry date"
-          />
+        <div className="w-[5.5rem] shrink-0 [&_input]:h-7 [&_input]:px-1.5 [&_input]:pr-7 [&_input]:text-[11px] [&_button]:h-6 [&_button]:w-6">
+          <DateInput value={date} onChange={setDate} required disabled={formDisabled} />
         </div>
-
-        {pendingDoc ? (
-          <Button type="submit" size="sm" busy={busy} className="h-8 shrink-0 px-2.5">
-            Confirm & save
-          </Button>
+        {kind === 'bill' ? (
+          <select
+            className={cn(compactControl, 'h-7 w-[4.5rem] shrink-0')}
+            value={billStatus}
+            onChange={(e) => setBillStatus(e.target.value as BillStatusTray)}
+            disabled={formDisabled}
+          >
+            <option value="unpaid">Unpaid</option>
+            <option value="paid">Paid</option>
+          </select>
+        ) : null}
+      </div>
+      <div className="flex min-w-0 items-center gap-1">
+        <select
+          className={cn(compactControl, 'h-7 flex-1')}
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          disabled={formDisabled}
+          aria-label="Category"
+        >
+          {categoryOpts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+        {kind === 'bill' && billStatus === 'unpaid' ? (
+          <select
+            className={cn(compactControl, 'h-7 flex-1')}
+            value={payableId}
+            onChange={(e) => setPayableId(e.target.value)}
+            disabled={formDisabled}
+            aria-label="Payable"
+          >
+            {payableAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
         ) : (
-          <Button type="submit" size="sm" busy={busy || analyzing} className="h-8 shrink-0 px-2.5">
-            {analyzing ? '…' : 'Add'}
-          </Button>
+          <select
+            className={cn(compactControl, 'h-7 flex-1')}
+            value={walletId}
+            onChange={(e) => setWalletId(e.target.value)}
+            disabled={formDisabled}
+            aria-label="Wallet"
+          >
+            {walletOpts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
         )}
       </div>
-
-      {/* Memo + optional entity */}
       <div className="flex min-w-0 items-center gap-1">
         <Input
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="Memo (optional)"
-          className="h-8 flex-1 px-2 text-xs"
-          aria-label="Memo"
+          placeholder="Memo"
+          className="h-7 flex-1 px-2 text-xs"
           disabled={formDisabled}
         />
-        {entities.length > 1 ? (
-          <select
-            className={cn(compactControl, 'w-[7.5rem] shrink-0')}
-            value={entity.id}
-            onChange={(e) => void onEntityChange(e.target.value)}
-            disabled={formDisabled}
-            aria-label="Book"
-          >
-            {entities.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
-        ) : null}
+        <Button
+          type="submit"
+          size="sm"
+          busy={busy}
+          disabled={formDisabled || !pendingDoc}
+          className="h-7 shrink-0 px-2 text-xs"
+        >
+          Save
+        </Button>
       </div>
-
-      {/* Idle drop affordance (subtle) or expanded document review */}
-      {reviewExpanded ? (
-        <div className="mt-0.5 flex min-h-0 flex-1 flex-col gap-1 overflow-auto rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5">
-          <div className="flex min-w-0 items-start justify-between gap-2">
-            <div className="min-w-0">
-              {analyzing ? (
-                <p className="text-xs text-[var(--color-muted)]">Analyzing document…</p>
-              ) : pendingDoc ? (
-                <>
-                  <p className="truncate text-xs font-medium text-[var(--color-fg)]">
-                    {pendingDocLabel(pendingDoc)}
-                  </p>
-                  {scanNotes ? (
-                    <p className="mt-0.5 line-clamp-3 text-[11px] leading-snug text-[var(--color-muted)]">
-                      {scanNotes}
-                    </p>
-                  ) : (
-                    <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">
-                      Document will be stored encrypted when you save. Review fields, then confirm.
-                    </p>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-[var(--color-muted)]">
-                  Could not analyze. Cancel and try another file, or fill the form manually.
-                </p>
-              )}
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={busy && !analyzing}
-              onClick={onCancelReview}
-              className="h-7 shrink-0 px-2 text-xs"
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <p className="px-0.5 text-center text-[10px] leading-none text-[var(--color-muted)]/80">
-          Drop receipt to analyze
-        </p>
-      )}
-
-      <ErrorBanner message={error} className="mb-0 px-2 py-1 text-xs" />
     </form>
   )
 }

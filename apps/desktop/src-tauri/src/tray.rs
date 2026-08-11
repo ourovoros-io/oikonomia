@@ -8,7 +8,8 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 
 const QUICK_ADD_LABEL: &str = "quick-add";
 const QUICK_ADD_WIDTH: f64 = 420.0;
-const QUICK_ADD_HEIGHT: f64 = 110.0;
+/// Match web step-wizard height (`QUICK_ADD_IDLE_HEIGHT` in quickAddWindow.ts).
+const QUICK_ADD_HEIGHT: f64 = 168.0;
 
 /// Bring the main window back after it was hidden to the tray.
 pub fn show_main_window(app: &AppHandle) {
