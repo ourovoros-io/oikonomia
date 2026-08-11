@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Download, Eye, Paperclip, Plus, X } from 'lucide-react'
+import { Download, Eye, Paperclip, Plus, Trash2 } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -40,13 +40,13 @@ export function EntryDetailModal({
 }: Props) {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [attachBusy, setAttachBusy] = useState(false)
-  const [unlinkId, setUnlinkId] = useState<string | null>(null)
+  const [deleteId, setDeleteId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   if (!view) return null
   const entry = view.entry
 
-  // One operation at a time: busyId is shared by export and unlink, so a
+  // One operation at a time: busyId is shared by export and delete, so a
   // second action while either is in flight must be refused, not just
   // silently overwrite the flag and re-enable controls mid-operation.
   const anyBusy = attachBusy || busyId !== null
@@ -77,16 +77,16 @@ export function EntryDetailModal({
     }
   }
 
-  async function confirmUnlink() {
-    if (!unlinkId) return
+  async function confirmDelete() {
+    if (!deleteId) return
     if (busyId !== null) return
-    setBusyId(unlinkId)
+    setBusyId(deleteId)
     try {
-      await api.documentUnlink(unlinkId)
-      setUnlinkId(null)
+      await api.documentDelete(deleteId)
+      setDeleteId(null)
       await onChanged()
     } catch (err) {
-      onError((err as CommandError).message || 'Could not remove attachment')
+      onError((err as CommandError).message || 'Could not delete document')
     } finally {
       setBusyId(null)
     }
@@ -114,15 +114,16 @@ export function EntryDetailModal({
       }}
     >
       <ConfirmDialog
-        open={unlinkId !== null}
-        title="Remove attachment?"
-        body="The file stays in your vault under Documents as unlinked — nothing is deleted."
-        confirmLabel="Remove"
-        busy={busyId !== null && busyId === unlinkId}
+        open={deleteId !== null}
+        title="Delete document?"
+        body="This permanently deletes the file from your vault. It cannot be undone. The entry itself stays."
+        confirmLabel="Delete"
+        danger
+        busy={busyId !== null && busyId === deleteId}
         onCancel={() => {
-          if (busyId === null) setUnlinkId(null)
+          if (busyId === null) setDeleteId(null)
         }}
-        onConfirm={() => void confirmUnlink()}
+        onConfirm={() => void confirmDelete()}
       />
 
       <div className="space-y-6">
@@ -233,11 +234,11 @@ export function EntryDetailModal({
                     size="icon"
                     className="h-8 w-8"
                     disabled={anyBusy}
-                    onClick={() => setUnlinkId(doc.id)}
-                    aria-label="Remove attachment"
-                    title="Remove"
+                    onClick={() => setDeleteId(doc.id)}
+                    aria-label="Delete document"
+                    title="Delete"
                   >
-                    <X className="size-4" />
+                    <Trash2 className="size-4" />
                   </Button>
                 </li>
               ))}

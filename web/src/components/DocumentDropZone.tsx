@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { FileUp, Loader2, Sparkles } from 'lucide-react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { api, type AnalyzerStatus, type DocumentSuggestion } from '../lib/api'
+import { api, type AnalyzerStatus, type DocumentSuggestion, type PendingDocSource } from '../lib/api'
 import { isTauri, type CommandError } from '../lib/tauri'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { cn } from './ui'
@@ -9,7 +9,7 @@ import { cn } from './ui'
 type Props = {
   entityId: string
   disabled?: boolean
-  onSuggestion: (suggestion: DocumentSuggestion) => void
+  onSuggestion: (suggestion: DocumentSuggestion, source: PendingDocSource) => void
   onError: (message: string) => void
 }
 
@@ -56,7 +56,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
           mimeType,
           dataBase64,
         })
-        onSuggestion(suggestion)
+        onSuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
         const msg = (err as CommandError).message || 'Could not analyze document'
         setLocalError(msg)
@@ -78,7 +78,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       setLocalError(null)
       try {
         const suggestion = await api.documentAnalyzePath({ entityId, path })
-        onSuggestion(suggestion)
+        onSuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
         const msg = (err as CommandError).message || 'Could not analyze document'
         setLocalError(msg)

@@ -148,6 +148,22 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   }
 }
 
+/** Simple-form posting input; the kind → debit/credit mapping lives in Rust. */
+export type SimpleEntryInput = {
+  entity_id: string
+  kind: 'expense' | 'income' | 'bill' | 'transfer'
+  bill_status: 'paid' | 'unpaid' | 'pay_existing' | null
+  entry_date: string
+  description: string
+  reference: string | null
+  amount_minor: number
+  category_account_id: string | null
+  wallet_account_id: string | null
+  payable_account_id: string | null
+  from_account_id: string | null
+  to_account_id: string | null
+}
+
 export const api = {
   entityList: () => call<Entity[]>('entity_list'),
   entityCreate: (input: {
@@ -196,20 +212,31 @@ export const api = {
     lines: CreateJournalLine[]
   }) => call<PostedEntryView>('entry_post', { input }),
   /** Simple-form posting: the kind → debit/credit mapping lives in Rust. */
-  entryPostSimple: (input: {
-    entity_id: string
-    kind: 'expense' | 'income' | 'bill' | 'transfer'
-    bill_status: 'paid' | 'unpaid' | 'pay_existing' | null
-    entry_date: string
-    description: string
-    reference: string | null
-    amount_minor: number
-    category_account_id: string | null
-    wallet_account_id: string | null
-    payable_account_id: string | null
-    from_account_id: string | null
-    to_account_id: string | null
-  }) => call<PostedEntryView>('entry_post_simple', { input }),
+  entryPostSimple: (input: SimpleEntryInput) => call<PostedEntryView>('entry_post_simple', { input }),
+  /** Post a simple entry together with its analyzed document (one transaction). */
+  entryPostSimpleWithDocument: (
+    input: SimpleEntryInput,
+    doc: { filename: string; mimeType: string; dataBase64: string },
+    analysisJson?: string,
+  ) =>
+    call<PostedEntryView>('entry_post_simple_with_document', {
+      input,
+      filename: doc.filename,
+      mimeType: doc.mimeType,
+      dataBase64: doc.dataBase64,
+      analysisJson: analysisJson ?? null,
+    }),
+  /** Same, for native drops: the backend re-reads the path at post time. */
+  entryPostSimpleWithDocumentPath: (
+    input: SimpleEntryInput,
+    path: string,
+    analysisJson?: string,
+  ) =>
+    call<PostedEntryView>('entry_post_simple_with_document_path', {
+      input,
+      path,
+      analysisJson: analysisJson ?? null,
+    }),
   entryVoid: (id: string) => call<{ original_id: string; reverse_id: string }>('entry_void', { id }),
 
   reportTrialBalance: (entityId: string, asOf: string) =>
@@ -243,12 +270,9 @@ export const api = {
       entityId: input.entityId,
       path: input.path,
     }),
-  documentLinkEntry: (documentId: string, entryId: string) =>
-    call<void>('document_link_entry', { documentId, entryId }),
   documentList: (entityId: string) => call<DocumentMeta[]>('document_list', { entityId }),
   documentGet: (documentId: string) => call<DocumentContent>('document_get', { documentId }),
   documentDelete: (documentId: string) => call<void>('document_delete', { documentId }),
-  documentUnlink: (documentId: string) => call<void>('document_unlink', { documentId }),
   documentAttach: (input: {
     entityId: string
     entryId: string
@@ -266,7 +290,6 @@ export type AnalyzerStatus = {
 }
 
 export type DocumentSuggestion = {
-  document_id: string
   source: 'bundled_ocr' | 'heuristic' | 'none'
   model: string | null
   kind: 'expense' | 'income' | 'bill'
@@ -286,7 +309,7 @@ export type DocumentSuggestion = {
 export type DocumentMeta = {
   id: string
   entity_id: string
-  entry_id: string | null
+  entry_id: string
   filename: string
   mime_type: string
   size_bytes: number
@@ -297,6 +320,11 @@ export type DocumentContent = {
   meta: DocumentMeta
   data_base64: string
 }
+
+/** Where a pending (not yet saved) document lives until the entry is posted. */
+export type PendingDocSource =
+  | { kind: 'file'; file: File }
+  | { kind: 'path'; path: string }
 
 export { formatMoney, formatDate, parseMajorToMinor, localeForCurrency } from './money'
 

@@ -16,9 +16,11 @@ import {
   type Account,
   type DocumentMeta,
   type Entity,
+  type PendingDocSource,
   type PostedEntryView,
 } from '../lib/api'
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
+import { fileToBase64, mimeFromName } from '../lib/files'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentDropZone } from '../components/DocumentDropZone'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
@@ -96,7 +98,8 @@ export function TransactionsPage({ entity }: Props) {
   const [busy, setBusy] = useState(false)
   const [voidId, setVoidId] = useState<string | null>(null)
   const [voidBusy, setVoidBusy] = useState(false)
-  const [linkedDocumentId, setLinkedDocumentId] = useState<string | null>(null)
+  const [pendingDoc, setPendingDoc] = useState<PendingDocSource | null>(null)
+  const [pendingAnalysis, setPendingAnalysis] = useState<string | null>(null)
   const [scanNotes, setScanNotes] = useState<string | null>(null)
   const [docs, setDocs] = useState<DocumentMeta[]>([])
   const [detailId, setDetailId] = useState<string | null>(null)
@@ -122,7 +125,6 @@ export function TransactionsPage({ entity }: Props) {
   const docsByEntry = useMemo(() => {
     const map = new Map<string, DocumentMeta[]>()
     for (const d of docs) {
-      if (!d.entry_id) continue
       const list = map.get(d.entry_id) ?? []
       list.push(d)
       map.set(d.entry_id, list)
@@ -238,9 +240,10 @@ export function TransactionsPage({ entity }: Props) {
     applyKindDefaults(next, accounts)
   }
 
-  function applySuggestion(s: DocumentSuggestion) {
+  function applySuggestion(s: DocumentSuggestion, source: PendingDocSource) {
     setShowForm(true)
-    setLinkedDocumentId(s.document_id)
+    setPendingDoc(source)
+    setPendingAnalysis(JSON.stringify(s))
     setScanNotes(s.notes)
 
     if (s.kind === 'bill') {
@@ -281,7 +284,7 @@ export function TransactionsPage({ entity }: Props) {
     setBusy(true)
     setError(null)
     try {
-      const posted = await api.entryPostSimple({
+      const input = {
         entity_id: entity.id,
         kind,
         bill_status: kind === 'bill' ? billStatus : null,
@@ -294,18 +297,29 @@ export function TransactionsPage({ entity }: Props) {
         payable_account_id: payableId || null,
         from_account_id: fromId || null,
         to_account_id: toId || null,
-      })
-      if (linkedDocumentId) {
-        try {
-          await api.documentLinkEntry(linkedDocumentId, posted.entry.id)
-        } catch {
-          /* entry is saved; link is best-effort */
-        }
+      }
+
+      if (pendingDoc?.kind === 'file') {
+        const dataBase64 = await fileToBase64(pendingDoc.file)
+        await api.entryPostSimpleWithDocument(
+          input,
+          {
+            filename: pendingDoc.file.name,
+            mimeType: pendingDoc.file.type || mimeFromName(pendingDoc.file.name),
+            dataBase64,
+          },
+          pendingAnalysis ?? undefined,
+        )
+      } else if (pendingDoc?.kind === 'path') {
+        await api.entryPostSimpleWithDocumentPath(input, pendingDoc.path, pendingAnalysis ?? undefined)
+      } else {
+        await api.entryPostSimple(input)
       }
       setDescription('')
       setReference('')
       setAmount('')
-      setLinkedDocumentId(null)
+      setPendingDoc(null)
+      setPendingAnalysis(null)
       setScanNotes(null)
       setShowForm(false)
       await reload()
@@ -372,9 +386,9 @@ export function TransactionsPage({ entity }: Props) {
 
       <DocumentDropZone
         entityId={entity.id}
-        onSuggestion={(s) => {
+        onSuggestion={(s, source) => {
           setError(null)
-          applySuggestion(s)
+          applySuggestion(s, source)
           if (s.source === 'none' && !s.amount_minor) {
             setError(s.notes || 'Could not read the document — fill the form manually.')
           }
@@ -415,7 +429,11 @@ export function TransactionsPage({ entity }: Props) {
         title="New entry"
         description="Pick a type — no debit/credit bookkeeping required"
         onClose={() => {
-          if (!busy) setShowForm(false)
+          if (!busy) {
+            setShowForm(false)
+            setPendingDoc(null)
+            setPendingAnalysis(null)
+          }
         }}
       >
         <div className="mb-5">
@@ -450,9 +468,9 @@ export function TransactionsPage({ entity }: Props) {
         {scanNotes ? (
           <div className="mb-5 rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-xs text-[var(--color-fg-secondary)]">
             {scanNotes}
-            {linkedDocumentId ? (
+            {pendingDoc ? (
               <span className="mt-1 block text-[var(--color-muted)]">
-                Document stored encrypted in your vault
+                Document will be stored encrypted when you save
                 {amount ? ` · suggested ${fmtMoney(parseMajorToMinor(amount, ccy) ?? 0, ccy)}` : ''}
                 . Review fields, then save.
               </span>
@@ -636,7 +654,11 @@ export function TransactionsPage({ entity }: Props) {
               type="button"
               variant="secondary"
               disabled={busy}
-              onClick={() => setShowForm(false)}
+              onClick={() => {
+                setShowForm(false)
+                setPendingDoc(null)
+                setPendingAnalysis(null)
+              }}
             >
               Cancel
             </Button>
