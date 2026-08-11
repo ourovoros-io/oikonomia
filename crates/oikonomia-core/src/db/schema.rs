@@ -123,17 +123,28 @@ CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
 /// v4: documents must be linked (`entry_id NOT NULL`) and uniquely named per
 /// book (`UNIQUE(entity_id, filename)`). `SQLite` cannot add constraints in
 /// place, so the table is rebuilt after cleaning existing data.
+///
+/// The whole rebuild (orphan delete, dedup renames, table rebuild, and the
+/// version bump) runs in one transaction: `SQLite` DDL is transactional, so a
+/// crash mid-migration must roll back wholesale rather than leave
+/// `documents_v4` half-built with `schema_version` still at 3 — that shape
+/// would make every subsequent unlock re-enter this function and fail
+/// forever on `documents_v4` already existing (a bricked vault).
 fn migrate_v4(conn: &Connection) -> Result<()> {
-    let deleted = conn
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let deleted = tx
         .execute("DELETE FROM documents WHERE entry_id IS NULL", [])
         .map_err(|err| Error::Io(err.to_string()))?;
     if deleted > 0 {
         log::info!("v4 migration: deleted {deleted} unlinked document(s)");
     }
 
-    dedup_document_names(conn)?;
+    dedup_document_names(&tx)?;
 
-    conn.execute_batch(
+    tx.execute_batch(
         "
         CREATE TABLE documents_v4 (
             id TEXT PRIMARY KEY NOT NULL,
@@ -158,6 +169,13 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
+    // Bump the version inside the same transaction: a crash after the
+    // rebuild but before the version write must not strand a vault where
+    // re-running the migration hits "documents_v4 already exists".
+    tx.execute("UPDATE vault_meta SET schema_version = 4 WHERE id = 1", [])
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(())
 }
 

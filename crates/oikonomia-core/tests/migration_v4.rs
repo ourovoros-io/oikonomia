@@ -102,3 +102,22 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
     );
     assert!(dup_insert.is_err(), "UNIQUE rejects duplicate names");
 }
+
+#[test]
+fn migrate_is_idempotent_after_v4() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    downgrade_to_v3_with_bad_data(conn);
+
+    migrate(conn).expect("first migrate");
+    migrate(conn).expect("second migrate is a no-op");
+
+    let version: i64 = conn
+        .query_row(
+            "SELECT schema_version FROM vault_meta WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .expect("version");
+    assert_eq!(version, 4);
+}
