@@ -136,11 +136,15 @@ export function formatMoney(
   }
 }
 
-/** Normalize entry dates from Rust (`YYYY-MM-DD` or `{ year, month, day }`). */
+/**
+ * Render entry dates from Rust (`YYYY-MM-DD` or `{ year, month, day }`) the
+ * European / Greek way: `dd/mm/yyyy`. Display only — anything sent back to
+ * the API stays ISO.
+ */
 export function formatDate(value: unknown): string {
   if (typeof value === 'string') {
-    // Already ISO or partial
-    if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10)
+    const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(value)
+    if (iso) return `${iso[3]}/${iso[2]}/${iso[1]}`
     return value
   }
   if (value && typeof value === 'object') {
@@ -168,7 +172,7 @@ export function formatDate(value: unknown): string {
     }
     const d = o.day
     if (typeof y === 'number' && m != null && typeof d === 'number') {
-      return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
     }
   }
   return String(value ?? '')

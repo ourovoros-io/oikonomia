@@ -33,13 +33,17 @@ describe('parseMajorToMinor', () => {
 })
 
 describe('formatDate', () => {
-  test('passes ISO strings through', () => {
-    expect(formatDate('2026-03-15')).toBe('2026-03-15')
-    expect(formatDate('2026-03-15T00:00:00')).toBe('2026-03-15')
+  test('renders ISO strings as dd/mm/yyyy', () => {
+    expect(formatDate('2026-03-15')).toBe('15/03/2026')
+    expect(formatDate('2026-03-15T00:00:00')).toBe('15/03/2026')
   })
 
-  test('normalizes {year, month, day} objects', () => {
-    expect(formatDate({ year: 2026, month: 'March', day: 5 })).toBe('2026-03-05')
-    expect(formatDate({ year: 2026, month: 3, day: 5 })).toBe('2026-03-05')
+  test('renders {year, month, day} objects as dd/mm/yyyy', () => {
+    expect(formatDate({ year: 2026, month: 'March', day: 5 })).toBe('05/03/2026')
+    expect(formatDate({ year: 2026, month: 3, day: 5 })).toBe('05/03/2026')
+  })
+
+  test('leaves non-date strings untouched', () => {
+    expect(formatDate('yesterday')).toBe('yesterday')
   })
 })

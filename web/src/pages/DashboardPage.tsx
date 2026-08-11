@@ -163,7 +163,7 @@ export function DashboardPage({ entity }: Props) {
             {entity.name}
           </h2>
           <p className="mt-1 text-sm text-[var(--color-muted)]">
-            {from} → {to} · {ccy}
+            {formatDate(from)} → {formatDate(to)} · {ccy}
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">

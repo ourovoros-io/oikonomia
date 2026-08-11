@@ -9,11 +9,15 @@ import { Button, EmptyState, ErrorBanner, PageHeader, Panel } from '../component
 
 type Props = { entity: Entity | null }
 
-/** created_at is the app-wide "unix:<seconds>" ordering key; render as a local date. */
+/** created_at is the app-wide "unix:<seconds>" ordering key; render as dd/mm/yyyy. */
 function formatCreatedAt(createdAt: string): string {
   const secs = Number(createdAt.replace(/^unix:/, ''))
   if (!Number.isFinite(secs) || secs <= 0) return ''
-  return new Date(secs * 1000).toLocaleDateString()
+  return new Date(secs * 1000).toLocaleDateString('el-GR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
 }
 
 /** Every file in the book's vault — always linked to the entry it was saved with. */
