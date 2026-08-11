@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { api, formatMoney, todayISO, type Account, type AccountType, type Entity } from '../lib/api'
 import { parseMajorToMinor } from '../lib/money'
+import { DateInput } from '../components/DateInput'
 import { Modal } from '../components/Modal'
 import {
   Button,
@@ -290,12 +291,7 @@ export function AccountsPage({ entity }: Props) {
             />
           </Field>
           <Field label="As of">
-            <Input
-              type="date"
-              value={balanceAsOf}
-              onChange={(e) => setBalanceAsOf(e.target.value)}
-              required
-            />
+            <DateInput value={balanceAsOf} onChange={setBalanceAsOf} required aria-label="Balance as of date" />
           </Field>
           <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
             <Button

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { formatDate, isoDate, parseMajorToMinor } from './money'
+import { formatDate, isoDate, parseEuropeanDateToISO, parseMajorToMinor } from './money'
 
 describe('parseMajorToMinor', () => {
   test('dot and comma decimals', () => {
@@ -52,5 +52,25 @@ describe('isoDate', () => {
   test('normalizes both entry date shapes to ISO', () => {
     expect(isoDate('2026-03-15T00:00:00')).toBe('2026-03-15')
     expect(isoDate({ year: 2026, month: 'March', day: 5 })).toBe('2026-03-05')
+  })
+})
+
+describe('parseEuropeanDateToISO', () => {
+  test('accepts day-first forms with mixed separators', () => {
+    expect(parseEuropeanDateToISO('15/03/2026')).toBe('2026-03-15')
+    expect(parseEuropeanDateToISO('5.3.26')).toBe('2026-03-05')
+    expect(parseEuropeanDateToISO('01-12-2026')).toBe('2026-12-01')
+    expect(parseEuropeanDateToISO('29/02/2024')).toBe('2024-02-29')
+  })
+
+  test('rejects impossible dates and garbage', () => {
+    expect(parseEuropeanDateToISO('29/02/2026')).toBeNull()
+    expect(parseEuropeanDateToISO('31/04/2026')).toBeNull()
+    expect(parseEuropeanDateToISO('00/01/2026')).toBeNull()
+    expect(parseEuropeanDateToISO('nope')).toBeNull()
+  })
+
+  test('accepts ISO as a fallback', () => {
+    expect(parseEuropeanDateToISO('2026-03-15')).toBe('2026-03-15')
   })
 })

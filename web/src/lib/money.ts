@@ -193,3 +193,41 @@ export function isoDate(value: unknown): string {
   if (!p) return typeof value === 'string' ? value : ''
   return `${p.y}-${pad2(p.m)}-${pad2(p.d)}`
 }
+
+/** Days in a month (1-based), Gregorian leap rules. */
+export function daysInMonth(y: number, m: number): number {
+  if (m === 2) {
+    const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
+    return leap ? 29 : 28
+  }
+  return [4, 6, 9, 11].includes(m) ? 30 : 31
+}
+
+/**
+ * Parse a user-typed European date — `dd/mm/yyyy`, tolerant of `d.m.yy` and
+ * dashes, with ISO accepted as a fallback — into ISO `YYYY-MM-DD`.
+ * Returns null when the input is not a real calendar date.
+ */
+export function parseEuropeanDateToISO(input: string): string | null {
+  const s = input.trim()
+  const eu = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/.exec(s)
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s)
+
+  let y: number
+  let m: number
+  let d: number
+  if (eu) {
+    d = Number(eu[1])
+    m = Number(eu[2])
+    y = eu[3].length === 2 ? 2000 + Number(eu[3]) : Number(eu[3])
+  } else if (iso) {
+    y = Number(iso[1])
+    m = Number(iso[2])
+    d = Number(iso[3])
+  } else {
+    return null
+  }
+
+  if (m < 1 || m > 12 || d < 1 || d > daysInMonth(y, m)) return null
+  return `${y}-${pad2(m)}-${pad2(d)}`
+}

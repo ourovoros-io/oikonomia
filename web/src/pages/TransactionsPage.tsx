@@ -23,6 +23,7 @@ import {
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { DateInput } from '../components/DateInput'
 import { DocumentDropZone } from '../components/DocumentDropZone'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { EntryDetailModal } from '../components/EntryDetailModal'
@@ -451,11 +452,11 @@ export function TransactionsPage({ entity }: Props) {
             placeholder="Description, reference, memo…"
           />
         </Field>
-        <Field label="From" className="w-40">
-          <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        <Field label="From" className="w-44">
+          <DateInput value={fromDate} onChange={setFromDate} aria-label="Filter from date" />
         </Field>
-        <Field label="To" className="w-40">
-          <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} />
+        <Field label="To" className="w-44">
+          <DateInput value={toDate} onChange={setToDate} aria-label="Filter to date" />
         </Field>
         <Field label="Account" className="w-56">
           <Select value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}>
@@ -532,7 +533,7 @@ export function TransactionsPage({ entity }: Props) {
 
         <form onSubmit={onPost} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label="Date">
-            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+            <DateInput value={date} onChange={setDate} required aria-label="Entry date" />
           </Field>
           <Field label={`Amount (${ccy})`}>
             <Input
