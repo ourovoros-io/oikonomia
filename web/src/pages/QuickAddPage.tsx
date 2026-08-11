@@ -8,7 +8,20 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react'
-import { ChevronLeft } from 'lucide-react'
+import {
+  ArrowDownLeft,
+  ArrowLeftRight,
+  ArrowUpRight,
+  BookOpen,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Loader2,
+  MessageSquare,
+  Receipt,
+  Wallet,
+} from 'lucide-react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import {
   api,
@@ -49,16 +62,23 @@ type Props = {
 
 type Step = 'entity' | 'kind' | 'amount' | 'accounts' | 'memo' | 'review'
 
-const KIND_OPTIONS: Array<{ id: EntryKind; label: string }> = [
-  { id: 'expense', label: 'Exp' },
-  { id: 'income', label: 'Inc' },
-  { id: 'bill', label: 'Bill' },
-  { id: 'transfer', label: 'Xfer' },
+const KIND_OPTIONS: Array<{
+  id: EntryKind
+  label: string
+  Icon: typeof ArrowUpRight
+}> = [
+  { id: 'expense', label: 'Expense', Icon: ArrowUpRight },
+  { id: 'income', label: 'Income', Icon: ArrowDownLeft },
+  { id: 'bill', label: 'Bill', Icon: FileText },
+  { id: 'transfer', label: 'Transfer', Icon: ArrowLeftRight },
 ]
 
-/** Uniform single-row control — everything is h-7, no overflow scroll. */
+/** Controls fill the two-row strip; no horizontal scroll. */
 const ctl =
-  'h-7 min-w-0 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-1.5 text-[11px] leading-none text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/25 disabled:opacity-50'
+  'h-8 min-w-0 w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-2 text-[11px] leading-none text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/25 disabled:opacity-50'
+
+const choiceBtn =
+  'flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border px-1 py-1 text-center transition disabled:opacity-50'
 
 const MAX_DOC_BYTES = 8 * 1024 * 1024
 const ROLL_MS = 220
@@ -117,11 +137,31 @@ function pendingDocLabel(source: PendingDocSource): string {
   return parts[parts.length - 1] || source.path
 }
 
-/** One horizontal strip — never scrolls. */
-function Row({ children, className }: { children: ReactNode; className?: string }) {
+/** Full-height panel body: title row + control row that fills remaining space. */
+function Panel({
+  icon,
+  title,
+  children,
+  className,
+}: {
+  icon: ReactNode
+  title: string
+  children: ReactNode
+  className?: string
+}) {
   return (
-    <div className={cn('flex h-full min-w-0 items-center gap-1 overflow-hidden', className)}>
-      {children}
+    <div className={cn('flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5', className)}>
+      <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
+        <span className="inline-flex size-4 shrink-0 items-center justify-center text-[var(--color-accent)]">
+          {icon}
+        </span>
+        <span className="truncate text-[11px] font-semibold tracking-wide text-[var(--color-fg)]">
+          {title}
+        </span>
+      </div>
+      <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1 overflow-hidden">
+        {children}
+      </div>
     </div>
   )
 }
@@ -616,20 +656,27 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
 
   if (loading) {
     return (
-      <Row className="justify-center px-2 text-[11px] text-[var(--color-muted)]">Loading…</Row>
+      <div className="flex h-full flex-col items-center justify-center gap-1 text-[11px] text-[var(--color-muted)]">
+        <Loader2 className="size-4 animate-spin text-[var(--color-accent)]" aria-hidden />
+        Loading…
+      </div>
     )
   }
 
   if (entities.length === 0) {
     return (
-      <Row className="px-2">
-        <p className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-muted)]">
+      <Panel icon={<BookOpen className="size-3.5" aria-hidden />} title="Book">
+        <p className="flex min-w-0 flex-1 items-center truncate text-[11px] text-[var(--color-muted)]">
           Create a book first
         </p>
-        <Button size="sm" className="h-7 shrink-0 px-2 text-[11px]" onClick={() => void api.openMainWindow()}>
+        <Button
+          size="sm"
+          className="h-8 shrink-0 px-2.5 text-[11px]"
+          onClick={() => void api.openMainWindow()}
+        >
           Open
         </Button>
-      </Row>
+      </Panel>
     )
   }
 
@@ -637,9 +684,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     switch (s) {
       case 'entity':
         return (
-          <Row>
-            <span className="shrink-0 text-[10px] font-medium text-[var(--color-muted)]">Book</span>
-            {/* Cap visible chips so the row never overflows — max 3 + select overflow */}
+          <Panel icon={<BookOpen className="size-3.5" aria-hidden />} title="Choose book">
             {entities.slice(0, 3).map((e) => {
               const active = e.id === entityId
               return (
@@ -648,278 +693,360 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                   type="button"
                   disabled={formDisabled}
                   onClick={() => void selectEntity(e.id)}
-                  className={cn(
-                    'h-7 min-w-0 max-w-[7rem] shrink truncate rounded-md border px-2 text-[11px] font-medium transition',
-                    active
-                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-fg)]'
-                      : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-fg)] hover:border-[var(--color-accent)]/50',
-                  )}
                   title={e.name}
+                  className={cn(
+                    choiceBtn,
+                    active
+                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                      : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)]/50',
+                  )}
                 >
-                  {e.name}
+                  <BookOpen
+                    className={cn(
+                      'size-3.5 shrink-0',
+                      active ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted)]',
+                    )}
+                    aria-hidden
+                  />
+                  <span className="w-full truncate text-[10px] font-semibold text-[var(--color-fg)]">
+                    {e.name}
+                  </span>
                 </button>
               )
             })}
             {entities.length > 3 ? (
-              <select
-                className={cn(ctl, 'min-w-0 flex-1')}
-                value={entityId && entities.slice(3).some((e) => e.id === entityId) ? entityId : ''}
-                disabled={formDisabled}
-                onChange={(e) => {
-                  if (e.target.value) void selectEntity(e.target.value)
-                }}
-                aria-label="More books"
-              >
-                <option value="">More…</option>
-                {entities.slice(3).map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="min-w-0 flex-1" aria-hidden />
-            )}
-          </Row>
+              <label className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+                <span className="sr-only">More books</span>
+                <select
+                  className={cn(ctl, 'h-full min-h-8')}
+                  value={
+                    entityId && entities.slice(3).some((e) => e.id === entityId) ? entityId : ''
+                  }
+                  disabled={formDisabled}
+                  onChange={(e) => {
+                    if (e.target.value) void selectEntity(e.target.value)
+                  }}
+                >
+                  <option value="">More…</option>
+                  {entities.slice(3).map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </Panel>
         )
 
       case 'kind':
         return (
-          <Row>
-            <span className="shrink-0 text-[10px] font-medium text-[var(--color-muted)]">Type</span>
-            <div className="inline-flex h-7 min-w-0 flex-1 items-stretch rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-px">
-              {KIND_OPTIONS.map((opt) => {
-                const active = kind === opt.id
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    disabled={formDisabled}
-                    onClick={() => selectKind(opt.id)}
+          <Panel icon={<Receipt className="size-3.5" aria-hidden />} title="Entry type">
+            {KIND_OPTIONS.map((opt) => {
+              const active = kind === opt.id
+              const Icon = opt.Icon
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  disabled={formDisabled}
+                  onClick={() => selectKind(opt.id)}
+                  className={cn(
+                    choiceBtn,
+                    active
+                      ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
+                      : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-accent)]/50',
+                  )}
+                >
+                  <Icon
                     className={cn(
-                      'min-w-0 flex-1 rounded-[5px] px-0.5 text-[10px] font-semibold transition',
-                      active
-                        ? 'bg-[var(--color-surface)] text-[var(--color-fg)] shadow-sm'
-                        : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]',
+                      'size-3.5 shrink-0',
+                      active ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted)]',
                     )}
-                  >
+                    aria-hidden
+                  />
+                  <span className="w-full truncate text-[10px] font-semibold text-[var(--color-fg)]">
                     {opt.label}
-                  </button>
-                )
-              })}
-            </div>
-          </Row>
+                  </span>
+                </button>
+              )
+            })}
+          </Panel>
         )
 
       case 'amount':
         return (
           <form
-            className="flex h-full min-w-0 items-center gap-1 overflow-hidden"
+            className="flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5"
             onSubmit={(e) => {
               e.preventDefault()
               advanceFromAmount()
             }}
           >
-            <span className="shrink-0 text-[10px] font-medium text-[var(--color-muted)]">Amt</span>
-            <Input
-              id="quick-add-amount"
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="h-7 min-w-0 flex-1 px-2 text-[12px] tabular-nums"
-              required
-              disabled={formDisabled}
-              aria-label={`Amount (${ccy})`}
-            />
-            <span className="shrink-0 text-[10px] font-medium text-[var(--color-muted)]">{ccy}</span>
-            <Button type="submit" size="sm" disabled={formDisabled} className="h-7 shrink-0 px-2.5 text-[11px]">
-              Next
-            </Button>
+            <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
+              <Wallet className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
+              <span className="truncate text-[11px] font-semibold text-[var(--color-fg)]">
+                Amount
+              </span>
+            </div>
+            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1">
+              <Input
+                id="quick-add-amount"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="h-full min-h-8 min-w-0 flex-[2] px-2 text-sm tabular-nums"
+                required
+                disabled={formDisabled}
+                aria-label={`Amount (${ccy})`}
+              />
+              <span className="inline-flex h-full min-h-8 shrink-0 items-center rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-2 text-[11px] font-semibold text-[var(--color-muted)]">
+                {ccy}
+              </span>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={formDisabled}
+                className="h-full min-h-8 shrink-0 gap-1 px-2.5 text-[11px]"
+              >
+                Next
+                <ChevronRight className="size-3.5" aria-hidden />
+              </Button>
+            </div>
           </form>
         )
 
       case 'accounts':
         return (
           <form
-            className="flex h-full min-w-0 items-center gap-1 overflow-hidden"
+            className="flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5"
             onSubmit={(e) => {
               e.preventDefault()
               advanceFromAccounts()
             }}
           >
-            {kind === 'bill' ? (
-              <select
-                className={cn(ctl, 'w-[3.5rem] shrink-0')}
-                value={billStatus}
-                onChange={(e) => setBillStatus(e.target.value as BillStatusTray)}
-                disabled={formDisabled}
-                aria-label="Status"
-              >
-                <option value="unpaid">Due</option>
-                <option value="paid">Paid</option>
-              </select>
-            ) : null}
+            <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
+              <Wallet className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
+              <span className="truncate text-[11px] font-semibold text-[var(--color-fg)]">
+                Accounts
+              </span>
+            </div>
+            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1">
+              {kind === 'bill' ? (
+                <select
+                  className={cn(ctl, 'h-full min-h-8 w-[4rem] shrink-0')}
+                  value={billStatus}
+                  onChange={(e) => setBillStatus(e.target.value as BillStatusTray)}
+                  disabled={formDisabled}
+                  aria-label="Status"
+                >
+                  <option value="unpaid">Due</option>
+                  <option value="paid">Paid</option>
+                </select>
+              ) : null}
 
-            {(kind === 'expense' || kind === 'bill') && (
-              <AccountSelect
-                value={categoryId}
-                onChange={setCategoryId}
-                options={expenseAccounts}
-                disabled={formDisabled}
-                label="Category"
-              />
-            )}
-            {kind === 'income' && (
-              <AccountSelect
-                value={categoryId}
-                onChange={setCategoryId}
-                options={incomeAccounts}
-                disabled={formDisabled}
-                label="Income"
-              />
-            )}
-            {(kind === 'expense' ||
-              kind === 'income' ||
-              (kind === 'bill' && billStatus === 'paid')) && (
-              <AccountSelect
-                value={walletId}
-                onChange={setWalletId}
-                options={kind === 'income' ? assetWallets : walletAccounts}
-                disabled={formDisabled}
-                label="Wallet"
-              />
-            )}
-            {kind === 'bill' && billStatus === 'unpaid' && (
-              <AccountSelect
-                value={payableId}
-                onChange={setPayableId}
-                options={payableAccounts}
-                disabled={formDisabled}
-                label="Payable"
-              />
-            )}
-            {kind === 'transfer' && (
-              <>
+              {(kind === 'expense' || kind === 'bill') && (
                 <AccountSelect
-                  value={fromId}
-                  onChange={setFromId}
-                  options={transferAccounts}
+                  value={categoryId}
+                  onChange={setCategoryId}
+                  options={expenseAccounts}
                   disabled={formDisabled}
-                  label="From"
+                  label="Category"
+                  icon={<Receipt className="size-3" aria-hidden />}
                 />
+              )}
+              {kind === 'income' && (
                 <AccountSelect
-                  value={toId}
-                  onChange={setToId}
-                  options={transferAccounts}
+                  value={categoryId}
+                  onChange={setCategoryId}
+                  options={incomeAccounts}
                   disabled={formDisabled}
-                  label="To"
+                  label="Income"
+                  icon={<ArrowDownLeft className="size-3" aria-hidden />}
                 />
-              </>
-            )}
-            <Button type="submit" size="sm" disabled={formDisabled} className="h-7 shrink-0 px-2.5 text-[11px]">
-              Next
-            </Button>
+              )}
+              {(kind === 'expense' ||
+                kind === 'income' ||
+                (kind === 'bill' && billStatus === 'paid')) && (
+                <AccountSelect
+                  value={walletId}
+                  onChange={setWalletId}
+                  options={kind === 'income' ? assetWallets : walletAccounts}
+                  disabled={formDisabled}
+                  label="Wallet"
+                  icon={<Wallet className="size-3" aria-hidden />}
+                />
+              )}
+              {kind === 'bill' && billStatus === 'unpaid' && (
+                <AccountSelect
+                  value={payableId}
+                  onChange={setPayableId}
+                  options={payableAccounts}
+                  disabled={formDisabled}
+                  label="Payable"
+                  icon={<FileText className="size-3" aria-hidden />}
+                />
+              )}
+              {kind === 'transfer' && (
+                <>
+                  <AccountSelect
+                    value={fromId}
+                    onChange={setFromId}
+                    options={transferAccounts}
+                    disabled={formDisabled}
+                    label="From"
+                    icon={<ArrowUpRight className="size-3" aria-hidden />}
+                  />
+                  <AccountSelect
+                    value={toId}
+                    onChange={setToId}
+                    options={transferAccounts}
+                    disabled={formDisabled}
+                    label="To"
+                    icon={<ArrowDownLeft className="size-3" aria-hidden />}
+                  />
+                </>
+              )}
+              <Button
+                type="submit"
+                size="sm"
+                disabled={formDisabled}
+                className="h-full min-h-8 shrink-0 gap-1 px-2.5 text-[11px]"
+              >
+                Next
+                <ChevronRight className="size-3.5" aria-hidden />
+              </Button>
+            </div>
           </form>
         )
 
       case 'memo':
         return (
           <form
-            className="flex h-full min-w-0 items-center gap-1 overflow-hidden"
+            className="flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5"
             onSubmit={(e) => {
               e.preventDefault()
               void onSubmit()
             }}
           >
-            <Input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Memo (optional)"
-              className="h-7 min-w-0 flex-1 px-2 text-[11px]"
-              disabled={formDisabled}
-            />
-            <Button
-              type="submit"
-              size="sm"
-              busy={busy}
-              disabled={formDisabled}
-              className="h-7 shrink-0 px-2.5 text-[11px]"
-            >
-              Save
-            </Button>
+            <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
+              <MessageSquare className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
+              <span className="truncate text-[11px] font-semibold text-[var(--color-fg)]">Memo</span>
+            </div>
+            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1">
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Optional note"
+                className="h-full min-h-8 min-w-0 flex-1 px-2 text-[11px]"
+                disabled={formDisabled}
+              />
+              <Button
+                type="submit"
+                size="sm"
+                busy={busy}
+                disabled={formDisabled}
+                className="h-full min-h-8 shrink-0 gap-1 px-2.5 text-[11px]"
+              >
+                <Check className="size-3.5" aria-hidden />
+                Save
+              </Button>
+            </div>
           </form>
         )
 
       case 'review':
         if (analyzing) {
           return (
-            <Row>
-              <p className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-muted)]">
+            <Panel icon={<Loader2 className="size-3.5 animate-spin" aria-hidden />} title="Document">
+              <p className="flex min-w-0 flex-1 items-center truncate text-[11px] text-[var(--color-muted)]">
                 Analyzing…
               </p>
-              <button
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
+                className="h-8 shrink-0 px-2 text-[11px]"
                 onClick={onCancelReview}
-                className="shrink-0 text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
               >
                 Cancel
-              </button>
-            </Row>
+              </Button>
+            </Panel>
           )
         }
         return (
           <form
-            className="flex h-full min-w-0 items-center gap-1 overflow-hidden"
+            className="flex h-full min-w-0 flex-col gap-1 overflow-hidden py-0.5"
             onSubmit={(e) => {
               e.preventDefault()
               void onSubmit()
             }}
           >
-            <p className="w-[5.5rem] shrink-0 truncate text-[10px] text-[var(--color-muted)]" title={pendingDoc ? pendingDocLabel(pendingDoc) : ''}>
-              {pendingDoc ? pendingDocLabel(pendingDoc) : 'Failed'}
-            </p>
-            <Input
-              inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="h-7 w-[3.75rem] shrink-0 px-1.5 text-[11px] tabular-nums"
-              disabled={formDisabled}
-              required
-            />
-            <AccountSelect
-              value={categoryId}
-              onChange={setCategoryId}
-              options={kind === 'income' ? incomeAccounts : expenseAccounts}
-              disabled={formDisabled}
-              label="Cat"
-            />
-            {kind === 'bill' && billStatus === 'unpaid' ? (
-              <AccountSelect
-                value={payableId}
-                onChange={setPayableId}
-                options={payableAccounts}
+            <div className="flex h-5 shrink-0 items-center gap-1.5 px-0.5">
+              <FileText className="size-3.5 shrink-0 text-[var(--color-accent)]" aria-hidden />
+              <span
+                className="min-w-0 flex-1 truncate text-[11px] font-semibold text-[var(--color-fg)]"
+                title={pendingDoc ? pendingDocLabel(pendingDoc) : undefined}
+              >
+                {pendingDoc ? pendingDocLabel(pendingDoc) : 'Failed'}
+              </span>
+              <button
+                type="button"
+                onClick={onCancelReview}
+                className="shrink-0 text-[10px] font-medium text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+              >
+                Clear
+              </button>
+            </div>
+            <div className="flex min-h-0 min-w-0 flex-1 items-stretch gap-1">
+              <Input
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="h-full min-h-8 w-[4.25rem] shrink-0 px-1.5 text-[11px] tabular-nums"
                 disabled={formDisabled}
-                label="AP"
+                required
+                aria-label="Amount"
               />
-            ) : (
               <AccountSelect
-                value={walletId}
-                onChange={setWalletId}
-                options={kind === 'income' ? assetWallets : walletAccounts}
+                value={categoryId}
+                onChange={setCategoryId}
+                options={kind === 'income' ? incomeAccounts : expenseAccounts}
                 disabled={formDisabled}
-                label="Pay"
+                label="Category"
+                icon={<Receipt className="size-3" aria-hidden />}
               />
-            )}
-            <Button
-              type="submit"
-              size="sm"
-              busy={busy}
-              disabled={formDisabled || !pendingDoc}
-              className="h-7 shrink-0 px-2 text-[11px]"
-            >
-              Save
-            </Button>
+              {kind === 'bill' && billStatus === 'unpaid' ? (
+                <AccountSelect
+                  value={payableId}
+                  onChange={setPayableId}
+                  options={payableAccounts}
+                  disabled={formDisabled}
+                  label="Payable"
+                  icon={<FileText className="size-3" aria-hidden />}
+                />
+              ) : (
+                <AccountSelect
+                  value={walletId}
+                  onChange={setWalletId}
+                  options={kind === 'income' ? assetWallets : walletAccounts}
+                  disabled={formDisabled}
+                  label="Wallet"
+                  icon={<Wallet className="size-3" aria-hidden />}
+                />
+              )}
+              <Button
+                type="submit"
+                size="sm"
+                busy={busy}
+                disabled={formDisabled || !pendingDoc}
+                className="h-full min-h-8 shrink-0 gap-1 px-2 text-[11px]"
+              >
+                <Check className="size-3.5" aria-hidden />
+                Save
+              </Button>
+            </div>
           </form>
         )
     }
@@ -943,17 +1070,16 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'flex h-full min-w-0 items-stretch overflow-hidden px-1.5 transition',
+        'relative flex h-full min-w-0 items-stretch overflow-hidden px-1.5 py-1 transition',
         dragOver && 'bg-[var(--color-accent-soft)]/40',
       )}
     >
-      {/* Back — fixed rail so the rolling stage stays one row */}
       <button
         type="button"
         onClick={goBack}
         disabled={!showBack}
         className={cn(
-          'inline-flex size-7 shrink-0 self-center items-center justify-center rounded-md transition',
+          'inline-flex w-7 shrink-0 self-stretch items-center justify-center rounded-md transition',
           showBack
             ? 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]'
             : 'pointer-events-none text-transparent',
@@ -961,7 +1087,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         aria-label="Back"
         tabIndex={showBack ? 0 : -1}
       >
-        <ChevronLeft className="size-3.5" />
+        <ChevronLeft className="size-4" />
       </button>
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -990,7 +1116,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
 
       {error ? (
         <p
-          className="absolute bottom-0 left-0 right-0 truncate px-2 text-center text-[9px] text-[var(--color-danger)]"
+          className="pointer-events-none absolute inset-x-8 bottom-0.5 truncate text-center text-[9px] text-[var(--color-danger)]"
           role="alert"
         >
           {error}
@@ -1006,28 +1132,38 @@ function AccountSelect({
   options,
   disabled,
   label,
+  icon,
 }: {
   value: string
   onChange: (v: string) => void
   options: AccountLike[]
   disabled: boolean
   label: string
+  icon?: ReactNode
 }) {
   return (
-    <select
-      className={cn(ctl, 'min-w-0 flex-1')}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      required
-      aria-label={label}
-    >
-      {options.length === 0 ? <option value="">—</option> : null}
-      {options.map((a) => (
-        <option key={a.id} value={a.id}>
-          {a.name}
-        </option>
-      ))}
-    </select>
+    <label className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <span className="sr-only">{label}</span>
+      {icon ? (
+        <span className="pointer-events-none absolute left-1.5 top-1/2 z-[1] -translate-y-1/2 text-[var(--color-muted)]">
+          {icon}
+        </span>
+      ) : null}
+      <select
+        className={cn(ctl, 'h-full min-h-8', icon ? 'pl-6' : undefined)}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        required
+        aria-label={label}
+      >
+        {options.length === 0 ? <option value="">—</option> : null}
+        {options.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }

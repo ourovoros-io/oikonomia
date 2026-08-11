@@ -1,10 +1,10 @@
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { isTauri } from './tauri'
 
-/** Single-row rolling tray (no horizontal scroll). */
+/** Two-row rolling tray (double the original 48px strip). */
 export const QUICK_ADD_WIDTH = 420
-export const QUICK_ADD_IDLE_HEIGHT = 48
-export const QUICK_ADD_REVIEW_HEIGHT = 48
+export const QUICK_ADD_IDLE_HEIGHT = 96
+export const QUICK_ADD_REVIEW_HEIGHT = 96
 
 /** Resize the tray quick-add panel (no-op outside Tauri). */
 export async function setQuickAddHeight(height: number): Promise<void> {

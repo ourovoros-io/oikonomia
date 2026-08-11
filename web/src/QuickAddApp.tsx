@@ -198,7 +198,7 @@ export default function QuickAddApp() {
   if (status === null) {
     return (
       <Shell>
-        <div className="flex h-full items-center justify-center px-2 text-[11px] text-[var(--color-muted)]">
+        <div className="flex h-full flex-col items-center justify-center gap-1 px-2 text-[11px] text-[var(--color-muted)]">
           Loading…
         </div>
       </Shell>
@@ -208,14 +208,16 @@ export default function QuickAddApp() {
   if (status !== 'unlocked') {
     return (
       <Shell>
-        <div className="flex h-full items-center gap-2 px-2">
-          <p className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-fg)]">Vault locked</p>
+        <div className="flex h-full flex-col items-stretch justify-center gap-1.5 px-2.5 py-1.5">
+          <p className="truncate text-center text-[11px] font-medium text-[var(--color-fg)]">
+            Vault locked
+          </p>
           <Button
             size="sm"
-            className="h-7 shrink-0 px-2 text-[11px]"
+            className="h-8 w-full shrink-0 text-[11px]"
             onClick={() => void api.openMainWindow()}
           >
-            Open
+            Open Oikonomia
           </Button>
         </div>
       </Shell>
@@ -225,10 +227,8 @@ export default function QuickAddApp() {
   if (phase === 'success') {
     return (
       <Shell>
-        <div className="flex h-full items-center justify-center px-2">
-          <p className="truncate text-[11px] font-medium text-[var(--color-success)]">
-            {successLabel}
-          </p>
+        <div className="flex h-full flex-col items-center justify-center gap-0.5 px-2">
+          <p className="truncate text-xs font-medium text-[var(--color-success)]">{successLabel}</p>
         </div>
       </Shell>
     )
