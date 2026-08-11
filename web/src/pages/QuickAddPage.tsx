@@ -1,14 +1,31 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type FormEvent,
+} from 'react'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import {
   api,
   todayISO,
   type Account,
+  type DocumentSuggestion,
   type Entity,
   type LastRoleAccounts,
+  type PendingDocSource,
   type UiPrefs,
 } from '../lib/api'
-import { parseMajorToMinor } from '../lib/money'
-import type { CommandError } from '../lib/tauri'
+import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
+import { fileToBase64, mimeFromName } from '../lib/files'
+import {
+  QUICK_ADD_IDLE_HEIGHT,
+  QUICK_ADD_REVIEW_HEIGHT,
+  setQuickAddHeight,
+} from '../lib/quickAddWindow'
+import { isTauri, type CommandError } from '../lib/tauri'
 import { Button, ErrorBanner, Input } from '../components/ui'
 import { DateInput } from '../components/DateInput'
 import { cn } from '../lib/cn'
@@ -41,6 +58,8 @@ const KIND_OPTIONS: Array<{ id: EntryKind; label: string }> = [
 
 const compactControl =
   'h-8 w-full min-w-0 rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-2 text-xs text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]/25 disabled:opacity-50'
+
+const MAX_DOC_BYTES = 8 * 1024 * 1024
 
 function roleIdsFromLast(last: LastRoleAccounts): string[] {
   return [
@@ -91,6 +110,12 @@ function applyRoleState(
   set.setToId(roles.toId)
 }
 
+function pendingDocLabel(source: PendingDocSource): string {
+  if (source.kind === 'file') return source.file.name
+  const parts = source.path.split(/[/\\]/)
+  return parts[parts.length - 1] || source.path
+}
+
 export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   const [entities, setEntities] = useState<Entity[]>([])
   const [entityId, setEntityId] = useState<string | null>(null)
@@ -111,10 +136,24 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   const [amount, setAmount] = useState('')
   const [busy, setBusy] = useState(false)
 
+  const [pendingDoc, setPendingDoc] = useState<PendingDocSource | null>(null)
+  const [pendingAnalysis, setPendingAnalysis] = useState<string | null>(null)
+  const [scanNotes, setScanNotes] = useState<string | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
+  /** True from drop until cancel/success — keeps height after analyzer errors. */
+  const [reviewExpanded, setReviewExpanded] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  const busyRef = useRef(false)
+  const baseCurrencyRef = useRef('EUR')
+  /** Bumped on cancel so in-flight analyze results are ignored. */
+  const analyzeGenRef = useRef(0)
+
   const entity = useMemo(
     () => entities.find((e) => e.id === entityId) ?? null,
     [entities, entityId],
   )
+
+  baseCurrencyRef.current = entity?.base_currency ?? 'EUR'
 
   const roleSetters = useMemo(
     () => ({ setCategoryId, setWalletId, setPayableId, setFromId, setToId }),
@@ -122,8 +161,28 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   )
 
   useEffect(() => {
-    onBusyChange?.(busy)
-  }, [busy, onBusyChange])
+    onBusyChange?.(busy || analyzing)
+  }, [busy, analyzing, onBusyChange])
+
+  // Keep panel height in sync with review mode (also re-apply on focus after hide).
+  useEffect(() => {
+    void setQuickAddHeight(reviewExpanded ? QUICK_ADD_REVIEW_HEIGHT : QUICK_ADD_IDLE_HEIGHT)
+  }, [reviewExpanded])
+
+  useEffect(() => {
+    const onFocus = () => {
+      void setQuickAddHeight(reviewExpanded ? QUICK_ADD_REVIEW_HEIGHT : QUICK_ADD_IDLE_HEIGHT)
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [reviewExpanded])
+
+  // Collapse to idle if this instance unmounts (success remount / lock).
+  useEffect(() => {
+    return () => {
+      void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+    }
+  }, [])
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
@@ -199,14 +258,14 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     }
   }, [loadAccountsFor])
 
-  // Focus amount once the form is ready.
+  // Focus amount once the form is ready (skip while document review is open).
   useEffect(() => {
-    if (loading || !entityId) return
+    if (loading || !entityId || reviewExpanded) return
     const t = window.setTimeout(() => {
       document.getElementById('quick-add-amount')?.focus()
     }, 0)
     return () => window.clearTimeout(t)
-  }, [loading, entityId])
+  }, [loading, entityId, reviewExpanded])
 
   async function onEntityChange(nextId: string) {
     setEntityId(nextId)
@@ -230,9 +289,193 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     applyRoleState(resolveRoleAccounts(next, accounts, last), roleSetters)
   }
 
+  function applySuggestion(s: DocumentSuggestion, source: PendingDocSource) {
+    setPendingDoc(source)
+    setPendingAnalysis(JSON.stringify(s))
+    setScanNotes(s.notes)
+    setReviewExpanded(true)
+
+    // Analyzer never suggests transfer; tray bill status is unpaid/paid only.
+    if (s.kind === 'bill') {
+      setKind('bill')
+      setBillStatus(s.bill_unpaid ? 'unpaid' : 'paid')
+    } else if (s.kind === 'income') {
+      setKind('income')
+      setBillStatus('unpaid')
+    } else {
+      setKind('expense')
+      setBillStatus('unpaid')
+    }
+
+    if (s.entry_date) setDate(s.entry_date)
+    if (s.description) setDescription(s.description)
+    else if (s.merchant) setDescription(s.merchant)
+
+    // Analyzer emits 2-exponent minor units; backend clears non-2-digit currencies.
+    const digits = currencyFractionDigits(baseCurrencyRef.current)
+    if (s.amount_minor != null && s.amount_minor > 0 && digits === 2) {
+      setAmount((s.amount_minor / 100).toFixed(2))
+    }
+    if (s.category_account_id) setCategoryId(s.category_account_id)
+    if (s.wallet_account_id) setWalletId(s.wallet_account_id)
+    if (s.payable_account_id) setPayableId(s.payable_account_id)
+  }
+
+  function clearDocumentReview() {
+    setPendingDoc(null)
+    setPendingAnalysis(null)
+    setScanNotes(null)
+    setAnalyzing(false)
+    setReviewExpanded(false)
+    setDragOver(false)
+  }
+
+  function onCancelReview() {
+    // Allow cancel after analyzer failure or mid-analyze; block only while a post is in flight.
+    if (busy && !analyzing) return
+    analyzeGenRef.current += 1
+    busyRef.current = false
+    setBusy(false)
+    clearDocumentReview()
+    setError(null)
+    void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+  }
+
+  const processFile = useCallback(async (file: File, entId: string) => {
+    if (busyRef.current) return
+    // Resource guard only — backend enforces the same cap (MAX_DOCUMENT_BYTES).
+    if (file.size > MAX_DOC_BYTES) {
+      setError('File too large (max 8 MB)')
+      return
+    }
+    const gen = analyzeGenRef.current + 1
+    analyzeGenRef.current = gen
+    busyRef.current = true
+    setBusy(true)
+    setAnalyzing(true)
+    setReviewExpanded(true)
+    setError(null)
+    void setQuickAddHeight(QUICK_ADD_REVIEW_HEIGHT)
+    try {
+      const dataBase64 = await fileToBase64(file)
+      const mimeType = file.type || mimeFromName(file.name)
+      const suggestion = await api.documentAnalyze({
+        entityId: entId,
+        filename: file.name,
+        mimeType,
+        dataBase64,
+      })
+      if (analyzeGenRef.current !== gen) return
+      applySuggestion(suggestion, { kind: 'file', file })
+    } catch (err) {
+      if (analyzeGenRef.current !== gen) return
+      const msg = (err as CommandError).message || 'Could not analyze document'
+      setError(msg)
+      // Stay expanded so the error is visible; Cancel collapses.
+      setPendingDoc(null)
+      setPendingAnalysis(null)
+      setScanNotes(null)
+    } finally {
+      if (analyzeGenRef.current === gen) {
+        busyRef.current = false
+        setBusy(false)
+        setAnalyzing(false)
+      }
+      setDragOver(false)
+    }
+  }, [])
+
+  const processPath = useCallback(async (path: string, entId: string) => {
+    if (busyRef.current) return
+    const gen = analyzeGenRef.current + 1
+    analyzeGenRef.current = gen
+    busyRef.current = true
+    setBusy(true)
+    setAnalyzing(true)
+    setReviewExpanded(true)
+    setError(null)
+    void setQuickAddHeight(QUICK_ADD_REVIEW_HEIGHT)
+    try {
+      const suggestion = await api.documentAnalyzePath({ entityId: entId, path })
+      if (analyzeGenRef.current !== gen) return
+      applySuggestion(suggestion, { kind: 'path', path })
+    } catch (err) {
+      if (analyzeGenRef.current !== gen) return
+      const msg = (err as CommandError).message || 'Could not analyze document'
+      setError(msg)
+      setPendingDoc(null)
+      setPendingAnalysis(null)
+      setScanNotes(null)
+    } finally {
+      if (analyzeGenRef.current === gen) {
+        busyRef.current = false
+        setBusy(false)
+        setAnalyzing(false)
+      }
+      setDragOver(false)
+    }
+  }, [])
+
+  // Tauri webviews often give empty dataTransfer.files on OS file drops.
+  useEffect(() => {
+    if (!isTauri() || !entityId || loading) return
+
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+    const entId = entityId
+
+    void (async () => {
+      try {
+        unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+          if (cancelled) return
+          const payload = event.payload
+          if (payload.type === 'enter' || payload.type === 'over') {
+            setDragOver(true)
+            return
+          }
+          if (payload.type === 'leave') {
+            setDragOver(false)
+            return
+          }
+          if (payload.type === 'drop') {
+            setDragOver(false)
+            const path = payload.paths[0]
+            if (path) {
+              void processPath(path, entId)
+            } else {
+              setError('No file path received from drop')
+            }
+          }
+        })
+      } catch {
+        // HTML5 handlers remain as fallback.
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [entityId, loading, processPath])
+
+  function onHtmlDrop(e: DragEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragOver(false)
+    if (!entityId || busyRef.current) return
+    const file = e.dataTransfer.files?.[0]
+    if (file && file.size > 0) {
+      void processFile(file, entityId)
+      return
+    }
+    if (!isTauri()) {
+      setError('No file received')
+    }
+  }
+
   async function onSubmit(ev: FormEvent) {
     ev.preventDefault()
-    if (!entity || busy) return
+    if (!entity || busy || analyzing) return
 
     const minor = parseMajorToMinor(amount, entity.base_currency)
     if (minor === null || minor <= 0) {
@@ -241,6 +484,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     }
 
     setBusy(true)
+    busyRef.current = true
     setError(null)
     try {
       const input = buildSimpleEntryInput({
@@ -256,7 +500,27 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         fromId,
         toId,
       })
-      await api.entryPostSimple(input)
+
+      if (pendingDoc?.kind === 'file') {
+        const dataBase64 = await fileToBase64(pendingDoc.file)
+        await api.entryPostSimpleWithDocument(
+          input,
+          {
+            filename: pendingDoc.file.name,
+            mimeType: pendingDoc.file.type || mimeFromName(pendingDoc.file.name),
+            dataBase64,
+          },
+          pendingAnalysis ?? undefined,
+        )
+      } else if (pendingDoc?.kind === 'path') {
+        await api.entryPostSimpleWithDocumentPath(
+          input,
+          pendingDoc.path,
+          pendingAnalysis ?? undefined,
+        )
+      } else {
+        await api.entryPostSimple(input)
+      }
 
       const roles: LastRoleAccounts = {
         category_account_id: categoryId || null,
@@ -283,8 +547,12 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         // ignore
       }
 
+      clearDocumentReview()
+      void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+
       // Clear busy before success UI so parent Escape/blur are not stuck blocked.
       setBusy(false)
+      busyRef.current = false
       onBusyChange?.(false)
       onPosted({
         kind,
@@ -294,6 +562,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     } catch (err) {
       setError((err as CommandError).message)
       setBusy(false)
+      busyRef.current = false
     }
   }
 
@@ -328,11 +597,30 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   }
 
   const ccy = entity.base_currency
+  const formDisabled = busy || analyzing
 
   return (
     <form
       onSubmit={(e) => void onSubmit(e)}
-      className="flex h-full flex-col gap-1 p-1.5"
+      onDragOver={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!formDisabled) setDragOver(true)
+      }}
+      onDragEnter={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        if (!formDisabled) setDragOver(true)
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault()
+        if (e.currentTarget === e.target) setDragOver(false)
+      }}
+      onDrop={onHtmlDrop}
+      className={cn(
+        'flex h-full flex-col gap-1 overflow-hidden p-1.5 transition',
+        dragOver && 'ring-1 ring-inset ring-[var(--color-accent)] bg-[var(--color-accent-soft)]/40',
+      )}
     >
       {/* Kind row */}
       <div className="inline-flex h-7 w-full items-stretch rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5">
@@ -343,7 +631,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               key={opt.id}
               type="button"
               aria-pressed={active}
-              disabled={busy}
+              disabled={formDisabled}
               onClick={() => onKindChange(opt.id)}
               className={cn(
                 'min-w-0 flex-1 rounded-[calc(var(--radius-control)-2px)] px-1 text-[11px] font-medium transition',
@@ -358,7 +646,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         })}
       </div>
 
-      {/* Amount + role accounts + date + Add */}
+      {/* Amount + role accounts + date + primary action */}
       <div className="flex min-w-0 items-center gap-1">
         <Input
           id="quick-add-amount"
@@ -369,7 +657,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           className="h-8 w-[4.5rem] shrink-0 px-2 text-xs tabular-nums"
           aria-label={`Amount (${ccy})`}
           required
-          disabled={busy}
+          disabled={formDisabled}
         />
 
         {kind === 'expense' ? (
@@ -379,7 +667,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               value={categoryId}
               onChange={(e) => setCategoryId(e.target.value)}
               required
-              disabled={busy}
+              disabled={formDisabled}
               aria-label="Category"
             >
               {expenseAccounts.length === 0 ? <option value="">No expense accounts</option> : null}
@@ -394,7 +682,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               value={walletId}
               onChange={(e) => setWalletId(e.target.value)}
               required
-              disabled={busy}
+              disabled={formDisabled}
               aria-label="Paid from"
             >
               {walletAccounts.length === 0 ? <option value="">No wallet accounts</option> : null}
@@ -414,7 +702,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               value={categoryId}
               onChange={(e) => setCategoryId(e.target.value)}
               required
-              disabled={busy}
+              disabled={formDisabled}
               aria-label="Income type"
             >
               {incomeAccounts.length === 0 ? <option value="">No income accounts</option> : null}
@@ -429,7 +717,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               value={walletId}
               onChange={(e) => setWalletId(e.target.value)}
               required
-              disabled={busy}
+              disabled={formDisabled}
               aria-label="Received into"
             >
               {assetWallets.length === 0 ? <option value="">No asset accounts</option> : null}
@@ -448,7 +736,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               className={cn(compactControl, 'w-[4.25rem] shrink-0')}
               value={billStatus}
               onChange={(e) => setBillStatus(e.target.value as BillStatusTray)}
-              disabled={busy}
+              disabled={formDisabled}
               aria-label="Bill status"
             >
               <option value="unpaid">Unpaid</option>
@@ -459,7 +747,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               value={categoryId}
               onChange={(e) => setCategoryId(e.target.value)}
               required
-              disabled={busy}
+              disabled={formDisabled}
               aria-label="Bill category"
             >
               {expenseAccounts.length === 0 ? <option value="">No expense accounts</option> : null}
@@ -475,7 +763,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                 value={walletId}
                 onChange={(e) => setWalletId(e.target.value)}
                 required
-                disabled={busy}
+                disabled={formDisabled}
                 aria-label="Paid from"
               >
                 {walletAccounts.length === 0 ? <option value="">No wallet accounts</option> : null}
@@ -491,7 +779,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                 value={payableId}
                 onChange={(e) => setPayableId(e.target.value)}
                 required
-                disabled={busy}
+                disabled={formDisabled}
                 aria-label="Bills payable"
               >
                 {payableAccounts.length === 0 ? (
@@ -514,7 +802,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               value={fromId}
               onChange={(e) => setFromId(e.target.value)}
               required
-              disabled={busy}
+              disabled={formDisabled}
               aria-label="From"
             >
               {transferAccounts.length === 0 ? <option value="">No asset accounts</option> : null}
@@ -529,7 +817,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
               value={toId}
               onChange={(e) => setToId(e.target.value)}
               required
-              disabled={busy}
+              disabled={formDisabled}
               aria-label="To"
             >
               {transferAccounts.length === 0 ? <option value="">No asset accounts</option> : null}
@@ -546,9 +834,15 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           <DateInput value={date} onChange={setDate} required aria-label="Entry date" />
         </div>
 
-        <Button type="submit" size="sm" busy={busy} className="h-8 shrink-0 px-2.5">
-          Add
-        </Button>
+        {pendingDoc ? (
+          <Button type="submit" size="sm" busy={busy} className="h-8 shrink-0 px-2.5">
+            Confirm & save
+          </Button>
+        ) : (
+          <Button type="submit" size="sm" busy={busy || analyzing} className="h-8 shrink-0 px-2.5">
+            {analyzing ? '…' : 'Add'}
+          </Button>
+        )}
       </div>
 
       {/* Memo + optional entity */}
@@ -559,14 +853,14 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           placeholder="Memo (optional)"
           className="h-8 flex-1 px-2 text-xs"
           aria-label="Memo"
-          disabled={busy}
+          disabled={formDisabled}
         />
         {entities.length > 1 ? (
           <select
             className={cn(compactControl, 'w-[7.5rem] shrink-0')}
             value={entity.id}
             onChange={(e) => void onEntityChange(e.target.value)}
-            disabled={busy}
+            disabled={formDisabled}
             aria-label="Book"
           >
             {entities.map((e) => (
@@ -577,6 +871,52 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           </select>
         ) : null}
       </div>
+
+      {/* Idle drop affordance (subtle) or expanded document review */}
+      {reviewExpanded ? (
+        <div className="mt-0.5 flex min-h-0 flex-1 flex-col gap-1 overflow-auto rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-1.5">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0">
+              {analyzing ? (
+                <p className="text-xs text-[var(--color-muted)]">Analyzing document…</p>
+              ) : pendingDoc ? (
+                <>
+                  <p className="truncate text-xs font-medium text-[var(--color-fg)]">
+                    {pendingDocLabel(pendingDoc)}
+                  </p>
+                  {scanNotes ? (
+                    <p className="mt-0.5 line-clamp-3 text-[11px] leading-snug text-[var(--color-muted)]">
+                      {scanNotes}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-[11px] text-[var(--color-muted)]">
+                      Document will be stored encrypted when you save. Review fields, then confirm.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-[var(--color-muted)]">
+                  Could not analyze. Cancel and try another file, or fill the form manually.
+                </p>
+              )}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={busy && !analyzing}
+              onClick={onCancelReview}
+              className="h-7 shrink-0 px-2 text-xs"
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="px-0.5 text-center text-[10px] leading-none text-[var(--color-muted)]/80">
+          Drop receipt to analyze
+        </p>
+      )}
 
       <ErrorBanner message={error} className="mb-0 px-2 py-1 text-xs" />
     </form>

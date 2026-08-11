@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { api, formatMoney } from './lib/api'
 import { isTauri, vaultStatus, type VaultStatus } from './lib/tauri'
 import { Button } from './components/ui'
+import { QUICK_ADD_IDLE_HEIGHT, setQuickAddHeight } from './lib/quickAddWindow'
 import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 
 export default function QuickAddApp() {
@@ -76,6 +77,11 @@ export default function QuickAddApp() {
     }
   }, [status])
 
+  const hidePanel = useCallback(() => {
+    void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+    void api.quickAddHide()
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
@@ -90,11 +96,11 @@ export default function QuickAddApp() {
         successTimerRef.current = null
       }
       setPhase('form')
-      void api.quickAddHide()
+      hidePanel()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [hidePanel])
 
   // Native selects / calendar popovers often blur the webview on open.
   // Delay hide and cancel if focus returns, so choosing accounts stays open.
@@ -114,7 +120,7 @@ export default function QuickAddApp() {
         if (busyRef.current) return
         // Focus returned (or never left the document) — keep the panel.
         if (document.hasFocus()) return
-        void api.quickAddHide()
+        hidePanel()
       }, 200)
     }
 
@@ -129,7 +135,7 @@ export default function QuickAddApp() {
       window.removeEventListener('focus', onFocus)
       clearBlurHide()
     }
-  }, [])
+  }, [hidePanel])
 
   useEffect(() => {
     return () => {
@@ -142,20 +148,23 @@ export default function QuickAddApp() {
     busyRef.current = busy
   }, [])
 
-  const onPosted = useCallback((info: QuickAddPosted) => {
-    // Post finished: clear busy so Escape works during the success flash.
-    busyRef.current = false
-    const money = formatMoney(info.amountMinor, info.currency)
-    setSuccessLabel(`Saved ${info.kind} ${money}`)
-    setPhase('success')
-    if (successTimerRef.current) clearTimeout(successTimerRef.current)
-    successTimerRef.current = setTimeout(() => {
-      successTimerRef.current = null
-      void api.quickAddHide()
-      setPhase('form')
-      setFormEpoch((n) => n + 1)
-    }, 1000)
-  }, [])
+  const onPosted = useCallback(
+    (info: QuickAddPosted) => {
+      // Post finished: clear busy so Escape works during the success flash.
+      busyRef.current = false
+      const money = formatMoney(info.amountMinor, info.currency)
+      setSuccessLabel(`Saved ${info.kind} ${money}`)
+      setPhase('success')
+      if (successTimerRef.current) clearTimeout(successTimerRef.current)
+      successTimerRef.current = setTimeout(() => {
+        successTimerRef.current = null
+        hidePanel()
+        setPhase('form')
+        setFormEpoch((n) => n + 1)
+      }, 1000)
+    },
+    [hidePanel],
+  )
 
   if (status === null) {
     return (
