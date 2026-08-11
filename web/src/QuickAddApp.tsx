@@ -8,7 +8,7 @@ import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
 
 /**
- * Transparent OS window with Vercel-like floating panel chrome:
+ * Transparent OS window with floating command-strip chrome:
  * tight radius, hairline border, soft elevation, surface fill.
  */
 function Shell({
