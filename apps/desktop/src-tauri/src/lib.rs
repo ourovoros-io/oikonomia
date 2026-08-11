@@ -83,11 +83,9 @@ pub fn run() {
             commands::document_analyzer_status,
             commands::document_analyze,
             commands::document_analyze_path,
-            commands::document_link_entry,
             commands::document_list,
             commands::document_get,
             commands::document_delete,
-            commands::document_unlink,
             commands::document_attach,
             commands::document_export,
         ])

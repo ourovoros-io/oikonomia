@@ -3,13 +3,12 @@
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
 use oikonomia_core::documents::{
-    DocumentId, attach_document, delete_document, get_document, link_document_to_entry,
-    list_documents, save_document, unlink_document,
+    DocumentId, attach_document, delete_document, get_document, list_documents, save_document,
 };
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, create_entity, delete_entity, list_accounts,
-    list_entities, post_entry,
+    CreateEntity, CreateJournalLine, PostJournal, PostedEntryView, create_entity, delete_entity,
+    list_accounts, list_entities, post_entry,
 };
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -41,7 +40,7 @@ fn setup_named_entity(conn: &Connection, name: &str) -> EntityId {
 }
 
 /// Post a trivial balanced expense entry so a document has something to
-/// attach to. Mirrors the setup in `unlink_orphans_but_preserves_document`.
+/// attach to.
 fn post_expense_entry(
     conn: &Connection,
     entity_id: EntityId,
@@ -75,6 +74,11 @@ fn post_expense_entry(
         },
     )
     .expect("post")
+}
+
+/// Post a trivial balanced entry so a document has something to link to.
+fn post_reference_entry(conn: &Connection, entity_id: EntityId) -> PostedEntryView {
+    post_expense_entry(conn, entity_id, "Reference entry")
 }
 
 #[test]
@@ -112,15 +116,15 @@ fn delete_entity_with_linked_document() {
     )
     .expect("post");
 
-    let meta = save_document(
+    save_document(
         conn,
         entity_id,
+        entry.entry.id,
         "receipt.txt",
         "text/plain",
         b"TOTAL 10,00 EUR",
     )
     .expect("save document");
-    link_document_to_entry(conn, meta.id, entry.entry.id).expect("link");
 
     delete_entity(conn, entity_id).expect("delete entity with linked document");
     assert!(list_entities(conn).expect("list").is_empty());
@@ -131,18 +135,54 @@ fn save_document_rejects_unsupported_and_oversize() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
+    let entry = post_reference_entry(conn, entity_id);
 
     let exe = save_document(
         conn,
         entity_id,
+        entry.entry.id,
         "evil.exe",
         "application/x-msdownload",
         b"MZ",
     );
     assert!(exe.is_err(), "executables must be rejected");
 
-    let empty = save_document(conn, entity_id, "empty.txt", "text/plain", b"");
+    let empty = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "empty.txt",
+        "text/plain",
+        b"",
+    );
     assert!(empty.is_err(), "empty files must be rejected");
+}
+
+#[test]
+fn save_document_rejects_duplicate_name_in_book() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    let entry = post_reference_entry(conn, entity_id);
+
+    save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "invoice.pdf",
+        "application/pdf",
+        b"%PDF-1.4",
+    )
+    .expect("first save");
+    let dup = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "invoice.pdf",
+        "application/pdf",
+        b"%PDF-1.4",
+    );
+    assert!(dup.is_err(), "same name in the same book must be rejected");
 }
 
 #[test]
@@ -150,9 +190,26 @@ fn list_get_delete_round_trip() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
+    let entry = post_reference_entry(conn, entity_id);
 
-    let a = save_document(conn, entity_id, "a.txt", "text/plain", b"alpha").expect("save a");
-    let b = save_document(conn, entity_id, "b.txt", "text/plain", b"bravo").expect("save b");
+    let a = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "a.txt",
+        "text/plain",
+        b"alpha",
+    )
+    .expect("save a");
+    let b = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "b.txt",
+        "text/plain",
+        b"bravo",
+    )
+    .expect("save b");
 
     let listed = list_documents(conn, entity_id).expect("list");
     assert_eq!(listed.len(), 2, "both documents listed");
@@ -175,65 +232,13 @@ fn list_get_delete_round_trip() {
 }
 
 #[test]
-fn unlink_orphans_but_preserves_document() {
-    let (_dir, vault) = setup_vault();
-    let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
-
-    let accounts = list_accounts(conn, entity_id).expect("accounts");
-    let checking = accounts.iter().find(|a| a.code == "1010").expect("1010");
-    let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
-
-    let entry = post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: "2026-02-01".into(),
-            description: "Lunch".into(),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: food.id,
-                    debit_minor: 500,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: checking.id,
-                    debit_minor: 0,
-                    credit_minor: 500,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post");
-
-    let meta = save_document(conn, entity_id, "r.txt", "text/plain", b"x").expect("save");
-    link_document_to_entry(conn, meta.id, entry.entry.id).expect("link");
-
-    let linked = &list_documents(conn, entity_id).expect("list")[0];
-    assert_eq!(linked.entry_id, Some(entry.entry.id), "linked after link");
-
-    unlink_document(conn, meta.id).expect("unlink");
-    let orphan = &list_documents(conn, entity_id).expect("list")[0];
-    assert_eq!(orphan.entry_id, None, "unlinked but still listed");
-    assert!(get_document(conn, meta.id).is_ok(), "blob preserved");
-
-    link_document_to_entry(conn, meta.id, entry.entry.id).expect("relink");
-    let relinked = &list_documents(conn, entity_id).expect("list")[0];
-    assert_eq!(relinked.entry_id, Some(entry.entry.id));
-}
-
-#[test]
-fn delete_and_unlink_missing_document_return_not_found() {
+fn delete_missing_document_returns_not_found() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
     setup_entity(conn);
 
     let missing = DocumentId::new();
     assert!(delete_document(conn, missing).is_err());
-    assert!(unlink_document(conn, missing).is_err());
 }
 
 #[test]
@@ -241,9 +246,26 @@ fn list_documents_is_newest_first() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
+    let entry = post_reference_entry(conn, entity_id);
 
-    let first = save_document(conn, entity_id, "first.txt", "text/plain", b"1").expect("save");
-    let second = save_document(conn, entity_id, "second.txt", "text/plain", b"2").expect("save");
+    let first = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "first.txt",
+        "text/plain",
+        b"1",
+    )
+    .expect("save");
+    let second = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "second.txt",
+        "text/plain",
+        b"2",
+    )
+    .expect("save");
 
     let listed = list_documents(conn, entity_id).expect("list");
     assert_eq!(listed[0].id, second.id, "most recent save first");
@@ -266,14 +288,10 @@ fn attach_document_saves_links_and_skips_analysis() {
         b"total 5",
     )
     .expect("attach");
-    assert_eq!(meta.entry_id, Some(entry.entry.id));
+    assert_eq!(meta.entry_id, entry.entry.id);
 
     let listed = list_documents(conn, entity_id).expect("list");
-    assert_eq!(
-        listed[0].entry_id,
-        Some(entry.entry.id),
-        "linked in one step"
-    );
+    assert_eq!(listed[0].entry_id, entry.entry.id, "linked in one step");
 
     let analysis: Option<String> = conn
         .query_row(

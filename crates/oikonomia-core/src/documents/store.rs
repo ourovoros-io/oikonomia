@@ -35,8 +35,8 @@ pub struct DocumentMeta {
     pub id: DocumentId,
     /// Entity book.
     pub entity_id: EntityId,
-    /// Linked entry if posted.
-    pub entry_id: Option<JournalEntryId>,
+    /// Linked entry (a document cannot exist without one).
+    pub entry_id: JournalEntryId,
     /// Original filename.
     pub filename: String,
     /// MIME type.
@@ -81,14 +81,16 @@ pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Re
     Ok(())
 }
 
-/// Store a document blob (already protected by `SQLCipher`).
+/// Store a document blob linked to `entry_id` (already protected by `SQLCipher`).
 ///
 /// # Errors
 ///
-/// Validation (size/mime) or DB errors.
+/// [`Error::Validation`] for invalid files or a duplicate filename in the
+/// book; DB errors otherwise.
 pub fn save_document(
     conn: &Connection,
     entity_id: EntityId,
+    entry_id: JournalEntryId,
     filename: &str,
     mime_type: &str,
     data: &[u8],
@@ -96,6 +98,19 @@ pub fn save_document(
     let name = filename.trim();
     let mime = resolve_mime(mime_type, name);
     validate_document_file(name, &mime, data.len() as u64)?;
+
+    let clash: i64 = conn
+        .query_row(
+            "SELECT COUNT(1) FROM documents WHERE entity_id = ?1 AND filename = ?2",
+            rusqlite::params![entity_id.0.to_string(), name],
+            |row| row.get(0),
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+    if clash > 0 {
+        return Err(Error::Validation(format!(
+            "a document named {name} already exists in this book"
+        )));
+    }
 
     // Validation caps the size at 8 MiB, so the length always fits an i64.
     let size_bytes = i64::try_from(data.len()).unwrap_or(i64::MAX);
@@ -107,11 +122,12 @@ pub fn save_document(
         "
         INSERT INTO documents (
             id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json
-        ) VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, NULL)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)
         ",
         rusqlite::params![
             id.0.to_string(),
             entity_id.0.to_string(),
+            entry_id.0.to_string(),
             name,
             mime,
             size_bytes,
@@ -119,12 +135,19 @@ pub fn save_document(
             created,
         ],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .map_err(|err| match err.sqlite_error_code() {
+        // Backstop: the pre-check races nothing (single-writer vault), but a
+        // constraint violation must still read as validation, not IO.
+        Some(rusqlite::ErrorCode::ConstraintViolation) => Error::Validation(format!(
+            "a document named {name} already exists in this book"
+        )),
+        _ => Error::Io(err.to_string()),
+    })?;
 
     Ok(DocumentMeta {
         id,
         entity_id,
-        entry_id: None,
+        entry_id,
         filename: name.to_owned(),
         mime_type: mime,
         size_bytes,
@@ -132,35 +155,13 @@ pub fn save_document(
     })
 }
 
-/// Attach a document to a posted journal entry.
-///
-/// # Errors
-///
-/// Not found or DB error.
-pub fn link_document_to_entry(
-    conn: &Connection,
-    document_id: DocumentId,
-    entry_id: JournalEntryId,
-) -> Result<()> {
-    let n = conn
-        .execute(
-            "UPDATE documents SET entry_id = ?1 WHERE id = ?2",
-            rusqlite::params![entry_id.0.to_string(), document_id.0.to_string()],
-        )
-        .map_err(|err| Error::Io(err.to_string()))?;
-    if n == 0 {
-        return Err(Error::NotFound("document".into()));
-    }
-    Ok(())
-}
-
-/// Validate, store, and link a document to an existing entry in one
-/// transaction (no OCR — analysis belongs to the drop-zone flow).
+/// Validate and store a document linked to an existing entry (no OCR —
+/// analysis belongs to the drop-zone flow).
 ///
 /// # Errors
 ///
 /// [`Error::NotFound`] for a missing entry, [`Error::Validation`] for an
-/// entry in a different book or an invalid file, plus DB errors.
+/// entry in a different book, an invalid file, or a duplicate filename.
 pub fn attach_document(
     conn: &Connection,
     entity_id: EntityId,
@@ -176,31 +177,17 @@ pub fn attach_document(
         ));
     }
 
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-    let meta = save_document(&tx, entity_id, filename, mime_type, data)?;
-    link_document_to_entry(&tx, meta.id, entry_id)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-
-    Ok(DocumentMeta {
-        entry_id: Some(entry_id),
-        ..meta
-    })
+    save_document(conn, entity_id, entry_id, filename, mime_type, data)
 }
 
-type MetaColumns = (String, String, Option<String>, String, String, i64, String);
+type MetaColumns = (String, String, String, String, String, i64, String);
 
 fn meta_from_columns(raw: MetaColumns) -> Result<DocumentMeta> {
     let (id_s, entity_s, entry_s, filename, mime_type, size_bytes, created_at) = raw;
     Ok(DocumentMeta {
         id: DocumentId(parse_uuid(&id_s)?),
         entity_id: EntityId(parse_uuid(&entity_s)?),
-        entry_id: entry_s
-            .as_deref()
-            .map(parse_uuid)
-            .transpose()?
-            .map(JournalEntryId),
+        entry_id: JournalEntryId(parse_uuid(&entry_s)?),
         filename,
         mime_type,
         size_bytes,
@@ -233,7 +220,7 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, i64>(5)?,
@@ -269,7 +256,7 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
                     (
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(2)?,
                         row.get::<_, String>(3)?,
                         row.get::<_, String>(4)?,
                         row.get::<_, i64>(5)?,
@@ -295,24 +282,6 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
 pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
     let n = conn
         .execute("DELETE FROM documents WHERE id = ?1", [id.0.to_string()])
-        .map_err(|err| Error::Io(err.to_string()))?;
-    if n == 0 {
-        return Err(Error::NotFound("document".into()));
-    }
-    Ok(())
-}
-
-/// Detach a document from its entry; the file stays in the vault as an orphan.
-///
-/// # Errors
-///
-/// Not found or DB error.
-pub fn unlink_document(conn: &Connection, id: DocumentId) -> Result<()> {
-    let n = conn
-        .execute(
-            "UPDATE documents SET entry_id = NULL WHERE id = ?1",
-            [id.0.to_string()],
-        )
         .map_err(|err| Error::Io(err.to_string()))?;
     if n == 0 {
         return Err(Error::NotFound("document".into()));

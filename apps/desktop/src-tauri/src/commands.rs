@@ -5,9 +5,8 @@ use crate::state::AppState;
 use base64::Engine;
 use oikonomia_core::documents::{
     AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, analyze_document_bytes,
-    analyzer_status, attach_document, delete_document, get_document, link_document_to_entry,
-    list_documents, save_analysis_json, save_document, suggest_accounts_for_entity,
-    unlink_document,
+    analyzer_status, attach_document, delete_document, get_document, list_documents,
+    suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
 use oikonomia_core::error::Error as CoreError;
@@ -531,7 +530,9 @@ async fn await_blocking<T>(
     }
 }
 
-/// Store, analyze, and annotate a document.
+/// Read-only analysis: suggest accounts/entry data for a dropped file
+/// without persisting anything (a document cannot exist until it is linked
+/// to a posted entry).
 ///
 /// The vault lock is held only while touching the database; the CPU-heavy
 /// OCR/parsing phase runs unlocked so other commands stay responsive (F8).
@@ -543,52 +544,29 @@ fn analyze_with_vault(
     mime_type: &str,
     data: &[u8],
 ) -> CommandResult<DocumentSuggestion> {
-    let (meta, accounts, entity) = {
+    let mime = oikonomia_core::documents::resolve_mime(mime_type, filename);
+    oikonomia_core::documents::validate_document_file(filename, &mime, data.len() as u64)?;
+
+    let (accounts, entity) = {
         let guard = crate::state::lock_vault(vault);
         let conn = guard.connection()?;
-        let entity = get_entity(conn, entity_id)?;
-        let meta = save_document(conn, entity_id, filename, mime_type, data)?;
-        let accounts = suggest_accounts_for_entity(conn, entity_id)?;
-        (meta, accounts, entity)
+        (
+            suggest_accounts_for_entity(conn, entity_id)?,
+            get_entity(conn, entity_id)?,
+        )
     };
 
     let suggestion = analyze_document_bytes(
-        meta.id,
-        &meta.filename,
-        &meta.mime_type,
+        oikonomia_core::documents::DocumentId::new(),
+        filename,
+        &mime,
         data,
         &accounts,
         &entity.base_currency,
         Some(model_dir),
     )?;
 
-    // Persist strictly: if the vault locked mid-analysis (watchdog or user),
-    // surface the error instead of silently dropping the analysis snapshot.
-    {
-        let guard = crate::state::lock_vault(vault);
-        let conn = guard.connection()?;
-        let json = serde_json::to_string(&suggestion).map_err(|e| CommandError {
-            code: "io".into(),
-            message: format!("could not serialize analysis: {e}"),
-        })?;
-        save_analysis_json(conn, meta.id, &json)?;
-    }
-
     Ok(suggestion)
-}
-
-/// Link a stored document to a journal entry after the user posts.
-#[tauri::command]
-pub async fn document_link_entry(
-    state: State<'_, AppState>,
-    document_id: oikonomia_core::documents::DocumentId,
-    entry_id: JournalEntryId,
-) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        link_document_to_entry(conn, document_id, entry_id)
-    })
-    .await
 }
 
 /// Metadata plus base64 payload for the in-app viewer.
@@ -640,19 +618,6 @@ pub async fn document_delete(
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         delete_document(conn, document_id)
-    })
-    .await
-}
-
-/// Detach a document from its entry (file stays in the vault).
-#[tauri::command]
-pub async fn document_unlink(
-    state: State<'_, AppState>,
-    document_id: DocumentId,
-) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        unlink_document(conn, document_id)
     })
     .await
 }

@@ -2578,6 +2578,7 @@ dependencies = [
  "base64 0.22.1",
  "directories",
  "image",
+ "log",
  "lopdf",
  "ocrs",
  "pdf-extract",
