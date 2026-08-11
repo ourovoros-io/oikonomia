@@ -26,8 +26,8 @@ import {
   PageHeader,
   Panel,
   Select,
-  cn,
 } from '../components/ui'
+import { cn } from '../lib/cn'
 import type { CommandError } from '../lib/tauri'
 
 type Props = { entity: Entity | null }

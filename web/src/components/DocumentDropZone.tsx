@@ -4,7 +4,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { api, type AnalyzerStatus, type DocumentSuggestion, type PendingDocSource } from '../lib/api'
 import { isTauri, type CommandError } from '../lib/tauri'
 import { fileToBase64, mimeFromName } from '../lib/files'
-import { cn } from './ui'
+import { cn } from '../lib/cn'
 
 type Props = {
   entityId: string

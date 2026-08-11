@@ -1,6 +1,7 @@
 import { useId, useRef, type ReactNode } from 'react'
 import { X } from 'lucide-react'
-import { Button, cn } from './ui'
+import { Button } from './ui'
+import { cn } from '../lib/cn'
 import { useDialogFocus } from './useDialogFocus'
 
 type Props = {

@@ -38,8 +38,8 @@ import {
   Panel,
   Segmented,
   Select,
-  cn,
 } from '../components/ui'
+import { cn } from '../lib/cn'
 import type { CommandError } from '../lib/tauri'
 import type { DocumentSuggestion } from '../lib/api'
 import { formatMoney as fmtMoney } from '../lib/money'

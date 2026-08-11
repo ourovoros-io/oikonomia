@@ -12,7 +12,8 @@ import {
 } from 'lucide-react'
 import { Logo } from './components/Logo'
 import { UnlockScreen } from './components/UnlockScreen'
-import { Button, Select, cn } from './components/ui'
+import { Button, Select } from './components/ui'
+import { cn } from './lib/cn'
 import { listen } from '@tauri-apps/api/event'
 import {
   appInfo,
