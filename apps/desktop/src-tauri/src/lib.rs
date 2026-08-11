@@ -47,6 +47,12 @@ pub fn run() {
 
             let app_state = AppState::new(ocr_dir).expect("failed to open vault data directory");
             let (vault, last_activity, lock_timeout) = app_state.watchdog_handles();
+
+            // Native window appearance (scrollbars, controls, title bar) must
+            // match the stored theme, not the OS preference.
+            let theme = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir()).theme;
+            app.handle().set_theme(Some(commands::native_theme(theme)));
+
             app.manage(app_state);
 
             // Rust-side idle lock: guarantees the vault locks even if the

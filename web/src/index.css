@@ -65,11 +65,14 @@ html:not(.dark) {
 }
 
 @layer base {
-  /* Native scrollbars and form controls must follow the app's theme class,
-     not the OS preference (the meta color-scheme hint alone would leave a
-     light scrollbar on a dark window and vice versa). */
+  /* Native form controls must follow the app's theme class, not the OS
+     preference. Scrollbars additionally get explicit palette colors:
+     WKWebView styles inner scrollers from the window appearance, so
+     color-scheme alone leaves a light scrollbar on a dark window (the
+     Rust side also syncs the native window theme via set_theme). */
   html {
     color-scheme: light;
+    scrollbar-color: var(--color-border-strong) transparent;
   }
   html.dark {
     color-scheme: dark;

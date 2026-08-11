@@ -515,13 +515,28 @@ pub fn settings_get_theme(state: State<'_, AppState>) -> Theme {
     load_ui_prefs(state.data_dir()).theme
 }
 
-/// Persist the UI theme.
+/// Persist the UI theme and sync the native window appearance. Without the
+/// sync, `WKWebView` keeps drawing scrollbars and native controls in the OS
+/// appearance rather than the app's theme.
 #[tauri::command]
-pub fn settings_set_theme(state: State<'_, AppState>, theme: Theme) -> CommandResult<()> {
+pub fn settings_set_theme(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    theme: Theme,
+) -> CommandResult<()> {
     let mut prefs = load_ui_prefs(state.data_dir());
     prefs.theme = theme;
     save_ui_prefs(state.data_dir(), &prefs)?;
+    app.set_theme(Some(native_theme(theme)));
     Ok(())
+}
+
+/// Map the stored theme onto Tauri's native window theme.
+pub fn native_theme(theme: Theme) -> tauri::Theme {
+    match theme {
+        Theme::Dark => tauri::Theme::Dark,
+        Theme::Light => tauri::Theme::Light,
+    }
 }
 
 // --- Documents / bill scan (bundled offline OCR) ---------------------------
