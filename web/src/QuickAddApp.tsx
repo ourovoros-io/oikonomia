@@ -20,9 +20,9 @@ function Shell({
       <div
         className={cn(
           'flex h-full w-full flex-col overflow-hidden',
-          'rounded-[14px] border border-[var(--color-border-strong)]',
+          'rounded-[12px] border border-[var(--color-border-strong)]',
           'bg-[var(--color-surface)] text-[var(--color-fg)]',
-          'shadow-[0_8px_28px_rgba(0,0,0,0.45)]',
+          'shadow-[0_6px_20px_rgba(0,0,0,0.4)]',
           className,
         )}
       >
@@ -198,7 +198,7 @@ export default function QuickAddApp() {
   if (status === null) {
     return (
       <Shell>
-        <div className="flex flex-1 items-center justify-center text-xs text-[var(--color-muted)]">
+        <div className="flex h-full items-center justify-center px-2 text-[11px] text-[var(--color-muted)]">
           Loading…
         </div>
       </Shell>
@@ -208,9 +208,13 @@ export default function QuickAddApp() {
   if (status !== 'unlocked') {
     return (
       <Shell>
-        <div className="flex flex-1 items-center justify-center gap-3 px-3">
-          <p className="min-w-0 flex-1 truncate text-xs text-[var(--color-fg)]">Vault is locked</p>
-          <Button size="sm" className="h-7 shrink-0 px-2.5 text-xs" onClick={() => void api.openMainWindow()}>
+        <div className="flex h-full items-center gap-2 px-2">
+          <p className="min-w-0 flex-1 truncate text-[11px] text-[var(--color-fg)]">Vault locked</p>
+          <Button
+            size="sm"
+            className="h-7 shrink-0 px-2 text-[11px]"
+            onClick={() => void api.openMainWindow()}
+          >
             Open
           </Button>
         </div>
@@ -221,8 +225,10 @@ export default function QuickAddApp() {
   if (phase === 'success') {
     return (
       <Shell>
-        <div className="flex flex-1 items-center justify-center px-3">
-          <p className="truncate text-xs font-medium text-[var(--color-success)]">{successLabel}</p>
+        <div className="flex h-full items-center justify-center px-2">
+          <p className="truncate text-[11px] font-medium text-[var(--color-success)]">
+            {successLabel}
+          </p>
         </div>
       </Shell>
     )
