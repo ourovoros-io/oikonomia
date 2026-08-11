@@ -1,10 +1,36 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { api, formatMoney } from './lib/api'
 import { isTauri, vaultStatus, type VaultStatus } from './lib/tauri'
 import { Button } from './components/ui'
 import { QUICK_ADD_IDLE_HEIGHT, setQuickAddHeight } from './lib/quickAddWindow'
 import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
+import { cn } from './lib/cn'
+
+/** Outer chrome for the transparent tray window (rounded, bordered, elevated). */
+function Shell({
+  children,
+  className,
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <div className="box-border flex h-full w-full items-stretch p-0">
+      <div
+        className={cn(
+          'flex h-full w-full flex-col overflow-hidden',
+          'rounded-[14px] border border-[var(--color-border-strong)]',
+          'bg-[var(--color-surface)] text-[var(--color-fg)]',
+          'shadow-[0_8px_28px_rgba(0,0,0,0.45)]',
+          className,
+        )}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
 
 export default function QuickAddApp() {
   const [status, setStatus] = useState<VaultStatus | null>(null)
@@ -39,7 +65,6 @@ export default function QuickAddApp() {
     let unlisten: (() => void) | undefined
     let cancelled = false
     void listen('vault-locked', () => {
-      // Mid-post/analyze must not leave busy stuck (Escape / blur hide blocked).
       busyRef.current = false
       if (successTimerRef.current) {
         clearTimeout(successTimerRef.current)
@@ -63,7 +88,6 @@ export default function QuickAddApp() {
     }
   }, [])
 
-  // Throttled activity heartbeat so the Rust idle watchdog sees tray input.
   useEffect(() => {
     if (status !== 'unlocked') return
 
@@ -85,7 +109,6 @@ export default function QuickAddApp() {
     }
   }, [status])
 
-  /** Hide panel and remount form so reopen has no stale review draft / height. */
   const hidePanel = useCallback(() => {
     if (successTimerRef.current) {
       clearTimeout(successTimerRef.current)
@@ -104,7 +127,6 @@ export default function QuickAddApp() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      // Escape always dismisses when not mid-post (including success flash).
       if (busyRef.current) return
       hidePanel()
     }
@@ -112,10 +134,6 @@ export default function QuickAddApp() {
     return () => window.removeEventListener('keydown', onKey)
   }, [hidePanel])
 
-  // Native selects / calendar popovers often blur the webview on open.
-  // Delay hide and cancel if focus returns, so choosing accounts stays open.
-  // On focus also re-poll vault: the quick-add window is reused, so unlock in
-  // the main app would otherwise leave this panel stuck on "Vault is locked".
   useEffect(() => {
     const clearBlurHide = () => {
       if (blurHideTimerRef.current) {
@@ -130,7 +148,6 @@ export default function QuickAddApp() {
       blurHideTimerRef.current = setTimeout(() => {
         blurHideTimerRef.current = null
         if (busyRef.current) return
-        // Focus returned (or never left the document) — keep the panel.
         if (document.hasFocus()) return
         hidePanel()
       }, 200)
@@ -165,13 +182,11 @@ export default function QuickAddApp() {
 
   const onPosted = useCallback(
     (info: QuickAddPosted) => {
-      // Post finished: clear busy so Escape works during the success flash.
       busyRef.current = false
       const money = formatMoney(info.amountMinor, info.currency)
       setSuccessLabel(`Saved ${info.kind} ${money}`)
       setPhase('success')
       if (successTimerRef.current) clearTimeout(successTimerRef.current)
-      // hidePanel remounts the form (formEpoch) and restores idle height.
       successTimerRef.current = setTimeout(() => {
         successTimerRef.current = null
         hidePanel()
@@ -182,41 +197,44 @@ export default function QuickAddApp() {
 
   if (status === null) {
     return (
-      <div className="flex h-screen items-center justify-center bg-[var(--color-bg)] text-xs text-[var(--color-muted)]">
-        Loading…
-      </div>
+      <Shell>
+        <div className="flex flex-1 items-center justify-center text-xs text-[var(--color-muted)]">
+          Loading…
+        </div>
+      </Shell>
     )
   }
 
   if (status !== 'unlocked') {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-[var(--color-bg)] px-4 text-center">
-        <p className="text-sm text-[var(--color-fg)]">Vault is locked</p>
-        <p className="text-xs text-[var(--color-muted)]">
-          Open Oikonomia to unlock, then try again.
-        </p>
-        <Button size="sm" onClick={() => void api.openMainWindow()}>
-          Open Oikonomia
-        </Button>
-      </div>
+      <Shell>
+        <div className="flex flex-1 items-center justify-center gap-3 px-3">
+          <p className="min-w-0 flex-1 truncate text-xs text-[var(--color-fg)]">Vault is locked</p>
+          <Button size="sm" className="h-7 shrink-0 px-2.5 text-xs" onClick={() => void api.openMainWindow()}>
+            Open
+          </Button>
+        </div>
+      </Shell>
     )
   }
 
   if (phase === 'success') {
     return (
-      <div className="flex h-screen items-center justify-center bg-[var(--color-bg)] px-4 text-center">
-        <p className="text-sm font-medium text-[var(--color-fg)]">{successLabel}</p>
-      </div>
+      <Shell>
+        <div className="flex flex-1 items-center justify-center px-3">
+          <p className="truncate text-xs font-medium text-[var(--color-success)]">{successLabel}</p>
+        </div>
+      </Shell>
     )
   }
 
   return (
-    <div className="h-screen overflow-hidden bg-[var(--color-bg)]">
+    <Shell>
       <QuickAddPage
         key={`${status}-${formEpoch}`}
         onPosted={onPosted}
         onBusyChange={onBusyChange}
       />
-    </div>
+    </Shell>
   )
 }

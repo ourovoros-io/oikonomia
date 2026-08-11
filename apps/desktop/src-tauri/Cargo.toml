@@ -20,7 +20,8 @@ macos-dock-icon = { path = "../../../crates/macos-dock-icon" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
-tauri = { version = "2.11.2", features = ["tray-icon", "image-png"] }
+# macos-private-api: transparent tray quick-add window (rounded corners via CSS).
+tauri = { version = "2.11.2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"

@@ -24,6 +24,12 @@ async function mount() {
     }
   }
 
+  // Transparent window + CSS shell draws rounded corners for the tray strip.
+  if (isQuickAdd) {
+    document.documentElement.classList.add('quick-add')
+    document.body.classList.add('quick-add')
+  }
+
   createRoot(root).render(
     <StrictMode>{isQuickAdd ? <QuickAddApp /> : <App />}</StrictMode>,
   )

@@ -142,4 +142,18 @@ html:not(.dark) {
     appearance: none;
     background-image: none;
   }
+
+  /* Tray quick-add: transparent OS window; the shell paints rounded corners. */
+  html.quick-add,
+  html.quick-add body,
+  html.quick-add #root {
+    height: 100%;
+    overflow: hidden;
+    background: transparent !important;
+  }
+
+  html.quick-add body {
+    /* Kill the full-app canvas fill so corners stay see-through. */
+    background: transparent !important;
+  }
 }

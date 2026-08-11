@@ -1,11 +1,12 @@
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { isTauri } from './tauri'
 
-export const QUICK_ADD_WIDTH = 420
-/** Fixed height for the step wizard — one screen at a time, no scroll. */
-export const QUICK_ADD_IDLE_HEIGHT = 168
-/** Document review stays the same size (rolling fields, no tall expand). */
-export const QUICK_ADD_REVIEW_HEIGHT = 168
+/** Compact one-row tray strip. */
+export const QUICK_ADD_WIDTH = 520
+/** Idle / form row height (padding + 32px controls + border). */
+export const QUICK_ADD_IDLE_HEIGHT = 52
+/** Slightly taller when reviewing a dropped document. */
+export const QUICK_ADD_REVIEW_HEIGHT = 88
 
 /** Resize the tray quick-add panel (no-op outside Tauri). */
 export async function setQuickAddHeight(height: number): Promise<void> {
