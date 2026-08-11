@@ -11,6 +11,7 @@ pub mod domain;
 pub mod error;
 pub mod ledger;
 pub mod money;
+pub mod prefs;
 pub mod util;
 pub mod vault;
 

@@ -23,6 +23,17 @@ use tauri::Manager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // Remember window size/position across launches. VISIBLE is excluded:
+        // quitting from the tray while hidden must not restore an invisible
+        // window on the next start.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
         .setup(|app| {
             // The bundled .app gets its Dock icon from icon.icns; dev mode runs
             // the bare binary, so set the icon at runtime as well.
@@ -82,6 +93,8 @@ pub fn run() {
             commands::dashboard_summary_cmd,
             commands::settings_get_lock_timeout,
             commands::settings_set_lock_timeout,
+            commands::settings_get_theme,
+            commands::settings_set_theme,
             commands::document_analyzer_status,
             commands::document_analyze,
             commands::document_analyze_path,

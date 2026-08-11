@@ -65,6 +65,16 @@ html:not(.dark) {
 }
 
 @layer base {
+  /* Native scrollbars and form controls must follow the app's theme class,
+     not the OS preference (the meta color-scheme hint alone would leave a
+     light scrollbar on a dark window and vice versa). */
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
   html,
   body,
   #root {

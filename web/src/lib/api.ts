@@ -148,6 +148,9 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   }
 }
 
+/** UI color theme, persisted outside the encrypted vault. */
+export type Theme = 'dark' | 'light'
+
 /** Simple-form posting input; the kind → debit/credit mapping lives in Rust. */
 export type SimpleEntryInput = {
   entity_id: string
@@ -250,6 +253,9 @@ export const api = {
 
   getLockTimeout: () => call<number>('settings_get_lock_timeout'),
   setLockTimeout: (secs: number) => call<void>('settings_set_lock_timeout', { secs }),
+  /** Theme is a plaintext pref (Rust side): readable before unlock. */
+  getTheme: () => call<Theme>('settings_get_theme'),
+  setTheme: (theme: Theme) => call<void>('settings_set_theme', { theme }),
 
   documentAnalyzerStatus: () => call<AnalyzerStatus>('document_analyzer_status'),
   documentAnalyze: (input: {

@@ -12,6 +12,8 @@ use oikonomia_core::vault::{Vault, VaultStatus, default_data_dir};
 /// Shared state behind Tauri commands.
 pub struct AppState {
     vault: Arc<Mutex<Vault>>,
+    /// App data directory: vault files plus the plaintext UI prefs.
+    data_dir: PathBuf,
     /// Directory containing bundled `text-detection.rten` + `text-recognition.rten`.
     ocr_model_dir: PathBuf,
     /// Seconds since `UNIX_EPOCH` of the last command touching the vault.
@@ -28,13 +30,20 @@ impl AppState {
     /// Propagates vault I/O errors from the default data directory.
     pub fn new(ocr_model_dir: PathBuf) -> Result<Self, CoreError> {
         let data_dir = default_data_dir()?;
-        let vault = Vault::open_path(data_dir)?;
+        let vault = Vault::open_path(data_dir.clone())?;
         Ok(Self {
             vault: Arc::new(Mutex::new(vault)),
+            data_dir,
             ocr_model_dir,
             last_activity: Arc::new(AtomicU64::new(now_secs())),
             lock_timeout_secs: Arc::new(AtomicU64::new(DEFAULT_LOCK_TIMEOUT_SECS)),
         })
+    }
+
+    /// App data directory (UI prefs live here as plaintext).
+    #[must_use]
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data_dir
     }
 
     /// Path to bundled OCR models.

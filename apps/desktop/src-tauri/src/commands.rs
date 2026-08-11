@@ -19,6 +19,7 @@ use oikonomia_core::ledger::{
     post_simple_entry, profit_and_loss, set_lock_timeout_secs, trial_balance, update_account,
     update_entity, void_entry,
 };
+use oikonomia_core::prefs::{Theme, load_ui_prefs, save_ui_prefs};
 use oikonomia_core::vault::{Vault, VaultStatus};
 use serde::Serialize;
 use std::path::Path;
@@ -504,6 +505,22 @@ pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) ->
     })
     .await?;
     state.set_lock_timeout_cache(secs);
+    Ok(())
+}
+
+/// Get the UI theme. Plaintext preference: readable before unlock so the
+/// unlock screen already renders in the user's theme.
+#[tauri::command]
+pub fn settings_get_theme(state: State<'_, AppState>) -> Theme {
+    load_ui_prefs(state.data_dir()).theme
+}
+
+/// Persist the UI theme.
+#[tauri::command]
+pub fn settings_set_theme(state: State<'_, AppState>, theme: Theme) -> CommandResult<()> {
+    let mut prefs = load_ui_prefs(state.data_dir());
+    prefs.theme = theme;
+    save_ui_prefs(state.data_dir(), &prefs)?;
     Ok(())
 }
 

@@ -59,6 +59,21 @@ export default function App() {
     document.documentElement.classList.toggle('dark', dark)
   }, [dark])
 
+  // Stored theme applies before unlock too; browser dev and first run keep
+  // the dark default.
+  useEffect(() => {
+    void api
+      .getTheme()
+      .then((theme) => setDark(theme === 'dark'))
+      .catch(() => undefined)
+  }, [])
+
+  function toggleTheme() {
+    const next = !dark
+    setDark(next)
+    void api.setTheme(next ? 'dark' : 'light').catch(() => undefined)
+  }
+
   const loadEntities = useCallback(async () => {
     const list = await api.entityList()
     setEntities(list)
@@ -258,7 +273,7 @@ export default function App() {
             <Button
               variant="secondary"
               size="icon"
-              onClick={() => setDark((v) => !v)}
+              onClick={toggleTheme}
               aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
               title={dark ? 'Light mode' : 'Dark mode'}
             >
