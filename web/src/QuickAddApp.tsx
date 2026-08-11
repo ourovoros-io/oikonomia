@@ -8,8 +8,8 @@ import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
 
 /**
- * Transparent OS window; chrome matches main app Card/Panel language
- * (surface, soft border, house radius).
+ * Transparent OS window with Vercel-like floating panel chrome:
+ * tight radius, hairline border, soft elevation, surface fill.
  */
 function Shell({
   children,
@@ -23,9 +23,9 @@ function Shell({
       <div
         className={cn(
           'flex h-full w-full flex-col overflow-hidden',
-          'rounded-2xl border border-[var(--color-border)]',
+          'rounded-[10px] border border-[var(--color-border-strong)]/80',
           'bg-[var(--color-surface)] text-[var(--color-fg)]',
-          'shadow-[0_1px_0_rgba(255,255,255,0.03),0_12px_40px_rgba(0,0,0,0.45)]',
+          'shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset,0_8px_30px_rgba(0,0,0,0.55)]',
           className,
         )}
       >
@@ -201,7 +201,7 @@ export default function QuickAddApp() {
   if (status === null) {
     return (
       <Shell>
-        <div className="flex h-full flex-col items-center justify-center gap-1 px-2 text-[11px] text-[var(--color-muted)]">
+        <div className="flex h-full items-center justify-center px-3 text-[13px] text-[var(--color-muted)]">
           Loading…
         </div>
       </Shell>
@@ -211,16 +211,12 @@ export default function QuickAddApp() {
   if (status !== 'unlocked') {
     return (
       <Shell>
-        <div className="flex h-full flex-col items-stretch justify-center gap-1.5 px-2.5 py-1.5">
-          <p className="truncate text-center text-[11px] font-medium text-[var(--color-fg)]">
-            Vault locked
+        <div className="flex h-full items-center gap-3 px-3">
+          <p className="min-w-0 flex-1 text-[13px] font-medium text-[var(--color-fg)]">
+            Vault is locked
           </p>
-          <Button
-            size="sm"
-            className="h-8 w-full shrink-0 text-[11px]"
-            onClick={() => void api.openMainWindow()}
-          >
-            Open Oikonomia
+          <Button size="sm" className="h-8 shrink-0" onClick={() => void api.openMainWindow()}>
+            Open
           </Button>
         </div>
       </Shell>
@@ -230,8 +226,8 @@ export default function QuickAddApp() {
   if (phase === 'success') {
     return (
       <Shell>
-        <div className="flex h-full flex-col items-center justify-center gap-0.5 px-2">
-          <p className="truncate text-xs font-medium text-[var(--color-success)]">{successLabel}</p>
+        <div className="flex h-full items-center justify-center px-3">
+          <p className="text-[13px] font-medium text-[var(--color-success)]">{successLabel}</p>
         </div>
       </Shell>
     )
