@@ -44,6 +44,7 @@ type Props = {
   value: string
   onChange: (iso: string) => void
   required?: boolean
+  disabled?: boolean
   'aria-label'?: string
 }
 
@@ -52,7 +53,13 @@ type Props = {
  * popover. Native date inputs order their segments by OS region and cannot be
  * forced to day-month-year, so this control replaces them.
  */
-export function DateInput({ value, onChange, required, 'aria-label': ariaLabel }: Props) {
+export function DateInput({
+  value,
+  onChange,
+  required,
+  disabled = false,
+  'aria-label': ariaLabel,
+}: Props) {
   const [text, setText] = useState(value ? formatDate(value) : '')
   const [invalid, setInvalid] = useState(false)
   const [open, setOpen] = useState(false)
@@ -68,7 +75,11 @@ export function DateInput({ value, onChange, required, 'aria-label': ariaLabel }
   }, [value])
 
   useEffect(() => {
-    if (!open) return
+    if (disabled) setOpen(false)
+  }, [disabled])
+
+  useEffect(() => {
+    if (!open || disabled) return
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && e.target instanceof Node && !rootRef.current.contains(e.target)) {
         setOpen(false)
@@ -76,7 +87,7 @@ export function DateInput({ value, onChange, required, 'aria-label': ariaLabel }
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [open])
+  }, [open, disabled])
 
   function commit() {
     const trimmed = text.trim()
@@ -138,6 +149,7 @@ export function DateInput({ value, onChange, required, 'aria-label': ariaLabel }
         placeholder="dd/mm/yyyy"
         inputMode="numeric"
         required={required}
+        disabled={disabled}
         aria-label={ariaLabel}
         aria-invalid={invalid || undefined}
         className={cn(
@@ -151,7 +163,11 @@ export function DateInput({ value, onChange, required, 'aria-label': ariaLabel }
         variant="ghost"
         size="icon"
         className="absolute top-1/2 right-1 h-8 w-8 -translate-y-1/2"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (disabled) return
+          setOpen((v) => !v)
+        }}
+        disabled={disabled}
         aria-label="Open calendar"
         aria-expanded={open}
         title="Calendar"
@@ -159,7 +175,7 @@ export function DateInput({ value, onChange, required, 'aria-label': ariaLabel }
         <CalendarDays className="size-4" />
       </Button>
 
-      {open ? (
+      {open && !disabled ? (
         <div className="absolute top-full left-0 z-30 mt-2 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-2xl">
           <div className="mb-2 flex items-center justify-between">
             <Button

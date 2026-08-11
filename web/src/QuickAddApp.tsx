@@ -41,6 +41,7 @@ export default function QuickAddApp() {
     void listen('vault-locked', () => {
       setStatus('locked')
       setPhase('form')
+      setFormEpoch((n) => n + 1)
       if (successTimerRef.current) {
         clearTimeout(successTimerRef.current)
         successTimerRef.current = null
@@ -77,9 +78,20 @@ export default function QuickAddApp() {
     }
   }, [status])
 
+  /** Hide panel and remount form so reopen has no stale review draft / height. */
   const hidePanel = useCallback(() => {
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current)
+      successTimerRef.current = null
+    }
+    if (blurHideTimerRef.current) {
+      clearTimeout(blurHideTimerRef.current)
+      blurHideTimerRef.current = null
+    }
     void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
     void api.quickAddHide()
+    setPhase('form')
+    setFormEpoch((n) => n + 1)
   }, [])
 
   useEffect(() => {
@@ -87,15 +99,6 @@ export default function QuickAddApp() {
       if (e.key !== 'Escape') return
       // Escape always dismisses when not mid-post (including success flash).
       if (busyRef.current) return
-      if (blurHideTimerRef.current) {
-        clearTimeout(blurHideTimerRef.current)
-        blurHideTimerRef.current = null
-      }
-      if (successTimerRef.current) {
-        clearTimeout(successTimerRef.current)
-        successTimerRef.current = null
-      }
-      setPhase('form')
       hidePanel()
     }
     window.addEventListener('keydown', onKey)
@@ -156,11 +159,10 @@ export default function QuickAddApp() {
       setSuccessLabel(`Saved ${info.kind} ${money}`)
       setPhase('success')
       if (successTimerRef.current) clearTimeout(successTimerRef.current)
+      // hidePanel remounts the form (formEpoch) and restores idle height.
       successTimerRef.current = setTimeout(() => {
         successTimerRef.current = null
         hidePanel()
-        setPhase('form')
-        setFormEpoch((n) => n + 1)
       }, 1000)
     },
     [hidePanel],

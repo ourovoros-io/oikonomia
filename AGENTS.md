@@ -43,6 +43,7 @@ cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
 - Vault data is **encrypted at rest**; no plaintext DB on disk.
 - v1 Tauri capabilities: **no network** permission.
 - Idle auto-lock is enforced by the Rust watchdog (`spawn_auto_lock`), not the UI timer.
+- Tray left-click opens the quick-add companion window (`quick-add` label); right-click is the tray menu.
 - No emojis in UI chrome, code, or commits.
 
 ## Style

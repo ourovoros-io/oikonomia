@@ -831,7 +831,13 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         ) : null}
 
         <div className="w-[5.75rem] shrink-0 [&_input]:h-8 [&_input]:px-2 [&_input]:pr-8 [&_input]:text-xs [&_button]:h-7 [&_button]:w-7">
-          <DateInput value={date} onChange={setDate} required aria-label="Entry date" />
+          <DateInput
+            value={date}
+            onChange={setDate}
+            required
+            disabled={formDisabled}
+            aria-label="Entry date"
+          />
         </div>
 
         {pendingDoc ? (
