@@ -5,6 +5,7 @@ import {
   Clock,
   FileQuestion,
   KeyRound,
+  Plus,
   Timer,
   Trash2,
   User,
@@ -13,6 +14,7 @@ import { api, type ChartTemplate, type Entity } from '../lib/api'
 import { vaultChangePassword } from '../lib/tauri'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { Modal } from '../components/Modal'
 import {
   Button,
   ChoiceCard,
@@ -78,6 +80,7 @@ export function SettingsPage({
   const [currency, setCurrency] = useState('EUR')
   const [template, setTemplate] = useState<ChartTemplate>('personal')
   const [busy, setBusy] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
   const [lockMins, setLockMins] = useState(15)
   const [lockBusy, setLockBusy] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null)
@@ -109,6 +112,7 @@ export function SettingsPage({
       })
       setName('')
       await onEntitiesChange()
+      setShowCreate(false)
       onSelectEntity(entity.id)
     } catch (err) {
       setError((err as CommandError).message)
@@ -272,11 +276,13 @@ export function SettingsPage({
         </form>
       </CollapsibleSection>
 
-      <CollapsibleSection
+      <Modal
+        open={showCreate}
         title="New entity"
         description="Separate books for personal and company"
-        icon={<Building2 className="size-4" />}
-        tone="info"
+        onClose={() => {
+          if (!busy) setShowCreate(false)
+        }}
       >
         <form onSubmit={onCreate} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -320,11 +326,21 @@ export function SettingsPage({
             </div>
           </div>
 
-          <Button type="submit" busy={busy}>
-            {busy ? 'Creating…' : 'Create entity'}
-          </Button>
+          <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setShowCreate(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" busy={busy}>
+              {busy ? 'Creating…' : 'Create entity'}
+            </Button>
+          </div>
         </form>
-      </CollapsibleSection>
+      </Modal>
 
       <CollapsibleSection
         title="Entities"
@@ -336,10 +352,16 @@ export function SettingsPage({
         icon={<Building2 className="size-4" />}
         tone="success"
         flush
+        actions={
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="size-3.5" />
+            New entity
+          </Button>
+        }
       >
         {entities.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[var(--color-muted)]">
-            Create an entity above to start posting entries.
+            Use the New entity button above to create your first book.
           </div>
         ) : (
           <ul className="divide-y divide-[var(--color-border)]">

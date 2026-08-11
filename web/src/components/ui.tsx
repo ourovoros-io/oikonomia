@@ -171,6 +171,7 @@ export function CollapsibleSection({
   tone = 'accent',
   defaultOpen = false,
   flush = false,
+  actions,
   children,
 }: {
   title: string
@@ -180,6 +181,8 @@ export function CollapsibleSection({
   defaultOpen?: boolean
   /** Body without padding, for lists that manage their own edges. */
   flush?: boolean
+  /** Right-aligned header controls, outside the toggle button (buttons cannot nest). */
+  actions?: ReactNode
   children: ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -191,28 +194,31 @@ export function CollapsibleSection({
         surfaceShadow,
       )}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-[var(--color-surface-2)]/60"
-      >
-        {icon ? (
-          <IconBadge tone={tone} size="sm">
-            {icon}
-          </IconBadge>
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
-          {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
-        </div>
-        <ChevronDown
-          className={cn(
-            'size-4 shrink-0 text-[var(--color-muted)] transition-transform duration-200',
-            open && 'rotate-180',
-          )}
-        />
-      </button>
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-3 px-5 py-4 text-left transition hover:bg-[var(--color-surface-2)]/60"
+        >
+          {icon ? (
+            <IconBadge tone={tone} size="sm">
+              {icon}
+            </IconBadge>
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
+            {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
+          </div>
+          <ChevronDown
+            className={cn(
+              'size-4 shrink-0 text-[var(--color-muted)] transition-transform duration-200',
+              open && 'rotate-180',
+            )}
+          />
+        </button>
+        {actions ? <div className="shrink-0 pr-5">{actions}</div> : null}
+      </div>
 
       {open ? (
         <div className={cn('border-t border-[var(--color-border)]', !flush && 'p-5 sm:p-6')}>
