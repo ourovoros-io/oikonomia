@@ -1,5 +1,7 @@
+import { useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from './ui'
+import { useDialogFocus } from './useDialogFocus'
 
 type Props = {
   open: boolean
@@ -23,6 +25,12 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: Props) {
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useDialogFocus(panelRef, open, () => {
+    if (!busy) onCancel()
+  })
+
   if (!open) return null
 
   return (
@@ -34,7 +42,9 @@ export function ConfirmDialog({
       onClick={onCancel}
     >
       <div
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-2xl"
+        ref={panelRef}
+        tabIndex={-1}
+        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-2xl outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex gap-3">

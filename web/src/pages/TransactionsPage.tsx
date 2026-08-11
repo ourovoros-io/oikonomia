@@ -676,10 +676,9 @@ export function TransactionsPage({ entity }: Props) {
         accounts={accountMap}
         documents={detailId ? (docsByEntry.get(detailId) ?? []) : []}
         currency={ccy}
-        // DocumentViewerModal stacks on top of this one; both register their
-        // own window keydown handler and see the same pre-event snapshot, so
-        // one Escape must close only the viewer — a second Escape then
-        // closes this detail modal.
+        // DocumentViewerModal stacks above this one. The dialog stack routes
+        // Escape to the top-most dialog only; this guard is defense in depth
+        // so the detail modal can never close while the viewer sits above it.
         onClose={() => {
           if (!viewerDocId) setDetailId(null)
         }}
@@ -770,11 +769,9 @@ export function TransactionsPage({ entity }: Props) {
                       <ArrowLeftRight className="size-4" />
                     )}
                   </IconBadge>
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => setDetailId(view.entry.id)}
-                  >
+                  {/* Keyboard path: activating this button bubbles its click
+                      to the row handler above — no duplicate handler. */}
+                  <button type="button" className="min-w-0 flex-1 text-left">
                     <div className="truncate text-sm font-medium text-[var(--color-fg)]">
                       {view.entry.description}
                     </div>

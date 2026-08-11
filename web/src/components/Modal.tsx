@@ -1,6 +1,7 @@
-import { useEffect, useId, type ReactNode } from 'react'
+import { useId, useRef, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { Button, cn } from './ui'
+import { useDialogFocus } from './useDialogFocus'
 
 type Props = {
   open: boolean
@@ -22,15 +23,9 @@ export function Modal({
   children,
 }: Props) {
   const titleId = useId()
+  const panelRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  useDialogFocus(panelRef, open, onClose)
 
   if (!open) return null
 
@@ -43,8 +38,10 @@ export function Modal({
       onClick={onClose}
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className={cn(
-          'flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl',
+          'flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl outline-none',
           maxWidth,
         )}
         onClick={(e) => e.stopPropagation()}
