@@ -10,8 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::invoice::parse_invoice_text;
 use super::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use super::store::{
-    DocumentId, match_expense_account, match_income_account, match_payable_account,
-    match_wallet_account,
+    match_expense_account, match_income_account, match_payable_account, match_wallet_account,
 };
 use crate::domain::{Account, AccountId};
 use crate::error::Result;
@@ -43,8 +42,6 @@ pub enum AnalyzeSource {
 /// Draft fields for the UI to review before posting.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentSuggestion {
-    /// Stored document id (encrypted vault).
-    pub document_id: DocumentId,
     /// How we analyzed.
     pub source: AnalyzeSource,
     /// Model label for UI (e.g. "ocrs-bundled").
@@ -108,7 +105,6 @@ pub fn analyzer_status(model_dir: Option<&std::path::Path>) -> AnalyzerStatus {
 ///
 /// Hard failures only (e.g. corrupt image after OCR path chosen).
 pub fn analyze_document_bytes(
-    document_id: DocumentId,
     filename: &str,
     mime_type: &str,
     data: &[u8],
@@ -183,7 +179,7 @@ pub fn analyze_document_bytes(
     };
 
     let model = model_label.or_else(|| suggestion.model.clone());
-    finalize_suggestion(&mut suggestion, document_id, accounts, source, model);
+    finalize_suggestion(&mut suggestion, accounts, source, model);
 
     // The invoice reader emits 2-exponent minor units (cents). For currencies
     // with a different exponent the value would be silently wrong, so drop it.
@@ -218,12 +214,10 @@ fn currency_exponent(code: &str) -> u32 {
 
 fn finalize_suggestion(
     s: &mut DocumentSuggestion,
-    document_id: DocumentId,
     accounts: &[Account],
     source: AnalyzeSource,
     model: Option<String>,
 ) {
-    s.document_id = document_id;
     s.source = source;
     s.model = model;
 
@@ -258,7 +252,6 @@ fn finalize_suggestion(
 
 fn empty_suggestion(notes: &str) -> DocumentSuggestion {
     DocumentSuggestion {
-        document_id: DocumentId(uuid::Uuid::nil()),
         source: AnalyzeSource::None,
         model: None,
         kind: EntryKindSuggestion::Expense,
@@ -362,24 +355,8 @@ mod tests {
     #[test]
     fn non_two_exponent_currency_drops_amount() {
         let text = b"Invoice\nTOTAL 45,90\nThank you";
-        let eur = analyze_document_bytes(
-            DocumentId(uuid::Uuid::nil()),
-            "bill.txt",
-            "text/plain",
-            text,
-            &[],
-            "EUR",
-            None,
-        );
-        let jpy = analyze_document_bytes(
-            DocumentId(uuid::Uuid::nil()),
-            "bill.txt",
-            "text/plain",
-            text,
-            &[],
-            "JPY",
-            None,
-        );
+        let eur = analyze_document_bytes("bill.txt", "text/plain", text, &[], "EUR", None);
+        let jpy = analyze_document_bytes("bill.txt", "text/plain", text, &[], "JPY", None);
 
         assert_eq!(eur.map(|s| s.amount_minor), Ok(Some(4590)));
 

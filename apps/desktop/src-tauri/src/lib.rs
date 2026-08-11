@@ -73,6 +73,8 @@ pub fn run() {
             commands::entry_get,
             commands::entry_post,
             commands::entry_post_simple,
+            commands::entry_post_simple_with_document,
+            commands::entry_post_simple_with_document_path,
             commands::entry_void,
             commands::report_trial_balance,
             commands::report_pnl,

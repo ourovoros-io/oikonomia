@@ -4,7 +4,6 @@
 //! rejection, and sales-invoice vs expense detection. No network.
 
 use super::analyze::{DocumentSuggestion, EntryKindSuggestion};
-use super::store::DocumentId;
 
 /// Parse extracted document text into a draft suggestion.
 #[must_use]
@@ -27,7 +26,6 @@ pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
     DocumentSuggestion {
-        document_id: DocumentId(uuid::Uuid::nil()),
         source: super::analyze::AnalyzeSource::Heuristic,
         model: Some("invoice-parser-v1".into()),
         kind,

@@ -6,7 +6,7 @@ use base64::Engine;
 use oikonomia_core::documents::{
     AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, analyze_document_bytes,
     analyzer_status, attach_document, delete_document, get_document, list_documents,
-    suggest_accounts_for_entity,
+    post_simple_entry_with_document, suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{Account, AccountId, Entity, EntityId, JournalEntryId};
 use oikonomia_core::error::Error as CoreError;
@@ -318,6 +318,97 @@ pub async fn entry_post_simple(
     .await
 }
 
+/// Post a simple entry together with its analyzed document (one transaction).
+#[tauri::command]
+pub async fn entry_post_simple_with_document(
+    state: State<'_, AppState>,
+    input: PostSimpleEntry,
+    filename: String,
+    mime_type: String,
+    data_base64: String,
+    analysis_json: Option<String>,
+) -> CommandResult<PostedEntryView> {
+    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
+    // file cannot balloon memory (same gate as document_analyze).
+    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
+    if data_base64.len() > max_base64_len {
+        return Err(CommandError {
+            code: "validation".into(),
+            message: "file too large (max 8 MB)".into(),
+        });
+    }
+
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(data_base64.trim())
+        .map_err(|e| CommandError {
+            code: "validation".into(),
+            message: format!("invalid file data: {e}"),
+        })?;
+
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        let (view, _meta) = post_simple_entry_with_document(
+            conn,
+            &input,
+            &filename,
+            &mime_type,
+            &data,
+            analysis_json.as_deref(),
+        )?;
+        Ok(view)
+    })
+    .await
+}
+
+/// Post a simple entry with a document from a filesystem path (native drop).
+/// The file is re-read and re-validated at post time; if it moved since the
+/// drop, a clean error surfaces and nothing is written.
+#[tauri::command]
+pub async fn entry_post_simple_with_document_path(
+    state: State<'_, AppState>,
+    input: PostSimpleEntry,
+    path: String,
+    analysis_json: Option<String>,
+) -> CommandResult<PostedEntryView> {
+    let vault = state.vault();
+    state.touch();
+
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::PathBuf::from(&path);
+        let filename = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("document")
+            .to_owned();
+
+        // Reject oversized/unsupported files from metadata alone before reading.
+        let meta = std::fs::metadata(&path).map_err(|e| CommandError {
+            code: "io".into(),
+            message: format!("could not read the dropped file: {e}"),
+        })?;
+        let mime = oikonomia_core::documents::resolve_mime("", &filename);
+        oikonomia_core::documents::validate_document_file(&filename, &mime, meta.len())?;
+
+        let data = std::fs::read(&path).map_err(|e| CommandError {
+            code: "io".into(),
+            message: format!("could not read the dropped file: {e}"),
+        })?;
+
+        let guard = crate::state::lock_vault(&vault);
+        let conn = guard.connection()?;
+        let (view, _meta) = post_simple_entry_with_document(
+            conn,
+            &input,
+            &filename,
+            &mime,
+            &data,
+            analysis_json.as_deref(),
+        )?;
+        Ok(view)
+    }))
+    .await
+}
+
 /// Void an entry (posts reverse).
 #[tauri::command]
 pub async fn entry_void(
@@ -457,7 +548,7 @@ pub async fn document_analyze(
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        analyze_with_vault(&vault, &model_dir, entity_id, &filename, &mime_type, &data)
+        analyze_readonly(&vault, &model_dir, entity_id, &filename, &mime_type, &data)
     }))
     .await
 }
@@ -494,7 +585,7 @@ pub async fn document_analyze_path(
             code: "io".into(),
             message: format!("could not read dropped file: {e}"),
         })?;
-        analyze_with_vault(&vault, &model_dir, entity_id, &filename, &mime, &data)
+        analyze_readonly(&vault, &model_dir, entity_id, &filename, &mime, &data)
     }))
     .await
 }
@@ -530,13 +621,10 @@ async fn await_blocking<T>(
     }
 }
 
-/// Read-only analysis: suggest accounts/entry data for a dropped file
-/// without persisting anything (a document cannot exist until it is linked
-/// to a posted entry).
-///
-/// The vault lock is held only while touching the database; the CPU-heavy
-/// OCR/parsing phase runs unlocked so other commands stay responsive (F8).
-fn analyze_with_vault(
+/// Analyze a document in memory and suggest a draft entry. Persists
+/// nothing: the file is stored only when the entry is posted
+/// (`entry_post_simple_with_document`), keeping the no-orphan invariant.
+fn analyze_readonly(
     vault: &Mutex<Vault>,
     model_dir: &Path,
     entity_id: EntityId,
@@ -557,7 +645,6 @@ fn analyze_with_vault(
     };
 
     let suggestion = analyze_document_bytes(
-        oikonomia_core::documents::DocumentId::new(),
         filename,
         &mime,
         data,
