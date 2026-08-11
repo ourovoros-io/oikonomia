@@ -174,7 +174,12 @@ export function SettingsPage({
       setConfirmPassword('')
       setNotice('Password changed. The vault is re-encrypted under the new password.')
     } catch (err) {
-      setError((err as CommandError).message || 'Could not change the password')
+      const cmd = err as CommandError
+      setError(
+        cmd.code === 'invalid_password'
+          ? 'Current password is incorrect.'
+          : cmd.message || 'Could not change the password',
+      )
     } finally {
       setPasswordBusy(false)
     }

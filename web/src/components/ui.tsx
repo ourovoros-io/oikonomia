@@ -368,10 +368,21 @@ export function PageHeader({
   )
 }
 
-export function ErrorBanner({ message }: { message: string | null }) {
+export function ErrorBanner({
+  message,
+  className = 'mb-4',
+}: {
+  message: string | null
+  className?: string
+}) {
   if (!message) return null
   return (
-    <div className="mb-4 flex items-start gap-2 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger)]">
+    <div
+      className={cn(
+        'flex items-start gap-2 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger)]',
+        className,
+      )}
+    >
       <span className="min-w-0 flex-1">{message}</span>
     </div>
   )

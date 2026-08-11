@@ -34,7 +34,11 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
       onUnlocked(next)
     } catch (err) {
       const cmd = err as CommandError
-      setError(cmd.message || 'Could not unlock vault')
+      setError(
+        cmd.code === 'invalid_password'
+          ? 'Incorrect password — please try again.'
+          : cmd.message || 'Could not unlock the vault.',
+      )
     } finally {
       setBusy(false)
       setPassword('')
@@ -91,7 +95,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
               </Field>
             ) : null}
 
-            <ErrorBanner message={error} />
+            <ErrorBanner message={error} className="text-center" />
 
             <Button type="submit" busy={busy} className="w-full">
               {busy ? 'Working…' : isSetup ? 'Create encrypted vault' : 'Unlock'}
