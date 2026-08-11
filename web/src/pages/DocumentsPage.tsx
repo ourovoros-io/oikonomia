@@ -16,7 +16,7 @@ function formatCreatedAt(createdAt: string): string {
   return new Date(secs * 1000).toLocaleDateString()
 }
 
-/** Every file in the entity's vault, including orphans never linked to an entry. */
+/** Every file in the book's vault — always linked to the entry it was saved with. */
 export function DocumentsPage({ entity }: Props) {
   const [docs, setDocs] = useState<DocumentMeta[]>([])
   const [entries, setEntries] = useState<PostedEntryView[]>([])
@@ -120,7 +120,7 @@ export function DocumentsPage({ entity }: Props) {
         <EmptyState
           icon={<FolderOpen className="size-5" />}
           title="No documents yet"
-          body="Files you drop on the Transactions page are stored here, encrypted. Attachments to entries also appear in this list."
+          body="Documents are saved here, encrypted, when you post an entry with a file attached or attach one to an existing entry."
         />
       ) : (
         <Panel

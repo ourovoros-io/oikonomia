@@ -219,12 +219,14 @@ export function TransactionsPage({ entity }: Props) {
       prevEntityId.current = entity.id
       setDetailId(null)
       setViewerDocId(null)
-      // A filter for one book's account must not silently empty another
-      // book's list: reset filters on switch, then let the dep change
-      // re-fire this effect for the single clean fetch.
-      if (search || debouncedSearch || fromDate || toDate || accountFilter) {
-        setSearch('')
-        setDebouncedSearch('')
+      // Clear the un-debounced fragment too, so it cannot filter the new
+      // book 300 ms later.
+      setSearch('')
+      setDebouncedSearch('')
+      // Gate the early return on tracked deps only: resetting `search`
+      // alone changes no dependency, and returning then would skip the
+      // reload and leave the old book's entries on screen.
+      if (debouncedSearch || fromDate || toDate || accountFilter) {
         setFromDate('')
         setToDate('')
         setAccountFilter('')
