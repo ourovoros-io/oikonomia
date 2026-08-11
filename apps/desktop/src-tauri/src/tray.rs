@@ -20,6 +20,15 @@ pub fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Hide the tray quick-add window if it exists (no-op when missing).
+pub fn hide_quick_add(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("quick-add") {
+        if let Err(err) = window.hide() {
+            log::warn!("failed to hide quick-add window: {err}");
+        }
+    }
+}
+
 /// Build the tray icon with its Open / Quit menu.
 pub fn init(app: &tauri::App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Oikonomia", true, None::<&str>)?;

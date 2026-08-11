@@ -19,7 +19,9 @@ use oikonomia_core::ledger::{
     post_simple_entry, profit_and_loss, replace_simple_entry, set_account_opening_balance,
     set_lock_timeout_secs, trial_balance, update_account, update_entity, void_entry,
 };
-use oikonomia_core::prefs::{Theme, load_ui_prefs, save_ui_prefs};
+use oikonomia_core::prefs::{
+    LastRoleAccounts, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
+};
 use oikonomia_core::vault::{Vault, VaultStatus};
 use serde::Serialize;
 use std::path::Path;
@@ -574,6 +576,39 @@ pub fn settings_set_theme(
     save_ui_prefs(state.data_dir(), &prefs)?;
     app.set_theme(Some(native_theme(theme)));
     Ok(())
+}
+
+/// Full plaintext UI prefs (theme + tray last-used). Safe before unlock.
+#[tauri::command]
+pub fn settings_get_ui_prefs(state: State<'_, AppState>) -> UiPrefs {
+    load_ui_prefs(state.data_dir())
+}
+
+/// Remember last entity + role accounts after a successful tray post.
+#[tauri::command]
+pub fn settings_remember_quick_add(
+    state: State<'_, AppState>,
+    entity_id: String,
+    kind: String,
+    accounts: LastRoleAccounts,
+) -> CommandResult<()> {
+    let mut prefs = load_ui_prefs(state.data_dir());
+    prefs.last_entity_id = Some(entity_id.clone());
+    prefs
+        .last_accounts_by_entity_kind
+        .insert(last_accounts_key(&entity_id, &kind), accounts);
+    save_ui_prefs(state.data_dir(), &prefs)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_main_window(app: tauri::AppHandle) {
+    crate::tray::show_main_window(&app);
+}
+
+#[tauri::command]
+pub fn quick_add_hide(app: tauri::AppHandle) {
+    crate::tray::hide_quick_add(&app);
 }
 
 /// Map the stored theme onto Tauri's native window theme.
