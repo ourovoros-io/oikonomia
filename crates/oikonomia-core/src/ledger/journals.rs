@@ -397,16 +397,15 @@ fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedE
     get_entry(conn, entry_id)
 }
 
-/// Build and post the journal entry for a simple-form input.
+/// Build and insert the simple-form entry without transaction management.
 ///
-/// The kind → debit/credit mapping lives here so the UI never carries
-/// accounting rules; each role account's type is checked before posting.
-///
-/// # Errors
-///
-/// [`Error::Validation`] for missing/mistyped role accounts or a
-/// non-positive amount, plus all [`post_entry`] errors.
-pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
+/// Callers own the transaction: [`post_simple_entry`] wraps this, and
+/// `documents::post_simple_entry_with_document` composes it with the
+/// document save inside one transaction.
+pub(crate) fn post_simple_entry_unchecked(
+    conn: &Connection,
+    input: &PostSimpleEntry,
+) -> Result<PostedEntryView> {
     if input.amount_minor <= 0 {
         return Err(Error::Validation("amount must be positive".into()));
     }
@@ -433,7 +432,7 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
         },
     ];
 
-    post_entry(
+    insert_posted_entry(
         conn,
         &PostJournal {
             entity_id: input.entity_id,
@@ -443,6 +442,24 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
             lines,
         },
     )
+}
+
+/// Build and post the journal entry for a simple-form input.
+///
+/// The kind → debit/credit mapping lives here so the UI never carries
+/// accounting rules; each role account's type is checked before posting.
+///
+/// # Errors
+///
+/// [`Error::Validation`] for missing/mistyped role accounts or a
+/// non-positive amount, plus all [`post_entry`] errors.
+pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let view = post_simple_entry_unchecked(&tx, input)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(view)
 }
 
 /// Resolve the (debit, credit) account pair for a simple entry.

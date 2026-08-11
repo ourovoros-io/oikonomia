@@ -16,6 +16,7 @@ pub use entities::{
     CreateEntity, archive_entity, create_entity, delete_entity, get_entity, list_entities,
     update_entity,
 };
+pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{
     CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine,
     SimpleBillStatus, SimpleEntryKind, VoidResult, account_register, get_entry, list_entries,

@@ -3,12 +3,14 @@
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
 use oikonomia_core::documents::{
-    DocumentId, attach_document, delete_document, get_document, list_documents, save_document,
+    DocumentId, attach_document, delete_document, get_document, list_documents,
+    post_simple_entry_with_document, save_document,
 };
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, PostedEntryView, create_entity, delete_entity,
-    list_accounts, list_entities, post_entry,
+    CreateEntity, CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView,
+    SimpleEntryKind, create_entity, delete_entity, list_accounts, list_entities, list_entries,
+    post_entry,
 };
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -329,4 +331,110 @@ fn attach_document_rejects_missing_and_wrong_entity_entry() {
         .is_err(),
         "entry from a different book must fail"
     );
+}
+
+fn simple_expense_input(
+    conn: &Connection,
+    entity_id: EntityId,
+    description: &str,
+) -> PostSimpleEntry {
+    let accounts = list_accounts(conn, entity_id).expect("accounts");
+    let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
+    let checking = accounts.iter().find(|a| a.code == "1010").expect("1010");
+    PostSimpleEntry {
+        entity_id,
+        kind: SimpleEntryKind::Expense,
+        bill_status: None,
+        entry_date: "2026-03-01".into(),
+        description: description.into(),
+        reference: None,
+        amount_minor: 1_000,
+        category_account_id: Some(food.id),
+        wallet_account_id: Some(checking.id),
+        payable_account_id: None,
+        from_account_id: None,
+        to_account_id: None,
+    }
+}
+
+#[test]
+fn post_with_document_is_atomic_and_stores_analysis() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+
+    let input = simple_expense_input(conn, entity_id, "Scanned groceries");
+    let (view, meta) = post_simple_entry_with_document(
+        conn,
+        &input,
+        "receipt.txt",
+        "text/plain",
+        b"TOTAL 10,00",
+        Some("{\"notes\":\"scan\"}"),
+    )
+    .expect("post with document");
+
+    assert_eq!(
+        meta.entry_id, view.entry.id,
+        "document linked to the new entry"
+    );
+
+    let analysis: Option<String> = conn
+        .query_row(
+            "SELECT analysis_json FROM documents WHERE id = ?1",
+            [meta.id.0.to_string()],
+            |row| row.get(0),
+        )
+        .expect("row");
+    assert_eq!(analysis.as_deref(), Some("{\"notes\":\"scan\"}"));
+}
+
+#[test]
+fn post_with_document_name_clash_rolls_back_the_entry() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+
+    let first = simple_expense_input(conn, entity_id, "First");
+    post_simple_entry_with_document(conn, &first, "bill.txt", "text/plain", b"a", None)
+        .expect("first post");
+
+    let before = list_entries(conn, entity_id, &EntryFilter::default())
+        .expect("list")
+        .len();
+
+    let second = simple_expense_input(conn, entity_id, "Second");
+    let clash =
+        post_simple_entry_with_document(conn, &second, "bill.txt", "text/plain", b"b", None);
+    assert!(clash.is_err(), "duplicate name must fail");
+
+    let after = list_entries(conn, entity_id, &EntryFilter::default())
+        .expect("list")
+        .len();
+    assert_eq!(after, before, "the entry must roll back with the document");
+}
+
+#[test]
+fn post_with_document_invalid_file_rolls_back_everything() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+
+    let input = simple_expense_input(conn, entity_id, "Bad file");
+    let result = post_simple_entry_with_document(
+        conn,
+        &input,
+        "evil.exe",
+        "application/x-msdownload",
+        b"MZ",
+        None,
+    );
+    assert!(result.is_err(), "unsupported file must fail");
+
+    let entries = list_entries(conn, entity_id, &EntryFilter::default()).expect("list");
+    assert!(
+        entries.is_empty(),
+        "no entry may survive a failed document save"
+    );
+    assert!(list_documents(conn, entity_id).expect("docs").is_empty());
 }

@@ -6,7 +6,9 @@ use uuid::Uuid;
 
 use crate::domain::{Account, AccountId, AccountType, EntityId, JournalEntryId};
 use crate::error::{Error, Result};
-use crate::ledger::{get_entry, list_accounts};
+use crate::ledger::{
+    PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
+};
 use crate::util::{now_utc_string, parse_uuid};
 
 /// Document primary key.
@@ -178,6 +180,45 @@ pub fn attach_document(
     }
 
     save_document(conn, entity_id, entry_id, filename, mime_type, data)
+}
+
+/// Post a simple entry and store its document in one transaction.
+///
+/// A duplicate filename (or any other failure) rolls back the entry too —
+/// the vault never holds a document without its entry or vice versa from
+/// this path.
+///
+/// # Errors
+///
+/// All [`post_simple_entry`](crate::ledger::post_simple_entry) and
+/// [`save_document`] errors.
+pub fn post_simple_entry_with_document(
+    conn: &Connection,
+    input: &PostSimpleEntry,
+    filename: &str,
+    mime_type: &str,
+    data: &[u8],
+    analysis_json: Option<&str>,
+) -> Result<(PostedEntryView, DocumentMeta)> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let view = post_simple_entry_unchecked(&tx, input)?;
+    let meta = save_document(
+        &tx,
+        input.entity_id,
+        view.entry.id,
+        filename,
+        mime_type,
+        data,
+    )?;
+    if let Some(json) = analysis_json {
+        save_analysis_json(&tx, meta.id, json)?;
+    }
+
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok((view, meta))
 }
 
 type MetaColumns = (String, String, String, String, String, i64, String);
