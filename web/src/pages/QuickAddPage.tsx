@@ -239,10 +239,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       setError('Enter a valid amount (e.g. 25.50 or 25,50)')
       return
     }
-    if (!description.trim()) {
-      setError('Description is required')
-      return
-    }
 
     setBusy(true)
     setError(null)
@@ -287,6 +283,9 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         // ignore
       }
 
+      // Clear busy before success UI so parent Escape/blur are not stuck blocked.
+      setBusy(false)
+      onBusyChange?.(false)
       onPosted({
         kind,
         amountMinor: minor,
@@ -294,7 +293,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       })
     } catch (err) {
       setError((err as CommandError).message)
-    } finally {
       setBusy(false)
     }
   }
@@ -558,10 +556,9 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         <Input
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="Memo"
+          placeholder="Memo (optional)"
           className="h-8 flex-1 px-2 text-xs"
           aria-label="Memo"
-          required
           disabled={busy}
         />
         {entities.length > 1 ? (

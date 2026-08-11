@@ -313,10 +313,8 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 /// Callers own the transaction: [`post_entry`] and [`void_entry`] wrap this so
 /// a failure mid-insert can never leave a partial posted entry behind.
 fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
+    // Description may be empty (tray quick-add memo is optional); still trim.
     let description = input.description.trim();
-    if description.is_empty() {
-        return Err(Error::Validation("description is required".into()));
-    }
 
     let entry_date = parse_date(&input.entry_date)?;
     let entry_id = JournalEntryId::new();

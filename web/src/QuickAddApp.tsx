@@ -13,6 +13,8 @@ export default function QuickAddApp() {
   const [formEpoch, setFormEpoch] = useState(0)
   const busyRef = useRef(false)
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Debounced hide so native <select> / DateInput menus do not dismiss the panel. */
+  const blurHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     void api
@@ -76,23 +78,63 @@ export default function QuickAddApp() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !busyRef.current) void api.quickAddHide()
+      if (e.key !== 'Escape') return
+      // Escape always dismisses when not mid-post (including success flash).
+      if (busyRef.current) return
+      if (blurHideTimerRef.current) {
+        clearTimeout(blurHideTimerRef.current)
+        blurHideTimerRef.current = null
+      }
+      if (successTimerRef.current) {
+        clearTimeout(successTimerRef.current)
+        successTimerRef.current = null
+      }
+      setPhase('form')
+      void api.quickAddHide()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  // Native selects / calendar popovers often blur the webview on open.
+  // Delay hide and cancel if focus returns, so choosing accounts stays open.
   useEffect(() => {
-    const onBlur = () => {
-      if (!busyRef.current) void api.quickAddHide()
+    const clearBlurHide = () => {
+      if (blurHideTimerRef.current) {
+        clearTimeout(blurHideTimerRef.current)
+        blurHideTimerRef.current = null
+      }
     }
+
+    const onBlur = () => {
+      if (busyRef.current) return
+      clearBlurHide()
+      blurHideTimerRef.current = setTimeout(() => {
+        blurHideTimerRef.current = null
+        if (busyRef.current) return
+        // Focus returned (or never left the document) — keep the panel.
+        if (document.hasFocus()) return
+        void api.quickAddHide()
+      }, 200)
+    }
+
+    const onFocus = () => {
+      clearBlurHide()
+    }
+
     window.addEventListener('blur', onBlur)
-    return () => window.removeEventListener('blur', onBlur)
+    window.addEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('blur', onBlur)
+      window.removeEventListener('focus', onFocus)
+      clearBlurHide()
+    }
   }, [])
 
   useEffect(() => {
     return () => {
       if (successTimerRef.current) clearTimeout(successTimerRef.current)
+      if (blurHideTimerRef.current) clearTimeout(blurHideTimerRef.current)
     }
   }, [])
 
@@ -101,6 +143,8 @@ export default function QuickAddApp() {
   }, [])
 
   const onPosted = useCallback((info: QuickAddPosted) => {
+    // Post finished: clear busy so Escape works during the success flash.
+    busyRef.current = false
     const money = formatMoney(info.amountMinor, info.currency)
     setSuccessLabel(`Saved ${info.kind} ${money}`)
     setPhase('success')
