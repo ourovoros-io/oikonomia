@@ -38,9 +38,35 @@
   --sidebar-w: 15.5rem;
 }
 
+/* Categorical chart palette (dark-surface steps; validated with the dataviz
+   six-checks script against #101511). Slot order is the CVD-safety mechanism —
+   assign in order, never cycled; fold extra series into --viz-other. */
+:root {
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-6: #008300;
+  --viz-7: #9085e9;
+  --viz-8: #e66767;
+  --viz-other: #4a554c;
+}
+
 /* Light theme overrides via html:not(.dark) — deeper hues for contrast
    on white, same green family. */
 html:not(.dark) {
+  /* Light-surface chart steps (validated against #ffffff). */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-7: #4a3aa7;
+  --viz-8: #e34948;
+  --viz-other: #b9c4bb;
+
   --color-canvas: #f6f9f6;
   --color-surface: #ffffff;
   --color-surface-2: #eff4ef;

@@ -1,12 +1,5 @@
-import { useEffect, useState } from 'react'
-import {
-  BarChart3,
-  FileSpreadsheet,
-  RefreshCw,
-  Scale,
-  TrendingDown,
-  TrendingUp,
-} from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { BarChart3, FileSpreadsheet, PieChart, RefreshCw, Scale } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -19,15 +12,14 @@ import {
   type ReportLine,
   type TrialBalance,
 } from '../lib/api'
+import { DateInput } from '../components/DateInput'
+import { ExpenseDonut } from '../components/ExpenseDonut'
 import {
   Button,
   Card,
   EmptyState,
   ErrorBanner,
   Field,
-  Hero,
-  Input,
-  MetricCard,
   PageHeader,
   Panel,
   Segmented,
@@ -82,7 +74,7 @@ export function ReportsPage({ entity }: Props) {
       <PageHeader
         eyebrow="Statements"
         title="Reports"
-        description="Industry-standard P&L, balance sheet, and trial balance"
+        description="Profit & loss, balance sheet, and trial balance"
         meta={entity.name}
         actions={
           <Segmented<Tab>
@@ -105,16 +97,16 @@ export function ReportsPage({ entity }: Props) {
         <div className="flex flex-wrap items-end gap-3">
           {tab === 'pnl' ? (
             <>
-              <Field label="From" className="w-[11rem]">
-                <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <Field label="From" className="w-44">
+                <DateInput value={from} onChange={setFrom} required aria-label="Report from date" />
               </Field>
-              <Field label="To" className="w-[11rem]">
-                <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <Field label="To" className="w-44">
+                <DateInput value={to} onChange={setTo} required aria-label="Report to date" />
               </Field>
             </>
           ) : (
-            <Field label="As of" className="w-[11rem]">
-              <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+            <Field label="As of" className="w-44">
+              <DateInput value={asOf} onChange={setAsOf} required aria-label="Report as-of date" />
             </Field>
           )}
           <Button variant="secondary" onClick={() => void run()}>
@@ -126,172 +118,259 @@ export function ReportsPage({ entity }: Props) {
 
       <ErrorBanner message={error} />
 
-      {tab === 'trial' && tb ? <TrialView tb={tb} ccy={ccy} /> : null}
-      {tab === 'pnl' && pnl ? <PnlView pnl={pnl} ccy={ccy} /> : null}
-      {tab === 'bs' && bs ? <BsView bs={bs} ccy={ccy} /> : null}
+      {tab === 'trial' && tb ? <TrialView tb={tb} entityName={entity.name} ccy={ccy} /> : null}
+      {tab === 'pnl' && pnl ? <PnlView pnl={pnl} entityName={entity.name} ccy={ccy} /> : null}
+      {tab === 'bs' && bs ? <BsView bs={bs} entityName={entity.name} ccy={ccy} /> : null}
     </div>
   )
 }
 
-function LinesList({ lines, ccy }: { lines: ReportLine[]; ccy: string }) {
-  if (lines.length === 0) {
-    return (
-      <div className="px-5 py-8 text-center text-sm text-[var(--color-muted)]">No lines</div>
-    )
-  }
-  return (
-    <ul className="divide-y divide-[var(--color-border)]">
-      {lines.map((l) => (
-        <li
-          key={`${l.code}-${l.name}`}
-          className="flex items-center gap-4 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50"
-        >
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-[var(--color-fg)]">{l.name}</div>
-            <div className="text-xs tabular-nums text-[var(--color-muted)]">{l.code}</div>
-          </div>
-          <div className="shrink-0 text-sm font-semibold tabular-nums text-[var(--color-fg)]">
-            {formatMoney(l.balance_minor, ccy)}
-          </div>
-        </li>
-      ))}
-    </ul>
-  )
-}
+// --- Statement building blocks ---------------------------------------------
 
-function TrialView({ tb, ccy }: { tb: TrialBalance; ccy: string }) {
+function Statement({
+  entityName,
+  title,
+  period,
+  ccy,
+  children,
+}: {
+  entityName: string
+  title: string
+  period: string
+  ccy: string
+  children: ReactNode
+}) {
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-[var(--color-muted)]">As of {formatDate(tb.as_of)}</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <MetricCard
-          label="Total debits"
-          value={formatMoney(tb.total_debits, ccy)}
-          icon={<TrendingUp className="size-4" />}
-        />
-        <MetricCard
-          label="Total credits"
-          value={formatMoney(tb.total_credits, ccy)}
-          icon={<TrendingDown className="size-4" />}
-        />
+    <Card padding="lg" className="mx-auto w-full max-w-2xl">
+      <div className="mb-6 border-b border-[var(--color-border)] pb-4 text-center">
+        <p className="text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+          {entityName}
+        </p>
+        <h3 className="mt-1 text-lg font-semibold tracking-tight text-[var(--color-fg)]">
+          {title}
+        </h3>
+        <p className="mt-0.5 text-xs text-[var(--color-muted)]">
+          {period} · All amounts in {ccy}
+        </p>
       </div>
-      <Panel title="Trial balance" description="Debits and credits by account">
-        <ul className="divide-y divide-[var(--color-border)]">
-          {tb.lines.map((l) => (
-            <li
-              key={l.code + l.name}
-              className="flex items-center gap-4 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-[var(--color-fg)]">
-                  {l.name}
-                </div>
-                <div className="text-xs tabular-nums text-[var(--color-muted)]">{l.code}</div>
-              </div>
-              <div className="w-32 shrink-0 text-right text-sm tabular-nums text-[var(--color-fg)]">
-                {l.debit_minor ? formatMoney(l.debit_minor, ccy) : '—'}
-              </div>
-              <div className="w-32 shrink-0 text-right text-sm tabular-nums text-[var(--color-fg)]">
-                {l.credit_minor ? formatMoney(l.credit_minor, ccy) : '—'}
-              </div>
-            </li>
-          ))}
-          <li className="flex items-center gap-4 bg-[var(--color-surface-2)]/40 px-5 py-3.5">
-            <div className="min-w-0 flex-1 text-sm font-semibold text-[var(--color-fg)]">
-              Total
-            </div>
-            <div className="w-32 shrink-0 text-right text-sm font-semibold tabular-nums text-[var(--color-fg)]">
-              {formatMoney(tb.total_debits, ccy)}
-            </div>
-            <div className="w-32 shrink-0 text-right text-sm font-semibold tabular-nums text-[var(--color-fg)]">
-              {formatMoney(tb.total_credits, ccy)}
-            </div>
-          </li>
-        </ul>
-      </Panel>
+      {children}
+    </Card>
+  )
+}
+
+function SectionLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="mt-6 mb-1 text-[11px] font-semibold tracking-[0.12em] text-[var(--color-muted)] uppercase first:mt-0">
+      {children}
     </div>
   )
 }
 
-function PnlView({ pnl, ccy }: { pnl: PnL; ccy: string }) {
+function LineRow({ line, ccy }: { line: ReportLine; ccy: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-1.5">
+      <div className="flex min-w-0 items-baseline gap-2.5">
+        <span className="shrink-0 text-xs tabular-nums text-[var(--color-muted)]">{line.code}</span>
+        <span className="truncate text-sm text-[var(--color-fg-secondary)]">{line.name}</span>
+      </div>
+      <span className="shrink-0 text-sm tabular-nums text-[var(--color-fg)]">
+        {formatMoney(line.balance_minor, ccy)}
+      </span>
+    </div>
+  )
+}
+
+function EmptyLines({ children }: { children: ReactNode }) {
+  return <p className="py-1.5 text-sm text-[var(--color-muted)] italic">{children}</p>
+}
+
+function TotalRow({
+  label,
+  amount,
+  ccy,
+  grand = false,
+  tone,
+}: {
+  label: string
+  amount: number
+  ccy: string
+  /** Grand totals close with a double rule, section totals with a single one. */
+  grand?: boolean
+  tone?: 'danger' | 'success'
+}) {
+  return (
+    <div
+      className={cn(
+        'flex items-baseline justify-between gap-4 py-2',
+        grand
+          ? 'mt-3 border-t-4 border-double border-[var(--color-border-strong)]'
+          : 'border-t border-[var(--color-border)]',
+      )}
+    >
+      <span className={cn('text-sm text-[var(--color-fg)]', grand ? 'font-semibold' : 'font-medium')}>
+        {label}
+      </span>
+      <span
+        className={cn(
+          'shrink-0 text-sm tabular-nums',
+          grand ? 'font-semibold' : 'font-medium',
+          tone === 'danger'
+            ? 'text-[var(--color-danger)]'
+            : tone === 'success'
+              ? 'text-[var(--color-success)]'
+              : 'text-[var(--color-fg)]',
+        )}
+      >
+        {formatMoney(amount, ccy)}
+      </span>
+    </div>
+  )
+}
+
+// --- Views ------------------------------------------------------------------
+
+function PnlView({ pnl, entityName, ccy }: { pnl: PnL; entityName: string; ccy: string }) {
   const net = pnl.net_income
   return (
     <div className="space-y-6">
-      <Hero accent={net < 0 ? 'neutral' : 'success'}>
-        <div className="p-6 sm:p-8">
-          <div className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
-            <BarChart3 className="size-4 text-[var(--color-accent)]" />
-            Net income
-          </div>
-          <div
-            title={formatMoney(net, ccy)}
-            className={cn(
-              'mt-3 truncate text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl',
-              net < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-fg)]',
-            )}
-          >
-            {formatMoney(net, ccy)}
-          </div>
-          <p className="mt-3 text-sm text-[var(--color-muted)]">
-            {formatDate(pnl.from)} → {formatDate(pnl.to)}
-          </p>
-        </div>
-      </Hero>
+      <Statement
+        entityName={entityName}
+        title="Profit & Loss"
+        period={`${formatDate(pnl.from)} – ${formatDate(pnl.to)}`}
+        ccy={ccy}
+      >
+        <SectionLabel>Income</SectionLabel>
+        {pnl.income.length === 0 ? (
+          <EmptyLines>No income recorded in this period.</EmptyLines>
+        ) : (
+          pnl.income.map((l) => <LineRow key={l.code + l.name} line={l} ccy={ccy} />)
+        )}
+        <TotalRow label="Total income" amount={pnl.total_income} ccy={ccy} />
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <MetricCard
-          label="Total income"
-          hint="Period"
-          value={formatMoney(pnl.total_income, ccy)}
-          icon={<TrendingUp className="size-4" />}
-          accent="success"
-        />
-        <MetricCard
-          label="Total expenses"
-          hint="Period"
-          value={formatMoney(pnl.total_expenses, ccy)}
-          icon={<TrendingDown className="size-4" />}
-          accent="danger"
-        />
-      </div>
+        <SectionLabel>Expenses</SectionLabel>
+        {pnl.expenses.length === 0 ? (
+          <EmptyLines>No expenses recorded in this period.</EmptyLines>
+        ) : (
+          pnl.expenses.map((l) => <LineRow key={l.code + l.name} line={l} ccy={ccy} />)
+        )}
+        <TotalRow label="Total expenses" amount={pnl.total_expenses} ccy={ccy} />
 
-      <Panel title="Income" description="Revenue accounts">
-        <LinesList lines={pnl.income} ccy={ccy} />
-      </Panel>
-      <Panel title="Expenses" description="Cost accounts">
-        <LinesList lines={pnl.expenses} ccy={ccy} />
+        <TotalRow
+          label="Net income"
+          amount={net}
+          ccy={ccy}
+          grand
+          tone={net < 0 ? 'danger' : 'success'}
+        />
+      </Statement>
+
+      <Panel
+        title="Expense breakdown"
+        description="Share of period expenses by category"
+        icon={<PieChart className="size-4" />}
+      >
+        <ExpenseDonut lines={pnl.expenses} ccy={ccy} />
       </Panel>
     </div>
   )
 }
 
-function BsView({ bs, ccy }: { bs: BalanceSheet; ccy: string }) {
+function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string; ccy: string }) {
+  const diff = bs.total_assets - bs.total_liabilities_equity
   return (
-    <div className="space-y-6">
-      <p className="text-sm text-[var(--color-muted)]">As of {formatDate(bs.as_of)}</p>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        <MetricCard
-          label="Total assets"
-          value={formatMoney(bs.total_assets, ccy)}
-          icon={<Scale className="size-4" />}
-        />
-        <MetricCard
-          label="Liabilities + equity"
-          value={formatMoney(bs.total_liabilities_equity, ccy)}
-          icon={<FileSpreadsheet className="size-4" />}
-        />
-      </div>
-
+    <Statement
+      entityName={entityName}
+      title="Balance Sheet"
+      period={`As of ${formatDate(bs.as_of)}`}
+      ccy={ccy}
+    >
       {([bs.assets, bs.liabilities, bs.equity] as const).map((section) => (
-        <Panel
-          key={section.title}
-          title={section.title}
-          description={`Total ${formatMoney(section.total, ccy)}`}
-        >
-          <LinesList lines={section.lines} ccy={ccy} />
-        </Panel>
+        <div key={section.title}>
+          <SectionLabel>{section.title}</SectionLabel>
+          {section.lines.length === 0 ? (
+            <EmptyLines>No {section.title.toLowerCase()} accounts with activity.</EmptyLines>
+          ) : (
+            section.lines.map((l) => <LineRow key={l.code + l.name} line={l} ccy={ccy} />)
+          )}
+          <TotalRow label={`Total ${section.title.toLowerCase()}`} amount={section.total} ccy={ccy} />
+        </div>
       ))}
-    </div>
+
+      <TotalRow label="Total assets" amount={bs.total_assets} ccy={ccy} grand />
+      <TotalRow
+        label="Total liabilities + equity"
+        amount={bs.total_liabilities_equity}
+        ccy={ccy}
+        grand
+      />
+      <p
+        className={cn(
+          'mt-3 text-center text-xs',
+          diff === 0 ? 'text-[var(--color-muted)]' : 'text-[var(--color-danger)]',
+        )}
+      >
+        {diff === 0
+          ? 'Assets equal liabilities plus equity — the books balance.'
+          : `Out of balance by ${formatMoney(diff, ccy)} — check for entries dated outside the period.`}
+      </p>
+    </Statement>
+  )
+}
+
+function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: string; ccy: string }) {
+  return (
+    <Statement
+      entityName={entityName}
+      title="Trial Balance"
+      period={`As of ${formatDate(tb.as_of)}`}
+      ccy={ccy}
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--color-border)]">
+              <th className="py-2 pr-4 text-left text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+                Account
+              </th>
+              <th className="w-32 py-2 pl-4 text-right text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+                Debit
+              </th>
+              <th className="w-32 py-2 pl-4 text-right text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+                Credit
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {tb.lines.map((l) => (
+              <tr key={l.code + l.name} className="border-b border-[var(--color-border)]/60">
+                <td className="py-2 pr-4">
+                  <span className="mr-2.5 text-xs tabular-nums text-[var(--color-muted)]">
+                    {l.code}
+                  </span>
+                  <span className="text-[var(--color-fg-secondary)]">{l.name}</span>
+                </td>
+                <td className="py-2 pl-4 text-right tabular-nums text-[var(--color-fg)]">
+                  {l.debit_minor ? formatMoney(l.debit_minor, ccy) : '—'}
+                </td>
+                <td className="py-2 pl-4 text-right tabular-nums text-[var(--color-fg)]">
+                  {l.credit_minor ? formatMoney(l.credit_minor, ccy) : '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-4 border-double border-[var(--color-border-strong)] font-semibold">
+              <td className="py-2.5 pr-4 text-[var(--color-fg)]">Total</td>
+              <td className="py-2.5 pl-4 text-right tabular-nums text-[var(--color-fg)]">
+                {formatMoney(tb.total_debits, ccy)}
+              </td>
+              <td className="py-2.5 pl-4 text-right tabular-nums text-[var(--color-fg)]">
+                {formatMoney(tb.total_credits, ccy)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </Statement>
   )
 }
