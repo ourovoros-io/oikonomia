@@ -39,13 +39,20 @@ export default function QuickAddApp() {
     let unlisten: (() => void) | undefined
     let cancelled = false
     void listen('vault-locked', () => {
-      setStatus('locked')
-      setPhase('form')
-      setFormEpoch((n) => n + 1)
+      // Mid-post/analyze must not leave busy stuck (Escape / blur hide blocked).
+      busyRef.current = false
       if (successTimerRef.current) {
         clearTimeout(successTimerRef.current)
         successTimerRef.current = null
       }
+      if (blurHideTimerRef.current) {
+        clearTimeout(blurHideTimerRef.current)
+        blurHideTimerRef.current = null
+      }
+      void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+      setStatus('locked')
+      setPhase('form')
+      setFormEpoch((n) => n + 1)
     }).then((fn) => {
       if (cancelled) fn()
       else unlisten = fn
@@ -107,6 +114,8 @@ export default function QuickAddApp() {
 
   // Native selects / calendar popovers often blur the webview on open.
   // Delay hide and cancel if focus returns, so choosing accounts stays open.
+  // On focus also re-poll vault: the quick-add window is reused, so unlock in
+  // the main app would otherwise leave this panel stuck on "Vault is locked".
   useEffect(() => {
     const clearBlurHide = () => {
       if (blurHideTimerRef.current) {
@@ -129,6 +138,9 @@ export default function QuickAddApp() {
 
     const onFocus = () => {
       clearBlurHide()
+      void vaultStatus()
+        .then(setStatus)
+        .catch(() => setStatus('locked'))
     }
 
     window.addEventListener('blur', onBlur)

@@ -102,6 +102,28 @@ fn expense_debits_category_credits_wallet() {
     assert_eq!(debit.debit.amount_minor(), 2_500);
 }
 
+/// Tray quick-add memo is optional; empty / whitespace-only description must
+/// post and store as empty (trimmed), not fail validation.
+#[test]
+fn expense_allows_empty_or_whitespace_description() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+
+    for description in ["", "   ", "\t\n"] {
+        let mut input = base_input(entity_id, SimpleEntryKind::Expense);
+        input.category_account_id = Some(acc.food);
+        input.wallet_account_id = Some(acc.checking);
+        input.description = description.into();
+
+        let view = post_simple_entry(conn, &input).expect("post expense with empty description");
+        assert_eq!(
+            view.entry.description, "",
+            "whitespace-only description must store trimmed empty"
+        );
+    }
+}
+
 #[test]
 fn income_debits_wallet_credits_category() {
     let (_dir, vault) = setup();
