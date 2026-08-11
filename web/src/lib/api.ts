@@ -151,6 +151,22 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 /** UI color theme, persisted outside the encrypted vault. */
 export type Theme = 'dark' | 'light'
 
+/** Last role-account picks for a single entity+kind tray post (snake_case matches Rust). */
+export type LastRoleAccounts = {
+  category_account_id: string | null
+  wallet_account_id: string | null
+  payable_account_id: string | null
+  from_account_id: string | null
+  to_account_id: string | null
+}
+
+/** Full plaintext UI prefs (theme + tray last-used). Safe before unlock. */
+export type UiPrefs = {
+  theme: Theme
+  last_entity_id: string | null
+  last_accounts_by_entity_kind: Record<string, LastRoleAccounts>
+}
+
 /** Simple-form posting input; the kind → debit/credit mapping lives in Rust. */
 export type SimpleEntryInput = {
   entity_id: string
@@ -266,6 +282,17 @@ export const api = {
   /** Theme is a plaintext pref (Rust side): readable before unlock. */
   getTheme: () => call<Theme>('settings_get_theme'),
   setTheme: (theme: Theme) => call<void>('settings_set_theme', { theme }),
+  /** Full plaintext UI prefs (theme + tray last-used). Safe before unlock. */
+  getUiPrefs: () => call<UiPrefs>('settings_get_ui_prefs'),
+  /** Remember last entity + role accounts after a successful tray post. */
+  rememberQuickAdd: (entityId: string, kind: string, accounts: LastRoleAccounts) =>
+    call<void>('settings_remember_quick_add', {
+      entityId,
+      kind,
+      accounts,
+    }),
+  openMainWindow: () => call<void>('open_main_window'),
+  quickAddHide: () => call<void>('quick_add_hide'),
 
   documentAnalyzerStatus: () => call<AnalyzerStatus>('document_analyzer_status'),
   documentAnalyze: (input: {
