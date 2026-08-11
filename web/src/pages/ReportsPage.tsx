@@ -188,10 +188,10 @@ function TrialView({ tb, ccy }: { tb: TrialBalance; ccy: string }) {
                 </div>
                 <div className="text-xs tabular-nums text-[var(--color-muted)]">{l.code}</div>
               </div>
-              <div className="w-28 shrink-0 text-right text-sm tabular-nums text-[var(--color-fg)]">
+              <div className="w-32 shrink-0 text-right text-sm tabular-nums text-[var(--color-fg)]">
                 {l.debit_minor ? formatMoney(l.debit_minor, ccy) : '—'}
               </div>
-              <div className="w-28 shrink-0 text-right text-sm tabular-nums text-[var(--color-fg)]">
+              <div className="w-32 shrink-0 text-right text-sm tabular-nums text-[var(--color-fg)]">
                 {l.credit_minor ? formatMoney(l.credit_minor, ccy) : '—'}
               </div>
             </li>
@@ -200,10 +200,10 @@ function TrialView({ tb, ccy }: { tb: TrialBalance; ccy: string }) {
             <div className="min-w-0 flex-1 text-sm font-semibold text-[var(--color-fg)]">
               Total
             </div>
-            <div className="w-28 shrink-0 text-right text-sm font-semibold tabular-nums text-[var(--color-fg)]">
+            <div className="w-32 shrink-0 text-right text-sm font-semibold tabular-nums text-[var(--color-fg)]">
               {formatMoney(tb.total_debits, ccy)}
             </div>
-            <div className="w-28 shrink-0 text-right text-sm font-semibold tabular-nums text-[var(--color-fg)]">
+            <div className="w-32 shrink-0 text-right text-sm font-semibold tabular-nums text-[var(--color-fg)]">
               {formatMoney(tb.total_credits, ccy)}
             </div>
           </li>
@@ -224,8 +224,9 @@ function PnlView({ pnl, ccy }: { pnl: PnL; ccy: string }) {
             Net income
           </div>
           <div
+            title={formatMoney(net, ccy)}
             className={cn(
-              'mt-3 text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl',
+              'mt-3 truncate text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl',
               net < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-fg)]',
             )}
           >

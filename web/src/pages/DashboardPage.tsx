@@ -183,14 +183,15 @@ export function DashboardPage({ entity }: Props) {
 
       <Hero>
         <div className="grid gap-8 p-6 sm:grid-cols-[1.2fr_1fr] sm:p-8">
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
               <TrendingUp className="size-4 text-[var(--color-accent)]" />
               Net this {periodLabel}
             </div>
             <div
+              title={money(net, true)}
               className={cn(
-                'mt-3 text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl',
+                'mt-3 truncate text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl',
                 net < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-fg)]',
               )}
             >
@@ -212,7 +213,7 @@ export function DashboardPage({ entity }: Props) {
             </div>
           </div>
 
-          <div className="flex flex-col justify-center gap-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/70 p-5 backdrop-blur">
+          <div className="flex min-w-0 flex-col justify-center gap-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/70 p-5 backdrop-blur">
             <FlowBar
               label="Income"
               value={money(income)}

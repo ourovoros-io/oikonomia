@@ -127,7 +127,7 @@ export function EntryDetailModal({
       />
 
       <div className="space-y-6">
-        <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+        <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-[var(--color-surface-2)] text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">

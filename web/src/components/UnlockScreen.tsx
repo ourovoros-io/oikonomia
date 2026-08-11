@@ -42,9 +42,11 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
     }
   }
 
+  // m-auto instead of items-center: when the window is shorter than the
+  // form, auto margins collapse and the top stays reachable by scrolling.
   return (
-    <div className="flex h-full items-center justify-center bg-[var(--color-canvas)] px-4">
-      <div className="w-full max-w-md">
+    <div className="flex h-full overflow-y-auto bg-[var(--color-canvas)] px-4">
+      <div className="m-auto w-full max-w-md py-8">
         <div className="mb-8 flex flex-col items-center text-center">
           <Logo className="mb-4 size-14 rounded-2xl shadow-lg shadow-[var(--color-accent)]/20" />
           <h1 className="text-2xl font-semibold tracking-tight">

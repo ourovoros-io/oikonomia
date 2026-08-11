@@ -402,54 +402,6 @@ export function EmptyState({
   )
 }
 
-export function Table({ children }: { children: ReactNode }) {
-  return (
-    <div
-      className={cn(
-        'overflow-x-auto rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]',
-        surfaceShadow,
-      )}
-    >
-      <table className="w-full min-w-[640px] border-collapse text-left text-sm">{children}</table>
-    </div>
-  )
-}
-
-export function Th({ children, className = '' }: { children?: ReactNode; className?: string }) {
-  return (
-    <th
-      className={cn(
-        'h-11 border-b border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase first:pl-5 last:pr-5',
-        className,
-      )}
-    >
-      {children}
-    </th>
-  )
-}
-
-export function Td({
-  children,
-  className = '',
-  colSpan,
-}: {
-  children?: ReactNode
-  className?: string
-  colSpan?: number
-}) {
-  return (
-    <td
-      colSpan={colSpan}
-      className={cn(
-        'h-12 border-b border-[var(--color-border)] px-4 align-middle text-[var(--color-fg-secondary)] transition first:pl-5 last:pr-5 last:border-b-0 group-hover:bg-[var(--color-surface-2)]/40',
-        className,
-      )}
-    >
-      {children}
-    </td>
-  )
-}
-
 /** Selectable card for template / type choices (less typing). */
 export function ChoiceCard({
   selected,
@@ -529,8 +481,9 @@ export function MetricCard({
         ) : null}
       </div>
       <div
+        title={value}
         className={cn(
-          'mt-5 text-2xl font-semibold tracking-tight tabular-nums',
+          'mt-5 truncate text-2xl font-semibold tracking-tight tabular-nums',
           accent === 'danger' ? 'text-[var(--color-danger)]' : 'text-[var(--color-fg)]',
         )}
       >
@@ -538,19 +491,6 @@ export function MetricCard({
       </div>
     </div>
   )
-}
-
-/** @deprecated Prefer MetricCard — kept for any residual imports. */
-export function StatCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string
-  value: string
-  icon?: ReactNode
-}) {
-  return <MetricCard label={label} value={value} icon={icon} />
 }
 
 export function Segmented<T extends string>({
@@ -570,6 +510,7 @@ export function Segmented<T extends string>({
           <button
             key={opt.id}
             type="button"
+            aria-pressed={active}
             onClick={() => onChange(opt.id)}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-[calc(var(--radius-control)-2px)] px-3 text-sm font-medium transition',
@@ -609,8 +550,13 @@ export function FlowBar({
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
-        <span className="text-[var(--color-muted)]">{label}</span>
-        <span className="font-semibold tabular-nums text-[var(--color-fg)]">{value}</span>
+        <span className="shrink-0 text-[var(--color-muted)]">{label}</span>
+        <span
+          title={value}
+          className="min-w-0 truncate font-semibold tabular-nums text-[var(--color-fg)]"
+        >
+          {value}
+        </span>
       </div>
       <div className="h-2 overflow-hidden rounded bg-[var(--color-surface-elevated)]">
         <div

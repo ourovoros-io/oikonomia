@@ -276,7 +276,7 @@ export default function App() {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto">
+        <main key={active} className="flex-1 overflow-auto">
           <div className="mx-auto max-w-6xl px-6 py-8">
             {error ? (
               <div className="mb-5 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger)]">
