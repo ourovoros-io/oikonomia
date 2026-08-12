@@ -60,12 +60,11 @@ type Step = 'entity' | 'kind' | 'amount' | 'accounts' | 'save'
 const KIND_OPTIONS: Array<{
   id: EntryKind
   label: string
-  short: string
 }> = [
-  { id: 'expense', label: 'Expense', short: 'Out' },
-  { id: 'income', label: 'Income', short: 'In' },
-  { id: 'bill', label: 'Bill', short: 'Bill' },
-  { id: 'transfer', label: 'Transfer', short: 'Move' },
+  { id: 'expense', label: 'Expense' },
+  { id: 'income', label: 'Income' },
+  { id: 'bill', label: 'Bill' },
+  { id: 'transfer', label: 'Transfer' },
 ]
 
 /** Quiet single-row control — fits 80px stepper chrome. */
@@ -778,7 +777,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                       : 'bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
                   )}
                 >
-                  {opt.short}
+                  {opt.label}
                 </button>
               )
             })}
