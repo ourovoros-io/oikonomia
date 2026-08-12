@@ -9,16 +9,17 @@ Repo: `oikonomia`
 Oikonomia already lives in the system tray (close main window = hide; tray
 menu Open / Quit). Capturing a receipt or a one-off expense still requires
 opening the full app and navigating Transactions. The owner wants a **small
-always-available companion** on tray left-click: same visual language as the
-app, one dense row for manual entry, drag-drop for documents with a brief
-review expansion, without losing Open full app and Quit.
+always-available Spotlight companion** on tray left-click: tray-anchored opaque
+card, amount-first manual entry, drag-drop for documents with a brief review
+expansion, without losing Open full app and Quit.
 
 ## Goals
 
 - Left-click tray → show a **dedicated small window** for fast posting.
 - Right-click tray → native menu: **Open Oikonomia**, **Quit Oikonomia**.
 - Support all simple kinds: expense, income, bill, transfer.
-- Manual entry stays compact (one primary control row + optional memo line).
+- Manual entry stays compact (Spotlight idle: kind segment, large amount, soft
+  account/memo rows).
 - File drop expands the panel for analyzer review, then posts.
 - Match existing Stripe-dark (and light) tokens; no new brand language.
 - All ledger and OCR rules stay in **`oikonomia-core`** / existing Tauri
@@ -47,7 +48,9 @@ review expansion, without losing Open full app and Quit.
 | Entity | Last-used entity; tiny switcher only when multiple entities exist |
 | After save | ~1s “Saved”, then hide window and reset form |
 | Bill default | Unpaid by default; small unpaid/paid toggle when kind = Bill |
-| Memo | Optional description on a second micro-line |
+| Memo | Optional description on a soft result row (always visible at idle) |
+| Window sizes | Locked: idle **600×168**, document review **600×280**, locked / success **600×72** (width always 600) |
+| Chrome | Opaque soft Spotlight card (no backdrop-blur); tray-anchored position |
 | On vault lock while open | Clear draft; switch to locked UI immediately |
 
 ## Architecture
@@ -81,12 +84,18 @@ review expansion, without losing Open full app and Quit.
   - Menu: `open` → existing `show_main_window`; `quit` → `app.exit(0)`.
 - Window label: **`quick-add`**.
   - Create on first need if missing; thereafter **show / hide / focus** (reuse).
-  - Compact size (~420×~88 idle including memo micro-line; taller when document
-    review is open). Not bound by main’s `minWidth` 960 / `minHeight` 640.
-  - Always-on-top while visible; resizable false (or limited); decorations
-    minimal / hidden title consistent with main aesthetic.
-  - Position near tray icon when the platform exposes bounds; else near cursor
-    or a stable corner of the primary work area.
+  - Locked sizes (logical px; stay in lockstep with `QUICK_ADD_*` in
+    `apps/desktop/src-tauri/src/tray.rs` and `web/src/lib/quickAddWindow.ts`):
+    - Width **600**
+    - Idle (default unlocked): **600×168**
+    - Document review: **600×280**
+    - Locked / success (compact): **600×72**
+  - Not bound by main’s `minWidth` 960 / `minHeight` 640.
+  - Always-on-top while visible; resizable false; undecorated transparent native
+    shell so the webview can draw an **opaque** soft Spotlight card (rounded
+    corners; no backdrop-blur in v1).
+  - Position **tray-anchored** (near tray click); FE never recenters. Fallback:
+    stable corner of the primary work area when bounds are unavailable.
   - CloseRequested: prevent destroy if reusing; **hide** instead (same spirit
     as main → tray). Escape from the webview also hides.
 - Main window, Dock reopen, window-state plugin behavior: **unchanged**.
@@ -116,14 +125,15 @@ review expansion, without losing Open full app and Quit.
 
 ## UI states
 
-### Unlocked, idle (default)
+### Unlocked, idle (default) — 600×168
 
-Dense strip matching app controls:
+Amount-first Spotlight companion (opaque soft card):
 
-1. **Primary row:** kind segmented control · amount · role account(s) · date
-   (default today) · **Add**.
-2. **Micro-line:** optional description (memo); entity chip/dropdown if
-   `entities.length > 1`.
+1. **Hero well:** kind segment (Out / In / Bill / Move) · large amount + currency ·
+   **Add** (Enter). Date is `todayISO` only — no date control in the companion.
+2. **Soft result rows:** role account(s) for the kind; optional memo; entity
+   (“Book”) meta only when `entities.length > 1`. Idle always shows account rows
+   + memo (no amount-only collapse).
 3. **Drop:** entire panel is a drop target; subtle “Drop receipt” affordance
    only — not a large empty zone.
 
@@ -138,27 +148,27 @@ Account roles per kind (same as full simple form / Rust):
 
 Focus amount on open when unlocked.
 
-### Document review (after drop)
+### Document review (after drop) — 600×280
 
 Panel height grows to show:
 
 - Filename; analyzing spinner or error.
-- Prefilled amount, date, description, suggested accounts (existing
-  `DocumentSuggestion` shape).
-- User may edit any field.
+- Prefilled amount, description, suggested accounts (existing
+  `DocumentSuggestion` shape). Entry date stays `todayISO` (no date control).
+- User may edit amount, memo, and accounts.
 - **Confirm & save** posts via document-aware entry command; **Cancel**
   clears pending document and returns to idle height.
 
-### Locked
+### Locked — 600×72
 
 Copy: vault is locked. Primary action: **Open Oikonomia** (show/focus main).
 No form fields. Same pattern if there are zero entities: prompt to create a
-book in the full app + Open.
+book in the full app + Open. Compact height.
 
-### Success
+### Success — 600×72
 
-~1 second “Saved” (kind + amount), then hide window and reset form state for
-the next open.
+~1 second “Saved” (kind + amount) at compact height, then hide window and reset
+form state for the next open.
 
 ### Validation / errors
 
@@ -242,8 +252,10 @@ encrypted vault.
 
 ## Open implementation details (resolve in plan, not product)
 
-- Exact pixel size and whether the memo line is always visible vs revealed
-  on focus (product accepts either as long as the strip stays small).
+- **Resolved — window sizes:** locked at idle **600×168**, document review
+  **600×280**, locked / success **600×72** (width **600**). Constants must stay
+  in lockstep between `tray.rs` `QUICK_ADD_*` and web `QUICK_ADD_*`
+  (`quickAddWindow.ts`). Idle always shows account rows + memo.
 - Whether blur-to-dismiss is enabled on all platforms or only when not
   interacting with a native file dialog.
 - Whether `pay_existing` bill flow appears in tray (product: unpaid/paid

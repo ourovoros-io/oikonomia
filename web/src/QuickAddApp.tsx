@@ -3,29 +3,36 @@ import { listen } from '@tauri-apps/api/event'
 import { api, formatMoney } from './lib/api'
 import { isTauri, vaultStatus, type VaultStatus } from './lib/tauri'
 import { Button } from './components/ui'
-import { QUICK_ADD_IDLE_HEIGHT, setQuickAddHeight } from './lib/quickAddWindow'
+import {
+  QUICK_ADD_COMPACT_HEIGHT,
+  QUICK_ADD_IDLE_HEIGHT,
+  setQuickAddHeight,
+} from './lib/quickAddWindow'
 import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
 
 /**
- * Transparent OS window with Vercel-like floating panel chrome:
- * tight radius, hairline border, soft elevation, surface fill.
+ * Opaque soft Spotlight card (v1: solid surface fill, no backdrop-blur).
+ * OS window stays tray-anchored; outer transparent only for rounded corners.
  */
 function Shell({
   children,
   className,
+  appear = true,
 }: {
   children: ReactNode
   className?: string
+  appear?: boolean
 }) {
   return (
-    <div className="box-border flex h-full w-full items-stretch p-0">
+    <div className="box-border flex h-full w-full items-stretch bg-transparent p-0">
       <div
         className={cn(
           'flex h-full w-full flex-col overflow-hidden',
-          'rounded-[10px] border border-[var(--color-border-strong)]/80',
+          'rounded-2xl border border-[var(--color-border-strong)]/55',
           'bg-[var(--color-surface)] text-[var(--color-fg)]',
-          'shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset,0_8px_30px_rgba(0,0,0,0.55)]',
+          'shadow-[0_0_0_1px_rgba(255,255,255,0.03)_inset,0_12px_40px_rgba(0,0,0,0.5),0_2px_10px_rgba(0,0,0,0.28)]',
+          appear && 'qa-appear',
           className,
         )}
       >
@@ -43,7 +50,7 @@ export default function QuickAddApp() {
   const [formEpoch, setFormEpoch] = useState(0)
   const busyRef = useRef(false)
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** Debounced hide so native <select> / DateInput menus do not dismiss the panel. */
+  /** Debounced hide so native <select> menus do not dismiss the panel. */
   const blurHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -77,7 +84,7 @@ export default function QuickAddApp() {
         clearTimeout(blurHideTimerRef.current)
         blurHideTimerRef.current = null
       }
-      void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+      void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       setStatus('locked')
       setPhase('form')
       setFormEpoch((n) => n + 1)
@@ -179,6 +186,15 @@ export default function QuickAddApp() {
     }
   }, [])
 
+  useEffect(() => {
+    if (status === null) return
+    if (status !== 'unlocked' || phase === 'success') {
+      void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
+      return
+    }
+    void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+  }, [status, phase])
+
   const onBusyChange = useCallback((busy: boolean) => {
     busyRef.current = busy
   }, [])
@@ -189,6 +205,7 @@ export default function QuickAddApp() {
       const money = formatMoney(info.amountMinor, info.currency)
       setSuccessLabel(`Saved ${info.kind} ${money}`)
       setPhase('success')
+      void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       if (successTimerRef.current) clearTimeout(successTimerRef.current)
       successTimerRef.current = setTimeout(() => {
         successTimerRef.current = null
@@ -201,7 +218,7 @@ export default function QuickAddApp() {
   if (status === null) {
     return (
       <Shell>
-        <div className="flex h-full items-center justify-center px-3 text-[13px] text-[var(--color-muted)]">
+        <div className="flex h-full items-center justify-center px-4 text-[13px] text-[var(--color-muted)]">
           Loading…
         </div>
       </Shell>
@@ -211,12 +228,16 @@ export default function QuickAddApp() {
   if (status !== 'unlocked') {
     return (
       <Shell>
-        <div className="flex h-full items-center gap-3 px-3">
-          <p className="min-w-0 flex-1 text-[13px] font-medium text-[var(--color-fg)]">
+        <div className="flex h-full items-center gap-3 px-4">
+          <p className="min-w-0 flex-1 text-[13px] text-[var(--color-fg-secondary)]">
             Vault is locked
           </p>
-          <Button size="sm" className="h-8 shrink-0" onClick={() => void api.openMainWindow()}>
-            Open
+          <Button
+            size="sm"
+            className="h-8 shrink-0 rounded-full px-3.5"
+            onClick={() => void api.openMainWindow()}
+          >
+            Open Oikonomia
           </Button>
         </div>
       </Shell>
@@ -225,8 +246,8 @@ export default function QuickAddApp() {
 
   if (phase === 'success') {
     return (
-      <Shell>
-        <div className="flex h-full items-center justify-center px-3">
+      <Shell appear={false}>
+        <div className="qa-crossfade flex h-full items-center justify-center px-4">
           <p className="text-[13px] font-medium text-[var(--color-success)]">{successLabel}</p>
         </div>
       </Shell>
