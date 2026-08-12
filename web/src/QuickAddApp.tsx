@@ -5,7 +5,7 @@ import { isTauri, vaultStatus, type VaultStatus } from './lib/tauri'
 import { Button } from './components/ui'
 import {
   QUICK_ADD_COMPACT_HEIGHT,
-  QUICK_ADD_IDLE_HEIGHT,
+  QUICK_ADD_STEPPER_HEIGHT,
   setQuickAddHeight,
 } from './lib/quickAddWindow'
 import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
@@ -128,7 +128,7 @@ export default function QuickAddApp() {
       clearTimeout(blurHideTimerRef.current)
       blurHideTimerRef.current = null
     }
-    void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+    void setQuickAddHeight(QUICK_ADD_STEPPER_HEIGHT)
     void api.quickAddHide()
     setPhase('form')
     setFormEpoch((n) => n + 1)
@@ -192,7 +192,7 @@ export default function QuickAddApp() {
       void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       return
     }
-    void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+    void setQuickAddHeight(QUICK_ADD_STEPPER_HEIGHT)
   }, [status, phase])
 
   const onBusyChange = useCallback((busy: boolean) => {
@@ -260,6 +260,7 @@ export default function QuickAddApp() {
         key={`${status}-${formEpoch}`}
         onPosted={onPosted}
         onBusyChange={onBusyChange}
+        onDismiss={hidePanel}
       />
     </Shell>
   )

@@ -8,17 +8,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react'
-import {
-  ArrowDownLeft,
-  ArrowUpRight,
-  BookOpen,
-  CornerDownLeft,
-  FileText,
-  Loader2,
-  MessageSquare,
-  Receipt,
-  Wallet,
-} from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import {
   api,
@@ -34,8 +24,8 @@ import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import {
   QUICK_ADD_COMPACT_HEIGHT,
-  QUICK_ADD_IDLE_HEIGHT,
-  QUICK_ADD_REVIEW_HEIGHT,
+  QUICK_ADD_SAVE_HEIGHT,
+  QUICK_ADD_STEPPER_HEIGHT,
   setQuickAddHeight,
 } from '../lib/quickAddWindow'
 import { isTauri, type CommandError } from '../lib/tauri'
@@ -61,7 +51,11 @@ export type QuickAddPosted = {
 type Props = {
   onPosted: (info: QuickAddPosted) => void
   onBusyChange?: (busy: boolean) => void
+  /** Cancel on Save step: hide panel + reset (same path as Esc). */
+  onDismiss?: () => void
 }
+
+type Step = 'entity' | 'kind' | 'amount' | 'accounts' | 'save'
 
 const KIND_OPTIONS: Array<{
   id: EntryKind
@@ -74,11 +68,12 @@ const KIND_OPTIONS: Array<{
   { id: 'transfer', label: 'Transfer', short: 'Move' },
 ]
 
-/** Soft Spotlight row control — no bordered pill grid; denser for 168 idle. */
-const rowCtl =
-  'h-7 min-w-0 w-full rounded-md border-0 bg-transparent px-1.5 text-[13px] text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:bg-[var(--color-surface-2)] disabled:opacity-50'
+/** Quiet single-row control — fits 80px stepper chrome. */
+const ctl =
+  'h-8 min-w-0 w-full rounded-md border-0 bg-[var(--color-surface-2)] px-2 text-[13px] text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:bg-[var(--color-canvas)] disabled:opacity-50'
 
 const MAX_DOC_BYTES = 8 * 1024 * 1024
+const ROLL_MS = 170
 
 function roleIdsFromLast(last: LastRoleAccounts): string[] {
   return [
@@ -134,13 +129,40 @@ function pendingDocLabel(source: PendingDocSource): string {
   return parts[parts.length - 1] || source.path
 }
 
-export function QuickAddPage({ onPosted, onBusyChange }: Props) {
+function Row({
+  children,
+  className,
+  role,
+  'aria-label': ariaLabel,
+}: {
+  children: ReactNode
+  className?: string
+  role?: string
+  'aria-label'?: string
+}) {
+  return (
+    <div
+      role={role}
+      aria-label={ariaLabel}
+      className={cn('flex h-full min-w-0 items-center gap-2 overflow-hidden', className)}
+    >
+      {children}
+    </div>
+  )
+}
+
+export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   const [entities, setEntities] = useState<Entity[]>([])
   const [entityId, setEntityId] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [prefs, setPrefs] = useState<UiPrefs | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const [step, setStep] = useState<Step>('kind')
+  const [leaving, setLeaving] = useState<Step | null>(null)
+  const [rollDir, setRollDir] = useState<1 | -1>(1)
+  const rollingRef = useRef(false)
 
   const [kind, setKind] = useState<EntryKind>('expense')
   const [billStatus, setBillStatus] = useState<BillStatusTray>('unpaid')
@@ -158,13 +180,10 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   const [pendingAnalysis, setPendingAnalysis] = useState<string | null>(null)
   const [analyzing, setAnalyzing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
-  const [rolesKey, setRolesKey] = useState(0)
   const busyRef = useRef(false)
   const baseCurrencyRef = useRef('EUR')
   const analyzeGenRef = useRef(0)
   const amountRef = useRef<HTMLInputElement | null>(null)
-
-  const reviewing = analyzing || pendingDoc != null
 
   const entity = useMemo(
     () => entities.find((e) => e.id === entityId) ?? null,
@@ -178,24 +197,30 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     [],
   )
 
+  const multiEntity = entities.length > 1
+  const firstStep: Step = multiEntity ? 'entity' : 'kind'
+
   useEffect(() => {
     onBusyChange?.(busy || analyzing)
   }, [busy, analyzing, onBusyChange])
 
-  // Height owner for form states: compact when no books; else review vs idle.
-  // Must not let idle/review overwrite the empty-books compact chrome.
+  // Height owner: compact empty books; save/confirm 120; analyze + rolls 80.
   useEffect(() => {
     if (loading) return
     if (entities.length === 0) {
       void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       return
     }
-    void setQuickAddHeight(reviewing ? QUICK_ADD_REVIEW_HEIGHT : QUICK_ADD_IDLE_HEIGHT)
-  }, [loading, entities.length, reviewing])
+    if (analyzing) {
+      void setQuickAddHeight(QUICK_ADD_STEPPER_HEIGHT)
+      return
+    }
+    void setQuickAddHeight(step === 'save' ? QUICK_ADD_SAVE_HEIGHT : QUICK_ADD_STEPPER_HEIGHT)
+  }, [loading, entities.length, analyzing, step])
 
   useEffect(() => {
     return () => {
-      void setQuickAddHeight(QUICK_ADD_IDLE_HEIGHT)
+      void setQuickAddHeight(QUICK_ADD_STEPPER_HEIGHT)
     }
   }, [])
 
@@ -240,6 +265,22 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     [roleSetters],
   )
 
+  const rollTo = useCallback((next: Step, dir: 1 | -1) => {
+    if (rollingRef.current) return
+    setStep((cur) => {
+      if (cur === next) return cur
+      rollingRef.current = true
+      setRollDir(dir)
+      setLeaving(cur)
+      window.setTimeout(() => {
+        setLeaving(null)
+        rollingRef.current = false
+      }, ROLL_MS)
+      return next
+    })
+    setError(null)
+  }, [])
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -261,6 +302,8 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
             : ents[0]!.id
         setEntityId(preferred)
         await loadAccountsFor(preferred, 'expense', uiPrefs)
+        // Vault step only when multiple books exist.
+        setStep(ents.length > 1 ? 'entity' : 'kind')
       } catch (err) {
         if (!cancelled) setError((err as CommandError).message)
       } finally {
@@ -273,29 +316,29 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   }, [loadAccountsFor])
 
   useEffect(() => {
-    if (loading) return
+    if (loading || step !== 'amount') return
     const t = window.setTimeout(() => {
       amountRef.current?.focus()
-    }, 40)
+    }, ROLL_MS + 20)
     return () => window.clearTimeout(t)
-  }, [loading, reviewing, kind])
+  }, [loading, step])
 
-  async function onEntityChange(nextId: string) {
+  async function selectEntity(nextId: string) {
+    if (rollingRef.current) return
     setEntityId(nextId)
     setError(null)
     try {
       await loadAccountsFor(nextId, kind, prefs)
-      setRolesKey((n) => n + 1)
+      rollTo('kind', 1)
     } catch (err) {
       setError((err as CommandError).message)
     }
   }
 
-  function onKindChange(next: EntryKind) {
-    if (next === kind) return
+  function selectKind(next: EntryKind) {
+    if (rollingRef.current) return
     setKind(next)
     if (next !== 'bill') setBillStatus('unpaid')
-    setError(null)
     if (!entity || !prefs) {
       applyRoleState(kindDefaultAccounts(next, accounts), roleSetters)
     } else {
@@ -303,8 +346,29 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       const last = prefs.last_accounts_by_entity_kind[key]
       applyRoleState(resolveRoleAccounts(next, accounts, last), roleSetters)
     }
-    setRolesKey((n) => n + 1)
-    window.setTimeout(() => amountRef.current?.focus(), 0)
+    rollTo('amount', 1)
+  }
+
+  function goBack() {
+    if (rollingRef.current || formDisabled) return
+    if (step === 'save') {
+      if (pendingDoc || analyzing) {
+        clearDocumentReview()
+      }
+      rollTo('accounts', -1)
+      return
+    }
+    if (step === 'kind' && multiEntity) {
+      rollTo('entity', -1)
+      return
+    }
+    if (step === 'amount') {
+      rollTo('kind', -1)
+      return
+    }
+    if (step === 'accounts') {
+      rollTo('amount', -1)
+    }
   }
 
   function applySuggestion(s: DocumentSuggestion, source: PendingDocSource) {
@@ -332,7 +396,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     if (s.category_account_id) setCategoryId(s.category_account_id)
     if (s.wallet_account_id) setWalletId(s.wallet_account_id)
     if (s.payable_account_id) setPayableId(s.payable_account_id)
-    setRolesKey((n) => n + 1)
   }
 
   function clearDocumentReview() {
@@ -342,7 +405,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     setDragOver(false)
   }
 
-  function onCancelReview() {
+  function onCancelAnalyze() {
     if (busy && !analyzing) return
     analyzeGenRef.current += 1
     busyRef.current = false
@@ -351,70 +414,78 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     setError(null)
   }
 
-  const processFile = useCallback(async (file: File, entId: string) => {
-    if (busyRef.current) return
-    if (file.size > MAX_DOC_BYTES) {
-      setError('File too large (max 8 MB)')
-      return
-    }
-    const gen = analyzeGenRef.current + 1
-    analyzeGenRef.current = gen
-    busyRef.current = true
-    setBusy(true)
-    setAnalyzing(true)
-    setError(null)
-    try {
-      const dataBase64 = await fileToBase64(file)
-      const mimeType = file.type || mimeFromName(file.name)
-      const suggestion = await api.documentAnalyze({
-        entityId: entId,
-        filename: file.name,
-        mimeType,
-        dataBase64,
-      })
-      if (analyzeGenRef.current !== gen) return
-      applySuggestion(suggestion, { kind: 'file', file })
-    } catch (err) {
-      if (analyzeGenRef.current !== gen) return
-      setError((err as CommandError).message || 'Could not analyze')
-      setPendingDoc(null)
-      setPendingAnalysis(null)
-    } finally {
-      if (analyzeGenRef.current === gen) {
-        busyRef.current = false
-        setBusy(false)
-        setAnalyzing(false)
+  const processFile = useCallback(
+    async (file: File, entId: string) => {
+      if (busyRef.current || rollingRef.current) return
+      if (file.size > MAX_DOC_BYTES) {
+        setError('File too large (max 8 MB)')
+        return
       }
-      setDragOver(false)
-    }
-  }, [])
+      const gen = analyzeGenRef.current + 1
+      analyzeGenRef.current = gen
+      busyRef.current = true
+      setBusy(true)
+      setAnalyzing(true)
+      setError(null)
+      rollTo('save', 1)
+      try {
+        const dataBase64 = await fileToBase64(file)
+        const mimeType = file.type || mimeFromName(file.name)
+        const suggestion = await api.documentAnalyze({
+          entityId: entId,
+          filename: file.name,
+          mimeType,
+          dataBase64,
+        })
+        if (analyzeGenRef.current !== gen) return
+        applySuggestion(suggestion, { kind: 'file', file })
+      } catch (err) {
+        if (analyzeGenRef.current !== gen) return
+        setError((err as CommandError).message || 'Could not analyze')
+        setPendingDoc(null)
+        setPendingAnalysis(null)
+      } finally {
+        if (analyzeGenRef.current === gen) {
+          busyRef.current = false
+          setBusy(false)
+          setAnalyzing(false)
+        }
+        setDragOver(false)
+      }
+    },
+    [rollTo],
+  )
 
-  const processPath = useCallback(async (path: string, entId: string) => {
-    if (busyRef.current) return
-    const gen = analyzeGenRef.current + 1
-    analyzeGenRef.current = gen
-    busyRef.current = true
-    setBusy(true)
-    setAnalyzing(true)
-    setError(null)
-    try {
-      const suggestion = await api.documentAnalyzePath({ entityId: entId, path })
-      if (analyzeGenRef.current !== gen) return
-      applySuggestion(suggestion, { kind: 'path', path })
-    } catch (err) {
-      if (analyzeGenRef.current !== gen) return
-      setError((err as CommandError).message || 'Could not analyze')
-      setPendingDoc(null)
-      setPendingAnalysis(null)
-    } finally {
-      if (analyzeGenRef.current === gen) {
-        busyRef.current = false
-        setBusy(false)
-        setAnalyzing(false)
+  const processPath = useCallback(
+    async (path: string, entId: string) => {
+      if (busyRef.current || rollingRef.current) return
+      const gen = analyzeGenRef.current + 1
+      analyzeGenRef.current = gen
+      busyRef.current = true
+      setBusy(true)
+      setAnalyzing(true)
+      setError(null)
+      rollTo('save', 1)
+      try {
+        const suggestion = await api.documentAnalyzePath({ entityId: entId, path })
+        if (analyzeGenRef.current !== gen) return
+        applySuggestion(suggestion, { kind: 'path', path })
+      } catch (err) {
+        if (analyzeGenRef.current !== gen) return
+        setError((err as CommandError).message || 'Could not analyze')
+        setPendingDoc(null)
+        setPendingAnalysis(null)
+      } finally {
+        if (analyzeGenRef.current === gen) {
+          busyRef.current = false
+          setBusy(false)
+          setAnalyzing(false)
+        }
+        setDragOver(false)
       }
-      setDragOver(false)
-    }
-  }, [])
+    },
+    [rollTo],
+  )
 
   useEffect(() => {
     if (!isTauri() || !entityId || loading) return
@@ -466,7 +537,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     const minor = parseMajorToMinor(amount, entity.base_currency)
     if (minor === null || minor <= 0) {
       setError('Invalid amount')
-      amountRef.current?.focus()
+      if (step !== 'amount') rollTo('amount', -1)
       return
     }
     const accountErr = validateTrayAccounts({
@@ -480,6 +551,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     })
     if (accountErr) {
       setError(accountErr)
+      if (step === 'save') rollTo('accounts', -1)
       return
     }
     setBusy(true)
@@ -554,12 +626,41 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     }
   }
 
+  function advanceFromAmount() {
+    if (!entity) return
+    const minor = parseMajorToMinor(amount, entity.base_currency)
+    if (minor === null || minor <= 0) {
+      setError('Invalid amount')
+      amountRef.current?.focus()
+      return
+    }
+    rollTo('accounts', 1)
+  }
+
+  function advanceFromAccounts() {
+    const accountErr = validateTrayAccounts({
+      kind,
+      billStatus,
+      categoryId,
+      walletId,
+      payableId,
+      fromId,
+      toId,
+    })
+    if (accountErr) {
+      setError(accountErr)
+      return
+    }
+    rollTo('save', 1)
+  }
+
   const formDisabled = busy || analyzing
   const ccy = entity?.base_currency ?? 'EUR'
+  const showBack = step !== firstStep && !formDisabled
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 px-4 text-[13px] text-[var(--color-muted)]">
+      <div className="flex h-full items-center justify-center gap-2 px-3 text-[13px] text-[var(--color-muted)]">
         <Loader2 className="size-3.5 animate-spin" aria-hidden />
         Loading
       </div>
@@ -567,7 +668,6 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   }
 
   if (entities.length === 0) {
-    // Compact 72 one-liner — mirrors locked chrome in QuickAddApp.
     return (
       <div className="flex h-full items-center gap-3 px-4">
         <p className="min-w-0 flex-1 text-[13px] text-[var(--color-fg-secondary)]">
@@ -584,9 +684,309 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     )
   }
 
+  function renderPanel(s: Step): ReactNode {
+    if (s === 'save' && analyzing) {
+      return (
+        <Row>
+          <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--color-muted)]" />
+          <p className="min-w-0 flex-1 truncate text-[13px] text-[var(--color-muted)]">
+            Analyzing…
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-8 shrink-0 rounded-full px-3 text-[12px]"
+            onClick={onCancelAnalyze}
+          >
+            Cancel
+          </Button>
+        </Row>
+      )
+    }
+
+    switch (s) {
+      case 'entity':
+        return (
+          <Row>
+            <span className="shrink-0 text-[12px] font-medium text-[var(--color-muted)]">
+              Vault
+            </span>
+            {entities.slice(0, 3).map((e) => {
+              const active = e.id === entityId
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  disabled={formDisabled}
+                  onClick={() => void selectEntity(e.id)}
+                  title={e.name}
+                  className={cn(
+                    'h-8 min-w-0 flex-1 truncate rounded-md px-2 text-[13px] font-medium transition disabled:opacity-50',
+                    active
+                      ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)]'
+                      : 'bg-[var(--color-surface-2)] text-[var(--color-fg-secondary)] hover:text-[var(--color-fg)]',
+                  )}
+                >
+                  {e.name}
+                </button>
+              )
+            })}
+            {entities.length > 3 ? (
+              <label className="relative min-w-0 flex-1">
+                <span className="sr-only">More books</span>
+                <select
+                  className={cn(ctl, 'ui-select h-8 cursor-pointer')}
+                  value={
+                    entityId && entities.slice(3).some((e) => e.id === entityId) ? entityId : ''
+                  }
+                  disabled={formDisabled}
+                  onChange={(e) => {
+                    if (e.target.value) void selectEntity(e.target.value)
+                  }}
+                >
+                  <option value="">More…</option>
+                  {entities.slice(3).map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+          </Row>
+        )
+
+      case 'kind':
+        return (
+          <Row role="radiogroup" aria-label="Entry type">
+            {KIND_OPTIONS.map((opt) => {
+              const active = kind === opt.id
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  disabled={formDisabled}
+                  title={opt.label}
+                  onClick={() => selectKind(opt.id)}
+                  className={cn(
+                    'h-8 min-w-0 flex-1 rounded-md px-2 text-[13px] font-medium transition disabled:opacity-50',
+                    active
+                      ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)]'
+                      : 'bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
+                  )}
+                >
+                  {opt.short}
+                </button>
+              )
+            })}
+          </Row>
+        )
+
+      case 'amount':
+        return (
+          <form
+            className="flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden"
+            onSubmit={(e) => {
+              e.preventDefault()
+              advanceFromAmount()
+            }}
+          >
+            <input
+              ref={amountRef}
+              id="quick-add-amount"
+              inputMode="decimal"
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="h-10 min-w-0 flex-1 border-0 bg-transparent px-1 text-[23px] font-semibold tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50"
+              required
+              disabled={formDisabled}
+              aria-label={`Amount (${ccy})`}
+              autoComplete="off"
+            />
+            <span className="shrink-0 text-[12px] font-medium tracking-wide text-[var(--color-muted)]">
+              {ccy}
+            </span>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={formDisabled}
+              className="h-8 shrink-0 rounded-full px-3 text-[12px]"
+            >
+              Next
+            </Button>
+          </form>
+        )
+
+      case 'accounts':
+        return (
+          <form
+            className="flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden"
+            onSubmit={(e) => {
+              e.preventDefault()
+              advanceFromAccounts()
+            }}
+          >
+            {(kind === 'expense' || kind === 'bill') && (
+              <AccountSelect
+                value={categoryId}
+                onChange={setCategoryId}
+                options={expenseAccounts}
+                disabled={formDisabled}
+                label="Category"
+              />
+            )}
+            {kind === 'income' && (
+              <AccountSelect
+                value={categoryId}
+                onChange={setCategoryId}
+                options={incomeAccounts}
+                disabled={formDisabled}
+                label="Income"
+              />
+            )}
+            {(kind === 'expense' ||
+              kind === 'income' ||
+              (kind === 'bill' && billStatus === 'paid')) && (
+              <AccountSelect
+                value={walletId}
+                onChange={setWalletId}
+                options={kind === 'income' ? assetWallets : walletAccounts}
+                disabled={formDisabled}
+                label="Wallet"
+              />
+            )}
+            {kind === 'bill' && billStatus === 'unpaid' && (
+              <AccountSelect
+                value={payableId}
+                onChange={setPayableId}
+                options={payableAccounts}
+                disabled={formDisabled}
+                label="Payable"
+              />
+            )}
+            {kind === 'transfer' && (
+              <>
+                <AccountSelect
+                  value={fromId}
+                  onChange={setFromId}
+                  options={transferAccounts}
+                  disabled={formDisabled}
+                  label="From"
+                />
+                <AccountSelect
+                  value={toId}
+                  onChange={setToId}
+                  options={transferAccounts}
+                  disabled={formDisabled}
+                  label="To"
+                />
+              </>
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={formDisabled}
+              className="h-8 shrink-0 rounded-full px-3 text-[12px]"
+            >
+              Next
+            </Button>
+          </form>
+        )
+
+      case 'save':
+        return (
+          <form
+            className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1.5 overflow-hidden"
+            onSubmit={(e) => void onSubmit(e)}
+          >
+            <div className="flex min-w-0 items-center gap-2">
+              {kind === 'bill' ? (
+                <div
+                  className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-md bg-[var(--color-surface-2)] p-0.5"
+                  role="radiogroup"
+                  aria-label="Bill status"
+                >
+                  {(
+                    [
+                      { id: 'unpaid', label: 'Due' },
+                      { id: 'paid', label: 'Paid' },
+                    ] as const
+                  ).map((opt) => {
+                    const active = billStatus === opt.id
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        disabled={formDisabled}
+                        onClick={() => setBillStatus(opt.id)}
+                        className={cn(
+                          'h-full rounded px-2 text-[11px] font-medium transition disabled:opacity-50',
+                          active
+                            ? 'bg-[var(--color-surface-elevated)] text-[var(--color-fg)]'
+                            : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : null}
+              <Input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Optional memo"
+                className={cn(ctl, 'h-7 flex-1 shadow-none ring-0')}
+                disabled={formDisabled}
+                aria-label="Memo"
+              />
+              {pendingDoc ? (
+                <span className="max-w-[7rem] shrink-0 truncate text-[11px] text-[var(--color-muted)]">
+                  {pendingDocLabel(pendingDoc)}
+                </span>
+              ) : (
+                <span className="shrink-0 text-[11px] text-[var(--color-muted)]/75">
+                  Drop receipt
+                </span>
+              )}
+            </div>
+            <div className="flex min-w-0 items-center justify-end gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-8 shrink-0 rounded-full px-3 text-[12px]"
+                disabled={busy && !analyzing}
+                onClick={() => {
+                  clearDocumentReview()
+                  onDismiss?.()
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                busy={busy && !analyzing}
+                disabled={formDisabled}
+                className="h-8 shrink-0 rounded-full px-3.5 text-[12px]"
+              >
+                Save
+              </Button>
+            </div>
+          </form>
+        )
+    }
+  }
+
   return (
-    <form
-      onSubmit={(e) => void onSubmit(e)}
+    <div
       onDragOver={(e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -603,350 +1003,58 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative flex h-full min-w-0 flex-col gap-1 overflow-hidden px-3 py-2 transition-colors duration-150',
-        dragOver && 'bg-[var(--color-accent-soft)]/40',
+        'relative flex h-full min-w-0 items-stretch overflow-hidden px-2.5 py-2 transition-colors duration-150',
+        dragOver && 'bg-[var(--color-accent-soft)]/35',
       )}
     >
-      {/* Unified Spotlight search well: kind · amount · Add */}
-      <div className="flex shrink-0 flex-col gap-1.5">
-        <div className="flex min-h-9 items-center gap-1.5 rounded-xl bg-[var(--color-canvas)] px-1.5 py-1">
-          <KindSegment value={kind} onChange={onKindChange} disabled={formDisabled} />
-          <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <input
-              ref={amountRef}
-              id="quick-add-amount"
-              inputMode="decimal"
-              placeholder="0.00"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="h-8 min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[22px] font-semibold tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50"
-              required
-              disabled={formDisabled}
-              aria-label={`Amount (${ccy})`}
-              autoComplete="off"
-            />
-            <span className="shrink-0 text-[12px] font-medium tracking-wide text-[var(--color-muted)]">
-              {ccy}
-            </span>
-          </div>
-          <Button
-            type="submit"
-            size="sm"
-            busy={busy && !analyzing}
-            disabled={formDisabled}
-            className="h-7 shrink-0 gap-1 rounded-full px-3 text-[12px]"
-          >
-            {reviewing ? (
-              'Confirm & save'
-            ) : (
-              <>
-                Add
-                <CornerDownLeft className="size-3 opacity-80" strokeWidth={2} aria-hidden />
-              </>
-            )}
-          </Button>
-        </div>
-        <div className="h-px shrink-0 bg-[var(--color-border)]" aria-hidden />
-      </div>
-
-      {/*
-        Idle always shows account result rows + memo (never amount-only collapse).
-        Date is todayISO only — no date control in the companion.
-        Multi-book entity lives in result meta so the amount well stays uncrowded.
-      */}
-      <div
-        key={rolesKey}
-        className="qa-roles-fade flex min-h-0 min-w-0 flex-1 flex-col justify-start gap-0.5"
+      <button
+        type="button"
+        onClick={goBack}
+        disabled={!showBack}
+        className={cn(
+          'mr-0.5 inline-flex w-6 shrink-0 self-stretch items-center justify-center rounded-md text-[18px] leading-none transition',
+          showBack
+            ? 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]'
+            : 'pointer-events-none text-transparent',
+        )}
+        aria-label="Back"
+        tabIndex={showBack ? 0 : -1}
       >
-        {entities.length > 1 ? (
-          <div className="flex h-6 shrink-0 items-center gap-1.5 px-1">
-            <BookOpen
-              className="size-3 shrink-0 text-[var(--color-muted)]"
-              strokeWidth={1.75}
-              aria-hidden
-            />
-            <span className="w-12 shrink-0 text-[11px] font-medium tracking-wide text-[var(--color-muted)]">
-              Book
-            </span>
-            <select
-              className={cn(rowCtl, 'ui-select h-6 cursor-pointer text-[12px]')}
-              value={entityId ?? ''}
-              disabled={formDisabled}
-              onChange={(e) => void onEntityChange(e.target.value)}
-              aria-label="Book"
-            >
-              {entities.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
+        ‹
+      </button>
+
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        {leaving ? (
+          <div
+            key={`leave-${leaving}`}
+            className={cn(
+              'absolute inset-0 overflow-hidden',
+              rollDir === 1 ? 'qa-exit-left' : 'qa-exit-right',
+            )}
+            aria-hidden
+          >
+            {renderPanel(leaving)}
           </div>
         ) : null}
-
-        {(kind === 'expense' || kind === 'bill') && (
-          <ResultRow
-            icon={<Receipt className="size-3.5" strokeWidth={1.75} aria-hidden />}
-            label="Category"
-            trailing={
-              kind === 'bill' ? (
-                <BillStatusToggle
-                  value={billStatus}
-                  onChange={setBillStatus}
-                  disabled={formDisabled}
-                />
-              ) : null
-            }
-          >
-            <AccountSelect
-              value={categoryId}
-              onChange={setCategoryId}
-              options={expenseAccounts}
-              disabled={formDisabled}
-              label="Category"
-            />
-          </ResultRow>
-        )}
-        {kind === 'income' && (
-          <ResultRow
-            icon={<ArrowDownLeft className="size-3.5" strokeWidth={1.75} aria-hidden />}
-            label="Income"
-          >
-            <AccountSelect
-              value={categoryId}
-              onChange={setCategoryId}
-              options={incomeAccounts}
-              disabled={formDisabled}
-              label="Income"
-            />
-          </ResultRow>
-        )}
-        {(kind === 'expense' ||
-          kind === 'income' ||
-          (kind === 'bill' && billStatus === 'paid')) && (
-          <ResultRow
-            icon={<Wallet className="size-3.5" strokeWidth={1.75} aria-hidden />}
-            label="Wallet"
-          >
-            <AccountSelect
-              value={walletId}
-              onChange={setWalletId}
-              options={kind === 'income' ? assetWallets : walletAccounts}
-              disabled={formDisabled}
-              label="Wallet"
-            />
-          </ResultRow>
-        )}
-        {kind === 'bill' && billStatus === 'unpaid' && (
-          <ResultRow
-            icon={<FileText className="size-3.5" strokeWidth={1.75} aria-hidden />}
-            label="Payable"
-          >
-            <AccountSelect
-              value={payableId}
-              onChange={setPayableId}
-              options={payableAccounts}
-              disabled={formDisabled}
-              label="Payable"
-            />
-          </ResultRow>
-        )}
-        {kind === 'transfer' && (
-          <>
-            <ResultRow
-              icon={<ArrowUpRight className="size-3.5" strokeWidth={1.75} aria-hidden />}
-              label="From"
-            >
-              <AccountSelect
-                value={fromId}
-                onChange={setFromId}
-                options={transferAccounts}
-                disabled={formDisabled}
-                label="From"
-              />
-            </ResultRow>
-            <ResultRow
-              icon={<ArrowDownLeft className="size-3.5" strokeWidth={1.75} aria-hidden />}
-              label="To"
-            >
-              <AccountSelect
-                value={toId}
-                onChange={setToId}
-                options={transferAccounts}
-                disabled={formDisabled}
-                label="To"
-              />
-            </ResultRow>
-          </>
-        )}
-
-        <ResultRow
-          icon={<MessageSquare className="size-3.5" strokeWidth={1.75} aria-hidden />}
-          label="Memo"
+        <div
+          key={`enter-${step}-${analyzing ? 'a' : 'b'}`}
+          className={cn(
+            'absolute inset-0 overflow-hidden',
+            leaving ? (rollDir === 1 ? 'qa-enter-right' : 'qa-enter-left') : undefined,
+          )}
         >
-          <Input
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Optional note"
-            className={cn(rowCtl, 'shadow-none ring-0 focus:border-0 focus:ring-0')}
-            disabled={formDisabled}
-            aria-label="Memo"
-          />
-        </ResultRow>
+          {renderPanel(step)}
+        </div>
       </div>
 
-      {reviewing ? (
-        <div className="qa-crossfade flex min-h-8 shrink-0 items-center gap-2 rounded-lg bg-[var(--color-surface-2)]/80 px-2.5">
-          {analyzing ? (
-            <>
-              <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--color-muted)]" />
-              <p className="min-w-0 flex-1 truncate text-[12px] text-[var(--color-muted)]">
-                Analyzing…
-              </p>
-            </>
-          ) : (
-            <>
-              <FileText
-                className="size-3.5 shrink-0 text-[var(--color-muted)]"
-                strokeWidth={1.75}
-                aria-hidden
-              />
-              <p className="min-w-0 flex-1 truncate text-[12px] text-[var(--color-fg-secondary)]">
-                {pendingDoc ? pendingDocLabel(pendingDoc) : 'Document'}
-              </p>
-            </>
-          )}
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 shrink-0 rounded-full px-2.5 text-[12px]"
-            onClick={onCancelReview}
-            disabled={busy && !analyzing}
-          >
-            Cancel
-          </Button>
-        </div>
-      ) : null}
-
       {error ? (
-        <p className="shrink-0 truncate text-[11px] text-[var(--color-danger)]" role="alert">
+        <p
+          className="pointer-events-none absolute inset-x-10 bottom-0.5 truncate text-center text-[11px] text-[var(--color-danger)]"
+          role="alert"
+        >
           {error}
         </p>
-      ) : reviewing ? null : (
-        <p className="shrink-0 truncate text-[11px] text-[var(--color-muted)]/75">Drop receipt</p>
-      )}
-    </form>
-  )
-}
-
-function KindSegment({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: EntryKind
-  onChange: (v: EntryKind) => void
-  disabled: boolean
-}) {
-  return (
-    <div
-      className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-lg p-0.5"
-      role="radiogroup"
-      aria-label="Entry type"
-    >
-      {KIND_OPTIONS.map((opt) => {
-        const active = value === opt.id
-        return (
-          <button
-            key={opt.id}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            disabled={disabled}
-            title={opt.label}
-            onClick={() => onChange(opt.id)}
-            className={cn(
-              'inline-flex h-full min-w-[2.1rem] items-center justify-center rounded-md px-1.5 text-[11px] font-medium transition disabled:opacity-50',
-              active
-                ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)]'
-                : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
-            )}
-          >
-            {opt.short}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function BillStatusToggle({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: BillStatusTray
-  onChange: (v: BillStatusTray) => void
-  disabled: boolean
-}) {
-  return (
-    <div
-      className="inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md bg-[var(--color-canvas)] p-0.5"
-      role="radiogroup"
-      aria-label="Bill status"
-    >
-      {(
-        [
-          { id: 'unpaid', label: 'Due' },
-          { id: 'paid', label: 'Paid' },
-        ] as const
-      ).map((opt) => {
-        const active = value === opt.id
-        return (
-          <button
-            key={opt.id}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            disabled={disabled}
-            onClick={() => onChange(opt.id)}
-            className={cn(
-              'h-full rounded px-2 text-[11px] font-medium transition disabled:opacity-50',
-              active
-                ? 'bg-[var(--color-surface-elevated)] text-[var(--color-fg)]'
-                : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
-            )}
-          >
-            {opt.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-function ResultRow({
-  icon,
-  label,
-  children,
-  trailing,
-}: {
-  icon: ReactNode
-  label: string
-  children: ReactNode
-  trailing?: ReactNode
-}) {
-  return (
-    <div className="flex min-h-7 shrink-0 items-center gap-1.5 rounded-md px-1 transition-colors hover:bg-[var(--color-surface-2)]">
-      <span className="inline-flex size-3.5 shrink-0 items-center justify-center text-[var(--color-muted)]">
-        {icon}
-      </span>
-      <span className="w-12 shrink-0 text-[11px] font-medium tracking-wide text-[var(--color-muted)]">
-        {label}
-      </span>
-      <div className="min-w-0 flex-1">{children}</div>
-      {trailing}
+      ) : null}
     </div>
   )
 }
@@ -965,20 +1073,23 @@ function AccountSelect({
   label: string
 }) {
   return (
-    <select
-      className={cn(rowCtl, 'ui-select cursor-pointer')}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled}
-      required
-      aria-label={label}
-    >
-      {options.length === 0 ? <option value="">—</option> : null}
-      {options.map((a) => (
-        <option key={a.id} value={a.id}>
-          {a.name}
-        </option>
-      ))}
-    </select>
+    <label className="relative min-w-0 flex-1">
+      <span className="sr-only">{label}</span>
+      <select
+        className={cn(ctl, 'ui-select h-8 cursor-pointer')}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        required
+        aria-label={label}
+      >
+        {options.length === 0 ? <option value="">—</option> : null}
+        {options.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+    </label>
   )
 }
