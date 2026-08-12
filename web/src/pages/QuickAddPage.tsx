@@ -70,7 +70,7 @@ const KIND_OPTIONS: Array<{
 /** BUI v2 chrome tokens — full-pill tracks/fields, hairline borders, h-9 row. */
 const ctlH = 'h-9'
 const pillTrack =
-  'flex h-9 w-full min-w-0 items-center gap-0.5 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-1'
+  'flex h-10 w-full min-w-0 items-center gap-0.5 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-1'
 const pillField =
   'flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-3'
 const pillChipQuiet =
