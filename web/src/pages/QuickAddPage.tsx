@@ -33,6 +33,7 @@ import {
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import {
+  QUICK_ADD_COMPACT_HEIGHT,
   QUICK_ADD_IDLE_HEIGHT,
   QUICK_ADD_REVIEW_HEIGHT,
   setQuickAddHeight,
@@ -181,9 +182,16 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
     onBusyChange?.(busy || analyzing)
   }, [busy, analyzing, onBusyChange])
 
+  // Height owner for form states: compact when no books; else review vs idle.
+  // Must not let idle/review overwrite the empty-books compact chrome.
   useEffect(() => {
+    if (loading) return
+    if (entities.length === 0) {
+      void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
+      return
+    }
     void setQuickAddHeight(reviewing ? QUICK_ADD_REVIEW_HEIGHT : QUICK_ADD_IDLE_HEIGHT)
-  }, [reviewing])
+  }, [loading, entities.length, reviewing])
 
   useEffect(() => {
     return () => {
@@ -559,9 +567,10 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
   }
 
   if (entities.length === 0) {
+    // Compact 72 one-liner — mirrors locked chrome in QuickAddApp.
     return (
       <div className="flex h-full items-center gap-3 px-4">
-        <p className="min-w-0 flex-1 text-[13px] text-[var(--color-muted)]">
+        <p className="min-w-0 flex-1 text-[13px] text-[var(--color-fg-secondary)]">
           Create a book in Oikonomia first
         </p>
         <Button

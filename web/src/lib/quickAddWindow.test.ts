@@ -22,7 +22,8 @@ describe('quickAddWindow sizes', () => {
     expect(QUICK_ADD_REVIEW_HEIGHT).toBeGreaterThan(QUICK_ADD_IDLE_HEIGHT)
   })
 
-  test('compact height for locked/success one-liners', () => {
+  test('compact height for locked/success/no-books one-liners', () => {
+    // QuickAddApp locked/success + QuickAddPage zero-entity empty state.
     expect(QUICK_ADD_COMPACT_HEIGHT).toBe(72)
     expect(QUICK_ADD_COMPACT_HEIGHT).toBeLessThan(QUICK_ADD_IDLE_HEIGHT)
   })

@@ -6,7 +6,7 @@ import { isTauri } from './tauri'
  *
  * - Idle 600×168 — amount hero + account rows + memo always visible
  * - Review 600×280 — document analyze / confirm
- * - Compact 600×72 — locked / success one-liners
+ * - Compact 600×72 — locked / success / no-books one-liners
  * - Tray-anchored position only (native `tray.rs`; FE never recenters)
  * - Opaque soft card chrome (no backdrop-blur in v1)
  *
@@ -16,7 +16,7 @@ import { isTauri } from './tauri'
 export const QUICK_ADD_WIDTH = 600
 export const QUICK_ADD_IDLE_HEIGHT = 168
 export const QUICK_ADD_REVIEW_HEIGHT = 280
-/** Locked / success one-liner chrome. */
+/** Locked / success / no-books one-liner chrome. */
 export const QUICK_ADD_COMPACT_HEIGHT = 72
 
 /** Resize the tray quick-add panel (no-op outside Tauri). */
