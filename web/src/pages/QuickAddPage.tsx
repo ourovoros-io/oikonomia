@@ -785,9 +785,10 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     role="radio"
                     aria-checked={active}
                     disabled={formDisabled}
+                    title={opt.label}
                     onClick={() => selectKind(opt.id)}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 items-center justify-center rounded-full px-0.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
