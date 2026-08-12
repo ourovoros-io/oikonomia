@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 
 const QUICK_ADD_LABEL: &str = "quick-add";
 /// Match web one-row rolling tray (`QUICK_ADD_*` in quickAddWindow.ts).
-const QUICK_ADD_WIDTH: f64 = 600.0;
+const QUICK_ADD_WIDTH: f64 = 300.0;
 const QUICK_ADD_STEPPER_HEIGHT: f64 = 80.0;
 /// Kept in lockstep with web; FE resizes to these at runtime.
 #[expect(dead_code)]
