@@ -736,7 +736,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     onClick={() => void selectEntity(e.id)}
                     title={e.name}
                     className={cn(
-                      'flex h-7 min-w-0 flex-1 items-center justify-center truncate rounded-full px-2 text-[13px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-2 text-[13px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -747,10 +747,10 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 )
               })}
               {entities.length > 3 ? (
-                <label className="relative flex h-7 min-w-0 flex-1 items-center">
+                <label className="relative flex h-full min-w-0 flex-1 items-center">
                   <span className="sr-only">More books</span>
                   <select
-                    className="ui-select h-7 w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-2 text-[13px] leading-none text-[var(--color-muted)] outline-none"
+                    className="ui-select h-full w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-2 text-[13px] leading-none text-[var(--color-muted)] outline-none"
                     value={
                       entityId && entities.slice(3).some((e) => e.id === entityId) ? entityId : ''
                     }
@@ -787,7 +787,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     disabled={formDisabled}
                     onClick={() => selectKind(opt.id)}
                     className={cn(
-                      'flex h-7 min-w-0 flex-1 items-center justify-center rounded-full px-2 text-[13px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center rounded-full px-2 text-[13px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
