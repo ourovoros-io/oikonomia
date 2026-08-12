@@ -158,15 +158,15 @@ html:not(.dark) {
   }
 }
 
-/* Quick Add: Spotlight appear + horizontal step rolls. */
+/* Quick Add: Perplexity-like appear toward tray + horizontal step rolls. */
 @keyframes qa-appear {
   from {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(0.96) translateY(6px);
   }
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: scale(1) translateY(0);
   }
 }
 @keyframes qa-crossfade {
@@ -219,7 +219,7 @@ html:not(.dark) {
 }
 
 .qa-appear {
-  animation: qa-appear 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: qa-appear 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
   transform-origin: top center;
 }
 .qa-crossfade {
