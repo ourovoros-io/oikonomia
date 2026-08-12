@@ -9,12 +9,12 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 const QUICK_ADD_LABEL: &str = "quick-add";
 /// Match web one-row rolling tray (`QUICK_ADD_*` in quickAddWindow.ts).
 const QUICK_ADD_WIDTH: f64 = 300.0;
-const QUICK_ADD_STEPPER_HEIGHT: f64 = 80.0;
+const QUICK_ADD_STEPPER_HEIGHT: f64 = 64.0;
 /// Kept in lockstep with web; FE resizes to these at runtime.
 #[expect(dead_code)]
-const QUICK_ADD_COMPACT_HEIGHT: f64 = 72.0;
+const QUICK_ADD_COMPACT_HEIGHT: f64 = 56.0;
 #[expect(dead_code)]
-const QUICK_ADD_SAVE_HEIGHT: f64 = 120.0;
+const QUICK_ADD_SAVE_HEIGHT: f64 = 96.0;
 
 /// Bring the main window back after it was hidden to the tray.
 pub fn show_main_window(app: &AppHandle) {

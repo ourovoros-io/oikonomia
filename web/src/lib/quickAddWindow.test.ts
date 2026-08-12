@@ -12,26 +12,28 @@ import {
  * QUICK_ADD_STEPPER_HEIGHT / QUICK_ADD_WIDTH).
  */
 describe('quickAddWindow sizes', () => {
-  test('stepper matches one-row companion (300x80)', () => {
+  test('stepper matches dense one-row companion (300x64)', () => {
     expect(QUICK_ADD_WIDTH).toBe(300)
-    expect(QUICK_ADD_STEPPER_HEIGHT).toBe(80)
+    expect(QUICK_ADD_STEPPER_HEIGHT).toBe(64)
   })
 
   test('save is taller than stepper', () => {
-    expect(QUICK_ADD_SAVE_HEIGHT).toBe(120)
+    expect(QUICK_ADD_SAVE_HEIGHT).toBe(96)
     expect(QUICK_ADD_SAVE_HEIGHT).toBeGreaterThan(QUICK_ADD_STEPPER_HEIGHT)
   })
 
   test('compact height for locked/success/no-books one-liners', () => {
     // QuickAddApp locked/success + QuickAddPage zero-entity empty state.
-    expect(QUICK_ADD_COMPACT_HEIGHT).toBe(72)
+    expect(QUICK_ADD_COMPACT_HEIGHT).toBe(56)
     expect(QUICK_ADD_COMPACT_HEIGHT).toBeLessThan(QUICK_ADD_STEPPER_HEIGHT)
   })
 
-  test('legacy spotlight companion widths/heights are retired', () => {
-    // 600-wide / 168 idle / 280 review belonged to the rejected stacked companion.
+  test('legacy spotlight companion sizes are retired', () => {
+    // 600-wide / 80–120 / 168 idle / 280 review belonged to earlier companions.
     expect(QUICK_ADD_WIDTH).not.toBe(600)
+    expect(QUICK_ADD_STEPPER_HEIGHT).not.toBe(80)
     expect(QUICK_ADD_STEPPER_HEIGHT).not.toBe(168)
+    expect(QUICK_ADD_SAVE_HEIGHT).not.toBe(120)
     expect(QUICK_ADD_SAVE_HEIGHT).not.toBe(280)
   })
 })

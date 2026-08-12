@@ -218,7 +218,7 @@ export default function QuickAddApp() {
   if (status === null) {
     return (
       <Shell>
-        <div className="flex h-full items-center justify-center px-2.5 text-[12px] text-[var(--color-muted)]">
+        <div className="flex h-full items-center justify-center px-2 text-[11px] text-[var(--color-muted)]">
           Loading…
         </div>
       </Shell>
@@ -228,13 +228,13 @@ export default function QuickAddApp() {
   if (status !== 'unlocked') {
     return (
       <Shell>
-        <div className="flex h-full items-center gap-2 px-2.5">
-          <p className="min-w-0 flex-1 text-[12px] leading-snug text-[var(--color-fg-secondary)]">
+        <div className="flex h-full items-center gap-1.5 px-2">
+          <p className="min-w-0 flex-1 text-[11px] leading-snug text-[var(--color-fg-secondary)]">
             Vault is locked
           </p>
           <Button
             size="sm"
-            className="h-9 shrink-0 rounded-full px-3 text-[11px]"
+            className="h-7 shrink-0 rounded-full px-2.5 text-[10px]"
             onClick={() => void api.openMainWindow()}
           >
             Open
@@ -247,8 +247,8 @@ export default function QuickAddApp() {
   if (phase === 'success') {
     return (
       <Shell appear={false}>
-        <div className="qa-crossfade flex h-full items-center justify-center px-2.5">
-          <p className="truncate text-[12px] font-medium text-[var(--color-success)]">
+        <div className="qa-crossfade flex h-full items-center justify-center px-2">
+          <p className="truncate text-[11px] font-medium text-[var(--color-success)]">
             {successLabel}
           </p>
         </div>

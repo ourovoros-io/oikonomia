@@ -67,20 +67,20 @@ const KIND_OPTIONS: Array<{
   { id: 'transfer', label: 'Transfer' },
 ]
 
-/** BUI v2 chrome for 300-wide tray — full-pill, hairline, tight h-9 rhythm. */
-const ctlH = 'h-9'
+/** Dense BUI v2 chrome for 300×64 tray — full-pill, hairline, h-7/h-8 rhythm. */
+const ctlH = 'h-7'
 const pillTrack =
-  'flex h-10 w-full min-w-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5'
+  'flex h-8 w-full min-w-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5'
 const pillField =
-  'flex h-9 min-w-0 flex-1 items-center gap-1 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-2'
+  'flex h-7 min-w-0 flex-1 items-center gap-1 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-1.5'
 const pillChipQuiet =
-  'inline-flex h-7 shrink-0 items-center rounded-full border border-[var(--color-border-strong)]/70 px-1.5 text-[10px] font-medium tracking-wide text-[var(--color-muted)]'
+  'inline-flex h-6 shrink-0 items-center rounded-full border border-[var(--color-border-strong)]/70 px-1.5 text-[9px] font-medium tracking-wide text-[var(--color-muted)]'
 const nextCta =
-  'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-[#04140b] shadow-sm transition hover:bg-[var(--color-accent-hover)] disabled:opacity-50'
+  'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-[#04140b] shadow-sm transition hover:bg-[var(--color-accent-hover)] disabled:opacity-50'
 const saveCta =
-  'h-9 shrink-0 rounded-full bg-[var(--color-accent)] px-3 text-[12px] font-medium text-[#04140b] shadow-[0_0_0_1px_rgba(53,176,107,0.35),0_0_20px_rgba(53,176,107,0.42)] transition hover:bg-[var(--color-accent-hover)] disabled:opacity-50'
+  'h-7 shrink-0 rounded-full bg-[var(--color-accent)] px-2.5 text-[11px] font-medium text-[#04140b] shadow-[0_0_0_1px_rgba(53,176,107,0.35),0_0_16px_rgba(53,176,107,0.4)] transition hover:bg-[var(--color-accent-hover)] disabled:opacity-50'
 const cancelCta =
-  'h-9 shrink-0 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-2.5 text-[12px] font-medium text-[var(--color-fg-secondary)] transition hover:text-[var(--color-fg)] disabled:opacity-50'
+  'h-7 shrink-0 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-2 text-[11px] font-medium text-[var(--color-fg-secondary)] transition hover:text-[var(--color-fg)] disabled:opacity-50'
 
 const MAX_DOC_BYTES = 8 * 1024 * 1024
 const ROLL_MS = 230
@@ -168,7 +168,7 @@ function Row({
 function NextButton({ disabled }: { disabled: boolean }) {
   return (
     <button type="submit" disabled={disabled} aria-label="Next" className={nextCta}>
-      <CornerDownLeft className="size-3.5" strokeWidth={2} aria-hidden />
+      <CornerDownLeft className="size-3" strokeWidth={2} aria-hidden />
     </button>
   )
 }
@@ -682,8 +682,8 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center gap-1.5 px-2 text-[12px] text-[var(--color-muted)]">
-        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+      <div className="flex h-full items-center justify-center gap-1 px-1.5 text-[11px] text-[var(--color-muted)]">
+        <Loader2 className="size-3 animate-spin" aria-hidden />
         Loading
       </div>
     )
@@ -691,13 +691,13 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   if (entities.length === 0) {
     return (
-      <div className="flex h-full items-center gap-2 px-2.5">
-        <p className="min-w-0 flex-1 text-[12px] leading-snug text-[var(--color-fg-secondary)]">
+      <div className="flex h-full items-center gap-1.5 px-2">
+        <p className="min-w-0 flex-1 text-[11px] leading-snug text-[var(--color-fg-secondary)]">
           Create a book first
         </p>
         <Button
           size="sm"
-          className="h-9 shrink-0 rounded-full px-3 text-[11px]"
+          className="h-7 shrink-0 rounded-full px-2.5 text-[10px]"
           onClick={() => void api.openMainWindow()}
         >
           Open
@@ -710,8 +710,8 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     if (s === 'save' && analyzing) {
       return (
         <Row>
-          <Loader2 className="size-3.5 shrink-0 animate-spin text-[var(--color-muted)]" />
-          <p className="min-w-0 flex-1 truncate text-[13px] leading-none text-[var(--color-muted)]">
+          <Loader2 className="size-3 shrink-0 animate-spin text-[var(--color-muted)]" />
+          <p className="min-w-0 flex-1 truncate text-[11px] leading-none text-[var(--color-muted)]">
             Analyzing…
           </p>
           <button type="button" className={cancelCta} onClick={onCancelAnalyze}>
@@ -736,7 +736,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     onClick={() => void selectEntity(e.id)}
                     title={e.name}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-1 text-[11px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[10px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -750,7 +750,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 <label className="relative flex h-full min-w-0 flex-1 items-center">
                   <span className="sr-only">More books</span>
                   <select
-                    className="ui-select h-full w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-1 text-[11px] leading-none text-[var(--color-muted)] outline-none"
+                    className="ui-select h-full w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-0.5 text-[10px] leading-none text-[var(--color-muted)] outline-none"
                     value={
                       entityId && entities.slice(3).some((e) => e.id === entityId) ? entityId : ''
                     }
@@ -788,7 +788,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     title={opt.label}
                     onClick={() => selectKind(opt.id)}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[10px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -820,7 +820,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               onChange={(e) => setAmount(e.target.value)}
               className={cn(
                 ctlH,
-                'min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[20px] font-semibold leading-none tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50',
+                'min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[17px] font-semibold leading-none tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50',
               )}
               required
               disabled={formDisabled}
@@ -910,13 +910,13 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'save':
         return (
           <form
-            className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1.5 overflow-hidden"
+            className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1 overflow-hidden"
             onSubmit={(e) => void onSubmit(e)}
           >
-            <div className="flex h-9 min-w-0 items-center gap-1.5">
+            <div className="flex h-7 min-w-0 items-center gap-1">
               {kind === 'bill' ? (
                 <div
-                  className="inline-flex h-9 shrink-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5"
+                  className="inline-flex h-7 shrink-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5"
                   role="radiogroup"
                   aria-label="Bill status"
                 >
@@ -936,7 +936,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                         disabled={formDisabled}
                         onClick={() => setBillStatus(opt.id)}
                         className={cn(
-                          'flex h-full items-center rounded-full px-2 text-[10px] font-medium leading-none transition disabled:opacity-50',
+                          'flex h-full items-center rounded-full px-1.5 text-[9px] font-medium leading-none transition disabled:opacity-50',
                           active
                             ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                             : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -954,22 +954,22 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 placeholder="Memo"
                 className={cn(
                   pillField,
-                  'min-w-0 text-[12px] leading-none outline-none placeholder:text-[var(--color-muted)] disabled:opacity-50',
+                  'min-w-0 text-[11px] leading-none outline-none placeholder:text-[var(--color-muted)] disabled:opacity-50',
                 )}
                 disabled={formDisabled}
                 aria-label="Memo"
               />
               {pendingDoc ? (
-                <span className="max-w-[4.5rem] shrink-0 truncate text-[10px] leading-none text-[var(--color-muted)]">
+                <span className="max-w-[3.75rem] shrink-0 truncate text-[9px] leading-none text-[var(--color-muted)]">
                   {pendingDocLabel(pendingDoc)}
                 </span>
               ) : (
-                <span className="shrink-0 text-[10px] leading-none text-[var(--color-muted)]/75">
+                <span className="shrink-0 text-[9px] leading-none text-[var(--color-muted)]/75">
                   Drop
                 </span>
               )}
             </div>
-            <div className="flex h-9 min-w-0 items-center justify-end gap-1.5">
+            <div className="flex h-7 min-w-0 items-center justify-end gap-1">
               <button
                 type="button"
                 className={cancelCta}
@@ -987,7 +987,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 className={cn(saveCta, 'inline-flex items-center justify-center gap-1')}
               >
                 {busy && !analyzing ? (
-                  <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                  <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
                 ) : null}
                 Save
               </button>
@@ -1015,7 +1015,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative flex h-full min-w-0 items-center gap-1 overflow-hidden px-2 transition-colors duration-150',
+        'relative flex h-full min-w-0 items-center gap-1 overflow-hidden px-1.5 transition-colors duration-150',
         dragOver && 'bg-[var(--color-accent-soft)]/35',
       )}
     >
@@ -1024,7 +1024,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         onClick={goBack}
         disabled={!showBack}
         className={cn(
-          'inline-flex h-9 w-5 shrink-0 items-center justify-center rounded-full text-[16px] leading-none transition',
+          'inline-flex h-7 w-4 shrink-0 items-center justify-center rounded-full text-[14px] leading-none transition',
           showBack
             ? 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]'
             : 'pointer-events-none text-transparent',
@@ -1089,11 +1089,11 @@ function AccountSelect({
 }) {
   return (
     <label className={cn(pillField, 'cursor-pointer')}>
-      <span className="shrink-0 text-[10px] font-medium leading-none text-[var(--color-muted)]">
+      <span className="shrink-0 text-[9px] font-medium leading-none text-[var(--color-muted)]">
         {prefix}
       </span>
       <select
-        className="ui-select h-7 min-w-0 flex-1 cursor-pointer border-0 bg-transparent p-0 text-[12px] leading-none text-[var(--color-fg)] outline-none disabled:opacity-50"
+        className="ui-select h-6 min-w-0 flex-1 cursor-pointer border-0 bg-transparent p-0 text-[11px] leading-none text-[var(--color-fg)] outline-none disabled:opacity-50"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
