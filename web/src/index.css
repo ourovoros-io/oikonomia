@@ -158,15 +158,15 @@ html:not(.dark) {
   }
 }
 
-/* Spotlight companion: soft appear + light content crossfades. */
+/* Quick Add: Perplexity-like appear toward tray + horizontal step rolls. */
 @keyframes qa-appear {
   from {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(0.96) translateY(6px);
   }
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: scale(1) translateY(0);
   }
 }
 @keyframes qa-crossfade {
@@ -177,22 +177,65 @@ html:not(.dark) {
     opacity: 1;
   }
 }
-@keyframes qa-roles-fade {
+@keyframes qa-enter-from-right {
   from {
-    opacity: 0;
+    transform: translateX(108%);
+    opacity: 0.35;
   }
   to {
+    transform: translateX(0);
     opacity: 1;
+  }
+}
+@keyframes qa-enter-from-left {
+  from {
+    transform: translateX(-108%);
+    opacity: 0.35;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+@keyframes qa-exit-to-left {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-108%);
+    opacity: 0.2;
+  }
+}
+@keyframes qa-exit-to-right {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(108%);
+    opacity: 0.2;
   }
 }
 
 .qa-appear {
-  animation: qa-appear 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: qa-appear 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
   transform-origin: top center;
 }
 .qa-crossfade {
   animation: qa-crossfade 140ms ease-out both;
 }
-.qa-roles-fade {
-  animation: qa-roles-fade 140ms ease-out both;
+.qa-enter-right {
+  animation: qa-enter-from-right 230ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.qa-enter-left {
+  animation: qa-enter-from-left 230ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.qa-exit-left {
+  animation: qa-exit-to-left 220ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  pointer-events: none;
+}
+.qa-exit-right {
+  animation: qa-exit-to-right 220ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  pointer-events: none;
 }

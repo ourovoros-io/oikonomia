@@ -2,22 +2,21 @@ import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { isTauri } from './tauri'
 
 /**
- * Spotlight companion window sizes (locked product constants).
+ * Dense one-row stepper companion sizes (locked product constants).
  *
- * - Idle 600×168 — amount hero + account rows + memo always visible
- * - Review 600×280 — document analyze / confirm
- * - Compact 600×72 — locked / success / no-books one-liners
+ * - Stepper 300×64 — vault / type / amount / accounts rolls
+ * - Compact 300×56 — locked / success / no-books one-liners
+ * - Save 300×96 — confirm row (bill status, memo, drop, Save/Cancel)
  * - Tray-anchored position only (native `tray.rs`; FE never recenters)
  * - Opaque soft card chrome (no backdrop-blur in v1)
  *
- * Idle default must stay in sync with `QUICK_ADD_*` in
- * `apps/desktop/src-tauri/src/tray.rs` (native create size before FE resize).
+ * Native create size must stay in sync with `QUICK_ADD_*` in
+ * `apps/desktop/src-tauri/src/tray.rs` (default before FE resize).
  */
-export const QUICK_ADD_WIDTH = 600
-export const QUICK_ADD_IDLE_HEIGHT = 168
-export const QUICK_ADD_REVIEW_HEIGHT = 280
-/** Locked / success / no-books one-liner chrome. */
-export const QUICK_ADD_COMPACT_HEIGHT = 72
+export const QUICK_ADD_WIDTH = 300
+export const QUICK_ADD_STEPPER_HEIGHT = 64
+export const QUICK_ADD_COMPACT_HEIGHT = 56
+export const QUICK_ADD_SAVE_HEIGHT = 96
 
 /** Resize the tray quick-add panel (no-op outside Tauri). */
 export async function setQuickAddHeight(height: number): Promise<void> {

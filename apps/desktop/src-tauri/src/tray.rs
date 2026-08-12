@@ -7,14 +7,14 @@ use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 
 const QUICK_ADD_LABEL: &str = "quick-add";
-/// Match web Spotlight tray (`QUICK_ADD_*` in quickAddWindow.ts).
-const QUICK_ADD_WIDTH: f64 = 600.0;
-const QUICK_ADD_IDLE_HEIGHT: f64 = 168.0;
+/// Match web one-row rolling tray (`QUICK_ADD_*` in quickAddWindow.ts).
+const QUICK_ADD_WIDTH: f64 = 300.0;
+const QUICK_ADD_STEPPER_HEIGHT: f64 = 64.0;
 /// Kept in lockstep with web; FE resizes to these at runtime.
 #[expect(dead_code)]
-const QUICK_ADD_REVIEW_HEIGHT: f64 = 280.0;
+const QUICK_ADD_COMPACT_HEIGHT: f64 = 56.0;
 #[expect(dead_code)]
-const QUICK_ADD_COMPACT_HEIGHT: f64 = 72.0;
+const QUICK_ADD_SAVE_HEIGHT: f64 = 96.0;
 
 /// Bring the main window back after it was hidden to the tray.
 pub fn show_main_window(app: &AppHandle) {
@@ -50,7 +50,7 @@ fn ensure_quick_add_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindo
     let window =
         WebviewWindowBuilder::new(app, QUICK_ADD_LABEL, WebviewUrl::App("index.html".into()))
             .title("Quick add")
-            .inner_size(QUICK_ADD_WIDTH, QUICK_ADD_IDLE_HEIGHT)
+            .inner_size(QUICK_ADD_WIDTH, QUICK_ADD_STEPPER_HEIGHT)
             .resizable(false)
             .maximizable(false)
             .minimizable(false)
@@ -65,7 +65,7 @@ fn ensure_quick_add_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindo
     Ok(window)
 }
 
-/// Position near tray click (Spotlight tray-anchored). Fallback: top-left of primary work area.
+/// Position near tray click (one-row tray-anchored). Fallback: top-left of primary work area.
 fn position_quick_add(window: &tauri::WebviewWindow, click: Option<PhysicalPosition<f64>>) {
     let Ok(outer) = window.outer_size() else {
         return;
