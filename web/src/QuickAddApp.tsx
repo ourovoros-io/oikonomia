@@ -12,8 +12,8 @@ import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
 
 /**
- * Opaque soft Spotlight card — tray-anchored OS window paints this chrome.
- * Transparent outer so rounded corners show; card fill stays solid surface.
+ * Opaque soft Spotlight card (v1: solid surface fill, no backdrop-blur).
+ * OS window stays tray-anchored; outer transparent only for rounded corners.
  */
 function Shell({
   children,
@@ -25,7 +25,7 @@ function Shell({
   appear?: boolean
 }) {
   return (
-    <div className="box-border flex h-full w-full items-stretch p-0">
+    <div className="box-border flex h-full w-full items-stretch bg-transparent p-0">
       <div
         className={cn(
           'flex h-full w-full flex-col overflow-hidden',

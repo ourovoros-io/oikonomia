@@ -73,9 +73,9 @@ const KIND_OPTIONS: Array<{
   { id: 'transfer', label: 'Transfer', short: 'Move' },
 ]
 
-/** Soft Spotlight row control — no bordered pill grid. */
+/** Soft Spotlight row control — no bordered pill grid; denser for 168 idle. */
 const rowCtl =
-  'h-8 min-w-0 w-full rounded-lg border-0 bg-transparent px-2 text-[13px] text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:bg-[var(--color-surface-2)]/80 disabled:opacity-50'
+  'h-7 min-w-0 w-full rounded-md border-0 bg-transparent px-1.5 text-[13px] text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:bg-[var(--color-surface-2)] disabled:opacity-50'
 
 const MAX_DOC_BYTES = 8 * 1024 * 1024
 
@@ -590,14 +590,36 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative flex h-full min-w-0 flex-col gap-1.5 overflow-hidden px-3.5 py-3 transition-colors duration-150',
-        dragOver && 'bg-[var(--color-accent-soft)]/35',
+        'relative flex h-full min-w-0 flex-col gap-1 overflow-hidden px-3 py-2.5 transition-colors duration-150',
+        dragOver && 'bg-[var(--color-accent-soft)]/40',
       )}
     >
       {/* Hero bar: quiet kind + amount-first + currency + accent submit */}
-      <div className="flex min-h-11 shrink-0 items-center gap-2">
+      <div className="flex min-h-10 shrink-0 items-center gap-2">
+        {entities.length > 1 ? (
+          <label className="inline-flex h-7 max-w-[6.5rem] shrink-0 items-center gap-1 rounded-md bg-[var(--color-surface-2)] px-1.5">
+            <BookOpen
+              className="size-3 shrink-0 text-[var(--color-muted)]"
+              strokeWidth={1.75}
+              aria-hidden
+            />
+            <select
+              className={cn(rowCtl, 'ui-select h-7 cursor-pointer px-0.5 text-[11px] font-medium')}
+              value={entityId ?? ''}
+              disabled={formDisabled}
+              onChange={(e) => void onEntityChange(e.target.value)}
+              aria-label="Book"
+            >
+              {entities.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <KindSegment value={kind} onChange={onKindChange} disabled={formDisabled} />
-        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+        <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
           <input
             ref={amountRef}
             id="quick-add-amount"
@@ -605,7 +627,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className="h-10 min-w-0 flex-1 border-0 bg-transparent px-1 text-[23px] font-semibold tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50"
+            className="h-9 min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[22px] font-semibold tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50"
             required
             disabled={formDisabled}
             aria-label={`Amount (${ccy})`}
@@ -620,7 +642,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
           size="sm"
           busy={busy && !analyzing}
           disabled={formDisabled}
-          className="h-9 shrink-0 gap-1.5 px-3.5 text-[13px]"
+          className="h-8 shrink-0 gap-1.5 px-3 text-[13px]"
         >
           {reviewing ? (
             'Confirm & save'
@@ -633,76 +655,27 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         </Button>
       </div>
 
-      {/* Soft Spotlight result rows */}
+      {/*
+        Idle always shows account result rows + memo (never amount-only collapse).
+        Date is todayISO only — no date control in the companion.
+      */}
       <div
         key={rolesKey}
-        className="qa-roles-fade flex min-h-0 min-w-0 flex-1 flex-col gap-0.5 overflow-hidden"
+        className="qa-roles-fade flex min-h-0 min-w-0 flex-1 flex-col justify-start gap-0.5"
       >
-        {entities.length > 1 ? (
-          <ResultRow
-            icon={<BookOpen className="size-3.5" strokeWidth={1.75} aria-hidden />}
-            label="Book"
-          >
-            <select
-              className={cn(rowCtl, 'ui-select cursor-pointer')}
-              value={entityId ?? ''}
-              disabled={formDisabled}
-              onChange={(e) => void onEntityChange(e.target.value)}
-              aria-label="Book"
-            >
-              {entities.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
-          </ResultRow>
-        ) : null}
-
-        {kind === 'bill' ? (
-          <ResultRow
-            icon={<FileText className="size-3.5" strokeWidth={1.75} aria-hidden />}
-            label="Status"
-          >
-            <div
-              className="inline-flex h-7 items-center gap-0.5 rounded-md bg-[var(--color-surface-2)]/70 p-0.5"
-              role="radiogroup"
-              aria-label="Bill status"
-            >
-              {(
-                [
-                  { id: 'unpaid', label: 'Due' },
-                  { id: 'paid', label: 'Paid' },
-                ] as const
-              ).map((opt) => {
-                const active = billStatus === opt.id
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    disabled={formDisabled}
-                    onClick={() => setBillStatus(opt.id)}
-                    className={cn(
-                      'h-full rounded px-2.5 text-[12px] font-medium transition disabled:opacity-50',
-                      active
-                        ? 'bg-[var(--color-surface-elevated)] text-[var(--color-fg)]'
-                        : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                )
-              })}
-            </div>
-          </ResultRow>
-        ) : null}
-
         {(kind === 'expense' || kind === 'bill') && (
           <ResultRow
             icon={<Receipt className="size-3.5" strokeWidth={1.75} aria-hidden />}
             label="Category"
+            trailing={
+              kind === 'bill' ? (
+                <BillStatusToggle
+                  value={billStatus}
+                  onChange={setBillStatus}
+                  disabled={formDisabled}
+                />
+              ) : null
+            }
           >
             <AccountSelect
               value={categoryId}
@@ -794,7 +767,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Optional note"
-            className={cn(rowCtl, 'shadow-none ring-0 focus:ring-0')}
+            className={cn(rowCtl, 'shadow-none ring-0 focus:border-0 focus:ring-0')}
             disabled={formDisabled}
             aria-label="Memo"
           />
@@ -857,7 +830,7 @@ function KindSegment({
 }) {
   return (
     <div
-      className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-lg bg-[var(--color-surface-2)]/90 p-0.5"
+      className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-md bg-[var(--color-surface-2)] p-0.5"
       role="radiogroup"
       aria-label="Entry type"
     >
@@ -873,7 +846,7 @@ function KindSegment({
             title={opt.label}
             onClick={() => onChange(opt.id)}
             className={cn(
-              'inline-flex h-full min-w-[2.15rem] items-center justify-center rounded-md px-1.5 text-[11px] font-medium transition disabled:opacity-50',
+              'inline-flex h-full min-w-[2.1rem] items-center justify-center rounded px-1.5 text-[11px] font-medium transition disabled:opacity-50',
               active
                 ? 'bg-[var(--color-surface-elevated)] text-[var(--color-fg)]'
                 : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -887,24 +860,72 @@ function KindSegment({
   )
 }
 
+function BillStatusToggle({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: BillStatusTray
+  onChange: (v: BillStatusTray) => void
+  disabled: boolean
+}) {
+  return (
+    <div
+      className="inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md bg-[var(--color-canvas)] p-0.5"
+      role="radiogroup"
+      aria-label="Bill status"
+    >
+      {(
+        [
+          { id: 'unpaid', label: 'Due' },
+          { id: 'paid', label: 'Paid' },
+        ] as const
+      ).map((opt) => {
+        const active = value === opt.id
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={disabled}
+            onClick={() => onChange(opt.id)}
+            className={cn(
+              'h-full rounded px-2 text-[11px] font-medium transition disabled:opacity-50',
+              active
+                ? 'bg-[var(--color-surface-elevated)] text-[var(--color-fg)]'
+                : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
+            )}
+          >
+            {opt.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function ResultRow({
   icon,
   label,
   children,
+  trailing,
 }: {
   icon: ReactNode
   label: string
   children: ReactNode
+  trailing?: ReactNode
 }) {
   return (
-    <div className="flex min-h-8 shrink-0 items-center gap-2 rounded-lg px-1.5 transition-colors hover:bg-[var(--color-surface-2)]/55">
+    <div className="flex min-h-7 shrink-0 items-center gap-1.5 rounded-md px-1 transition-colors hover:bg-[var(--color-surface-2)]">
       <span className="inline-flex size-3.5 shrink-0 items-center justify-center text-[var(--color-muted)]">
         {icon}
       </span>
-      <span className="w-14 shrink-0 text-[11px] font-medium tracking-wide text-[var(--color-muted)]">
+      <span className="w-12 shrink-0 text-[11px] font-medium tracking-wide text-[var(--color-muted)]">
         {label}
       </span>
       <div className="min-w-0 flex-1">{children}</div>
+      {trailing}
     </div>
   )
 }
