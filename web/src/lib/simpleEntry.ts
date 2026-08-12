@@ -111,3 +111,28 @@ export function buildSimpleEntryInput(args: {
     to_account_id: args.toId || null,
   }
 }
+
+/** Validate role-account selections for the tray quick-add form. */
+export function validateTrayAccounts(args: {
+  kind: EntryKind
+  billStatus: BillStatusTray
+  categoryId: string
+  walletId: string
+  payableId: string
+  fromId: string
+  toId: string
+}): string | null {
+  const { kind, billStatus, categoryId, walletId, payableId, fromId, toId } = args
+  if ((kind === 'expense' || kind === 'income') && (!categoryId || !walletId)) {
+    return 'Pick accounts'
+  }
+  if (kind === 'bill') {
+    if (!categoryId) return 'Pick category'
+    if (billStatus === 'paid' && !walletId) return 'Pick wallet'
+    if (billStatus === 'unpaid' && !payableId) return 'Pick payable'
+  }
+  if (kind === 'transfer') {
+    if (!fromId || !toId || fromId === toId) return 'Pick different accounts'
+  }
+  return null
+}

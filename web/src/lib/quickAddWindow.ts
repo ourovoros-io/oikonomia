@@ -1,10 +1,16 @@
 import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
 import { isTauri } from './tauri'
 
-/** Compact rolling tray — two visual rows, Vercel-tight chrome. */
-export const QUICK_ADD_WIDTH = 440
-export const QUICK_ADD_IDLE_HEIGHT = 100
-export const QUICK_ADD_REVIEW_HEIGHT = 100
+/**
+ * Spotlight companion window sizes.
+ * Idle default must stay in sync with `QUICK_ADD_*` in
+ * `apps/desktop/src-tauri/src/tray.rs` (native create size before FE resize).
+ */
+export const QUICK_ADD_WIDTH = 600
+export const QUICK_ADD_IDLE_HEIGHT = 168
+export const QUICK_ADD_REVIEW_HEIGHT = 280
+/** Locked / success one-liner chrome. */
+export const QUICK_ADD_COMPACT_HEIGHT = 72
 
 /** Resize the tray quick-add panel (no-op outside Tauri). */
 export async function setQuickAddHeight(height: number): Promise<void> {
