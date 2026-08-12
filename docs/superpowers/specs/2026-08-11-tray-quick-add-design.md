@@ -131,7 +131,7 @@ One-row horizontal stepper (opaque soft card). Current step exits left; next
 enters from the right. Back `‹` from step 2+. Esc hides. Date is `todayISO`
 only — no date control.
 
-1. **Vault** — pick book (skipped when a single entity exists).
+1. **Book** — pick book (skipped when a single entity exists).
 2. **Type** — Out / In / Bill / Move → expense / income / bill / transfer;
    selecting advances.
 3. **Amount** — 22–24px tabular input, autofocus; Enter advances.

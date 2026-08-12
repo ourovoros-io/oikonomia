@@ -8,7 +8,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from 'react'
-import { Loader2 } from 'lucide-react'
+import { CornerDownLeft, Loader2 } from 'lucide-react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import {
   api,
@@ -73,7 +73,7 @@ const ctl =
   'h-8 min-w-0 w-full rounded-md border-0 bg-[var(--color-surface-2)] px-2 text-[13px] text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:bg-[var(--color-canvas)] disabled:opacity-50'
 
 const MAX_DOC_BYTES = 8 * 1024 * 1024
-const ROLL_MS = 170
+const ROLL_MS = 230
 
 function roleIdsFromLast(last: LastRoleAccounts): string[] {
   return [
@@ -302,7 +302,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             : ents[0]!.id
         setEntityId(preferred)
         await loadAccountsFor(preferred, 'expense', uiPrefs)
-        // Vault step only when multiple books exist.
+        // Book step only when multiple books exist.
         setStep(ents.length > 1 ? 'entity' : 'kind')
       } catch (err) {
         if (!cancelled) setError((err as CommandError).message)
@@ -710,7 +710,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         return (
           <Row>
             <span className="shrink-0 text-[12px] font-medium text-[var(--color-muted)]">
-              Vault
+              Book
             </span>
             {entities.slice(0, 3).map((e) => {
               const active = e.id === entityId
@@ -813,10 +813,12 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             <Button
               type="submit"
               size="sm"
+              variant="ghost"
               disabled={formDisabled}
-              className="h-8 shrink-0 rounded-full px-3 text-[12px]"
+              aria-label="Next"
+              className="h-8 w-8 shrink-0 rounded-full px-0 text-[var(--color-muted)] hover:text-[var(--color-fg)]"
             >
-              Next
+              <CornerDownLeft className="size-3.5" strokeWidth={1.75} aria-hidden />
             </Button>
           </form>
         )
@@ -837,6 +839,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 options={expenseAccounts}
                 disabled={formDisabled}
                 label="Category"
+                prefix="Cat"
               />
             )}
             {kind === 'income' && (
@@ -846,6 +849,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 options={incomeAccounts}
                 disabled={formDisabled}
                 label="Income"
+                prefix="Inc"
               />
             )}
             {(kind === 'expense' ||
@@ -857,6 +861,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 options={kind === 'income' ? assetWallets : walletAccounts}
                 disabled={formDisabled}
                 label="Wallet"
+                prefix="Wallet"
               />
             )}
             {kind === 'bill' && billStatus === 'unpaid' && (
@@ -866,6 +871,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 options={payableAccounts}
                 disabled={formDisabled}
                 label="Payable"
+                prefix="Payable"
               />
             )}
             {kind === 'transfer' && (
@@ -876,6 +882,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                   options={transferAccounts}
                   disabled={formDisabled}
                   label="From"
+                  prefix="From"
                 />
                 <AccountSelect
                   value={toId}
@@ -883,16 +890,19 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                   options={transferAccounts}
                   disabled={formDisabled}
                   label="To"
+                  prefix="To"
                 />
               </>
             )}
             <Button
               type="submit"
               size="sm"
+              variant="ghost"
               disabled={formDisabled}
-              className="h-8 shrink-0 rounded-full px-3 text-[12px]"
+              aria-label="Next"
+              className="h-8 w-8 shrink-0 rounded-full px-0 text-[var(--color-muted)] hover:text-[var(--color-fg)]"
             >
-              Next
+              <CornerDownLeft className="size-3.5" strokeWidth={1.75} aria-hidden />
             </Button>
           </form>
         )
@@ -928,7 +938,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                         className={cn(
                           'h-full rounded px-2 text-[11px] font-medium transition disabled:opacity-50',
                           active
-                            ? 'bg-[var(--color-surface-elevated)] text-[var(--color-fg)]'
+                            ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)]'
                             : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
                         )}
                       >
@@ -1065,18 +1075,26 @@ function AccountSelect({
   options,
   disabled,
   label,
+  prefix,
 }: {
   value: string
   onChange: (v: string) => void
   options: AccountLike[]
   disabled: boolean
   label: string
+  /** Quiet in-row role marker — visible, not sr-only. */
+  prefix: string
 }) {
   return (
-    <label className="relative min-w-0 flex-1">
-      <span className="sr-only">{label}</span>
+    <label className="flex min-w-0 flex-1 items-center gap-1.5">
+      <span className="shrink-0 text-[11px] font-medium text-[var(--color-muted)]">
+        {prefix}
+        <span className="mx-0.5 text-[var(--color-muted)]/55" aria-hidden>
+          ·
+        </span>
+      </span>
       <select
-        className={cn(ctl, 'ui-select h-8 cursor-pointer')}
+        className={cn(ctl, 'ui-select h-8 min-w-0 flex-1 cursor-pointer')}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}

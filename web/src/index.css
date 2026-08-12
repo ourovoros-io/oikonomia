@@ -226,16 +226,16 @@ html:not(.dark) {
   animation: qa-crossfade 140ms ease-out both;
 }
 .qa-enter-right {
-  animation: qa-enter-from-right 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: qa-enter-from-right 230ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .qa-enter-left {
-  animation: qa-enter-from-left 170ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: qa-enter-from-left 230ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .qa-exit-left {
-  animation: qa-exit-to-left 160ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: qa-exit-to-left 220ms cubic-bezier(0.4, 0, 0.2, 1) both;
   pointer-events: none;
 }
 .qa-exit-right {
-  animation: qa-exit-to-right 160ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation: qa-exit-to-right 220ms cubic-bezier(0.4, 0, 0.2, 1) both;
   pointer-events: none;
 }
