@@ -67,20 +67,20 @@ const KIND_OPTIONS: Array<{
   { id: 'transfer', label: 'Transfer' },
 ]
 
-/** BUI v2 chrome tokens — full-pill tracks/fields, hairline borders, h-9 row. */
+/** BUI v2 chrome for 300-wide tray — full-pill, hairline, tight h-9 rhythm. */
 const ctlH = 'h-9'
 const pillTrack =
-  'flex h-10 w-full min-w-0 items-center gap-0.5 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-1'
+  'flex h-10 w-full min-w-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5'
 const pillField =
-  'flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-3'
+  'flex h-9 min-w-0 flex-1 items-center gap-1 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-2'
 const pillChipQuiet =
-  'inline-flex h-7 shrink-0 items-center rounded-full border border-[var(--color-border-strong)]/70 px-2.5 text-[11px] font-medium tracking-wide text-[var(--color-muted)]'
+  'inline-flex h-7 shrink-0 items-center rounded-full border border-[var(--color-border-strong)]/70 px-1.5 text-[10px] font-medium tracking-wide text-[var(--color-muted)]'
 const nextCta =
   'inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-[#04140b] shadow-sm transition hover:bg-[var(--color-accent-hover)] disabled:opacity-50'
 const saveCta =
-  'h-9 shrink-0 rounded-full bg-[var(--color-accent)] px-4 text-[12px] font-medium text-[#04140b] shadow-[0_0_0_1px_rgba(53,176,107,0.35),0_0_20px_rgba(53,176,107,0.42)] transition hover:bg-[var(--color-accent-hover)] disabled:opacity-50'
+  'h-9 shrink-0 rounded-full bg-[var(--color-accent)] px-3 text-[12px] font-medium text-[#04140b] shadow-[0_0_0_1px_rgba(53,176,107,0.35),0_0_20px_rgba(53,176,107,0.42)] transition hover:bg-[var(--color-accent-hover)] disabled:opacity-50'
 const cancelCta =
-  'h-9 shrink-0 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-3.5 text-[12px] font-medium text-[var(--color-fg-secondary)] transition hover:text-[var(--color-fg)] disabled:opacity-50'
+  'h-9 shrink-0 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-2.5 text-[12px] font-medium text-[var(--color-fg-secondary)] transition hover:text-[var(--color-fg)] disabled:opacity-50'
 
 const MAX_DOC_BYTES = 8 * 1024 * 1024
 const ROLL_MS = 230
@@ -139,7 +139,7 @@ function pendingDocLabel(source: PendingDocSource): string {
   return parts[parts.length - 1] || source.path
 }
 
-/** Single 80px row — items share one vertical centerline + even gap rhythm. */
+/** Single 80px row — shared vertical centerline + tight even gap for 300-wide. */
 function Row({
   children,
   className,
@@ -156,7 +156,7 @@ function Row({
       role={role}
       aria-label={ariaLabel}
       className={cn(
-        'flex h-full min-w-0 items-center gap-2 overflow-hidden',
+        'flex h-full min-w-0 items-center gap-1.5 overflow-hidden',
         className,
       )}
     >
@@ -682,7 +682,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center gap-2 px-3 text-[13px] text-[var(--color-muted)]">
+      <div className="flex h-full items-center justify-center gap-1.5 px-2 text-[12px] text-[var(--color-muted)]">
         <Loader2 className="size-3.5 animate-spin" aria-hidden />
         Loading
       </div>
@@ -691,16 +691,16 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   if (entities.length === 0) {
     return (
-      <div className="flex h-full items-center gap-3 px-4">
-        <p className="min-w-0 flex-1 text-[13px] leading-none text-[var(--color-fg-secondary)]">
-          Create a book in Oikonomia first
+      <div className="flex h-full items-center gap-2 px-2.5">
+        <p className="min-w-0 flex-1 text-[12px] leading-snug text-[var(--color-fg-secondary)]">
+          Create a book first
         </p>
         <Button
           size="sm"
-          className="h-9 shrink-0 rounded-full px-4 text-[12px]"
+          className="h-9 shrink-0 rounded-full px-3 text-[11px]"
           onClick={() => void api.openMainWindow()}
         >
-          Open Oikonomia
+          Open
         </Button>
       </div>
     )
@@ -736,7 +736,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     onClick={() => void selectEntity(e.id)}
                     title={e.name}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-2 text-[13px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-1 text-[11px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -750,7 +750,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 <label className="relative flex h-full min-w-0 flex-1 items-center">
                   <span className="sr-only">More books</span>
                   <select
-                    className="ui-select h-full w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-2 text-[13px] leading-none text-[var(--color-muted)] outline-none"
+                    className="ui-select h-full w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-1 text-[11px] leading-none text-[var(--color-muted)] outline-none"
                     value={
                       entityId && entities.slice(3).some((e) => e.id === entityId) ? entityId : ''
                     }
@@ -787,7 +787,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     disabled={formDisabled}
                     onClick={() => selectKind(opt.id)}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 items-center justify-center rounded-full px-2 text-[13px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center rounded-full px-0.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -804,7 +804,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'amount':
         return (
           <form
-            className="flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden"
+            className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
             onSubmit={(e) => {
               e.preventDefault()
               advanceFromAmount()
@@ -819,7 +819,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               onChange={(e) => setAmount(e.target.value)}
               className={cn(
                 ctlH,
-                'min-w-0 flex-1 border-0 bg-transparent px-1 text-[23px] font-semibold leading-none tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50',
+                'min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[20px] font-semibold leading-none tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50',
               )}
               required
               disabled={formDisabled}
@@ -834,7 +834,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'accounts':
         return (
           <form
-            className="flex h-full min-w-0 flex-1 items-center gap-2 overflow-hidden"
+            className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
             onSubmit={(e) => {
               e.preventDefault()
               advanceFromAccounts()
@@ -909,13 +909,13 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'save':
         return (
           <form
-            className="flex h-full min-w-0 flex-1 flex-col justify-center gap-2 overflow-hidden"
+            className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1.5 overflow-hidden"
             onSubmit={(e) => void onSubmit(e)}
           >
-            <div className="flex h-9 min-w-0 items-center gap-2">
+            <div className="flex h-9 min-w-0 items-center gap-1.5">
               {kind === 'bill' ? (
                 <div
-                  className="inline-flex h-9 shrink-0 items-center gap-0.5 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-1"
+                  className="inline-flex h-9 shrink-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5"
                   role="radiogroup"
                   aria-label="Bill status"
                 >
@@ -935,7 +935,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                         disabled={formDisabled}
                         onClick={() => setBillStatus(opt.id)}
                         className={cn(
-                          'flex h-7 items-center rounded-full px-3 text-[11px] font-medium leading-none transition disabled:opacity-50',
+                          'flex h-full items-center rounded-full px-2 text-[10px] font-medium leading-none transition disabled:opacity-50',
                           active
                             ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                             : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -950,25 +950,25 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Optional memo"
+                placeholder="Memo"
                 className={cn(
                   pillField,
-                  'text-[13px] leading-none outline-none placeholder:text-[var(--color-muted)] disabled:opacity-50',
+                  'min-w-0 text-[12px] leading-none outline-none placeholder:text-[var(--color-muted)] disabled:opacity-50',
                 )}
                 disabled={formDisabled}
                 aria-label="Memo"
               />
               {pendingDoc ? (
-                <span className="max-w-[7rem] shrink-0 truncate text-[11px] leading-none text-[var(--color-muted)]">
+                <span className="max-w-[4.5rem] shrink-0 truncate text-[10px] leading-none text-[var(--color-muted)]">
                   {pendingDocLabel(pendingDoc)}
                 </span>
               ) : (
-                <span className="shrink-0 text-[11px] leading-none text-[var(--color-muted)]/75">
-                  Drop receipt
+                <span className="shrink-0 text-[10px] leading-none text-[var(--color-muted)]/75">
+                  Drop
                 </span>
               )}
             </div>
-            <div className="flex h-9 min-w-0 items-center justify-end gap-2">
+            <div className="flex h-9 min-w-0 items-center justify-end gap-1.5">
               <button
                 type="button"
                 className={cancelCta}
@@ -983,7 +983,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               <button
                 type="submit"
                 disabled={formDisabled || (busy && !analyzing)}
-                className={cn(saveCta, 'inline-flex items-center justify-center gap-1.5')}
+                className={cn(saveCta, 'inline-flex items-center justify-center gap-1')}
               >
                 {busy && !analyzing ? (
                   <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
@@ -1014,7 +1014,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative flex h-full min-w-0 items-center gap-2 overflow-hidden px-3 transition-colors duration-150',
+        'relative flex h-full min-w-0 items-center gap-1 overflow-hidden px-2 transition-colors duration-150',
         dragOver && 'bg-[var(--color-accent-soft)]/35',
       )}
     >
@@ -1023,7 +1023,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         onClick={goBack}
         disabled={!showBack}
         className={cn(
-          'inline-flex h-9 w-7 shrink-0 items-center justify-center rounded-full text-[18px] leading-none transition',
+          'inline-flex h-9 w-5 shrink-0 items-center justify-center rounded-full text-[16px] leading-none transition',
           showBack
             ? 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]'
             : 'pointer-events-none text-transparent',
@@ -1060,7 +1060,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
       {error ? (
         <p
-          className="pointer-events-none absolute inset-x-12 bottom-1 truncate text-center text-[11px] leading-none text-[var(--color-danger)]"
+          className="pointer-events-none absolute inset-x-6 bottom-1 truncate text-center text-[10px] leading-none text-[var(--color-danger)]"
           role="alert"
         >
           {error}
@@ -1088,11 +1088,11 @@ function AccountSelect({
 }) {
   return (
     <label className={cn(pillField, 'cursor-pointer')}>
-      <span className="shrink-0 text-[11px] font-medium leading-none text-[var(--color-muted)]">
+      <span className="shrink-0 text-[10px] font-medium leading-none text-[var(--color-muted)]">
         {prefix}
       </span>
       <select
-        className="ui-select h-7 min-w-0 flex-1 cursor-pointer border-0 bg-transparent p-0 text-[13px] leading-none text-[var(--color-fg)] outline-none disabled:opacity-50"
+        className="ui-select h-7 min-w-0 flex-1 cursor-pointer border-0 bg-transparent p-0 text-[12px] leading-none text-[var(--color-fg)] outline-none disabled:opacity-50"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}

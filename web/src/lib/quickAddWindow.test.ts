@@ -12,8 +12,8 @@ import {
  * QUICK_ADD_STEPPER_HEIGHT / QUICK_ADD_WIDTH).
  */
 describe('quickAddWindow sizes', () => {
-  test('stepper matches one-row companion (600x80)', () => {
-    expect(QUICK_ADD_WIDTH).toBe(600)
+  test('stepper matches one-row companion (300x80)', () => {
+    expect(QUICK_ADD_WIDTH).toBe(300)
     expect(QUICK_ADD_STEPPER_HEIGHT).toBe(80)
   })
 
@@ -28,8 +28,9 @@ describe('quickAddWindow sizes', () => {
     expect(QUICK_ADD_COMPACT_HEIGHT).toBeLessThan(QUICK_ADD_STEPPER_HEIGHT)
   })
 
-  test('legacy spotlight companion heights are retired', () => {
-    // 168 idle / 280 review belonged to the rejected stacked companion.
+  test('legacy spotlight companion widths/heights are retired', () => {
+    // 600-wide / 168 idle / 280 review belonged to the rejected stacked companion.
+    expect(QUICK_ADD_WIDTH).not.toBe(600)
     expect(QUICK_ADD_STEPPER_HEIGHT).not.toBe(168)
     expect(QUICK_ADD_SAVE_HEIGHT).not.toBe(280)
   })
