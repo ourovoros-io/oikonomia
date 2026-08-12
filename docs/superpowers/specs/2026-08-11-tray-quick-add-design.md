@@ -9,18 +9,21 @@ Repo: `oikonomia`
 Oikonomia already lives in the system tray (close main window = hide; tray
 menu Open / Quit). Capturing a receipt or a one-off expense still requires
 opening the full app and navigating Transactions. The owner wants a **small
-always-available Spotlight companion** on tray left-click: tray-anchored opaque
-card, amount-first manual entry, drag-drop for documents with a brief review
-expansion, without losing Open full app and Quit.
+always-available tray companion** on tray left-click: tray-anchored opaque
+card with a **rolling one-row horizontal stepper**, plus document drop that
+stays one-row through analyze then Save — without losing Open full app and
+Quit.
 
 ## Goals
 
 - Left-click tray → show a **dedicated small window** for fast posting.
 - Right-click tray → native menu: **Open Oikonomia**, **Quit Oikonomia**.
 - Support all simple kinds: expense, income, bill, transfer.
-- Manual entry stays compact (Spotlight idle: kind segment, large amount, soft
-  account/memo rows).
-- File drop expands the panel for analyzer review, then posts.
+- Manual entry stays one dense row that rolls through Vault → Type → Amount
+  → Accounts (stepper **600×80**).
+- Quiet extras (memo, Due/Paid, drop) live on the Save step at **600×120**.
+- Document analyze is one-row **Analyzing…** at stepper height, then Save
+  prefilled — not a tall review expansion.
 - Match existing Stripe-dark (and light) tokens; no new brand language.
 - All ledger and OCR rules stay in **`oikonomia-core`** / existing Tauri
   commands; UI only maps form state to those APIs.
@@ -44,8 +47,8 @@ expansion, without losing Open full app and Quit.
 | Right-click | Menu: Open Oikonomia, Quit Oikonomia |
 | Entry kinds | Expense, income, bill, transfer |
 | Vault locked | Panel opens with short message + **Open Oikonomia**; no password field |
-| Document drop | Panel expands for review / edit / confirm |
-| Entity | Last-used entity; tiny switcher only when multiple entities exist |
+| Document drop | One-row **Analyzing…** at stepper height, then Save prefilled (edit / confirm there) |
+| Entity | Last-used entity; Vault step in the stepper when multiple entities exist |
 | After save | ~1s “Saved”, then hide window and reset form |
 | Bill default | Unpaid by default; small unpaid/paid toggle when kind = Bill |
 | Memo | Optional; quiet on Save step only |
@@ -92,8 +95,8 @@ expansion, without losing Open full app and Quit.
     - Locked / success / no-books (compact): **600×72**
   - Not bound by main’s `minWidth` 960 / `minHeight` 640.
   - Always-on-top while visible; resizable false; undecorated transparent native
-    shell so the webview can draw an **opaque** soft Spotlight card (rounded
-    corners; no backdrop-blur in v1).
+    shell so the webview can draw an **opaque soft card** for the one-row
+    stepper (rounded corners; no backdrop-blur in v1).
   - Position **tray-anchored** (near tray click); FE never recenters. Fallback:
     stable corner of the primary work area when bounds are unavailable.
   - CloseRequested: prevent destroy if reusing; **hide** instead (same spirit
@@ -214,7 +217,7 @@ encrypted vault.
 | Main already visible | Quick-add is independent; posts succeed either way |
 | Main hidden to tray | Unchanged; quick-add does not force main open except Open action |
 | Auto-lock mid-edit | Draft cleared; locked UI |
-| Analyzer failure | Error in expanded panel; user can dismiss or retry |
+| Analyzer failure | Error on the one-row / Save surface; user can dismiss or retry |
 | Invalid accounts / zero amount | Validation error; panel stays open |
 | Multi-monitor / no tray rect | Fallback position (cursor or primary work area) |
 | Theme | Respect stored theme (same `getTheme` / document class as main) |
@@ -229,9 +232,9 @@ encrypted vault.
   unlocked vs success render smoke if lightweight tests exist; otherwise
   build + lint.
 - **Manual / desktop:** left-click opens panel; right-click menu Open/Quit;
-  post expense/income/bill/transfer; drop PDF → expand → confirm; Escape /
-  blur hide; lock while open; multi-entity switcher; success then reopen
-  shows clean form with last-used defaults.
+  post expense/income/bill/transfer; drop PDF → Analyzing… → Save prefilled
+  → confirm; Escape / blur hide; lock while open; multi-entity Vault step;
+  success then reopen shows clean form with last-used defaults.
 
 ## Implementation sketch (for the plan, not binding order)
 
@@ -240,7 +243,7 @@ encrypted vault.
    capabilities for the new window if required.
 3. Frontend mount branch + QuickAddApp shell (locked / unlocked / success).
 4. Idle form + post via `entry_post_simple`; last-used defaults.
-5. Drop + expand review + document post path.
+5. Drop → one-row Analyzing… → Save prefilled + document post path.
 6. Polish: position, focus, theme, activity heartbeat, Escape.
 
 ## Open implementation details (resolve in plan, not product)
