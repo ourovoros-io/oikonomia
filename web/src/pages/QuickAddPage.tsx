@@ -980,15 +980,16 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               >
                 Cancel
               </button>
-              <Button
+              <button
                 type="submit"
-                size="sm"
-                busy={busy && !analyzing}
-                disabled={formDisabled}
-                className={saveCta}
+                disabled={formDisabled || (busy && !analyzing)}
+                className={cn(saveCta, 'inline-flex items-center justify-center gap-1.5')}
               >
+                {busy && !analyzing ? (
+                  <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+                ) : null}
                 Save
-              </Button>
+              </button>
             </div>
           </form>
         )
