@@ -48,9 +48,9 @@ expansion, without losing Open full app and Quit.
 | Entity | Last-used entity; tiny switcher only when multiple entities exist |
 | After save | ~1s “Saved”, then hide window and reset form |
 | Bill default | Unpaid by default; small unpaid/paid toggle when kind = Bill |
-| Memo | Optional description on a soft result row (always visible at idle) |
-| Window sizes | Locked: idle **600×168**, document review **600×280**, locked / success **600×72** (width always 600) |
-| Chrome | Opaque soft Spotlight card (no backdrop-blur); tray-anchored position |
+| Memo | Optional; quiet on Save step only |
+| Window sizes | Locked: stepper **600×80**, save **600×120**, locked / success / no-books **600×72** (width always 600) |
+| Chrome | Opaque soft card (no backdrop-blur); tray-anchored; one-row horizontal stepper |
 | On vault lock while open | Clear draft; switch to locked UI immediately |
 
 ## Architecture
@@ -87,9 +87,9 @@ expansion, without losing Open full app and Quit.
   - Locked sizes (logical px; stay in lockstep with `QUICK_ADD_*` in
     `apps/desktop/src-tauri/src/tray.rs` and `web/src/lib/quickAddWindow.ts`):
     - Width **600**
-    - Idle (default unlocked): **600×168**
-    - Document review: **600×280**
-    - Locked / success (compact): **600×72**
+    - Stepper (default unlocked rolls): **600×80**
+    - Save / confirm: **600×120**
+    - Locked / success / no-books (compact): **600×72**
   - Not bound by main’s `minWidth` 960 / `minHeight` 640.
   - Always-on-top while visible; resizable false; undecorated transparent native
     shell so the webview can draw an **opaque** soft Spotlight card (rounded
@@ -125,17 +125,17 @@ expansion, without losing Open full app and Quit.
 
 ## UI states
 
-### Unlocked, idle (default) — 600×168
+### Unlocked, stepper (default) — 600×80
 
-Amount-first Spotlight companion (opaque soft card):
+One-row horizontal stepper (opaque soft card). Current step exits left; next
+enters from the right. Back `‹` from step 2+. Esc hides. Date is `todayISO`
+only — no date control.
 
-1. **Hero well:** kind segment (Out / In / Bill / Move) · large amount + currency ·
-   **Add** (Enter). Date is `todayISO` only — no date control in the companion.
-2. **Soft result rows:** role account(s) for the kind; optional memo; entity
-   (“Book”) meta only when `entities.length > 1`. Idle always shows account rows
-   + memo (no amount-only collapse).
-3. **Drop:** entire panel is a drop target; subtle “Drop receipt” affordance
-   only — not a large empty zone.
+1. **Vault** — pick book (skipped when a single entity exists).
+2. **Type** — Out / In / Bill / Move → expense / income / bill / transfer;
+   selecting advances.
+3. **Amount** — 22–24px tabular input, autofocus; Enter advances.
+4. **Accounts** — role pickers on one row for the kind.
 
 Account roles per kind (same as full simple form / Rust):
 
@@ -143,21 +143,14 @@ Account roles per kind (same as full simple form / Rust):
 |------|--------|
 | Expense | category (expense), wallet (asset/liability pay-from) |
 | Income | category (income), wallet (deposit-to) |
-| Bill | category (expense), payable (AP); bill_status unpaid/paid toggle (default unpaid) |
+| Bill | category (expense), payable (AP) or wallet when paid |
 | Transfer | from account, to account |
 
-Focus amount on open when unlocked.
+### Save / confirm — 600×120
 
-### Document review (after drop) — 600×280
-
-Panel height grows to show:
-
-- Filename; analyzing spinner or error.
-- Prefilled amount, description, suggested accounts (existing
-  `DocumentSuggestion` shape). Entry date stays `todayISO` (no date control).
-- User may edit amount, memo, and accounts.
-- **Confirm & save** posts via document-aware entry command; **Cancel**
-  clears pending document and returns to idle height.
+Quiet extras live only here: Bill Due/Paid, optional memo, Drop receipt,
+accent **Save**, **Cancel** (hide + reset). Analyze shows one-row
+**Analyzing…** at stepper height, then Save prefilled (document-aware post).
 
 ### Locked — 600×72
 
@@ -252,10 +245,11 @@ encrypted vault.
 
 ## Open implementation details (resolve in plan, not product)
 
-- **Resolved — window sizes:** locked at idle **600×168**, document review
-  **600×280**, locked / success **600×72** (width **600**). Constants must stay
-  in lockstep between `tray.rs` `QUICK_ADD_*` and web `QUICK_ADD_*`
-  (`quickAddWindow.ts`). Idle always shows account rows + memo.
+- **Resolved — window sizes:** locked at stepper **600×80**, save
+  **600×120**, locked / success / no-books **600×72** (width **600**).
+  Constants must stay in lockstep between `tray.rs` `QUICK_ADD_*` and web
+  `QUICK_ADD_*` (`quickAddWindow.ts`). One-row rolling stepper; quiet extras
+  only on Save.
 - Whether blur-to-dismiss is enabled on all platforms or only when not
   interacting with a native file dialog.
 - Whether `pay_existing` bill flow appears in tray (product: unpaid/paid
