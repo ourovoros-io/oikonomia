@@ -564,7 +564,11 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
         <p className="min-w-0 flex-1 text-[13px] text-[var(--color-muted)]">
           Create a book in Oikonomia first
         </p>
-        <Button size="sm" className="h-8 shrink-0" onClick={() => void api.openMainWindow()}>
+        <Button
+          size="sm"
+          className="h-8 shrink-0 rounded-full px-3.5"
+          onClick={() => void api.openMainWindow()}
+        >
           Open Oikonomia
         </Button>
       </div>
@@ -590,21 +594,73 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative flex h-full min-w-0 flex-col gap-1 overflow-hidden px-3 py-2.5 transition-colors duration-150',
+        'relative flex h-full min-w-0 flex-col gap-1 overflow-hidden px-3 py-2 transition-colors duration-150',
         dragOver && 'bg-[var(--color-accent-soft)]/40',
       )}
     >
-      {/* Hero bar: quiet kind + amount-first + currency + accent submit */}
-      <div className="flex min-h-10 shrink-0 items-center gap-2">
+      {/* Unified Spotlight search well: kind · amount · Add */}
+      <div className="flex shrink-0 flex-col gap-1.5">
+        <div className="flex min-h-9 items-center gap-1.5 rounded-xl bg-[var(--color-canvas)] px-1.5 py-1">
+          <KindSegment value={kind} onChange={onKindChange} disabled={formDisabled} />
+          <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+            <input
+              ref={amountRef}
+              id="quick-add-amount"
+              inputMode="decimal"
+              placeholder="0.00"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="h-8 min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[22px] font-semibold tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50"
+              required
+              disabled={formDisabled}
+              aria-label={`Amount (${ccy})`}
+              autoComplete="off"
+            />
+            <span className="shrink-0 text-[12px] font-medium tracking-wide text-[var(--color-muted)]">
+              {ccy}
+            </span>
+          </div>
+          <Button
+            type="submit"
+            size="sm"
+            busy={busy && !analyzing}
+            disabled={formDisabled}
+            className="h-7 shrink-0 gap-1 rounded-full px-3 text-[12px]"
+          >
+            {reviewing ? (
+              'Confirm & save'
+            ) : (
+              <>
+                Add
+                <CornerDownLeft className="size-3 opacity-80" strokeWidth={2} aria-hidden />
+              </>
+            )}
+          </Button>
+        </div>
+        <div className="h-px shrink-0 bg-[var(--color-border)]" aria-hidden />
+      </div>
+
+      {/*
+        Idle always shows account result rows + memo (never amount-only collapse).
+        Date is todayISO only — no date control in the companion.
+        Multi-book entity lives in result meta so the amount well stays uncrowded.
+      */}
+      <div
+        key={rolesKey}
+        className="qa-roles-fade flex min-h-0 min-w-0 flex-1 flex-col justify-start gap-0.5"
+      >
         {entities.length > 1 ? (
-          <label className="inline-flex h-7 max-w-[6.5rem] shrink-0 items-center gap-1 rounded-md bg-[var(--color-surface-2)] px-1.5">
+          <div className="flex h-6 shrink-0 items-center gap-1.5 px-1">
             <BookOpen
               className="size-3 shrink-0 text-[var(--color-muted)]"
               strokeWidth={1.75}
               aria-hidden
             />
+            <span className="w-12 shrink-0 text-[11px] font-medium tracking-wide text-[var(--color-muted)]">
+              Book
+            </span>
             <select
-              className={cn(rowCtl, 'ui-select h-7 cursor-pointer px-0.5 text-[11px] font-medium')}
+              className={cn(rowCtl, 'ui-select h-6 cursor-pointer text-[12px]')}
               value={entityId ?? ''}
               disabled={formDisabled}
               onChange={(e) => void onEntityChange(e.target.value)}
@@ -616,53 +672,9 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
                 </option>
               ))}
             </select>
-          </label>
+          </div>
         ) : null}
-        <KindSegment value={kind} onChange={onKindChange} disabled={formDisabled} />
-        <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-          <input
-            ref={amountRef}
-            id="quick-add-amount"
-            inputMode="decimal"
-            placeholder="0.00"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="h-9 min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[22px] font-semibold tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50"
-            required
-            disabled={formDisabled}
-            aria-label={`Amount (${ccy})`}
-            autoComplete="off"
-          />
-          <span className="shrink-0 text-[12px] font-medium tracking-wide text-[var(--color-muted)]">
-            {ccy}
-          </span>
-        </div>
-        <Button
-          type="submit"
-          size="sm"
-          busy={busy && !analyzing}
-          disabled={formDisabled}
-          className="h-8 shrink-0 gap-1.5 px-3 text-[13px]"
-        >
-          {reviewing ? (
-            'Confirm & save'
-          ) : (
-            <>
-              Add
-              <CornerDownLeft className="size-3 opacity-80" strokeWidth={2} aria-hidden />
-            </>
-          )}
-        </Button>
-      </div>
 
-      {/*
-        Idle always shows account result rows + memo (never amount-only collapse).
-        Date is todayISO only — no date control in the companion.
-      */}
-      <div
-        key={rolesKey}
-        className="qa-roles-fade flex min-h-0 min-w-0 flex-1 flex-col justify-start gap-0.5"
-      >
         {(kind === 'expense' || kind === 'bill') && (
           <ResultRow
             icon={<Receipt className="size-3.5" strokeWidth={1.75} aria-hidden />}
@@ -799,7 +811,7 @@ export function QuickAddPage({ onPosted, onBusyChange }: Props) {
             type="button"
             size="sm"
             variant="ghost"
-            className="h-7 shrink-0 px-2 text-[12px]"
+            className="h-7 shrink-0 rounded-full px-2.5 text-[12px]"
             onClick={onCancelReview}
             disabled={busy && !analyzing}
           >
@@ -830,7 +842,7 @@ function KindSegment({
 }) {
   return (
     <div
-      className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-md bg-[var(--color-surface-2)] p-0.5"
+      className="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-lg p-0.5"
       role="radiogroup"
       aria-label="Entry type"
     >
@@ -846,9 +858,9 @@ function KindSegment({
             title={opt.label}
             onClick={() => onChange(opt.id)}
             className={cn(
-              'inline-flex h-full min-w-[2.1rem] items-center justify-center rounded px-1.5 text-[11px] font-medium transition disabled:opacity-50',
+              'inline-flex h-full min-w-[2.1rem] items-center justify-center rounded-md px-1.5 text-[11px] font-medium transition disabled:opacity-50',
               active
-                ? 'bg-[var(--color-surface-elevated)] text-[var(--color-fg)]'
+                ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)]'
                 : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
             )}
           >

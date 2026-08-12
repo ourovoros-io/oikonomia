@@ -29,7 +29,7 @@ function Shell({
       <div
         className={cn(
           'flex h-full w-full flex-col overflow-hidden',
-          'rounded-[14px] border border-[var(--color-border-strong)]/55',
+          'rounded-2xl border border-[var(--color-border-strong)]/55',
           'bg-[var(--color-surface)] text-[var(--color-fg)]',
           'shadow-[0_0_0_1px_rgba(255,255,255,0.03)_inset,0_12px_40px_rgba(0,0,0,0.5),0_2px_10px_rgba(0,0,0,0.28)]',
           appear && 'qa-appear',
@@ -203,7 +203,7 @@ export default function QuickAddApp() {
     (info: QuickAddPosted) => {
       busyRef.current = false
       const money = formatMoney(info.amountMinor, info.currency)
-      setSuccessLabel(`Saved ${money}`)
+      setSuccessLabel(`Saved ${info.kind} ${money}`)
       setPhase('success')
       void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       if (successTimerRef.current) clearTimeout(successTimerRef.current)
@@ -232,7 +232,11 @@ export default function QuickAddApp() {
           <p className="min-w-0 flex-1 text-[13px] text-[var(--color-fg-secondary)]">
             Vault is locked
           </p>
-          <Button size="sm" className="h-8 shrink-0" onClick={() => void api.openMainWindow()}>
+          <Button
+            size="sm"
+            className="h-8 shrink-0 rounded-full px-3.5"
+            onClick={() => void api.openMainWindow()}
+          >
             Open Oikonomia
           </Button>
         </div>
