@@ -78,6 +78,7 @@ pub fn run() {
             commands::vault_change_password,
             commands::vault_backup,
             commands::vault_restore,
+            commands::vault_pick_backup,
             commands::app_info,
             commands::entity_list,
             commands::entity_create,

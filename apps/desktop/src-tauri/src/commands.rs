@@ -187,7 +187,7 @@ pub async fn vault_backup(
 ///
 /// `path` is the archive to unpack. When `path` is `None`, a native open
 /// dialog chooses the file (the in-app path). A concrete path is accepted so
-/// a caller that already picked via the same dialog can pass it through.
+/// a caller that already picked via [`vault_pick_backup`] can pass it through.
 /// Decrypt is not performed; the owner unlocks afterwards with the existing
 /// master password.
 ///
@@ -208,25 +208,10 @@ pub async fn vault_restore(
     let archive = if let Some(chosen) = path {
         std::path::PathBuf::from(chosen)
     } else {
-        let picked = await_blocking(tauri::async_runtime::spawn_blocking({
-            let app = app.clone();
-            move || {
-                use tauri_plugin_dialog::DialogExt;
-                Ok(app
-                    .dialog()
-                    .file()
-                    .add_filter("Oikonomia backup", &[BACKUP_EXTENSION])
-                    .blocking_pick_file())
-            }
-        }))
-        .await?;
-        let Some(file_path) = picked else {
+        let Some(picked) = pick_backup_path(&app).await? else {
             return Ok(None);
         };
-        file_path.into_path().map_err(|e| CommandError {
-            code: "io".into(),
-            message: format!("invalid backup location: {e}"),
-        })?
+        picked
     };
 
     with_vault_blocking(&state, move |vault| {
@@ -235,6 +220,42 @@ pub async fn vault_restore(
     })
     .await
     .map(Some)
+}
+
+/// Choose a backup file via a native open dialog.
+///
+/// Read-only: does not restore, lock, or write vault files. Returns the chosen
+/// path, or `None` if the user cancelled. The frontend confirms, then calls
+/// [`vault_restore`] with that path and `replace`.
+#[tauri::command]
+pub async fn vault_pick_backup(app: tauri::AppHandle) -> CommandResult<Option<String>> {
+    let Some(path) = pick_backup_path(&app).await? else {
+        return Ok(None);
+    };
+    Ok(Some(path.display().to_string()))
+}
+
+/// Native Open dialog for a `.oikonomia-backup` file. `None` if cancelled.
+async fn pick_backup_path(app: &tauri::AppHandle) -> CommandResult<Option<std::path::PathBuf>> {
+    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        move || {
+            use tauri_plugin_dialog::DialogExt;
+            Ok(app
+                .dialog()
+                .file()
+                .add_filter("Oikonomia backup", &[BACKUP_EXTENSION])
+                .blocking_pick_file())
+        }
+    }))
+    .await?;
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    file_path.into_path().map(Some).map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("invalid backup location: {e}"),
+    })
 }
 
 /// Close any open `SQLCipher` connection and notify the UI when the session
