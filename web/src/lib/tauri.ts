@@ -73,6 +73,13 @@ export async function vaultChangePassword(
   }
 }
 
+export async function vaultTouch(): Promise<void> {
+  if (!isTauri()) {
+    return
+  }
+  await invoke<void>('vault_touch')
+}
+
 export async function vaultLock(): Promise<VaultStatus> {
   if (!isTauri()) {
     return 'locked'

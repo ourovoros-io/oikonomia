@@ -26,7 +26,7 @@ use oikonomia_core::vault::{Vault, VaultStatus};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Emitter, State};
 
 /// Static app metadata for the about screen / diagnostics.
 #[derive(Debug, Serialize)]
@@ -46,13 +46,19 @@ pub struct AppInfo {
 #[tauri::command]
 pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
     let vault = state.vault();
-    state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
         let guard = crate::state::lock_vault(&vault);
         Ok(guard.status())
     }))
     .await
+}
+
+/// Heartbeat for the idle watchdog. Separate from [`vault_status`] so lock
+/// probes (quick-add focus) do not extend the idle window.
+#[tauri::command]
+pub fn vault_touch(state: State<'_, AppState>) {
+    state.touch();
 }
 
 /// Create a new encrypted vault with the master password.
@@ -115,12 +121,17 @@ pub async fn vault_change_password(
 
 /// Lock the vault for this session.
 #[tauri::command]
-pub async fn vault_lock(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
-    with_vault_blocking(&state, move |vault| {
+pub async fn vault_lock(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<VaultStatus> {
+    let status = with_vault_blocking(&state, move |vault| {
         vault.lock();
         Ok(vault.status())
     })
-    .await
+    .await?;
+    let _ = app.emit("vault-locked", ());
+    Ok(status)
 }
 
 /// Return build identity (no secrets).
@@ -403,11 +414,19 @@ pub async fn entry_post_simple_with_document_path(
     path: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
+    let path_buf = std::path::PathBuf::from(&path);
+    if !state.drop_path_allowed(&path_buf) {
+        return Err(CommandError {
+            code: "validation".into(),
+            message: "file path was not dropped into the app".into(),
+        });
+    }
+
     let vault = state.vault();
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let path = std::path::PathBuf::from(&path);
+        let path = path_buf;
         let filename = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -571,9 +590,11 @@ pub fn settings_set_theme(
     state: State<'_, AppState>,
     theme: Theme,
 ) -> CommandResult<()> {
+    let _guard = state.lock_prefs();
     let mut prefs = load_ui_prefs(state.data_dir());
     prefs.theme = theme;
     save_ui_prefs(state.data_dir(), &prefs)?;
+    drop(_guard);
     app.set_theme(Some(native_theme(theme)));
     Ok(())
 }
@@ -592,6 +613,7 @@ pub fn settings_remember_quick_add(
     kind: String,
     accounts: LastRoleAccounts,
 ) -> CommandResult<()> {
+    let _guard = state.lock_prefs();
     let mut prefs = load_ui_prefs(state.data_dir());
     prefs.last_entity_id = Some(entity_id.clone());
     prefs
@@ -672,12 +694,20 @@ pub async fn document_analyze_path(
     entity_id: EntityId,
     path: String,
 ) -> CommandResult<DocumentSuggestion> {
+    let path_buf = std::path::PathBuf::from(&path);
+    if !state.drop_path_allowed(&path_buf) {
+        return Err(CommandError {
+            code: "validation".into(),
+            message: "file path was not dropped into the app".into(),
+        });
+    }
+
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let path = std::path::PathBuf::from(&path);
+        let path = path_buf;
         let filename = path
             .file_name()
             .and_then(|s| s.to_str())

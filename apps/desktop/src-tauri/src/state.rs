@@ -1,6 +1,7 @@
 //! Process-wide application state: vault handle, OCR model paths, idle lock.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -20,6 +21,10 @@ pub struct AppState {
     last_activity: Arc<AtomicU64>,
     /// Cached idle timeout for the watchdog; the persisted value lives in the vault.
     lock_timeout_secs: Arc<AtomicU64>,
+    /// Canonical paths from native drag-drop; path IPC commands accept only these.
+    allowed_drop_paths: Mutex<HashSet<PathBuf>>,
+    /// Serializes plaintext prefs load-mutate-save.
+    prefs_lock: Mutex<()>,
 }
 
 impl AppState {
@@ -37,6 +42,8 @@ impl AppState {
             ocr_model_dir,
             last_activity: Arc::new(AtomicU64::new(now_secs())),
             lock_timeout_secs: Arc::new(AtomicU64::new(DEFAULT_LOCK_TIMEOUT_SECS)),
+            allowed_drop_paths: Mutex::new(HashSet::new()),
+            prefs_lock: Mutex::new(()),
         })
     }
 
@@ -58,6 +65,48 @@ impl AppState {
         Arc::clone(&self.vault)
     }
 
+    /// Hold across a prefs load-mutate-save so theme and tray last-used cannot clobber.
+    pub fn lock_prefs(&self) -> std::sync::MutexGuard<'_, ()> {
+        match self.prefs_lock.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                self.prefs_lock.clear_poison();
+                poisoned.into_inner()
+            }
+        }
+    }
+
+    /// Record native drop paths for later path-based analyze/post commands.
+    pub fn remember_drop_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        let mut allowed = match self.allowed_drop_paths.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                self.allowed_drop_paths.clear_poison();
+                poisoned.into_inner()
+            }
+        };
+        for path in paths {
+            if let Ok(canonical) = path.canonicalize() {
+                allowed.insert(canonical);
+            }
+        }
+    }
+
+    /// True when `path` was recorded from a native drop (after canonicalize).
+    #[must_use]
+    pub fn drop_path_allowed(&self, path: &Path) -> bool {
+        let Ok(canonical) = path.canonicalize() else {
+            return false;
+        };
+        match self.allowed_drop_paths.lock() {
+            Ok(set) => set.contains(&canonical),
+            Err(poisoned) => {
+                self.allowed_drop_paths.clear_poison();
+                poisoned.into_inner().contains(&canonical)
+            }
+        }
+    }
+
     /// Record command activity for the idle watchdog.
     pub fn touch(&self) {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
@@ -77,6 +126,14 @@ impl AppState {
             Arc::clone(&self.lock_timeout_secs),
         )
     }
+}
+
+/// Compare a candidate path against a set of already-canonicalized drop paths.
+#[must_use]
+pub fn path_is_allowed_set(allowed: &HashSet<PathBuf>, path: &Path) -> bool {
+    path.canonicalize()
+        .ok()
+        .is_some_and(|canonical| allowed.contains(&canonical))
 }
 
 fn now_secs() -> u64 {
@@ -171,4 +228,32 @@ pub fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
     }
 
     dev
+}
+
+#[cfg(test)]
+mod tests {
+    use super::path_is_allowed_set;
+    use std::collections::HashSet;
+    use std::fs;
+
+    #[test]
+    fn path_is_allowed_requires_canonical_membership() {
+        let dir = std::env::temp_dir().join(format!("oiko-allow-{}", std::process::id()));
+        if fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let file = dir.join("drop.pdf");
+        if fs::write(&file, b"%PDF").is_err() {
+            return;
+        }
+        let Ok(canonical) = file.canonicalize() else {
+            return;
+        };
+        let mut allowed = HashSet::new();
+        allowed.insert(canonical);
+
+        assert!(path_is_allowed_set(&allowed, &file));
+        assert!(!path_is_allowed_set(&allowed, &dir.join("other.pdf")));
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

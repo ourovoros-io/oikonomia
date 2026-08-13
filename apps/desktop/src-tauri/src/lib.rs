@@ -71,6 +71,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::vault_status,
+            commands::vault_touch,
             commands::vault_init,
             commands::vault_unlock,
             commands::vault_lock,
@@ -125,6 +126,12 @@ pub fn run() {
 
                 if let Err(err) = window.hide() {
                     log::warn!("failed to hide window on close: {err}");
+                }
+            }
+
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                if let Some(state) = window.try_state::<AppState>() {
+                    state.remember_drop_paths(paths.iter().cloned());
                 }
             }
         })

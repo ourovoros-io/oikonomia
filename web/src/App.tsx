@@ -20,6 +20,7 @@ import {
   isTauri,
   vaultLock,
   vaultStatus,
+  vaultTouch,
   type AppInfo,
   type VaultStatus,
 } from './lib/tauri'
@@ -147,7 +148,7 @@ export default function App() {
       const now = Date.now()
       if (now - lastHeartbeat > 60_000) {
         lastHeartbeat = now
-        void vaultStatus().catch(() => undefined)
+        void vaultTouch().catch(() => undefined)
       }
     }
 
