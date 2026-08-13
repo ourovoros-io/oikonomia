@@ -3,8 +3,8 @@ import { KeyRound } from 'lucide-react'
 import { Logo } from './Logo'
 import { ConfirmDialog } from './ConfirmDialog'
 import type { VaultStatus } from '../lib/tauri'
-import { vaultInit, vaultRestore, vaultStatus, vaultUnlock, pickVaultBackup, type CommandError } from '../lib/tauri'
-import { backupCommandError, restoreArgs, restoreConfirm } from '../lib/vaultBackupUi'
+import { vaultInit, vaultRestore, vaultStatus, vaultUnlock, type CommandError } from '../lib/tauri'
+import { backupCommandError, restoreConfirm } from '../lib/vaultBackupUi'
 import { Button, ErrorBanner, Field, Input } from './ui'
 
 type Props = {
@@ -19,8 +19,6 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
-  const [restorePath, setRestorePath] = useState<string | undefined>(undefined)
-  const [restorePicking, setRestorePicking] = useState(false)
 
   const isSetup = status === 'uninitialized'
   const restorePrompt = restoreConfirm(isSetup ? 'load' : 'replace')
@@ -53,40 +51,21 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
     }
   }
 
-  async function beginRestore() {
-    if (busy || restoreBusy || restorePicking || restoreOpen) return
-    setError(null)
-    setRestorePicking(true)
-    try {
-      const picked = await pickVaultBackup()
-      if (picked.kind === 'cancelled') return
-      setRestorePath(picked.kind === 'picked' ? picked.path : undefined)
-      setRestoreOpen(true)
-    } catch (err) {
-      setError(backupCommandError(err as CommandError))
-    } finally {
-      setRestorePicking(false)
-    }
-  }
-
   async function confirmRestore() {
     setRestoreBusy(true)
     setError(null)
     try {
-      const result = await vaultRestore(restoreArgs(restorePath, restorePrompt.replace))
+      const result = await vaultRestore({ replace: restorePrompt.replace })
       if (result === null) {
         setRestoreOpen(false)
-        setRestorePath(undefined)
         return
       }
       const next = await vaultStatus()
       setRestoreOpen(false)
-      setRestorePath(undefined)
       onUnlocked(next)
     } catch (err) {
       setError(backupCommandError(err as CommandError))
       setRestoreOpen(false)
-      setRestorePath(undefined)
     } finally {
       setRestoreBusy(false)
     }
@@ -156,8 +135,8 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
         <button
           type="button"
           className="text-xs text-[var(--color-muted)] transition hover:text-[var(--color-fg-secondary)]"
-          onClick={() => void beginRestore()}
-          disabled={busy || restoreBusy || restorePicking}
+          onClick={() => setRestoreOpen(true)}
+          disabled={busy || restoreBusy}
         >
           Restore from backup
         </button>
@@ -171,10 +150,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
         danger
         busy={restoreBusy}
         onCancel={() => {
-          if (!restoreBusy) {
-            setRestoreOpen(false)
-            setRestorePath(undefined)
-          }
+          if (!restoreBusy) setRestoreOpen(false)
         }}
         onConfirm={() => void confirmRestore()}
       />

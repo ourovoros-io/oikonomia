@@ -10,13 +10,10 @@ vi.mock('../lib/tauri', () => ({
   vaultUnlock: vi.fn(),
   vaultRestore: vi.fn(),
   vaultStatus: vi.fn(),
-  pickVaultBackup: vi.fn(),
 }))
 
-import { pickVaultBackup, vaultRestore, vaultStatus } from '../lib/tauri'
+import { vaultRestore, vaultStatus } from '../lib/tauri'
 import { UnlockScreen } from './UnlockScreen'
-
-const BACKUP_PATH = '/tmp/in.oikonomia-backup'
 
 afterEach(() => {
   cleanup()
@@ -25,8 +22,6 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(vaultRestore).mockReset()
   vi.mocked(vaultStatus).mockReset()
-  vi.mocked(pickVaultBackup).mockReset()
-  vi.mocked(pickVaultBackup).mockResolvedValue({ kind: 'picked', path: BACKUP_PATH })
 })
 
 describe('UnlockScreen restore whisper', () => {
@@ -40,59 +35,54 @@ describe('UnlockScreen restore whisper', () => {
     expect(screen.getByRole('button', { name: 'Restore from backup' })).toBeTruthy()
   })
 
-  test('uninitialized: Open then Load backup then vaultRestore({ path, replace: false })', async () => {
-    vi.mocked(vaultRestore).mockResolvedValue(BACKUP_PATH)
+  test('uninitialized confirm uses Load backup then vaultRestore({ replace: false })', async () => {
+    vi.mocked(vaultRestore).mockResolvedValue('/tmp/in.oikonomia-backup')
     vi.mocked(vaultStatus).mockResolvedValue('locked')
     const onUnlocked = vi.fn()
     render(<UnlockScreen status="uninitialized" onUnlocked={onUnlocked} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'Restore from backup' }))
-    await waitFor(() => {
-      expect(pickVaultBackup).toHaveBeenCalledTimes(1)
-    })
     expect(vaultRestore).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog', { name: 'Load backup on this device?' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Load backup' })).toBeTruthy()
 
     await userEvent.click(screen.getByRole('button', { name: 'Load backup' }))
     await waitFor(() => {
-      expect(vaultRestore).toHaveBeenCalledWith({ path: BACKUP_PATH, replace: false })
+      expect(vaultRestore).toHaveBeenCalledWith({ replace: false })
     })
+    expect(vi.mocked(vaultRestore).mock.calls[0]?.[0]).not.toHaveProperty('path')
     expect(vaultStatus).toHaveBeenCalledTimes(1)
     expect(onUnlocked).toHaveBeenCalledWith('locked')
   })
 
-  test('locked: Open then Replace vault then vaultRestore({ path, replace: true })', async () => {
-    vi.mocked(vaultRestore).mockResolvedValue(BACKUP_PATH)
+  test('locked confirm uses Replace vault then vaultRestore({ replace: true })', async () => {
+    vi.mocked(vaultRestore).mockResolvedValue('/tmp/in.oikonomia-backup')
     vi.mocked(vaultStatus).mockResolvedValue('locked')
     const onUnlocked = vi.fn()
     render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'Restore from backup' }))
-    await waitFor(() => {
-      expect(pickVaultBackup).toHaveBeenCalledTimes(1)
-    })
     expect(vaultRestore).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog', { name: 'Replace local vault?' })).toBeTruthy()
 
     await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
     await waitFor(() => {
-      expect(vaultRestore).toHaveBeenCalledWith({ path: BACKUP_PATH, replace: true })
+      expect(vaultRestore).toHaveBeenCalledWith({ replace: true })
     })
+    expect(vi.mocked(vaultRestore).mock.calls[0]?.[0]).not.toHaveProperty('path')
     expect(onUnlocked).toHaveBeenCalledWith('locked')
   })
 
-  test('cancelled picker does not change status', async () => {
-    vi.mocked(pickVaultBackup).mockResolvedValue({ kind: 'cancelled' })
+  test('cancelled restore (null) does not change status', async () => {
+    vi.mocked(vaultRestore).mockResolvedValue(null)
     const onUnlocked = vi.fn()
     render(<UnlockScreen status="uninitialized" onUnlocked={onUnlocked} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'Restore from backup' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Load backup' }))
     await waitFor(() => {
-      expect(pickVaultBackup).toHaveBeenCalledTimes(1)
+      expect(vaultRestore).toHaveBeenCalledWith({ replace: false })
     })
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(vaultRestore).not.toHaveBeenCalled()
     expect(vaultStatus).not.toHaveBeenCalled()
     expect(onUnlocked).not.toHaveBeenCalled()
   })

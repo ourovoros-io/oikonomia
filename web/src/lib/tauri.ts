@@ -1,5 +1,4 @@
 import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
 
 export type VaultStatus = 'uninitialized' | 'locked' | 'unlocked'
 
@@ -12,11 +11,6 @@ export type CommandError = {
   code: string
   message: string
 }
-
-const BACKUP_FILTER = {
-  name: 'Oikonomia backup',
-  extensions: ['oikonomia-backup'],
-} as const
 
 /** True when running inside the Tauri webview (not a plain browser tab). */
 export function isTauri(): boolean {
@@ -31,16 +25,6 @@ function asCommandError(err: unknown): CommandError {
     code: 'unknown',
     message: err instanceof Error ? err.message : String(err),
   }
-}
-
-function asPickedPath(selected: unknown): string | null {
-  if (typeof selected === 'string' && selected.length > 0) return selected
-  if (Array.isArray(selected) && selected.length > 0) return asPickedPath(selected[0])
-  if (selected && typeof selected === 'object' && 'path' in selected) {
-    const path = (selected as { path: unknown }).path
-    if (typeof path === 'string' && path.length > 0) return path
-  }
-  return null
 }
 
 export async function vaultStatus(): Promise<VaultStatus> {
@@ -126,53 +110,16 @@ export async function vaultBackup(): Promise<string | null> {
   }
 }
 
-export type BackupPick =
-  | { kind: 'picked'; path: string }
-  | { kind: 'cancelled' }
-  | { kind: 'unavailable' }
-
 /**
- * Native Open for restore. Prefer this before ConfirmDialog, then pass `path`
- * into {@link vaultRestore}. `cancelled` means the user dismissed the picker.
- * `unavailable` (browser / plugin failure) lets the caller omit `path` so Rust
- * can still show Open as a fallback.
+ * Native Open dialog lives in Rust. Confirm in the UI first, then call with
+ * `{ replace }` only — do not pass `path`. `null` means the user cancelled.
  */
-export async function pickVaultBackup(): Promise<BackupPick> {
-  if (!isTauri()) {
-    return { kind: 'unavailable' }
-  }
-  try {
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: BACKUP_FILTER.name, extensions: [...BACKUP_FILTER.extensions] }],
-    })
-    const path = asPickedPath(selected)
-    if (path === null) return { kind: 'cancelled' }
-    return { kind: 'picked', path }
-  } catch {
-    return { kind: 'unavailable' }
-  }
-}
-
-/**
- * Restore a backup archive. Pass `path` after a successful {@link pickVaultBackup}.
- * Omit `path` only when the web picker is unavailable. `null` means the user
- * cancelled a Rust-side Open fallback.
- */
-export async function vaultRestore(opts: {
-  path?: string
-  replace: boolean
-}): Promise<string | null> {
+export async function vaultRestore(opts: { replace: boolean }): Promise<string | null> {
   if (!isTauri()) {
     throw asCommandError(new Error('Vault commands require the desktop app'))
   }
   try {
-    const payload: { replace: boolean; path?: string } = { replace: opts.replace }
-    if (opts.path !== undefined) {
-      payload.path = opts.path
-    }
-    return await invoke<string | null>('vault_restore', payload)
+    return await invoke<string | null>('vault_restore', { replace: opts.replace })
   } catch (err) {
     throw asCommandError(err)
   }

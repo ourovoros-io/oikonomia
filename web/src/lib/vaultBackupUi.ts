@@ -64,13 +64,6 @@ export function restoreConfirm(kind: RestoreConfirmKind): {
   }
 }
 
-export function restoreArgs(
-  path: string | undefined,
-  replace: boolean,
-): { path?: string; replace: boolean } {
-  return path === undefined ? { replace } : { path, replace }
-}
-
 export function backupCommandError(err: CommandError): string {
   switch (err.code) {
     case 'vault_uninitialized':
