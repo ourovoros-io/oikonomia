@@ -214,10 +214,7 @@ fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
     // A recognized biller with a known service (telecom etc.) is a bill to
     // pay even without the utility markers above.
     if let Some((_, Some(_))) = super::brands::known_brand(lower) {
-        return (
-            EntryKindSuggestion::Bill,
-            unpaid || lower.contains("εξόφληση"),
-        );
+        return (EntryKindSuggestion::Bill, unpaid);
     }
 
     if unpaid {
@@ -1222,6 +1219,21 @@ B                 51              25/06/2026                     400014111102934
         assert!(
             !s.bill_unpaid,
             "εμπρόθεσμο/εκκαθαριστικό/εξόφληση μέσω must not force unpaid"
+        );
+    }
+
+    #[test]
+    fn cosmote_pay_via_is_not_unpaid() {
+        let text = "\
+Cosmote λογαριασμός κινητής
+Εξόφληση μέσω τραπέζης
+Ποσό Πληρωμής 30,00 €
+";
+        let s = parse_invoice_text(text);
+        assert_eq!(s.kind, EntryKindSuggestion::Bill);
+        assert!(
+            !s.bill_unpaid,
+            "known-brand εξόφληση μέσω must not force unpaid: {s:?}"
         );
     }
 

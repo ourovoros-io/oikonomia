@@ -117,64 +117,11 @@ pub fn analyze_document_bytes(
     let mime = mime_type.to_ascii_lowercase();
     let is_image = mime.starts_with("image/");
 
-    let mut source = AnalyzeSource::None;
-    let mut model_label: Option<String> = None;
-    let mut notes_prefix = String::new();
-
-    let text = if is_image {
-        if let Some(dir) = model_dir {
-            let paths = OcrModelPaths::from_dir(dir);
-            if ocr_available(&paths) {
-                match ocr_image_bytes(&paths, data) {
-                    Ok(t) if !t.trim().is_empty() => {
-                        source = AnalyzeSource::BundledOcr;
-                        model_label = Some("ocrs-bundled".into());
-                        notes_prefix =
-                            "Read with built-in offline OCR. Review before saving.".into();
-                        Some(t)
-                    }
-                    Ok(_) => {
-                        notes_prefix =
-                            "OCR ran but found little text — fill the form manually if needed."
-                                .into();
-                        None
-                    }
-                    Err(e) => {
-                        notes_prefix = format!("OCR error: {e}. You can still enter the fields.");
-                        None
-                    }
-                }
-            } else {
-                notes_prefix =
-                    "Bundled OCR models not found. Use a text PDF or enter fields manually.".into();
-                None
-            }
-        } else {
-            notes_prefix = "OCR model path not configured.".into();
-            None
-        }
-    } else {
-        let t = extract_text(filename, &mime, data);
-        if t.is_some() {
-            source = AnalyzeSource::Heuristic;
-            notes_prefix =
-                "Parsed from document text on-device (no network). Review before saving.".into();
-        }
-        t
-    };
-
-    let text = if mime.contains("pdf") && should_ocr_pdf_images(text.as_deref()) {
-        ocr_pdf_embedded_images(
-            data,
-            model_dir,
-            &mut source,
-            &mut model_label,
-            &mut notes_prefix,
-        )
-        .or(text)
-    } else {
-        text
-    };
+    let extracted = read_document_text(filename, &mime, data, is_image, model_dir);
+    let text = extracted.text;
+    let mut source = extracted.source;
+    let model_label = extracted.model_label;
+    let notes_prefix = extracted.notes_prefix;
 
     let mut suggestion = if let Some(ref body) = text {
         if source == AnalyzeSource::None {
@@ -265,6 +212,105 @@ fn finalize_suggestion(
     }
 }
 
+struct ExtractedText {
+    text: Option<String>,
+    source: AnalyzeSource,
+    model_label: Option<String>,
+    notes_prefix: String,
+}
+
+fn read_document_text(
+    filename: &str,
+    mime: &str,
+    data: &[u8],
+    is_image: bool,
+    model_dir: Option<&Path>,
+) -> ExtractedText {
+    let mut source = AnalyzeSource::None;
+    let mut model_label = None;
+    let mut notes_prefix = String::new();
+
+    let text = if is_image {
+        ocr_plain_image(
+            data,
+            model_dir,
+            &mut source,
+            &mut model_label,
+            &mut notes_prefix,
+        )
+    } else {
+        let pdf = mime.contains("pdf") || filename.to_ascii_lowercase().ends_with(".pdf");
+        if pdf && !pdf_within_budget(data) {
+            notes_prefix =
+                "PDF exceeds the page or stream budget; enter the fields manually.".into();
+            None
+        } else {
+            let t = extract_text(filename, mime, data);
+            if t.is_some() {
+                source = AnalyzeSource::Heuristic;
+                notes_prefix =
+                    "Parsed from document text on-device (no network). Review before saving."
+                        .into();
+            }
+            if pdf && should_ocr_pdf_images(t.as_deref()) {
+                ocr_pdf_embedded_images(
+                    data,
+                    model_dir,
+                    &mut source,
+                    &mut model_label,
+                    &mut notes_prefix,
+                )
+                .or(t)
+            } else {
+                t
+            }
+        }
+    };
+
+    ExtractedText {
+        text,
+        source,
+        model_label,
+        notes_prefix,
+    }
+}
+
+fn ocr_plain_image(
+    data: &[u8],
+    model_dir: Option<&Path>,
+    source: &mut AnalyzeSource,
+    model_label: &mut Option<String>,
+    notes_prefix: &mut String,
+) -> Option<String> {
+    let Some(dir) = model_dir else {
+        *notes_prefix = "OCR model path not configured.".into();
+        return None;
+    };
+    let paths = OcrModelPaths::from_dir(dir);
+    if !ocr_available(&paths) {
+        *notes_prefix =
+            "Bundled OCR models not found. Use a text PDF or enter fields manually.".into();
+        return None;
+    }
+    match ocr_image_bytes(&paths, data) {
+        Ok(t) if !t.trim().is_empty() => {
+            *source = AnalyzeSource::BundledOcr;
+            *model_label = Some("ocrs-bundled".into());
+            *notes_prefix = "Read with built-in offline OCR. Review before saving.".into();
+            Some(t)
+        }
+        Ok(_) => {
+            *notes_prefix =
+                "OCR ran but found little text — fill the form manually if needed.".into();
+            None
+        }
+        Err(e) => {
+            *notes_prefix = format!("OCR error: {e}. You can still enter the fields.");
+            None
+        }
+    }
+}
+
 fn empty_suggestion(notes: &str) -> DocumentSuggestion {
     DocumentSuggestion {
         source: AnalyzeSource::None,
@@ -326,7 +372,7 @@ fn extract_pdf_jpeg_images(data: &[u8]) -> Vec<Vec<u8>> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for page_id in doc.get_pages().values().copied() {
+    for page_id in doc.get_pages().values().copied().take(MAX_PDF_PAGES) {
         collect_jpegs_from_page(&doc, page_id, &mut out);
         if out.len() >= 2 {
             return out;
@@ -524,6 +570,11 @@ mod tests {
         assert!(should_ocr_pdf_images(Some("abc")));
         assert!(should_ocr_pdf_images(Some("1234567")));
         assert!(!should_ocr_pdf_images(Some("12345678")));
+    }
+
+    #[test]
+    fn tiny_non_pdf_is_within_budget() {
+        assert!(pdf_within_budget(b"not a pdf"));
     }
 
     #[test]
