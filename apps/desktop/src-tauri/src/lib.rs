@@ -71,6 +71,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::vault_status,
+            commands::vault_touch,
             commands::vault_init,
             commands::vault_unlock,
             commands::vault_lock,
@@ -127,6 +128,8 @@ pub fn run() {
                     log::warn!("failed to hide window on close: {err}");
                 }
             }
+
+            record_native_drops(window, event);
         })
         .build(tauri::generate_context!())
         .expect("failed to start Oikonomia")
@@ -140,4 +143,12 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
+    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event
+        && let Some(state) = window.try_state::<AppState>()
+    {
+        state.remember_drop_paths(paths.iter().cloned());
+    }
 }

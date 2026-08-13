@@ -48,12 +48,26 @@ impl OcrModelPaths {
 
 /// True if the OCR engine can be (or already has been) loaded.
 pub fn ocr_available(paths: &OcrModelPaths) -> bool {
-    if let Ok(guard) = ENGINE.lock()
-        && guard.is_some()
-    {
+    if lock_engine().is_some() {
         return true;
     }
     paths.available()
+}
+
+fn lock_engine() -> std::sync::MutexGuard<'static, Option<OcrEngine>> {
+    recover_option_mutex(&ENGINE)
+}
+
+fn recover_option_mutex<T>(mutex: &Mutex<Option<T>>) -> std::sync::MutexGuard<'_, Option<T>> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            mutex.clear_poison();
+            let mut guard = poisoned.into_inner();
+            *guard = None;
+            guard
+        }
+    }
 }
 
 /// Ensure the global OCR engine is loaded (lazy, once).
@@ -62,9 +76,7 @@ pub fn ocr_available(paths: &OcrModelPaths) -> bool {
 ///
 /// Missing model files or engine init failure.
 pub fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
-    let mut guard = ENGINE
-        .lock()
-        .map_err(|_| Error::Analysis("OCR engine lock poisoned".into()))?;
+    let mut guard = lock_engine();
 
     if guard.is_some() {
         return Ok(());
@@ -198,13 +210,24 @@ fn run_ocr_on_rgb(paths: &OcrModelPaths, img: &RgbImage) -> Result<String> {
     let img_source = ImageSource::from_bytes(img.as_raw(), img.dimensions())
         .map_err(|e| Error::Analysis(format!("image source: {e}")))?;
 
-    let mut guard = ENGINE
-        .lock()
-        .map_err(|_| Error::Analysis("OCR engine lock poisoned".into()))?;
+    let mut guard = lock_engine();
     let engine = guard
         .as_mut()
         .ok_or_else(|| Error::Analysis("OCR engine not loaded".into()))?;
 
+    let inferred = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        infer_text(engine, img_source)
+    }));
+
+    if let Ok(result) = inferred {
+        result
+    } else {
+        *guard = None;
+        Err(Error::Analysis("OCR engine panicked".into()))
+    }
+}
+
+fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<String> {
     let ocr_input = engine
         .prepare_input(img_source)
         .map_err(|e| Error::Analysis(format!("OCR prepare: {e}")))?;
@@ -239,4 +262,26 @@ fn run_ocr_on_rgb(paths: &OcrModelPaths, img: &RgbImage) -> Result<String> {
     }
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+#[expect(clippy::panic, reason = "test poisons a local mutex on purpose")]
+mod tests {
+    use super::recover_option_mutex;
+    use std::sync::Mutex;
+
+    #[test]
+    fn recover_option_mutex_clears_poison() {
+        let mutex = Mutex::new(Some(7_i32));
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = mutex.lock();
+            panic!("poison the lock");
+        });
+        assert!(mutex.is_poisoned());
+        let guard = recover_option_mutex(&mutex);
+        assert!(guard.is_none());
+        drop(guard);
+        assert!(!mutex.is_poisoned());
+        assert!(mutex.lock().is_ok_and(|g| g.is_none()));
+    }
 }

@@ -272,6 +272,10 @@ fn list_documents_is_newest_first() {
     let listed = list_documents(conn, entity_id).expect("list");
     assert_eq!(listed[0].id, second.id, "most recent save first");
     assert_eq!(listed[1].id, first.id);
+    assert_eq!(
+        listed[0].entry_description, "Reference entry",
+        "list must carry the linked entry description"
+    );
 }
 
 #[test]
@@ -330,6 +334,20 @@ fn attach_document_rejects_missing_and_wrong_entity_entry() {
         )
         .is_err(),
         "entry from a different book must fail"
+    );
+
+    let err = save_document(
+        conn,
+        entity_a,
+        entry_b.entry.id,
+        "cross.txt",
+        "text/plain",
+        b"data",
+    )
+    .expect_err("save must not link a foreign entry");
+    assert!(
+        err.to_string().contains("another book") || err.to_string().contains("does not belong"),
+        "{err}"
     );
 }
 

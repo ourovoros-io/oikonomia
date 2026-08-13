@@ -20,6 +20,7 @@ import {
   isTauri,
   vaultLock,
   vaultStatus,
+  vaultTouch,
   type AppInfo,
   type VaultStatus,
 } from './lib/tauri'
@@ -147,7 +148,7 @@ export default function App() {
       const now = Date.now()
       if (now - lastHeartbeat > 60_000) {
         lastHeartbeat = now
-        void vaultStatus().catch(() => undefined)
+        void vaultTouch().catch(() => undefined)
       }
     }
 
@@ -300,11 +301,21 @@ export default function App() {
               </div>
             ) : null}
 
-            {active === 'dashboard' ? <DashboardPage entity={entity} /> : null}
-            {active === 'transactions' ? <TransactionsPage entity={entity} /> : null}
-            {active === 'documents' ? <DocumentsPage entity={entity} /> : null}
-            {active === 'accounts' ? <AccountsPage entity={entity} /> : null}
-            {active === 'reports' ? <ReportsPage entity={entity} /> : null}
+            {active === 'dashboard' ? (
+              <DashboardPage key={entity?.id ?? 'none'} entity={entity} />
+            ) : null}
+            {active === 'transactions' ? (
+              <TransactionsPage key={entity?.id ?? 'none'} entity={entity} />
+            ) : null}
+            {active === 'documents' ? (
+              <DocumentsPage key={entity?.id ?? 'none'} entity={entity} />
+            ) : null}
+            {active === 'accounts' ? (
+              <AccountsPage key={entity?.id ?? 'none'} entity={entity} />
+            ) : null}
+            {active === 'reports' ? (
+              <ReportsPage key={entity?.id ?? 'none'} entity={entity} />
+            ) : null}
             {active === 'settings' ? (
               <SettingsPage
                 entities={entities}

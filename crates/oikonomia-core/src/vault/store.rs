@@ -4,8 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rand::RngCore;
-use rusqlite::Connection;
-use zeroize::Zeroizing;
+use rusqlite::{Connection, OpenFlags};
 
 use super::crypto::{self, VaultKey};
 use super::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
@@ -100,14 +99,26 @@ impl Vault {
         let header = VaultHeader::new_with_salt(&salt);
         let key = crypto::derive_key(password, &header)?;
 
-        let db_path = vault_db_path(&self.data_dir);
-        let conn = open_sqlcipher(&db_path, &key)?;
-        bootstrap_schema(&conn)?;
-
         let header_path = vault_header_path(&self.data_dir);
         let header_json =
             serde_json::to_string_pretty(&header).map_err(|err| Error::Io(err.to_string()))?;
-        fs::write(&header_path, header_json).map_err(|err| Error::Io(err.to_string()))?;
+        let staged_header = header_path.with_extension("json.init");
+        fs::write(&staged_header, &header_json).map_err(|err| Error::Io(err.to_string()))?;
+        fs::rename(&staged_header, &header_path).map_err(|err| Error::Io(err.to_string()))?;
+
+        let db_path = vault_db_path(&self.data_dir);
+        let conn = match open_sqlcipher(&db_path, &key, true) {
+            Ok(conn) => conn,
+            Err(err) => {
+                discard_partial_init(&self.data_dir);
+                return Err(err);
+            }
+        };
+        if let Err(err) = bootstrap_schema(&conn) {
+            drop(conn);
+            discard_partial_init(&self.data_dir);
+            return Err(err);
+        }
 
         self.header = Some(header);
         self.conn = Some(conn);
@@ -198,36 +209,55 @@ impl Vault {
         // Verify the old password first — a typo must not lock the vault.
         let old_key = crypto::derive_key(old, &header)?;
         let db_path = vault_db_path(&self.data_dir);
-        let conn = open_sqlcipher(&db_path, &old_key)?;
+        let conn = open_sqlcipher(&db_path, &old_key, false)?;
 
         // Only now drop our own connection: its page cache would go stale
         // across the rekey below.
+        let was_unlocked = self.conn.is_some();
         self.conn = None;
 
-        let mut salt = [0u8; SALT_LEN];
-        rand::thread_rng().fill_bytes(&mut salt);
-        let new_header = VaultHeader::new_with_salt(&salt);
-        let new_key = crypto::derive_key(new, &new_header)?;
+        let result = (|| -> Result<VaultHeader> {
+            let mut salt = [0u8; SALT_LEN];
+            rand::thread_rng().fill_bytes(&mut salt);
+            let new_header = VaultHeader::new_with_salt(&salt);
+            let new_key = crypto::derive_key(new, &new_header)?;
 
-        let header_path = vault_header_path(&self.data_dir);
-        let staged_path = vault_staged_header_path(&self.data_dir);
-        let header_json =
-            serde_json::to_string_pretty(&new_header).map_err(|err| Error::Io(err.to_string()))?;
-        fs::write(&staged_path, header_json).map_err(|err| Error::Io(err.to_string()))?;
+            let header_path = vault_header_path(&self.data_dir);
+            let staged_path = vault_staged_header_path(&self.data_dir);
+            let header_json = serde_json::to_string_pretty(&new_header)
+                .map_err(|err| Error::Io(err.to_string()))?;
+            write_synced(&staged_path, header_json.as_bytes())?;
 
-        // Fold WAL pages into the main file so the rekey covers everything.
-        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
-            .map_err(|err| Error::Io(err.to_string()))?;
-        let pragma_key = Zeroizing::new(crypto::key_to_sqlcipher_pragma(&new_key));
-        conn.pragma_update(None, "rekey", pragma_key.as_str())
-            .map_err(|err| Error::Crypto(err.to_string()))?;
-        drop(conn);
+            // Fold WAL pages into the main file so the rekey covers everything.
+            let blocked: i64 = conn
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+                .map_err(|err| Error::Io(err.to_string()))?;
+            if blocked != 0 {
+                return Err(Error::Io("wal checkpoint blocked; will not rekey".into()));
+            }
+            let pragma_key = crypto::key_to_sqlcipher_pragma(&new_key);
+            conn.pragma_update(None, "rekey", pragma_key.as_str())
+                .map_err(|err| Error::Crypto(err.to_string()))?;
+            drop(conn);
 
-        fs::rename(&staged_path, &header_path).map_err(|err| Error::Io(err.to_string()))?;
+            fs::rename(&staged_path, &header_path).map_err(|err| Error::Io(err.to_string()))?;
+            Ok(new_header)
+        })();
 
-        self.header = Some(new_header);
-        self.conn = Some(open_sqlcipher(&db_path, &new_key)?);
-        Ok(())
+        match result {
+            Ok(new_header) => {
+                let new_key = crypto::derive_key(new, &new_header)?;
+                self.header = Some(new_header);
+                self.conn = Some(open_sqlcipher(&db_path, &new_key, false)?);
+                Ok(())
+            }
+            Err(err) => {
+                if was_unlocked && let Ok(restored) = open_sqlcipher(&db_path, &old_key, false) {
+                    self.conn = Some(restored);
+                }
+                Err(err)
+            }
+        }
     }
 
     /// Borrow the open connection.
@@ -262,7 +292,7 @@ fn validate_password(password: &str) -> Result<()> {
 /// is readable (i.e. the password actually matches this header).
 fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result<Connection> {
     let key = crypto::derive_key(password, header)?;
-    let conn = open_sqlcipher(db_path, &key)?;
+    let conn = open_sqlcipher(db_path, &key, false)?;
 
     conn.query_row("SELECT schema_version FROM vault_meta LIMIT 1", [], |row| {
         row.get::<_, i64>(0)
@@ -272,10 +302,27 @@ fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result
     Ok(conn)
 }
 
-fn open_sqlcipher(path: &Path, key: &VaultKey) -> Result<Connection> {
-    let conn = Connection::open(path).map_err(|err| Error::Io(err.to_string()))?;
+fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connection> {
+    if !create {
+        let meta = fs::metadata(path)
+            .map_err(|_| Error::VaultCorrupt("vault database is missing".into()))?;
+        if meta.len() == 0 {
+            return Err(Error::VaultCorrupt("vault database is empty".into()));
+        }
+    }
 
-    let pragma_key = Zeroizing::new(crypto::key_to_sqlcipher_pragma(key));
+    let flags = if create {
+        OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_URI
+    } else {
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI
+    };
+
+    let conn =
+        Connection::open_with_flags(path, flags).map_err(|err| Error::Io(err.to_string()))?;
+
+    let pragma_key = crypto::key_to_sqlcipher_pragma(key);
     // `SQLCipher` requires key before other operations.
     conn.pragma_update(None, "key", pragma_key.as_str())
         .map_err(|_| Error::InvalidPassword)?;
@@ -293,6 +340,37 @@ fn open_sqlcipher(path: &Path, key: &VaultKey) -> Result<Connection> {
         .map_err(|err| Error::Io(err.to_string()))?;
 
     Ok(conn)
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+
+    let mut file = fs::File::create(path).map_err(|err| Error::Io(err.to_string()))?;
+    file.write_all(bytes)
+        .map_err(|err| Error::Io(err.to_string()))?;
+    file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
+    if let Some(parent) = path.parent() {
+        let dir = fs::File::open(parent).map_err(|err| Error::Io(err.to_string()))?;
+        let _ = dir.sync_all();
+    }
+    Ok(())
+}
+
+fn remove_vault_db_sidecars(db_path: &Path) {
+    let _ = fs::remove_file(db_path);
+    let wal = PathBuf::from(format!("{}-wal", db_path.display()));
+    let shm = PathBuf::from(format!("{}-shm", db_path.display()));
+    let _ = fs::remove_file(wal);
+    let _ = fs::remove_file(shm);
+}
+
+/// A failed first-run must not leave a header without a database — that
+/// shape looks Locked and cannot be initialized or unlocked.
+fn discard_partial_init(data_dir: &Path) {
+    let header_path = vault_header_path(data_dir);
+    remove_vault_db_sidecars(&vault_db_path(data_dir));
+    let _ = fs::remove_file(&header_path);
+    let _ = fs::remove_file(header_path.with_extension("json.init"));
 }
 
 fn bootstrap_schema(conn: &Connection) -> Result<()> {
@@ -348,5 +426,32 @@ mod tests {
         };
         assert!(bytes.len() > 16);
         assert_ne!(&bytes[0..6], b"SQLite");
+    }
+
+    #[test]
+    fn discard_partial_init_removes_header_and_db() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+        let header = vault_header_path(dir.path());
+        let staged = header.with_extension("json.init");
+        let db = vault_db_path(dir.path());
+        if fs::write(&header, b"{}").is_err()
+            || fs::write(&staged, b"{}").is_err()
+            || fs::write(&db, b"x").is_err()
+        {
+            return;
+        }
+
+        discard_partial_init(dir.path());
+
+        assert!(!header.exists(), "header must not survive a failed init");
+        assert!(!staged.exists(), "staged init header must be removed");
+        assert!(!db.exists(), "orphan db must be removed");
+
+        let Ok(vault) = Vault::open_path(dir.path()) else {
+            return;
+        };
+        assert_eq!(vault.status(), VaultStatus::Uninitialized);
     }
 }

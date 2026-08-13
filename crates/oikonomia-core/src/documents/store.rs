@@ -48,6 +48,8 @@ pub struct DocumentMeta {
     /// Creation instant as the app-wide `unix:<seconds>` ordering key
     /// (see `now_utc_string`); not a display date — the UI formats it.
     pub created_at: String,
+    /// Linked journal entry description (for list decoration without a second query).
+    pub entry_description: String,
 }
 
 /// Max upload size (8 MiB) — keeps vault lean and model latency reasonable.
@@ -101,6 +103,13 @@ pub fn save_document(
     let mime = resolve_mime(mime_type, name);
     validate_document_file(name, &mime, data.len() as u64)?;
 
+    let entry = get_entry(conn, entry_id)?;
+    if entry.entry.entity_id != entity_id {
+        return Err(Error::Validation(
+            "document entry belongs to another book".into(),
+        ));
+    }
+
     let clash: i64 = conn
         .query_row(
             "SELECT COUNT(1) FROM documents WHERE entity_id = ?1 AND filename = ?2",
@@ -137,14 +146,22 @@ pub fn save_document(
             created,
         ],
     )
-    .map_err(|err| match err.sqlite_error_code() {
-        // Backstop: the pre-check races nothing (single-writer vault), but a
-        // constraint violation must still read as validation, not IO.
-        Some(rusqlite::ErrorCode::ConstraintViolation) => Error::Validation(format!(
-            "a document named {name} already exists in this book"
-        )),
-        _ => Error::Io(err.to_string()),
+    .map_err(|err| {
+        let text = err.to_string();
+        if matches!(
+            err.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::ConstraintViolation)
+        ) && text.contains("UNIQUE")
+        {
+            Error::Validation(format!(
+                "a document named {name} already exists in this book"
+            ))
+        } else {
+            Error::Io(text)
+        }
     })?;
+
+    let entry_description = entry.entry.description;
 
     Ok(DocumentMeta {
         id,
@@ -154,6 +171,7 @@ pub fn save_document(
         mime_type: mime,
         size_bytes,
         created_at: created,
+        entry_description,
     })
 }
 
@@ -221,10 +239,11 @@ pub fn post_simple_entry_with_document(
     Ok((view, meta))
 }
 
-type MetaColumns = (String, String, String, String, String, i64, String);
+type MetaColumns = (String, String, String, String, String, i64, String, String);
 
 fn meta_from_columns(raw: MetaColumns) -> Result<DocumentMeta> {
-    let (id_s, entity_s, entry_s, filename, mime_type, size_bytes, created_at) = raw;
+    let (id_s, entity_s, entry_s, filename, mime_type, size_bytes, created_at, entry_description) =
+        raw;
     Ok(DocumentMeta {
         id: DocumentId(parse_uuid(&id_s)?),
         entity_id: EntityId(parse_uuid(&entity_s)?),
@@ -233,6 +252,7 @@ fn meta_from_columns(raw: MetaColumns) -> Result<DocumentMeta> {
         mime_type,
         size_bytes,
         created_at,
+        entry_description,
     })
 }
 
@@ -248,10 +268,12 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
     let mut stmt = conn
         .prepare(
             "
-            SELECT id, entity_id, entry_id, filename, mime_type, size_bytes, created_at
-            FROM documents
-            WHERE entity_id = ?1
-            ORDER BY created_at DESC, rowid DESC
+            SELECT d.id, d.entity_id, d.entry_id, d.filename, d.mime_type, d.size_bytes,
+                   d.created_at, je.description
+            FROM documents d
+            JOIN journal_entries je ON je.id = d.entry_id
+            WHERE d.entity_id = ?1
+            ORDER BY d.created_at DESC, d.rowid DESC
             ",
         )
         .map_err(|err| Error::Io(err.to_string()))?;
@@ -266,6 +288,7 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
                 row.get::<_, String>(4)?,
                 row.get::<_, i64>(5)?,
                 row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
             ))
         })
         .map_err(|err| Error::Io(err.to_string()))?;
@@ -287,9 +310,11 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
     let (raw, data) = conn
         .query_row(
             "
-            SELECT id, entity_id, entry_id, filename, mime_type, size_bytes, created_at, data
-            FROM documents
-            WHERE id = ?1
+            SELECT d.id, d.entity_id, d.entry_id, d.filename, d.mime_type, d.size_bytes,
+                   d.created_at, je.description, d.data
+            FROM documents d
+            JOIN journal_entries je ON je.id = d.entry_id
+            WHERE d.id = ?1
             ",
             [id.0.to_string()],
             |row| {
@@ -302,8 +327,9 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
                         row.get::<_, String>(4)?,
                         row.get::<_, i64>(5)?,
                         row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
                     ),
-                    row.get::<_, Vec<u8>>(7)?,
+                    row.get::<_, Vec<u8>>(8)?,
                 ))
             },
         )

@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Download, Eye, FolderOpen, Trash2 } from 'lucide-react'
-import { api, type DocumentMeta, type Entity, type PostedEntryView } from '../lib/api'
+import { api, type DocumentMeta, type Entity } from '../lib/api'
 import type { CommandError } from '../lib/tauri'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
@@ -23,22 +23,17 @@ function formatCreatedAt(createdAt: string): string {
 /** Every file in the book's vault — always linked to the entry it was saved with. */
 export function DocumentsPage({ entity }: Props) {
   const [docs, setDocs] = useState<DocumentMeta[]>([])
-  const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [error, setError] = useState<string | null>(null)
   const [viewerDocId, setViewerDocId] = useState<string | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
 
-  const entryById = useMemo(() => new Map(entries.map((e) => [e.entry.id, e])), [entries])
-
   const anyBusy = busyId !== null || deleteBusy
 
   async function reload() {
     if (!entity) return
-    const [d, e] = await Promise.all([api.documentList(entity.id), api.entryList(entity.id)])
-    setDocs(d)
-    setEntries(e)
+    setDocs(await api.documentList(entity.id))
   }
 
   useEffect(() => {
@@ -46,7 +41,6 @@ export function DocumentsPage({ entity }: Props) {
     setDeleteId(null)
     if (!entity) {
       setDocs([])
-      setEntries([])
       return
     }
     void reload().catch((err) => setError((err as CommandError).message))
@@ -149,7 +143,7 @@ export function DocumentsPage({ entity }: Props) {
                 </div>
 
                 <span className="max-w-48 truncate rounded-full bg-[var(--color-accent-soft)] px-2.5 py-1 text-xs text-[var(--color-accent)]">
-                  {entryById.get(doc.entry_id)?.entry.description ?? 'Linked entry'}
+                  {doc.entry_description || 'Linked entry'}
                 </span>
 
                 <Button

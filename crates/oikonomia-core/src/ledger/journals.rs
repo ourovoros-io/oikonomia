@@ -1,5 +1,7 @@
 //! Journal entry posting, listing, void, and account register.
 
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
@@ -195,7 +197,12 @@ pub fn list_entries(
         .prepare(
             "
             SELECT je.id, je.entity_id, je.entry_date, je.description, je.reference,
-                   je.status, je.voided_by_entry_id
+                   je.status, je.voided_by_entry_id,
+                   je.voided_by_entry_id IS NOT NULL
+                       OR EXISTS (
+                           SELECT 1 FROM journal_entries x
+                           WHERE x.voided_by_entry_id = je.id
+                       ) AS is_voided
             FROM journal_entries je
             WHERE je.entity_id = ?1
               AND je.status = 'posted'
@@ -221,21 +228,23 @@ pub fn list_entries(
         .query_map(
             rusqlite::params![entity_id.0.to_string(), from, to, pattern, account],
             |row| {
-                let voided: Option<String> = row.get(6)?;
-                Ok((map_entry_row(row)?, voided.is_some()))
+                let is_voided: i64 = row.get(7)?;
+                Ok((map_entry_row(row)?, is_voided != 0))
             },
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut out = Vec::new();
+    let mut headers = Vec::new();
     for row in rows {
-        let (entry, mut is_voided) = row.map_err(|err| Error::Io(err.to_string()))?;
-        // Also treat void-reversals as voided (including older data that only
-        // linked the original → reverse, not reverse → original).
-        if !is_voided {
-            is_voided = entry_is_void_reverse(conn, entry.id)?;
-        }
-        let lines = load_lines(conn, entry.id)?;
+        headers.push(row.map_err(|err| Error::Io(err.to_string()))?);
+    }
+
+    let mut lines_by_entry =
+        load_lines_for_entries(conn, headers.iter().map(|(entry, _)| entry.id))?;
+
+    let mut out = Vec::new();
+    for (entry, is_voided) in headers {
+        let lines = lines_by_entry.remove(&entry.id).unwrap_or_default();
         out.push(PostedEntryView {
             entry,
             lines,
@@ -815,6 +824,55 @@ pub fn account_register(
     }
 
     Ok(result)
+}
+
+fn load_lines_for_entries(
+    conn: &Connection,
+    ids: impl IntoIterator<Item = JournalEntryId>,
+) -> Result<HashMap<JournalEntryId, Vec<JournalLine>>> {
+    let ids: Vec<String> = ids.into_iter().map(|id| id.0.to_string()).collect();
+    let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
+    if ids.is_empty() {
+        return Ok(grouped);
+    }
+
+    let placeholders = vec!["?"; ids.len()].join(",");
+    let sql = format!(
+        "
+        SELECT id, entry_id, account_id, debit_minor, credit_minor, memo
+        FROM journal_lines
+        WHERE entry_id IN ({placeholders})
+        ORDER BY entry_id, line_order
+        "
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(ids.iter()), map_line_row)
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    for row in rows {
+        let line = row.map_err(|err| Error::Io(err.to_string()))?;
+        grouped.entry(line.entry_id).or_default().push(line);
+    }
+    Ok(grouped)
+}
+
+fn map_line_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalLine> {
+    let id = parse_uuid(&row.get::<_, String>(0)?).map_err(|e| row_err(&e))?;
+    let eid = parse_uuid(&row.get::<_, String>(1)?).map_err(|e| row_err(&e))?;
+    let aid = parse_uuid(&row.get::<_, String>(2)?).map_err(|e| row_err(&e))?;
+    let debit = Money::from_minor(row.get(3)?).map_err(|e| row_err(&e))?;
+    let credit = Money::from_minor(row.get(4)?).map_err(|e| row_err(&e))?;
+    Ok(JournalLine {
+        id: JournalLineId(id),
+        entry_id: JournalEntryId(eid),
+        account_id: AccountId(aid),
+        debit,
+        credit,
+        memo: row.get(5)?,
+    })
 }
 
 fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<JournalLine>> {

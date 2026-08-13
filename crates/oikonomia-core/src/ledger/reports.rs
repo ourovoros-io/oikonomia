@@ -92,7 +92,7 @@ pub struct BalanceSheet {
     pub assets: BalanceSheetSection,
     /// Liabilities.
     pub liabilities: BalanceSheetSection,
-    /// Equity including current-period net income.
+    /// Equity including current-FY net income and prior-period unclosed P&L.
     pub equity: BalanceSheetSection,
     /// Assets total.
     pub total_assets: i64,
@@ -191,7 +191,8 @@ pub fn profit_and_loss(
     })
 }
 
-/// Balance sheet as of date (equity includes YTD net income from fiscal year start).
+/// Balance sheet as of date (equity includes current-FY net income and
+/// unclosed prior-period P&L — there is no permanent year-end close).
 ///
 /// # Errors
 ///
@@ -213,6 +214,34 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
             fy_start,
             as_of_d,
         )?);
+
+    if let Some(prior_end) = fy_start.previous_day() {
+        let books_start = Date::from_calendar_date(1, time::Month::January, 1).unwrap_or(prior_end);
+        let prior_net = sum_types_in_range(
+            conn,
+            entity_id,
+            &[AccountType::Income],
+            books_start,
+            prior_end,
+        )?
+        .saturating_sub(sum_types_in_range(
+            conn,
+            entity_id,
+            &[AccountType::Expense],
+            books_start,
+            prior_end,
+        )?);
+        if prior_net != 0 {
+            equity_lines.push(ReportLine {
+                code: "RE".into(),
+                name: "Retained Earnings (prior periods)".into(),
+                account_type: AccountType::Equity,
+                debit_minor: 0,
+                credit_minor: 0,
+                balance_minor: prior_net,
+            });
+        }
+    }
 
     if net != 0 {
         equity_lines.push(ReportLine {

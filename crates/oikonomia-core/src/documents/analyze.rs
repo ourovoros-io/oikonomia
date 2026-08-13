@@ -5,6 +5,8 @@
 //! 2. **Images** → bundled neural OCR (`ocrs` models in app resources)
 //! 3. **Invoice reader** → Greek/EU totals, MARK, kind (no cloud)
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use super::invoice::parse_invoice_text;
@@ -115,51 +117,11 @@ pub fn analyze_document_bytes(
     let mime = mime_type.to_ascii_lowercase();
     let is_image = mime.starts_with("image/");
 
-    let mut source = AnalyzeSource::None;
-    let mut model_label: Option<String> = None;
-    let mut notes_prefix = String::new();
-
-    let text = if is_image {
-        if let Some(dir) = model_dir {
-            let paths = OcrModelPaths::from_dir(dir);
-            if ocr_available(&paths) {
-                match ocr_image_bytes(&paths, data) {
-                    Ok(t) if !t.trim().is_empty() => {
-                        source = AnalyzeSource::BundledOcr;
-                        model_label = Some("ocrs-bundled".into());
-                        notes_prefix =
-                            "Read with built-in offline OCR. Review before saving.".into();
-                        Some(t)
-                    }
-                    Ok(_) => {
-                        notes_prefix =
-                            "OCR ran but found little text — fill the form manually if needed."
-                                .into();
-                        None
-                    }
-                    Err(e) => {
-                        notes_prefix = format!("OCR error: {e}. You can still enter the fields.");
-                        None
-                    }
-                }
-            } else {
-                notes_prefix =
-                    "Bundled OCR models not found. Use a text PDF or enter fields manually.".into();
-                None
-            }
-        } else {
-            notes_prefix = "OCR model path not configured.".into();
-            None
-        }
-    } else {
-        let t = extract_text(filename, &mime, data);
-        if t.is_some() {
-            source = AnalyzeSource::Heuristic;
-            notes_prefix =
-                "Parsed from document text on-device (no network). Review before saving.".into();
-        }
-        t
-    };
+    let extracted = read_document_text(filename, &mime, data, is_image, model_dir);
+    let text = extracted.text;
+    let mut source = extracted.source;
+    let model_label = extracted.model_label;
+    let notes_prefix = extracted.notes_prefix;
 
     let mut suggestion = if let Some(ref body) = text {
         if source == AnalyzeSource::None {
@@ -250,6 +212,105 @@ fn finalize_suggestion(
     }
 }
 
+struct ExtractedText {
+    text: Option<String>,
+    source: AnalyzeSource,
+    model_label: Option<String>,
+    notes_prefix: String,
+}
+
+fn read_document_text(
+    filename: &str,
+    mime: &str,
+    data: &[u8],
+    is_image: bool,
+    model_dir: Option<&Path>,
+) -> ExtractedText {
+    let mut source = AnalyzeSource::None;
+    let mut model_label = None;
+    let mut notes_prefix = String::new();
+
+    let text = if is_image {
+        ocr_plain_image(
+            data,
+            model_dir,
+            &mut source,
+            &mut model_label,
+            &mut notes_prefix,
+        )
+    } else {
+        let pdf = mime.contains("pdf") || filename.to_ascii_lowercase().ends_with(".pdf");
+        if pdf && !pdf_within_budget(data) {
+            notes_prefix =
+                "PDF exceeds the page or stream budget; enter the fields manually.".into();
+            None
+        } else {
+            let t = extract_text(filename, mime, data);
+            if t.is_some() {
+                source = AnalyzeSource::Heuristic;
+                notes_prefix =
+                    "Parsed from document text on-device (no network). Review before saving."
+                        .into();
+            }
+            if pdf && should_ocr_pdf_images(t.as_deref()) {
+                ocr_pdf_embedded_images(
+                    data,
+                    model_dir,
+                    &mut source,
+                    &mut model_label,
+                    &mut notes_prefix,
+                )
+                .or(t)
+            } else {
+                t
+            }
+        }
+    };
+
+    ExtractedText {
+        text,
+        source,
+        model_label,
+        notes_prefix,
+    }
+}
+
+fn ocr_plain_image(
+    data: &[u8],
+    model_dir: Option<&Path>,
+    source: &mut AnalyzeSource,
+    model_label: &mut Option<String>,
+    notes_prefix: &mut String,
+) -> Option<String> {
+    let Some(dir) = model_dir else {
+        *notes_prefix = "OCR model path not configured.".into();
+        return None;
+    };
+    let paths = OcrModelPaths::from_dir(dir);
+    if !ocr_available(&paths) {
+        *notes_prefix =
+            "Bundled OCR models not found. Use a text PDF or enter fields manually.".into();
+        return None;
+    }
+    match ocr_image_bytes(&paths, data) {
+        Ok(t) if !t.trim().is_empty() => {
+            *source = AnalyzeSource::BundledOcr;
+            *model_label = Some("ocrs-bundled".into());
+            *notes_prefix = "Read with built-in offline OCR. Review before saving.".into();
+            Some(t)
+        }
+        Ok(_) => {
+            *notes_prefix =
+                "OCR ran but found little text — fill the form manually if needed.".into();
+            None
+        }
+        Err(e) => {
+            *notes_prefix = format!("OCR error: {e}. You can still enter the fields.");
+            None
+        }
+    }
+}
+
 fn empty_suggestion(notes: &str) -> DocumentSuggestion {
     DocumentSuggestion {
         source: AnalyzeSource::None,
@@ -267,6 +328,150 @@ fn empty_suggestion(notes: &str) -> DocumentSuggestion {
         confidence: 0.0,
         notes: notes.to_owned(),
     }
+}
+
+const MIN_PDF_TEXT_CHARS: usize = 8;
+const MAX_PDF_PAGES: usize = 50;
+const MAX_PDF_STREAM_BYTES: usize = 32 * 1024 * 1024;
+
+fn should_ocr_pdf_images(text: Option<&str>) -> bool {
+    text.is_none_or(|t| t.chars().count() < MIN_PDF_TEXT_CHARS)
+}
+
+fn ocr_pdf_embedded_images(
+    data: &[u8],
+    model_dir: Option<&Path>,
+    source: &mut AnalyzeSource,
+    model_label: &mut Option<String>,
+    notes_prefix: &mut String,
+) -> Option<String> {
+    let dir = model_dir?;
+    let paths = OcrModelPaths::from_dir(dir);
+    if !ocr_available(&paths) {
+        return None;
+    }
+    for jpeg in extract_pdf_jpeg_images(data).into_iter().take(2) {
+        let Ok(text) = ocr_image_bytes(&paths, &jpeg) else {
+            continue;
+        };
+        if text.chars().count() > 8 {
+            *source = AnalyzeSource::BundledOcr;
+            *model_label = Some("ocrs-bundled".into());
+            *notes_prefix =
+                "Read embedded PDF image with built-in OCR. Review before saving.".into();
+            return Some(text);
+        }
+    }
+    None
+}
+
+/// JPEG (`DCTDecode`) image streams only — no new PDF rasterizer.
+/// Page `/XObject` images are preferred so a logo in the catalog is not first.
+fn extract_pdf_jpeg_images(data: &[u8]) -> Vec<Vec<u8>> {
+    let Ok(doc) = lopdf::Document::load_mem(data) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for page_id in doc.get_pages().values().copied().take(MAX_PDF_PAGES) {
+        collect_jpegs_from_page(&doc, page_id, &mut out);
+        if out.len() >= 2 {
+            return out;
+        }
+    }
+    if !out.is_empty() {
+        return out;
+    }
+    for object in doc.objects.values() {
+        if let Some(jpeg) = jpeg_from_object(&doc, object) {
+            out.push(jpeg);
+            if out.len() >= 2 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+fn collect_jpegs_from_page(
+    doc: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+    out: &mut Vec<Vec<u8>>,
+) {
+    let Ok(page) = doc.get_dictionary(page_id) else {
+        return;
+    };
+    let Some(resources) = dict_ref_or_inline(doc, page.get(b"Resources").ok()) else {
+        return;
+    };
+    let Some(xobjects) = dict_ref_or_inline(doc, resources.get(b"XObject").ok()) else {
+        return;
+    };
+    for (_name, object) in xobjects {
+        if let Some(jpeg) = jpeg_from_object(doc, object) {
+            out.push(jpeg);
+            if out.len() >= 2 {
+                return;
+            }
+        }
+    }
+}
+
+fn dict_ref_or_inline<'a>(
+    doc: &'a lopdf::Document,
+    object: Option<&'a lopdf::Object>,
+) -> Option<&'a lopdf::Dictionary> {
+    match object? {
+        lopdf::Object::Dictionary(dict) => Some(dict),
+        lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
+        _ => None,
+    }
+}
+
+fn jpeg_from_object(doc: &lopdf::Document, object: &lopdf::Object) -> Option<Vec<u8>> {
+    let stream = match object {
+        lopdf::Object::Stream(stream) => stream,
+        lopdf::Object::Reference(id) => match doc.objects.get(id) {
+            Some(lopdf::Object::Stream(stream)) => stream,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let subtype = stream.dict.get(b"Subtype").ok()?;
+    let is_image = matches!(subtype, lopdf::Object::Name(name) if name == b"Image");
+    if !is_image {
+        return None;
+    }
+    let filter = stream.dict.get(b"Filter").ok()?;
+    let jpeg = match filter {
+        lopdf::Object::Name(name) if name == b"DCTDecode" => true,
+        lopdf::Object::Array(arr) => arr
+            .iter()
+            .any(|item| matches!(item, lopdf::Object::Name(name) if name == b"DCTDecode")),
+        _ => false,
+    };
+    if !jpeg || stream.content.len() > MAX_PDF_STREAM_BYTES {
+        return None;
+    }
+    Some(stream.content.clone())
+}
+
+fn pdf_within_budget(data: &[u8]) -> bool {
+    let Ok(doc) = lopdf::Document::load_mem(data) else {
+        return data.len() <= MAX_PDF_STREAM_BYTES;
+    };
+    if doc.get_pages().len() > MAX_PDF_PAGES {
+        return false;
+    }
+    let mut total = 0usize;
+    for object in doc.objects.values() {
+        if let lopdf::Object::Stream(stream) = object {
+            total = total.saturating_add(stream.content.len());
+            if total > MAX_PDF_STREAM_BYTES {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn extract_text(filename: &str, mime: &str, data: &[u8]) -> Option<String> {
@@ -290,6 +495,9 @@ fn extract_text(filename: &str, mime: &str, data: &[u8]) -> Option<String> {
 /// panic mid-page. We repair the former and contain the latter, falling
 /// back to page-by-page extraction so one bad page cannot blank the rest.
 fn pdf_text(data: &[u8]) -> Option<String> {
+    if !pdf_within_budget(data) {
+        return None;
+    }
     if let Some(text) = pdf_text_whole(data).or_else(|| pdf_text_per_page(data)) {
         return Some(text);
     }
@@ -315,7 +523,12 @@ fn pdf_text_per_page(data: &[u8]) -> Option<String> {
         return None;
     }
 
-    let page_numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
+    let page_numbers: Vec<u32> = doc
+        .get_pages()
+        .keys()
+        .copied()
+        .take(MAX_PDF_PAGES)
+        .collect();
 
     let mut chunks: Vec<String> = Vec::new();
     for page in page_numbers {
@@ -344,6 +557,25 @@ fn pdf_text_per_page(data: &[u8]) -> Option<String> {
 mod tests {
     use super::super::invoice::parse_invoice_text;
     use super::*;
+
+    #[test]
+    fn extract_pdf_jpeg_images_ignores_non_pdf() {
+        assert!(extract_pdf_jpeg_images(b"not a pdf").is_empty());
+        assert!(extract_pdf_jpeg_images(b"%PDF-1.4\ntrailer\n%%EOF").is_empty());
+    }
+
+    #[test]
+    fn short_or_missing_pdf_text_triggers_image_ocr() {
+        assert!(should_ocr_pdf_images(None));
+        assert!(should_ocr_pdf_images(Some("abc")));
+        assert!(should_ocr_pdf_images(Some("1234567")));
+        assert!(!should_ocr_pdf_images(Some("12345678")));
+    }
+
+    #[test]
+    fn tiny_non_pdf_is_within_budget() {
+        assert!(pdf_within_budget(b"not a pdf"));
+    }
 
     #[test]
     fn english_total_line() {

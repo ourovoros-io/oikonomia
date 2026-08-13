@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Latest schema version applied by migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 4;
+pub const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 /// Apply pending migrations. Safe to call on every unlock.
 ///
@@ -33,6 +33,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 
     if version < 4 {
         migrate_v4(conn)?;
+    }
+
+    if version < 5 {
+        migrate_v5(conn)?;
     }
 
     if version < CURRENT_SCHEMA_VERSION {
@@ -174,6 +178,59 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
     // re-running the migration hits "documents_v4 already exists".
     tx.execute("UPDATE vault_meta SET schema_version = 4 WHERE id = 1", [])
         .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(())
+}
+
+/// v5: `journal_lines` must be debit XOR credit. `SQLite` cannot add a CHECK
+/// in place, so the table is rebuilt. Existing data is copied only if every
+/// line already satisfies the invariant — a violating row is a corrupt book
+/// and must fail the migration rather than be silently dropped.
+fn migrate_v5(conn: &Connection) -> Result<()> {
+    let bad: i64 = conn
+        .query_row(
+            "
+            SELECT COUNT(1) FROM journal_lines
+            WHERE (debit_minor = 0) = (credit_minor = 0)
+            ",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+    if bad > 0 {
+        return Err(Error::VaultCorrupt(format!(
+            "cannot migrate to v5: {bad} journal line(s) are not debit XOR credit"
+        )));
+    }
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.execute_batch(
+        "
+        CREATE TABLE journal_lines_v5 (
+            id TEXT PRIMARY KEY NOT NULL,
+            entry_id TEXT NOT NULL REFERENCES journal_entries(id) ON DELETE CASCADE,
+            account_id TEXT NOT NULL REFERENCES accounts(id),
+            debit_minor INTEGER NOT NULL DEFAULT 0 CHECK (debit_minor >= 0),
+            credit_minor INTEGER NOT NULL DEFAULT 0 CHECK (credit_minor >= 0),
+            memo TEXT,
+            line_order INTEGER NOT NULL DEFAULT 0,
+            CHECK ((debit_minor = 0) != (credit_minor = 0))
+        );
+        INSERT INTO journal_lines_v5
+            SELECT id, entry_id, account_id, debit_minor, credit_minor, memo, line_order
+            FROM journal_lines;
+        DROP TABLE journal_lines;
+        ALTER TABLE journal_lines_v5 RENAME TO journal_lines;
+        CREATE INDEX IF NOT EXISTS idx_lines_entry ON journal_lines(entry_id);
+        CREATE INDEX IF NOT EXISTS idx_lines_account ON journal_lines(account_id);
+        UPDATE vault_meta SET schema_version = 5 WHERE id = 1;
+        ",
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
 
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(())

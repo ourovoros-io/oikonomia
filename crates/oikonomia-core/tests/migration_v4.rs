@@ -2,7 +2,7 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
-use oikonomia_core::db::migrate;
+use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -61,7 +61,7 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
             |r| r.get(0),
         )
         .expect("version");
-    assert_eq!(version, 4);
+    assert_eq!(version, CURRENT_SCHEMA_VERSION);
 
     let orphans: i64 = conn
         .query_row("SELECT COUNT(1) FROM documents WHERE id = 'd1'", [], |r| {
@@ -119,5 +119,5 @@ fn migrate_is_idempotent_after_v4() {
             |r| r.get(0),
         )
         .expect("version");
-    assert_eq!(version, 4);
+    assert_eq!(version, CURRENT_SCHEMA_VERSION);
 }

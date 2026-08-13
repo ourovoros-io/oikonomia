@@ -7,10 +7,23 @@ use serde::{Deserialize, Serialize};
 ///
 /// Always non-negative at the type boundary for line amounts; signed
 /// aggregates (balances) use plain `i64` where a sign is meaningful.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct Money {
-    /// Minor units (cents).
-    pub amount_minor: i64,
+    amount_minor: i64,
+}
+
+impl<'de> Deserialize<'de> for Money {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Raw {
+            amount_minor: i64,
+        }
+
+        let raw = Raw::deserialize(deserializer)?;
+        Money::from_minor(raw.amount_minor).map_err(serde::de::Error::custom)
+    }
 }
 
 impl Money {
@@ -90,5 +103,23 @@ mod tests {
         assert_eq!(a.checked_add(b).map(Money::amount_minor), Ok(140));
         assert_eq!(a.checked_sub(b).map(Money::amount_minor), Ok(60));
         assert_eq!(b.checked_sub(a), Err(Error::NegativeMoney));
+    }
+
+    #[test]
+    fn deserialize_rejects_negative() {
+        let err = serde_json::from_str::<Money>(r#"{"amount_minor":-1}"#);
+        assert!(err.is_err(), "negative Money must not deserialize");
+    }
+
+    #[test]
+    fn deserialize_accepts_zero_and_positive() {
+        assert_eq!(
+            serde_json::from_str::<Money>(r#"{"amount_minor":0}"#).ok(),
+            Some(Money::ZERO)
+        );
+        assert_eq!(
+            serde_json::from_str::<Money>(r#"{"amount_minor":50}"#).ok(),
+            Money::from_minor(50).ok()
+        );
     }
 }
