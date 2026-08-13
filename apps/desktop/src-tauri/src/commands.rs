@@ -657,6 +657,7 @@ pub async fn entry_void(
 /// Parse a bank CSV into suggested simple-entry rows. **Does not post.**
 ///
 /// When `input.path` is omitted, a native Open dialog chooses the file.
+/// `input.mapping` overrides header auto-detect when set.
 /// Returns `None` if the user cancelled the dialog.
 #[tauri::command]
 pub async fn csv_import_preview(
@@ -675,7 +676,13 @@ pub async fn csv_import_preview(
 
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
-        preview_bank_csv_file(conn, input.entity_id, input.accounts(), &path)
+        preview_bank_csv_file(
+            conn,
+            input.entity_id,
+            input.accounts(),
+            &path,
+            input.mapping.as_ref(),
+        )
     })
     .await
     .map(Some)

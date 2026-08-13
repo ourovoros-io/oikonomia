@@ -278,9 +278,19 @@ mod tests {
     fn sanitize_entity_name_for_filename() {
         let acme = default_journal_export_file_name("Acme Ltd");
         assert!(acme.starts_with("oikonomia-journal-acme-ltd-"), "{acme}");
-        assert!(acme.ends_with(".csv"), "{acme}");
+        assert_eq!(
+            std::path::Path::new(&acme)
+                .extension()
+                .and_then(|e| e.to_str()),
+            Some("csv")
+        );
         let name = default_journal_export_file_name("!!!");
         assert!(name.contains("entity"), "{name}");
-        assert!(name.ends_with(".csv"), "{name}");
+        assert_eq!(
+            std::path::Path::new(&name)
+                .extension()
+                .and_then(|e| e.to_str()),
+            Some("csv")
+        );
     }
 }

@@ -7,8 +7,9 @@ use rusqlite::Connection;
 
 use super::parse::{parse_bank_csv, read_csv_text};
 use super::{
-    CsvImportAccounts, CsvImportPostResult, CsvImportPreview, CsvImportPreviewRow, CsvRowOutcome,
-    currency_minor_exponent, normalize_description, suggested_entry,
+    CsvColumnMapping, CsvImportAccounts, CsvImportPostResult, CsvImportPreview,
+    CsvImportPreviewRow, CsvRowOutcome, currency_minor_exponent, normalize_description,
+    suggested_entry,
 };
 use crate::domain::{AccountId, EntityId};
 use crate::error::{Error, Result};
@@ -35,16 +36,19 @@ impl DedupeKey {
 
 /// Parse a bank CSV and flag duplicates. **Does not post.**
 ///
+/// `mapping` overrides header auto-detect when `Some`; see [`CsvColumnMapping`].
+///
 /// # Errors
 ///
-/// Unknown entity, file-level CSV shape errors, or database errors.
+/// Unknown entity, file-level CSV shape errors, invalid mapping, or database errors.
 pub fn preview_bank_csv(
     conn: &Connection,
     entity_id: EntityId,
     accounts: CsvImportAccounts,
     csv_text: &str,
+    mapping: Option<&CsvColumnMapping>,
 ) -> Result<CsvImportPreview> {
-    preview_bank_csv_named(conn, entity_id, accounts, csv_text, String::new())
+    preview_bank_csv_named(conn, entity_id, accounts, csv_text, mapping, String::new())
 }
 
 /// [`preview_bank_csv`] reading `path` from disk. **Does not post.**
@@ -57,9 +61,17 @@ pub fn preview_bank_csv_file(
     entity_id: EntityId,
     accounts: CsvImportAccounts,
     path: &Path,
+    mapping: Option<&CsvColumnMapping>,
 ) -> Result<CsvImportPreview> {
     let text = read_csv_text(path)?;
-    preview_bank_csv_named(conn, entity_id, accounts, &text, path.display().to_string())
+    preview_bank_csv_named(
+        conn,
+        entity_id,
+        accounts,
+        &text,
+        mapping,
+        path.display().to_string(),
+    )
 }
 
 fn preview_bank_csv_named(
@@ -67,6 +79,7 @@ fn preview_bank_csv_named(
     entity_id: EntityId,
     accounts: CsvImportAccounts,
     csv_text: &str,
+    mapping: Option<&CsvColumnMapping>,
     source: String,
 ) -> Result<CsvImportPreview> {
     let entity = get_entity(conn, entity_id)?;
@@ -75,15 +88,20 @@ fn preview_bank_csv_named(
     check_role_account(conn, entity_id, accounts.income_account_id)?;
 
     let exponent = currency_minor_exponent(&entity.base_currency);
-    let parsed = parse_bank_csv(csv_text, exponent)?;
+    let parsed = parse_bank_csv(csv_text, exponent, mapping)?;
     let mut seen = load_active_keys(conn, entity_id)?;
-    let mut rows = Vec::with_capacity(parsed.len());
+    let mut rows = Vec::with_capacity(parsed.rows.len());
 
-    for outcome in parsed {
+    for outcome in parsed.rows {
         rows.push(preview_row(entity_id, accounts, &mut seen, outcome));
     }
 
-    Ok(CsvImportPreview { source, rows })
+    Ok(CsvImportPreview {
+        source,
+        headers: parsed.headers,
+        detected_mapping: parsed.detected_mapping,
+        rows,
+    })
 }
 
 fn preview_row(

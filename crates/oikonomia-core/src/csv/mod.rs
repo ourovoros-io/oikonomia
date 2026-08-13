@@ -48,7 +48,7 @@ pub use export::{
     JournalCsvLine, JournalCsvStatus, default_journal_export_file_name, ensure_csv_path,
     export_journal_csv, parse_journal_export, write_journal_csv_file,
 };
-pub use parse::{parse_bank_csv, parse_csv_date, read_csv_text};
+pub use parse::{ParsedBankCsv, parse_bank_csv, parse_csv_date, read_csv_text};
 pub use post::{post_import_rows, preview_bank_csv, preview_bank_csv_file};
 
 /// Upper bound on a CSV file read into memory (same cap as documents).
@@ -91,6 +91,9 @@ pub enum CsvError {
     /// Parsed amount is zero (simple entries require a positive amount).
     #[error("amount is zero")]
     ZeroAmount,
+    /// Caller-supplied column mapping is incomplete or contradictory.
+    #[error("{0}")]
+    InvalidMapping(String),
 }
 
 impl From<CsvError> for Error {
@@ -130,6 +133,9 @@ pub struct CsvImportPreviewInput {
     /// Default income category for positive amounts.
     #[serde(default)]
     pub income_account_id: Option<AccountId>,
+    /// Column mapping. When omitted, headers are auto-detected.
+    #[serde(default)]
+    pub mapping: Option<CsvColumnMapping>,
 }
 
 impl CsvImportPreviewInput {
@@ -187,6 +193,40 @@ pub enum CsvRowOutcome {
     },
 }
 
+/// Header-name mapping for one bank CSV (Map columns step).
+///
+/// Values are **header names** as they appear in the first row, matched
+/// case-insensitively (ASCII). 0-based indexes are not accepted.
+///
+/// When this struct is provided (`Some`), `date` and `description` are
+/// required, and the amount side must be **either** `amount` **or** both
+/// `debit` and `credit` — not both forms, and not neither. `reference` is
+/// optional. Auto-detect is not used for those fields.
+///
+/// When omitted (`None` on [`CsvImportPreviewInput::mapping`]), the parser
+/// auto-detects columns from header aliases.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CsvColumnMapping {
+    /// Date column header.
+    #[serde(default)]
+    pub date: Option<String>,
+    /// Description / payee / memo column header.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Signed amount column. Mutually exclusive with [`Self::debit`] / [`Self::credit`].
+    #[serde(default)]
+    pub amount: Option<String>,
+    /// Debit (money-out) column; requires [`Self::credit`] when mapping is explicit.
+    #[serde(default)]
+    pub debit: Option<String>,
+    /// Credit (money-in) column; requires [`Self::debit`] when mapping is explicit.
+    #[serde(default)]
+    pub credit: Option<String>,
+    /// Optional reference / check-number column.
+    #[serde(default)]
+    pub reference: Option<String>,
+}
+
 /// Preview of a bank CSV: suggested simple entries, duplicate flags, per-row errors.
 ///
 /// Does not write to the ledger.
@@ -194,6 +234,11 @@ pub enum CsvRowOutcome {
 pub struct CsvImportPreview {
     /// Filesystem path, or empty when parsed from in-memory text.
     pub source: String,
+    /// Header row, in file order (trimmed). For the Map columns UI.
+    pub headers: Vec<String>,
+    /// Auto-detected mapping from header aliases, for Map UI pre-fill.
+    /// Present even when the caller supplied [`CsvImportPreviewInput::mapping`].
+    pub detected_mapping: CsvColumnMapping,
     /// Data rows in file order.
     pub rows: Vec<CsvImportPreviewRow>,
 }

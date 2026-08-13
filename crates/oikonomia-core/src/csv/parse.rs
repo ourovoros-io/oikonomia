@@ -6,7 +6,7 @@ use std::path::Path;
 use csv::{ReaderBuilder, StringRecord, Trim};
 
 use super::amount::parse_signed_minor;
-use super::{CsvError, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow};
+use super::{CsvColumnMapping, CsvError, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow};
 use crate::error::Error;
 use crate::ledger::SimpleEntryKind;
 use crate::util::format_date;
@@ -104,9 +104,9 @@ enum Column {
     Direction,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 struct ColumnMap {
-    date: usize,
+    date: Option<usize>,
     description: Option<usize>,
     amount: Option<usize>,
     debit: Option<usize>,
@@ -115,16 +115,32 @@ struct ColumnMap {
     direction: Option<usize>,
 }
 
+/// Parsed bank CSV plus header metadata for the Map columns UI.
+#[derive(Debug, Clone)]
+pub struct ParsedBankCsv {
+    /// Trimmed header names, file order.
+    pub headers: Vec<String>,
+    /// Auto-detected mapping (aliases), even when the caller overrode columns.
+    pub detected_mapping: CsvColumnMapping,
+    /// Data rows in file order.
+    pub rows: Vec<CsvRowOutcome>,
+}
+
 /// Parse a bank CSV into per-row outcomes. Never writes to the ledger.
 ///
 /// Accepts comma or semicolon delimiters and RFC 4180 quoted fields.
 /// `exponent` is the entity currency's minor-unit exponent (2 for EUR).
+/// `mapping` overrides header auto-detect when `Some`.
 ///
 /// # Errors
 ///
-/// File-level problems (empty, missing date/amount headers). Malformed
-/// **rows** are returned as [`CsvRowOutcome::Invalid`], not as `Err`.
-pub fn parse_bank_csv(text: &str, exponent: u8) -> crate::error::Result<Vec<CsvRowOutcome>> {
+/// File-level problems (empty, missing date/amount headers, invalid mapping).
+/// Malformed **rows** are returned as [`CsvRowOutcome::Invalid`], not as `Err`.
+pub fn parse_bank_csv(
+    text: &str,
+    exponent: u8,
+    mapping: Option<&CsvColumnMapping>,
+) -> crate::error::Result<ParsedBankCsv> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Err(CsvError::Empty.into());
@@ -144,7 +160,13 @@ pub fn parse_bank_csv(text: &str, exponent: u8) -> crate::error::Result<Vec<CsvR
     if headers.is_empty() || headers.iter().all(str::is_empty) {
         return Err(CsvError::MissingHeader.into());
     }
-    let columns = map_headers(&headers)?;
+
+    let detected = auto_map_headers(&headers);
+    let detected_mapping = mapping_from_headers(&headers, detected);
+    let columns = match mapping {
+        Some(user) => resolve_user_mapping(&headers, user)?,
+        None => require_auto_map(detected)?,
+    };
 
     let mut rows = Vec::new();
     for (index, record) in reader.records().enumerate() {
@@ -157,7 +179,11 @@ pub fn parse_bank_csv(text: &str, exponent: u8) -> crate::error::Result<Vec<CsvR
             }),
         }
     }
-    Ok(rows)
+    Ok(ParsedBankCsv {
+        headers: headers.iter().map(str::to_owned).collect(),
+        detected_mapping,
+        rows,
+    })
 }
 
 fn detect_delimiter(text: &str) -> u8 {
@@ -179,27 +205,20 @@ fn detect_delimiter(text: &str) -> u8 {
     if semi > comma { b';' } else { b',' }
 }
 
-fn map_headers(headers: &StringRecord) -> crate::error::Result<ColumnMap> {
-    let mut date = None;
-    let mut description = None;
-    let mut amount = None;
-    let mut debit = None;
-    let mut credit = None;
-    let mut reference = None;
-    let mut direction = None;
-
+fn auto_map_headers(headers: &StringRecord) -> ColumnMap {
+    let mut map = ColumnMap::default();
     for (idx, name) in headers.iter().enumerate() {
         let Some(kind) = classify_header(name) else {
             continue;
         };
         match kind {
-            Column::Date if date.is_none() => date = Some(idx),
-            Column::Description if description.is_none() => description = Some(idx),
-            Column::Amount if amount.is_none() => amount = Some(idx),
-            Column::Debit if debit.is_none() => debit = Some(idx),
-            Column::Credit if credit.is_none() => credit = Some(idx),
-            Column::Reference if reference.is_none() => reference = Some(idx),
-            Column::Direction if direction.is_none() => direction = Some(idx),
+            Column::Date if map.date.is_none() => map.date = Some(idx),
+            Column::Description if map.description.is_none() => map.description = Some(idx),
+            Column::Amount if map.amount.is_none() => map.amount = Some(idx),
+            Column::Debit if map.debit.is_none() => map.debit = Some(idx),
+            Column::Credit if map.credit.is_none() => map.credit = Some(idx),
+            Column::Reference if map.reference.is_none() => map.reference = Some(idx),
+            Column::Direction if map.direction.is_none() => map.direction = Some(idx),
             Column::Date
             | Column::Description
             | Column::Amount
@@ -209,22 +228,83 @@ fn map_headers(headers: &StringRecord) -> crate::error::Result<ColumnMap> {
             | Column::Direction => {}
         }
     }
+    map
+}
 
-    let Some(date) = date else {
+fn require_auto_map(map: ColumnMap) -> crate::error::Result<ColumnMap> {
+    if map.date.is_none() {
         return Err(CsvError::MissingDateColumn.into());
-    };
-    if amount.is_none() && debit.is_none() && credit.is_none() {
+    }
+    if map.amount.is_none() && map.debit.is_none() && map.credit.is_none() {
         return Err(CsvError::MissingAmountColumn.into());
+    }
+    Ok(map)
+}
+
+fn mapping_from_headers(headers: &StringRecord, map: ColumnMap) -> CsvColumnMapping {
+    let name = |idx: Option<usize>| idx.map(|i| headers.get(i).unwrap_or("").to_owned());
+    CsvColumnMapping {
+        date: name(map.date),
+        description: name(map.description),
+        amount: name(map.amount),
+        debit: name(map.debit),
+        credit: name(map.credit),
+        reference: name(map.reference),
+    }
+}
+
+fn nonempty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|s| !s.is_empty())
+}
+
+fn header_index(headers: &StringRecord, name: &str) -> CsvResult<usize> {
+    let needle = name.trim();
+    headers
+        .iter()
+        .position(|h| h.eq_ignore_ascii_case(needle))
+        .ok_or_else(|| CsvError::InvalidMapping(format!("CSV has no column named '{name}'")))
+}
+
+fn resolve_user_mapping(
+    headers: &StringRecord,
+    mapping: &CsvColumnMapping,
+) -> crate::error::Result<ColumnMap> {
+    let Some(date) = nonempty(mapping.date.as_deref()) else {
+        return Err(CsvError::InvalidMapping("CSV mapping is missing a date column".into()).into());
+    };
+    let Some(description) = nonempty(mapping.description.as_deref()) else {
+        return Err(
+            CsvError::InvalidMapping("CSV mapping is missing a description column".into()).into(),
+        );
+    };
+    let amount = nonempty(mapping.amount.as_deref());
+    let debit = nonempty(mapping.debit.as_deref());
+    let credit = nonempty(mapping.credit.as_deref());
+    let reference = nonempty(mapping.reference.as_deref());
+
+    let has_amount = amount.is_some();
+    let has_dc = debit.is_some() || credit.is_some();
+    if has_amount && has_dc {
+        return Err(CsvError::InvalidMapping(
+            "CSV mapping cannot set both amount and debit/credit".into(),
+        )
+        .into());
+    }
+    if !has_amount && (debit.is_none() || credit.is_none()) {
+        return Err(CsvError::InvalidMapping(
+            "CSV mapping is missing an amount column (provide amount, or debit and credit)".into(),
+        )
+        .into());
     }
 
     Ok(ColumnMap {
-        date,
-        description,
-        amount,
-        debit,
-        credit,
-        reference,
-        direction,
+        date: Some(header_index(headers, date)?),
+        description: Some(header_index(headers, description)?),
+        amount: amount.map(|n| header_index(headers, n)).transpose()?,
+        debit: debit.map(|n| header_index(headers, n)).transpose()?,
+        credit: credit.map(|n| header_index(headers, n)).transpose()?,
+        reference: reference.map(|n| header_index(headers, n)).transpose()?,
+        direction: None,
     })
 }
 
@@ -308,7 +388,10 @@ fn parse_record_inner(
     columns: ColumnMap,
     exponent: u8,
 ) -> CsvResult<ParsedBankRow> {
-    let date_raw = cell(record, columns.date);
+    let Some(date_idx) = columns.date else {
+        return Err(CsvError::InvalidDate(String::new()));
+    };
+    let date_raw = cell(record, date_idx);
     let entry_date = parse_csv_date(date_raw)?;
     let description = columns
         .description
@@ -417,7 +500,7 @@ mod tests {
     use super::*;
 
     fn parsed(text: &str) -> Vec<CsvRowOutcome> {
-        parse_bank_csv(text, 2).expect("parse csv")
+        parse_bank_csv(text, 2, None).expect("parse csv").rows
     }
 
     fn first_ok(text: &str) -> ParsedBankRow {
@@ -487,9 +570,9 @@ mod tests {
 
     #[test]
     fn missing_columns_are_file_errors() {
-        let err = parse_bank_csv("Name,Memo\nfoo,bar\n", 2).expect_err("headers");
+        let err = parse_bank_csv("Name,Memo\nfoo,bar\n", 2, None).expect_err("headers");
         assert!(matches!(err, Error::CsvParse(_)));
-        let err = parse_bank_csv("", 2).expect_err("empty");
+        let err = parse_bank_csv("", 2, None).expect_err("empty");
         assert!(matches!(err, Error::CsvParse(_)));
     }
 
@@ -508,5 +591,139 @@ mod tests {
         assert_eq!(parse_csv_date("2026/03/05").expect("ymd"), "2026-03-05");
         assert!(parse_csv_date("03/13/2026").is_err());
         assert!(parse_csv_date("32/01/2026").is_err());
+    }
+
+    fn names(
+        date: &str,
+        description: &str,
+        amount: Option<&str>,
+        debit: Option<&str>,
+        credit: Option<&str>,
+    ) -> CsvColumnMapping {
+        CsvColumnMapping {
+            date: Some(date.into()),
+            description: Some(description.into()),
+            amount: amount.map(str::to_owned),
+            debit: debit.map(str::to_owned),
+            credit: credit.map(str::to_owned),
+            reference: None,
+        }
+    }
+
+    #[test]
+    fn omitted_mapping_auto_detects_headers() {
+        let parsed = parse_bank_csv(
+            "Date,Description,Amount\n2026-03-15,Coffee,-3.50\n",
+            2,
+            None,
+        )
+        .expect("auto");
+        assert_eq!(
+            parsed.headers,
+            vec![
+                "Date".to_owned(),
+                "Description".to_owned(),
+                "Amount".to_owned()
+            ]
+        );
+        assert_eq!(parsed.detected_mapping.date.as_deref(), Some("Date"));
+        assert_eq!(
+            parsed.detected_mapping.description.as_deref(),
+            Some("Description")
+        );
+        assert_eq!(parsed.detected_mapping.amount.as_deref(), Some("Amount"));
+        let CsvRowOutcome::Parsed(row) = &parsed.rows[0] else {
+            panic!("row");
+        };
+        assert_eq!(row.description, "Coffee");
+    }
+
+    #[test]
+    fn mapping_override_uses_mapped_columns() {
+        let csv = "Date,Payee,Notes,Amount\n2026-03-15,Coffee,ignored notes,-3.50\n";
+        let auto = parse_bank_csv(csv, 2, None).expect("auto");
+        let CsvRowOutcome::Parsed(row) = &auto.rows[0] else {
+            panic!("auto row");
+        };
+        assert_eq!(row.description, "Coffee");
+
+        let mapping = names("Date", "Notes", Some("Amount"), None, None);
+        let mapped = parse_bank_csv(csv, 2, Some(&mapping)).expect("mapped");
+        assert_eq!(
+            mapped.detected_mapping.description.as_deref(),
+            Some("Payee")
+        );
+        let CsvRowOutcome::Parsed(row) = &mapped.rows[0] else {
+            panic!("mapped row");
+        };
+        assert_eq!(row.description, "ignored notes");
+        assert_eq!(row.signed_amount_minor, -350);
+    }
+
+    #[test]
+    fn mapping_override_debit_credit() {
+        let csv = "When,What,Out,In\n01/04/2026,Rent,800.00,\n";
+        let mapping = names("When", "What", None, Some("Out"), Some("In"));
+        let parsed = parse_bank_csv(csv, 2, Some(&mapping)).expect("dc");
+        let CsvRowOutcome::Parsed(row) = &parsed.rows[0] else {
+            panic!("row");
+        };
+        assert_eq!(row.kind, SimpleEntryKind::Expense);
+        assert_eq!(row.amount_minor, 80_000);
+        assert!(parsed.detected_mapping.date.is_none());
+    }
+
+    #[test]
+    fn invalid_mapping_is_rejected() {
+        let csv = "Date,Description,Amount,Debit,Credit\n2026-03-15,X,-1.00,,\n";
+
+        let missing_date = CsvColumnMapping {
+            description: Some("Description".into()),
+            amount: Some("Amount".into()),
+            ..CsvColumnMapping::default()
+        };
+        let err = parse_bank_csv(csv, 2, Some(&missing_date)).expect_err("date");
+        assert!(
+            matches!(err, Error::CsvParse(ref m) if m.contains("date")),
+            "{err}"
+        );
+
+        let missing_desc = CsvColumnMapping {
+            date: Some("Date".into()),
+            amount: Some("Amount".into()),
+            ..CsvColumnMapping::default()
+        };
+        let err = parse_bank_csv(csv, 2, Some(&missing_desc)).expect_err("desc");
+        assert!(
+            matches!(err, Error::CsvParse(ref m) if m.contains("description")),
+            "{err}"
+        );
+
+        let missing_amount = names("Date", "Description", None, None, None);
+        let err = parse_bank_csv(csv, 2, Some(&missing_amount)).expect_err("amount");
+        assert!(
+            matches!(err, Error::CsvParse(ref m) if m.contains("amount")),
+            "{err}"
+        );
+
+        let both = names(
+            "Date",
+            "Description",
+            Some("Amount"),
+            Some("Debit"),
+            Some("Credit"),
+        );
+        let err = parse_bank_csv(csv, 2, Some(&both)).expect_err("both");
+        assert!(
+            matches!(err, Error::CsvParse(ref m) if m.contains("both")),
+            "{err}"
+        );
+
+        let unknown = names("Date", "Nope", Some("Amount"), None, None);
+        let err = parse_bank_csv(csv, 2, Some(&unknown)).expect_err("unknown");
+        assert!(
+            matches!(err, Error::CsvParse(ref m) if m.contains("Nope")),
+            "{err}"
+        );
     }
 }

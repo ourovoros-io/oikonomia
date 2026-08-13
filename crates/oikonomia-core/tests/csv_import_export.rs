@@ -3,8 +3,8 @@
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
 use oikonomia_core::csv::{
-    CsvImportAccounts, JournalCsvStatus, export_journal_csv, parse_journal_export,
-    post_import_rows, preview_bank_csv, preview_bank_csv_file,
+    CsvColumnMapping, CsvImportAccounts, JournalCsvStatus, export_journal_csv,
+    parse_journal_export, post_import_rows, preview_bank_csv, preview_bank_csv_file,
 };
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_for_post};
 use oikonomia_core::error::Error;
@@ -83,10 +83,13 @@ fn preview_does_not_post() {
     let (entity_id, acc) = entity_with_accounts(conn);
 
     let before = count_entries(conn, entity_id);
-    let preview = preview_bank_csv(conn, entity_id, roles(&acc), grocery_csv()).expect("preview");
+    let preview =
+        preview_bank_csv(conn, entity_id, roles(&acc), grocery_csv(), None).expect("preview");
     assert_eq!(preview.rows.len(), 1);
     assert!(!preview.rows[0].duplicate);
     assert!(preview.rows[0].error.is_none());
+    assert_eq!(preview.headers, ["Date", "Description", "Amount"]);
+    assert_eq!(preview.detected_mapping.amount.as_deref(), Some("Amount"));
     assert_eq!(
         preview.rows[0].suggested.as_ref().map(|s| s.kind),
         Some(SimpleEntryKind::Expense)
@@ -101,7 +104,7 @@ fn post_selected_rows_are_balanced() {
     let (entity_id, acc) = entity_with_accounts(conn);
 
     let csv = "Date,Description,Amount\n2026-03-15,Groceries,-25.00\n2026-03-16,Salary,1000.00\n";
-    let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv).expect("preview");
+    let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
     let rows: Vec<PostSimpleEntry> = preview
         .rows
         .iter()
@@ -133,7 +136,7 @@ fn junk_row_rejected_and_batch_rolls_back() {
     let (entity_id, acc) = entity_with_accounts(conn);
 
     let csv = "Date,Description,Amount\n2026-03-15,Groceries,-25.00\nbad-date,Nope,1.00\n";
-    let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv).expect("preview");
+    let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
     assert!(preview.rows[0].error.is_none());
     assert!(preview.rows[1].error.is_some());
 
@@ -169,7 +172,7 @@ fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
 
     // Same date+amount; description differs only by whitespace and case.
     let csv = "Date,Description,Amount\n2026-03-15,  GROCERIES  ,-25.00\n2026-03-15,  GROCERIES  ,-25.00\n";
-    let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv).expect("preview");
+    let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
     assert_eq!(preview.rows.len(), 2);
     assert!(preview.rows[0].duplicate, "matches existing ledger entry");
     assert!(
@@ -283,8 +286,51 @@ fn preview_from_file_path_still_does_not_post() {
     std::fs::write(&path, grocery_csv()).expect("write csv");
 
     let before = count_entries(conn, entity_id);
-    let preview = preview_bank_csv_file(conn, entity_id, roles(&acc), &path).expect("preview file");
+    let preview =
+        preview_bank_csv_file(conn, entity_id, roles(&acc), &path, None).expect("preview file");
     assert_eq!(preview.rows.len(), 1);
     assert!(preview.source.contains("bank.csv"));
     assert_eq!(count_entries(conn, entity_id), before);
+}
+
+#[test]
+fn preview_mapping_override_and_auto_detect() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+
+    let csv = "Date,Payee,Notes,Amount\n2026-03-15,Coffee,ignored notes,-3.50\n";
+    let auto = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("auto");
+    assert_eq!(auto.headers, ["Date", "Payee", "Notes", "Amount"]);
+    assert_eq!(auto.detected_mapping.date.as_deref(), Some("Date"));
+    assert_eq!(auto.detected_mapping.description.as_deref(), Some("Payee"));
+    assert_eq!(auto.detected_mapping.amount.as_deref(), Some("Amount"));
+    assert_eq!(
+        auto.rows[0]
+            .suggested
+            .as_ref()
+            .map(|s| s.description.as_str()),
+        Some("Coffee")
+    );
+
+    let mapping = CsvColumnMapping {
+        date: Some("Date".into()),
+        description: Some("Notes".into()),
+        amount: Some("Amount".into()),
+        ..CsvColumnMapping::default()
+    };
+    let mapped =
+        preview_bank_csv(conn, entity_id, roles(&acc), csv, Some(&mapping)).expect("mapped");
+    assert_eq!(
+        mapped.detected_mapping.description.as_deref(),
+        Some("Payee")
+    );
+    assert_eq!(
+        mapped.rows[0]
+            .suggested
+            .as_ref()
+            .map(|s| s.description.as_str()),
+        Some("ignored notes")
+    );
+    assert_eq!(count_entries(conn, entity_id), 0);
 }
