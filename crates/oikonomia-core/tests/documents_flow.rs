@@ -272,6 +272,10 @@ fn list_documents_is_newest_first() {
     let listed = list_documents(conn, entity_id).expect("list");
     assert_eq!(listed[0].id, second.id, "most recent save first");
     assert_eq!(listed[1].id, first.id);
+    assert_eq!(
+        listed[0].entry_description, "Reference entry",
+        "list must carry the linked entry description"
+    );
 }
 
 #[test]

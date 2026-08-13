@@ -357,6 +357,7 @@ export type DocumentMeta = {
   mime_type: string
   size_bytes: number
   created_at: string
+  entry_description: string
 }
 
 export type DocumentContent = {
