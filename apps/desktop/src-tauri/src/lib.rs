@@ -76,6 +76,8 @@ pub fn run() {
             commands::vault_unlock,
             commands::vault_lock,
             commands::vault_change_password,
+            commands::vault_backup,
+            commands::vault_restore,
             commands::app_info,
             commands::entity_list,
             commands::entity_create,
@@ -118,19 +120,7 @@ pub fn run() {
             commands::document_attach,
             commands::document_export,
         ])
-        .on_window_event(|window, event| {
-            // Closing the window hides it to the tray instead of quitting;
-            // Quit lives in the tray menu (or Cmd+Q).
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-
-                if let Err(err) = window.hide() {
-                    log::warn!("failed to hide window on close: {err}");
-                }
-            }
-
-            record_native_drops(window, event);
-        })
+        .on_window_event(on_window_event)
         .build(tauri::generate_context!())
         .expect("failed to start Oikonomia")
         .run(|app, event| {
@@ -143,6 +133,20 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    // Closing the window hides it to the tray instead of quitting;
+    // Quit lives in the tray menu (or Cmd+Q).
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        api.prevent_close();
+
+        if let Err(err) = window.hide() {
+            log::warn!("failed to hide window on close: {err}");
+        }
+    }
+
+    record_native_drops(window, event);
 }
 
 fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
