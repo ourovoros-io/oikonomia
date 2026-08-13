@@ -32,6 +32,7 @@ impl From<CoreError> for CommandError {
             CoreError::RestoreWouldOverwrite => "restore_would_overwrite",
             CoreError::NotFound(_) => "not_found",
             CoreError::Analysis(_) => "analysis",
+            CoreError::CsvParse(_) => "csv_parse",
         };
 
         Self {

@@ -3,6 +3,11 @@
 use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 use base64::Engine;
+use oikonomia_core::csv::{
+    CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewInput,
+    default_journal_export_file_name, ensure_csv_path, export_journal_csv, post_import_rows,
+    preview_bank_csv_file,
+};
 use oikonomia_core::documents::{
     AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, analyze_document_bytes,
     analyzer_status, attach_document, delete_document, get_document, list_documents,
@@ -645,6 +650,121 @@ pub async fn entry_void(
         void_entry(conn, id)
     })
     .await
+}
+
+// --- CSV import / export ---------------------------------------------------
+
+/// Parse a bank CSV into suggested simple-entry rows. **Does not post.**
+///
+/// When `input.path` is omitted, a native Open dialog chooses the file.
+/// Returns `None` if the user cancelled the dialog.
+#[tauri::command]
+pub async fn csv_import_preview(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    input: CsvImportPreviewInput,
+) -> CommandResult<Option<CsvImportPreview>> {
+    let path = if let Some(chosen) = input.path.clone() {
+        std::path::PathBuf::from(chosen)
+    } else {
+        let Some(picked) = pick_csv_path(&app).await? else {
+            return Ok(None);
+        };
+        picked
+    };
+
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        preview_bank_csv_file(conn, input.entity_id, input.accounts(), &path)
+    })
+    .await
+    .map(Some)
+}
+
+/// Post selected preview rows through `post_simple_entry`.
+///
+/// Duplicates (date + amount + normalized description) are skipped unless
+/// `include_duplicates` is true. Junk / unbalanced rows fail the whole batch.
+#[tauri::command]
+pub async fn csv_import_post(
+    state: State<'_, AppState>,
+    input: CsvImportPostInput,
+) -> CommandResult<CsvImportPostResult> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        post_import_rows(conn, &input.rows, input.include_duplicates)
+    })
+    .await
+}
+
+/// Export the current entity's journal as CSV via a native Save dialog.
+///
+/// Returns the destination path, or `None` if the user cancelled.
+#[tauri::command]
+pub async fn csv_export_journal(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    entity_id: EntityId,
+) -> CommandResult<Option<String>> {
+    let (csv_text, file_name) = with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        let entity = get_entity(conn, entity_id)?;
+        let text = export_journal_csv(conn, entity_id)?;
+        Ok((text, default_journal_export_file_name(&entity.name)))
+    })
+    .await?;
+
+    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        move || {
+            use tauri_plugin_dialog::DialogExt;
+            Ok(app
+                .dialog()
+                .file()
+                .add_filter("CSV", &["csv"])
+                .set_file_name(&file_name)
+                .blocking_save_file())
+        }
+    }))
+    .await?;
+
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let dest = ensure_csv_path(file_path.into_path().map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("invalid save location: {e}"),
+    })?);
+
+    std::fs::write(&dest, csv_text.as_bytes()).map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("could not save CSV: {e}"),
+    })?;
+
+    Ok(Some(dest.display().to_string()))
+}
+
+/// Native Open dialog for a `.csv` file. `None` if cancelled.
+async fn pick_csv_path(app: &tauri::AppHandle) -> CommandResult<Option<std::path::PathBuf>> {
+    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        move || {
+            use tauri_plugin_dialog::DialogExt;
+            Ok(app
+                .dialog()
+                .file()
+                .add_filter("CSV", &["csv"])
+                .blocking_pick_file())
+        }
+    }))
+    .await?;
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    file_path.into_path().map(Some).map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("invalid CSV location: {e}"),
+    })
 }
 
 // --- Reports ---------------------------------------------------------------

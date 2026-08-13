@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod coa;
+pub mod csv;
 pub mod db;
 pub mod documents;
 pub mod domain;
