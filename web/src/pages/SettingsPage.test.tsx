@@ -94,6 +94,22 @@ describe('SettingsPage vault backup', () => {
     expect(screen.getByRole('button', { name: /backup vault/i })).toBeEnabled()
   })
 
+  test('clicking Backup vault invokes vaultBackup', async () => {
+    vi.mocked(vaultBackup).mockResolvedValue('/tmp/oikonomia-backup-2026-08-13.oikonomia-backup')
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await expandVaultBackup()
+    await userEvent.click(screen.getByRole('button', { name: /backup vault/i }))
+    await waitFor(() => {
+      expect(vaultBackup).toHaveBeenCalledTimes(1)
+    })
+  })
+
   test('does not call vaultRestore until Replace vault is confirmed', async () => {
     vi.mocked(vaultRestore).mockResolvedValue('/tmp/backup.oikonomia-backup')
     render(
