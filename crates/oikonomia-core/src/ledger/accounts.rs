@@ -154,6 +154,13 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
         return Err(Error::Validation("code and name are required".into()));
     }
 
+    let account = get_account(conn, input.id)?;
+    if account.is_system && !input.is_active {
+        return Err(Error::Validation(
+            "system accounts cannot be archived".into(),
+        ));
+    }
+
     let n = conn
         .execute(
             "

@@ -7,9 +7,9 @@ use oikonomia_core::documents::{attach_document, list_documents};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, account_balance, create_entity,
-    list_accounts, list_entries, post_simple_entry, replace_simple_entry,
-    set_account_opening_balance, trial_balance, void_entry,
+    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, UpdateAccount, account_balance,
+    create_entity, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
+    set_account_opening_balance, trial_balance, update_account, void_entry,
 };
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -212,4 +212,38 @@ fn opening_balance_handles_liability_negative_and_no_op_targets() {
         set_account_opening_balance(conn, acc.bills_payable, 50_000, "2026-01-01"),
         Err(Error::Validation(_))
     ));
+}
+
+#[test]
+fn update_account_cannot_deactivate_system_accounts() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (_entity_id, _acc) = entity_with_accounts(conn);
+    let accounts = list_accounts(conn, _entity_id).expect("accounts");
+    let system = accounts
+        .iter()
+        .find(|a| a.is_system)
+        .expect("opening balances");
+
+    let err = update_account(
+        conn,
+        &UpdateAccount {
+            id: system.id,
+            code: system.code.clone(),
+            name: system.name.clone(),
+            is_active: false,
+            sort_order: system.sort_order,
+        },
+    )
+    .expect_err("system deactivate");
+    assert!(
+        matches!(err, Error::Validation(ref msg) if msg.contains("system accounts cannot be archived")),
+        "{err:?}"
+    );
+    let after = list_accounts(conn, _entity_id)
+        .expect("reload")
+        .into_iter()
+        .find(|a| a.id == system.id)
+        .expect("still there");
+    assert!(after.is_active, "system account must stay active");
 }
