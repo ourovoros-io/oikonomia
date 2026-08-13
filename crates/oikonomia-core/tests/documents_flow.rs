@@ -335,6 +335,20 @@ fn attach_document_rejects_missing_and_wrong_entity_entry() {
         .is_err(),
         "entry from a different book must fail"
     );
+
+    let err = save_document(
+        conn,
+        entity_a,
+        entry_b.entry.id,
+        "cross.txt",
+        "text/plain",
+        b"data",
+    )
+    .expect_err("save must not link a foreign entry");
+    assert!(
+        err.to_string().contains("another book") || err.to_string().contains("does not belong"),
+        "{err}"
+    );
 }
 
 fn simple_expense_input(

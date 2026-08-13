@@ -103,6 +103,13 @@ pub fn save_document(
     let mime = resolve_mime(mime_type, name);
     validate_document_file(name, &mime, data.len() as u64)?;
 
+    let entry = get_entry(conn, entry_id)?;
+    if entry.entry.entity_id != entity_id {
+        return Err(Error::Validation(
+            "document entry belongs to another book".into(),
+        ));
+    }
+
     let clash: i64 = conn
         .query_row(
             "SELECT COUNT(1) FROM documents WHERE entity_id = ?1 AND filename = ?2",
@@ -139,16 +146,22 @@ pub fn save_document(
             created,
         ],
     )
-    .map_err(|err| match err.sqlite_error_code() {
-        // Backstop: the pre-check races nothing (single-writer vault), but a
-        // constraint violation must still read as validation, not IO.
-        Some(rusqlite::ErrorCode::ConstraintViolation) => Error::Validation(format!(
-            "a document named {name} already exists in this book"
-        )),
-        _ => Error::Io(err.to_string()),
+    .map_err(|err| {
+        let text = err.to_string();
+        if matches!(
+            err.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::ConstraintViolation)
+        ) && text.contains("UNIQUE")
+        {
+            Error::Validation(format!(
+                "a document named {name} already exists in this book"
+            ))
+        } else {
+            Error::Io(text)
+        }
     })?;
 
-    let entry_description = get_entry(conn, entry_id)?.entry.description;
+    let entry_description = entry.entry.description;
 
     Ok(DocumentMeta {
         id,
