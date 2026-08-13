@@ -22,7 +22,7 @@ use oikonomia_core::ledger::{
 use oikonomia_core::prefs::{
     LastRoleAccounts, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
 };
-use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus};
+use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
@@ -137,6 +137,8 @@ pub async fn vault_lock(
 /// Lock the vault (if unlocked) and write a portable ciphertext archive.
 ///
 /// Always presents a native save dialog (same pattern as [`document_export`]).
+/// The suggested filename is `oikonomia-backup-YYYY-MM-DD.oikonomia-backup`
+/// using the local calendar date.
 /// The vault is locked *before* the dialog so no `SQLCipher` connection remains
 /// open over the files being copied. The archive is `vault.db` plus
 /// `vault.header.json` only: it is not re-encrypted and never stores the
@@ -150,6 +152,7 @@ pub async fn vault_backup(
 ) -> CommandResult<Option<String>> {
     lock_vault_session(&app, &state).await?;
 
+    let file_name = default_backup_file_name();
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
@@ -158,7 +161,7 @@ pub async fn vault_backup(
                 .dialog()
                 .file()
                 .add_filter("Oikonomia backup", &[BACKUP_EXTENSION])
-                .set_file_name("oikonomia.oikonomia-backup")
+                .set_file_name(&file_name)
                 .blocking_save_file())
         }
     }))

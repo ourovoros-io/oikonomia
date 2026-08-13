@@ -22,6 +22,19 @@ pub const FORMAT_VERSION: u16 = 1;
 /// File extension for portable vault backups (no leading dot).
 pub const BACKUP_EXTENSION: &str = "oikonomia-backup";
 
+/// Default native-save filename: `oikonomia-backup-YYYY-MM-DD.oikonomia-backup`.
+///
+/// Uses the local calendar date so consecutive daily backups sort in Finder.
+#[must_use]
+pub fn default_backup_file_name() -> String {
+    format!("oikonomia-backup-{}.{BACKUP_EXTENSION}", local_iso_date())
+}
+
+fn local_iso_date() -> String {
+    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
+    crate::util::format_date(now.date())
+}
+
 const MEMBER_DB: &str = "vault.db";
 const MEMBER_HEADER: &str = "vault.header.json";
 const RESTORE_DB_TMP: &str = "vault.db.restore-tmp";
@@ -739,6 +752,21 @@ mod tests {
             matches!(err, Error::BackupInvalid(ref msg) if msg.contains("version")),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn default_backup_file_name_is_dated_local_iso() {
+        let name = default_backup_file_name();
+        let prefix = "oikonomia-backup-";
+        let suffix = format!(".{BACKUP_EXTENSION}");
+        assert!(name.starts_with(prefix), "{name}");
+        assert!(name.ends_with(&suffix), "{name}");
+        let date = name
+            .strip_prefix(prefix)
+            .and_then(|s| s.strip_suffix(suffix.as_str()))
+            .expect("dated backup name");
+        crate::util::parse_date(date).expect("YYYY-MM-DD");
+        assert_eq!(date, local_iso_date());
     }
 
     fn init_vault_with(password: &str) -> (TempDir, Vault) {
