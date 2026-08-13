@@ -425,9 +425,10 @@ export type CsvColumnMapping = {
 /** Preview of a bank CSV. Does not write to the ledger. */
 export type CsvImportPreview = {
   source: string
-  headers: string[]
-  /** Auto-detect, even when the caller passed `mapping`. */
-  detected_mapping: CsvColumnMapping
+  /** Present once Rust returns the header row (Map columns selects). */
+  headers?: string[]
+  /** Auto-detect pre-fill; present even when the caller passed `mapping`. */
+  detected_mapping?: CsvColumnMapping
   rows: CsvImportPreviewRow[]
 }
 

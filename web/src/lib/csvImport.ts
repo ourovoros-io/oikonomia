@@ -6,8 +6,15 @@ import type {
   SimpleEntryInput,
 } from './api'
 
+export const CSV_MAP_SOURCE_FALLBACK = 'Auto-detected'
+
 export const CSV_MAP_FOOTER_NOTE =
   'Unmapped columns are ignored. Debit/credit columns can replace Amount.'
+
+/** True when preview includes a header row to drive mapping selects. */
+export function previewHasColumnMap(preview: { headers?: string[] | null }): boolean {
+  return (preview.headers?.length ?? 0) > 0
+}
 
 export type CsvMapDraft = {
   date: string

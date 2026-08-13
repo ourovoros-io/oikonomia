@@ -287,7 +287,11 @@ export function TransactionsPage({ entity }: Props) {
 
   async function onMappingContinue(mapping: CsvColumnMapping, unchanged: boolean) {
     if (!entity || !csvPreview) return
-    if (unchanged || mappingsEqual(mapping, csvPreview.detected_mapping)) {
+    if (
+      unchanged ||
+      !csvPreview.source ||
+      mappingsEqual(mapping, csvPreview.detected_mapping ?? {})
+    ) {
       setCsvStep('preview')
       return
     }

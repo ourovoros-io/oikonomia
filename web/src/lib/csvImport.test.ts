@@ -10,6 +10,7 @@ import {
   mappingReady,
   matchHeader,
   postLabel,
+  previewHasColumnMap,
   previewSubtitle,
   rowSelectable,
 } from './csvImport'
@@ -202,5 +203,11 @@ describe('column mapping helpers', () => {
   test('mappingsEqual ignores ASCII case', () => {
     expect(mappingsEqual(detected, { ...detected, date: 'date' })).toBe(true)
     expect(mappingsEqual(detected, { ...detected, description: 'Notes' })).toBe(false)
+  })
+
+  test('previewHasColumnMap is false until headers exist', () => {
+    expect(previewHasColumnMap({ headers: ['Date'] })).toBe(true)
+    expect(previewHasColumnMap({ headers: [] })).toBe(false)
+    expect(previewHasColumnMap({})).toBe(false)
   })
 })

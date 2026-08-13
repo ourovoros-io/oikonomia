@@ -268,6 +268,30 @@ describe('TransactionsPage CSV mapping and preview', () => {
     expect(api.csvImportPost).not.toHaveBeenCalled()
   })
 
+  test('without headers, mapping shows Auto-detected and continue uses the existing preview', async () => {
+    const legacy: CsvImportPreview = {
+      source: '/tmp/bank.csv',
+      rows: preview.rows,
+    }
+    vi.mocked(api.csvImportPreview).mockResolvedValue(legacy)
+
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Map CSV columns' })).toBeTruthy()
+    })
+    expect(screen.getAllByDisplayValue('Auto-detected').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('combobox', { name: 'Description source column' })).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Preview import' })).toBeTruthy()
+    })
+    expect(api.csvImportPreview).toHaveBeenCalledTimes(1)
+    expect(api.csvImportPreview.mock.calls[0]?.[0]).not.toHaveProperty('mapping')
+    expect(api.csvImportPost).not.toHaveBeenCalled()
+  })
+
   test('duplicate rows are unchecked; Post N selected matches checked count', async () => {
     await renderReady()
     await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
