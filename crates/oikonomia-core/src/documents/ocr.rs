@@ -48,22 +48,20 @@ impl OcrModelPaths {
 
 /// True if the OCR engine can be (or already has been) loaded.
 pub fn ocr_available(paths: &OcrModelPaths) -> bool {
-    if let Ok(guard) = lock_engine()
-        && guard.is_some()
-    {
+    if lock_engine().is_some() {
         return true;
     }
     paths.available()
 }
 
-fn lock_engine() -> Result<std::sync::MutexGuard<'static, Option<OcrEngine>>> {
+fn lock_engine() -> std::sync::MutexGuard<'static, Option<OcrEngine>> {
     match ENGINE.lock() {
-        Ok(guard) => Ok(guard),
+        Ok(guard) => guard,
         Err(poisoned) => {
             ENGINE.clear_poison();
             let mut guard = poisoned.into_inner();
             *guard = None;
-            Ok(guard)
+            guard
         }
     }
 }
@@ -74,7 +72,7 @@ fn lock_engine() -> Result<std::sync::MutexGuard<'static, Option<OcrEngine>>> {
 ///
 /// Missing model files or engine init failure.
 pub fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
-    let mut guard = lock_engine()?;
+    let mut guard = lock_engine();
 
     if guard.is_some() {
         return Ok(());
@@ -208,7 +206,7 @@ fn run_ocr_on_rgb(paths: &OcrModelPaths, img: &RgbImage) -> Result<String> {
     let img_source = ImageSource::from_bytes(img.as_raw(), img.dimensions())
         .map_err(|e| Error::Analysis(format!("image source: {e}")))?;
 
-    let mut guard = lock_engine()?;
+    let mut guard = lock_engine();
     let engine = guard
         .as_mut()
         .ok_or_else(|| Error::Analysis("OCR engine not loaded".into()))?;
@@ -217,12 +215,11 @@ fn run_ocr_on_rgb(paths: &OcrModelPaths, img: &RgbImage) -> Result<String> {
         infer_text(engine, img_source)
     }));
 
-    match inferred {
-        Ok(result) => result,
-        Err(_) => {
-            *guard = None;
-            Err(Error::Analysis("OCR engine panicked".into()))
-        }
+    if let Ok(result) = inferred {
+        result
+    } else {
+        *guard = None;
+        Err(Error::Analysis("OCR engine panicked".into()))
     }
 }
 

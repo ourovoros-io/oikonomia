@@ -95,16 +95,14 @@ impl AppState {
     /// True when `path` was recorded from a native drop (after canonicalize).
     #[must_use]
     pub fn drop_path_allowed(&self, path: &Path) -> bool {
-        let Ok(canonical) = path.canonicalize() else {
-            return false;
-        };
-        match self.allowed_drop_paths.lock() {
-            Ok(set) => set.contains(&canonical),
+        let allowed = match self.allowed_drop_paths.lock() {
+            Ok(set) => set,
             Err(poisoned) => {
                 self.allowed_drop_paths.clear_poison();
-                poisoned.into_inner().contains(&canonical)
+                poisoned.into_inner()
             }
-        }
+        };
+        path_is_allowed_set(&allowed, path)
     }
 
     /// Record command activity for the idle watchdog.

@@ -590,11 +590,11 @@ pub fn settings_set_theme(
     state: State<'_, AppState>,
     theme: Theme,
 ) -> CommandResult<()> {
-    let _guard = state.lock_prefs();
+    let prefs_guard = state.lock_prefs();
     let mut prefs = load_ui_prefs(state.data_dir());
     prefs.theme = theme;
     save_ui_prefs(state.data_dir(), &prefs)?;
-    drop(_guard);
+    drop(prefs_guard);
     app.set_theme(Some(native_theme(theme)));
     Ok(())
 }

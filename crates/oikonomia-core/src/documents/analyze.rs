@@ -165,7 +165,13 @@ pub fn analyze_document_bytes(
 
     let text = match text {
         Some(t) => Some(t),
-        None if mime.contains("pdf") => ocr_pdf_embedded_images(data, model_dir, &mut source, &mut model_label, &mut notes_prefix),
+        None if mime.contains("pdf") => ocr_pdf_embedded_images(
+            data,
+            model_dir,
+            &mut source,
+            &mut model_label,
+            &mut notes_prefix,
+        ),
         other => other,
     };
 
@@ -304,7 +310,7 @@ fn ocr_pdf_embedded_images(
     None
 }
 
-/// JPEG (`DCTDecode`) image XObjects only — no new PDF rasterizer.
+/// JPEG (`DCTDecode`) image streams only — no new PDF rasterizer.
 fn extract_pdf_jpeg_images(data: &[u8]) -> Vec<Vec<u8>> {
     let Ok(doc) = lopdf::Document::load_mem(data) else {
         return Vec::new();
@@ -383,12 +389,13 @@ fn pdf_text_whole(data: &[u8]) -> Option<String> {
 /// Page-by-page pass: pages whose resources make pdf-extract error or panic
 /// are skipped, and the surviving pages' text is joined.
 fn pdf_text_per_page(data: &[u8]) -> Option<String> {
+    const MAX_PDF_PAGES: usize = 50;
+
     let doc = lopdf::Document::load_mem(data).ok()?;
     if doc.is_encrypted() {
         return None;
     }
 
-    const MAX_PDF_PAGES: usize = 50;
     let page_numbers: Vec<u32> = doc
         .get_pages()
         .keys()

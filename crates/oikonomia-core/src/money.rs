@@ -13,7 +13,9 @@ pub struct Money {
 }
 
 impl<'de> Deserialize<'de> for Money {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
         #[derive(Deserialize)]
         struct Raw {
             amount_minor: i64,

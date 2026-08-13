@@ -218,8 +218,8 @@ fn opening_balance_handles_liability_negative_and_no_op_targets() {
 fn update_account_cannot_deactivate_system_accounts() {
     let (_dir, vault) = setup();
     let conn = vault.connection().expect("conn");
-    let (_entity_id, _acc) = entity_with_accounts(conn);
-    let accounts = list_accounts(conn, _entity_id).expect("accounts");
+    let (entity_id, _acc) = entity_with_accounts(conn);
+    let accounts = list_accounts(conn, entity_id).expect("accounts");
     let system = accounts
         .iter()
         .find(|a| a.is_system)
@@ -240,7 +240,7 @@ fn update_account_cannot_deactivate_system_accounts() {
         matches!(err, Error::Validation(ref msg) if msg.contains("system accounts cannot be archived")),
         "{err:?}"
     );
-    let after = list_accounts(conn, _entity_id)
+    let after = list_accounts(conn, entity_id)
         .expect("reload")
         .into_iter()
         .find(|a| a.id == system.id)

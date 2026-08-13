@@ -16,6 +16,8 @@
 /// (no classic `xref` table at all, or a corrected table pointer does not
 /// fit the original digit width).
 pub(crate) fn repair_xref_offsets(data: &[u8]) -> Option<Vec<u8>> {
+    const MAX_STALE_XREF_SPANS: usize = 256;
+
     let tables = xref_keyword_positions(data);
     if tables.is_empty() {
         return None;
@@ -23,8 +25,6 @@ pub(crate) fn repair_xref_offsets(data: &[u8]) -> Option<Vec<u8>> {
 
     let mut patched = data.to_vec();
     let mut repaired_any = false;
-
-    const MAX_STALE_XREF_SPANS: usize = 256;
     for (i, span) in claimed_offset_spans(data).into_iter().enumerate() {
         if i >= MAX_STALE_XREF_SPANS {
             break;

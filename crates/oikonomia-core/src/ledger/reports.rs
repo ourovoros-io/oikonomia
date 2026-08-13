@@ -216,8 +216,7 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
         )?);
 
     if let Some(prior_end) = fy_start.previous_day() {
-        let books_start = Date::from_calendar_date(1, time::Month::January, 1)
-            .unwrap_or(prior_end);
+        let books_start = Date::from_calendar_date(1, time::Month::January, 1).unwrap_or(prior_end);
         let prior_net = sum_types_in_range(
             conn,
             entity_id,

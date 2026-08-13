@@ -239,10 +239,8 @@ pub fn list_entries(
         headers.push(row.map_err(|err| Error::Io(err.to_string()))?);
     }
 
-    let mut lines_by_entry = load_lines_for_entries(
-        conn,
-        headers.iter().map(|(entry, _)| entry.id),
-    )?;
+    let mut lines_by_entry =
+        load_lines_for_entries(conn, headers.iter().map(|(entry, _)| entry.id))?;
 
     let mut out = Vec::new();
     for (entry, is_voided) in headers {
@@ -847,7 +845,9 @@ fn load_lines_for_entries(
         ORDER BY entry_id, line_order
         "
     );
-    let mut stmt = conn.prepare(&sql).map_err(|err| Error::Io(err.to_string()))?;
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|err| Error::Io(err.to_string()))?;
     let rows = stmt
         .query_map(rusqlite::params_from_iter(ids.iter()), map_line_row)
         .map_err(|err| Error::Io(err.to_string()))?;

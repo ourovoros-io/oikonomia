@@ -1206,14 +1206,8 @@ B                 51              25/06/2026                     400014111102934
 
     #[test]
     fn value_after_fullwidth_colon_does_not_panic() {
-        assert_eq!(
-            value_after_colon("Name：ACME LTD"),
-            Some("ACME LTD".into())
-        );
-        assert_eq!(
-            value_after_colon("Name: ACME LTD"),
-            Some("ACME LTD".into())
-        );
+        assert_eq!(value_after_colon("Name：ACME LTD"), Some("ACME LTD".into()));
+        assert_eq!(value_after_colon("Name: ACME LTD"), Some("ACME LTD".into()));
     }
 
     #[test]

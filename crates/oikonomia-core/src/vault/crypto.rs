@@ -103,10 +103,7 @@ mod tests {
         let mut header = VaultHeader::new_with_salt(&[1u8; SALT_LEN]);
         header.m_cost = 50_000_000;
         let err = derive_key("correct horse battery staple", &header);
-        assert!(
-            matches!(err, Err(Error::VaultCorrupt(_))),
-            "{err:?}"
-        );
+        assert!(matches!(err, Err(Error::VaultCorrupt(_))), "{err:?}");
     }
 
     #[test]
@@ -114,10 +111,7 @@ mod tests {
         let mut header = VaultHeader::new_with_salt(&[2u8; SALT_LEN]);
         header.t_cost = 0;
         let err = derive_key("correct horse battery staple", &header);
-        assert!(
-            matches!(err, Err(Error::VaultCorrupt(_))),
-            "{err:?}"
-        );
+        assert!(matches!(err, Err(Error::VaultCorrupt(_))), "{err:?}");
     }
 
     #[test]

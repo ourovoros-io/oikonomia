@@ -233,9 +233,7 @@ impl Vault {
                 .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
                 .map_err(|err| Error::Io(err.to_string()))?;
             if blocked != 0 {
-                return Err(Error::Io(
-                    "wal checkpoint blocked; will not rekey".into(),
-                ));
+                return Err(Error::Io("wal checkpoint blocked; will not rekey".into()));
             }
             let pragma_key = crypto::key_to_sqlcipher_pragma(&new_key);
             conn.pragma_update(None, "rekey", pragma_key.as_str())
@@ -254,10 +252,8 @@ impl Vault {
                 Ok(())
             }
             Err(err) => {
-                if was_unlocked {
-                    if let Ok(restored) = open_sqlcipher(&db_path, &old_key, false) {
-                        self.conn = Some(restored);
-                    }
+                if was_unlocked && let Ok(restored) = open_sqlcipher(&db_path, &old_key, false) {
+                    self.conn = Some(restored);
                 }
                 Err(err)
             }
@@ -308,9 +304,8 @@ fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result
 
 fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connection> {
     if !create {
-        let meta = fs::metadata(path).map_err(|_| {
-            Error::VaultCorrupt("vault database is missing".into())
-        })?;
+        let meta = fs::metadata(path)
+            .map_err(|_| Error::VaultCorrupt("vault database is missing".into()))?;
         if meta.len() == 0 {
             return Err(Error::VaultCorrupt("vault database is empty".into()));
         }
@@ -324,7 +319,8 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI
     };
 
-    let conn = Connection::open_with_flags(path, flags).map_err(|err| Error::Io(err.to_string()))?;
+    let conn =
+        Connection::open_with_flags(path, flags).map_err(|err| Error::Io(err.to_string()))?;
 
     let pragma_key = crypto::key_to_sqlcipher_pragma(key);
     // `SQLCipher` requires key before other operations.
@@ -350,7 +346,8 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
 
     let mut file = fs::File::create(path).map_err(|err| Error::Io(err.to_string()))?;
-    file.write_all(bytes).map_err(|err| Error::Io(err.to_string()))?;
+    file.write_all(bytes)
+        .map_err(|err| Error::Io(err.to_string()))?;
     file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
     if let Some(parent) = path.parent() {
         let dir = fs::File::open(parent).map_err(|err| Error::Io(err.to_string()))?;

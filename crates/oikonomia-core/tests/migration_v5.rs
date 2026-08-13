@@ -1,4 +1,4 @@
-//! v4 → v5: journal_lines debit XOR credit CHECK.
+//! v4 → v5: `journal_lines` debit XOR credit CHECK.
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 

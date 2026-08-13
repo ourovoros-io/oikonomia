@@ -183,7 +183,7 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// v5: `journal_lines` must be debit XOR credit. SQLite cannot add a CHECK
+/// v5: `journal_lines` must be debit XOR credit. `SQLite` cannot add a CHECK
 /// in place, so the table is rebuilt. Existing data is copied only if every
 /// line already satisfies the invariant — a violating row is a corrupt book
 /// and must fail the migration rather than be silently dropped.

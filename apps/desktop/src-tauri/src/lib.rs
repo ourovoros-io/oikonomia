@@ -129,11 +129,7 @@ pub fn run() {
                 }
             }
 
-            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                if let Some(state) = window.try_state::<AppState>() {
-                    state.remember_drop_paths(paths.iter().cloned());
-                }
-            }
+            record_native_drops(window, event);
         })
         .build(tauri::generate_context!())
         .expect("failed to start Oikonomia")
@@ -147,4 +143,12 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
+    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event
+        && let Some(state) = window.try_state::<AppState>()
+    {
+        state.remember_drop_paths(paths.iter().cloned());
+    }
 }
