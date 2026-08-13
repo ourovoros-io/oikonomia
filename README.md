@@ -24,6 +24,7 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 - Multi-entity books with personal / company / blank chart templates
 - Chart of accounts (create, deactivate)
 - Journal entries (two-line post + void with reverse)
+- Bank CSV import (confirm before post) and journal CSV export
 - Reports: trial balance, profit & loss, balance sheet
 - Dashboard (MTD income/expense, assets)
 - Dark / light theme; English UI; locale money formatting
@@ -82,4 +83,4 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 
 ## Out of v1 (backlog)
 
-Recurring transactions, attachments, budgets, CSV import/export, invoicing, multi-currency, Greek UI, recovery key.
+Recurring transactions, attachments, budgets, invoicing, multi-currency, Greek UI, recovery key.
