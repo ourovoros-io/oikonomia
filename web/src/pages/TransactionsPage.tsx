@@ -22,6 +22,7 @@ import {
 } from '../lib/api'
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
+import { beginExclusive } from '../lib/guards'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DateInput } from '../components/DateInput'
 import { DocumentDropZone } from '../components/DocumentDropZone'
@@ -113,6 +114,7 @@ export function TransactionsPage({ entity }: Props) {
   const [toDate, setToDate] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
   const prevEntityId = useRef<string | null>(null)
+  const busyRef = useRef(false)
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
@@ -278,8 +280,10 @@ export function TransactionsPage({ entity }: Props) {
   async function onPost(ev: FormEvent) {
     ev.preventDefault()
     if (!entity) return
+    if (!beginExclusive(busyRef)) return
     const minor = parseMajorToMinor(amount, entity.base_currency)
     if (minor === null || minor <= 0) {
+      busyRef.current = false
       setError('Enter a valid amount (e.g. 25.50 or 25,50)')
       return
     }
@@ -334,6 +338,7 @@ export function TransactionsPage({ entity }: Props) {
     } catch (err) {
       setError((err as CommandError).message)
     } finally {
+      busyRef.current = false
       setBusy(false)
     }
   }

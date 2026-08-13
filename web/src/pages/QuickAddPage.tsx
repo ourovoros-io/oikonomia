@@ -29,6 +29,7 @@ import {
   setQuickAddHeight,
 } from '../lib/quickAddWindow'
 import { isTauri, type CommandError } from '../lib/tauri'
+import { beginExclusive } from '../lib/guards'
 import { Button } from '../components/ui'
 import { cn } from '../lib/cn'
 import {
@@ -203,6 +204,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   const [analyzing, setAnalyzing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const busyRef = useRef(false)
+  const accountsGenRef = useRef(0)
   const baseCurrencyRef = useRef('EUR')
   const analyzeGenRef = useRef(0)
   const amountRef = useRef<HTMLInputElement | null>(null)
@@ -277,7 +279,9 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   const loadAccountsFor = useCallback(
     async (entId: string, nextKind: EntryKind, uiPrefs: UiPrefs | null) => {
+      const gen = ++accountsGenRef.current
       const list = await api.accountList(entId)
+      if (gen !== accountsGenRef.current) return list
       setAccounts(list)
       const key = lastAccountsMapKey(entId, nextKind)
       const last = uiPrefs?.last_accounts_by_entity_kind[key]
@@ -347,13 +351,15 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   async function selectEntity(nextId: string) {
     if (rollingRef.current) return
+    const gen = accountsGenRef.current + 1
     setEntityId(nextId)
     setError(null)
     try {
       await loadAccountsFor(nextId, kind, prefs)
+      if (gen !== accountsGenRef.current) return
       rollTo('kind', 1)
     } catch (err) {
-      setError((err as CommandError).message)
+      if (gen === accountsGenRef.current) setError((err as CommandError).message)
     }
   }
 
@@ -555,9 +561,11 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   async function onSubmit(ev?: FormEvent) {
     ev?.preventDefault()
-    if (!entity || busy || analyzing) return
+    if (!entity || analyzing) return
+    if (!beginExclusive(busyRef)) return
     const minor = parseMajorToMinor(amount, entity.base_currency)
     if (minor === null || minor <= 0) {
+      busyRef.current = false
       setError('Invalid amount')
       if (step !== 'amount') rollTo('amount', -1)
       return
@@ -572,12 +580,12 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       toId,
     })
     if (accountErr) {
+      busyRef.current = false
       setError(accountErr)
       if (step === 'save') rollTo('accounts', -1)
       return
     }
     setBusy(true)
-    busyRef.current = true
     setError(null)
     try {
       const input = buildSimpleEntryInput({
