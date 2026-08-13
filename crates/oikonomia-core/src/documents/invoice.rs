@@ -189,8 +189,7 @@ fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
     if is_utility_bill(lower) {
         let unpaid = lower.contains("ληξιπρόθεσμ")
             || lower.contains("ανεξόφλητ")
-            || lower.contains("amount due")
-            || lower.contains("εξόφληση μέσω");
+            || lower.contains("amount due");
         return (EntryKindSuggestion::Bill, unpaid);
     }
 
@@ -1216,12 +1215,13 @@ B                 51              25/06/2026                     400014111102934
 ΔΕΗ
 ΕΚΚΑΘΑΡΙΣΤΙΚΟΣ ΛΟΓΑΡΙΑΣΜΟΣ
 Πληρωμή εμπρόθεσμα έως 10/08/2026
+Εξόφληση μέσω τραπέζης
 Συνολικό Ποσό Πληρωμής 50,00 €
 ";
         let s = parse_invoice_text(text);
         assert!(
             !s.bill_unpaid,
-            "εμπρόθεσμο/εκκαθαριστικό must not force unpaid"
+            "εμπρόθεσμο/εκκαθαριστικό/εξόφληση μέσω must not force unpaid"
         );
     }
 

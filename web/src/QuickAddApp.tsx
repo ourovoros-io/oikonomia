@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { api, formatMoney } from './lib/api'
-import { isTauri, vaultStatus, type VaultStatus } from './lib/tauri'
+import { isTauri, vaultStatus, vaultTouch, type VaultStatus } from './lib/tauri'
 import { Button } from './components/ui'
 import {
   QUICK_ADD_COMPACT_HEIGHT,
@@ -106,7 +106,7 @@ export default function QuickAddApp() {
       const now = Date.now()
       if (now - lastHeartbeat > 60_000) {
         lastHeartbeat = now
-        void vaultStatus().catch(() => undefined)
+        void vaultTouch().catch(() => undefined)
       }
     }
 

@@ -55,10 +55,14 @@ pub fn ocr_available(paths: &OcrModelPaths) -> bool {
 }
 
 fn lock_engine() -> std::sync::MutexGuard<'static, Option<OcrEngine>> {
-    match ENGINE.lock() {
+    recover_option_mutex(&ENGINE)
+}
+
+fn recover_option_mutex<T>(mutex: &Mutex<Option<T>>) -> std::sync::MutexGuard<'_, Option<T>> {
+    match mutex.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
-            ENGINE.clear_poison();
+            mutex.clear_poison();
             let mut guard = poisoned.into_inner();
             *guard = None;
             guard
@@ -258,4 +262,26 @@ fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<Str
     }
 
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+#[expect(clippy::panic, reason = "test poisons a local mutex on purpose")]
+mod tests {
+    use super::recover_option_mutex;
+    use std::sync::Mutex;
+
+    #[test]
+    fn recover_option_mutex_clears_poison() {
+        let mutex = Mutex::new(Some(7_i32));
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = mutex.lock();
+            panic!("poison the lock");
+        });
+        assert!(mutex.is_poisoned());
+        let guard = recover_option_mutex(&mutex);
+        assert!(guard.is_none());
+        drop(guard);
+        assert!(!mutex.is_poisoned());
+        assert!(mutex.lock().is_ok_and(|g| g.is_none()));
+    }
 }

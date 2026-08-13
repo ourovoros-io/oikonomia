@@ -110,13 +110,13 @@ impl Vault {
         let conn = match open_sqlcipher(&db_path, &key, true) {
             Ok(conn) => conn,
             Err(err) => {
-                remove_vault_db_sidecars(&db_path);
+                discard_partial_init(&self.data_dir);
                 return Err(err);
             }
         };
         if let Err(err) = bootstrap_schema(&conn) {
             drop(conn);
-            remove_vault_db_sidecars(&db_path);
+            discard_partial_init(&self.data_dir);
             return Err(err);
         }
 
@@ -364,6 +364,15 @@ fn remove_vault_db_sidecars(db_path: &Path) {
     let _ = fs::remove_file(shm);
 }
 
+/// A failed first-run must not leave a header without a database — that
+/// shape looks Locked and cannot be initialized or unlocked.
+fn discard_partial_init(data_dir: &Path) {
+    let header_path = vault_header_path(data_dir);
+    remove_vault_db_sidecars(&vault_db_path(data_dir));
+    let _ = fs::remove_file(&header_path);
+    let _ = fs::remove_file(header_path.with_extension("json.init"));
+}
+
 fn bootstrap_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
@@ -417,5 +426,32 @@ mod tests {
         };
         assert!(bytes.len() > 16);
         assert_ne!(&bytes[0..6], b"SQLite");
+    }
+
+    #[test]
+    fn discard_partial_init_removes_header_and_db() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+        let header = vault_header_path(dir.path());
+        let staged = header.with_extension("json.init");
+        let db = vault_db_path(dir.path());
+        if fs::write(&header, b"{}").is_err()
+            || fs::write(&staged, b"{}").is_err()
+            || fs::write(&db, b"x").is_err()
+        {
+            return;
+        }
+
+        discard_partial_init(dir.path());
+
+        assert!(!header.exists(), "header must not survive a failed init");
+        assert!(!staged.exists(), "staged init header must be removed");
+        assert!(!db.exists(), "orphan db must be removed");
+
+        let Ok(vault) = Vault::open_path(dir.path()) else {
+            return;
+        };
+        assert_eq!(vault.status(), VaultStatus::Uninitialized);
     }
 }

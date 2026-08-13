@@ -163,16 +163,17 @@ pub fn analyze_document_bytes(
         t
     };
 
-    let text = match text {
-        Some(t) => Some(t),
-        None if mime.contains("pdf") => ocr_pdf_embedded_images(
+    let text = if mime.contains("pdf") && should_ocr_pdf_images(text.as_deref()) {
+        ocr_pdf_embedded_images(
             data,
             model_dir,
             &mut source,
             &mut model_label,
             &mut notes_prefix,
-        ),
-        other => other,
+        )
+        .or(text)
+    } else {
+        text
     };
 
     let mut suggestion = if let Some(ref body) = text {
@@ -283,6 +284,14 @@ fn empty_suggestion(notes: &str) -> DocumentSuggestion {
     }
 }
 
+const MIN_PDF_TEXT_CHARS: usize = 8;
+const MAX_PDF_PAGES: usize = 50;
+const MAX_PDF_STREAM_BYTES: usize = 32 * 1024 * 1024;
+
+fn should_ocr_pdf_images(text: Option<&str>) -> bool {
+    text.is_none_or(|t| t.chars().count() < MIN_PDF_TEXT_CHARS)
+}
+
 fn ocr_pdf_embedded_images(
     data: &[u8],
     model_dir: Option<&Path>,
@@ -311,41 +320,112 @@ fn ocr_pdf_embedded_images(
 }
 
 /// JPEG (`DCTDecode`) image streams only — no new PDF rasterizer.
+/// Page `/XObject` images are preferred so a logo in the catalog is not first.
 fn extract_pdf_jpeg_images(data: &[u8]) -> Vec<Vec<u8>> {
     let Ok(doc) = lopdf::Document::load_mem(data) else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for object in doc.objects.values() {
-        let lopdf::Object::Stream(stream) = object else {
-            continue;
-        };
-        let Ok(subtype) = stream.dict.get(b"Subtype") else {
-            continue;
-        };
-        let is_image = matches!(subtype, lopdf::Object::Name(name) if name == b"Image");
-        if !is_image {
-            continue;
-        }
-        let Ok(filter) = stream.dict.get(b"Filter") else {
-            continue;
-        };
-        let jpeg = match filter {
-            lopdf::Object::Name(name) if name == b"DCTDecode" => true,
-            lopdf::Object::Array(arr) => arr
-                .iter()
-                .any(|item| matches!(item, lopdf::Object::Name(name) if name == b"DCTDecode")),
-            _ => false,
-        };
-        if !jpeg || stream.content.len() > 32 * 1024 * 1024 {
-            continue;
-        }
-        out.push(stream.content.clone());
+    for page_id in doc.get_pages().values().copied() {
+        collect_jpegs_from_page(&doc, page_id, &mut out);
         if out.len() >= 2 {
-            break;
+            return out;
+        }
+    }
+    if !out.is_empty() {
+        return out;
+    }
+    for object in doc.objects.values() {
+        if let Some(jpeg) = jpeg_from_object(&doc, object) {
+            out.push(jpeg);
+            if out.len() >= 2 {
+                break;
+            }
         }
     }
     out
+}
+
+fn collect_jpegs_from_page(
+    doc: &lopdf::Document,
+    page_id: lopdf::ObjectId,
+    out: &mut Vec<Vec<u8>>,
+) {
+    let Ok(page) = doc.get_dictionary(page_id) else {
+        return;
+    };
+    let Some(resources) = dict_ref_or_inline(doc, page.get(b"Resources").ok()) else {
+        return;
+    };
+    let Some(xobjects) = dict_ref_or_inline(doc, resources.get(b"XObject").ok()) else {
+        return;
+    };
+    for (_name, object) in xobjects {
+        if let Some(jpeg) = jpeg_from_object(doc, object) {
+            out.push(jpeg);
+            if out.len() >= 2 {
+                return;
+            }
+        }
+    }
+}
+
+fn dict_ref_or_inline<'a>(
+    doc: &'a lopdf::Document,
+    object: Option<&'a lopdf::Object>,
+) -> Option<&'a lopdf::Dictionary> {
+    match object? {
+        lopdf::Object::Dictionary(dict) => Some(dict),
+        lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
+        _ => None,
+    }
+}
+
+fn jpeg_from_object(doc: &lopdf::Document, object: &lopdf::Object) -> Option<Vec<u8>> {
+    let stream = match object {
+        lopdf::Object::Stream(stream) => stream,
+        lopdf::Object::Reference(id) => match doc.objects.get(id) {
+            Some(lopdf::Object::Stream(stream)) => stream,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let subtype = stream.dict.get(b"Subtype").ok()?;
+    let is_image = matches!(subtype, lopdf::Object::Name(name) if name == b"Image");
+    if !is_image {
+        return None;
+    }
+    let filter = stream.dict.get(b"Filter").ok()?;
+    let jpeg = match filter {
+        lopdf::Object::Name(name) if name == b"DCTDecode" => true,
+        lopdf::Object::Array(arr) => arr
+            .iter()
+            .any(|item| matches!(item, lopdf::Object::Name(name) if name == b"DCTDecode")),
+        _ => false,
+    };
+    if !jpeg || stream.content.len() > MAX_PDF_STREAM_BYTES {
+        return None;
+    }
+    Some(stream.content.clone())
+}
+
+fn pdf_within_budget(data: &[u8]) -> bool {
+    let Ok(doc) = lopdf::Document::load_mem(data) else {
+        return data.len() <= MAX_PDF_STREAM_BYTES;
+    };
+    if doc.get_pages().len() > MAX_PDF_PAGES {
+        return false;
+    }
+    let mut total = 0usize;
+    for object in doc.objects.values() {
+        if let lopdf::Object::Stream(stream) = object {
+            total = total.saturating_add(stream.content.len());
+            if total > MAX_PDF_STREAM_BYTES {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn extract_text(filename: &str, mime: &str, data: &[u8]) -> Option<String> {
@@ -369,6 +449,9 @@ fn extract_text(filename: &str, mime: &str, data: &[u8]) -> Option<String> {
 /// panic mid-page. We repair the former and contain the latter, falling
 /// back to page-by-page extraction so one bad page cannot blank the rest.
 fn pdf_text(data: &[u8]) -> Option<String> {
+    if !pdf_within_budget(data) {
+        return None;
+    }
     if let Some(text) = pdf_text_whole(data).or_else(|| pdf_text_per_page(data)) {
         return Some(text);
     }
@@ -389,8 +472,6 @@ fn pdf_text_whole(data: &[u8]) -> Option<String> {
 /// Page-by-page pass: pages whose resources make pdf-extract error or panic
 /// are skipped, and the surviving pages' text is joined.
 fn pdf_text_per_page(data: &[u8]) -> Option<String> {
-    const MAX_PDF_PAGES: usize = 50;
-
     let doc = lopdf::Document::load_mem(data).ok()?;
     if doc.is_encrypted() {
         return None;
@@ -435,6 +516,14 @@ mod tests {
     fn extract_pdf_jpeg_images_ignores_non_pdf() {
         assert!(extract_pdf_jpeg_images(b"not a pdf").is_empty());
         assert!(extract_pdf_jpeg_images(b"%PDF-1.4\ntrailer\n%%EOF").is_empty());
+    }
+
+    #[test]
+    fn short_or_missing_pdf_text_triggers_image_ocr() {
+        assert!(should_ocr_pdf_images(None));
+        assert!(should_ocr_pdf_images(Some("abc")));
+        assert!(should_ocr_pdf_images(Some("1234567")));
+        assert!(!should_ocr_pdf_images(Some("12345678")));
     }
 
     #[test]
