@@ -190,25 +190,12 @@ fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
         let unpaid = lower.contains("ληξιπρόθεσμ")
             || lower.contains("ανεξόφλητ")
             || lower.contains("amount due")
-            || lower.contains("εξόφληση μέσω")
-            || lower.contains("εμπρόθεσμ");
-        // Settlement bills are typically amounts to pay now.
-        return (
-            EntryKindSuggestion::Bill,
-            unpaid || lower.contains("εκκαθαριστικ"),
-        );
+            || lower.contains("εξόφληση μέσω");
+        return (EntryKindSuggestion::Bill, unpaid);
     }
 
     // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
-    let sales = is_sales_invoice(lower)
-        || lower.contains("τιμολόγιο παροχ")
-        || lower.contains("παροχή υπηρεσι")
-        || lower.contains("ενδοκοινοτικ")
-        || (lower.contains("sales invoice"))
-        || (lower.contains("invoice")
-            && lower.contains("service")
-            && !lower.contains("electric")
-            && !lower.contains("utility"));
+    let sales = is_sales_invoice(lower) || lower.contains("sales invoice");
 
     let purchase = lower.contains("τιμολόγιο αγορ")
         || lower.contains("purchase invoice")
@@ -1043,8 +1030,8 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
 }
 
 fn value_after_colon(line: &str) -> Option<String> {
-    let idx = line.find(':').or_else(|| line.find('：'))?;
-    let v = line[idx + 1..].trim();
+    let (idx, ch) = line.char_indices().find(|(_, c)| *c == ':' || *c == '：')?;
+    let v = line[idx + ch.len_utf8()..].trim();
     if v.is_empty() {
         None
     } else {
@@ -1203,6 +1190,45 @@ B                 51              25/06/2026                     400014111102934
             s.merchant
         );
         assert!(s.bill_unpaid, "Επί πιστώσει should mark unpaid/credit");
+    }
+
+    #[test]
+    fn received_service_invoice_is_not_income() {
+        let text = "\
+Τιμολόγιο Παροχής Υπηρεσιών
+Επωνυμία: ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ
+Α.Φ.Μ.: 123456789
+Πληρωτέο (€): 200,00
+";
+        let s = parse_invoice_text(text);
+        assert_ne!(s.kind, EntryKindSuggestion::Income, "kind={:?}", s.kind);
+    }
+
+    #[test]
+    fn value_after_fullwidth_colon_does_not_panic() {
+        assert_eq!(
+            value_after_colon("Name：ACME LTD"),
+            Some("ACME LTD".into())
+        );
+        assert_eq!(
+            value_after_colon("Name: ACME LTD"),
+            Some("ACME LTD".into())
+        );
+    }
+
+    #[test]
+    fn settlement_bill_is_not_automatically_unpaid() {
+        let text = "\
+ΔΕΗ
+ΕΚΚΑΘΑΡΙΣΤΙΚΟΣ ΛΟΓΑΡΙΑΣΜΟΣ
+Πληρωμή εμπρόθεσμα έως 10/08/2026
+Συνολικό Ποσό Πληρωμής 50,00 €
+";
+        let s = parse_invoice_text(text);
+        assert!(
+            !s.bill_unpaid,
+            "εμπρόθεσμο/εκκαθαριστικό must not force unpaid"
+        );
     }
 
     #[test]
