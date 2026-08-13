@@ -5,6 +5,8 @@
 //! 2. **Images** → bundled neural OCR (`ocrs` models in app resources)
 //! 3. **Invoice reader** → Greek/EU totals, MARK, kind (no cloud)
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use super::invoice::parse_invoice_text;
@@ -161,6 +163,12 @@ pub fn analyze_document_bytes(
         t
     };
 
+    let text = match text {
+        Some(t) => Some(t),
+        None if mime.contains("pdf") => ocr_pdf_embedded_images(data, model_dir, &mut source, &mut model_label, &mut notes_prefix),
+        other => other,
+    };
+
     let mut suggestion = if let Some(ref body) = text {
         if source == AnalyzeSource::None {
             source = AnalyzeSource::Heuristic;
@@ -269,6 +277,71 @@ fn empty_suggestion(notes: &str) -> DocumentSuggestion {
     }
 }
 
+fn ocr_pdf_embedded_images(
+    data: &[u8],
+    model_dir: Option<&Path>,
+    source: &mut AnalyzeSource,
+    model_label: &mut Option<String>,
+    notes_prefix: &mut String,
+) -> Option<String> {
+    let dir = model_dir?;
+    let paths = OcrModelPaths::from_dir(dir);
+    if !ocr_available(&paths) {
+        return None;
+    }
+    for jpeg in extract_pdf_jpeg_images(data).into_iter().take(2) {
+        let Ok(text) = ocr_image_bytes(&paths, &jpeg) else {
+            continue;
+        };
+        if text.chars().count() > 8 {
+            *source = AnalyzeSource::BundledOcr;
+            *model_label = Some("ocrs-bundled".into());
+            *notes_prefix =
+                "Read embedded PDF image with built-in OCR. Review before saving.".into();
+            return Some(text);
+        }
+    }
+    None
+}
+
+/// JPEG (`DCTDecode`) image XObjects only — no new PDF rasterizer.
+fn extract_pdf_jpeg_images(data: &[u8]) -> Vec<Vec<u8>> {
+    let Ok(doc) = lopdf::Document::load_mem(data) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for object in doc.objects.values() {
+        let lopdf::Object::Stream(stream) = object else {
+            continue;
+        };
+        let Ok(subtype) = stream.dict.get(b"Subtype") else {
+            continue;
+        };
+        let is_image = matches!(subtype, lopdf::Object::Name(name) if name == b"Image");
+        if !is_image {
+            continue;
+        }
+        let Ok(filter) = stream.dict.get(b"Filter") else {
+            continue;
+        };
+        let jpeg = match filter {
+            lopdf::Object::Name(name) if name == b"DCTDecode" => true,
+            lopdf::Object::Array(arr) => arr
+                .iter()
+                .any(|item| matches!(item, lopdf::Object::Name(name) if name == b"DCTDecode")),
+            _ => false,
+        };
+        if !jpeg || stream.content.len() > 32 * 1024 * 1024 {
+            continue;
+        }
+        out.push(stream.content.clone());
+        if out.len() >= 2 {
+            break;
+        }
+    }
+    out
+}
+
 fn extract_text(filename: &str, mime: &str, data: &[u8]) -> Option<String> {
     if mime == "text/plain" || filename.to_ascii_lowercase().ends_with(".txt") {
         return Some(String::from_utf8_lossy(data).into_owned());
@@ -315,7 +388,13 @@ fn pdf_text_per_page(data: &[u8]) -> Option<String> {
         return None;
     }
 
-    let page_numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
+    const MAX_PDF_PAGES: usize = 50;
+    let page_numbers: Vec<u32> = doc
+        .get_pages()
+        .keys()
+        .copied()
+        .take(MAX_PDF_PAGES)
+        .collect();
 
     let mut chunks: Vec<String> = Vec::new();
     for page in page_numbers {
@@ -344,6 +423,12 @@ fn pdf_text_per_page(data: &[u8]) -> Option<String> {
 mod tests {
     use super::super::invoice::parse_invoice_text;
     use super::*;
+
+    #[test]
+    fn extract_pdf_jpeg_images_ignores_non_pdf() {
+        assert!(extract_pdf_jpeg_images(b"not a pdf").is_empty());
+        assert!(extract_pdf_jpeg_images(b"%PDF-1.4\ntrailer\n%%EOF").is_empty());
+    }
 
     #[test]
     fn english_total_line() {

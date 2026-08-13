@@ -48,12 +48,24 @@ impl OcrModelPaths {
 
 /// True if the OCR engine can be (or already has been) loaded.
 pub fn ocr_available(paths: &OcrModelPaths) -> bool {
-    if let Ok(guard) = ENGINE.lock()
+    if let Ok(guard) = lock_engine()
         && guard.is_some()
     {
         return true;
     }
     paths.available()
+}
+
+fn lock_engine() -> Result<std::sync::MutexGuard<'static, Option<OcrEngine>>> {
+    match ENGINE.lock() {
+        Ok(guard) => Ok(guard),
+        Err(poisoned) => {
+            ENGINE.clear_poison();
+            let mut guard = poisoned.into_inner();
+            *guard = None;
+            Ok(guard)
+        }
+    }
 }
 
 /// Ensure the global OCR engine is loaded (lazy, once).
@@ -62,9 +74,7 @@ pub fn ocr_available(paths: &OcrModelPaths) -> bool {
 ///
 /// Missing model files or engine init failure.
 pub fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
-    let mut guard = ENGINE
-        .lock()
-        .map_err(|_| Error::Analysis("OCR engine lock poisoned".into()))?;
+    let mut guard = lock_engine()?;
 
     if guard.is_some() {
         return Ok(());
@@ -198,13 +208,25 @@ fn run_ocr_on_rgb(paths: &OcrModelPaths, img: &RgbImage) -> Result<String> {
     let img_source = ImageSource::from_bytes(img.as_raw(), img.dimensions())
         .map_err(|e| Error::Analysis(format!("image source: {e}")))?;
 
-    let mut guard = ENGINE
-        .lock()
-        .map_err(|_| Error::Analysis("OCR engine lock poisoned".into()))?;
+    let mut guard = lock_engine()?;
     let engine = guard
         .as_mut()
         .ok_or_else(|| Error::Analysis("OCR engine not loaded".into()))?;
 
+    let inferred = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        infer_text(engine, img_source)
+    }));
+
+    match inferred {
+        Ok(result) => result,
+        Err(_) => {
+            *guard = None;
+            Err(Error::Analysis("OCR engine panicked".into()))
+        }
+    }
+}
+
+fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<String> {
     let ocr_input = engine
         .prepare_input(img_source)
         .map_err(|e| Error::Analysis(format!("OCR prepare: {e}")))?;

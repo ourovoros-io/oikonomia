@@ -24,7 +24,11 @@ pub(crate) fn repair_xref_offsets(data: &[u8]) -> Option<Vec<u8>> {
     let mut patched = data.to_vec();
     let mut repaired_any = false;
 
-    for span in claimed_offset_spans(data) {
+    const MAX_STALE_XREF_SPANS: usize = 256;
+    for (i, span) in claimed_offset_spans(data).into_iter().enumerate() {
+        if i >= MAX_STALE_XREF_SPANS {
+            break;
+        }
         let claimed = parse_ascii_usize(data.get(span.clone())?)?;
 
         if offset_points_at_xref(data, claimed) {
