@@ -9,6 +9,7 @@ import type { Entity } from '../lib/api'
 vi.mock('../lib/tauri', () => ({
   vaultBackup: vi.fn(),
   vaultRestore: vi.fn(),
+  vaultPickBackup: vi.fn(),
   vaultChangePassword: vi.fn(),
 }))
 
@@ -18,7 +19,7 @@ vi.mock('../lib/api', () => ({
   },
 }))
 
-import { vaultBackup, vaultRestore } from '../lib/tauri'
+import { vaultBackup, vaultPickBackup, vaultRestore } from '../lib/tauri'
 import { SettingsPage } from './SettingsPage'
 
 const entity: Entity = {
@@ -29,6 +30,8 @@ const entity: Entity = {
   chart_template: 'personal',
 }
 
+const BACKUP_PATH = '/tmp/backup.oikonomia-backup'
+
 const noopAsync = async () => {}
 
 afterEach(() => {
@@ -38,6 +41,8 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(vaultBackup).mockReset()
   vi.mocked(vaultRestore).mockReset()
+  vi.mocked(vaultPickBackup).mockReset()
+  vi.mocked(vaultPickBackup).mockResolvedValue(BACKUP_PATH)
 })
 
 async function expandVaultBackup() {
@@ -110,8 +115,8 @@ describe('SettingsPage vault backup', () => {
     })
   })
 
-  test('does not call vaultRestore until Replace vault is confirmed', async () => {
-    vi.mocked(vaultRestore).mockResolvedValue('/tmp/backup.oikonomia-backup')
+  test('pick then confirm then vaultRestore with path and replace:true', async () => {
+    vi.mocked(vaultRestore).mockResolvedValue(BACKUP_PATH)
     render(
       <SettingsPage
         entities={[entity]}
@@ -121,18 +126,19 @@ describe('SettingsPage vault backup', () => {
     )
     await expandVaultBackup()
     await userEvent.click(screen.getByRole('button', { name: /restore from backup/i }))
+    await waitFor(() => {
+      expect(vaultPickBackup).toHaveBeenCalledTimes(1)
+    })
     expect(vaultRestore).not.toHaveBeenCalled()
     expect(screen.getByRole('dialog', { name: 'Replace local vault?' })).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
     await waitFor(() => {
-      expect(vaultRestore).toHaveBeenCalledTimes(1)
+      expect(vaultRestore).toHaveBeenCalledWith({ path: BACKUP_PATH, replace: true })
     })
-    expect(vaultRestore).toHaveBeenCalledWith({ replace: true })
-    expect(vi.mocked(vaultRestore).mock.calls[0]?.[0]).not.toHaveProperty('path')
   })
 
-  test('cancelled restore (null) is a no-op', async () => {
-    vi.mocked(vaultRestore).mockResolvedValue(null)
+  test('cancelled pick does not restore and does not show confirm', async () => {
+    vi.mocked(vaultPickBackup).mockResolvedValue(null)
     render(
       <SettingsPage
         entities={[entity]}
@@ -142,13 +148,10 @@ describe('SettingsPage vault backup', () => {
     )
     await expandVaultBackup()
     await userEvent.click(screen.getByRole('button', { name: /restore from backup/i }))
-    await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
     await waitFor(() => {
-      expect(vaultRestore).toHaveBeenCalledWith({ replace: true })
+      expect(vaultPickBackup).toHaveBeenCalledTimes(1)
     })
-    expect(vi.mocked(vaultRestore).mock.calls[0]?.[0]).not.toHaveProperty('path')
-    await waitFor(() => {
-      expect(screen.queryByRole('dialog')).toBeNull()
-    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(vaultRestore).not.toHaveBeenCalled()
   })
 })

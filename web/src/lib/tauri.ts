@@ -111,15 +111,38 @@ export async function vaultBackup(): Promise<string | null> {
 }
 
 /**
- * Native Open dialog lives in Rust. Confirm in the UI first, then call with
- * `{ replace }` only — do not pass `path`. `null` means the user cancelled.
+ * Native Open dialog lives in Rust. `null` means the user cancelled.
+ * Confirm in the UI after a path is returned, then pass it to {@link vaultRestore}.
  */
-export async function vaultRestore(opts: { replace: boolean }): Promise<string | null> {
+export async function vaultPickBackup(): Promise<string | null> {
   if (!isTauri()) {
     throw asCommandError(new Error('Vault commands require the desktop app'))
   }
   try {
-    return await invoke<string | null>('vault_restore', { replace: opts.replace })
+    return await invoke<string | null>('vault_pick_backup')
+  } catch (err) {
+    throw asCommandError(err)
+  }
+}
+
+/**
+ * Restore a backup archive. Pass `path` after {@link vaultPickBackup}.
+ * Omit `path` only as a fallback so Rust can still show Open. `null` means
+ * the user cancelled a Rust-side Open fallback.
+ */
+export async function vaultRestore(opts: {
+  path?: string
+  replace: boolean
+}): Promise<string | null> {
+  if (!isTauri()) {
+    throw asCommandError(new Error('Vault commands require the desktop app'))
+  }
+  try {
+    const payload: { replace: boolean; path?: string } = { replace: opts.replace }
+    if (opts.path !== undefined) {
+      payload.path = opts.path
+    }
+    return await invoke<string | null>('vault_restore', payload)
   } catch (err) {
     throw asCommandError(err)
   }

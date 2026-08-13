@@ -14,7 +14,7 @@ import {
   User,
 } from 'lucide-react'
 import { api, type ChartTemplate, type Entity } from '../lib/api'
-import { vaultBackup, vaultChangePassword, vaultRestore, type CommandError } from '../lib/tauri'
+import { vaultBackup, vaultChangePassword, vaultPickBackup, vaultRestore, type CommandError } from '../lib/tauri'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
@@ -106,6 +106,8 @@ export function SettingsPage({
   const [backupBusy, setBackupBusy] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
+  const [restorePath, setRestorePath] = useState<string | undefined>(undefined)
+  const [restorePicking, setRestorePicking] = useState(false)
 
   const backupAvailability = vaultBackupAvailability({
     vaultPresent,
@@ -224,19 +226,39 @@ export function SettingsPage({
     }
   }
 
+  async function beginRestore() {
+    if (restoreBusy || restorePicking || restoreOpen) return
+    setError(null)
+    setRestorePicking(true)
+    try {
+      const path = await vaultPickBackup()
+      if (path === null) return
+      setRestorePath(path)
+      setRestoreOpen(true)
+    } catch (err) {
+      setError(backupCommandError(err as CommandError))
+    } finally {
+      setRestorePicking(false)
+    }
+  }
+
   async function confirmRestore() {
+    if (!restorePath) return
     setRestoreBusy(true)
     setError(null)
     try {
-      const result = await vaultRestore({ replace: replaceConfirm.replace })
+      const result = await vaultRestore({ path: restorePath, replace: replaceConfirm.replace })
       if (result === null) {
         setRestoreOpen(false)
+        setRestorePath(undefined)
         return
       }
       setRestoreOpen(false)
+      setRestorePath(undefined)
     } catch (err) {
       setError(backupCommandError(err as CommandError))
       setRestoreOpen(false)
+      setRestorePath(undefined)
     } finally {
       setRestoreBusy(false)
     }
@@ -283,7 +305,10 @@ export function SettingsPage({
         danger
         busy={restoreBusy}
         onCancel={() => {
-          if (!restoreBusy) setRestoreOpen(false)
+          if (!restoreBusy) {
+            setRestoreOpen(false)
+            setRestorePath(undefined)
+          }
         }}
         onConfirm={() => void confirmRestore()}
       />
@@ -379,8 +404,9 @@ export function SettingsPage({
           </Button>
           <Button
             variant="danger"
-            disabled={restoreBusy}
-            onClick={() => setRestoreOpen(true)}
+            disabled={restoreBusy || restorePicking}
+            busy={restorePicking}
+            onClick={() => void beginRestore()}
           >
             <Upload className="size-3.5" />
             Restore from backup
