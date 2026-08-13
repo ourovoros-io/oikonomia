@@ -65,6 +65,14 @@ pub enum Error {
     #[error("vault is corrupt: {0}")]
     VaultCorrupt(String),
 
+    /// Portable vault backup is not a valid Oikonomia archive.
+    #[error("backup is invalid: {0}")]
+    BackupInvalid(String),
+
+    /// Restore refused because vault files already exist and `replace` was false.
+    #[error("a vault already exists; restore requires replace")]
+    RestoreWouldOverwrite,
+
     /// Requested resource does not exist.
     #[error("{0} not found")]
     NotFound(String),

@@ -28,6 +28,8 @@ impl From<CoreError> for CommandError {
             CoreError::Io(_) => "io",
             CoreError::Crypto(_) => "crypto",
             CoreError::VaultCorrupt(_) => "vault_corrupt",
+            CoreError::BackupInvalid(_) => "backup_invalid",
+            CoreError::RestoreWouldOverwrite => "restore_would_overwrite",
             CoreError::NotFound(_) => "not_found",
             CoreError::Analysis(_) => "analysis",
         };

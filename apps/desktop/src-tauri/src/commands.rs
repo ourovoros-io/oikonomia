@@ -22,7 +22,7 @@ use oikonomia_core::ledger::{
 use oikonomia_core::prefs::{
     LastRoleAccounts, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
 };
-use oikonomia_core::vault::{Vault, VaultStatus};
+use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
 use serde::Serialize;
 use std::path::Path;
 use std::sync::Mutex;
@@ -132,6 +132,164 @@ pub async fn vault_lock(
     .await?;
     let _ = app.emit("vault-locked", ());
     Ok(status)
+}
+
+/// Write a portable ciphertext archive. Does not lock; an unlocked session
+/// stays unlocked.
+///
+/// Always presents a native save dialog (same pattern as [`document_export`]).
+/// The suggested filename is `oikonomia-backup-YYYY-MM-DD.oikonomia-backup`
+/// using the local calendar date. An unlocked vault is snapshotted with
+/// `VACUUM INTO` so the copy is consistent without closing `SQLCipher`.
+/// The archive is `vault.db` plus `vault.header.json` only: it is not
+/// re-encrypted and never stores the master password.
+///
+/// Returns the destination path, or `None` if the user cancelled.
+#[tauri::command]
+pub async fn vault_backup(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<Option<String>> {
+    let file_name = default_backup_file_name();
+    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        move || {
+            use tauri_plugin_dialog::DialogExt;
+            Ok(app
+                .dialog()
+                .file()
+                .add_filter("Oikonomia backup", &[BACKUP_EXTENSION])
+                .set_file_name(&file_name)
+                .blocking_save_file())
+        }
+    }))
+    .await?;
+
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let dest = with_backup_extension(file_path.into_path().map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("invalid save location: {e}"),
+    })?);
+
+    with_vault_blocking(&state, move |vault| {
+        vault.backup_to(&dest)?;
+        Ok(dest.display().to_string())
+    })
+    .await
+    .map(Some)
+}
+
+/// Restore a portable vault archive and leave the vault locked.
+///
+/// `path` is the archive to unpack. When `path` is `None`, a native open
+/// dialog chooses the file (the in-app path). A concrete path is accepted so
+/// a caller that already picked via [`vault_pick_backup`] can pass it through.
+/// Decrypt is not performed; the owner unlocks afterwards with the existing
+/// master password.
+///
+/// Existing vault files are not overwritten unless `replace` is `true`.
+/// An uninitialized data directory accepts `replace: false`.
+///
+/// Returns the archive path that was restored, or `None` if the user cancelled
+/// the open dialog.
+#[tauri::command]
+pub async fn vault_restore(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    path: Option<String>,
+    replace: bool,
+) -> CommandResult<Option<String>> {
+    lock_vault_session(&app, &state).await?;
+
+    let archive = if let Some(chosen) = path {
+        std::path::PathBuf::from(chosen)
+    } else {
+        let Some(picked) = pick_backup_path(&app).await? else {
+            return Ok(None);
+        };
+        picked
+    };
+
+    with_vault_blocking(&state, move |vault| {
+        vault.restore_from(&archive, replace)?;
+        Ok(archive.display().to_string())
+    })
+    .await
+    .map(Some)
+}
+
+/// Choose a backup file via a native open dialog.
+///
+/// Read-only: does not restore, lock, or write vault files. Returns the chosen
+/// path, or `None` if the user cancelled. The frontend confirms, then calls
+/// [`vault_restore`] with that path and `replace`.
+#[tauri::command]
+pub async fn vault_pick_backup(app: tauri::AppHandle) -> CommandResult<Option<String>> {
+    let Some(path) = pick_backup_path(&app).await? else {
+        return Ok(None);
+    };
+    Ok(Some(path.display().to_string()))
+}
+
+/// Native Open dialog for a `.oikonomia-backup` file. `None` if cancelled.
+async fn pick_backup_path(app: &tauri::AppHandle) -> CommandResult<Option<std::path::PathBuf>> {
+    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        move || {
+            use tauri_plugin_dialog::DialogExt;
+            Ok(app
+                .dialog()
+                .file()
+                .add_filter("Oikonomia backup", &[BACKUP_EXTENSION])
+                .blocking_pick_file())
+        }
+    }))
+    .await?;
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    file_path.into_path().map(Some).map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("invalid backup location: {e}"),
+    })
+}
+
+/// Close any open `SQLCipher` connection and notify the UI when the session
+/// actually transitioned from unlocked to locked.
+async fn lock_vault_session(
+    app: &tauri::AppHandle,
+    state: &State<'_, AppState>,
+) -> CommandResult<()> {
+    let was_unlocked = with_vault_blocking(state, |vault| {
+        let was_unlocked = vault.status() == VaultStatus::Unlocked;
+        vault.lock();
+        Ok(was_unlocked)
+    })
+    .await?;
+    if was_unlocked {
+        let _ = app.emit("vault-locked", ());
+    }
+    Ok(())
+}
+
+fn with_backup_extension(path: std::path::PathBuf) -> std::path::PathBuf {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext == BACKUP_EXTENSION => path,
+        _ => {
+            let mut name = path.file_name().map_or_else(
+                || std::ffi::OsString::from("oikonomia"),
+                std::ffi::OsString::from,
+            );
+            name.push(".");
+            name.push(BACKUP_EXTENSION);
+            match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                Some(parent) => parent.join(name),
+                None => std::path::PathBuf::from(name),
+            }
+        }
+    }
 }
 
 /// Return build identity (no secrets).

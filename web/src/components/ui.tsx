@@ -1,4 +1,4 @@
-import { ChevronDown, Loader2 } from 'lucide-react'
+import { ChevronDown, CircleAlert, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import type {
   ButtonHTMLAttributes,
@@ -368,12 +368,14 @@ export function PageHeader({
 
 export function ErrorBanner({
   message,
+  title,
   className = 'mb-4',
 }: {
   message: string | null
+  title?: string
   className?: string
 }) {
-  if (!message) return null
+  if (!message && !title) return null
   return (
     <div
       className={cn(
@@ -381,7 +383,11 @@ export function ErrorBanner({
         className,
       )}
     >
-      <span className="min-w-0 flex-1">{message}</span>
+      {title ? <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden /> : null}
+      <div className="min-w-0 flex-1">
+        {title ? <p className="font-semibold">{title}</p> : null}
+        {message ? <p className={title ? 'mt-0.5' : undefined}>{message}</p> : null}
+      </div>
     </div>
   )
 }
