@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import {
   backupCommandError,
   canBackupVault,
+  restoreArgs,
   restoreConfirm,
   vaultBackupAvailability,
   vaultBackupBanner,
@@ -62,6 +63,20 @@ describe('restoreConfirm', () => {
     expect(prompt.title).toBe('Replace local vault?')
     expect(prompt.confirmLabel).toBe('Replace vault')
     expect(prompt.replace).toBe(true)
+  })
+})
+
+describe('restoreArgs', () => {
+  test('includes path when the picker returned one', () => {
+    expect(restoreArgs('/tmp/x.oikonomia-backup', true)).toEqual({
+      path: '/tmp/x.oikonomia-backup',
+      replace: true,
+    })
+  })
+
+  test('omits path only when the picker was unavailable', () => {
+    expect(restoreArgs(undefined, false)).toEqual({ replace: false })
+    expect(restoreArgs(undefined, false)).not.toHaveProperty('path')
   })
 })
 
