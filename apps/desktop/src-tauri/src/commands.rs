@@ -134,15 +134,15 @@ pub async fn vault_lock(
     Ok(status)
 }
 
-/// Lock the vault (if unlocked) and write a portable ciphertext archive.
+/// Write a portable ciphertext archive. Does not lock; an unlocked session
+/// stays unlocked.
 ///
 /// Always presents a native save dialog (same pattern as [`document_export`]).
 /// The suggested filename is `oikonomia-backup-YYYY-MM-DD.oikonomia-backup`
-/// using the local calendar date.
-/// The vault is locked *before* the dialog so no `SQLCipher` connection remains
-/// open over the files being copied. The archive is `vault.db` plus
-/// `vault.header.json` only: it is not re-encrypted and never stores the
-/// master password.
+/// using the local calendar date. An unlocked vault is snapshotted with
+/// `VACUUM INTO` so the copy is consistent without closing `SQLCipher`.
+/// The archive is `vault.db` plus `vault.header.json` only: it is not
+/// re-encrypted and never stores the master password.
 ///
 /// Returns the destination path, or `None` if the user cancelled.
 #[tauri::command]
@@ -150,8 +150,6 @@ pub async fn vault_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<Option<String>> {
-    lock_vault_session(&app, &state).await?;
-
     let file_name = default_backup_file_name();
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();

@@ -1,13 +1,18 @@
 //! Portable backup of the `SQLCipher` ciphertext plus public vault header.
 //!
-//! The archive is not a second encryption layer: it copies `vault.db` and
-//! `vault.header.json` as they sit on disk. The master password is never
-//! stored. `vault.header.json.tmp` is crash-recovery state for password
-//! change, not a source of truth, and is omitted.
+//! The archive is not a second encryption layer: it stores `vault.db` and
+//! `vault.header.json` as ciphertext. The master password is never stored.
+//! `vault.header.json.tmp` is crash-recovery state for password change, not a
+//! source of truth, and is omitted.
+//!
+//! An unlocked vault is snapshotted with `VACUUM INTO` so WAL is folded
+//! without closing the session. A locked vault is a quiescent file copy.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+
+use rusqlite::Connection;
 
 use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
 use super::store::Vault;
@@ -39,11 +44,13 @@ const MEMBER_DB: &str = "vault.db";
 const MEMBER_HEADER: &str = "vault.header.json";
 const RESTORE_DB_TMP: &str = "vault.db.restore-tmp";
 const RESTORE_HEADER_TMP: &str = "vault.header.json.restore-tmp";
+const SNAPSHOT_DB_TMP: &str = "vault.db.backup-tmp";
 
 /// Write a portable archive of the ciphertext vault files at `dest`.
 ///
-/// Copies `vault.db` and `vault.header.json` only. The destination is written
-/// as `dest` + `.tmp` in the same directory, then renamed into place.
+/// File-copies `vault.db` and `vault.header.json` when there is no open
+/// writer (locked / files on disk only). The destination is written as
+/// `dest` + `.tmp` in the same directory, then renamed into place.
 ///
 /// # Errors
 ///
@@ -53,49 +60,8 @@ const RESTORE_HEADER_TMP: &str = "vault.header.json.restore-tmp";
 pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     let db_path = vault_db_path(data_dir);
-    let header_ok = header_path.is_file();
-    let db_ok = db_path.is_file();
-
-    match (header_ok, db_ok) {
-        (true, true) => {}
-        (false, false) => return Err(Error::VaultUninitialized),
-        (true, false) => {
-            return Err(Error::VaultCorrupt(
-                "vault header exists without database".into(),
-            ));
-        }
-        (false, true) => {
-            return Err(Error::VaultCorrupt(
-                "vault database exists without header".into(),
-            ));
-        }
-    }
-
-    let tmp = sibling_temp(dest, ".tmp")?;
-    let result = (|| {
-        if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
-            fs::create_dir_all(parent).map_err(|err| Error::Io(err.to_string()))?;
-        }
-
-        let mut out = File::create(&tmp).map_err(|err| Error::Io(err.to_string()))?;
-        out.write_all(MAGIC)
-            .map_err(|err| Error::Io(err.to_string()))?;
-        out.write_all(&FORMAT_VERSION.to_le_bytes())
-            .map_err(|err| Error::Io(err.to_string()))?;
-        write_member_from_path(&mut out, MEMBER_HEADER, &header_path)?;
-        write_member_from_path(&mut out, MEMBER_DB, &db_path)?;
-        out.sync_all().map_err(|err| Error::Io(err.to_string()))?;
-        drop(out);
-
-        fs::rename(&tmp, dest).map_err(|err| Error::Io(err.to_string()))?;
-        sync_parent(dest);
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    result
+    ensure_vault_files(&header_path, &db_path)?;
+    write_archive_from_paths(&header_path, &db_path, dest)
 }
 
 /// Unpack a backup archive into `data_dir`.
@@ -152,17 +118,21 @@ pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Resu
 }
 
 impl Vault {
-    /// Lock if needed, then write a portable ciphertext archive to `dest`.
+    /// Write a portable ciphertext archive to `dest` without changing lock state.
     ///
-    /// Locking first closes the `SQLCipher` connection so WAL pages are folded
-    /// into `vault.db` before the copy.
+    /// Unlocked: `VACUUM INTO` a temp file (`SQLCipher` keeps the dest keyed with
+    /// the live connection's key), then pack it with `vault.header.json`.
+    /// Locked: copy the on-disk pair (no writer).
     ///
     /// # Errors
     ///
     /// See [`backup_to_path`].
-    pub fn backup_to(&mut self, dest: &Path) -> Result<()> {
-        self.lock();
-        backup_to_path(self.data_dir(), dest)
+    pub fn backup_to(&self, dest: &Path) -> Result<()> {
+        match self.connection() {
+            Ok(conn) => backup_from_open_connection(conn, self.data_dir(), dest),
+            Err(Error::VaultLocked) => backup_to_path(self.data_dir(), dest),
+            Err(other) => Err(other),
+        }
     }
 
     /// Lock if needed, unpack `archive` into this vault's data directory, and
@@ -182,6 +152,104 @@ impl Vault {
         *self = Self::open_path(data_dir)?;
         Ok(())
     }
+}
+
+fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
+    match (header_path.is_file(), db_path.is_file()) {
+        (true, true) => Ok(()),
+        (false, false) => Err(Error::VaultUninitialized),
+        (true, false) => Err(Error::VaultCorrupt(
+            "vault header exists without database".into(),
+        )),
+        (false, true) => Err(Error::VaultCorrupt(
+            "vault database exists without header".into(),
+        )),
+    }
+}
+
+/// Consistent snapshot of an open `SQLCipher` connection, packed with the
+/// on-disk header. The live session stays open.
+fn backup_from_open_connection(conn: &Connection, data_dir: &Path, dest: &Path) -> Result<()> {
+    let header_path = vault_header_path(data_dir);
+    if !header_path.is_file() {
+        return Err(Error::VaultCorrupt(
+            "database exists without vault header".into(),
+        ));
+    }
+
+    let snap = data_dir.join(SNAPSHOT_DB_TMP);
+    discard_snapshot(&snap);
+
+    let vacuum = vacuum_into_encrypted(conn, &snap);
+    if let Err(err) = vacuum {
+        discard_snapshot(&snap);
+        return Err(err);
+    }
+
+    let packed = write_archive_from_paths(&header_path, &snap, dest);
+    discard_snapshot(&snap);
+    packed
+}
+
+fn vacuum_into_encrypted(conn: &Connection, dest: &Path) -> Result<()> {
+    let path = dest
+        .to_str()
+        .ok_or_else(|| Error::Io("backup snapshot path is not UTF-8".into()))?;
+    let escaped = path.replace('\'', "''");
+    conn.execute(&format!("VACUUM INTO '{escaped}'"), [])
+        .map_err(|err| Error::Io(err.to_string()))?;
+    reject_plaintext_sqlite(dest)
+}
+
+fn reject_plaintext_sqlite(path: &Path) -> Result<()> {
+    let mut magic = [0u8; 6];
+    let mut file = File::open(path).map_err(|err| Error::Io(err.to_string()))?;
+    file.read_exact(&mut magic).map_err(|err| {
+        if err.kind() == io::ErrorKind::UnexpectedEof {
+            Error::Io("backup snapshot is empty".into())
+        } else {
+            Error::Io(err.to_string())
+        }
+    })?;
+    if &magic == b"SQLite" {
+        return Err(Error::Io(
+            "online backup produced a plaintext database".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn discard_snapshot(path: &Path) {
+    let _ = fs::remove_file(path);
+    remove_db_sidecars(path);
+}
+
+fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> Result<()> {
+    let tmp = sibling_temp(dest, ".tmp")?;
+    let result = (|| {
+        if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).map_err(|err| Error::Io(err.to_string()))?;
+        }
+
+        let mut out = File::create(&tmp).map_err(|err| Error::Io(err.to_string()))?;
+        out.write_all(MAGIC)
+            .map_err(|err| Error::Io(err.to_string()))?;
+        out.write_all(&FORMAT_VERSION.to_le_bytes())
+            .map_err(|err| Error::Io(err.to_string()))?;
+        write_member_from_path(&mut out, MEMBER_HEADER, header_path)?;
+        write_member_from_path(&mut out, MEMBER_DB, db_path)?;
+        out.sync_all().map_err(|err| Error::Io(err.to_string()))?;
+        drop(out);
+
+        fs::rename(&tmp, dest).map_err(|err| Error::Io(err.to_string()))?;
+        sync_parent(dest);
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 fn unpack_archive_to_staging(archive: &Path, header_tmp: &Path, db_tmp: &Path) -> Result<()> {
@@ -426,7 +494,7 @@ mod tests {
         fs::write(path, bytes).expect("write");
     }
 
-    fn backup_of(vault: &mut Vault) -> (TempDir, PathBuf) {
+    fn backup_of(vault: &Vault) -> (TempDir, PathBuf) {
         let dest = TempDir::new().expect("archive dir");
         let archive = dest.path().join("books.oikonomia-backup");
         vault.backup_to(&archive).expect("backup");
@@ -447,7 +515,7 @@ mod tests {
         let header_before = fs::read(vault_header_path(src.path())).expect("header");
         let db_before = fs::read(vault_db_path(src.path())).expect("db");
 
-        let (_archive_dir, archive) = backup_of(&mut vault);
+        let (_archive_dir, archive) = backup_of(&vault);
 
         let restore_dir = TempDir::new().expect("restore");
         restore_from_path(&archive, restore_dir.path(), false).expect("restore");
@@ -544,8 +612,8 @@ mod tests {
 
     #[test]
     fn restore_into_uninitialized_succeeds_without_replace() {
-        let (_src, mut vault) = init_vault();
-        let (_archive_dir, archive) = backup_of(&mut vault);
+        let (_src, vault) = init_vault();
+        let (_archive_dir, archive) = backup_of(&vault);
 
         let restore_dir = TempDir::new().expect("empty");
         let mut restored = Vault::open_path(restore_dir.path()).expect("open empty");
@@ -564,8 +632,8 @@ mod tests {
 
     #[test]
     fn restore_while_locked_succeeds_and_leaves_locked() {
-        let (_src, mut source) = init_vault();
-        let (_archive_dir, archive) = backup_of(&mut source);
+        let (_src, source) = init_vault();
+        let (_archive_dir, archive) = backup_of(&source);
 
         let (_dest_dir, mut dest) = init_vault_with("a different password 12");
         dest.lock();
@@ -583,8 +651,8 @@ mod tests {
 
     #[test]
     fn restore_while_unlocked_locks_then_replaces() {
-        let (_src, mut source) = init_vault();
-        let (_archive_dir, archive) = backup_of(&mut source);
+        let (_src, source) = init_vault();
+        let (_archive_dir, archive) = backup_of(&source);
 
         let (_dest_dir, mut dest) = init_vault_with("a different password 12");
         assert_eq!(dest.status(), VaultStatus::Unlocked);
@@ -617,41 +685,53 @@ mod tests {
     }
 
     #[test]
-    fn backup_while_unlocked_locks_then_writes_consistent_pair() {
-        let (src, mut vault) = init_vault();
+    fn backup_while_unlocked_stays_unlocked_and_round_trips() {
+        let (_src, vault) = init_vault();
         assert_eq!(vault.status(), VaultStatus::Unlocked);
 
-        let (_archive_dir, archive) = backup_of(&mut vault);
+        let conn = vault.connection().expect("conn");
+        crate::ledger::create_entity(
+            conn,
+            &crate::ledger::CreateEntity {
+                name: "Personal".into(),
+                base_currency: "EUR".into(),
+                chart_template: crate::domain::ChartTemplate::Personal,
+                fiscal_year_start_month: Some(1),
+            },
+        )
+        .expect("entity so WAL has pages");
+
+        let (_archive_dir, archive) = backup_of(&vault);
         assert_eq!(
             vault.status(),
-            VaultStatus::Locked,
-            "backup_to must lock before copying ciphertext"
+            VaultStatus::Unlocked,
+            "backup must not lock an open session"
         );
-
-        let header_after_lock = fs::read(vault_header_path(src.path())).expect("header");
-        let db_after_lock = fs::read(vault_db_path(src.path())).expect("db");
+        let still_open = vault.connection().expect("session still open");
+        let live = crate::ledger::list_entities(still_open).expect("list live");
+        assert_eq!(live.len(), 1);
+        assert_eq!(live[0].name, "Personal");
 
         let restore_dir = TempDir::new().expect("restore");
         restore_from_path(&archive, restore_dir.path(), false).expect("restore");
-        assert_eq!(
-            fs::read(vault_header_path(restore_dir.path())).expect("restored header"),
-            header_after_lock
-        );
-        assert_eq!(
-            fs::read(vault_db_path(restore_dir.path())).expect("restored db"),
-            db_after_lock
-        );
+        let db_bytes = fs::read(vault_db_path(restore_dir.path())).expect("db");
+        assert!(db_bytes.len() > 16);
+        assert_ne!(&db_bytes[0..6], b"SQLite", "archive must stay ciphertext");
 
         let mut restored = Vault::open_path(restore_dir.path()).expect("open");
         restored
             .unlock(PASSWORD)
-            .expect("pair written after lock must unlock");
+            .expect("original master password must unlock the snapshot");
+        let restored_entities =
+            crate::ledger::list_entities(restored.connection().expect("conn")).expect("list");
+        assert_eq!(restored_entities.len(), 1);
+        assert_eq!(restored_entities[0].name, "Personal");
     }
 
     #[test]
     fn master_password_never_appears_in_backup_bytes() {
-        let (_src, mut vault) = init_vault();
-        let (_archive_dir, archive) = backup_of(&mut vault);
+        let (_src, vault) = init_vault();
+        let (_archive_dir, archive) = backup_of(&vault);
         let bytes = fs::read(&archive).expect("read archive");
         assert!(
             !contains_bytes(&bytes, PASSWORD.as_bytes()),
@@ -677,7 +757,6 @@ mod tests {
         let archive = other.path().join("other.oikonomia-backup");
         other_vault.backup_to(&archive).expect("backup other");
         let expected_header = fs::read(vault_header_path(other.path())).expect("other header");
-        let expected_db = fs::read(vault_db_path(other.path())).expect("other db");
 
         vault.restore_from(&archive, true).expect("replace restore");
         assert_eq!(vault.status(), VaultStatus::Locked);
@@ -686,19 +765,22 @@ mod tests {
             fs::read(vault_header_path(src.path())).expect("replaced header"),
             expected_header
         );
-        assert_eq!(
-            fs::read(vault_db_path(src.path())).expect("replaced db"),
-            expected_db
-        );
+        vault
+            .unlock("a different password 12")
+            .expect("replaced vault unlocks with the backup password");
+        vault.lock();
+        vault
+            .unlock(PASSWORD)
+            .expect_err("pre-restore password must no longer open the vault");
     }
 
     #[test]
     fn staged_header_tmp_is_not_included_in_backup() {
-        let (src, mut vault) = init_vault();
+        let (src, vault) = init_vault();
         let staged = vault_staged_header_path(src.path());
         write_file(&staged, b"must-not-be-in-backup");
 
-        let (_dest, archive) = backup_of(&mut vault);
+        let (_dest, archive) = backup_of(&vault);
         let restore_dir = TempDir::new().expect("restore");
         restore_from_path(&archive, restore_dir.path(), false).expect("restore");
         assert!(
