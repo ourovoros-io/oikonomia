@@ -24,13 +24,17 @@ fn setup_vault() -> (TempDir, Vault) {
 }
 
 fn setup_entity(conn: &Connection) -> EntityId {
+    setup_entity_fy(conn, 1)
+}
+
+fn setup_entity_fy(conn: &Connection, fiscal_year_start_month: u8) -> EntityId {
     create_entity(
         conn,
         &CreateEntity {
             name: "Probe".into(),
             base_currency: "EUR".into(),
             chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
+            fiscal_year_start_month: Some(fiscal_year_start_month),
         },
     )
     .expect("entity")
@@ -120,6 +124,64 @@ fn balance_sheet_balances_for_past_as_of() {
     assert_eq!(
         bs.total_assets, -1_000,
         "assets as of Feb 1 reflect only the January credit to checking"
+    );
+}
+
+#[test]
+fn balance_sheet_balances_after_fiscal_year_boundary() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-06-01", 1_000);
+
+    let bs_2026 = balance_sheet(conn, entity_id, "2026-12-31").expect("bs 2026");
+    assert_eq!(bs_2026.total_assets, bs_2026.total_liabilities_equity);
+    assert_eq!(bs_2026.total_assets, -1_000);
+
+    let bs_2027 = balance_sheet(conn, entity_id, "2027-01-31").expect("bs 2027");
+    assert_eq!(
+        bs_2027.total_assets, bs_2027.total_liabilities_equity,
+        "2027 as-of must still balance: assets {} vs L+E {}",
+        bs_2027.total_assets, bs_2027.total_liabilities_equity
+    );
+    assert_eq!(bs_2027.total_assets, -1_000);
+    assert!(
+        bs_2027
+            .equity
+            .lines
+            .iter()
+            .any(|l| l.code == "RE" && l.balance_minor == -1_000),
+        "prior-year P&L must appear as RE: {:?}",
+        bs_2027.equity.lines
+    );
+    assert!(
+        !bs_2027.equity.lines.iter().any(|l| l.code == "NI"),
+        "current-FY NI must be omitted when zero: {:?}",
+        bs_2027.equity.lines
+    );
+}
+
+#[test]
+fn balance_sheet_balances_when_activity_is_before_fy_start_month() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity_fy(conn, 7);
+    post_expense(conn, entity_id, "2026-03-15", 1_000);
+
+    let bs = balance_sheet(conn, entity_id, "2026-08-01").expect("bs");
+    assert_eq!(
+        bs.total_assets, bs.total_liabilities_equity,
+        "July-FY as-of must balance: assets {} vs L+E {}",
+        bs.total_assets, bs.total_liabilities_equity
+    );
+    assert_eq!(bs.total_assets, -1_000);
+    assert!(
+        bs.equity
+            .lines
+            .iter()
+            .any(|l| l.code == "RE" && l.balance_minor == -1_000),
+        "March expense is prior-period RE: {:?}",
+        bs.equity.lines
     );
 }
 
