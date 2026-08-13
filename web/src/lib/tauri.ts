@@ -97,3 +97,30 @@ export async function appInfo(): Promise<AppInfo> {
   }
   return invoke<AppInfo>('app_info')
 }
+
+/** Native Save dialog lives in Rust. `null` means the user cancelled. */
+export async function vaultBackup(): Promise<string | null> {
+  if (!isTauri()) {
+    throw asCommandError(new Error('Vault commands require the desktop app'))
+  }
+  try {
+    return await invoke<string | null>('vault_backup')
+  } catch (err) {
+    throw asCommandError(err)
+  }
+}
+
+/**
+ * Native Open dialog lives in Rust. Confirm in the UI first, then call with
+ * `{ replace }` only — do not pass `path`. `null` means the user cancelled.
+ */
+export async function vaultRestore(opts: { replace: boolean }): Promise<string | null> {
+  if (!isTauri()) {
+    throw asCommandError(new Error('Vault commands require the desktop app'))
+  }
+  try {
+    return await invoke<string | null>('vault_restore', { replace: opts.replace })
+  } catch (err) {
+    throw asCommandError(err)
+  }
+}

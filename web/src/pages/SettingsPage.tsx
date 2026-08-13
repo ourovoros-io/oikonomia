@@ -1,17 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import {
+  Archive,
   Briefcase,
   Building2,
   Clock,
+  Download,
   FileQuestion,
   KeyRound,
   Plus,
   Timer,
   Trash2,
+  Upload,
   User,
 } from 'lucide-react'
 import { api, type ChartTemplate, type Entity } from '../lib/api'
-import { vaultChangePassword } from '../lib/tauri'
+import { vaultBackup, vaultChangePassword, vaultRestore, type CommandError } from '../lib/tauri'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
@@ -26,10 +29,20 @@ import {
   PageHeader,
   Select,
 } from '../components/ui'
-import type { CommandError } from '../lib/tauri'
+import {
+  VAULT_BACKUP_BODY,
+  VAULT_BACKUP_HINT,
+  backupCommandError,
+  canBackupVault,
+  restoreConfirm,
+  vaultBackupAvailability,
+  vaultBackupBanner,
+} from '../lib/vaultBackupUi'
 
 type Props = {
   entities: Entity[]
+  /** False when no vault files exist. Settings is normally only mounted unlocked. */
+  vaultPresent?: boolean
   onEntitiesChange: () => Promise<void>
   onSelectEntity: (id: string) => void
   onLockTimeoutChange?: (secs: number) => void
@@ -70,6 +83,7 @@ const LOCK_PRESETS = [
 
 export function SettingsPage({
   entities,
+  vaultPresent = true,
   onEntitiesChange,
   onSelectEntity,
   onLockTimeoutChange,
@@ -89,6 +103,17 @@ export function SettingsPage({
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordBusy, setPasswordBusy] = useState(false)
+  const [backupBusy, setBackupBusy] = useState(false)
+  const [restoreOpen, setRestoreOpen] = useState(false)
+  const [restoreBusy, setRestoreBusy] = useState(false)
+
+  const backupAvailability = vaultBackupAvailability({
+    vaultPresent,
+    entityCount: entities.length,
+  })
+  const backupBanner = vaultBackupBanner(backupAvailability)
+  const backupEnabled = canBackupVault(backupAvailability)
+  const replaceConfirm = restoreConfirm('replace')
 
   useEffect(() => {
     void api
@@ -185,6 +210,38 @@ export function SettingsPage({
     }
   }
 
+  async function onBackup() {
+    if (!backupEnabled) return
+    setError(null)
+    setNotice(null)
+    setBackupBusy(true)
+    try {
+      await vaultBackup()
+    } catch (err) {
+      setError(backupCommandError(err as CommandError))
+    } finally {
+      setBackupBusy(false)
+    }
+  }
+
+  async function confirmRestore() {
+    setRestoreBusy(true)
+    setError(null)
+    try {
+      const result = await vaultRestore({ replace: replaceConfirm.replace })
+      if (result === null) {
+        setRestoreOpen(false)
+        return
+      }
+      setRestoreOpen(false)
+    } catch (err) {
+      setError(backupCommandError(err as CommandError))
+      setRestoreOpen(false)
+    } finally {
+      setRestoreBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -216,6 +273,19 @@ export function SettingsPage({
           if (!deleteBusy) setPendingDelete(null)
         }}
         onConfirm={() => void confirmDelete()}
+      />
+
+      <ConfirmDialog
+        open={restoreOpen}
+        title={replaceConfirm.title}
+        body={replaceConfirm.body}
+        confirmLabel={replaceConfirm.confirmLabel}
+        danger
+        busy={restoreBusy}
+        onCancel={() => {
+          if (!restoreBusy) setRestoreOpen(false)
+        }}
+        onConfirm={() => void confirmRestore()}
       />
 
       <CollapsibleSection
@@ -279,6 +349,43 @@ export function SettingsPage({
             </Button>
           </div>
         </form>
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title="Vault backup"
+        description="Export the encrypted vault as one file"
+        icon={<Archive className="size-4" />}
+        tone="accent"
+      >
+        {backupBanner ? (
+          <ErrorBanner
+            title={backupBanner.title}
+            message={backupBanner.body}
+            className="mb-4"
+          />
+        ) : null}
+        <p className="text-sm leading-relaxed text-[var(--color-fg-secondary)]">
+          {VAULT_BACKUP_BODY}
+        </p>
+        <p className="mt-2 text-xs text-[var(--color-muted)]">{VAULT_BACKUP_HINT}</p>
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <Button
+            disabled={!backupEnabled}
+            busy={backupBusy}
+            onClick={() => void onBackup()}
+          >
+            <Download className="size-3.5" />
+            Backup vault
+          </Button>
+          <Button
+            variant="danger"
+            disabled={restoreBusy}
+            onClick={() => setRestoreOpen(true)}
+          >
+            <Upload className="size-3.5" />
+            Restore from backup
+          </Button>
+        </div>
       </CollapsibleSection>
 
       <Modal
