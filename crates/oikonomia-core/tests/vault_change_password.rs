@@ -3,11 +3,31 @@
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
 use oikonomia_core::error::Error;
-use oikonomia_core::vault::{Vault, VaultStatus};
+use oikonomia_core::vault::{Vault, VaultStatus, vault_db_path};
 use tempfile::TempDir;
 
 const OLD: &str = "old password 12345";
 const NEW: &str = "new password 12345";
+
+#[test]
+fn unlock_missing_db_is_corrupt_not_wrong_password() {
+    let dir = TempDir::new().expect("dir");
+    let mut vault = Vault::open_path(dir.path()).expect("open");
+    vault.init(OLD).expect("init");
+    vault.lock();
+    std::fs::remove_file(vault_db_path(dir.path())).expect("rm db");
+
+    let mut reopened = Vault::open_path(dir.path()).expect("reopen");
+    let err = reopened.unlock(OLD).expect_err("must not create empty db");
+    assert!(
+        matches!(err, Error::VaultCorrupt(_)),
+        "missing db must be corrupt, got {err:?}"
+    );
+    assert!(
+        !vault_db_path(dir.path()).exists(),
+        "must not plant a new ciphertext"
+    );
+}
 
 fn init_vault() -> (TempDir, Vault) {
     let dir = TempDir::new().expect("tempdir");

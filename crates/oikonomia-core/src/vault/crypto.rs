@@ -65,13 +65,15 @@ pub fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKey> {
 
 /// Format a raw key for `SQLCipher` `PRAGMA key = "x'…'"`.
 #[must_use]
-pub fn key_to_sqlcipher_pragma(key: &VaultKey) -> String {
-    let mut hex = String::with_capacity(KEY_LEN * 2);
+pub fn key_to_sqlcipher_pragma(key: &VaultKey) -> Zeroizing<String> {
+    let mut hex = String::with_capacity(KEY_LEN * 2 + 3);
+    hex.push_str("x'");
     for byte in key.iter() {
         use std::fmt::Write;
         let _ = write!(hex, "{byte:02x}");
     }
-    format!("x'{hex}'")
+    hex.push('\'');
+    Zeroizing::new(hex)
 }
 
 #[cfg(test)]
