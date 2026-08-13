@@ -19,6 +19,7 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 ## v1 features
 
 - Encrypted vault (Argon2id → SQLCipher); init / unlock / lock; change master password
+- Encrypted vault backup/restore (one `.oikonomia-backup` file: `vault.db` + header, already SQLCipher); Settings + login restore; no second password; pick-then-confirm then unlock with master password
 - Auto-lock on idle, enforced by a Rust watchdog thread (survives webview stalls)
 - Multi-entity books with personal / company / blank chart templates
 - Chart of accounts (create, deactivate)
