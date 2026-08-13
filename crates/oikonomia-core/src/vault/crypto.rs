@@ -46,6 +46,13 @@ pub fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKey> {
         return Err(Error::VaultCorrupt("unsupported key length".into()));
     }
 
+    if !(8_192..=1_048_576).contains(&header.m_cost)
+        || !(1..=8).contains(&header.t_cost)
+        || !(1..=4).contains(&header.p_cost)
+    {
+        return Err(Error::VaultCorrupt("argon2 parameters out of range".into()));
+    }
+
     let salt = decode_salt(header)?;
     let params = Params::new(header.m_cost, header.t_cost, header.p_cost, Some(KEY_LEN))
         .map_err(|err| Error::Crypto(err.to_string()))?;
@@ -89,6 +96,28 @@ mod tests {
         let b = derive_key("correct horse battery staple", &header);
         assert!(a.is_ok());
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn derive_rejects_huge_m_cost() {
+        let mut header = VaultHeader::new_with_salt(&[1u8; SALT_LEN]);
+        header.m_cost = 50_000_000;
+        let err = derive_key("correct horse battery staple", &header);
+        assert!(
+            matches!(err, Err(Error::VaultCorrupt(_))),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn derive_rejects_zero_t_cost() {
+        let mut header = VaultHeader::new_with_salt(&[2u8; SALT_LEN]);
+        header.t_cost = 0;
+        let err = derive_key("correct horse battery staple", &header);
+        assert!(
+            matches!(err, Err(Error::VaultCorrupt(_))),
+            "{err:?}"
+        );
     }
 
     #[test]
