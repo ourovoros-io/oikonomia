@@ -25,7 +25,7 @@ use oikonomia_core::ledger::{
     set_lock_timeout_secs, trial_balance, update_account, update_entity, void_entry,
 };
 use oikonomia_core::prefs::{
-    LastRoleAccounts, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
+    LastRoleAccounts, Locale, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
 };
 use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
 use serde::Serialize;
@@ -156,6 +156,7 @@ pub async fn vault_backup(
     state: State<'_, AppState>,
 ) -> CommandResult<Option<String>> {
     let file_name = default_backup_file_name();
+    let filter_label = crate::tray::backup_filter_label(load_ui_prefs(state.data_dir()).locale);
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
@@ -163,7 +164,7 @@ pub async fn vault_backup(
             Ok(app
                 .dialog()
                 .file()
-                .add_filter("Oikonomia backup", &[BACKUP_EXTENSION])
+                .add_filter(filter_label, &[BACKUP_EXTENSION])
                 .set_file_name(&file_name)
                 .blocking_save_file())
         }
@@ -211,7 +212,8 @@ pub async fn vault_restore(
     let archive = if let Some(chosen) = path {
         std::path::PathBuf::from(chosen)
     } else {
-        let Some(picked) = pick_backup_path(&app).await? else {
+        let Some(picked) = pick_backup_path(&app, load_ui_prefs(state.data_dir()).locale).await?
+        else {
             return Ok(None);
         };
         picked
@@ -231,15 +233,22 @@ pub async fn vault_restore(
 /// path, or `None` if the user cancelled. The frontend confirms, then calls
 /// [`vault_restore`] with that path and `replace`.
 #[tauri::command]
-pub async fn vault_pick_backup(app: tauri::AppHandle) -> CommandResult<Option<String>> {
-    let Some(path) = pick_backup_path(&app).await? else {
+pub async fn vault_pick_backup(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<Option<String>> {
+    let Some(path) = pick_backup_path(&app, load_ui_prefs(state.data_dir()).locale).await? else {
         return Ok(None);
     };
     Ok(Some(path.display().to_string()))
 }
 
 /// Native Open dialog for a `.oikonomia-backup` file. `None` if cancelled.
-async fn pick_backup_path(app: &tauri::AppHandle) -> CommandResult<Option<std::path::PathBuf>> {
+async fn pick_backup_path(
+    app: &tauri::AppHandle,
+    locale: Locale,
+) -> CommandResult<Option<std::path::PathBuf>> {
+    let filter_label = crate::tray::backup_filter_label(locale);
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
@@ -247,7 +256,7 @@ async fn pick_backup_path(app: &tauri::AppHandle) -> CommandResult<Option<std::p
             Ok(app
                 .dialog()
                 .file()
-                .add_filter("Oikonomia backup", &[BACKUP_EXTENSION])
+                .add_filter(filter_label, &[BACKUP_EXTENSION])
                 .blocking_pick_file())
         }
     }))
@@ -884,7 +893,31 @@ pub fn settings_set_theme(
     Ok(())
 }
 
-/// Full plaintext UI prefs (theme + tray last-used). Safe before unlock.
+/// Get the native UI locale. Plaintext preference: readable before unlock so
+/// tray chrome and dialogs match the user's language before a password.
+#[tauri::command]
+pub fn settings_get_locale(state: State<'_, AppState>) -> Locale {
+    load_ui_prefs(state.data_dir()).locale
+}
+
+/// Persist the native UI locale, then rebuild the tray menu and refresh the
+/// quick-add window title when that window exists.
+#[tauri::command]
+pub fn settings_set_locale(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    locale: Locale,
+) -> CommandResult<()> {
+    let prefs_guard = state.lock_prefs();
+    let mut prefs = load_ui_prefs(state.data_dir());
+    prefs.locale = locale;
+    save_ui_prefs(state.data_dir(), &prefs)?;
+    drop(prefs_guard);
+    crate::tray::apply_locale(&app, locale);
+    Ok(())
+}
+
+/// Full plaintext UI prefs (theme, locale, tray last-used). Safe before unlock.
 #[tauri::command]
 pub fn settings_get_ui_prefs(state: State<'_, AppState>) -> UiPrefs {
     load_ui_prefs(state.data_dir())
