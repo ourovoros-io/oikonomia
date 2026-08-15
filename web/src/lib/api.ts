@@ -287,7 +287,7 @@ export const api = {
   /** Theme is a plaintext pref (Rust side): readable before unlock. */
   getTheme: () => call<Theme>('settings_get_theme'),
   setTheme: (theme: Theme) => call<void>('settings_set_theme', { theme }),
-  /** Native tray/dialog locale. Web chrome persist is localStorage only for now. */
+  /** Locale is a plaintext pref (Rust side): readable before unlock. Same shape as theme. */
   getLocale: () => call<Locale>('settings_get_locale'),
   setLocale: (locale: Locale) => call<void>('settings_set_locale', { locale }),
   /** Full plaintext UI prefs (theme + tray last-used + locale). Safe before unlock. */

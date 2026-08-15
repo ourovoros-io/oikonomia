@@ -7,7 +7,6 @@ import {
   Download,
   FileQuestion,
   KeyRound,
-  Languages,
   Plus,
   Timer,
   Trash2,
@@ -40,8 +39,6 @@ import {
   vaultBackupHint,
 } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
-import { cn } from '../lib/cn'
-import type { Locale } from '../lib/api'
 
 type Props = {
   entities: Entity[]
@@ -84,55 +81,6 @@ const TEMPLATES: Array<{
   },
 ]
 
-/** Designer-locked language pill. Option labels stay native-script in both locales. */
-function LanguagePill({
-  value,
-  onChange,
-  ariaLabel,
-  englishLabel,
-  greekLabel,
-}: {
-  value: Locale
-  onChange: (locale: Locale) => void
-  ariaLabel: string
-  englishLabel: string
-  greekLabel: string
-}) {
-  return (
-    <div
-      role="radiogroup"
-      aria-label={ariaLabel}
-      className="inline-flex h-8 items-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
-    >
-      {(
-        [
-          { id: 'en', label: englishLabel },
-          { id: 'el', label: greekLabel },
-        ] as const
-      ).map((opt) => {
-        const active = value === opt.id
-        return (
-          <button
-            key={opt.id}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onChange(opt.id)}
-            className={cn(
-              'inline-flex h-[26px] items-center rounded-full px-3 text-sm font-medium transition',
-              active
-                ? 'bg-[#f4f6f4] text-[#131b15] shadow-sm'
-                : 'text-[var(--color-muted)]',
-            )}
-          >
-            {opt.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 const LOCK_PRESETS = [
   { mins: 5, labelKey: 'settings.lock.5min' },
   { mins: 15, labelKey: 'settings.lock.15min' },
@@ -147,7 +95,7 @@ export function SettingsPage({
   onSelectEntity,
   onLockTimeoutChange,
 }: Props) {
-  const { t, locale, setLocale } = useI18n()
+  const { t } = useI18n()
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -370,22 +318,6 @@ export function SettingsPage({
         }}
         onConfirm={() => void confirmRestore()}
       />
-
-      <CollapsibleSection
-        title={t('settings.language.title')}
-        description={t('settings.language.description')}
-        icon={<Languages className="size-4" />}
-        tone="muted"
-        defaultOpen
-      >
-        <LanguagePill
-          value={locale}
-          onChange={setLocale}
-          ariaLabel={t('settings.language.title')}
-          englishLabel={t('settings.language.english')}
-          greekLabel={t('settings.language.greek')}
-        />
-      </CollapsibleSection>
 
       <CollapsibleSection
         title={t('settings.autoLock.title')}

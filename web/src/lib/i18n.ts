@@ -1,7 +1,7 @@
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
 
-/** Web locale persist. Values are `en` | `el` only. No UiPrefs dual-write yet. */
+/** Optimistic mirror only. Durable store is UiPrefs.locale. */
 export const LOCALE_STORAGE_KEY = 'oikonomia.locale'
 
 export type Locale = 'en' | 'el'
@@ -296,7 +296,7 @@ export function t(key: string, vars?: TranslateVars): string {
   return interpolate(raw, vars)
 }
 
-/** Apply locale in memory and persist to `oikonomia.locale`. */
+/** Apply locale in memory and mirror `oikonomia.locale`. Does not write UiPrefs. */
 export function applyLocale(locale: Locale): void {
   const next = parseLocale(locale)
   if (next === current) {
@@ -308,16 +308,35 @@ export function applyLocale(locale: Locale): void {
   notify()
 }
 
-/** Hydrate from localStorage. Missing or invalid → `en`. */
+/** Apply `prefs.locale` (absent/invalid → `en`). */
+export function applyLocaleFromPrefs(prefs: { locale?: unknown } | null | undefined): Locale {
+  const locale = parseLocale(prefs?.locale)
+  applyLocale(locale)
+  return locale
+}
+
+/** Hydrate the optimistic mirror. Missing or invalid → `en`. */
 export function hydrateLocaleFromStorage(): Locale {
   const locale = readCachedLocale() ?? 'en'
   applyLocale(locale)
   return locale
 }
 
-/** Programmatic locale change. Writes `localStorage['oikonomia.locale']` only. */
+type PersistFn = (locale: Locale) => void | Promise<void>
+let persistLocale: PersistFn | null = null
+
+/** Wire durable persist (`settings_set_locale`). Tests inject a mock. */
+export function setLocalePersist(fn: PersistFn | null): void {
+  persistLocale = fn
+}
+
+/**
+ * Programmatic locale change. Mirrors localStorage, then persists via
+ * `settings_set_locale` when a writer is wired.
+ */
 export function setLocale(locale: Locale): void {
   applyLocale(locale)
+  void persistLocale?.(locale)
 }
 
 /** Test-only catalog overlay. */
@@ -336,6 +355,7 @@ export function setLocaleMessagesForTests(
 export function resetI18nForTests(): void {
   current = 'en'
   testMessages = {}
+  persistLocale = null
   try {
     localStorage.removeItem(LOCALE_STORAGE_KEY)
   } catch {
