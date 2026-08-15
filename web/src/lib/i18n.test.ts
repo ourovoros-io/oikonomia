@@ -15,7 +15,6 @@ import {
   setLocalePersist,
   t,
 } from './i18n'
-import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
 
 afterEach(() => {
@@ -41,10 +40,21 @@ describe('Writer el catalog', () => {
     const flat = flattenMessages(el)
     expect(flat['app.nav.dashboard']).toBe('Επισκόπηση')
     expect(flat['unlock.title.unlock']).toBe('Καλωσορίσατε')
+    expect(flat['tx.header.title']).toBe('Κινήσεις')
+    expect(flat['dashboard.eyebrow']).toBe('Επισκόπηση')
+    expect(flat['dropzone.title.idle']).toBe(
+      'Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο',
+    )
+    expect(flat['accounts.add.label']).toBe('Προσθήκη λογαριασμού')
+    expect(flat['tx.form.billStatus.label']).toBe('Κατάσταση λογαριασμού')
+    expect(flat['quickAdd.kind.billShort']).toBe('Λογαρ.')
+    expect(flat['quickAdd.kind.transferShort']).toBe('Μεταφ.')
     expect(flat['settings.language.title']).toBe('Γλώσσα')
     expect(flat['settings.language.english']).toBe('English')
     expect(flat['settings.language.greek']).toBe('Ελληνικά')
-    expect(Object.keys(flat).length).toBeGreaterThanOrEqual(174)
+    expect(flat['error.core']).toBeUndefined()
+    const writerKeys = Object.keys(flat).filter((k) => !k.startsWith('settings.language.'))
+    expect(writerKeys.length).toBe(542)
   })
 
   test('t() uses Writer wording via current extract keys', () => {
@@ -64,6 +74,13 @@ describe('Writer el catalog', () => {
     expect(t('quickAdd.createBookFirst')).toBe('Δημιουργήστε πρώτα βιβλίο')
     expect(t('settings.language.title')).toBe('Γλώσσα')
     expect(t('settings.language.description')).toBe('Μενού, ετικέτες και Γρήγορη καταχώριση.')
+    expect(t('tx.title')).toBe('Κινήσεις')
+    expect(t('dash.overview')).toBe('Επισκόπηση')
+    expect(t('acct.addAccount')).toBe('Προσθήκη λογαριασμού')
+    expect(t('rpt.title')).toBe('Αναφορές')
+    expect(t('docs.title')).toBe('Έγγραφα')
+    expect(t('drop.title')).toBe('Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο')
+    expect(t('tx.billStatus')).toBe('Κατάσταση λογαριασμού')
   })
 
   test('interpolates Writer placeholders from extract var names', () => {
@@ -81,10 +98,9 @@ describe('Writer el catalog', () => {
 })
 
 describe('t fallback', () => {
-  test('missing el key falls back to English', () => {
+  test('missing el key falls back to English or the key', () => {
     setLocale('el')
-    expect(t('dash.overview')).toBe(en['dash.overview'])
-    expect(t('tx.title')).toBe(en['tx.title'])
+    expect(t('__missing.page.key__')).toBe('__missing.page.key__')
   })
 
   test('interpolates {name} placeholders in English', () => {
@@ -130,6 +146,6 @@ describe('test catalog overlay', () => {
     setLocaleMessagesForTests('el', { 'unlock.titleCreate': 'EL Create your vault' })
     setLocale('el')
     expect(t('unlock.titleCreate')).toBe('EL Create your vault')
-    expect(t('dash.overview')).toBe(en['dash.overview'])
+    expect(t('__missing.page.key__')).toBe('__missing.page.key__')
   })
 })

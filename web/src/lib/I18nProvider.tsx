@@ -24,7 +24,7 @@ const I18nContext = createContext<I18nContextValue | null>(null)
 
 /**
  * Hydrates locale from UiPrefs (`settings_get_locale` / `settings_get_ui_prefs`).
- * localStorage is an optimistic mirror only. Settings language chrome is held.
+ * localStorage is an optimistic mirror only. The Settings language pill calls setLocale.
  */
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
