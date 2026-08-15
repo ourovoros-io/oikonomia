@@ -6,6 +6,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { formatBytes } from '../lib/files'
 import { Button, EmptyState, ErrorBanner, PageHeader, Panel } from '../components/ui'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null }
 
@@ -22,6 +23,7 @@ function formatCreatedAt(createdAt: string): string {
 
 /** Every file in the book's vault — always linked to the entry it was saved with. */
 export function DocumentsPage({ entity }: Props) {
+  const { t } = useI18n()
   const [docs, setDocs] = useState<DocumentMeta[]>([])
   const [error, setError] = useState<string | null>(null)
   const [viewerDocId, setViewerDocId] = useState<string | null>(null)
@@ -56,7 +58,7 @@ export function DocumentsPage({ entity }: Props) {
       setDeleteId(null)
       await reload()
     } catch (err) {
-      setError((err as CommandError).message || 'Could not delete document')
+      setError((err as CommandError).message || t('docs.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -68,7 +70,7 @@ export function DocumentsPage({ entity }: Props) {
     try {
       await api.documentExport(id)
     } catch (err) {
-      setError((err as CommandError).message || 'Could not save a copy')
+      setError((err as CommandError).message || t('docs.exportFailed'))
     } finally {
       setBusyId(null)
     }
@@ -78,8 +80,8 @@ export function DocumentsPage({ entity }: Props) {
     return (
       <EmptyState
         icon={<FolderOpen className="size-5" />}
-        title="No book selected"
-        body="Create or select a book first."
+        title={t('docs.noBookTitle')}
+        body={t('docs.noBookBody')}
       />
     )
   }
@@ -87,19 +89,19 @@ export function DocumentsPage({ entity }: Props) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Vault"
-        title="Documents"
-        description="Every file stored in this book's encrypted vault."
-        meta="Encrypted at rest"
+        eyebrow={t('docs.eyebrow')}
+        title={t('docs.title')}
+        description={t('docs.description')}
+        meta={t('docs.meta')}
       />
 
       <ErrorBanner message={error} />
 
       <ConfirmDialog
         open={deleteId !== null}
-        title="Delete document?"
-        body="This permanently removes the file from your vault. It cannot be undone. Journal entries are not affected."
-        confirmLabel="Delete"
+        title={t('docs.deleteTitle')}
+        body={t('docs.deleteBody')}
+        confirmLabel={t('common.delete')}
         danger
         busy={deleteBusy}
         onCancel={() => {
@@ -117,13 +119,13 @@ export function DocumentsPage({ entity }: Props) {
       {docs.length === 0 ? (
         <EmptyState
           icon={<FolderOpen className="size-5" />}
-          title="No documents yet"
-          body="Documents are saved here, encrypted, when you post an entry with a file attached or attach one to an existing entry."
+          title={t('docs.emptyTitle')}
+          body={t('docs.emptyBody')}
         />
       ) : (
         <Panel
-          title="Vault files"
-          description={`${docs.length} stored · encrypted`}
+          title={t('docs.vaultFiles')}
+          description={t('docs.vaultFilesDesc', { count: docs.length })}
           icon={<FolderOpen className="size-4" />}
         >
           <ul className="divide-y divide-[var(--color-border)]">
@@ -143,7 +145,7 @@ export function DocumentsPage({ entity }: Props) {
                 </div>
 
                 <span className="max-w-48 truncate rounded-full bg-[var(--color-accent-soft)] px-2.5 py-1 text-xs text-[var(--color-accent)]">
-                  {doc.entry_description || 'Linked entry'}
+                  {doc.entry_description || t('docs.linkedEntry')}
                 </span>
 
                 <Button
@@ -151,8 +153,8 @@ export function DocumentsPage({ entity }: Props) {
                   size="icon"
                   className="h-8 w-8 shrink-0"
                   onClick={() => setViewerDocId(doc.id)}
-                  aria-label="View document"
-                  title="View"
+                  aria-label={t('docs.viewAria')}
+                  title={t('docs.view')}
                 >
                   <Eye className="size-4" />
                 </Button>
@@ -163,8 +165,8 @@ export function DocumentsPage({ entity }: Props) {
                   disabled={anyBusy}
                   busy={busyId === doc.id}
                   onClick={() => void onExport(doc.id)}
-                  aria-label="Save a copy"
-                  title="Save a copy"
+                  aria-label={t('docs.saveCopyAria')}
+                  title={t('docs.saveCopy')}
                 >
                   <Download className="size-4" />
                 </Button>
@@ -174,8 +176,8 @@ export function DocumentsPage({ entity }: Props) {
                   className="h-8 w-8 shrink-0"
                   disabled={anyBusy}
                   onClick={() => setDeleteId(doc.id)}
-                  aria-label="Delete document"
-                  title="Delete"
+                  aria-label={t('docs.deleteAria')}
+                  title={t('common.delete')}
                 >
                   <Trash2 className="size-4" />
                 </Button>

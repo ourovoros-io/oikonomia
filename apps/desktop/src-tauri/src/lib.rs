@@ -39,8 +39,6 @@ pub fn run() {
             // the bare binary, so set the icon at runtime as well.
             macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
 
-            tray::init(app)?;
-
             let resource_dir = app.path().resource_dir().ok();
             let ocr_dir = resolve_ocr_model_dir(resource_dir);
             log::info!("OCR model dir: {}", ocr_dir.display());
@@ -50,8 +48,11 @@ pub fn run() {
 
             // Native window appearance (scrollbars, controls, title bar) must
             // match the stored theme, not the OS preference.
-            let theme = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir()).theme;
-            app.handle().set_theme(Some(commands::native_theme(theme)));
+            let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
+            app.handle()
+                .set_theme(Some(commands::native_theme(prefs.theme)));
+
+            tray::init(app, prefs.locale)?;
 
             app.manage(app_state);
 
@@ -111,6 +112,8 @@ pub fn run() {
             commands::settings_set_lock_timeout,
             commands::settings_get_theme,
             commands::settings_set_theme,
+            commands::settings_get_locale,
+            commands::settings_set_locale,
             commands::settings_get_ui_prefs,
             commands::settings_remember_quick_add,
             commands::open_main_window,

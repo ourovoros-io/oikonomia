@@ -1,5 +1,6 @@
 //! System tray: left-click quick-add; menu Open / Quit; close hides windows.
 
+use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -15,6 +16,80 @@ const QUICK_ADD_STEPPER_HEIGHT: f64 = 64.0;
 const QUICK_ADD_COMPACT_HEIGHT: f64 = 56.0;
 #[expect(dead_code)]
 const QUICK_ADD_SAVE_HEIGHT: f64 = 96.0;
+
+/// Tray menu: open the main window.
+#[must_use]
+pub fn tray_open_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Open Oikonomia",
+        Locale::El => "Άνοιγμα Oikonomia",
+    }
+}
+
+/// Tray menu: quit the app.
+#[must_use]
+pub fn tray_quit_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Quit Oikonomia",
+        Locale::El => "Έξοδος από το Oikonomia",
+    }
+}
+
+/// Quick-add companion window title.
+#[must_use]
+pub fn quick_add_title(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Quick add",
+        Locale::El => "Γρήγορη καταχώριση",
+    }
+}
+
+/// Native file-dialog filter for `.oikonomia-backup` archives.
+#[must_use]
+pub fn backup_filter_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Oikonomia backup",
+        Locale::El => "Αντίγραφο ασφαλείας Oikonomia",
+    }
+}
+
+/// Tray tooltip is the brand name in every locale.
+#[must_use]
+pub fn tray_tooltip(_locale: Locale) -> &'static str {
+    "Oikonomia"
+}
+
+fn locale_from_app(app: &AppHandle) -> Locale {
+    app.try_state::<crate::state::AppState>()
+        .map(|state| load_ui_prefs(state.data_dir()).locale)
+        .unwrap_or_default()
+}
+
+fn build_menu<R: tauri::Runtime, M: Manager<R>>(app: &M, locale: Locale) -> tauri::Result<Menu<R>> {
+    let open = MenuItem::with_id(app, "open", tray_open_label(locale), true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", tray_quit_label(locale), true, None::<&str>)?;
+    Menu::with_items(app, &[&open, &quit])
+}
+
+/// Rebuild the tray menu and refresh the quick-add title after a locale change.
+pub fn apply_locale(app: &AppHandle, locale: Locale) {
+    match build_menu(app, locale) {
+        Ok(menu) => {
+            if let Some(tray) = app.tray_by_id("main")
+                && let Err(err) = tray.set_menu(Some(menu))
+            {
+                log::warn!("failed to update tray menu: {err}");
+            }
+        }
+        Err(err) => log::warn!("failed to rebuild tray menu: {err}"),
+    }
+
+    if let Some(window) = app.get_webview_window(QUICK_ADD_LABEL)
+        && let Err(err) = window.set_title(quick_add_title(locale))
+    {
+        log::warn!("failed to set quick-add title: {err}");
+    }
+}
 
 /// Bring the main window back after it was hidden to the tray.
 pub fn show_main_window(app: &AppHandle) {
@@ -49,7 +124,7 @@ fn ensure_quick_add_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindo
     // (native chrome is rectangular).
     let window =
         WebviewWindowBuilder::new(app, QUICK_ADD_LABEL, WebviewUrl::App("index.html".into()))
-            .title("Quick add")
+            .title(quick_add_title(locale_from_app(app)))
             .inner_size(QUICK_ADD_WIDTH, QUICK_ADD_STEPPER_HEIGHT)
             .resizable(false)
             .maximizable(false)
@@ -105,14 +180,12 @@ pub fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64>>) {
 }
 
 /// Build the tray icon with left-click quick-add and Open / Quit menu.
-pub fn init(app: &tauri::App) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Oikonomia", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Oikonomia", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
+pub fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
+    let menu = build_menu(app, locale)?;
 
     let tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .tooltip("Oikonomia")
+        .tooltip(tray_tooltip(locale))
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main_window(app),
@@ -145,4 +218,26 @@ pub fn init(app: &tauri::App) -> tauri::Result<()> {
     tray.build(app)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_labels_switch_en_el() {
+        assert_eq!(tray_open_label(Locale::En), "Open Oikonomia");
+        assert_eq!(tray_open_label(Locale::El), "Άνοιγμα Oikonomia");
+        assert_eq!(tray_quit_label(Locale::En), "Quit Oikonomia");
+        assert_eq!(tray_quit_label(Locale::El), "Έξοδος από το Oikonomia");
+        assert_eq!(quick_add_title(Locale::En), "Quick add");
+        assert_eq!(quick_add_title(Locale::El), "Γρήγορη καταχώριση");
+        assert_eq!(backup_filter_label(Locale::En), "Oikonomia backup");
+        assert_eq!(
+            backup_filter_label(Locale::El),
+            "Αντίγραφο ασφαλείας Oikonomia"
+        );
+        assert_eq!(tray_tooltip(Locale::En), "Oikonomia");
+        assert_eq!(tray_tooltip(Locale::El), "Oikonomia");
+    }
 }

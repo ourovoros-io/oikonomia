@@ -26,11 +26,22 @@ import {
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import type { CommandError } from '../lib/tauri'
+import { t } from '../lib/i18n'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null }
 type Tab = 'trial' | 'pnl' | 'bs'
 
+function sectionTitle(title: string): string {
+  const key = title.toLowerCase()
+  if (key === 'assets') return t('rpt.section.assets')
+  if (key === 'liabilities') return t('rpt.section.liabilities')
+  if (key === 'equity') return t('rpt.section.equity')
+  return title
+}
+
 export function ReportsPage({ entity }: Props) {
+  const { t } = useI18n()
   const [tab, setTab] = useState<Tab>('pnl')
   const [asOf, setAsOf] = useState(todayISO())
   const [from, setFrom] = useState(yearStartISO())
@@ -61,8 +72,8 @@ export function ReportsPage({ entity }: Props) {
     return (
       <EmptyState
         icon={<BarChart3 className="size-5" />}
-        title="No book selected"
-        body="Create or select a book first."
+        title={t('rpt.noBookTitle')}
+        body={t('rpt.noBookBody')}
       />
     )
   }
@@ -72,20 +83,20 @@ export function ReportsPage({ entity }: Props) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Statements"
-        title="Reports"
-        description="Profit & loss, balance sheet, and trial balance"
+        eyebrow={t('rpt.eyebrow')}
+        title={t('rpt.title')}
+        description={t('rpt.description')}
         meta={entity.name}
         actions={
           <Segmented<Tab>
             value={tab}
             onChange={setTab}
             options={[
-              { id: 'pnl', label: 'P&L', icon: <BarChart3 className="size-3.5" /> },
-              { id: 'bs', label: 'Balance sheet', icon: <Scale className="size-3.5" /> },
+              { id: 'pnl', label: t('rpt.pnl'), icon: <BarChart3 className="size-3.5" /> },
+              { id: 'bs', label: t('rpt.balanceSheet'), icon: <Scale className="size-3.5" /> },
               {
                 id: 'trial',
-                label: 'Trial balance',
+                label: t('rpt.trialBalance'),
                 icon: <FileSpreadsheet className="size-3.5" />,
               },
             ]}
@@ -97,21 +108,21 @@ export function ReportsPage({ entity }: Props) {
         <div className="flex flex-wrap items-end gap-3">
           {tab === 'pnl' ? (
             <>
-              <Field label="From" className="w-44">
-                <DateInput value={from} onChange={setFrom} required aria-label="Report from date" />
+              <Field label={t('rpt.from')} className="w-44">
+                <DateInput value={from} onChange={setFrom} required aria-label={t('rpt.fromDate')} />
               </Field>
-              <Field label="To" className="w-44">
-                <DateInput value={to} onChange={setTo} required aria-label="Report to date" />
+              <Field label={t('rpt.to')} className="w-44">
+                <DateInput value={to} onChange={setTo} required aria-label={t('rpt.toDate')} />
               </Field>
             </>
           ) : (
-            <Field label="As of" className="w-44">
-              <DateInput value={asOf} onChange={setAsOf} required aria-label="Report as-of date" />
+            <Field label={t('rpt.asOf')} className="w-44">
+              <DateInput value={asOf} onChange={setAsOf} required aria-label={t('rpt.asOfDate')} />
             </Field>
           )}
           <Button variant="secondary" onClick={() => void run()}>
             <RefreshCw className="size-4" />
-            Refresh
+            {t('rpt.refresh')}
           </Button>
         </div>
       </Card>
@@ -150,7 +161,7 @@ function Statement({
           {title}
         </h3>
         <p className="mt-0.5 text-xs text-[var(--color-muted)]">
-          {period} · All amounts in {ccy}
+          {t('rpt.amountsIn', { period, ccy })}
         </p>
       </div>
       {children}
@@ -235,28 +246,28 @@ function PnlView({ pnl, entityName, ccy }: { pnl: PnL; entityName: string; ccy: 
     <div className="space-y-6">
       <Statement
         entityName={entityName}
-        title="Profit & Loss"
+        title={t('rpt.profitLoss')}
         period={`${formatDate(pnl.from)} – ${formatDate(pnl.to)}`}
         ccy={ccy}
       >
-        <SectionLabel>Income</SectionLabel>
+        <SectionLabel>{t('rpt.income')}</SectionLabel>
         {pnl.income.length === 0 ? (
-          <EmptyLines>No income recorded in this period.</EmptyLines>
+          <EmptyLines>{t('rpt.noIncome')}</EmptyLines>
         ) : (
           pnl.income.map((l) => <LineRow key={l.code + l.name} line={l} ccy={ccy} />)
         )}
-        <TotalRow label="Total income" amount={pnl.total_income} ccy={ccy} />
+        <TotalRow label={t('rpt.totalIncome')} amount={pnl.total_income} ccy={ccy} />
 
-        <SectionLabel>Expenses</SectionLabel>
+        <SectionLabel>{t('rpt.expenses')}</SectionLabel>
         {pnl.expenses.length === 0 ? (
-          <EmptyLines>No expenses recorded in this period.</EmptyLines>
+          <EmptyLines>{t('rpt.noExpenses')}</EmptyLines>
         ) : (
           pnl.expenses.map((l) => <LineRow key={l.code + l.name} line={l} ccy={ccy} />)
         )}
-        <TotalRow label="Total expenses" amount={pnl.total_expenses} ccy={ccy} />
+        <TotalRow label={t('rpt.totalExpenses')} amount={pnl.total_expenses} ccy={ccy} />
 
         <TotalRow
-          label="Net income"
+          label={t('rpt.netIncome')}
           amount={net}
           ccy={ccy}
           grand
@@ -265,8 +276,8 @@ function PnlView({ pnl, entityName, ccy }: { pnl: PnL; entityName: string; ccy: 
       </Statement>
 
       <Panel
-        title="Expense breakdown"
-        description="Share of period expenses by category"
+        title={t('rpt.expenseBreakdown')}
+        description={t('rpt.expenseBreakdownDesc')}
         icon={<PieChart className="size-4" />}
       >
         <ExpenseDonut lines={pnl.expenses} ccy={ccy} />
@@ -280,25 +291,31 @@ function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string;
   return (
     <Statement
       entityName={entityName}
-      title="Balance Sheet"
-      period={`As of ${formatDate(bs.as_of)}`}
+      title={t('rpt.balanceSheet')}
+      period={t('rpt.asOfPeriod', { date: formatDate(bs.as_of) })}
       ccy={ccy}
     >
       {([bs.assets, bs.liabilities, bs.equity] as const).map((section) => (
         <div key={section.title}>
           <SectionLabel>{section.title}</SectionLabel>
           {section.lines.length === 0 ? (
-            <EmptyLines>No {section.title.toLowerCase()} accounts with activity.</EmptyLines>
+            <EmptyLines>
+              {t('rpt.noSectionAccounts', { section: sectionTitle(section.title) })}
+            </EmptyLines>
           ) : (
             section.lines.map((l) => <LineRow key={l.code + l.name} line={l} ccy={ccy} />)
           )}
-          <TotalRow label={`Total ${section.title.toLowerCase()}`} amount={section.total} ccy={ccy} />
+          <TotalRow
+            label={t('rpt.totalSection', { section: sectionTitle(section.title) })}
+            amount={section.total}
+            ccy={ccy}
+          />
         </div>
       ))}
 
-      <TotalRow label="Total assets" amount={bs.total_assets} ccy={ccy} grand />
+      <TotalRow label={t('rpt.totalAssets')} amount={bs.total_assets} ccy={ccy} grand />
       <TotalRow
-        label="Total liabilities + equity"
+        label={t('rpt.totalLiabEquity')}
         amount={bs.total_liabilities_equity}
         ccy={ccy}
         grand
@@ -310,8 +327,8 @@ function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string;
         )}
       >
         {diff === 0
-          ? 'Assets equal liabilities plus equity — the books balance.'
-          : `Out of balance by ${formatMoney(diff, ccy)} — check for entries dated outside the period.`}
+          ? t('rpt.booksBalance')
+          : t('rpt.outOfBalance', { amount: formatMoney(diff, ccy) })}
       </p>
     </Statement>
   )
@@ -321,8 +338,8 @@ function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: stri
   return (
     <Statement
       entityName={entityName}
-      title="Trial Balance"
-      period={`As of ${formatDate(tb.as_of)}`}
+      title={t('rpt.trialBalance')}
+      period={t('rpt.asOfPeriod', { date: formatDate(tb.as_of) })}
       ccy={ccy}
     >
       <div className="overflow-x-auto">
@@ -330,13 +347,13 @@ function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: stri
           <thead>
             <tr className="border-b border-[var(--color-border)]">
               <th className="py-2 pr-4 text-left text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-                Account
+                {t('rpt.account')}
               </th>
               <th className="w-32 py-2 pl-4 text-right text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-                Debit
+                {t('rpt.debit')}
               </th>
               <th className="w-32 py-2 pl-4 text-right text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-                Credit
+                {t('rpt.credit')}
               </th>
             </tr>
           </thead>
@@ -360,7 +377,7 @@ function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: stri
           </tbody>
           <tfoot>
             <tr className="border-t-4 border-double border-[var(--color-border-strong)] font-semibold">
-              <td className="py-2.5 pr-4 text-[var(--color-fg)]">Total</td>
+              <td className="py-2.5 pr-4 text-[var(--color-fg)]">{t('rpt.total')}</td>
               <td className="py-2.5 pl-4 text-right tabular-nums text-[var(--color-fg)]">
                 {formatMoney(tb.total_debits, ccy)}
               </td>

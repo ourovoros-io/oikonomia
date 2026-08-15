@@ -1,11 +1,15 @@
 import type { CommandError } from './tauri'
+import { t } from './i18n'
 
 export type VaultBackupAvailability = 'ready' | 'empty' | 'missing'
 
-export const VAULT_BACKUP_BODY =
-  'Files stay ciphertext. Backup packs the vault header and database together so they stay a pair. Unlock still uses your master password.'
+export function vaultBackupBody(): string {
+  return t('settings.vaultBackup.body')
+}
 
-export const VAULT_BACKUP_HINT = 'Saved as oikonomia-backup-YYYY-MM-DD.oikonomia-backup'
+export function vaultBackupHint(): string {
+  return t('settings.vaultBackup.hint')
+}
 
 export function vaultBackupAvailability(opts: {
   vaultPresent: boolean
@@ -27,13 +31,13 @@ export function vaultBackupBanner(availability: VaultBackupAvailability): {
   switch (availability) {
     case 'empty':
       return {
-        title: 'Nothing to back up',
-        body: 'This vault has not been initialized yet. Create a book first, or restore an existing backup.',
+        title: t('settings.vaultBackup.emptyTitle'),
+        body: t('settings.vaultBackup.emptyBody'),
       }
     case 'missing':
       return {
-        title: 'No vault on this computer',
-        body: 'Nothing to back up. Restore from a backup, or set up a new vault.',
+        title: t('settings.vaultBackup.missingTitle'),
+        body: t('settings.vaultBackup.missingBody'),
       }
     case 'ready':
       return null
@@ -50,16 +54,16 @@ export function restoreConfirm(kind: RestoreConfirmKind): {
 } {
   if (kind === 'load') {
     return {
-      title: 'Load backup on this device?',
-      body: 'This becomes the vault on this computer. After it loads, the vault will be locked — unlock with your existing master password.',
-      confirmLabel: 'Load backup',
+      title: t('settings.restore.loadTitle'),
+      body: t('settings.restore.loadBody'),
+      confirmLabel: t('settings.restore.loadConfirm'),
       replace: false,
     }
   }
   return {
-    title: 'Replace local vault?',
-    body: 'Restoring this backup replaces the vault on this computer. The current vault cannot be recovered. After restore, the vault will be locked — unlock with your master password.',
-    confirmLabel: 'Replace vault',
+    title: t('settings.restore.replaceTitle'),
+    body: t('settings.restore.replaceBody'),
+    confirmLabel: t('settings.restore.replaceConfirm'),
     replace: true,
   }
 }
@@ -67,16 +71,16 @@ export function restoreConfirm(kind: RestoreConfirmKind): {
 export function backupCommandError(err: CommandError): string {
   switch (err.code) {
     case 'vault_uninitialized':
-      return 'Nothing to back up. This vault has not been initialized yet.'
+      return t('settings.vaultBackup.errUninitialized')
     case 'backup_invalid':
-      return err.message || 'That file is not a valid Oikonomia backup.'
+      return err.message || t('settings.vaultBackup.errInvalid')
     case 'restore_would_overwrite':
-      return 'A vault already exists on this computer. Confirm replace to continue.'
+      return t('settings.vaultBackup.errOverwrite')
     case 'not_found':
-      return err.message || 'Backup file not found.'
+      return err.message || t('settings.vaultBackup.errNotFound')
     case 'io':
-      return err.message || 'Could not read or write the backup file.'
+      return err.message || t('settings.vaultBackup.errIo')
     default:
-      return err.message || 'Could not complete the backup.'
+      return err.message || t('settings.vaultBackup.errDefault')
   }
 }

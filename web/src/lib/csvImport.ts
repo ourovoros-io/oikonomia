@@ -5,11 +5,7 @@ import type {
   LastRoleAccounts,
   SimpleEntryInput,
 } from './api'
-
-export const CSV_MAP_SOURCE_FALLBACK = 'Auto-detected'
-
-export const CSV_MAP_FOOTER_NOTE =
-  'Unmapped columns are ignored. Debit/credit columns can replace Amount.'
+import { t } from './i18n'
 
 /** True when preview includes a header row to drive mapping selects. */
 export function previewHasColumnMap(preview: { headers?: string[] | null }): boolean {
@@ -132,13 +128,15 @@ export function defaultChecked(row: CsvImportPreviewRow): boolean {
 }
 
 export function postLabel(n: number): string {
-  return `Post ${n} selected`
+  return t('tx.csv.postSelected', { n })
 }
 
 export function previewSubtitle(rowCount: number, duplicateCount: number): string {
-  const rows = `${rowCount} ${rowCount === 1 ? 'row' : 'rows'}`
-  const dupes = `${duplicateCount} likely duplicate${duplicateCount === 1 ? '' : 's'} flagged`
-  return `${rows} · ${dupes} · nothing posts until you confirm`
+  const rows = t(rowCount === 1 ? 'tx.csv.rowOne' : 'tx.csv.rowMany', { n: rowCount })
+  const dupes = t(duplicateCount === 1 ? 'tx.csv.dupeOne' : 'tx.csv.dupeMany', {
+    n: duplicateCount,
+  })
+  return t('tx.csv.previewSubtitle', { rows, dupes })
 }
 
 function orNull(value: string | null | undefined): string | null {

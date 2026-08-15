@@ -42,6 +42,7 @@ import {
   type BillStatusTray,
   type EntryKind,
 } from '../lib/simpleEntry'
+import { useI18n } from '../lib/I18nProvider'
 
 export type QuickAddPosted = {
   kind: EntryKind
@@ -60,12 +61,13 @@ type Step = 'entity' | 'kind' | 'amount' | 'accounts' | 'save'
 
 const KIND_OPTIONS: Array<{
   id: EntryKind
-  label: string
+  labelKey: 'kind.expense' | 'kind.income' | 'kind.billShort' | 'kind.transferShort'
+  titleKey: 'kind.expense' | 'kind.income' | 'kind.bill' | 'kind.transfer'
 }> = [
-  { id: 'expense', label: 'Expense' },
-  { id: 'income', label: 'Income' },
-  { id: 'bill', label: 'Bill' },
-  { id: 'transfer', label: 'Transfer' },
+  { id: 'expense', labelKey: 'kind.expense', titleKey: 'kind.expense' },
+  { id: 'income', labelKey: 'kind.income', titleKey: 'kind.income' },
+  { id: 'bill', labelKey: 'kind.billShort', titleKey: 'kind.bill' },
+  { id: 'transfer', labelKey: 'kind.transferShort', titleKey: 'kind.transfer' },
 ]
 
 /** Dense BUI v2 chrome for 300×64 tray — full-pill, hairline, h-7/h-8 rhythm. */
@@ -166,15 +168,16 @@ function Row({
   )
 }
 
-function NextButton({ disabled }: { disabled: boolean }) {
+function NextButton({ disabled, label }: { disabled: boolean; label: string }) {
   return (
-    <button type="submit" disabled={disabled} aria-label="Next" className={nextCta}>
+    <button type="submit" disabled={disabled} aria-label={label} className={nextCta}>
       <CornerDownLeft className="size-3" strokeWidth={2} aria-hidden />
     </button>
   )
 }
 
 export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
+  const { t } = useI18n()
   const [entities, setEntities] = useState<Entity[]>([])
   const [entityId, setEntityId] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -446,7 +449,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     async (file: File, entId: string) => {
       if (busyRef.current || rollingRef.current) return
       if (file.size > MAX_DOC_BYTES) {
-        setError('File too large (max 8 MB)')
+        setError(t('quickAdd.fileTooLarge'))
         return
       }
       const gen = analyzeGenRef.current + 1
@@ -469,7 +472,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         applySuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
         if (analyzeGenRef.current !== gen) return
-        setError((err as CommandError).message || 'Could not analyze')
+        setError((err as CommandError).message || t('quickAdd.couldNotAnalyze'))
         setPendingDoc(null)
         setPendingAnalysis(null)
       } finally {
@@ -481,7 +484,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         setDragOver(false)
       }
     },
-    [rollTo],
+    [rollTo, t],
   )
 
   const processPath = useCallback(
@@ -500,7 +503,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         applySuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
         if (analyzeGenRef.current !== gen) return
-        setError((err as CommandError).message || 'Could not analyze')
+        setError((err as CommandError).message || t('quickAdd.couldNotAnalyze'))
         setPendingDoc(null)
         setPendingAnalysis(null)
       } finally {
@@ -512,7 +515,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         setDragOver(false)
       }
     },
-    [rollTo],
+    [rollTo, t],
   )
 
   useEffect(() => {
@@ -537,7 +540,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             setDragOver(false)
             const path = payload.paths[0]
             if (path) void processPath(path, entId)
-            else setError('No file path received')
+            else setError(t('quickAdd.noFilePath'))
           }
         })
       } catch {
@@ -566,7 +569,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     const minor = parseMajorToMinor(amount, entity.base_currency)
     if (minor === null || minor <= 0) {
       busyRef.current = false
-      setError('Invalid amount')
+      setError(t('quickAdd.invalidAmount'))
       if (step !== 'amount') rollTo('amount', -1)
       return
     }
@@ -660,7 +663,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     if (!entity) return
     const minor = parseMajorToMinor(amount, entity.base_currency)
     if (minor === null || minor <= 0) {
-      setError('Invalid amount')
+      setError(t('quickAdd.invalidAmount'))
       amountRef.current?.focus()
       return
     }
@@ -692,7 +695,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     return (
       <div className="flex h-full items-center justify-center gap-1 px-1.5 text-[11px] text-[var(--color-muted)]">
         <Loader2 className="size-3 animate-spin" aria-hidden />
-        Loading
+        {t('quickAdd.loading')}
       </div>
     )
   }
@@ -701,14 +704,14 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     return (
       <div className="flex h-full items-center gap-1.5 px-2">
         <p className="min-w-0 flex-1 text-[11px] leading-snug text-[var(--color-fg-secondary)]">
-          Create a book first
+          {t('quickAdd.createBookFirst')}
         </p>
         <Button
           size="sm"
           className="h-7 shrink-0 rounded-full px-2.5 text-[10px]"
           onClick={() => void api.openMainWindow()}
         >
-          Open
+          {t('common.open')}
         </Button>
       </div>
     )
@@ -720,10 +723,10 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         <Row>
           <Loader2 className="size-3 shrink-0 animate-spin text-[var(--color-muted)]" />
           <p className="min-w-0 flex-1 truncate text-[11px] leading-none text-[var(--color-muted)]">
-            Analyzing…
+            {t('quickAdd.analyzing')}
           </p>
           <button type="button" className={cancelCta} onClick={onCancelAnalyze}>
-            Cancel
+            {t('common.cancel')}
           </button>
         </Row>
       )
@@ -733,7 +736,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'entity':
         return (
           <Row>
-            <div className={pillTrack} role="group" aria-label="Book">
+            <div className={pillTrack} role="group" aria-label={t('quickAdd.book')}>
               {entities.slice(0, 3).map((e) => {
                 const active = e.id === entityId
                 return (
@@ -756,7 +759,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               })}
               {entities.length > 3 ? (
                 <label className="relative flex h-full min-w-0 flex-1 items-center">
-                  <span className="sr-only">More books</span>
+                  <span className="sr-only">{t('quickAdd.moreBooks')}</span>
                   <select
                     className="ui-select h-full w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-0.5 text-[10px] leading-none text-[var(--color-muted)] outline-none"
                     value={
@@ -767,7 +770,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                       if (e.target.value) void selectEntity(e.target.value)
                     }}
                   >
-                    <option value="">More…</option>
+                    <option value="">{t('quickAdd.more')}</option>
                     {entities.slice(3).map((e) => (
                       <option key={e.id} value={e.id}>
                         {e.name}
@@ -783,7 +786,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'kind':
         return (
           <Row>
-            <div className={pillTrack} role="radiogroup" aria-label="Entry type">
+            <div className={pillTrack} role="radiogroup" aria-label={t('quickAdd.entryType')}>
               {KIND_OPTIONS.map((opt) => {
                 const active = kind === opt.id
                 return (
@@ -793,7 +796,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     role="radio"
                     aria-checked={active}
                     disabled={formDisabled}
-                    title={opt.label}
+                    title={t(opt.titleKey)}
                     onClick={() => selectKind(opt.id)}
                     className={cn(
                       'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[10px] font-medium leading-none transition disabled:opacity-50',
@@ -802,7 +805,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
                     )}
                   >
-                    {opt.label}
+                    {t(opt.labelKey)}
                   </button>
                 )
               })}
@@ -832,11 +835,11 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               )}
               required
               disabled={formDisabled}
-              aria-label={`Amount (${ccy})`}
+              aria-label={t('quickAdd.amount', { ccy })}
               autoComplete="off"
             />
             <span className={pillChipQuiet}>{ccy}</span>
-            <NextButton disabled={formDisabled} />
+            <NextButton disabled={formDisabled} label={t('common.next')} />
           </form>
         )
 
@@ -855,8 +858,8 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 onChange={setCategoryId}
                 options={expenseAccounts}
                 disabled={formDisabled}
-                label="Category"
-                prefix="Cat"
+                label={t('quickAdd.category')}
+                prefix={t('quickAdd.catPrefix')}
               />
             )}
             {kind === 'income' && (
@@ -865,8 +868,8 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 onChange={setCategoryId}
                 options={incomeAccounts}
                 disabled={formDisabled}
-                label="Income"
-                prefix="Inc"
+                label={t('quickAdd.income')}
+                prefix={t('quickAdd.incPrefix')}
               />
             )}
             {(kind === 'expense' ||
@@ -877,8 +880,8 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 onChange={setWalletId}
                 options={kind === 'income' ? assetWallets : walletAccounts}
                 disabled={formDisabled}
-                label="Wallet"
-                prefix="Wallet"
+                label={t('quickAdd.wallet')}
+                prefix={t('quickAdd.walletPrefix')}
               />
             )}
             {kind === 'bill' && billStatus === 'unpaid' && (
@@ -887,8 +890,8 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 onChange={setPayableId}
                 options={payableAccounts}
                 disabled={formDisabled}
-                label="Payable"
-                prefix="Payable"
+                label={t('quickAdd.payable')}
+                prefix={t('quickAdd.payablePrefix')}
               />
             )}
             {kind === 'transfer' && (
@@ -898,20 +901,20 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                   onChange={setFromId}
                   options={transferAccounts}
                   disabled={formDisabled}
-                  label="From"
-                  prefix="From"
+                  label={t('quickAdd.from')}
+                  prefix={t('quickAdd.fromPrefix')}
                 />
                 <AccountSelect
                   value={toId}
                   onChange={setToId}
                   options={transferAccounts}
                   disabled={formDisabled}
-                  label="To"
-                  prefix="To"
+                  label={t('quickAdd.to')}
+                  prefix={t('quickAdd.toPrefix')}
                 />
               </>
             )}
-            <NextButton disabled={formDisabled} />
+            <NextButton disabled={formDisabled} label={t('common.next')} />
           </form>
         )
 
@@ -926,12 +929,12 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 <div
                   className="inline-flex h-7 shrink-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5"
                   role="radiogroup"
-                  aria-label="Bill status"
+                  aria-label={t('quickAdd.billStatus')}
                 >
                   {(
                     [
-                      { id: 'unpaid', label: 'Due' },
-                      { id: 'paid', label: 'Paid' },
+                      { id: 'unpaid', labelKey: 'quickAdd.due' as const },
+                      { id: 'paid', labelKey: 'quickAdd.paid' as const },
                     ] as const
                   ).map((opt) => {
                     const active = billStatus === opt.id
@@ -950,7 +953,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                             : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
                         )}
                       >
-                        {opt.label}
+                        {t(opt.labelKey)}
                       </button>
                     )
                   })}
@@ -959,13 +962,13 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               <input
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Memo"
+                placeholder={t('quickAdd.memo')}
                 className={cn(
                   pillField,
                   'min-w-0 text-[11px] leading-none outline-none placeholder:text-[var(--color-muted)] disabled:opacity-50',
                 )}
                 disabled={formDisabled}
-                aria-label="Memo"
+                aria-label={t('quickAdd.memo')}
               />
               {pendingDoc ? (
                 <span className="max-w-[3.75rem] shrink-0 truncate text-[9px] leading-none text-[var(--color-muted)]">
@@ -973,7 +976,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 </span>
               ) : (
                 <span className="shrink-0 text-[9px] leading-none text-[var(--color-muted)]/75">
-                  Drop
+                  {t('quickAdd.drop')}
                 </span>
               )}
             </div>
@@ -987,7 +990,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                   onDismiss?.()
                 }}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
@@ -997,7 +1000,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 {busy && !analyzing ? (
                   <Loader2 className="size-3 shrink-0 animate-spin" aria-hidden />
                 ) : null}
-                Save
+                {t('common.save')}
               </button>
             </div>
           </form>
@@ -1037,7 +1040,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             ? 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]'
             : 'pointer-events-none text-transparent',
         )}
-        aria-label="Back"
+        aria-label={t('common.back')}
         tabIndex={showBack ? 0 : -1}
       >
         ‹

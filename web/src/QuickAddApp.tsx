@@ -10,6 +10,7 @@ import {
 } from './lib/quickAddWindow'
 import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
+import { useI18n } from './lib/I18nProvider'
 
 /**
  * Soft opaque BUI card: 16px radius, hairline border, no backdrop-blur.
@@ -43,6 +44,7 @@ function Shell({
 }
 
 export default function QuickAddApp() {
+  const { t } = useI18n()
   const [status, setStatus] = useState<VaultStatus | null>(null)
   const [dark, setDark] = useState(true)
   const [phase, setPhase] = useState<'form' | 'success'>('form')
@@ -203,7 +205,7 @@ export default function QuickAddApp() {
     (info: QuickAddPosted) => {
       busyRef.current = false
       const money = formatMoney(info.amountMinor, info.currency)
-      setSuccessLabel(`Saved ${info.kind} ${money}`)
+      setSuccessLabel(t('quickAdd.saved', { kind: t(`kind.${info.kind}`), money }))
       setPhase('success')
       void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       if (successTimerRef.current) clearTimeout(successTimerRef.current)
@@ -219,7 +221,7 @@ export default function QuickAddApp() {
     return (
       <Shell>
         <div className="flex h-full items-center justify-center px-2 text-[11px] text-[var(--color-muted)]">
-          Loading…
+          {t('common.loading')}
         </div>
       </Shell>
     )
@@ -230,14 +232,14 @@ export default function QuickAddApp() {
       <Shell>
         <div className="flex h-full items-center gap-1.5 px-2">
           <p className="min-w-0 flex-1 text-[11px] leading-snug text-[var(--color-fg-secondary)]">
-            Vault is locked
+            {t('quickAdd.vaultLocked')}
           </p>
           <Button
             size="sm"
             className="h-7 shrink-0 rounded-full px-2.5 text-[10px]"
             onClick={() => void api.openMainWindow()}
           >
-            Open
+            {t('common.open')}
           </Button>
         </div>
       </Shell>

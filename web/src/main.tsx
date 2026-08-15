@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import './index.css'
 import App from './App.tsx'
 import QuickAddApp from './QuickAddApp.tsx'
+import { I18nProvider } from './lib/I18nProvider.tsx'
 import { isTauri } from './lib/tauri'
 
 const rootEl = document.getElementById('root')
@@ -31,7 +32,9 @@ async function mount() {
   }
 
   createRoot(root).render(
-    <StrictMode>{isQuickAdd ? <QuickAddApp /> : <App />}</StrictMode>,
+    <StrictMode>
+      <I18nProvider>{isQuickAdd ? <QuickAddApp /> : <App />}</I18nProvider>
+    </StrictMode>,
   )
 }
 

@@ -13,6 +13,7 @@ import { fileToBase64, formatBytes, mimeFromName } from '../lib/files'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Modal } from './Modal'
 import { Button } from './ui'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = {
   /** Non-null view opens the modal. */
@@ -41,6 +42,7 @@ export function EntryDetailModal({
   onChanged,
   onError,
 }: Props) {
+  const { t } = useI18n()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [attachBusy, setAttachBusy] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -59,7 +61,7 @@ export function EntryDetailModal({
     if (anyBusy) return
     // Resource guard only — the backend enforces the same cap.
     if (file.size > 8 * 1024 * 1024) {
-      onError('File too large (max 8 MB)')
+      onError(t('entry.fileTooLarge'))
       return
     }
     setAttachBusy(true)
@@ -74,7 +76,7 @@ export function EntryDetailModal({
       })
       await onChanged()
     } catch (err) {
-      onError((err as CommandError).message || 'Could not attach file')
+      onError((err as CommandError).message || t('entry.attachFailed'))
     } finally {
       setAttachBusy(false)
     }
@@ -89,7 +91,7 @@ export function EntryDetailModal({
       setDeleteId(null)
       await onChanged()
     } catch (err) {
-      onError((err as CommandError).message || 'Could not delete document')
+      onError((err as CommandError).message || t('entry.deleteFailed'))
     } finally {
       setBusyId(null)
     }
@@ -101,7 +103,7 @@ export function EntryDetailModal({
     try {
       await api.documentExport(id)
     } catch (err) {
-      onError((err as CommandError).message || 'Could not save a copy')
+      onError((err as CommandError).message || t('entry.exportFailed'))
     } finally {
       setBusyId(null)
     }
@@ -111,16 +113,16 @@ export function EntryDetailModal({
     <Modal
       open
       title={entry.description}
-      description={`${formatDate(entry.entry_date)}${entry.reference ? ` · Ref ${entry.reference}` : ''}`}
+      description={`${formatDate(entry.entry_date)}${entry.reference ? t('entry.ref', { reference: entry.reference }) : ''}`}
       onClose={() => {
         if (!anyBusy) onClose()
       }}
     >
       <ConfirmDialog
         open={deleteId !== null}
-        title="Delete document?"
-        body="This permanently deletes the file from your vault. It cannot be undone. The entry itself stays."
-        confirmLabel="Delete"
+        title={t('entry.deleteDocTitle')}
+        body={t('entry.deleteDocBody')}
+        confirmLabel={t('common.delete')}
         danger
         busy={busyId !== null && busyId === deleteId}
         onCancel={() => {
@@ -134,10 +136,10 @@ export function EntryDetailModal({
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-[var(--color-surface-2)] text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-                <th className="px-4 py-2.5 text-left">Account</th>
-                <th className="px-4 py-2.5 text-right">Debit</th>
-                <th className="px-4 py-2.5 text-right">Credit</th>
-                <th className="px-4 py-2.5 text-left">Memo</th>
+                <th className="px-4 py-2.5 text-left">{t('entry.account')}</th>
+                <th className="px-4 py-2.5 text-right">{t('entry.debit')}</th>
+                <th className="px-4 py-2.5 text-right">{t('entry.credit')}</th>
+                <th className="px-4 py-2.5 text-left">{t('entry.memo')}</th>
               </tr>
             </thead>
             <tbody>
@@ -146,7 +148,7 @@ export function EntryDetailModal({
                 return (
                   <tr key={line.id} className="border-t border-[var(--color-border)]">
                     <td className="px-4 py-2.5 text-[var(--color-fg)]">
-                      {acc ? `${acc.code} · ${acc.name}` : 'Unknown account'}
+                      {acc ? `${acc.code} · ${acc.name}` : t('entry.unknownAccount')}
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums">
                       {line.debit.amount_minor > 0
@@ -169,7 +171,7 @@ export function EntryDetailModal({
         <div>
           <div className="mb-2 flex items-center justify-between">
             <span className="text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-              Attachments
+              {t('entry.attachments')}
             </span>
             <Button
               variant="secondary"
@@ -179,7 +181,7 @@ export function EntryDetailModal({
               onClick={() => fileRef.current?.click()}
             >
               <Plus className="size-3.5" />
-              Attach file
+              {t('entry.attachFile')}
             </Button>
             <input
               ref={fileRef}
@@ -197,7 +199,7 @@ export function EntryDetailModal({
 
           {documents.length === 0 ? (
             <p className="rounded-xl border border-dashed border-[var(--color-border-strong)] px-4 py-6 text-center text-xs text-[var(--color-muted)]">
-              No files attached to this entry.
+              {t('entry.noFiles')}
             </p>
           ) : (
             <ul className="divide-y divide-[var(--color-border)] rounded-xl border border-[var(--color-border)]">
@@ -215,8 +217,8 @@ export function EntryDetailModal({
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => onView(doc.id)}
-                    aria-label="View document"
-                    title="View"
+                    aria-label={t('docs.viewAria')}
+                    title={t('docs.view')}
                   >
                     <Eye className="size-4" />
                   </Button>
@@ -227,8 +229,8 @@ export function EntryDetailModal({
                     busy={busyId === doc.id}
                     disabled={anyBusy}
                     onClick={() => void onExport(doc.id)}
-                    aria-label="Save a copy"
-                    title="Save a copy"
+                    aria-label={t('docs.saveCopyAria')}
+                    title={t('docs.saveCopy')}
                   >
                     <Download className="size-4" />
                   </Button>
@@ -238,8 +240,8 @@ export function EntryDetailModal({
                     className="h-8 w-8"
                     disabled={anyBusy}
                     onClick={() => setDeleteId(doc.id)}
-                    aria-label="Delete document"
-                    title="Delete"
+                    aria-label={t('docs.deleteAria')}
+                    title={t('common.delete')}
                   >
                     <Trash2 className="size-4" />
                   </Button>
@@ -252,7 +254,7 @@ export function EntryDetailModal({
         <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
           <Button variant="secondary" disabled={anyBusy} onClick={onEdit}>
             <Pencil className="size-3.5" />
-            Edit entry
+            {t('entry.edit')}
           </Button>
         </div>
       </div>

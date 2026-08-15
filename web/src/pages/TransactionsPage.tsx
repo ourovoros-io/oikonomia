@@ -53,6 +53,7 @@ import { cn } from '../lib/cn'
 import type { CommandError } from '../lib/tauri'
 import type { DocumentSuggestion } from '../lib/api'
 import { formatMoney as fmtMoney } from '../lib/money'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null }
 
@@ -90,6 +91,7 @@ function inferKind(
 }
 
 export function TransactionsPage({ entity }: Props) {
+  const { t } = useI18n()
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -431,7 +433,7 @@ export function TransactionsPage({ entity }: Props) {
     const minor = parseMajorToMinor(amount, entity.base_currency)
     if (minor === null || minor <= 0) {
       busyRef.current = false
-      setError('Enter a valid amount (e.g. 25.50 or 25,50)')
+      setError(t('tx.invalidAmount'))
       return
     }
     // Role/account rules live in Rust (post_simple_entry); its Validation
@@ -502,7 +504,7 @@ export function TransactionsPage({ entity }: Props) {
       setEntries((prev) => prev.filter((e) => e.entry.id !== id && !e.is_voided))
       await reload()
     } catch (err) {
-      setError((err as CommandError).message || 'Failed to delete entry')
+      setError((err as CommandError).message || t('tx.deleteFailed'))
     } finally {
       setVoidBusy(false)
     }
@@ -512,8 +514,8 @@ export function TransactionsPage({ entity }: Props) {
     return (
       <EmptyState
         icon={<ArrowLeftRight className="size-5" />}
-        title="No book selected"
-        body="Create or select a book first."
+        title={t('tx.noBookTitle')}
+        body={t('tx.noBookBody')}
       />
     )
   }
@@ -529,7 +531,7 @@ export function TransactionsPage({ entity }: Props) {
         disabled={csvBusy !== null && csvBusy !== 'import'}
         onClick={() => void onImportCsv()}
       >
-        Import CSV
+        {t('tx.csv.import')}
       </Button>
       <Button
         variant="secondary"
@@ -537,13 +539,13 @@ export function TransactionsPage({ entity }: Props) {
         busy={csvBusy === 'export'}
         disabled={csvBusy !== null && csvBusy !== 'export'}
         onClick={() => void onExportCsv()}
-        title="Unencrypted accountant CSV"
+        title={t('tx.csv.exportTitle')}
       >
-        Export CSV
+        {t('tx.csv.export')}
       </Button>
       <Button size="sm" onClick={openNewEntry}>
         <Plus className="size-3" />
-        New Entry
+        {t('tx.newEntry')}
       </Button>
     </>
   )
@@ -591,10 +593,10 @@ export function TransactionsPage({ entity }: Props) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Ledger"
-        title="Transactions"
-        description="Record money in, money out, bills, and transfers."
-        meta="Offline OCR · encrypted docs"
+        eyebrow={t('tx.eyebrow')}
+        title={t('tx.title')}
+        description={t('tx.description')}
+        meta={t('tx.meta')}
       />
 
       <ErrorBanner message={error} />
@@ -621,9 +623,9 @@ export function TransactionsPage({ entity }: Props) {
 
       <ConfirmDialog
         open={voidId !== null}
-        title="Delete entry?"
-        body="The entry will be removed from your list. A reversing journal entry is kept in the books for audit (you will not see it here)."
-        confirmLabel="Delete"
+        title={t('tx.deleteTitle')}
+        body={t('tx.deleteBody')}
+        confirmLabel={t('common.delete')}
         danger
         busy={voidBusy}
         onCancel={() => {
@@ -638,29 +640,29 @@ export function TransactionsPage({ entity }: Props) {
           setError(null)
           applySuggestion(s, source)
           if (s.source === 'none' && !s.amount_minor) {
-            setError(s.notes || 'Could not read the document — fill the form manually.')
+            setError(s.notes || t('tx.couldNotReadDoc'))
           }
         }}
         onError={(msg) => setError(msg)}
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <Field label="Search" className="min-w-[220px] flex-1">
+        <Field label={t('tx.search')} className="min-w-[220px] flex-1">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Description, reference, memo…"
+            placeholder={t('tx.searchPlaceholder')}
           />
         </Field>
-        <Field label="From" className="w-44">
-          <DateInput value={fromDate} onChange={setFromDate} aria-label="Filter from date" />
+        <Field label={t('tx.from')} className="w-44">
+          <DateInput value={fromDate} onChange={setFromDate} aria-label={t('tx.filterFrom')} />
         </Field>
-        <Field label="To" className="w-44">
-          <DateInput value={toDate} onChange={setToDate} aria-label="Filter to date" />
+        <Field label={t('tx.to')} className="w-44">
+          <DateInput value={toDate} onChange={setToDate} aria-label={t('tx.filterTo')} />
         </Field>
-        <Field label="Account" className="w-56">
+        <Field label={t('tx.account')} className="w-56">
           <Select value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}>
-            <option value="">All accounts</option>
+            <option value="">{t('tx.allAccounts')}</option>
             {accounts
               .filter((a) => a.is_active)
               .map((a) => (
@@ -674,12 +676,8 @@ export function TransactionsPage({ entity }: Props) {
 
       <Modal
         open={showForm}
-        title={editId ? 'Edit entry' : 'New entry'}
-        description={
-          editId
-            ? 'Replaces the original entry — the books keep an audit trail'
-            : 'Pick a type — no debit/credit bookkeeping required'
-        }
+        title={editId ? t('tx.editTitle') : t('tx.newTitle')}
+        description={editId ? t('tx.editDescription') : t('tx.newDescription')}
         onClose={() => {
           if (!busy) {
             setShowForm(false)
@@ -696,22 +694,22 @@ export function TransactionsPage({ entity }: Props) {
             options={[
               {
                 id: 'expense',
-                label: 'Expense',
+                label: t('kind.expense'),
                 icon: <ArrowUpRight className="size-3.5" />,
               },
               {
                 id: 'income',
-                label: 'Income',
+                label: t('kind.income'),
                 icon: <ArrowDownLeft className="size-3.5" />,
               },
               {
                 id: 'bill',
-                label: 'Bill',
+                label: t('kind.bill'),
                 icon: <FileText className="size-3.5" />,
               },
               {
                 id: 'transfer',
-                label: 'Transfer',
+                label: t('kind.transfer'),
                 icon: <ArrowLeftRight className="size-3.5" />,
               },
             ]}
@@ -723,48 +721,52 @@ export function TransactionsPage({ entity }: Props) {
             {scanNotes}
             {pendingDoc ? (
               <span className="mt-1 block text-[var(--color-muted)]">
-                Document will be stored encrypted when you save
-                {amount ? ` · suggested ${fmtMoney(parseMajorToMinor(amount, ccy) ?? 0, ccy)}` : ''}
-                . Review fields, then save.
+                {t('tx.docWillStore')}
+                {amount
+                  ? t('tx.docSuggested', {
+                      amount: fmtMoney(parseMajorToMinor(amount, ccy) ?? 0, ccy),
+                    })
+                  : ''}
+                {t('tx.docReview')}
               </span>
             ) : null}
           </div>
         ) : null}
 
         <form onSubmit={onPost} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Date">
-            <DateInput value={date} onChange={setDate} required aria-label="Entry date" />
+          <Field label={t('tx.date')}>
+            <DateInput value={date} onChange={setDate} required aria-label={t('tx.entryDate')} />
           </Field>
-          <Field label={`Amount (${ccy})`}>
+          <Field label={t('tx.amount', { ccy })}>
             <Input
               inputMode="decimal"
-              placeholder="25,50 or 25.50"
+              placeholder={t('tx.amountPlaceholder')}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               className="tabular-nums"
               required
             />
           </Field>
-          <Field label="Reference (optional)">
+          <Field label={t('tx.reference')}>
             <Input
               value={reference}
               onChange={(e) => setReference(e.target.value)}
-              placeholder="Invoice #, bill #…"
+              placeholder={t('tx.referencePlaceholder')}
             />
           </Field>
 
-          <Field label="Description" className="sm:col-span-2 lg:col-span-3">
+          <Field label={t('tx.descriptionLabel')} className="sm:col-span-2 lg:col-span-3">
             <Input
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder={
                 kind === 'bill'
-                  ? 'e.g. Electricity March'
+                  ? t('tx.descPlaceholder.bill')
                   : kind === 'income'
-                    ? 'e.g. March salary'
+                    ? t('tx.descPlaceholder.income')
                     : kind === 'transfer'
-                      ? 'e.g. Move to savings'
-                      : 'e.g. Groceries'
+                      ? t('tx.descPlaceholder.transfer')
+                      : t('tx.descPlaceholder.expense')
               }
               required
             />
@@ -772,7 +774,7 @@ export function TransactionsPage({ entity }: Props) {
 
           {kind === 'expense' ? (
             <>
-              <Field label="Category (what for)">
+              <Field label={t('tx.categoryWhatFor')}>
                 <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
                   {expenseAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -781,7 +783,7 @@ export function TransactionsPage({ entity }: Props) {
                   ))}
                 </Select>
               </Field>
-              <Field label="Paid from">
+              <Field label={t('tx.paidFrom')}>
                 <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
                   {walletAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -795,7 +797,7 @@ export function TransactionsPage({ entity }: Props) {
 
           {kind === 'income' ? (
             <>
-              <Field label="Income type">
+              <Field label={t('tx.incomeType')}>
                 <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
                   {incomeAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -804,7 +806,7 @@ export function TransactionsPage({ entity }: Props) {
                   ))}
                 </Select>
               </Field>
-              <Field label="Received into">
+              <Field label={t('tx.receivedInto')}>
                 <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
                   {walletAccounts
                     .filter((a) => a.account_type === 'asset')
@@ -820,18 +822,18 @@ export function TransactionsPage({ entity }: Props) {
 
           {kind === 'bill' ? (
             <>
-              <Field label="Bill status" className="sm:col-span-2 lg:col-span-3">
+              <Field label={t('tx.billStatus')} className="sm:col-span-2 lg:col-span-3">
                 <Select
                   value={billStatus}
                   onChange={(e) => setBillStatus(e.target.value as BillStatus)}
                 >
-                  <option value="paid">Paid now (from bank/card)</option>
-                  <option value="unpaid">Unpaid — I owe this (bills payable)</option>
-                  <option value="pay_existing">Pay an existing unpaid bill</option>
+                  <option value="paid">{t('tx.billPaidNow')}</option>
+                  <option value="unpaid">{t('tx.billUnpaid')}</option>
+                  <option value="pay_existing">{t('tx.billPayExisting')}</option>
                 </Select>
               </Field>
               {billStatus !== 'pay_existing' ? (
-                <Field label="Bill category">
+                <Field label={t('tx.billCategory')}>
                   <Select
                     value={categoryId}
                     onChange={(e) => setCategoryId(e.target.value)}
@@ -846,7 +848,7 @@ export function TransactionsPage({ entity }: Props) {
                 </Field>
               ) : null}
               {billStatus === 'paid' || billStatus === 'pay_existing' ? (
-                <Field label={billStatus === 'paid' ? 'Paid from' : 'Pay from'}>
+                <Field label={billStatus === 'paid' ? t('tx.paidFrom') : t('tx.payFrom')}>
                   <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
                     {walletAccounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -857,10 +859,10 @@ export function TransactionsPage({ entity }: Props) {
                 </Field>
               ) : null}
               {billStatus === 'unpaid' || billStatus === 'pay_existing' ? (
-                <Field label="Bills payable account">
+                <Field label={t('tx.billsPayableAccount')}>
                   <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
                     {payableAccounts.length === 0 ? (
-                      <option value="">No liability accounts — add one</option>
+                      <option value="">{t('tx.noLiability')}</option>
                     ) : null}
                     {payableAccounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -872,8 +874,7 @@ export function TransactionsPage({ entity }: Props) {
               ) : null}
               {payableAccounts.length === 0 && billStatus !== 'paid' ? (
                 <p className="text-xs text-[var(--color-muted)] sm:col-span-2 lg:col-span-3">
-                  Tip: under Accounts, add a liability named “Bills Payable”. New Personal books
-                  include this by default.
+                  {t('tx.billsPayableTip')}
                 </p>
               ) : null}
             </>
@@ -881,7 +882,7 @@ export function TransactionsPage({ entity }: Props) {
 
           {kind === 'transfer' ? (
             <>
-              <Field label="From">
+              <Field label={t('tx.from')}>
                 <Select value={fromId} onChange={(e) => setFromId(e.target.value)} required>
                   {walletAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -890,7 +891,7 @@ export function TransactionsPage({ entity }: Props) {
                   ))}
                 </Select>
               </Field>
-              <Field label="To">
+              <Field label={t('tx.to')}>
                 <Select value={toId} onChange={(e) => setToId(e.target.value)} required>
                   {walletAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
@@ -914,10 +915,10 @@ export function TransactionsPage({ entity }: Props) {
                 setEditId(null)
               }}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" busy={busy}>
-              {busy ? 'Saving…' : editId ? 'Save changes' : 'Save entry'}
+              {busy ? t('common.saving') : editId ? t('tx.saveChanges') : t('tx.saveEntry')}
             </Button>
           </div>
         </form>
@@ -951,20 +952,20 @@ export function TransactionsPage({ entity }: Props) {
       {visibleEntries.length === 0 && filtersActive ? (
         <EmptyState
           icon={<FileText className="size-5" />}
-          title="No matching entries"
-          body="No entries match the current search or filters."
+          title={t('tx.noMatchTitle')}
+          body={t('tx.noMatchBody')}
         />
       ) : visibleEntries.length === 0 ? (
         <EmptyState
           icon={<ArrowLeftRight className="size-5" />}
-          title="No transactions yet"
-          body="Use Expense for spending, Income for money in, and Bill for utilities or invoices you need to track."
+          title={t('tx.emptyTitle')}
+          body={t('tx.emptyBody')}
           action={<div className="flex flex-wrap items-center justify-center gap-2">{csvActions}</div>}
         />
       ) : (
         <Panel
-          title="All entries"
-          description={`${visibleEntries.length} posted · ${ccy}`}
+          title={t('tx.allEntries')}
+          description={t('tx.allEntriesDesc', { count: visibleEntries.length, ccy })}
           actions={csvActions}
         >
           <ul className="divide-y divide-[var(--color-border)]">
@@ -1011,7 +1012,7 @@ export function TransactionsPage({ entity }: Props) {
                     <div className="truncate text-xs text-[var(--color-muted)]">
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                      <span className="capitalize">{kindLabel}</span>
+                      <span>{t(`kind.${kindLabel}`)}</span>
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       {parts}
                     </div>
@@ -1019,7 +1020,7 @@ export function TransactionsPage({ entity }: Props) {
                   {(docsByEntry.get(view.entry.id)?.length ?? 0) > 0 ? (
                     <Paperclip
                       className="size-3.5 shrink-0 text-[var(--color-muted)]"
-                      aria-label="Has attached document"
+                      aria-label={t('tx.hasDocument')}
                     />
                   ) : null}
                   <div
@@ -1044,8 +1045,8 @@ export function TransactionsPage({ entity }: Props) {
                       e.stopPropagation()
                       setVoidId(view.entry.id)
                     }}
-                    aria-label="Delete entry"
-                    title="Delete"
+                    aria-label={t('tx.deleteEntry')}
+                    title={t('common.delete')}
                   >
                     <Trash2 className="size-4" />
                   </Button>

@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { formatMoney, type ReportLine } from '../lib/api'
 import { cn } from '../lib/cn'
+import { t } from '../lib/i18n'
+import { useI18n } from '../lib/I18nProvider'
 
 /**
  * Slices beyond this fold into a neutral "Other" — more hues would stop being
@@ -45,7 +47,7 @@ function buildSlices(lines: ReportLine[]): { slices: Slice[]; total: number } {
   if (rest.length > 0) {
     const other = rest.reduce((sum, l) => sum + l.balance_minor, 0)
     slices.push({
-      name: `Other (${rest.length} categories)`,
+      name: t('donut.other', { count: rest.length }),
       amount: other,
       share: other / total,
       color: 'var(--viz-other)',
@@ -57,13 +59,14 @@ function buildSlices(lines: ReportLine[]): { slices: Slice[]; total: number } {
 
 /** Donut of period expenses by category, with a hover readout in the hole. */
 export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string }) {
+  useI18n()
   const [hover, setHover] = useState<number | null>(null)
   const { slices, total } = buildSlices(lines)
 
   if (slices.length === 0) {
     return (
       <div className="px-5 py-10 text-center text-sm text-[var(--color-muted)]">
-        No expenses in this period.
+        {t('donut.noExpenses')}
       </div>
     )
   }
@@ -104,7 +107,7 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string 
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-9 text-center">
           <span className="w-full truncate text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-            {active ? active.name : 'Total expenses'}
+            {active ? active.name : t('donut.totalExpenses')}
           </span>
           <span className="mt-1 w-full truncate text-lg font-semibold tabular-nums text-[var(--color-fg)]">
             {formatMoney(active ? active.amount : total, ccy)}

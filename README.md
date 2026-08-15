@@ -27,7 +27,8 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 - Bank CSV import (confirm before post) and journal CSV export
 - Reports: trial balance, profit & loss, balance sheet
 - Dashboard (MTD income/expense, assets)
-- Dark / light theme; English UI; locale money formatting
+- Dark / light theme; locale money formatting
+- UI language: English and Ελληνικά; switch in Settings; persists across relaunch
 
 ## Prerequisites
 
@@ -83,4 +84,4 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 
 ## Out of v1 (backlog)
 
-Recurring transactions, attachments, budgets, invoicing, multi-currency, Greek UI, recovery key.
+Recurring transactions, attachments, budgets, invoicing, multi-currency, recovery key.

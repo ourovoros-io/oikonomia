@@ -7,6 +7,7 @@ import {
   Download,
   FileQuestion,
   KeyRound,
+  Languages,
   Plus,
   Timer,
   Trash2,
@@ -30,14 +31,17 @@ import {
   Select,
 } from '../components/ui'
 import {
-  VAULT_BACKUP_BODY,
-  VAULT_BACKUP_HINT,
   backupCommandError,
   canBackupVault,
   restoreConfirm,
   vaultBackupAvailability,
   vaultBackupBanner,
+  vaultBackupBody,
+  vaultBackupHint,
 } from '../lib/vaultBackupUi'
+import { useI18n } from '../lib/I18nProvider'
+import { cn } from '../lib/cn'
+import type { Locale } from '../lib/api'
 
 type Props = {
   entities: Entity[]
@@ -50,36 +54,91 @@ type Props = {
 
 const TEMPLATES: Array<{
   id: ChartTemplate
-  title: string
-  description: string
+  titleKey:
+    | 'settings.entityCreate.template.personal.title'
+    | 'settings.entityCreate.template.company.title'
+    | 'settings.entityCreate.template.blank.title'
+  descriptionKey:
+    | 'settings.template.personal.description'
+    | 'settings.template.company.description'
+    | 'settings.template.blank.description'
   icon: typeof User
 }> = [
   {
     id: 'personal',
-    title: 'Personal',
-    description: 'Cash, cards, salary, living costs',
+    titleKey: 'settings.entityCreate.template.personal.title',
+    descriptionKey: 'settings.template.personal.description',
     icon: User,
   },
   {
     id: 'company',
-    title: 'Company',
-    description: 'AR/AP, sales, payroll, opex',
+    titleKey: 'settings.entityCreate.template.company.title',
+    descriptionKey: 'settings.template.company.description',
     icon: Briefcase,
   },
   {
     id: 'blank',
-    title: 'Blank',
-    description: 'Start with an empty chart',
+    titleKey: 'settings.entityCreate.template.blank.title',
+    descriptionKey: 'settings.template.blank.description',
     icon: FileQuestion,
   },
 ]
 
+/** Designer-locked language pill. Option labels stay native-script in both locales. */
+function LanguagePill({
+  value,
+  onChange,
+  ariaLabel,
+  englishLabel,
+  greekLabel,
+}: {
+  value: Locale
+  onChange: (locale: Locale) => void
+  ariaLabel: string
+  englishLabel: string
+  greekLabel: string
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      className="inline-flex h-8 items-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
+    >
+      {(
+        [
+          { id: 'en', label: englishLabel },
+          { id: 'el', label: greekLabel },
+        ] as const
+      ).map((opt) => {
+        const active = value === opt.id
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(opt.id)}
+            className={cn(
+              'inline-flex h-[26px] items-center rounded-full px-3 text-sm font-medium transition',
+              active
+                ? 'bg-[#f4f6f4] text-[#131b15] shadow-sm'
+                : 'text-[var(--color-muted)]',
+            )}
+          >
+            {opt.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 const LOCK_PRESETS = [
-  { mins: 5, label: '5 min' },
-  { mins: 15, label: '15 min' },
-  { mins: 30, label: '30 min' },
-  { mins: 60, label: '1 hour' },
-]
+  { mins: 5, labelKey: 'settings.lock.5min' },
+  { mins: 15, labelKey: 'settings.lock.15min' },
+  { mins: 30, labelKey: 'settings.lock.30min' },
+  { mins: 60, labelKey: 'settings.lock.1hour' },
+] as const
 
 export function SettingsPage({
   entities,
@@ -88,6 +147,7 @@ export function SettingsPage({
   onSelectEntity,
   onLockTimeoutChange,
 }: Props) {
+  const { t, locale, setLocale } = useI18n()
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -157,7 +217,7 @@ export function SettingsPage({
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
-      setError((err as CommandError).message || 'Failed to delete entity')
+      setError((err as CommandError).message || t('settings.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -165,7 +225,7 @@ export function SettingsPage({
 
   async function saveLock(mins: number) {
     if (!Number.isFinite(mins) || mins < 1) {
-      setError('Lock timeout must be at least 1 minute')
+      setError(t('settings.lockTimeoutMin'))
       return
     }
     setLockBusy(true)
@@ -188,7 +248,7 @@ export function SettingsPage({
     setNotice(null)
 
     if (newPassword !== confirmPassword) {
-      setError('New passwords do not match')
+      setError(t('settings.passwordsMismatch'))
       return
     }
     // Password strength rules live in Rust; its Validation error surfaces below.
@@ -199,13 +259,13 @@ export function SettingsPage({
       setOldPassword('')
       setNewPassword('')
       setConfirmPassword('')
-      setNotice('Password changed. The vault is re-encrypted under the new password.')
+      setNotice(t('settings.passwordChanged'))
     } catch (err) {
       const cmd = err as CommandError
       setError(
         cmd.code === 'invalid_password'
-          ? 'Current password is incorrect.'
-          : cmd.message || 'Could not change the password',
+          ? t('settings.currentPasswordIncorrect')
+          : cmd.message || t('settings.changePasswordFailed'),
       )
     } finally {
       setPasswordBusy(false)
@@ -267,10 +327,10 @@ export function SettingsPage({
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Workspace"
-        title="Settings"
-        description="Books, security, and preferences"
-        meta="Local vault only"
+        eyebrow={t('settings.eyebrow')}
+        title={t('settings.title')}
+        description={t('settings.description')}
+        meta={t('settings.meta')}
       />
 
       <ErrorBanner message={error} />
@@ -282,13 +342,11 @@ export function SettingsPage({
 
       <ConfirmDialog
         open={pendingDelete !== null}
-        title="Delete entity?"
+        title={t('settings.deleteEntityTitle')}
         body={
-          pendingDelete
-            ? `“${pendingDelete.name}” and all of its accounts and transactions will be permanently removed. This cannot be undone.`
-            : ''
+          pendingDelete ? t('settings.deleteEntityBody', { name: pendingDelete.name }) : ''
         }
-        confirmLabel="Delete"
+        confirmLabel={t('common.delete')}
         danger
         busy={deleteBusy}
         onCancel={() => {
@@ -314,8 +372,24 @@ export function SettingsPage({
       />
 
       <CollapsibleSection
-        title="Auto-lock"
-        description="Lock the vault after idle time"
+        title={t('settings.language.title')}
+        description={t('settings.language.description')}
+        icon={<Languages className="size-4" />}
+        tone="muted"
+        defaultOpen
+      >
+        <LanguagePill
+          value={locale}
+          onChange={setLocale}
+          ariaLabel={t('settings.language.title')}
+          englishLabel={t('settings.language.option.en')}
+          greekLabel={t('settings.language.option.el')}
+        />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={t('settings.autoLock.title')}
+        description={t('settings.autoLock.description')}
         icon={<Timer className="size-4" />}
         tone="warning"
       >
@@ -329,19 +403,19 @@ export function SettingsPage({
               onClick={() => void saveLock(p.mins)}
             >
               <Clock className="size-3.5" />
-              {p.label}
+              {t(p.labelKey)}
             </Button>
           ))}
         </div>
       </CollapsibleSection>
 
       <CollapsibleSection
-        title="Master password"
-        description="Re-encrypts the vault. There is no recovery if the new password is lost."
+        title={t('settings.masterPassword.title')}
+        description={t('settings.masterPassword.description')}
         icon={<KeyRound className="size-4" />}
       >
         <form onSubmit={onChangePassword} className="grid gap-4 sm:grid-cols-3">
-          <Field label="Current password">
+          <Field label={t('settings.currentPassword')}>
             <Input
               type="password"
               autoComplete="current-password"
@@ -350,7 +424,7 @@ export function SettingsPage({
               required
             />
           </Field>
-          <Field label="New password">
+          <Field label={t('settings.newPassword')}>
             <Input
               type="password"
               autoComplete="new-password"
@@ -359,7 +433,7 @@ export function SettingsPage({
               required
             />
           </Field>
-          <Field label="Confirm new password">
+          <Field label={t('settings.confirmNewPassword')}>
             <Input
               type="password"
               autoComplete="new-password"
@@ -370,15 +444,15 @@ export function SettingsPage({
           </Field>
           <div className="sm:col-span-3">
             <Button type="submit" busy={passwordBusy}>
-              {passwordBusy ? 'Re-encrypting…' : 'Change password'}
+              {passwordBusy ? t('settings.reencrypting') : t('settings.changePassword')}
             </Button>
           </div>
         </form>
       </CollapsibleSection>
 
       <CollapsibleSection
-        title="Vault backup"
-        description="Export the encrypted vault as one file"
+        title={t('settings.vaultBackup.title')}
+        description={t('settings.vaultBackup.description')}
         icon={<Archive className="size-4" />}
         tone="accent"
       >
@@ -390,9 +464,9 @@ export function SettingsPage({
           />
         ) : null}
         <p className="text-sm leading-relaxed text-[var(--color-fg-secondary)]">
-          {VAULT_BACKUP_BODY}
+          {vaultBackupBody()}
         </p>
-        <p className="mt-2 text-xs text-[var(--color-muted)]">{VAULT_BACKUP_HINT}</p>
+        <p className="mt-2 text-xs text-[var(--color-muted)]">{vaultBackupHint()}</p>
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <Button
             disabled={!backupEnabled}
@@ -400,7 +474,7 @@ export function SettingsPage({
             onClick={() => void onBackup()}
           >
             <Download className="size-3.5" />
-            Backup vault
+            {t('settings.vaultBackup.backupVault')}
           </Button>
           <Button
             variant="danger"
@@ -409,34 +483,34 @@ export function SettingsPage({
             onClick={() => void beginRestore()}
           >
             <Upload className="size-3.5" />
-            Restore from backup
+            {t('settings.vaultBackup.restore')}
           </Button>
         </div>
       </CollapsibleSection>
 
       <Modal
         open={showCreate}
-        title="New entity"
-        description="Separate books for personal and company"
+        title={t('settings.newEntity.title')}
+        description={t('settings.newEntity.description')}
         onClose={() => {
           if (!busy) setShowCreate(false)
         }}
       >
         <form onSubmit={onCreate} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Name">
+            <Field label={t('settings.newEntity.name')}>
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
-                placeholder="Personal"
+                placeholder={t('settings.newEntity.namePlaceholder')}
               />
             </Field>
-            <Field label="Currency">
+            <Field label={t('settings.newEntity.currency')}>
               <Select value={currency} onChange={(e) => setCurrency(e.target.value)} required>
                 {CURRENCIES.map((c) => (
                   <option key={c.code} value={c.code}>
-                    {c.code} — {c.label}
+                    {c.code} — {t(`currency.${c.code}`)}
                   </option>
                 ))}
               </Select>
@@ -445,19 +519,19 @@ export function SettingsPage({
 
           <div>
             <span className="mb-1.5 block text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-              Chart template
+              {t('settings.newEntity.chartTemplate')}
             </span>
             <div className="grid gap-3 sm:grid-cols-3">
-              {TEMPLATES.map((t) => {
-                const Icon = t.icon
+              {TEMPLATES.map((tpl) => {
+                const Icon = tpl.icon
                 return (
                   <ChoiceCard
-                    key={t.id}
-                    selected={template === t.id}
-                    onClick={() => setTemplate(t.id)}
+                    key={tpl.id}
+                    selected={template === tpl.id}
+                    onClick={() => setTemplate(tpl.id)}
                     icon={<Icon className="size-4" strokeWidth={1.75} />}
-                    title={t.title}
-                    description={t.description}
+                    title={t(tpl.titleKey)}
+                    description={t(tpl.descriptionKey)}
                   />
                 )
               })}
@@ -471,21 +545,23 @@ export function SettingsPage({
               disabled={busy}
               onClick={() => setShowCreate(false)}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" busy={busy}>
-              {busy ? 'Creating…' : 'Create entity'}
+              {busy ? t('settings.newEntity.creating') : t('settings.newEntity.create')}
             </Button>
           </div>
         </form>
       </Modal>
 
       <CollapsibleSection
-        title="Entities"
+        title={t('settings.entities.title')}
         description={
           entities.length === 0
-            ? 'No books yet'
-            : `${entities.length} book${entities.length === 1 ? '' : 's'}`
+            ? t('settings.entities.none')
+            : entities.length === 1
+              ? t('settings.entities.oneBook')
+              : t('settings.entities.nBooks', { count: entities.length })
         }
         icon={<Building2 className="size-4" />}
         tone="success"
@@ -493,13 +569,13 @@ export function SettingsPage({
         actions={
           <Button size="sm" onClick={() => setShowCreate(true)}>
             <Plus className="size-3.5" />
-            New entity
+            {t('settings.entities.new')}
           </Button>
         }
       >
         {entities.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[var(--color-muted)]">
-            Use the New entity button above to create your first book.
+            {t('settings.entities.empty')}
           </div>
         ) : (
           <ul className="divide-y divide-[var(--color-border)]">
@@ -518,20 +594,20 @@ export function SettingsPage({
                   <div className="text-xs text-[var(--color-muted)]">
                     <span className="tabular-nums">{e.base_currency}</span>
                     <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                    <span className="capitalize">{e.chart_template}</span>
+                    <span>{t(`chart.${e.chart_template}`)}</span>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <Button variant="secondary" size="sm" onClick={() => onSelectEntity(e.id)}>
-                    Open
+                    {t('settings.entities.open')}
                   </Button>
                   <Button
                     variant="danger"
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => setPendingDelete({ id: e.id, name: e.name })}
-                    aria-label={`Delete ${e.name}`}
-                    title="Delete"
+                    aria-label={t('settings.entities.deleteAria', { name: e.name })}
+                    title={t('common.delete')}
                   >
                     <Trash2 className="size-3.5" />
                   </Button>

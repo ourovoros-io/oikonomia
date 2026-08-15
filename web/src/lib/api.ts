@@ -151,6 +151,9 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 /** UI color theme, persisted outside the encrypted vault. */
 export type Theme = 'dark' | 'light'
 
+/** UI language, persisted on UiPrefs (plaintext, readable before unlock). */
+export type Locale = 'en' | 'el'
+
 /** Last role-account picks for a single entity+kind tray post (snake_case matches Rust). */
 export type LastRoleAccounts = {
   category_account_id: string | null
@@ -160,11 +163,13 @@ export type LastRoleAccounts = {
   to_account_id: string | null
 }
 
-/** Full plaintext UI prefs (theme + tray last-used). Safe before unlock. */
+/** Full plaintext UI prefs (theme + tray last-used + locale). Safe before unlock. */
 export type UiPrefs = {
   theme: Theme
   last_entity_id: string | null
   last_accounts_by_entity_kind: Record<string, LastRoleAccounts>
+  /** Absent on older prefs files; treat as `en`. */
+  locale?: Locale
 }
 
 /** Simple-form posting input; the kind → debit/credit mapping lives in Rust. */
@@ -282,7 +287,10 @@ export const api = {
   /** Theme is a plaintext pref (Rust side): readable before unlock. */
   getTheme: () => call<Theme>('settings_get_theme'),
   setTheme: (theme: Theme) => call<void>('settings_set_theme', { theme }),
-  /** Full plaintext UI prefs (theme + tray last-used). Safe before unlock. */
+  /** Locale is a plaintext pref (Rust side): readable before unlock. Same shape as theme. */
+  getLocale: () => call<Locale>('settings_get_locale'),
+  setLocale: (locale: Locale) => call<void>('settings_set_locale', { locale }),
+  /** Full plaintext UI prefs (theme + tray last-used + locale). Safe before unlock. */
   getUiPrefs: () => call<UiPrefs>('settings_get_ui_prefs'),
   /** Remember last entity + role accounts after a successful tray post. */
   rememberQuickAdd: (entityId: string, kind: string, accounts: LastRoleAccounts) =>

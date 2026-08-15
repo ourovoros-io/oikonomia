@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
+import { resetI18nForTests, t } from './i18n'
 import {
   buildSimpleEntryInput,
   kindDefaultAccounts,
@@ -14,6 +15,10 @@ const accounts: AccountLike[] = [
   { id: 'a2', name: 'Savings', account_type: 'asset', is_active: true },
   { id: 'l1', name: 'Bills Payable', account_type: 'liability', is_active: true },
 ]
+
+afterEach(() => {
+  resetI18nForTests()
+})
 
 describe('lastAccountsMapKey', () => {
   test('joins entity and kind', () => {
@@ -92,16 +97,16 @@ describe('validateTrayAccounts', () => {
 
   test('expense requires both accounts', () => {
     expect(validateTrayAccounts({ ...base, kind: 'expense', categoryId: '' })).toBe(
-      'Pick accounts',
+      t('quickAdd.pickAccounts'),
     )
     expect(validateTrayAccounts({ ...base, kind: 'expense', walletId: '' })).toBe(
-      'Pick accounts',
+      t('quickAdd.pickAccounts'),
     )
   })
 
   test('income requires both accounts', () => {
     expect(validateTrayAccounts({ ...base, kind: 'income', walletId: '' })).toBe(
-      'Pick accounts',
+      t('quickAdd.pickAccounts'),
     )
   })
 
@@ -116,7 +121,7 @@ describe('validateTrayAccounts', () => {
         billStatus: 'unpaid',
         categoryId: '',
       }),
-    ).toBe('Pick category')
+    ).toBe(t('quickAdd.pickCategory'))
     expect(
       validateTrayAccounts({
         ...base,
@@ -124,7 +129,7 @@ describe('validateTrayAccounts', () => {
         billStatus: 'unpaid',
         payableId: '',
       }),
-    ).toBe('Pick payable')
+    ).toBe(t('quickAdd.pickPayable'))
   })
 
   test('bill paid needs category + wallet', () => {
@@ -138,14 +143,14 @@ describe('validateTrayAccounts', () => {
         billStatus: 'paid',
         walletId: '',
       }),
-    ).toBe('Pick wallet')
+    ).toBe(t('quickAdd.pickWallet'))
   })
 
   test('transfer needs distinct from/to', () => {
     expect(validateTrayAccounts({ ...base, kind: 'transfer' })).toBeNull()
     expect(
       validateTrayAccounts({ ...base, kind: 'transfer', fromId: '' }),
-    ).toBe('Pick different accounts')
+    ).toBe(t('quickAdd.pickDifferentAccounts'))
     expect(
       validateTrayAccounts({
         ...base,
@@ -153,6 +158,6 @@ describe('validateTrayAccounts', () => {
         fromId: 'a1',
         toId: 'a1',
       }),
-    ).toBe('Pick different accounts')
+    ).toBe(t('quickAdd.pickDifferentAccounts'))
   })
 })

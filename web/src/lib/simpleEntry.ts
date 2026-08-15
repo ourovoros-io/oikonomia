@@ -1,4 +1,5 @@
 import type { SimpleEntryInput } from './api'
+import { t } from './i18n'
 
 export type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 export type BillStatusTray = 'paid' | 'unpaid'
@@ -124,15 +125,15 @@ export function validateTrayAccounts(args: {
 }): string | null {
   const { kind, billStatus, categoryId, walletId, payableId, fromId, toId } = args
   if ((kind === 'expense' || kind === 'income') && (!categoryId || !walletId)) {
-    return 'Pick accounts'
+    return t('quickAdd.pickAccounts')
   }
   if (kind === 'bill') {
-    if (!categoryId) return 'Pick category'
-    if (billStatus === 'paid' && !walletId) return 'Pick wallet'
-    if (billStatus === 'unpaid' && !payableId) return 'Pick payable'
+    if (!categoryId) return t('quickAdd.pickCategory')
+    if (billStatus === 'paid' && !walletId) return t('quickAdd.pickWallet')
+    if (billStatus === 'unpaid' && !payableId) return t('quickAdd.pickPayable')
   }
   if (kind === 'transfer') {
-    if (!fromId || !toId || fromId === toId) return 'Pick different accounts'
+    if (!fromId || !toId || fromId === toId) return t('quickAdd.pickDifferentAccounts')
   }
   return null
 }

@@ -5,6 +5,7 @@ import type { CommandError } from '../lib/tauri'
 import { formatBytes } from '../lib/files'
 import { Modal } from './Modal'
 import { Button } from './ui'
+import { useI18n } from '../lib/I18nProvider'
 
 function base64ToBytes(b64: string): Uint8Array {
   const bin = atob(b64)
@@ -25,6 +26,7 @@ type Props = {
  * revoked when the viewer closes. "Save a copy" is the explicit export path.
  */
 export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
+  const { t } = useI18n()
   const [meta, setMeta] = useState<DocumentMeta | null>(null)
   const [bytes, setBytes] = useState<Uint8Array | null>(null)
   const [exporting, setExporting] = useState(false)
@@ -45,7 +47,7 @@ export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
       })
       .catch((err) => {
         if (cancelled) return
-        onError((err as CommandError).message || 'Could not open document')
+        onError((err as CommandError).message || t('viewer.openFailed'))
         onClose()
       })
     return () => {
@@ -74,7 +76,7 @@ export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
     try {
       await api.documentExport(documentId)
     } catch (err) {
-      onError((err as CommandError).message || 'Could not save a copy')
+      onError((err as CommandError).message || t('viewer.exportFailed'))
     } finally {
       setExporting(false)
     }
@@ -89,7 +91,7 @@ export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
   return (
     <Modal
       open
-      title={meta?.filename ?? 'Document'}
+      title={meta?.filename ?? t('viewer.document')}
       description={meta ? `${meta.mime_type} · ${formatBytes(meta.size_bytes)}` : undefined}
       maxWidth="max-w-4xl"
       onClose={onClose}
@@ -124,14 +126,14 @@ export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
 
           {!isImage && !isPdf && !isText ? (
             <p className="py-8 text-center text-sm text-[var(--color-muted)]">
-              No in-app preview for {meta.mime_type} — use Save a copy to open it elsewhere.
+              {t('viewer.noPreview', { mime: meta.mime_type })}
             </p>
           ) : null}
 
           <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
             <Button variant="secondary" busy={exporting} onClick={() => void onExport()}>
               <Download className="size-4" />
-              {exporting ? 'Saving…' : 'Save a copy'}
+              {exporting ? t('viewer.saving') : t('viewer.saveCopy')}
             </Button>
           </div>
         </div>

@@ -23,6 +23,17 @@ pub enum Theme {
     Light,
 }
 
+/// Native UI locale (tray, dialogs). Webview i18n is separate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Locale {
+    /// English (the default).
+    #[default]
+    En,
+    /// Greek.
+    El,
+}
+
 /// Last role-account picks for a single entity+kind tray post.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -43,6 +54,8 @@ pub struct LastRoleAccounts {
 pub struct UiPrefs {
     /// Color theme.
     pub theme: Theme,
+    /// Native locale for tray menu, window titles, and file-dialog filters.
+    pub locale: Locale,
     /// Last entity used in the tray quick-add panel.
     pub last_entity_id: Option<String>,
     /// Map key: `"{entity_id}:{kind}"` (kind = expense|income|bill|transfer).
@@ -171,6 +184,7 @@ mod tests {
 
         let prefs = UiPrefs {
             theme: Theme::Dark,
+            locale: Locale::En,
             last_entity_id: Some("ent-1".into()),
             last_accounts_by_entity_kind: last_accounts,
         };
@@ -188,7 +202,59 @@ mod tests {
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let prefs = load_ui_prefs(dir.path());
         assert_eq!(prefs.theme, Theme::Light);
+        assert_eq!(prefs.locale, Locale::En);
         assert_eq!(prefs.last_entity_id, None);
         assert!(prefs.last_accounts_by_entity_kind.is_empty());
+    }
+
+    #[test]
+    fn locale_defaults_to_en() {
+        assert_eq!(UiPrefs::default().locale, Locale::En);
+    }
+
+    #[test]
+    fn locale_round_trips_el() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let prefs = UiPrefs {
+            locale: Locale::El,
+            ..UiPrefs::default()
+        };
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+        assert_eq!(load_ui_prefs(dir.path()), prefs);
+        assert_eq!(load_ui_prefs(dir.path()).locale, Locale::El);
+    }
+
+    #[test]
+    fn missing_locale_defaults_to_en() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let json = r#"{ "theme": "light" }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+        let prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs.theme, Theme::Light);
+        assert_eq!(prefs.locale, Locale::En);
+    }
+
+    #[test]
+    fn unknown_locale_field_is_ignored() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let json = r#"{ "theme": "light", "locale": "el", "future_field": 42 }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+        assert_eq!(
+            load_ui_prefs(dir.path()),
+            UiPrefs {
+                theme: Theme::Light,
+                locale: Locale::El,
+                ..UiPrefs::default()
+            }
+        );
     }
 }
