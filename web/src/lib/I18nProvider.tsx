@@ -23,7 +23,7 @@ const I18nContext = createContext<I18nContextValue | null>(null)
 
 /**
  * Hydrates locale from UiPrefs (`settings_get_locale` / `settings_get_ui_prefs`).
- * localStorage is first-paint cache only. No Settings switcher lives here.
+ * localStorage is first-paint cache only. The Settings language pill calls setLocale.
  */
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => readCachedLocale() ?? getLocale())

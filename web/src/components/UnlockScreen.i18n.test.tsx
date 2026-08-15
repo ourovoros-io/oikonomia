@@ -13,7 +13,7 @@ vi.mock('../lib/tauri', () => ({
 }))
 
 import { UnlockScreen } from './UnlockScreen'
-import { resetI18nForTests, setLocale, setLocaleMessagesForTests } from '../lib/i18n'
+import { resetI18nForTests, setLocale } from '../lib/i18n'
 
 afterEach(() => {
   cleanup()
@@ -21,10 +21,21 @@ afterEach(() => {
 })
 
 describe('UnlockScreen i18n', () => {
-  test('renders create title via key; el stub is looked up', () => {
-    setLocaleMessagesForTests('el', { 'unlock.titleCreate': 'EL Create your vault' })
+  test('setup title uses Writer catalog', () => {
     setLocale('el')
     render(<UnlockScreen status="uninitialized" onUnlocked={() => {}} />)
-    expect(screen.getByRole('heading', { name: 'EL Create your vault' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Δημιουργία θυρίδας' })).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Επιλέξτε κωδικό. Δεν αποθηκεύεται. Αν τον χάσετε, τα βιβλία δεν ανακτώνται.',
+      ),
+    ).toBeTruthy()
+  })
+
+  test('unlock title uses Writer catalog', () => {
+    setLocale('el')
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    expect(screen.getByRole('heading', { name: 'Καλωσορίσατε' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Ξεκλείδωμα' })).toBeTruthy()
   })
 })

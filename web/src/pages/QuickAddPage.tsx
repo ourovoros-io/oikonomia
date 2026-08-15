@@ -61,12 +61,13 @@ type Step = 'entity' | 'kind' | 'amount' | 'accounts' | 'save'
 
 const KIND_OPTIONS: Array<{
   id: EntryKind
-  labelKey: 'kind.expense' | 'kind.income' | 'kind.bill' | 'kind.transfer'
+  labelKey: 'kind.expense' | 'kind.income' | 'kind.billShort' | 'kind.transferShort'
+  titleKey: 'kind.expense' | 'kind.income' | 'kind.bill' | 'kind.transfer'
 }> = [
-  { id: 'expense', labelKey: 'kind.expense' },
-  { id: 'income', labelKey: 'kind.income' },
-  { id: 'bill', labelKey: 'kind.bill' },
-  { id: 'transfer', labelKey: 'kind.transfer' },
+  { id: 'expense', labelKey: 'kind.expense', titleKey: 'kind.expense' },
+  { id: 'income', labelKey: 'kind.income', titleKey: 'kind.income' },
+  { id: 'bill', labelKey: 'kind.billShort', titleKey: 'kind.bill' },
+  { id: 'transfer', labelKey: 'kind.transferShort', titleKey: 'kind.transfer' },
 ]
 
 /** Dense BUI v2 chrome for 300×64 tray — full-pill, hairline, h-7/h-8 rhythm. */
@@ -795,7 +796,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     role="radio"
                     aria-checked={active}
                     disabled={formDisabled}
-                    title={t(opt.labelKey)}
+                    title={t(opt.titleKey)}
                     onClick={() => selectKind(opt.id)}
                     className={cn(
                       'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[10px] font-medium leading-none transition disabled:opacity-50',
