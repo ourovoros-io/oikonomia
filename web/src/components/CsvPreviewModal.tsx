@@ -10,6 +10,7 @@ import {
   previewSubtitle,
   rowSelectable,
 } from '../lib/csvImport'
+import { useI18n } from '../lib/I18nProvider'
 
 type DraftRow = CsvImportPreview['rows'][number] & { checked: boolean }
 
@@ -25,11 +26,11 @@ type Props = {
   onConfirm: (input: { rows: SimpleEntryInput[]; include_duplicates: boolean }) => void
 }
 
-function kindLabel(kind: SimpleEntryInput['kind']): 'Expense' | 'Income' | 'Bill' | 'Transfer' {
-  if (kind === 'income') return 'Income'
-  if (kind === 'bill') return 'Bill'
-  if (kind === 'transfer') return 'Transfer'
-  return 'Expense'
+function kindLabelKey(kind: SimpleEntryInput['kind']): string {
+  if (kind === 'income') return 'tx.csv.kind.income'
+  if (kind === 'bill') return 'tx.csv.kind.bill'
+  if (kind === 'transfer') return 'tx.csv.kind.transfer'
+  return 'tx.csv.kind.expense'
 }
 
 /** Step 3 of CSV import: review, bulk-edit, then post selected rows. */
@@ -44,6 +45,7 @@ export function CsvPreviewModal({
   onClose,
   onConfirm,
 }: Props) {
+  const { t } = useI18n()
   const [drafts, setDrafts] = useState<DraftRow[]>([])
   const [bulkWallet, setBulkWallet] = useState('')
   const [bulkCategory, setBulkCategory] = useState('')
@@ -115,17 +117,17 @@ export function CsvPreviewModal({
   return (
     <Modal
       open={open}
-      title="Preview import"
+      title={t('tx.csv.previewTitle')}
       description={preview ? previewSubtitle(preview.rows.length, duplicateCount) : undefined}
       maxWidth="max-w-4xl"
       onClose={onClose}
     >
       <div className="mb-4 flex flex-wrap items-end gap-3">
-        <Field label="Wallet" className="min-w-[12rem] flex-1">
+        <Field label={t('tx.csv.wallet')} className="min-w-[12rem] flex-1">
           <Select
             value={bulkWallet}
             onChange={(e) => setBulkWallet(e.target.value)}
-            aria-label="Bulk wallet"
+            aria-label={t('tx.csv.bulkWallet')}
           >
             {walletAccounts.map((a) => (
               <option key={a.id} value={a.id}>
@@ -134,14 +136,14 @@ export function CsvPreviewModal({
             ))}
           </Select>
         </Field>
-        <Field label="Category" className="min-w-[12rem] flex-1">
+        <Field label={t('tx.csv.category')} className="min-w-[12rem] flex-1">
           <Select
             value={bulkCategory}
             onChange={(e) => setBulkCategory(e.target.value)}
-            aria-label="Bulk category"
+            aria-label={t('tx.csv.bulkCategory')}
           >
             {expenseAccounts.length > 0 ? (
-              <optgroup label="Expense">
+              <optgroup label={t('tx.csv.kind.expense')}>
                 {expenseAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
@@ -150,7 +152,7 @@ export function CsvPreviewModal({
               </optgroup>
             ) : null}
             {incomeAccounts.length > 0 ? (
-              <optgroup label="Income">
+              <optgroup label={t('tx.csv.kind.income')}>
                 {incomeAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
@@ -166,7 +168,7 @@ export function CsvPreviewModal({
           disabled={selected.length === 0 || busy}
           onClick={applyToSelected}
         >
-          Apply to selected
+          {t('tx.csv.applySelected')}
         </Button>
       </div>
 
@@ -181,14 +183,14 @@ export function CsvPreviewModal({
                   checked={allSelectableChecked}
                   disabled={selectable.length === 0 || busy}
                   onChange={(e) => toggleAll(e.target.checked)}
-                  aria-label="Select all importable rows"
+                  aria-label={t('tx.csv.selectAll')}
                 />
               </th>
-              <th className="px-3 py-2.5">Date</th>
-              <th className="px-3 py-2.5">Description</th>
-              <th className="px-3 py-2.5 text-right">Amount</th>
-              <th className="px-3 py-2.5">Type</th>
-              <th className="px-3 py-2.5">Note</th>
+              <th className="px-3 py-2.5">{t('tx.csv.col.date')}</th>
+              <th className="px-3 py-2.5">{t('tx.csv.col.description')}</th>
+              <th className="px-3 py-2.5 text-right">{t('tx.csv.col.amount')}</th>
+              <th className="px-3 py-2.5">{t('tx.csv.col.type')}</th>
+              <th className="px-3 py-2.5">{t('tx.csv.col.note')}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--color-border)]">
@@ -209,7 +211,7 @@ export function CsvPreviewModal({
                       checked={row.checked}
                       disabled={!selectableRow || busy}
                       onChange={(e) => toggleRow(row.source_row, e.target.checked)}
-                      aria-label={`Select row ${row.source_row}`}
+                      aria-label={t('tx.csv.selectRow', { n: row.source_row })}
                     />
                   </td>
                   <td className="px-3 py-2.5 tabular-nums text-[var(--color-fg-secondary)]">
@@ -238,7 +240,7 @@ export function CsvPreviewModal({
                             : 'bg-[var(--color-surface-elevated)] text-[var(--color-fg-secondary)]',
                         )}
                       >
-                        {kindLabel(kind)}
+                        {t(kindLabelKey(kind))}
                       </span>
                     ) : (
                       '—'
@@ -248,7 +250,7 @@ export function CsvPreviewModal({
                     {row.error ? (
                       <span className="text-[var(--color-danger)]">{row.error}</span>
                     ) : row.duplicate ? (
-                      <span className="text-[var(--color-warning)]">Likely duplicate</span>
+                      <span className="text-[var(--color-warning)]">{t('tx.csv.duplicate')}</span>
                     ) : null}
                   </td>
                 </tr>
@@ -260,7 +262,7 @@ export function CsvPreviewModal({
 
       <div className="mt-5 flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
         <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button
           type="button"

@@ -531,7 +531,7 @@ export function TransactionsPage({ entity }: Props) {
         disabled={csvBusy !== null && csvBusy !== 'import'}
         onClick={() => void onImportCsv()}
       >
-        Import CSV
+        {t('tx.csv.import')}
       </Button>
       <Button
         variant="secondary"
@@ -539,9 +539,9 @@ export function TransactionsPage({ entity }: Props) {
         busy={csvBusy === 'export'}
         disabled={csvBusy !== null && csvBusy !== 'export'}
         onClick={() => void onExportCsv()}
-        title="Unencrypted accountant CSV"
+        title={t('tx.csv.exportTitle')}
       >
-        Export CSV
+        {t('tx.csv.export')}
       </Button>
       <Button size="sm" onClick={openNewEntry}>
         <Plus className="size-3" />

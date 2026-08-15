@@ -54,8 +54,14 @@ describe('Writer el catalog', () => {
     expect(flat['settings.language.option.en']).toBe('English')
     expect(flat['settings.language.option.el']).toBe('Ελληνικά')
     expect(flat['error.core']).toBeUndefined()
-    const writerKeys = Object.keys(flat).filter((k) => !k.startsWith('settings.language.'))
+    const writerKeys = Object.keys(flat).filter(
+      (k) => !k.startsWith('settings.language.') && !k.startsWith('tx.csv.'),
+    )
     expect(writerKeys.length).toBe(542)
+    expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
+    expect(flat['tx.csv.kind.expense']).toBe('Έξοδα')
+    expect(flat['tx.csv.kind.income']).toBe('Έσοδα')
+    expect(flat['tx.csv.kind.transfer']).toBe('Μεταφορά')
   })
 
   test('t() uses Writer wording via current extract keys', () => {
@@ -83,6 +89,8 @@ describe('Writer el catalog', () => {
     expect(t('docs.title')).toBe('Έγγραφα')
     expect(t('drop.title')).toBe('Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο')
     expect(t('tx.billStatus')).toBe('Κατάσταση λογαριασμού')
+    expect(t('tx.csv.import')).toBe('Εισαγωγή CSV')
+    expect(t('tx.csv.kind.expense')).toBe('Έξοδα')
   })
 
   test('interpolates Writer placeholders from extract var names', () => {

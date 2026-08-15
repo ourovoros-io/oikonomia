@@ -28,6 +28,7 @@ vi.mock('../lib/api', async (importOriginal) => {
 })
 
 import { api } from '../lib/api'
+import { resetI18nForTests } from '../lib/i18n'
 import { TransactionsPage } from './TransactionsPage'
 
 const entity: Entity = {
@@ -148,6 +149,7 @@ const postedEntry: PostedEntryView = {
 
 afterEach(() => {
   cleanup()
+  resetI18nForTests()
 })
 
 beforeEach(() => {
