@@ -190,8 +190,10 @@
     "language": {
       "title": "Γλώσσα",
       "description": "Μενού, ετικέτες και Γρήγορη καταχώριση.",
-      "english": "English",
-      "greek": "Ελληνικά"
+      "option": {
+        "en": "English",
+        "el": "Ελληνικά"
+      }
     },
     "lock": {
       "title": "Αυτόματο κλείδωμα",

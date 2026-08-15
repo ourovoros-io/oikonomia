@@ -382,8 +382,8 @@ export function SettingsPage({
           value={locale}
           onChange={setLocale}
           ariaLabel={t('settings.language.title')}
-          englishLabel={t('settings.language.english')}
-          greekLabel={t('settings.language.greek')}
+          englishLabel={t('settings.language.option.en')}
+          greekLabel={t('settings.language.option.el')}
         />
       </CollapsibleSection>
 
