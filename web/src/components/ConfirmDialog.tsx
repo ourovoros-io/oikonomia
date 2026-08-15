@@ -2,6 +2,7 @@ import { useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { Button } from './ui'
 import { useDialogFocus } from './useDialogFocus'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = {
   open: boolean
@@ -19,13 +20,15 @@ export function ConfirmDialog({
   open,
   title,
   body,
-  confirmLabel = 'Confirm',
+  confirmLabel,
   danger = false,
   busy = false,
   onConfirm,
   onCancel,
 }: Props) {
+  const { t } = useI18n()
   const panelRef = useRef<HTMLDivElement>(null)
+  const resolvedConfirm = confirmLabel ?? t('common.confirm')
 
   useDialogFocus(panelRef, open, () => {
     if (!busy) onCancel()
@@ -66,10 +69,10 @@ export function ConfirmDialog({
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="secondary" onClick={onCancel} disabled={busy}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} busy={busy}>
-            {busy ? 'Working…' : confirmLabel}
+            {busy ? t('common.working') : resolvedConfirm}
           </Button>
         </div>
       </div>

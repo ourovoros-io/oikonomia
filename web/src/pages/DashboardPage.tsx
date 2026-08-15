@@ -39,6 +39,7 @@ import {
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import type { CommandError } from '../lib/tauri'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null }
 
@@ -77,6 +78,7 @@ function inferActivity(view: PostedEntryView, accounts: Account[]): ActivityRow 
 }
 
 export function DashboardPage({ entity }: Props) {
+  const { t } = useI18n()
   const [data, setData] = useState<DashboardSummary | null>(null)
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -90,7 +92,7 @@ export function DashboardPage({ entity }: Props) {
   const from = period === 'month' ? monthStartISO() : yearStartISO()
   const to = period === 'month' ? monthEndISO() : yearEndISO()
   const assetsAsOf = todayISO()
-  const periodLabel = period === 'month' ? 'month' : 'year'
+  const periodLabel = period === 'month' ? t('dash.period.month') : t('dash.period.year')
 
   useEffect(() => {
     if (!entity) {
@@ -136,8 +138,8 @@ export function DashboardPage({ entity }: Props) {
     return (
       <EmptyState
         icon={<Landmark className="size-5" />}
-        title="Create a book to begin"
-        body="Add a personal or company entity under Settings. Each entity has its own chart of accounts and reports."
+        title={t('dash.createTitle')}
+        body={t('dash.createBody')}
       />
     )
   }
@@ -157,7 +159,7 @@ export function DashboardPage({ entity }: Props) {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
-            Overview
+            {t('dash.overview')}
           </p>
           <h2 className="mt-1 text-[1.75rem] leading-tight font-semibold tracking-tight text-[var(--color-fg)]">
             {entity.name}
@@ -171,11 +173,11 @@ export function DashboardPage({ entity }: Props) {
             value={period}
             onChange={setPeriod}
             options={[
-              { id: 'month', label: 'Month', icon: <Calendar className="size-3.5" /> },
-              { id: 'year', label: 'Year', icon: <CalendarRange className="size-3.5" /> },
+              { id: 'month', label: t('dash.month'), icon: <Calendar className="size-3.5" /> },
+              { id: 'year', label: t('dash.year'), icon: <CalendarRange className="size-3.5" /> },
             ]}
           />
-          <div className="text-xs text-[var(--color-muted)]">Encrypted vault · local only</div>
+          <div className="text-xs text-[var(--color-muted)]">{t('dash.encryptedVault')}</div>
         </div>
       </div>
 
@@ -186,7 +188,7 @@ export function DashboardPage({ entity }: Props) {
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
               <TrendingUp className="size-4 text-[var(--color-accent)]" />
-              Net this {periodLabel}
+              {t('dash.netThis', { period: periodLabel })}
             </div>
             <div
               title={money(net, true)}
@@ -198,36 +200,38 @@ export function DashboardPage({ entity }: Props) {
               {loading && !data ? '—' : money(net, true)}
             </div>
             <p className="mt-3 max-w-md text-sm leading-relaxed text-[var(--color-muted)]">
-              Income minus expenses for the current {periodLabel}. Drop bills on Transactions for offline
-              OCR, or post entries manually.
+              {t('dash.netBody', { period: periodLabel })}
             </p>
             <div className="mt-6 flex flex-wrap items-center gap-4 text-xs text-[var(--color-muted)]">
               <span className="inline-flex items-center gap-1.5">
                 <Sparkles className="size-3.5 text-[var(--color-accent)]" />
-                Offline invoice reader
+                {t('dash.offlineReader')}
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <Receipt className="size-3.5" />
-                {data?.recent_entry_count ?? 0} entries this {periodLabel}
+                {t('dash.entriesThis', {
+                  count: data?.recent_entry_count ?? 0,
+                  period: periodLabel,
+                })}
               </span>
             </div>
           </div>
 
           <div className="flex min-w-0 flex-col justify-center gap-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/70 p-5 backdrop-blur">
             <FlowBar
-              label="Income"
+              label={t('dash.income')}
               value={money(income)}
               ratio={income / maxFlow}
               tone="success"
             />
             <FlowBar
-              label="Expenses"
+              label={t('dash.expenses')}
               value={money(expenses)}
               ratio={expenses / maxFlow}
               tone="danger"
             />
             <div className="border-t border-[var(--color-border)] pt-4 text-xs text-[var(--color-muted)]">
-              Cash-in vs cash-out (period activity). Assets below are balances as of today.
+              {t('dash.cashInVsOut')}
             </div>
           </div>
         </div>
@@ -235,28 +239,28 @@ export function DashboardPage({ entity }: Props) {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label="Total assets"
-          hint="As of today"
+          label={t('dash.totalAssets')}
+          hint={t('dash.asOfToday')}
           value={loading && !data ? '—' : money(assets)}
           icon={<Wallet className="size-4" />}
         />
         <MetricCard
-          label="Income"
-          hint={period === 'month' ? 'This month' : 'This year'}
+          label={t('dash.income')}
+          hint={period === 'month' ? t('dash.thisMonth') : t('dash.thisYear')}
           value={loading && !data ? '—' : money(income)}
           icon={<ArrowDownLeft className="size-4" />}
           accent="success"
         />
         <MetricCard
-          label="Expenses"
-          hint={period === 'month' ? 'This month' : 'This year'}
+          label={t('dash.expenses')}
+          hint={period === 'month' ? t('dash.thisMonth') : t('dash.thisYear')}
           value={loading && !data ? '—' : money(expenses)}
           icon={<ArrowUpRight className="size-4" />}
           accent="danger"
         />
         <MetricCard
-          label="Net result"
-          hint="Income − expenses"
+          label={t('dash.netResult')}
+          hint={t('dash.netHint')}
           value={loading && !data ? '—' : money(net, true)}
           icon={<Scale className="size-4" />}
           accent={net < 0 ? 'danger' : 'success'}
@@ -264,13 +268,13 @@ export function DashboardPage({ entity }: Props) {
       </div>
 
       <Panel
-        title="Recent activity"
-        description={`Posted entries this ${periodLabel}`}
+        title={t('dash.recentActivity')}
+        description={t('dash.recentDesc', { period: periodLabel })}
         icon={<Receipt className="size-4" />}
       >
         {activity.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[var(--color-muted)]">
-            {loading ? 'Loading…' : `No entries yet this ${periodLabel}. Post one under Transactions.`}
+            {loading ? t('common.loading') : t('dash.noEntries', { period: periodLabel })}
           </div>
         ) : (
           <ul className="divide-y divide-[var(--color-border)]">
@@ -300,7 +304,7 @@ export function DashboardPage({ entity }: Props) {
                   <div className="text-xs text-[var(--color-muted)]">
                     {row.date}
                     <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                    <span className="capitalize">{row.kind}</span>
+                    <span>{t(`kind.${row.kind}`)}</span>
                   </div>
                 </div>
                 <div

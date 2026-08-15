@@ -32,19 +32,21 @@ import { DocumentsPage } from './pages/DocumentsPage'
 import { AccountsPage } from './pages/AccountsPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { useI18n } from './lib/I18nProvider'
 
 const NAV = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'transactions', label: 'Transactions', icon: Receipt },
-  { id: 'documents', label: 'Documents', icon: FolderOpen },
-  { id: 'accounts', label: 'Accounts', icon: Wallet },
-  { id: 'reports', label: 'Reports', icon: BookOpen },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard },
+  { id: 'transactions', labelKey: 'nav.transactions', icon: Receipt },
+  { id: 'documents', labelKey: 'nav.documents', icon: FolderOpen },
+  { id: 'accounts', labelKey: 'nav.accounts', icon: Wallet },
+  { id: 'reports', labelKey: 'nav.reports', icon: BookOpen },
+  { id: 'settings', labelKey: 'nav.settings', icon: Settings },
 ] as const
 
 type NavId = (typeof NAV)[number]['id']
 
 export default function App() {
+  const { t } = useI18n()
   const [dark, setDark] = useState(true)
   const [active, setActive] = useState<NavId>('dashboard')
   const [status, setStatus] = useState<VaultStatus | null>(null)
@@ -100,7 +102,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to talk to the app backend')
+      setError(err instanceof Error ? err.message : t('app.failedBackend'))
     }
   }, [loadEntities])
 
@@ -170,7 +172,7 @@ export default function App() {
       setEntities([])
       setEntityId(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to lock')
+      setError(err instanceof Error ? err.message : t('app.failedLock'))
     } finally {
       setLocking(false)
     }
@@ -179,7 +181,7 @@ export default function App() {
   if (status === null) {
     return (
       <div className="flex h-full items-center justify-center bg-[var(--color-canvas)] text-sm text-[var(--color-muted)]">
-        Loading…
+        {t('common.loading')}
       </div>
     )
   }
@@ -203,20 +205,20 @@ export default function App() {
           <Logo className="size-8 shrink-0 rounded-lg shadow-sm shadow-[var(--color-accent)]/30" />
           <div className="min-w-0 leading-tight">
             <div className="truncate text-sm font-semibold tracking-tight">Oikonomia</div>
-            <div className="truncate text-[11px] text-[var(--color-muted)]">Local ledger</div>
+            <div className="truncate text-[11px] text-[var(--color-muted)]">{t('app.localLedger')}</div>
           </div>
         </div>
 
         <div className="border-b border-[var(--color-border)] px-3 py-3">
           <div className="mb-1.5 px-1 text-[11px] font-medium tracking-[0.12em] text-[var(--color-muted)] uppercase">
-            Book
+            {t('app.book')}
           </div>
           <Select
             value={entity?.id ?? ''}
             onChange={(e) => setEntityId(e.target.value || null)}
-            aria-label="Active entity"
+            aria-label={t('app.activeEntity')}
           >
-            {entities.length === 0 ? <option value="">No entities yet</option> : null}
+            {entities.length === 0 ? <option value="">{t('app.noEntitiesYet')}</option> : null}
             {entities.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name} · {e.base_currency}
@@ -248,14 +250,14 @@ export default function App() {
                   )}
                   strokeWidth={1.75}
                 />
-                <span className="truncate">{item.label}</span>
+                <span className="truncate">{t(item.labelKey)}</span>
               </button>
             )
           })}
         </nav>
 
         <div className="border-t border-[var(--color-border)] px-4 py-3 text-[11px] text-[var(--color-muted)]">
-          {info ? `v${info.version} · encrypted` : 'Oikonomia'}
+          {info ? t('app.versionEncrypted', { version: info.version }) : 'Oikonomia'}
         </div>
       </aside>
 
@@ -263,12 +265,15 @@ export default function App() {
         <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 px-6 backdrop-blur">
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-[var(--color-fg)]">
-              {entity ? entity.name : 'No book selected'}
+              {entity ? entity.name : t('app.noBookSelected')}
             </div>
             <div className="truncate text-xs text-[var(--color-muted)]">
               {entity
-                ? `${entity.base_currency} · ${entity.chart_template} chart`
-                : 'Create an entity in Settings'}
+                ? t('app.entityChart', {
+                    currency: entity.base_currency,
+                    chart: t(`chart.${entity.chart_template}`),
+                  })
+                : t('app.createEntityInSettings')}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -276,8 +281,8 @@ export default function App() {
               variant="secondary"
               size="icon"
               onClick={toggleTheme}
-              aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-              title={dark ? 'Light mode' : 'Dark mode'}
+              aria-label={dark ? t('app.switchToLight') : t('app.switchToDark')}
+              title={dark ? t('app.lightMode') : t('app.darkMode')}
             >
               {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
             </Button>
@@ -285,10 +290,10 @@ export default function App() {
               variant="secondary"
               onClick={() => void onLock()}
               disabled={locking}
-              aria-label="Lock vault"
+              aria-label={t('app.lockVault')}
             >
               <Lock className="size-4" />
-              {locking ? 'Locking…' : 'Lock'}
+              {locking ? t('app.locking') : t('app.lock')}
             </Button>
           </div>
         </header>

@@ -5,6 +5,7 @@ import { api, type AnalyzerStatus, type DocumentSuggestion, type PendingDocSourc
 import { isTauri, type CommandError } from '../lib/tauri'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { cn } from '../lib/cn'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = {
   entityId: string
@@ -14,6 +15,7 @@ type Props = {
 }
 
 export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: Props) {
+  const { t } = useI18n()
   const [dragOver, setDragOver] = useState(false)
   const [busy, setBusy] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -28,7 +30,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         setStatus({
           ocr_available: false,
           offline: true,
-          hint: 'Built-in analyzer status unavailable.',
+          hint: t('drop.statusUnavailable'),
         }),
       )
   }, [])
@@ -39,7 +41,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       // Resource guard only — the backend enforces the same cap (MAX_DOCUMENT_BYTES);
       // checking here avoids reading a huge file into memory and across IPC first.
       if (file.size > 8 * 1024 * 1024) {
-        const msg = 'File too large (max 8 MB)'
+        const msg = t('drop.fileTooLarge')
         setLocalError(msg)
         onError(msg)
         return
@@ -58,7 +60,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         })
         onSuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
-        const msg = (err as CommandError).message || 'Could not analyze document'
+        const msg = (err as CommandError).message || t('drop.analyzeFailed')
         setLocalError(msg)
         onError(msg)
       } finally {
@@ -67,7 +69,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         setDragOver(false)
       }
     },
-    [disabled, entityId, onError, onSuggestion],
+    [disabled, entityId, onError, onSuggestion, t],
   )
 
   const processPath = useCallback(
@@ -80,7 +82,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         const suggestion = await api.documentAnalyzePath({ entityId, path })
         onSuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
-        const msg = (err as CommandError).message || 'Could not analyze document'
+        const msg = (err as CommandError).message || t('drop.analyzeFailed')
         setLocalError(msg)
         onError(msg)
       } finally {
@@ -89,7 +91,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         setDragOver(false)
       }
     },
-    [disabled, entityId, onError, onSuggestion],
+    [disabled, entityId, onError, onSuggestion, t],
   )
 
   // Tauri webviews often give empty dataTransfer.files on OS file drops.
@@ -119,7 +121,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
             if (path) {
               void processPath(path)
             } else {
-              setLocalError('No file path received from drop — try clicking to choose a file.')
+              setLocalError(t('drop.noPath'))
             }
           }
         })
@@ -146,7 +148,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
     }
     // In Tauri, paths often only arrive via onDragDropEvent (handled above).
     if (!isTauri()) {
-      setLocalError('No file received. Try clicking to choose a file.')
+      setLocalError(t('drop.noFile'))
     }
   }
 
@@ -206,11 +208,10 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
           )}
         </span>
         <p className="pointer-events-none text-sm font-semibold text-[var(--color-fg)]">
-          {busy ? 'Analyzing document…' : 'Drop a bill, invoice, receipt, or bank statement here'}
+          {busy ? t('drop.analyzing') : t('drop.title')}
         </p>
         <p className="pointer-events-none mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-[var(--color-muted)]">
-          PDF (invoices, bills, bank statements), photos of receipts (PNG/JPEG/WebP), or text. Fully
-          offline — nothing leaves this device. Click to choose a file.
+          {t('drop.body')}
         </p>
         {status ? (
           <p className="pointer-events-none mx-auto mt-4 inline-flex max-w-lg items-start gap-1.5 text-left text-[11px] leading-snug text-[var(--color-muted)]">

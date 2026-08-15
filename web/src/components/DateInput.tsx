@@ -3,22 +3,16 @@ import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '../lib/cn'
 import { daysInMonth, formatDate, parseEuropeanDateToISO } from '../lib/money'
 import { Button, Input } from './ui'
+import { useI18n } from '../lib/I18nProvider'
 
-const WEEKDAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'] as const
-
-const MONTH_NAMES = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
+const WEEKDAY_KEYS = [
+  'date.weekday.mo',
+  'date.weekday.tu',
+  'date.weekday.we',
+  'date.weekday.th',
+  'date.weekday.fr',
+  'date.weekday.sa',
+  'date.weekday.su',
 ] as const
 
 type YearMonth = { y: number; m: number }
@@ -60,6 +54,7 @@ export function DateInput({
   disabled = false,
   'aria-label': ariaLabel,
 }: Props) {
+  const { t } = useI18n()
   const [text, setText] = useState(value ? formatDate(value) : '')
   const [invalid, setInvalid] = useState(false)
   const [open, setOpen] = useState(false)
@@ -146,7 +141,7 @@ export function DateInput({
             commit()
           }
         }}
-        placeholder="dd/mm/yyyy"
+        placeholder={t('date.placeholder')}
         inputMode="numeric"
         required={required}
         disabled={disabled}
@@ -168,9 +163,9 @@ export function DateInput({
           setOpen((v) => !v)
         }}
         disabled={disabled}
-        aria-label="Open calendar"
+        aria-label={t('date.openCalendar')}
         aria-expanded={open}
-        title="Calendar"
+        title={t('date.calendar')}
       >
         <CalendarDays className="size-4" />
       </Button>
@@ -184,12 +179,12 @@ export function DateInput({
               size="icon"
               className="h-7 w-7"
               onClick={() => shiftMonth(-1)}
-              aria-label="Previous month"
+              aria-label={t('date.prevMonth')}
             >
               <ChevronLeft className="size-4" />
             </Button>
             <span className="text-sm font-medium text-[var(--color-fg)]">
-              {MONTH_NAMES[view.m - 1]} {view.y}
+              {t(`date.month.${view.m}`)} {view.y}
             </span>
             <Button
               type="button"
@@ -197,16 +192,16 @@ export function DateInput({
               size="icon"
               className="h-7 w-7"
               onClick={() => shiftMonth(1)}
-              aria-label="Next month"
+              aria-label={t('date.nextMonth')}
             >
               <ChevronRight className="size-4" />
             </Button>
           </div>
 
           <div className="grid grid-cols-7 gap-0.5 text-center">
-            {WEEKDAYS.map((wd) => (
-              <span key={wd} className="py-1 text-[10px] font-medium text-[var(--color-muted)]">
-                {wd}
+            {WEEKDAY_KEYS.map((key) => (
+              <span key={key} className="py-1 text-[10px] font-medium text-[var(--color-muted)]">
+                {t(key)}
               </span>
             ))}
             {Array.from({ length: offset }, (_, i) => (

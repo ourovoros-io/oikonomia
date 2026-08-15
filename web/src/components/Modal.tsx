@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { Button } from './ui'
 import { cn } from '../lib/cn'
 import { useDialogFocus } from './useDialogFocus'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = {
   open: boolean
@@ -23,6 +24,7 @@ export function Modal({
   onClose,
   children,
 }: Props) {
+  const { t } = useI18n()
   const titleId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -61,8 +63,8 @@ export function Modal({
             size="icon"
             className="h-8 w-8 shrink-0"
             onClick={onClose}
-            aria-label="Close"
-            title="Close"
+            aria-label={t('common.close')}
+            title={t('common.close')}
           >
             <X className="size-4" />
           </Button>

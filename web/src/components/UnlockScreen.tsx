@@ -5,6 +5,7 @@ import { ConfirmDialog } from './ConfirmDialog'
 import type { VaultStatus } from '../lib/tauri'
 import { vaultInit, vaultPickBackup, vaultRestore, vaultStatus, vaultUnlock, type CommandError } from '../lib/tauri'
 import { backupCommandError, restoreConfirm } from '../lib/vaultBackupUi'
+import { useI18n } from '../lib/I18nProvider'
 import { Button, ErrorBanner, Field, Input } from './ui'
 
 type Props = {
@@ -13,6 +14,7 @@ type Props = {
 }
 
 export function UnlockScreen({ status, onUnlocked }: Props) {
+  const { t } = useI18n()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false)
@@ -30,7 +32,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
     setError(null)
 
     if (isSetup && password !== confirm) {
-      setError('Passwords do not match')
+      setError(t('unlock.passwordsMismatch'))
       return
     }
 
@@ -43,8 +45,8 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
       const cmd = err as CommandError
       setError(
         cmd.code === 'invalid_password'
-          ? 'Incorrect password — please try again.'
-          : cmd.message || 'Could not unlock the vault.',
+          ? t('unlock.incorrectPassword')
+          : cmd.message || t('unlock.unlockFailed'),
       )
     } finally {
       setBusy(false)
@@ -102,12 +104,10 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
           <div className="mb-8 flex flex-col items-center text-center">
             <Logo className="mb-4 size-14 rounded-2xl shadow-lg shadow-[var(--color-accent)]/20" />
             <h1 className="text-2xl font-semibold tracking-tight">
-              {isSetup ? 'Create your vault' : 'Welcome back'}
+              {isSetup ? t('unlock.titleCreate') : t('unlock.titleWelcome')}
             </h1>
             <p className="mt-2 max-w-sm text-sm text-[var(--color-muted)]">
-              {isSetup
-                ? 'Choose a password. It is never stored. If you lose it, the books cannot be recovered.'
-                : 'Enter your password to decrypt this device’s books.'}
+              {isSetup ? t('unlock.bodyCreate') : t('unlock.bodyWelcome')}
             </p>
           </div>
 
@@ -116,7 +116,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
             onSubmit={onSubmit}
           >
             <div className="space-y-4">
-              <Field label="Password">
+              <Field label={t('unlock.password')}>
                 <div className="relative">
                   <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
                   <Input
@@ -132,7 +132,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
               </Field>
 
               {isSetup ? (
-                <Field label="Confirm password">
+                <Field label={t('unlock.confirmPassword')}>
                   <Input
                     type="password"
                     autoComplete="new-password"
@@ -146,7 +146,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
               <ErrorBanner message={error} className="text-center" />
 
               <Button type="submit" busy={busy} className="w-full">
-                {busy ? 'Working…' : isSetup ? 'Create encrypted vault' : 'Unlock'}
+                {busy ? t('common.working') : isSetup ? t('unlock.createVault') : t('unlock.unlock')}
               </Button>
             </div>
           </form>
@@ -160,7 +160,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
           onClick={() => void beginRestore()}
           disabled={busy || restoreBusy || restorePicking}
         >
-          Restore from backup
+          {t('unlock.restoreFromBackup')}
         </button>
       </div>
 

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import {
   backupCommandError,
   canBackupVault,
@@ -6,6 +6,12 @@ import {
   vaultBackupAvailability,
   vaultBackupBanner,
 } from './vaultBackupUi'
+import { resetI18nForTests, t } from './i18n'
+import en from '../locales/en.json' with { type: 'json' }
+
+afterEach(() => {
+  resetI18nForTests()
+})
 
 describe('vaultBackupAvailability', () => {
   test('ready when the vault has at least one entity', () => {
@@ -32,16 +38,18 @@ describe('canBackupVault', () => {
 describe('vaultBackupBanner', () => {
   test('empty copy matches backup-03', () => {
     expect(vaultBackupBanner('empty')).toEqual({
-      title: 'Nothing to back up',
-      body: 'This vault has not been initialized yet. Create a book first, or restore an existing backup.',
+      title: t('settings.vaultBackup.emptyTitle'),
+      body: t('settings.vaultBackup.emptyBody'),
     })
+    expect(vaultBackupBanner('empty')?.title).toBe(en['settings.vaultBackup.emptyTitle'])
   })
 
   test('missing copy matches backup-04', () => {
     expect(vaultBackupBanner('missing')).toEqual({
-      title: 'No vault on this computer',
-      body: 'Nothing to back up. Restore from a backup, or set up a new vault.',
+      title: t('settings.vaultBackup.missingTitle'),
+      body: t('settings.vaultBackup.missingBody'),
     })
+    expect(vaultBackupBanner('missing')?.title).toBe(en['settings.vaultBackup.missingTitle'])
   })
 
   test('ready has no banner', () => {
@@ -52,15 +60,15 @@ describe('vaultBackupBanner', () => {
 describe('restoreConfirm', () => {
   test('uninitialized uses Load backup and replace:false', () => {
     const prompt = restoreConfirm('load')
-    expect(prompt.title).toBe('Load backup on this device?')
-    expect(prompt.confirmLabel).toBe('Load backup')
+    expect(prompt.title).toBe(t('settings.restore.loadTitle'))
+    expect(prompt.confirmLabel).toBe(t('settings.restore.loadConfirm'))
     expect(prompt.replace).toBe(false)
   })
 
   test('existing vault uses Replace vault and replace:true', () => {
     const prompt = restoreConfirm('replace')
-    expect(prompt.title).toBe('Replace local vault?')
-    expect(prompt.confirmLabel).toBe('Replace vault')
+    expect(prompt.title).toBe(t('settings.restore.replaceTitle'))
+    expect(prompt.confirmLabel).toBe(t('settings.restore.replaceConfirm'))
     expect(prompt.replace).toBe(true)
   })
 })

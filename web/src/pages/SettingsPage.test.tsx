@@ -21,6 +21,7 @@ vi.mock('../lib/api', () => ({
 
 import { vaultBackup, vaultPickBackup, vaultRestore } from '../lib/tauri'
 import { SettingsPage } from './SettingsPage'
+import { resetI18nForTests } from '../lib/i18n'
 
 const entity: Entity = {
   id: 'e1',
@@ -36,6 +37,7 @@ const noopAsync = async () => {}
 
 afterEach(() => {
   cleanup()
+  resetI18nForTests()
 })
 
 beforeEach(() => {

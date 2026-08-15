@@ -15,11 +15,13 @@ vi.mock('../lib/tauri', () => ({
 
 import { vaultPickBackup, vaultRestore, vaultStatus } from '../lib/tauri'
 import { UnlockScreen } from './UnlockScreen'
+import { resetI18nForTests } from '../lib/i18n'
 
 const BACKUP_PATH = '/tmp/in.oikonomia-backup'
 
 afterEach(() => {
   cleanup()
+  resetI18nForTests()
 })
 
 beforeEach(() => {

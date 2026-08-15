@@ -30,15 +30,25 @@ import {
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import type { CommandError } from '../lib/tauri'
+import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null }
 
-const TYPES: Array<{ id: AccountType; label: string; icon: typeof Wallet }> = [
-  { id: 'asset', label: 'Asset', icon: Landmark },
-  { id: 'liability', label: 'Liability', icon: CreditCard },
-  { id: 'equity', label: 'Equity', icon: PieChart },
-  { id: 'income', label: 'Income', icon: TrendingUp },
-  { id: 'expense', label: 'Expense', icon: TrendingDown },
+const TYPES: Array<{
+  id: AccountType
+  labelKey:
+    | 'accountType.asset'
+    | 'accountType.liability'
+    | 'accountType.equity'
+    | 'accountType.income'
+    | 'accountType.expense'
+  icon: typeof Wallet
+}> = [
+  { id: 'asset', labelKey: 'accountType.asset', icon: Landmark },
+  { id: 'liability', labelKey: 'accountType.liability', icon: CreditCard },
+  { id: 'equity', labelKey: 'accountType.equity', icon: PieChart },
+  { id: 'income', labelKey: 'accountType.income', icon: TrendingUp },
+  { id: 'expense', labelKey: 'accountType.expense', icon: TrendingDown },
 ]
 
 function typeMeta(t: AccountType) {
@@ -53,6 +63,7 @@ function typeTone(t: AccountType): 'accent' | 'success' | 'danger' | 'muted' {
 }
 
 export function AccountsPage({ entity }: Props) {
+  const { t } = useI18n()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
@@ -140,7 +151,7 @@ export function AccountsPage({ entity }: Props) {
 
     const minor = parseMajorToMinor(balanceAmount, entity.base_currency)
     if (minor === null) {
-      setBalanceError('Enter a valid amount (e.g. 2.500,00 — negative allowed)')
+      setBalanceError(t('acct.invalidAmount'))
       return
     }
 
@@ -161,8 +172,8 @@ export function AccountsPage({ entity }: Props) {
     return (
       <EmptyState
         icon={<Wallet className="size-5" />}
-        title="No book selected"
-        body="Create or select a book first."
+        title={t('acct.noBookTitle')}
+        body={t('acct.noBookBody')}
       />
     )
   }
@@ -170,14 +181,14 @@ export function AccountsPage({ entity }: Props) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Chart"
-        title="Accounts"
-        description={`Chart of accounts for ${entity.name}`}
-        meta={`${counts.total} active`}
+        eyebrow={t('acct.eyebrow')}
+        title={t('acct.title')}
+        description={t('acct.description', { name: entity.name })}
+        meta={t('acct.meta', { count: counts.total })}
         actions={
           <Button onClick={() => setShowForm((v) => !v)}>
             <Plus className="size-4" />
-            {showForm ? 'Close' : 'Add account'}
+            {showForm ? t('acct.close') : t('acct.addAccount')}
           </Button>
         }
       />
@@ -186,27 +197,27 @@ export function AccountsPage({ entity }: Props) {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
-          label="Active accounts"
-          hint="In this book"
+          label={t('acct.activeAccounts')}
+          hint={t('acct.inThisBook')}
           value={String(counts.total)}
           icon={<Wallet className="size-4" />}
         />
         <MetricCard
-          label="Assets"
-          hint="Cash, bank, inventory"
+          label={t('acct.assets')}
+          hint={t('acct.assetsHint')}
           value={String(counts.assets)}
           icon={<Landmark className="size-4" />}
         />
         <MetricCard
-          label="Income"
-          hint="Revenue categories"
+          label={t('acct.income')}
+          hint={t('acct.incomeHint')}
           value={String(counts.income)}
           icon={<TrendingUp className="size-4" />}
           accent="success"
         />
         <MetricCard
-          label="Expenses"
-          hint="Spend categories"
+          label={t('acct.expenses')}
+          hint={t('acct.expensesHint')}
           value={String(counts.expense)}
           icon={<TrendingDown className="size-4" />}
           accent="danger"
@@ -216,44 +227,42 @@ export function AccountsPage({ entity }: Props) {
       {showForm ? (
         <Card padding="lg">
           <div className="mb-5">
-            <h3 className="text-sm font-semibold text-[var(--color-fg)]">New account</h3>
-            <p className="text-xs text-[var(--color-muted)]">
-              Code, name, and type — system accounts cannot be removed
-            </p>
+            <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t('acct.newAccount')}</h3>
+            <p className="text-xs text-[var(--color-muted)]">{t('acct.newAccountHint')}</p>
           </div>
           <form onSubmit={onCreate} className="grid gap-4 sm:grid-cols-3">
-            <Field label="Code">
+            <Field label={t('acct.code')}>
               <Input
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
-                placeholder="e.g. 5150"
+                placeholder={t('acct.codePlaceholder')}
                 className="tabular-nums"
                 required
               />
             </Field>
-            <Field label="Name">
+            <Field label={t('acct.name')}>
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Account name"
+                placeholder={t('acct.namePlaceholder')}
                 required
               />
             </Field>
-            <Field label="Type">
+            <Field label={t('acct.type')}>
               <Select
                 value={accountType}
                 onChange={(e) => setAccountType(e.target.value as AccountType)}
               >
-                {TYPES.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
+                {TYPES.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {t(opt.labelKey)}
                   </option>
                 ))}
               </Select>
             </Field>
             <div className="flex items-end sm:col-span-3">
               <Button type="submit" busy={busy}>
-                {busy ? 'Saving…' : 'Create account'}
+                {busy ? t('common.saving') : t('acct.createAccount')}
               </Button>
             </div>
           </form>
@@ -262,8 +271,12 @@ export function AccountsPage({ entity }: Props) {
 
       <Modal
         open={balanceAccount !== null}
-        title={balanceAccount ? `Set balance — ${balanceAccount.name}` : 'Set balance'}
-        description="State what the account actually holds; the difference is posted against Opening Balances"
+        title={
+          balanceAccount
+            ? t('acct.setBalanceNamed', { name: balanceAccount.name })
+            : t('acct.setBalance')
+        }
+        description={t('acct.setBalanceDesc')}
         maxWidth="max-w-md"
         onClose={() => {
           if (!balanceBusy) setBalanceAccount(null)
@@ -273,13 +286,13 @@ export function AccountsPage({ entity }: Props) {
           <ErrorBanner message={balanceError} className="mb-0" />
           {balanceCurrent !== null ? (
             <p className="text-sm text-[var(--color-muted)]">
-              Ledger balance today:{' '}
+              {t('acct.ledgerBalanceToday')}{' '}
               <span className="font-medium tabular-nums text-[var(--color-fg)]">
                 {formatMoney(balanceCurrent, entity.base_currency)}
               </span>
             </p>
           ) : null}
-          <Field label={`Actual balance (${entity.base_currency})`}>
+          <Field label={t('acct.actualBalance', { ccy: entity.base_currency })}>
             <Input
               inputMode="decimal"
               placeholder="2.500,00"
@@ -290,8 +303,13 @@ export function AccountsPage({ entity }: Props) {
               autoFocus
             />
           </Field>
-          <Field label="As of">
-            <DateInput value={balanceAsOf} onChange={setBalanceAsOf} required aria-label="Balance as of date" />
+          <Field label={t('acct.asOf')}>
+            <DateInput
+              value={balanceAsOf}
+              onChange={setBalanceAsOf}
+              required
+              aria-label={t('acct.balanceAsOf')}
+            />
           </Field>
           <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
             <Button
@@ -300,10 +318,10 @@ export function AccountsPage({ entity }: Props) {
               disabled={balanceBusy}
               onClick={() => setBalanceAccount(null)}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button type="submit" busy={balanceBusy}>
-              {balanceBusy ? 'Posting…' : 'Set balance'}
+              {balanceBusy ? t('acct.posting') : t('acct.setBalance')}
             </Button>
           </div>
         </form>
@@ -312,13 +330,13 @@ export function AccountsPage({ entity }: Props) {
       {accounts.length === 0 ? (
         <EmptyState
           icon={<Banknote className="size-5" />}
-          title="No accounts"
-          body="This entity has an empty chart of accounts."
+          title={t('acct.noAccountsTitle')}
+          body={t('acct.noAccountsBody')}
         />
       ) : (
         <Panel
-          title="Chart of accounts"
-          description="Active and archived accounts"
+          title={t('acct.chartTitle')}
+          description={t('acct.chartDesc')}
           icon={<Banknote className="size-4" />}
         >
           <ul className="divide-y divide-[var(--color-border)]">
@@ -343,13 +361,13 @@ export function AccountsPage({ entity }: Props) {
                       </span>
                       <span className="text-sm text-[var(--color-fg)]">{a.name}</span>
                       {a.is_system ? (
-                        <span className="text-xs text-[var(--color-muted)]">system</span>
+                        <span className="text-xs text-[var(--color-muted)]">{t('common.system')}</span>
                       ) : null}
                     </div>
                     <div className="text-xs text-[var(--color-muted)]">
-                      {meta.label}
+                      {t(meta.labelKey)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                      {a.is_active ? 'Active' : 'Inactive'}
+                      {a.is_active ? t('common.active') : t('common.inactive')}
                     </div>
                   </div>
                   {a.is_active &&
@@ -359,8 +377,8 @@ export function AccountsPage({ entity }: Props) {
                       size="icon"
                       className="h-8 w-8 shrink-0"
                       onClick={() => openBalance(a)}
-                      aria-label={`Set balance for ${a.name}`}
-                      title="Set balance"
+                      aria-label={t('acct.setBalanceAria', { name: a.name })}
+                      title={t('acct.setBalance')}
                     >
                       <Coins className="size-4" />
                     </Button>
@@ -371,8 +389,8 @@ export function AccountsPage({ entity }: Props) {
                       size="icon"
                       className="h-8 w-8 shrink-0"
                       onClick={() => void onArchive(a.id)}
-                      aria-label="Deactivate account"
-                      title="Deactivate"
+                      aria-label={t('acct.deactivateAria')}
+                      title={t('acct.deactivate')}
                     >
                       <CircleOff className="size-4" />
                     </Button>
