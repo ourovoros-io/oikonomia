@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal local-only capabilities for Oikonomia v1 (no network).",
+  "description": "Minimal local-only capabilities for Oikonomia v1 (no network). File I/O stays in Rust: native dialogs pick a path, and the vault lives in the app data dir. No fs plugin is exposed to the webview.",
   "windows": ["main", "quick-add"],
   "permissions": [
     "core:default",

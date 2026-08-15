@@ -15,20 +15,28 @@ import {
   isoDate,
   todayISO,
   type Account,
+  type CsvImportPreview,
+  type CsvColumnMapping,
   type DocumentMeta,
   type Entity,
+  type LastRoleAccounts,
   type PendingDocSource,
   type PostedEntryView,
+  type SimpleEntryInput,
 } from '../lib/api'
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { CsvMappingModal } from '../components/CsvMappingModal'
+import { CsvPreviewModal } from '../components/CsvPreviewModal'
 import { DateInput } from '../components/DateInput'
 import { DocumentDropZone } from '../components/DocumentDropZone'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { EntryDetailModal } from '../components/EntryDetailModal'
 import { Modal } from '../components/Modal'
+import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
+import { lastAccountsMapKey } from '../lib/simpleEntry'
 import {
   Button,
   EmptyState,
@@ -113,8 +121,17 @@ export function TransactionsPage({ entity }: Props) {
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [accountFilter, setAccountFilter] = useState('')
+  const [csvPreview, setCsvPreview] = useState<CsvImportPreview | null>(null)
+  const [csvStep, setCsvStep] = useState<'closed' | 'mapping' | 'preview'>('closed')
+  const [csvBusy, setCsvBusy] = useState<'import' | 'export' | 'post' | null>(null)
+  const [csvRoles, setCsvRoles] = useState<{
+    wallet_account_id: string | null
+    expense_account_id: string | null
+    income_account_id: string | null
+  } | null>(null)
   const prevEntityId = useRef<string | null>(null)
   const busyRef = useRef(false)
+  const csvBusyRef = useRef(false)
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
@@ -212,6 +229,133 @@ export function TransactionsPage({ entity }: Props) {
     }
   }
 
+  function closeCsvFlow() {
+    if (csvBusy === 'post' || csvBusy === 'import') return
+    setCsvStep('closed')
+    setCsvPreview(null)
+    setCsvRoles(null)
+  }
+
+  async function lastAccountsForCsv(): Promise<{
+    expenseLast?: LastRoleAccounts | null
+    incomeLast?: LastRoleAccounts | null
+  }> {
+    if (!entity) return {}
+    try {
+      const prefs = await api.getUiPrefs()
+      return {
+        expenseLast: prefs.last_accounts_by_entity_kind[lastAccountsMapKey(entity.id, 'expense')],
+        incomeLast: prefs.last_accounts_by_entity_kind[lastAccountsMapKey(entity.id, 'income')],
+      }
+    } catch {
+      return {}
+    }
+  }
+
+  async function onImportCsv() {
+    if (!entity) return
+    if (!beginExclusive(csvBusyRef)) return
+    setCsvBusy('import')
+    setError(null)
+    try {
+      const last = await lastAccountsForCsv()
+      const defaults = csvImportAccountDefaults({
+        accounts,
+        walletId,
+        categoryId,
+        kind,
+        expenseLast: last.expenseLast,
+        incomeLast: last.incomeLast,
+      })
+      const preview = await api.csvImportPreview({
+        entity_id: entity.id,
+        wallet_account_id: defaults.wallet_account_id,
+        expense_account_id: defaults.expense_account_id,
+        income_account_id: defaults.income_account_id,
+      })
+      if (!preview) return
+      setCsvRoles(defaults)
+      setCsvPreview(preview)
+      setCsvStep('mapping')
+    } catch (err) {
+      setError((err as CommandError).message)
+    } finally {
+      csvBusyRef.current = false
+      setCsvBusy(null)
+    }
+  }
+
+  async function onMappingContinue(mapping: CsvColumnMapping, unchanged: boolean) {
+    if (!entity || !csvPreview) return
+    if (
+      unchanged ||
+      !csvPreview.source ||
+      mappingsEqual(mapping, csvPreview.detected_mapping ?? {})
+    ) {
+      setCsvStep('preview')
+      return
+    }
+    if (!beginExclusive(csvBusyRef)) return
+    setCsvBusy('import')
+    setError(null)
+    try {
+      const preview = await api.csvImportPreview({
+        entity_id: entity.id,
+        path: csvPreview.source,
+        wallet_account_id: csvRoles?.wallet_account_id ?? null,
+        expense_account_id: csvRoles?.expense_account_id ?? null,
+        income_account_id: csvRoles?.income_account_id ?? null,
+        mapping,
+      })
+      if (!preview) return
+      setCsvPreview(preview)
+      setCsvStep('preview')
+    } catch (err) {
+      setError((err as CommandError).message)
+    } finally {
+      csvBusyRef.current = false
+      setCsvBusy(null)
+    }
+  }
+
+  async function onExportCsv() {
+    if (!entity) return
+    if (!beginExclusive(csvBusyRef)) return
+    setCsvBusy('export')
+    setError(null)
+    try {
+      await api.csvExportJournal(entity.id)
+    } catch (err) {
+      setError((err as CommandError).message)
+    } finally {
+      csvBusyRef.current = false
+      setCsvBusy(null)
+    }
+  }
+
+  async function onCsvPost(input: { rows: SimpleEntryInput[]; include_duplicates: boolean }) {
+    if (!beginExclusive(csvBusyRef)) return
+    setCsvBusy('post')
+    setError(null)
+    try {
+      await api.csvImportPost(input)
+      setCsvStep('closed')
+      setCsvPreview(null)
+      setCsvRoles(null)
+      await reload()
+    } catch (err) {
+      setError((err as CommandError).message)
+    } finally {
+      csvBusyRef.current = false
+      setCsvBusy(null)
+    }
+  }
+
+  function openNewEntry() {
+    applyKindDefaults(kind, accounts)
+    setShowForm(true)
+  }
+
   useEffect(() => {
     if (!entity) {
       setEntries([])
@@ -224,6 +368,9 @@ export function TransactionsPage({ entity }: Props) {
       prevEntityId.current = entity.id
       setDetailId(null)
       setViewerDocId(null)
+      setCsvStep('closed')
+      setCsvPreview(null)
+      setCsvRoles(null)
       // Clear the un-debounced fragment too, so it cannot filter the new
       // book 300 ms later.
       setSearch('')
@@ -373,6 +520,34 @@ export function TransactionsPage({ entity }: Props) {
 
   const ccy = entity.base_currency
 
+  const csvActions = (
+    <>
+      <Button
+        variant="secondary"
+        size="sm"
+        busy={csvBusy === 'import'}
+        disabled={csvBusy !== null && csvBusy !== 'import'}
+        onClick={() => void onImportCsv()}
+      >
+        Import CSV
+      </Button>
+      <Button
+        variant="secondary"
+        size="sm"
+        busy={csvBusy === 'export'}
+        disabled={csvBusy !== null && csvBusy !== 'export'}
+        onClick={() => void onExportCsv()}
+        title="Unencrypted accountant CSV"
+      >
+        Export CSV
+      </Button>
+      <Button size="sm" onClick={openNewEntry}>
+        <Plus className="size-3" />
+        New Entry
+      </Button>
+    </>
+  )
+
   /**
    * Map a posted entry's lines back onto the simple form and open it for
    * editing. Bills reopen as their expense/transfer equivalent — the journal
@@ -423,6 +598,26 @@ export function TransactionsPage({ entity }: Props) {
       />
 
       <ErrorBanner message={error} />
+
+      <CsvMappingModal
+        open={csvStep === 'mapping'}
+        preview={csvPreview}
+        busy={csvBusy === 'import'}
+        onClose={closeCsvFlow}
+        onContinue={(mapping, unchanged) => void onMappingContinue(mapping, unchanged)}
+      />
+
+      <CsvPreviewModal
+        open={csvStep === 'preview'}
+        preview={csvPreview}
+        currency={ccy}
+        walletAccounts={walletAccounts}
+        expenseAccounts={expenseAccounts}
+        incomeAccounts={incomeAccounts}
+        busy={csvBusy === 'post'}
+        onClose={closeCsvFlow}
+        onConfirm={(input) => void onCsvPost(input)}
+      />
 
       <ConfirmDialog
         open={voidId !== null}
@@ -764,34 +959,13 @@ export function TransactionsPage({ entity }: Props) {
           icon={<ArrowLeftRight className="size-5" />}
           title="No transactions yet"
           body="Use Expense for spending, Income for money in, and Bill for utilities or invoices you need to track."
-          action={
-            <Button
-              onClick={() => {
-                applyKindDefaults(kind, accounts)
-                setShowForm(true)
-              }}
-            >
-              <Plus className="size-3.5" />
-              New Entry
-            </Button>
-          }
+          action={<div className="flex flex-wrap items-center justify-center gap-2">{csvActions}</div>}
         />
       ) : (
         <Panel
           title="All entries"
           description={`${visibleEntries.length} posted · ${ccy}`}
-          actions={
-            <Button
-              size="sm"
-              onClick={() => {
-                applyKindDefaults(kind, accounts)
-                setShowForm(true)
-              }}
-            >
-              <Plus className="size-3" />
-              New Entry
-            </Button>
-          }
+          actions={csvActions}
         >
           <ul className="divide-y divide-[var(--color-border)]">
             {visibleEntries.map((view) => {

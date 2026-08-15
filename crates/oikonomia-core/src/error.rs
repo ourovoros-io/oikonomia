@@ -80,4 +80,8 @@ pub enum Error {
     /// Document analysis backend unavailable or failed.
     #[error("analysis failed: {0}")]
     Analysis(String),
+
+    /// Bank CSV or journal CSV could not be parsed.
+    #[error("{0}")]
+    CsvParse(String),
 }

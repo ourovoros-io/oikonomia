@@ -324,6 +324,47 @@ export const api = {
     dataBase64: string
   }) => call<DocumentMeta>('document_attach', input),
   documentExport: (documentId: string) => call<string | null>('document_export', { documentId }),
+
+  /**
+   * Parse a bank CSV into suggested simple entries. Does not post.
+   * Omit `path` so Rust shows a native Open dialog. Omit `mapping` to auto-detect.
+   * `null` = cancelled.
+   */
+  csvImportPreview: (input: {
+    entity_id: string
+    path?: string | null
+    wallet_account_id?: string | null
+    expense_account_id?: string | null
+    income_account_id?: string | null
+    mapping?: CsvColumnMapping | null
+  }) => {
+    const payload: {
+      entity_id: string
+      path?: string
+      wallet_account_id?: string | null
+      expense_account_id?: string | null
+      income_account_id?: string | null
+      mapping?: CsvColumnMapping
+    } = {
+      entity_id: input.entity_id,
+      wallet_account_id: input.wallet_account_id ?? null,
+      expense_account_id: input.expense_account_id ?? null,
+      income_account_id: input.income_account_id ?? null,
+    }
+    if (input.path) {
+      payload.path = input.path
+    }
+    if (input.mapping) {
+      payload.mapping = input.mapping
+    }
+    return call<CsvImportPreview | null>('csv_import_preview', { input: payload })
+  },
+  /** Post selected preview rows. Duplicates are skipped unless `include_duplicates`. */
+  csvImportPost: (input: { rows: SimpleEntryInput[]; include_duplicates?: boolean }) =>
+    call<CsvImportPostResult>('csv_import_post', { input }),
+  /** Native Save dialog. `null` = cancelled. Writes an unencrypted accountant CSV. */
+  csvExportJournal: (entityId: string) =>
+    call<string | null>('csv_export_journal', { entityId }),
 }
 
 export type AnalyzerStatus = {
@@ -369,6 +410,40 @@ export type DocumentContent = {
 export type PendingDocSource =
   | { kind: 'file'; file: File }
   | { kind: 'path'; path: string }
+
+/** Header-name mapping for one bank CSV. Values are header names (ASCII case-insensitive). */
+export type CsvColumnMapping = {
+  date?: string | null
+  description?: string | null
+  /** XOR debit+credit. */
+  amount?: string | null
+  debit?: string | null
+  credit?: string | null
+  reference?: string | null
+}
+
+/** Preview of a bank CSV. Does not write to the ledger. */
+export type CsvImportPreview = {
+  source: string
+  /** Present once Rust returns the header row (Map columns selects). */
+  headers?: string[]
+  /** Auto-detect pre-fill; present even when the caller passed `mapping`. */
+  detected_mapping?: CsvColumnMapping
+  rows: CsvImportPreviewRow[]
+}
+
+export type CsvImportPreviewRow = {
+  source_row: number
+  duplicate: boolean
+  error: string | null
+  suggested: SimpleEntryInput | null
+  signed_amount_minor: number | null
+}
+
+export type CsvImportPostResult = {
+  posted: PostedEntryView[]
+  skipped_duplicate_count: number
+}
 
 export { formatMoney, formatDate, isoDate, parseMajorToMinor, localeForCurrency } from './money'
 
