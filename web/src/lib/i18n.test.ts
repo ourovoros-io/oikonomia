@@ -1,18 +1,17 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import {
   LOCALE_STORAGE_KEY,
   applyLocale,
-  applyLocaleFromPrefs,
   flattenMessages,
   getLocale,
+  hydrateLocaleFromStorage,
   parseLocale,
   readCachedLocale,
   resetI18nForTests,
   setLocale,
   setLocaleMessagesForTests,
-  setLocalePersist,
   t,
 } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
@@ -93,34 +92,35 @@ describe('t fallback', () => {
 })
 
 describe('setLocale persist', () => {
-  test('writes optimistic cache and calls persist', () => {
-    const persist = vi.fn()
-    setLocalePersist(persist)
+  test('writes oikonomia.locale only', () => {
     setLocale('el')
     expect(getLocale()).toBe('el')
     expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('el')
-    expect(persist).toHaveBeenCalledWith('el')
   })
 
-  test('reload hydrates from UiPrefs, not the cache, as source of truth', () => {
+  test('reload hydrates from oikonomia.locale', () => {
     setLocale('el')
     expect(readCachedLocale()).toBe('el')
 
     resetI18nForTests()
     expect(getLocale()).toBe('en')
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'el')
 
-    applyLocaleFromPrefs({ locale: 'el' })
+    expect(hydrateLocaleFromStorage()).toBe('el')
     expect(getLocale()).toBe('el')
   })
 
-  test('invalid cached value becomes en', () => {
+  test('invalid stored value becomes en', () => {
     localStorage.setItem(LOCALE_STORAGE_KEY, 'de')
     expect(readCachedLocale()).toBe('en')
+    expect(hydrateLocaleFromStorage()).toBe('en')
   })
 
-  test('absent prefs.locale defaults to en', () => {
+  test('missing key defaults to en', () => {
     applyLocale('el')
-    applyLocaleFromPrefs({})
+    resetI18nForTests()
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBeNull()
+    expect(hydrateLocaleFromStorage()).toBe('en')
     expect(getLocale()).toBe('en')
   })
 })

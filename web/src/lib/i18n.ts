@@ -1,7 +1,7 @@
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
 
-/** Optimistic first-paint cache only. Durable store is UiPrefs.locale. */
+/** Web locale persist. Values are `en` | `el` only. No UiPrefs dual-write yet. */
 export const LOCALE_STORAGE_KEY = 'oikonomia.locale'
 
 export type Locale = 'en' | 'el'
@@ -296,7 +296,7 @@ export function t(key: string, vars?: TranslateVars): string {
   return interpolate(raw, vars)
 }
 
-/** Apply locale in memory + optimistic cache. Does not persist to UiPrefs. */
+/** Apply locale in memory and persist to `oikonomia.locale`. */
 export function applyLocale(locale: Locale): void {
   const next = parseLocale(locale)
   if (next === current) {
@@ -308,28 +308,16 @@ export function applyLocale(locale: Locale): void {
   notify()
 }
 
-/** Apply `prefs.locale` (absent/invalid → `en`). */
-export function applyLocaleFromPrefs(prefs: { locale?: unknown } | null | undefined): Locale {
-  const locale = parseLocale(prefs?.locale)
+/** Hydrate from localStorage. Missing or invalid → `en`. */
+export function hydrateLocaleFromStorage(): Locale {
+  const locale = readCachedLocale() ?? 'en'
   applyLocale(locale)
   return locale
 }
 
-type PersistFn = (locale: Locale) => void | Promise<void>
-let persistLocale: PersistFn | null = null
-
-/** Wire durable persist (UiPrefs / settings_set_locale). Tests inject a mock. */
-export function setLocalePersist(fn: PersistFn | null): void {
-  persistLocale = fn
-}
-
-/**
- * Programmatic locale change. Updates memory + optimistic cache, then persists
- * via the wired UiPrefs writer when one is configured.
- */
+/** Programmatic locale change. Writes `localStorage['oikonomia.locale']` only. */
 export function setLocale(locale: Locale): void {
   applyLocale(locale)
-  void persistLocale?.(locale)
 }
 
 /** Test-only catalog overlay. */
@@ -348,7 +336,6 @@ export function setLocaleMessagesForTests(
 export function resetI18nForTests(): void {
   current = 'en'
   testMessages = {}
-  persistLocale = null
   try {
     localStorage.removeItem(LOCALE_STORAGE_KEY)
   } catch {

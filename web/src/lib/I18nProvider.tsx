@@ -1,12 +1,8 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api } from './api'
 import {
-  applyLocale,
   getLocale,
-  parseLocale,
-  readCachedLocale,
+  hydrateLocaleFromStorage,
   setLocale as setLocaleAndPersist,
-  setLocalePersist,
   subscribeLocale,
   t as translate,
   type Locale,
@@ -22,53 +18,13 @@ type I18nContextValue = {
 const I18nContext = createContext<I18nContextValue | null>(null)
 
 /**
- * Hydrates locale from UiPrefs (`settings_get_locale` / `settings_get_ui_prefs`).
- * localStorage is first-paint cache only. The Settings language pill calls setLocale.
+ * Hydrates locale from `localStorage['oikonomia.locale']` (`en` | `el`).
+ * No UiPrefs / settings_*_locale dual-write yet. Unlock and Quick Add inherit.
  */
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(() => readCachedLocale() ?? getLocale())
+  const [locale, setLocaleState] = useState<Locale>(() => hydrateLocaleFromStorage())
 
-  useEffect(() => {
-    const cached = readCachedLocale()
-    if (cached) applyLocale(cached)
-    return subscribeLocale(() => setLocaleState(getLocale()))
-  }, [])
-
-  useEffect(() => {
-    setLocalePersist((next) => api.setLocale(next).catch(() => undefined))
-    return () => setLocalePersist(null)
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-
-    function applyFromPrefsOrCache(prefsLocale: unknown): void {
-      if (cancelled) return
-      if (prefsLocale === 'en' || prefsLocale === 'el') {
-        applyLocale(prefsLocale)
-        return
-      }
-      applyLocale(readCachedLocale() ?? 'en')
-    }
-
-    void api
-      .getLocale()
-      .then((next) => {
-        if (!cancelled) applyLocale(parseLocale(next))
-      })
-      .catch(() => {
-        if (cancelled) return
-        void api
-          .getUiPrefs()
-          .then((prefs) => applyFromPrefsOrCache(prefs.locale))
-          .catch(() => {
-            if (!cancelled) applyLocale(readCachedLocale() ?? 'en')
-          })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  useEffect(() => subscribeLocale(() => setLocaleState(getLocale())), [])
 
   const value = useMemo<I18nContextValue>(
     () => ({
