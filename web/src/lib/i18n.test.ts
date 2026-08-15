@@ -78,6 +78,7 @@ describe('Writer el catalog', () => {
     expect(t('dash.overview')).toBe('Επισκόπηση')
     expect(t('acct.addAccount')).toBe('Προσθήκη λογαριασμού')
     expect(t('rpt.title')).toBe('Αναφορές')
+    expect(t('rpt.pnl')).toBe('Αποτελέσματα')
     expect(t('docs.title')).toBe('Έγγραφα')
     expect(t('drop.title')).toBe('Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο')
     expect(t('tx.billStatus')).toBe('Κατάσταση λογαριασμού')
