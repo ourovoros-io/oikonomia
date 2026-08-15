@@ -15,6 +15,7 @@ import {
   setLocalePersist,
   t,
 } from './i18n'
+import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
 
 afterEach(() => {
@@ -102,6 +103,14 @@ describe('t fallback', () => {
   test('missing el key falls back to English or the key', () => {
     setLocale('el')
     expect(t('__missing.page.key__')).toBe('__missing.page.key__')
+  })
+
+  test('en.json key missing or empty in el.json falls back to English', () => {
+    setLocale('el')
+    expect(t('kind.other')).toBe(en['kind.other'])
+
+    setLocaleMessagesForTests('el', { 'kind.other': '   ' })
+    expect(t('kind.other')).toBe(en['kind.other'])
   })
 
   test('interpolates {name} placeholders in English', () => {
