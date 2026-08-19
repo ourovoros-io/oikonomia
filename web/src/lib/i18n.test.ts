@@ -49,10 +49,10 @@ describe('Writer el catalog', () => {
     expect(flat['accounts.add.label']).toBe('Προσθήκη λογαριασμού')
     expect(flat['tx.form.billStatus.label']).toBe('Κατάσταση λογαριασμού')
     expect(flat['tx.hidden.badge']).toBe('Κρυφή')
-    expect(flat['tx.form.hidden.label']).toBe('Κρυφή')
-    expect(flat['tx.form.hidden.hint']).toBe(
-      'Η εξαγωγή παραλείπει αυτή τη γραμμή. Το αντίγραφο ασφαλείας την περιλαμβάνει ακόμη.',
-    )
+    expect(flat['tx.form.hidden.label']).toBe('Απόκρυψη')
+    expect(flat['tx.form.hidden.hint']).toBe('Απόκρυψη από την εξαγωγή')
+    expect(flat['tx.list.meta.counts']).toBe('{posted} καταχωρισμένα · {hidden} κρυφά')
+    expect(flat['tx.export.whisper']).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές.')
     expect(flat['quickAdd.hidden.label']).toBe('Κρυφή')
     expect(flat['tx.hidden.action.hide']).toBe('Απόκρυψη')
     expect(flat['tx.hidden.action.show']).toBe('Εμφάνιση')
@@ -70,7 +70,7 @@ describe('Writer el catalog', () => {
     const writerKeys = Object.keys(flat).filter(
       (k) => !k.startsWith('settings.language.') && !k.startsWith('tx.csv.'),
     )
-    expect(writerKeys.length).toBe(551)
+    expect(writerKeys.length).toBe(553)
     expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
     expect(flat['tx.csv.kind.expense']).toBe('Έξοδα')
     expect(flat['tx.csv.kind.income']).toBe('Έσοδα')
@@ -103,7 +103,9 @@ describe('Writer el catalog', () => {
     expect(t('drop.title')).toBe('Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο')
     expect(t('tx.billStatus')).toBe('Κατάσταση λογαριασμού')
     expect(t('tx.hidden.badge')).toBe('Κρυφή')
-    expect(t('tx.form.hidden.label')).toBe('Κρυφή')
+    expect(t('tx.form.hidden.label')).toBe('Απόκρυψη')
+    expect(t('tx.form.hidden.hint')).toBe('Απόκρυψη από την εξαγωγή')
+    expect(t('tx.export.whisper')).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές.')
     expect(t('quickAdd.hidden.label')).toBe('Κρυφή')
     expect(t('tx.csv.import')).toBe('Εισαγωγή CSV')
     expect(t('tx.csv.kind.expense')).toBe('Έξοδα')
@@ -119,6 +121,7 @@ describe('Writer el catalog', () => {
       'Αποθηκεύτηκε Έξοδο €12.00',
     )
     expect(t('quickAdd.amount', { ccy: 'EUR' })).toBe('Ποσό (EUR)')
+    expect(t('tx.list.meta.counts', { posted: 24, hidden: 1 })).toBe('24 καταχωρισμένα · 1 κρυφά')
     expect(t('settings.deleteEntityBody', { name: 'Personal' })).toContain('Personal')
   })
 })

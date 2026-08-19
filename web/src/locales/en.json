@@ -266,8 +266,10 @@
   "tx.hidden.action.show": "Show",
   "tx.hidden.aria.hide": "Hide from export",
   "tx.hidden.aria.show": "Show in export",
-  "tx.form.hidden.label": "Hidden",
-  "tx.form.hidden.hint": "Export skips this line. Backup still includes it.",
+  "tx.form.hidden.label": "Hide",
+  "tx.form.hidden.hint": "Hidden from export",
+  "tx.list.meta.counts": "{posted} posted · {hidden} hidden",
+  "tx.export.whisper": "Export omits hidden rows.",
   "tx.export.empty.hidden": "Nothing to export. Every line is hidden.",
 
   "tx.csv.import": "Import CSV",
