@@ -30,6 +30,7 @@ import {
 } from '../lib/quickAddWindow'
 import { isTauri, type CommandError } from '../lib/tauri'
 import { beginExclusive } from '../lib/guards'
+import { HideFromExportControl } from '../components/hiddenUi'
 import { Button } from '../components/ui'
 import { cn } from '../lib/cn'
 import {
@@ -200,6 +201,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   const [fromId, setFromId] = useState('')
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
+  const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const [pendingDoc, setPendingDoc] = useState<PendingDocSource | null>(null)
@@ -604,25 +606,26 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         fromId,
         toId,
       })
-      if (pendingDoc?.kind === 'file') {
-        const dataBase64 = await fileToBase64(pendingDoc.file)
-        await api.entryPostSimpleWithDocument(
-          input,
-          {
-            filename: pendingDoc.file.name,
-            mimeType: pendingDoc.file.type || mimeFromName(pendingDoc.file.name),
-            dataBase64,
-          },
-          pendingAnalysis ?? undefined,
-        )
-      } else if (pendingDoc?.kind === 'path') {
-        await api.entryPostSimpleWithDocumentPath(
-          input,
-          pendingDoc.path,
-          pendingAnalysis ?? undefined,
-        )
-      } else {
-        await api.entryPostSimple(input)
+      const posted =
+        pendingDoc?.kind === 'file'
+          ? await api.entryPostSimpleWithDocument(
+              input,
+              {
+                filename: pendingDoc.file.name,
+                mimeType: pendingDoc.file.type || mimeFromName(pendingDoc.file.name),
+                dataBase64: await fileToBase64(pendingDoc.file),
+              },
+              pendingAnalysis ?? undefined,
+            )
+          : pendingDoc?.kind === 'path'
+            ? await api.entryPostSimpleWithDocumentPath(
+                input,
+                pendingDoc.path,
+                pendingAnalysis ?? undefined,
+              )
+            : await api.entryPostSimple(input)
+      if (hidden) {
+        await api.entrySetHidden(posted.entry.id, true)
       }
       const roles: LastRoleAccounts = {
         category_account_id: categoryId || null,
@@ -648,6 +651,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         // ignore pref write failures
       }
       clearDocumentReview()
+      setHidden(false)
       setBusy(false)
       busyRef.current = false
       onBusyChange?.(false)
@@ -980,6 +984,12 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 </span>
               )}
             </div>
+            <HideFromExportControl
+              compact
+              checked={hidden}
+              disabled={formDisabled}
+              onChange={setHidden}
+            />
             <div className="flex h-7 min-w-0 items-center justify-end gap-1">
               <button
                 type="button"
