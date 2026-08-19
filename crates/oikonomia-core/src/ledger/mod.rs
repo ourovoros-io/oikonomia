@@ -20,7 +20,8 @@ pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{
     CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine,
     SimpleBillStatus, SimpleEntryKind, VoidResult, account_register, get_entry, list_entries,
-    post_entry, post_simple_entry, replace_simple_entry, set_account_opening_balance, void_entry,
+    post_entry, post_simple_entry, replace_simple_entry, set_account_opening_balance,
+    set_entry_hidden, void_entry,
 };
 pub use reports::{
     BalanceSheet, BalanceSheetSection, DashboardSummary, PnL, ReportLine, TrialBalance,

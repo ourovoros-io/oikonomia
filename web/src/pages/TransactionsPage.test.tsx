@@ -125,6 +125,7 @@ const postedEntry: PostedEntryView = {
     description: 'Alpha supermarket',
     reference: null,
     status: 'posted',
+    hidden: false,
   },
   lines: [
     {

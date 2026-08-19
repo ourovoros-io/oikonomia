@@ -22,7 +22,7 @@ fn setup_vault() -> (TempDir, Vault) {
 fn v5_rejects_double_sided_journal_line() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
-    assert_eq!(CURRENT_SCHEMA_VERSION, 5);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 6);
 
     let entity = create_entity(
         conn,
@@ -82,10 +82,12 @@ fn v5_rejects_double_sided_journal_line() {
 fn v5_migrates_existing_balanced_lines() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
+    conn.execute("ALTER TABLE journal_entries DROP COLUMN hidden", [])
+        .expect("pre-v6 shape");
     conn.execute("UPDATE vault_meta SET schema_version = 4 WHERE id = 1", [])
         .expect("downgrade version");
 
-    migrate(conn).expect("v4 -> v5");
+    migrate(conn).expect("v4 -> current");
     let version: i64 = conn
         .query_row(
             "SELECT schema_version FROM vault_meta WHERE id = 1",
@@ -93,7 +95,7 @@ fn v5_migrates_existing_balanced_lines() {
             |r| r.get(0),
         )
         .expect("version");
-    assert_eq!(version, 5);
+    assert_eq!(version, CURRENT_SCHEMA_VERSION);
 }
 
 #[test]

@@ -10,7 +10,7 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts,
-    list_entries, post_simple_entry, void_entry,
+    list_entries, post_simple_entry, set_entry_hidden, void_entry,
 };
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -273,6 +273,56 @@ fn export_round_trips_posted_lines_and_marks_voided() {
             l.description.starts_with("VOID:") && l.status == JournalCsvStatus::Voided
         }),
         "void reverse: {lines:?}"
+    );
+}
+
+#[test]
+fn export_omits_hidden_rows_until_unhidden() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+
+    let grocery = PostSimpleEntry {
+        entity_id,
+        kind: SimpleEntryKind::Expense,
+        bill_status: None,
+        entry_date: "2026-03-15".into(),
+        description: "Groceries".into(),
+        reference: None,
+        amount_minor: 2_500,
+        category_account_id: Some(acc.food),
+        wallet_account_id: Some(acc.checking),
+        payable_account_id: None,
+        from_account_id: None,
+        to_account_id: None,
+    };
+    let view = post_simple_entry(conn, &grocery).expect("post");
+    set_entry_hidden(conn, view.entry.id, true).expect("hide");
+
+    let hidden_csv = export_journal_csv(conn, entity_id).expect("export hidden");
+    let hidden_lines = parse_journal_export(&hidden_csv).expect("parse hidden");
+    assert!(
+        hidden_lines
+            .iter()
+            .all(|line| line.description != "Groceries"),
+        "hidden omitted: {hidden_lines:?}"
+    );
+    let still_listed = list_entries(conn, entity_id, &EntryFilter::default()).expect("list");
+    assert!(
+        still_listed
+            .iter()
+            .any(|v| v.entry.id == view.entry.id && v.entry.hidden),
+        "list still returns hidden after export"
+    );
+
+    set_entry_hidden(conn, view.entry.id, false).expect("unhide");
+    let shown_csv = export_journal_csv(conn, entity_id).expect("export shown");
+    let shown_lines = parse_journal_export(&shown_csv).expect("parse shown");
+    assert!(
+        shown_lines
+            .iter()
+            .any(|line| line.description == "Groceries"),
+        "unhidden exported: {shown_lines:?}"
     );
 }
 

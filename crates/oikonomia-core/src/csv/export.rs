@@ -83,6 +83,9 @@ fn sanitize_file_stem(name: &str) -> String {
 /// `debit_minor`, `credit_minor`, `status`. Amounts are **integer minor units**,
 /// never floating point. `status` is `posted` or `voided`.
 ///
+/// Hidden entries are omitted. Voided-but-visible rows still export;
+/// hidden-and-voided do not. There is no "include hidden" switch in v1.
+///
 /// # Errors
 ///
 /// Unknown entity or database failures.
@@ -108,6 +111,7 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             JOIN accounts a ON a.id = jl.account_id
             WHERE je.entity_id = ?1
               AND je.status = 'posted'
+              AND (je.hidden = 0 OR je.hidden IS NULL)
             ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
             ",
         )

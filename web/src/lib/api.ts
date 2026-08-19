@@ -42,6 +42,7 @@ export type JournalEntry = {
   description: string
   reference: string | null
   status: 'draft' | 'posted'
+  hidden: boolean
 }
 
 export type PostedEntryView = {
@@ -262,6 +263,9 @@ export const api = {
       analysisJson: analysisJson ?? null,
     }),
   entryVoid: (id: string) => call<{ original_id: string; reverse_id: string }>('entry_void', { id }),
+  /** Owner-only hidden flag. Hidden rows stay in list/get; CSV export omits them. */
+  entrySetHidden: (id: string, hidden: boolean) =>
+    call<PostedEntryView>('entry_set_hidden', { id, hidden }),
   /** Edit = void + repost in one transaction; documents follow the new entry. */
   entryReplaceSimple: (originalId: string, input: SimpleEntryInput) =>
     call<PostedEntryView>('entry_replace_simple', { originalId, input }),
