@@ -34,6 +34,7 @@ import { DateInput } from '../components/DateInput'
 import { DocumentDropZone } from '../components/DocumentDropZone'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { EntryDetailModal } from '../components/EntryDetailModal'
+import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
 import { lastAccountsMapKey } from '../lib/simpleEntry'
@@ -139,6 +140,14 @@ export function TransactionsPage({ entity }: Props) {
 
   /** Hide voided pairs; the backend marks both sides via is_voided. */
   const visibleEntries = useMemo(() => entries.filter((e) => !e.is_voided), [entries])
+  const postedCount = useMemo(
+    () => visibleEntries.filter((e) => !e.entry.hidden).length,
+    [visibleEntries],
+  )
+  const hiddenCount = useMemo(
+    () => visibleEntries.filter((e) => e.entry.hidden).length,
+    [visibleEntries],
+  )
 
   // Debounce typing so each keystroke doesn't hit SQLite.
   useEffect(() => {
@@ -965,7 +974,8 @@ export function TransactionsPage({ entity }: Props) {
       ) : (
         <Panel
           title={t('tx.allEntries')}
-          description={t('tx.allEntriesDesc', { count: visibleEntries.length, ccy })}
+          description={`${t('tx.list.meta.counts', { posted: postedCount, hidden: hiddenCount })} · ${ccy}`}
+          whisper={t('tx.export.whisper')}
           actions={csvActions}
         >
           <ul className="divide-y divide-[var(--color-border)]">
@@ -1006,8 +1016,11 @@ export function TransactionsPage({ entity }: Props) {
                   {/* Keyboard path: activating this button bubbles its click
                       to the row handler above — no duplicate handler. */}
                   <button type="button" className="min-w-0 flex-1 text-left">
-                    <div className="truncate text-sm font-medium text-[var(--color-fg)]">
-                      {view.entry.description}
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="truncate text-sm font-medium text-[var(--color-fg)]">
+                        {view.entry.description}
+                      </span>
+                      {view.entry.hidden ? <HiddenBadge /> : null}
                     </div>
                     <div className="truncate text-xs text-[var(--color-muted)]">
                       {formatDate(view.entry.entry_date)}
