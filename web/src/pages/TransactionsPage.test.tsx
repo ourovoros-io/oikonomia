@@ -23,6 +23,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       csvImportPreview: vi.fn(),
       csvImportPost: vi.fn(),
       csvExportJournal: vi.fn(),
+      entrySetHidden: vi.fn(),
     },
   }
 })
@@ -164,6 +165,10 @@ beforeEach(() => {
     skipped_duplicate_count: 0,
   })
   vi.mocked(api.csvExportJournal).mockReset().mockResolvedValue('/tmp/journal.csv')
+  vi.mocked(api.entrySetHidden).mockReset().mockImplementation(async (id, hidden) => ({
+    ...postedEntry,
+    entry: { ...postedEntry.entry, id, hidden },
+  }))
 })
 
 async function renderReady() {
@@ -213,7 +218,7 @@ describe('TransactionsPage CSV toolbar', () => {
     ])
     await renderReady()
     expect(screen.queryByText('Nothing to export. Every line is hidden.')).toBeNull()
-    expect(screen.queryByText('Hidden')).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: /include hidden/i })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Export CSV' }))
     await waitFor(() => {
       expect(api.csvExportJournal).toHaveBeenCalledWith('e1')
@@ -241,6 +246,50 @@ describe('TransactionsPage CSV toolbar', () => {
     expect(screen.queryByRole('dialog', { name: 'Map CSV columns' })).toBeNull()
     expect(screen.queryByRole('dialog', { name: 'Preview import' })).toBeNull()
     expect(api.csvImportPost).not.toHaveBeenCalled()
+  })
+})
+
+describe('TransactionsPage hidden paint', () => {
+  const hiddenEntry: PostedEntryView = {
+    ...postedEntry,
+    entry: { ...postedEntry.entry, id: 'j2', description: 'ATM cash', hidden: true },
+  }
+
+  test('list shows Hidden pill, posted/hidden counts, and export whisper', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([postedEntry, hiddenEntry])
+    await renderReady()
+    expect(screen.getByText('1 posted · 1 hidden · EUR')).toBeTruthy()
+    expect(screen.getByText('Export omits hidden rows.')).toBeTruthy()
+    expect(screen.getByText('Hidden')).toBeTruthy()
+    expect(screen.getByText('ATM cash')).toBeTruthy()
+    expect(screen.queryByRole('checkbox', { name: /include hidden/i })).toBeNull()
+    expect(screen.queryByText('Hide from export')).toBeNull()
+  })
+
+  test('EL list badge is Κρυφή', async () => {
+    const { setLocale } = await import('../lib/i18n')
+    setLocale('el')
+    vi.mocked(api.entryList).mockResolvedValue([hiddenEntry])
+    render(<TransactionsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getByText('Κρυφή')).toBeTruthy()
+    })
+    expect(screen.getByText('0 καταχωρισμένα · 1 κρυφά · EUR')).toBeTruthy()
+    expect(screen.getByText('Η εξαγωγή παραλείπει τις κρυφές γραμμές.')).toBeTruthy()
+  })
+
+  test('detail Hide checkbox calls entry_set_hidden', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByText('Alpha supermarket'))
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox', { name: /hide/i })).toBeTruthy()
+    })
+    expect(screen.getByText('Hidden from export')).toBeTruthy()
+    expect(screen.queryByRole('radio', { name: /hide/i })).toBeNull()
+    await userEvent.click(screen.getByRole('checkbox', { name: /hide/i }))
+    await waitFor(() => {
+      expect(api.entrySetHidden).toHaveBeenCalledWith('j1', true)
+    })
   })
 })
 
