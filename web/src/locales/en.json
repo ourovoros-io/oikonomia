@@ -198,6 +198,7 @@
   "quickAdd.pickWallet": "Pick wallet",
   "quickAdd.pickPayable": "Pick payable",
   "quickAdd.pickDifferentAccounts": "Pick different accounts",
+  "quickAdd.hidden.label": "Hidden",
 
   "tx.eyebrow": "Ledger",
   "tx.title": "Transactions",
@@ -260,6 +261,14 @@
   "tx.docWillStore": "Document will be stored encrypted when you save",
   "tx.docSuggested": " · suggested {amount}",
   "tx.docReview": ". Review fields, then save.",
+  "tx.hidden.badge": "Hidden",
+  "tx.hidden.action.hide": "Hide",
+  "tx.hidden.action.show": "Show",
+  "tx.hidden.aria.hide": "Hide from export",
+  "tx.hidden.aria.show": "Show in export",
+  "tx.form.hidden.label": "Hidden",
+  "tx.form.hidden.hint": "Export skips this line. Backup still includes it.",
+  "tx.export.empty.hidden": "Nothing to export. Every line is hidden.",
 
   "tx.csv.import": "Import CSV",
   "tx.csv.export": "Export CSV",
