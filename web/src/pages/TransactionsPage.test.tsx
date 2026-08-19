@@ -187,6 +187,48 @@ describe('TransactionsPage CSV toolbar', () => {
     await waitFor(() => {
       expect(api.csvExportJournal).toHaveBeenCalledWith('e1')
     })
+    expect(api.csvExportJournal).toHaveBeenCalledTimes(1)
+    expect(api.csvExportJournal.mock.calls[0]).toEqual(['e1'])
+  })
+
+  test('export uses the journal path with no include-hidden toggle', async () => {
+    await renderReady()
+    expect(screen.queryByRole('checkbox', { name: /include hidden/i })).toBeNull()
+    expect(screen.queryByRole('switch', { name: /hidden/i })).toBeNull()
+    expect(screen.queryByText('Hide from export')).toBeNull()
+    expect(screen.queryByText('Show in export')).toBeNull()
+    expect(screen.queryByText('Nothing to export. Every line is hidden.')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Export CSV' }))
+    await waitFor(() => {
+      expect(api.csvExportJournal).toHaveBeenCalledWith('e1')
+    })
+  })
+
+  test('all-hidden list still uses native journal export (no web empty handler)', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([
+      {
+        ...postedEntry,
+        entry: { ...postedEntry.entry, hidden: true },
+      },
+    ])
+    await renderReady()
+    expect(screen.queryByText('Nothing to export. Every line is hidden.')).toBeNull()
+    expect(screen.queryByText('Hidden')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Export CSV' }))
+    await waitFor(() => {
+      expect(api.csvExportJournal).toHaveBeenCalledWith('e1')
+    })
+  })
+
+  test('New Entry form has no Hidden checkbox (HOLD paint)', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'New entry' })).toBeTruthy()
+    })
+    expect(screen.queryByRole('checkbox', { name: /hidden/i })).toBeNull()
+    expect(screen.queryByText('Export skips this line. Backup still includes it.')).toBeNull()
+    expect(screen.queryByText('Hide from export')).toBeNull()
   })
 
   test('cancelled import does not open mapping or preview', async () => {

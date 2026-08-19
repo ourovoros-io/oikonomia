@@ -51,6 +51,21 @@ async function expandVaultBackup() {
   await userEvent.click(screen.getByRole('button', { name: /vault backup/i }))
 }
 
+describe('SettingsPage hidden chrome HOLD', () => {
+  test('Settings has no Hidden export control', () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    expect(screen.queryByText('Hidden')).toBeNull()
+    expect(screen.queryByText('Hide from export')).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: /hidden/i })).toBeNull()
+  })
+})
+
 describe('SettingsPage vault backup', () => {
   test('disables Backup vault when there are no entities', async () => {
     render(
