@@ -460,7 +460,7 @@ export function SettingsPage({
       >
         <div className="space-y-4">
           {license?.state === 'trial' && license.days_remaining != null ? (
-            <div className="inline-flex items-center rounded-full bg-[var(--color-accent)] px-3 py-1 text-sm font-medium text-white">
+            <div className="inline-flex items-center rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-sm font-medium text-[var(--color-accent)]">
               {t('settings.trial.banner.active', { n: license.days_remaining })}
             </div>
           ) : null}
@@ -472,7 +472,7 @@ export function SettingsPage({
             </div>
           ) : null}
           {license?.state === 'expired' ? (
-            <div className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-3 py-1 text-sm font-medium text-[var(--color-fg)]">
+            <div className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-3 py-1 text-sm font-medium text-[var(--color-warning)]">
               {licenseExpiredBanner(license)}
             </div>
           ) : null}
