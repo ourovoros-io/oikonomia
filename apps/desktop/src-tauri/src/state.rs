@@ -162,7 +162,7 @@ pub fn lock_vault(vault: &Mutex<Vault>) -> std::sync::MutexGuard<'_, Vault> {
 /// Pure predicate for the idle watchdog. Tests cover the four launch cases
 /// without sleeping the 5s loop or constructing an `AppHandle`.
 #[must_use]
-pub const fn should_auto_lock(idle_secs: u64, timeout_secs: u64, status: VaultStatus) -> bool {
+pub fn should_auto_lock(idle_secs: u64, timeout_secs: u64, status: VaultStatus) -> bool {
     status == VaultStatus::Unlocked && idle_secs >= timeout_secs
 }
 
@@ -171,7 +171,7 @@ pub const fn should_auto_lock(idle_secs: u64, timeout_secs: u64, status: VaultSt
 /// Emit needs `AppHandle`; this returns the decision so tests can assert the
 /// emit path without the Tauri runtime.
 #[must_use]
-pub const fn should_emit_vault_locked(did_lock: bool) -> bool {
+pub fn should_emit_vault_locked(did_lock: bool) -> bool {
     did_lock
 }
 
