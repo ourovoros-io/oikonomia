@@ -1,0 +1,317 @@
+# Release desktop builds (skeleton — not go-live).
+#
+# Trigger: version tags `v*` (e.g. v0.1.0). Optional workflow_dispatch with
+# dry_run still requires the GitHub Environment named `release` and never
+# runs on pull_request. Ordinary PR CI stays in ci.yml (secret-free).
+#
+# YAML cannot create Environments. Owner must create `release` in
+# GitHub → Settings → Environments, add required reviewers, then add
+# secrets after Apple Developer + Windows cloud-HSM accounts exist.
+#
+# ---------------------------------------------------------------------------
+# Environment `release` secret *names* (values go in the GitHub UI only)
+# ---------------------------------------------------------------------------
+#
+# Apple — Developer ID Application (outside the App Store) + notarytool via
+# an App Store Connect Team API key. Official Tauri v2 env names:
+# https://v2.tauri.app/reference/environment-variables/
+# https://v2.tauri.app/distribute/sign/macos/
+#
+#   APPLE_CERTIFICATE           base64 of the Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD  password for that .p12
+#   APPLE_SIGNING_IDENTITY      e.g. Developer ID Application: Name (TEAMID)
+#   APPLE_TEAM_ID               10-character Apple Team ID
+#   APPLE_API_ISSUER            App Store Connect Issuer ID (UUID)
+#   APPLE_API_KEY               App Store Connect Key ID (Tauri name; NOT the .p8 body)
+#   APPLE_API_KEY_ID            same Key ID (accepted alias if APPLE_API_KEY is unset)
+#   APPLE_API_KEY_P8            contents of AuthKey_<id>.p8; written to a runner
+#                               file and exposed as APPLE_API_KEY_PATH (never commit)
+#
+# Windows — Authenticode via cloud HSM only (no Microsoft Store). Provide a
+# complete SSL.com eSigner set *or* a complete DigiCert KeyLocker set.
+# Do not store a raw Authenticode .pfx. Not Azure Trusted Signing.
+#
+#   SSL.com eSigner (CodeSignTool):
+#     ES_USERNAME
+#     ES_PASSWORD
+#     ES_TOTP_SECRET
+#     ES_CREDENTIAL_ID
+#
+#   DigiCert Software Trust Manager / KeyLocker (smctl):
+#     SM_HOST
+#     SM_API_KEY
+#     SM_CLIENT_CERT_FILE_B64   auth client cert (not the code-signing private key)
+#     SM_CLIENT_CERT_PASSWORD
+#     SM_KEYPAIR_ALIAS          KeyLocker keypair / cert alias used at go-live
+#
+# Linux — no paid signing account; unsigned .deb + .AppImage.
+#
+# ---------------------------------------------------------------------------
+# NEVER store in GitHub (repo, Actions secrets, or this Environment)
+# ---------------------------------------------------------------------------
+#
+#   - license signing private key (mint on a host you control only)
+#   - Paddle API keys / webhook secrets
+#   - any buyer PII
+#   - Tauri updater signing private key (no in-app updater)
+#   - a raw Authenticode .pfx of the Windows code-signing private key
+#
+# Day-one updates are a manual download from the GitHub Release. This
+# workflow does not emit updater JSON, latest.json, or any phone-home.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build without attaching a GitHub Release (still uses the release environment)
+        type: boolean
+        default: false
+
+# Attach binaries to the tag's GitHub Release. Not used on pull_request.
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Empty on dry_run or non-tag runs: tauri-action then skips Release upload.
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && inputs.dry_run != true && github.ref_name || '' }}
+
+jobs:
+  macos:
+    name: macos
+    runs-on: macos-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require Apple signing and notarytool secrets (fail-closed)
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          missing=()
+          [ -z "${APPLE_CERTIFICATE}" ] && missing+=(APPLE_CERTIFICATE)
+          [ -z "${APPLE_CERTIFICATE_PASSWORD}" ] && missing+=(APPLE_CERTIFICATE_PASSWORD)
+          [ -z "${APPLE_SIGNING_IDENTITY}" ] && missing+=(APPLE_SIGNING_IDENTITY)
+          [ -z "${APPLE_TEAM_ID}" ] && missing+=(APPLE_TEAM_ID)
+          [ -z "${APPLE_API_ISSUER}" ] && missing+=(APPLE_API_ISSUER)
+          [ -z "${APPLE_API_KEY}" ] && [ -z "${APPLE_API_KEY_ID}" ] && missing+=("APPLE_API_KEY or APPLE_API_KEY_ID")
+          [ -z "${APPLE_API_KEY_P8}" ] && missing+=(APPLE_API_KEY_P8)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required release environment secrets: ${missing[*]}"
+            echo "Refusing to publish an unsigned macOS build as if it were signed."
+            echo "Add the Apple secret names listed at the top of this workflow to Environment 'release'."
+            exit 1
+          fi
+
+      # Tauri reads APPLE_API_KEY as the Key ID and APPLE_API_KEY_PATH as the .p8 file.
+      - name: Materialize App Store Connect API key on the runner
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          key_id="${APPLE_API_KEY_ID:-${APPLE_API_KEY}}"
+          key_dir="${RUNNER_TEMP}/private_keys"
+          mkdir -p "${key_dir}"
+          key_path="${key_dir}/AuthKey_${key_id}.p8"
+          umask 077
+          printf '%s\n' "${APPLE_API_KEY_P8}" > "${key_path}"
+          echo "APPLE_API_KEY=${key_id}" >> "${GITHUB_ENV}"
+          echo "APPLE_API_KEY_PATH=${key_path}" >> "${GITHUB_ENV}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Official Tauri v2 action. projectPath is the crate that owns tauri.conf.json.
+      # beforeBuildCommand already runs `npm run build` in web/ (no web/dist placeholder).
+      # Signing/notarization use the env vars below when secrets exist; this job
+      # never reaches here if they are missing.
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ env.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+        with:
+          projectPath: apps/desktop/src-tauri
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_TAG && format('Oikonomia {0}', env.RELEASE_TAG) || '' }}
+          releaseBody: Manual download from this GitHub Release. No in-app updater.
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          uploadWorkflowArtifacts: true
+
+  windows:
+    name: windows
+    runs-on: windows-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require Windows cloud-HSM secrets (fail-closed)
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ secrets.SM_KEYPAIR_ALIAS }}
+        shell: pwsh
+        run: |
+          function Test-Secret([string]$Name) {
+            -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))
+          }
+          $esigner = (Test-Secret 'ES_USERNAME') -and (Test-Secret 'ES_PASSWORD') -and (Test-Secret 'ES_TOTP_SECRET') -and (Test-Secret 'ES_CREDENTIAL_ID')
+          $keylocker = (Test-Secret 'SM_HOST') -and (Test-Secret 'SM_API_KEY') -and (Test-Secret 'SM_CLIENT_CERT_FILE_B64') -and (Test-Secret 'SM_CLIENT_CERT_PASSWORD') -and (Test-Secret 'SM_KEYPAIR_ALIAS')
+          if (-not $esigner -and -not $keylocker) {
+            Write-Host '::error::Missing a complete Windows cloud-HSM secret set.'
+            Write-Host 'Need SSL.com eSigner (ES_USERNAME, ES_PASSWORD, ES_TOTP_SECRET, ES_CREDENTIAL_ID)'
+            Write-Host 'or DigiCert KeyLocker (SM_HOST, SM_API_KEY, SM_CLIENT_CERT_FILE_B64, SM_CLIENT_CERT_PASSWORD, SM_KEYPAIR_ALIAS).'
+            Write-Host 'Refusing to publish an unsigned Windows build as if it were signed.'
+            Write-Host 'Do not store a raw Authenticode .pfx. Not Azure Trusted Signing.'
+            exit 1
+          }
+
+      # Placeholder only. Live CodeSignTool / smctl is not invoked in this PR.
+      # signCommand is applied via a runner-local Tauri config overlay so
+      # tauri.conf.json is unchanged. If this script is reached, it still
+      # refuses so an unsigned .exe/.msi is never attached as signed.
+      - name: Write Tauri Windows signCommand overlay (placeholder)
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\windows-cloud-hsm-sign.ps1'
+          $command = 'pwsh -NoProfile -File "' + $script + '" %1'
+          $overlay = @{ bundle = @{ windows = @{ signCommand = $command } } }
+          $path = Join-Path $env:RUNNER_TEMP 'tauri-windows-sign.json'
+          $overlay | ConvertTo-Json -Depth 6 | Set-Content -Path $path -Encoding utf8
+          "TAURI_WINDOWS_SIGN_CONFIG=$path" | Add-Content $env:GITHUB_ENV
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
+          SM_HOST: ${{ secrets.SM_HOST }}
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_KEYPAIR_ALIAS: ${{ secrets.SM_KEYPAIR_ALIAS }}
+        with:
+          projectPath: apps/desktop/src-tauri
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_TAG && format('Oikonomia {0}', env.RELEASE_TAG) || '' }}
+          releaseBody: Manual download from this GitHub Release. No in-app updater.
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          uploadWorkflowArtifacts: true
+          args: --config ${{ env.TAURI_WINDOWS_SIGN_CONFIG }}
+
+  linux:
+    name: linux
+    runs-on: ubuntu-22.04
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same Debian packages as ci.yml, plus patchelf/xdg-utils/libfuse2 for
+      # Tauri's default Linux bundles (.deb + AppImage). perl is required by
+      # the vendored OpenSSL build from rusqlite's sqlcipher feature.
+      - name: Install Tauri v2 Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            perl \
+            patchelf \
+            xdg-utils \
+            libfuse2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop/src-tauri
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_TAG && format('Oikonomia {0}', env.RELEASE_TAG) || '' }}
+          releaseBody: Manual download from this GitHub Release. No in-app updater.
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+          uploadWorkflowArtifacts: true
+          args: --bundles deb,appimage
