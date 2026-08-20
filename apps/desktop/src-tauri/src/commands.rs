@@ -931,7 +931,7 @@ pub async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandRes
 /// Set auto-lock timeout seconds.
 #[tauri::command]
 pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         set_lock_timeout_secs(conn, secs)
     })

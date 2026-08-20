@@ -8,8 +8,8 @@ use oikonomia_core::documents::{attach_document, delete_document, get_document, 
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts,
-    list_entries, post_simple_entry,
+    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity,
+    get_lock_timeout_secs, list_accounts, list_entries, post_simple_entry, set_lock_timeout_secs,
 };
 use oikonomia_core::license::{
     LicenseState, LicenseVerifier, PRODUCT, install_license, license_status, record_trial_start,
@@ -254,5 +254,77 @@ fn expired_license_rejects_document_attach_and_delete_but_allows_export() {
         std::fs::read(&export_path).expect("exported bytes"),
         b"keep-me",
         "document export stays allowed while expired"
+    );
+}
+
+#[test]
+fn expired_license_does_not_mutate_lock_timeout() {
+    let (dir, vault, keys) = setup();
+    let conn = vault.connection().expect("conn");
+    let before = get_lock_timeout_secs(conn).expect("default timeout");
+
+    let body = sign_lic(&keys.signing, "2020-01-01");
+    let src = dir.path().join("incoming.lic");
+    std::fs::write(&src, &body).expect("write lic");
+    assert_eq!(
+        install_license(dir.path(), &src, &keys.verifier)
+            .expect("install")
+            .state,
+        LicenseState::Expired
+    );
+
+    let err = when_writes_allowed(dir.path(), &keys.verifier, || {
+        set_lock_timeout_secs(conn, 120)
+    });
+    assert_eq!(err, Err(Error::LicenseExpired));
+    assert_eq!(
+        get_lock_timeout_secs(conn).expect("unchanged"),
+        before,
+        "expired must not persist a new lock timeout"
+    );
+}
+
+#[test]
+fn document_export_still_works_when_expired() {
+    let (dir, vault, keys) = setup();
+    let entity_id = seed_books(&vault);
+    let conn = vault.connection().expect("conn");
+    let entry_id = list_entries(conn, entity_id, &EntryFilter::default())
+        .expect("list")
+        .into_iter()
+        .find(|v| v.entry.description == "Groceries")
+        .expect("seed entry")
+        .entry
+        .id;
+    let meta = attach_document(
+        conn,
+        entity_id,
+        entry_id,
+        "receipt.txt",
+        "text/plain",
+        b"export-me",
+    )
+    .expect("attach while writable");
+
+    let body = sign_lic(&keys.signing, "2020-01-01");
+    let src = dir.path().join("incoming.lic");
+    std::fs::write(&src, &body).expect("write lic");
+    assert_eq!(
+        install_license(dir.path(), &src, &keys.verifier)
+            .expect("install")
+            .state,
+        LicenseState::Expired
+    );
+
+    // Same read+write path as the `document_export` command (dialog is UI-only).
+    let (exported_meta, data) = get_document(conn, meta.id).expect("document_export read");
+    let dest = dir.path().join("exported-receipt.txt");
+    std::fs::write(&dest, &data).expect("document_export write");
+    assert_eq!(exported_meta.filename, "receipt.txt");
+    assert_eq!(std::fs::read(&dest).expect("bytes"), b"export-me");
+    assert_eq!(
+        require_writes_allowed(dir.path(), &keys.verifier),
+        Err(Error::LicenseExpired),
+        "export must not require a writable license"
     );
 }
