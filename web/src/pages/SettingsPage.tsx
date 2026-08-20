@@ -17,8 +17,10 @@ import {
 } from 'lucide-react'
 import { api, type ChartTemplate, type Entity } from '../lib/api'
 import {
+  canAddAnotherBook,
   formatLicensedUntil,
   isLicenseExpiredCode,
+  licenseErrorMessage,
   licenseExpiredBanner,
   licenseImportError,
   type LicenseStatus,
@@ -219,11 +221,16 @@ export function SettingsPage({
       applyExpiredFromWrite()
       return null
     }
+    const licenseCopy = licenseErrorMessage(cmd.code)
+    if (licenseCopy !== undefined) return licenseCopy
     return cmd.message || fallback
   }
 
+  const addAnotherBook = canAddAnotherBook(license, entities.length)
+
   async function onCreate(ev: FormEvent) {
     ev.preventDefault()
+    if (!canAddAnotherBook(license, entities.length)) return
     setBusy(true)
     setError(null)
     try {
@@ -303,6 +310,11 @@ export function SettingsPage({
       const cmd = err as CommandError
       if (isLicenseExpiredCode(cmd.code)) {
         applyExpiredFromWrite()
+        return
+      }
+      const licenseCopy = licenseErrorMessage(cmd.code)
+      if (licenseCopy !== undefined) {
+        setError(licenseCopy)
         return
       }
       setError(
@@ -670,10 +682,25 @@ export function SettingsPage({
         tone="success"
         flush
         actions={
-          <Button size="sm" onClick={() => setShowCreate(true)}>
-            <Plus className="size-3.5" />
-            {t('settings.entities.new')}
-          </Button>
+          <div className="flex max-w-[16rem] flex-col items-end gap-1">
+            <Button
+              size="sm"
+              disabled={!addAnotherBook}
+              title={addAnotherBook ? undefined : t('license.entityLimitHint')}
+              onClick={() => {
+                if (!addAnotherBook) return
+                setShowCreate(true)
+              }}
+            >
+              <Plus className="size-3.5" />
+              {t('settings.entities.new')}
+            </Button>
+            {addAnotherBook ? null : (
+              <p className="text-right text-[11px] leading-snug text-[var(--color-muted)]">
+                {t('license.entityLimitHint')}
+              </p>
+            )}
+          </div>
         }
       >
         {entities.length === 0 ? (

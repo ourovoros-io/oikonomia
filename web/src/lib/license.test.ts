@@ -2,8 +2,10 @@
 
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  canAddAnotherBook,
   formatLicensedUntil,
   isLicenseExpiredCode,
+  licenseErrorMessage,
   licenseExpiredBanner,
   licenseImportError,
 } from './license'
@@ -26,6 +28,36 @@ describe('licenseImportError', () => {
   test('unknown import code still uses generic Writer copy', () => {
     expect(licenseImportError({ code: 'unknown', message: 'LicenseError Display' })).toBe(
       'Could not import the license.',
+    )
+  })
+})
+
+describe('licenseErrorMessage', () => {
+  test('license_entity_limit uses Writer copy, not Rust Display', () => {
+    expect(licenseErrorMessage('license_entity_limit')).toBe(
+      'A license is required to add another book.',
+    )
+  })
+
+  test('license_expired is a state change, not a mapped string', () => {
+    expect(licenseErrorMessage('license_expired')).toBeUndefined()
+  })
+})
+
+describe('canAddAnotherBook', () => {
+  test('first book is allowed without a license', () => {
+    expect(canAddAnotherBook(null, 0)).toBe(true)
+    expect(canAddAnotherBook({ state: 'trial', days_remaining: 12 }, 0)).toBe(true)
+    expect(canAddAnotherBook({ state: 'expired' }, 0)).toBe(true)
+  })
+
+  test('a second book requires licensed', () => {
+    expect(canAddAnotherBook({ state: 'trial', days_remaining: 12 }, 1)).toBe(false)
+    expect(canAddAnotherBook({ state: 'none' }, 1)).toBe(false)
+    expect(canAddAnotherBook({ state: 'expired' }, 1)).toBe(false)
+    expect(canAddAnotherBook(null, 1)).toBe(false)
+    expect(canAddAnotherBook({ state: 'licensed', licensed_until: '2027-08-20' }, 1)).toBe(
+      true,
     )
   })
 })

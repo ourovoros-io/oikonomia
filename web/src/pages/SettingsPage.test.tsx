@@ -209,11 +209,14 @@ describe('SettingsPage license', () => {
     })
     render(
       <SettingsPage
-        entities={[entity]}
+        entities={[]}
         onEntitiesChange={noopAsync}
         onSelectEntity={() => {}}
       />,
     )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /new entity/i })).toBeEnabled()
+    })
     await userEvent.click(screen.getByRole('button', { name: /new entity/i }))
     await userEvent.type(screen.getByLabelText('Name'), 'Work')
     await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
@@ -224,6 +227,117 @@ describe('SettingsPage license', () => {
     })
     expect(screen.queryByText(/rust Display/i)).toBeNull()
     expect(screen.queryByText(/LicenseExpired/i)).toBeNull()
+  })
+
+  test('trial with one entity disables add-book and does not open create', async () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('12 days left in your trial')).toBeTruthy()
+    })
+    const add = screen.getByRole('button', { name: /new entity/i })
+    expect(add).toBeDisabled()
+    expect(
+      screen.getByText('Import a signed license to keep more than one book in this vault.'),
+    ).toBeTruthy()
+    await userEvent.click(add)
+    expect(screen.queryByRole('dialog', { name: /new entity/i })).toBeNull()
+    expect(api.entityCreate).not.toHaveBeenCalled()
+  })
+
+  test('licensed with one entity keeps add-book enabled and create can proceed', async () => {
+    vi.mocked(api.licenseStatus).mockResolvedValue({
+      state: 'licensed',
+      licensed_until: '2027-08-20',
+    })
+    vi.mocked(api.entityCreate).mockResolvedValue({
+      id: 'e2',
+      name: 'Work',
+      base_currency: 'EUR',
+      fiscal_year_start_month: 1,
+      chart_template: 'personal',
+    })
+    const onEntitiesChange = vi.fn(noopAsync)
+    const onSelectEntity = vi.fn()
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={onEntitiesChange}
+        onSelectEntity={onSelectEntity}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /new entity/i })).toBeEnabled()
+    })
+    await userEvent.click(screen.getByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Work')
+    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+    await waitFor(() => {
+      expect(api.entityCreate).toHaveBeenCalledTimes(1)
+    })
+    expect(onSelectEntity).toHaveBeenCalledWith('e2')
+  })
+
+  test('expired first-book create maps license_expired, not entityLimit', async () => {
+    vi.mocked(api.licenseStatus).mockResolvedValue({ state: 'expired' })
+    vi.mocked(api.entityCreate).mockRejectedValue({
+      code: 'license_expired',
+      message: 'LicenseExpired: rust Display must never appear',
+    })
+    render(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /new entity/i })).toBeEnabled()
+    })
+    await userEvent.click(screen.getByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Work')
+    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+    await waitFor(() => {
+      expect(
+        screen.getByText('Trial ended. You can still back up, restore, and export CSV.'),
+      ).toBeTruthy()
+    })
+    expect(screen.queryByText('A license is required to add another book.')).toBeNull()
+    expect(screen.queryByText(/rust Display/i)).toBeNull()
+  })
+
+  test('entity_create license_entity_limit shows Writer copy, not Rust Display', async () => {
+    vi.mocked(api.licenseStatus).mockResolvedValue({
+      state: 'licensed',
+      licensed_until: '2027-08-20',
+    })
+    vi.mocked(api.entityCreate).mockRejectedValue({
+      code: 'license_entity_limit',
+      message: 'LicenseEntityLimit: rust Display must never appear',
+    })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /new entity/i })).toBeEnabled()
+    })
+    await userEvent.click(screen.getByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Work')
+    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+    await waitFor(() => {
+      expect(screen.getByText('A license is required to add another book.')).toBeTruthy()
+    })
+    expect(screen.queryByText(/rust Display/i)).toBeNull()
+    expect(screen.queryByText(/LicenseEntityLimit/i)).toBeNull()
   })
 })
 

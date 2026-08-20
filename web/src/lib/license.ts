@@ -15,6 +15,40 @@ export function isLicenseExpiredCode(code: string): boolean {
   return code === 'license_expired'
 }
 
+export function isLicenseEntityLimitCode(code: string): boolean {
+  return code === 'license_entity_limit'
+}
+
+/**
+ * Map a license `CommandError.code` to Writer copy. Never uses Rust Display.
+ * `license_expired` is a state change, not a string — callers handle that.
+ */
+export function licenseErrorMessage(code: string): string | undefined {
+  if (isLicenseEntityLimitCode(code)) return t('license.entityLimit')
+  if (isLicenseExpiredCode(code)) return undefined
+  if (
+    code === 'license_invalid' ||
+    code === 'license_signature' ||
+    code === 'signature' ||
+    code === 'license_wrong_product' ||
+    code === 'wrong_product' ||
+    code === 'license_unreadable' ||
+    code === 'unreadable'
+  ) {
+    return licenseImportError({ code, message: '' })
+  }
+  return undefined
+}
+
+/** First book is free. A second book needs `licensed`. Unknown/null counts as unlicensed. */
+export function canAddAnotherBook(
+  status: LicenseStatus | null,
+  entityCount: number,
+): boolean {
+  if (entityCount === 0) return true
+  return status?.state === 'licensed'
+}
+
 /**
  * Import failures map `CommandError.code` only. Native today sends
  * `license_invalid`; we cannot tell signature / wrong product / unreadable
