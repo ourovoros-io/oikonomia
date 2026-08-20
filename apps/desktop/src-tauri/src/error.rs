@@ -35,6 +35,7 @@ impl From<CoreError> for CommandError {
             CoreError::CsvParse(_) => "csv_parse",
             CoreError::LicenseInvalid => "license_invalid",
             CoreError::LicenseExpired => "license_expired",
+            CoreError::LicenseEntityLimit => "license_entity_limit",
             _ => "unknown",
         };
 

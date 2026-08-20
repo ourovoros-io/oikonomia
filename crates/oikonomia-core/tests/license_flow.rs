@@ -9,7 +9,8 @@ use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity,
-    get_lock_timeout_secs, list_accounts, list_entries, post_simple_entry, set_lock_timeout_secs,
+    create_entity_allowed, get_lock_timeout_secs, list_accounts, list_entities, list_entries,
+    post_simple_entry, set_lock_timeout_secs,
 };
 use oikonomia_core::license::{
     LicenseState, LicenseVerifier, PRODUCT, install_license, license_status, record_trial_start,
@@ -327,4 +328,85 @@ fn document_export_still_works_when_expired() {
         Err(Error::LicenseExpired),
         "export must not require a writable license"
     );
+}
+
+fn book(name: &str) -> CreateEntity {
+    CreateEntity {
+        name: name.into(),
+        base_currency: "EUR".into(),
+        chart_template: ChartTemplate::Personal,
+        fiscal_year_start_month: Some(1),
+    }
+}
+
+#[test]
+fn vault_init_first_entity_works_unlicensed() {
+    let (dir, vault, keys) = setup();
+    let conn = vault.connection().expect("conn");
+    assert_eq!(
+        license_status(dir.path(), &keys.verifier)
+            .expect("status")
+            .state,
+        LicenseState::None
+    );
+    create_entity_allowed(dir.path(), &keys.verifier, conn, &book("First"))
+        .expect("first entity while unlicensed");
+    assert_eq!(list_entities(conn).expect("list").len(), 1);
+}
+
+#[test]
+fn trial_second_entity_is_license_entity_limit() {
+    let (dir, vault, keys) = setup();
+    record_trial_start(dir.path()).expect("trial");
+    let conn = vault.connection().expect("conn");
+    create_entity_allowed(dir.path(), &keys.verifier, conn, &book("One")).expect("first");
+    let err =
+        create_entity_allowed(dir.path(), &keys.verifier, conn, &book("Two")).expect_err("second");
+    assert!(
+        matches!(err, Error::LicenseEntityLimit),
+        "trial + existing entity: {err:?}"
+    );
+    assert_eq!(list_entities(conn).expect("list").len(), 1);
+}
+
+#[test]
+fn licensed_second_entity_is_ok() {
+    let (dir, vault, keys) = setup();
+    let conn = vault.connection().expect("conn");
+    create_entity(conn, &book("One")).expect("seed");
+    let body = sign_lic(&keys.signing, "2099-12-31");
+    let src = dir.path().join("incoming.lic");
+    std::fs::write(&src, &body).expect("write lic");
+    assert_eq!(
+        install_license(dir.path(), &src, &keys.verifier)
+            .expect("install")
+            .state,
+        LicenseState::Licensed
+    );
+    create_entity_allowed(dir.path(), &keys.verifier, conn, &book("Two"))
+        .expect("licensed may create more");
+    assert_eq!(list_entities(conn).expect("list").len(), 2);
+}
+
+#[test]
+fn expired_entity_create_is_license_expired() {
+    let (dir, vault, keys) = setup();
+    let conn = vault.connection().expect("conn");
+    create_entity(conn, &book("One")).expect("seed");
+    let body = sign_lic(&keys.signing, "2020-01-01");
+    let src = dir.path().join("incoming.lic");
+    std::fs::write(&src, &body).expect("write lic");
+    assert_eq!(
+        install_license(dir.path(), &src, &keys.verifier)
+            .expect("install")
+            .state,
+        LicenseState::Expired
+    );
+    let err =
+        create_entity_allowed(dir.path(), &keys.verifier, conn, &book("Two")).expect_err("expired");
+    assert!(
+        matches!(err, Error::LicenseExpired),
+        "expired create must not be license_entity_limit: {err:?}"
+    );
+    assert_eq!(list_entities(conn).expect("list").len(), 1);
 }

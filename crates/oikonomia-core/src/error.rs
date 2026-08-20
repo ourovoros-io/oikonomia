@@ -93,4 +93,8 @@ pub enum Error {
     /// License or trial has expired; mutating writes are blocked.
     #[error("license has expired")]
     LicenseExpired,
+
+    /// Unlicensed vault already has its one allowed entity.
+    #[error("unlicensed vaults may have only one entity")]
+    LicenseEntityLimit,
 }

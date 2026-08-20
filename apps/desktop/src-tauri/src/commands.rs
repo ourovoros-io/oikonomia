@@ -19,11 +19,11 @@ use oikonomia_core::ledger::{
     BalanceSheet, CreateAccount, CreateEntity, DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary,
     EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine, TrialBalance,
     UpdateAccount, VoidResult, account_balance, account_register, archive_account, archive_entity,
-    balance_sheet, create_account, create_entity, dashboard_summary, delete_entity, get_entity,
-    get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries, post_entry,
-    post_simple_entry, profit_and_loss, replace_simple_entry, set_account_opening_balance,
-    set_entry_hidden, set_lock_timeout_secs, trial_balance, update_account, update_entity,
-    void_entry,
+    balance_sheet, create_account, create_entity_allowed, dashboard_summary, delete_entity,
+    get_entity, get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries,
+    post_entry, post_simple_entry, profit_and_loss, replace_simple_entry,
+    set_account_opening_balance, set_entry_hidden, set_lock_timeout_secs, trial_balance,
+    update_account, update_entity, void_entry,
 };
 use oikonomia_core::license::{
     LicenseStatus, LicenseVerifier, install_license, record_trial_start, require_writes_allowed,
@@ -390,9 +390,11 @@ pub async fn entity_create(
     state: State<'_, AppState>,
     input: CreateEntity,
 ) -> CommandResult<Entity> {
+    let data_dir = state.data_dir().to_path_buf();
     with_vault_write_blocking(&state, move |vault| {
+        let verifier = LicenseVerifier::production()?;
         let conn = vault.connection()?;
-        create_entity(conn, &input)
+        create_entity_allowed(&data_dir, &verifier, conn, &input)
     })
     .await
 }

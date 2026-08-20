@@ -13,8 +13,8 @@ pub use accounts::{
 };
 pub use balance::{account_balance, account_balance_as_of, normal_balance};
 pub use entities::{
-    CreateEntity, archive_entity, create_entity, delete_entity, get_entity, list_entities,
-    update_entity,
+    CreateEntity, archive_entity, count_entities, create_entity, create_entity_allowed,
+    delete_entity, get_entity, list_entities, update_entity,
 };
 pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{

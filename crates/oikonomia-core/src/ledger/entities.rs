@@ -3,10 +3,13 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+use std::path::Path;
+
 use crate::coa::template_accounts;
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
 use crate::error::{Error, Result};
 use crate::ledger::balance::account_type_str;
+use crate::license::LicenseVerifier;
 use crate::util::{now_utc_string, parse_uuid};
 
 /// Input for creating a new entity.
@@ -78,6 +81,35 @@ pub fn create_entity(conn: &Connection, input: &CreateEntity) -> Result<Entity> 
     let entity = create_entity_in_tx(&tx, input)?;
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(entity)
+}
+
+/// Number of entities in the vault (including archived).
+///
+/// # Errors
+///
+/// DB errors.
+pub fn count_entities(conn: &Connection) -> Result<u64> {
+    let n: i64 = conn
+        .query_row("SELECT COUNT(1) FROM entities", [], |row| row.get(0))
+        .map_err(|err| Error::Io(err.to_string()))?;
+    u64::try_from(n).map_err(|_| Error::Io("entity count overflow".into()))
+}
+
+/// [`create_entity`] after the license write gate and one-entity unlicensed cap.
+///
+/// # Errors
+///
+/// [`Error::LicenseExpired`], [`Error::LicenseEntityLimit`], or
+/// [`create_entity`] errors.
+pub fn create_entity_allowed(
+    data_dir: &Path,
+    verifier: &LicenseVerifier,
+    conn: &Connection,
+    input: &CreateEntity,
+) -> Result<Entity> {
+    let count = count_entities(conn)?;
+    crate::license::require_entity_create_allowed(data_dir, verifier, count)?;
+    create_entity(conn, input)
 }
 
 fn create_entity_in_tx(conn: &Connection, input: &CreateEntity) -> Result<Entity> {

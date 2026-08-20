@@ -172,6 +172,30 @@ pub fn when_writes_allowed<T>(
     write()
 }
 
+/// Whether a new entity may be created under the current license.
+///
+/// Unlicensed states (`none` / `trial` / `expired`) may have **one** entity
+/// per vault. [`LicenseState::Licensed`] may create more. Expired writes are
+/// still [`Error::LicenseExpired`], not [`Error::LicenseEntityLimit`].
+///
+/// # Errors
+///
+/// [`Error::LicenseExpired`] when writes are blocked; [`Error::LicenseEntityLimit`]
+/// when an unlicensed vault already has an entity.
+pub fn require_entity_create_allowed(
+    data_dir: &Path,
+    verifier: &LicenseVerifier,
+    existing_entity_count: u64,
+) -> Result<()> {
+    require_writes_allowed(data_dir, verifier)?;
+    let status = license_status(data_dir, verifier)?;
+    if status.state == LicenseState::Licensed || existing_entity_count == 0 {
+        Ok(())
+    } else {
+        Err(Error::LicenseEntityLimit)
+    }
+}
+
 /// Current license / trial status using the system UTC clock.
 ///
 /// # Errors
@@ -671,5 +695,52 @@ mod tests {
         let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
         assert_eq!(status.state, LicenseState::Expired);
         assert!(!writes_allowed(&status));
+    }
+
+    #[test]
+    fn entity_create_limit_is_not_license_expired() {
+        let dir = tempdir().expect("tempdir");
+        let keys = ephemeral();
+
+        assert!(require_entity_create_allowed(dir.path(), &keys.verifier, 0).is_ok());
+        assert_eq!(
+            require_entity_create_allowed(dir.path(), &keys.verifier, 1),
+            Err(Error::LicenseEntityLimit)
+        );
+
+        record_trial_start(dir.path()).expect("trial");
+        assert!(require_entity_create_allowed(dir.path(), &keys.verifier, 0).is_ok());
+        assert_eq!(
+            require_entity_create_allowed(dir.path(), &keys.verifier, 1),
+            Err(Error::LicenseEntityLimit)
+        );
+
+        let expired = sign_lic(
+            &keys.signing,
+            PRODUCT,
+            "2020-01-01",
+            "buyer@example.com",
+            "2020-01-01T00:00:00Z",
+        );
+        install_license(dir.path(), &write_lic(dir.path(), &expired), &keys.verifier)
+            .expect("expired");
+        assert_eq!(
+            require_entity_create_allowed(dir.path(), &keys.verifier, 0),
+            Err(Error::LicenseExpired)
+        );
+        assert_eq!(
+            require_entity_create_allowed(dir.path(), &keys.verifier, 1),
+            Err(Error::LicenseExpired)
+        );
+
+        let valid = sign_lic(
+            &keys.signing,
+            PRODUCT,
+            "2099-12-31",
+            "buyer@example.com",
+            "2026-08-20T12:00:00Z",
+        );
+        install_license(dir.path(), &write_lic(dir.path(), &valid), &keys.verifier).expect("lic");
+        assert!(require_entity_create_allowed(dir.path(), &keys.verifier, 3).is_ok());
     }
 }
