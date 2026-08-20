@@ -163,7 +163,8 @@ pub fn lock_vault(vault: &Mutex<Vault>) -> std::sync::MutexGuard<'_, Vault> {
 /// without sleeping the 5s loop or constructing an `AppHandle`.
 #[must_use]
 pub const fn should_auto_lock(idle_secs: u64, timeout_secs: u64, status: VaultStatus) -> bool {
-    status == VaultStatus::Unlocked && idle_secs >= timeout_secs
+    // `matches!` is const; derived `PartialEq` on `VaultStatus` is not.
+    matches!(status, VaultStatus::Unlocked) && idle_secs >= timeout_secs
 }
 
 /// Whether a watchdog tick that just locked should emit `vault-locked`.
