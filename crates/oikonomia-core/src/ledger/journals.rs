@@ -451,6 +451,15 @@ pub(crate) fn post_simple_entry_unchecked(
     conn: &Connection,
     input: &PostSimpleEntry,
 ) -> Result<PostedEntryView> {
+    post_simple_entry_unchecked_hidden(conn, input, false)
+}
+
+/// Like [`post_simple_entry_unchecked`], copying `hidden` onto the new row.
+pub(crate) fn post_simple_entry_unchecked_hidden(
+    conn: &Connection,
+    input: &PostSimpleEntry,
+    hidden: bool,
+) -> Result<PostedEntryView> {
     if input.amount_minor <= 0 {
         return Err(Error::Validation("amount must be positive".into()));
     }
@@ -486,7 +495,7 @@ pub(crate) fn post_simple_entry_unchecked(
             reference: input.reference.clone(),
             lines,
         },
-        false,
+        hidden,
     )
 }
 
@@ -643,6 +652,8 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult>
 ///
 /// Posted entries stay immutable — an edit is a void plus repost so the audit
 /// trail survives. The UI hides voided pairs, so this reads as an in-place edit.
+/// A hidden original yields a hidden replacement (and a hidden VOID reverse)
+/// so journal CSV omits the whole edit. A visible original stays visible.
 ///
 /// # Errors
 ///
@@ -664,7 +675,7 @@ pub fn replace_simple_entry(
     }
 
     void_entry_in_tx(&tx, original_id)?;
-    let replacement = post_simple_entry_unchecked(&tx, input)?;
+    let replacement = post_simple_entry_unchecked_hidden(&tx, input, original.entry.hidden)?;
 
     tx.execute(
         "UPDATE documents SET entry_id = ?1 WHERE entry_id = ?2",
