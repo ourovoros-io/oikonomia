@@ -154,6 +154,81 @@ describe('SettingsPage vault backup', () => {
     })
   })
 
+  test('vaultBackup CommandError codes render ErrorBanner', async () => {
+    const cases: Array<{ code: string; text: string }> = [
+      {
+        code: 'vault_uninitialized',
+        text: 'Nothing to back up. This vault has not been initialized yet.',
+      },
+      {
+        code: 'backup_invalid',
+        text: 'That file is not a valid Oikonomia backup.',
+      },
+      {
+        code: 'restore_would_overwrite',
+        text: 'A vault already exists on this computer. Confirm replace to continue.',
+      },
+      { code: 'not_found', text: 'Backup file not found.' },
+      { code: 'io', text: 'Could not read or write the backup file.' },
+    ]
+    for (const { code, text } of cases) {
+      cleanup()
+      vi.mocked(vaultBackup).mockReset().mockRejectedValue({ code, message: '' })
+      render(
+        <SettingsPage
+          entities={[entity]}
+          onEntitiesChange={noopAsync}
+          onSelectEntity={() => {}}
+        />,
+      )
+      await expandVaultBackup()
+      await userEvent.click(screen.getByRole('button', { name: /backup vault/i }))
+      await waitFor(() => {
+        expect(screen.getByText(text)).toBeTruthy()
+      })
+    }
+  })
+
+  test('vaultRestore CommandError codes render ErrorBanner', async () => {
+    const cases: Array<{ code: string; text: string }> = [
+      {
+        code: 'vault_uninitialized',
+        text: 'Nothing to back up. This vault has not been initialized yet.',
+      },
+      {
+        code: 'backup_invalid',
+        text: 'That file is not a valid Oikonomia backup.',
+      },
+      {
+        code: 'restore_would_overwrite',
+        text: 'A vault already exists on this computer. Confirm replace to continue.',
+      },
+      { code: 'not_found', text: 'Backup file not found.' },
+      { code: 'io', text: 'Could not read or write the backup file.' },
+    ]
+    for (const { code, text } of cases) {
+      cleanup()
+      vi.mocked(vaultPickBackup).mockReset().mockResolvedValue(BACKUP_PATH)
+      vi.mocked(vaultRestore).mockReset().mockRejectedValue({ code, message: '' })
+      render(
+        <SettingsPage
+          entities={[entity]}
+          onEntitiesChange={noopAsync}
+          onSelectEntity={() => {}}
+        />,
+      )
+      await expandVaultBackup()
+      await userEvent.click(screen.getByRole('button', { name: /restore from backup/i }))
+      await waitFor(() => {
+        expect(screen.getByRole('dialog', { name: 'Replace local vault?' })).toBeTruthy()
+      })
+      await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
+      await waitFor(() => {
+        expect(screen.getByText(text)).toBeTruthy()
+      })
+    }
+  })
+
   test('cancelled pick does not restore and does not show confirm', async () => {
     vi.mocked(vaultPickBackup).mockResolvedValue(null)
     render(
