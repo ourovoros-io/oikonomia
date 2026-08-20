@@ -34,7 +34,11 @@ impl AppState {
     ///
     /// Propagates vault I/O errors from the default data directory.
     pub fn new(ocr_model_dir: PathBuf) -> Result<Self, CoreError> {
-        let data_dir = default_data_dir()?;
+        Self::open_path(default_data_dir()?, ocr_model_dir)
+    }
+
+    /// Open a vault in `data_dir` (tests and [`Self::new`]).
+    pub(crate) fn open_path(data_dir: PathBuf, ocr_model_dir: PathBuf) -> Result<Self, CoreError> {
         let vault = Vault::open_path(data_dir.clone())?;
         Ok(Self {
             vault: Arc::new(Mutex::new(vault)),
@@ -163,7 +167,8 @@ pub fn lock_vault(vault: &Mutex<Vault>) -> std::sync::MutexGuard<'_, Vault> {
 /// without sleeping the 5s loop or constructing an `AppHandle`.
 #[must_use]
 pub const fn should_auto_lock(idle_secs: u64, timeout_secs: u64, status: VaultStatus) -> bool {
-    status == VaultStatus::Unlocked && idle_secs >= timeout_secs
+    // `matches!` is const; derived `PartialEq` on `VaultStatus` is not.
+    matches!(status, VaultStatus::Unlocked) && idle_secs >= timeout_secs
 }
 
 /// Whether a watchdog tick that just locked should emit `vault-locked`.

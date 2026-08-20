@@ -19,11 +19,14 @@ use oikonomia_core::ledger::{
     BalanceSheet, CreateAccount, CreateEntity, DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary,
     EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine, TrialBalance,
     UpdateAccount, VoidResult, account_balance, account_register, archive_account, archive_entity,
-    balance_sheet, create_account, create_entity, dashboard_summary, delete_entity, get_entity,
-    get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries, post_entry,
-    post_simple_entry, profit_and_loss, replace_simple_entry, set_account_opening_balance,
-    set_entry_hidden, set_lock_timeout_secs, trial_balance, update_account, update_entity,
-    void_entry,
+    balance_sheet, create_account, create_entity_allowed, dashboard_summary, delete_entity,
+    get_entity, get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries,
+    post_entry, post_simple_entry, profit_and_loss, replace_simple_entry,
+    set_account_opening_balance, set_entry_hidden, set_lock_timeout_secs, trial_balance,
+    update_account, update_entity, void_entry,
+};
+use oikonomia_core::license::{
+    LicenseStatus, LicenseVerifier, install_license, record_trial_start, require_writes_allowed,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
@@ -73,11 +76,13 @@ pub async fn vault_init(
     state: State<'_, AppState>,
     password: String,
 ) -> CommandResult<VaultStatus> {
-    with_vault_blocking(&state, move |vault| {
+    let status = with_vault_blocking(&state, move |vault| {
         vault.init(&password)?;
         Ok(vault.status())
     })
-    .await
+    .await?;
+    stamp_trial_start(&state)?;
+    Ok(status)
 }
 
 /// Unlock an existing vault.
@@ -103,8 +108,54 @@ pub async fn vault_unlock(
     })
     .await?;
 
+    stamp_trial_start(&state)?;
     state.set_lock_timeout_cache(secs);
     Ok(status)
+}
+
+/// Stamp `trial_started_at` once after a successful vault init or unlock.
+fn stamp_trial_start(state: &AppState) -> CommandResult<()> {
+    let _guard = state.lock_prefs();
+    record_trial_start(state.data_dir())?;
+    Ok(())
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod tests {
+    use super::stamp_trial_start;
+    use crate::state::AppState;
+    use oikonomia_core::license::{LicenseState, LicenseVerifier, license_status};
+    use oikonomia_core::prefs::load_ui_prefs;
+
+    #[test]
+    fn vault_init_stamps_trial_without_unlock() {
+        let dir = std::env::temp_dir().join(format!(
+            "oiko-vault-init-trial-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        {
+            let vault = state.vault();
+            let mut guard = crate::state::lock_vault(&vault);
+            guard
+                .init("correct horse battery staple")
+                .expect("vault init");
+        }
+        stamp_trial_start(&state).expect("stamp");
+        assert!(
+            load_ui_prefs(state.data_dir()).trial_started_at.is_some(),
+            "vault_init helper must stamp trial_started_at"
+        );
+        let verifier = LicenseVerifier::production().expect("production verifier");
+        let status = license_status(state.data_dir(), &verifier).expect("status");
+        assert_eq!(status.state, LicenseState::Trial);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Change the master password (requires the current password).
@@ -114,6 +165,7 @@ pub async fn vault_change_password(
     old: String,
     new: String,
 ) -> CommandResult<VaultStatus> {
+    require_writes(&state)?;
     let vault = state.vault();
     state.touch();
 
@@ -244,6 +296,52 @@ pub async fn vault_pick_backup(
     Ok(Some(path.display().to_string()))
 }
 
+/// Offline license / trial status. Never contacts the network.
+#[tauri::command]
+pub fn license_status(state: State<'_, AppState>) -> CommandResult<LicenseStatus> {
+    let verifier = LicenseVerifier::production()?;
+    Ok(oikonomia_core::license::license_status(
+        state.data_dir(),
+        &verifier,
+    )?)
+}
+
+/// Native Open for a `.lic` file; verify, then atomically copy as `license.lic`.
+///
+/// Returns the new status, or `None` if the user cancelled. The stored file is
+/// the signed original, not an unsigned cache.
+#[tauri::command]
+pub async fn license_install(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<Option<LicenseStatus>> {
+    let filter_label = crate::tray::license_filter_label(load_ui_prefs(state.data_dir()).locale);
+    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+        let app = app.clone();
+        move || {
+            use tauri_plugin_dialog::DialogExt;
+            Ok(app
+                .dialog()
+                .file()
+                .add_filter(filter_label, &["lic"])
+                .blocking_pick_file())
+        }
+    }))
+    .await?;
+
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let path = file_path.into_path().map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("invalid license location: {e}"),
+    })?;
+
+    let verifier = LicenseVerifier::production()?;
+    let status = install_license(state.data_dir(), &path, &verifier)?;
+    Ok(Some(status))
+}
+
 /// Native Open dialog for a `.oikonomia-backup` file. `None` if cancelled.
 async fn pick_backup_path(
     app: &tauri::AppHandle,
@@ -334,9 +432,11 @@ pub async fn entity_create(
     state: State<'_, AppState>,
     input: CreateEntity,
 ) -> CommandResult<Entity> {
-    with_vault_blocking(&state, move |vault| {
+    let data_dir = state.data_dir().to_path_buf();
+    with_vault_write_blocking(&state, move |vault| {
+        let verifier = LicenseVerifier::production()?;
         let conn = vault.connection()?;
-        create_entity(conn, &input)
+        create_entity_allowed(&data_dir, &verifier, conn, &input)
     })
     .await
 }
@@ -348,7 +448,7 @@ pub async fn entity_update(
     id: EntityId,
     name: String,
 ) -> CommandResult<Entity> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         update_entity(conn, id, &name)
     })
@@ -358,7 +458,7 @@ pub async fn entity_update(
 /// Archive entity (soft-hide).
 #[tauri::command]
 pub async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         archive_entity(conn, id)
     })
@@ -368,7 +468,7 @@ pub async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> Command
 /// Permanently delete an entity and all of its books data.
 #[tauri::command]
 pub async fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         delete_entity(conn, id)
     })
@@ -396,7 +496,7 @@ pub async fn account_create(
     state: State<'_, AppState>,
     input: CreateAccount,
 ) -> CommandResult<Account> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         create_account(conn, &input)
     })
@@ -409,7 +509,7 @@ pub async fn account_update(
     state: State<'_, AppState>,
     input: UpdateAccount,
 ) -> CommandResult<Account> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         update_account(conn, &input)
     })
@@ -419,7 +519,7 @@ pub async fn account_update(
 /// Archive (deactivate) account.
 #[tauri::command]
 pub async fn account_archive(state: State<'_, AppState>, id: AccountId) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         archive_account(conn, id)
     })
@@ -464,7 +564,7 @@ pub async fn account_set_opening_balance(
     target_minor: i64,
     as_of: String,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         set_account_opening_balance(conn, account_id, target_minor, &as_of)
     })
@@ -515,7 +615,7 @@ pub async fn entry_post(
     state: State<'_, AppState>,
     input: PostJournal,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         post_entry(conn, &input)
     })
@@ -528,7 +628,7 @@ pub async fn entry_post_simple(
     state: State<'_, AppState>,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         post_simple_entry(conn, &input)
     })
@@ -562,7 +662,7 @@ pub async fn entry_post_simple_with_document(
             message: format!("invalid file data: {e}"),
         })?;
 
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         let (view, _meta) = post_simple_entry_with_document(
             conn,
@@ -587,6 +687,7 @@ pub async fn entry_post_simple_with_document_path(
     path: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
+    require_writes(&state)?;
     let path_buf = std::path::PathBuf::from(&path);
     if !state.drop_path_allowed(&path_buf) {
         return Err(CommandError {
@@ -642,7 +743,7 @@ pub async fn entry_replace_simple(
     original_id: JournalEntryId,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         replace_simple_entry(conn, original_id, &input)
     })
@@ -656,7 +757,7 @@ pub async fn entry_set_hidden(
     id: JournalEntryId,
     hidden: bool,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         set_entry_hidden(conn, id, hidden)
     })
@@ -669,7 +770,7 @@ pub async fn entry_void(
     state: State<'_, AppState>,
     id: JournalEntryId,
 ) -> CommandResult<VoidResult> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         void_entry(conn, id)
     })
@@ -721,7 +822,7 @@ pub async fn csv_import_post(
     state: State<'_, AppState>,
     input: CsvImportPostInput,
 ) -> CommandResult<CsvImportPostResult> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         post_import_rows(conn, &input.rows, input.include_duplicates)
     })
@@ -874,7 +975,7 @@ pub async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandRes
 /// Set auto-lock timeout seconds.
 #[tauri::command]
 pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         set_lock_timeout_secs(conn, secs)
     })
@@ -1065,6 +1166,22 @@ pub async fn document_analyze_path(
     .await
 }
 
+fn require_writes(state: &AppState) -> CommandResult<()> {
+    let verifier = LicenseVerifier::production()?;
+    require_writes_allowed(state.data_dir(), &verifier).map_err(CommandError::from)
+}
+
+/// Same as [`with_vault_blocking`], but refuse the call when the trial/license
+/// is expired (`license_expired`).
+async fn with_vault_write_blocking<T, F>(state: &State<'_, AppState>, f: F) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut Vault) -> Result<T, CoreError> + Send + 'static,
+{
+    require_writes(state)?;
+    with_vault_blocking(state, f).await
+}
+
 /// Run vault work on the blocking pool: no command ever waits for the vault
 /// mutex on the main thread or an async runtime worker (e.g. while a rekey
 /// holds it for seconds).
@@ -1177,7 +1294,7 @@ pub async fn document_delete(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         delete_document(conn, document_id)
     })
@@ -1212,7 +1329,7 @@ pub async fn document_attach(
             message: format!("invalid file data: {e}"),
         })?;
 
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         attach_document(conn, entity_id, entry_id, &filename, &mime_type, &data)
     })

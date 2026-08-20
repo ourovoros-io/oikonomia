@@ -7,6 +7,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Domain and vault errors returned to the application layer.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// Vault has not been created yet.
     #[error("vault is not initialized")]
@@ -84,4 +85,16 @@ pub enum Error {
     /// Bank CSV or journal CSV could not be parsed.
     #[error("{0}")]
     CsvParse(String),
+
+    /// License file is missing, unreadable, or fails verification.
+    #[error("license is invalid")]
+    LicenseInvalid,
+
+    /// License or trial has expired; mutating writes are blocked.
+    #[error("license has expired")]
+    LicenseExpired,
+
+    /// Unlicensed vault already has its one allowed entity.
+    #[error("unlicensed vaults may have only one entity")]
+    LicenseEntityLimit,
 }

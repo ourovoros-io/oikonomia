@@ -6,6 +6,7 @@ import {
   Clock,
   Download,
   FileQuestion,
+  Key,
   KeyRound,
   Languages,
   Plus,
@@ -15,6 +16,15 @@ import {
   User,
 } from 'lucide-react'
 import { api, type ChartTemplate, type Entity } from '../lib/api'
+import {
+  canAddAnotherBook,
+  formatLicensedUntil,
+  isLicenseExpiredCode,
+  licenseErrorMessage,
+  licenseExpiredBanner,
+  licenseImportError,
+  type LicenseStatus,
+} from '../lib/license'
 import { vaultBackup, vaultChangePassword, vaultPickBackup, vaultRestore, type CommandError } from '../lib/tauri'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -168,6 +178,9 @@ export function SettingsPage({
   const [restoreBusy, setRestoreBusy] = useState(false)
   const [restorePath, setRestorePath] = useState<string | undefined>(undefined)
   const [restorePicking, setRestorePicking] = useState(false)
+  const [license, setLicense] = useState<LicenseStatus | null>(null)
+  const [licenseError, setLicenseError] = useState<string | null>(null)
+  const [licenseBusy, setLicenseBusy] = useState(false)
 
   const backupAvailability = vaultBackupAvailability({
     vaultPresent,
@@ -184,10 +197,40 @@ export function SettingsPage({
       .catch(() => {
         /* ignore */
       })
+    void api
+      .licenseStatus()
+      .then(setLicense)
+      .catch(() => {
+        /* ignore — Rust command lands on the same PR */
+      })
   }, [])
+
+  function applyExpiredFromWrite(): void {
+    setLicense((prev) => ({
+      state: 'expired',
+      days_remaining: prev?.days_remaining,
+      licensed_until: prev?.licensed_until,
+    }))
+    setLicenseError(null)
+    setError(null)
+  }
+
+  function commandErrorMessage(err: unknown, fallback = ''): string | null {
+    const cmd = err as CommandError
+    if (isLicenseExpiredCode(cmd.code)) {
+      applyExpiredFromWrite()
+      return null
+    }
+    const licenseCopy = licenseErrorMessage(cmd.code)
+    if (licenseCopy !== undefined) return licenseCopy
+    return cmd.message || fallback
+  }
+
+  const addAnotherBook = canAddAnotherBook(license, entities.length)
 
   async function onCreate(ev: FormEvent) {
     ev.preventDefault()
+    if (!canAddAnotherBook(license, entities.length)) return
     setBusy(true)
     setError(null)
     try {
@@ -202,7 +245,8 @@ export function SettingsPage({
       setShowCreate(false)
       onSelectEntity(entity.id)
     } catch (err) {
-      setError((err as CommandError).message)
+      const message = commandErrorMessage(err)
+      if (message !== null) setError(message)
     } finally {
       setBusy(false)
     }
@@ -217,7 +261,8 @@ export function SettingsPage({
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
-      setError((err as CommandError).message || t('settings.deleteFailed'))
+      const message = commandErrorMessage(err, t('settings.deleteFailed'))
+      if (message !== null) setError(message)
     } finally {
       setDeleteBusy(false)
     }
@@ -236,7 +281,8 @@ export function SettingsPage({
       setLockMins(mins)
       onLockTimeoutChange?.(secs)
     } catch (err) {
-      setError((err as CommandError).message)
+      const message = commandErrorMessage(err)
+      if (message !== null) setError(message)
     } finally {
       setLockBusy(false)
     }
@@ -262,6 +308,15 @@ export function SettingsPage({
       setNotice(t('settings.passwordChanged'))
     } catch (err) {
       const cmd = err as CommandError
+      if (isLicenseExpiredCode(cmd.code)) {
+        applyExpiredFromWrite()
+        return
+      }
+      const licenseCopy = licenseErrorMessage(cmd.code)
+      if (licenseCopy !== undefined) {
+        setError(licenseCopy)
+        return
+      }
       setError(
         cmd.code === 'invalid_password'
           ? t('settings.currentPasswordIncorrect')
@@ -269,6 +324,29 @@ export function SettingsPage({
       )
     } finally {
       setPasswordBusy(false)
+    }
+  }
+
+  async function onImportLicense() {
+    setLicenseBusy(true)
+    setLicenseError(null)
+    try {
+      const next = await api.licenseInstall()
+      if (next === null) return
+      setLicense(next)
+    } catch (err) {
+      const cmd = err as CommandError
+      if (isLicenseExpiredCode(cmd.code)) {
+        setLicense((prev) => ({
+          state: 'expired',
+          days_remaining: prev?.days_remaining,
+          licensed_until: prev?.licensed_until,
+        }))
+        return
+      }
+      setLicenseError(licenseImportError(cmd))
+    } finally {
+      setLicenseBusy(false)
     }
   }
 
@@ -376,7 +454,6 @@ export function SettingsPage({
         description={t('settings.language.description')}
         icon={<Languages className="size-4" />}
         tone="muted"
-        defaultOpen
       >
         <LanguagePill
           value={locale}
@@ -385,6 +462,44 @@ export function SettingsPage({
           englishLabel={t('settings.language.option.en')}
           greekLabel={t('settings.language.option.el')}
         />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        title={t('settings.license.title')}
+        description={t('settings.license.description')}
+        icon={<Key className="size-4" />}
+        defaultOpen
+      >
+        <div className="space-y-4">
+          {license?.state === 'trial' && license.days_remaining != null ? (
+            <div className="inline-flex items-center rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-sm font-medium text-[var(--color-accent)]">
+              {t('settings.trial.banner.active', { n: license.days_remaining })}
+            </div>
+          ) : null}
+          {license?.state === 'licensed' && license.licensed_until ? (
+            <div className="inline-flex items-center rounded-full bg-[var(--color-surface-elevated)] px-3 py-1 text-sm font-medium text-[var(--color-fg-secondary)]">
+              {t('settings.license.licensedUntil', {
+                date: formatLicensedUntil(license.licensed_until, locale),
+              })}
+            </div>
+          ) : null}
+          {license?.state === 'expired' ? (
+            <div className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-3 py-1 text-sm font-medium text-[var(--color-warning)]">
+              {licenseExpiredBanner(license)}
+            </div>
+          ) : null}
+          <ErrorBanner message={licenseError} className="" />
+          <Button
+            variant="secondary"
+            busy={licenseBusy}
+            onClick={() => void onImportLicense()}
+          >
+            <Upload className="size-3.5" />
+            {license?.state === 'licensed'
+              ? t('settings.license.replace')
+              : t('settings.license.import')}
+          </Button>
+        </div>
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -567,10 +682,25 @@ export function SettingsPage({
         tone="success"
         flush
         actions={
-          <Button size="sm" onClick={() => setShowCreate(true)}>
-            <Plus className="size-3.5" />
-            {t('settings.entities.new')}
-          </Button>
+          <div className="flex max-w-[16rem] flex-col items-end gap-1">
+            <Button
+              size="sm"
+              disabled={!addAnotherBook}
+              title={addAnotherBook ? undefined : t('license.entityLimitHint')}
+              onClick={() => {
+                if (!addAnotherBook) return
+                setShowCreate(true)
+              }}
+            >
+              <Plus className="size-3.5" />
+              {t('settings.entities.new')}
+            </Button>
+            {addAnotherBook ? null : (
+              <p className="text-right text-[11px] leading-snug text-[var(--color-muted)]">
+                {t('license.entityLimitHint')}
+              </p>
+            )}
+          </div>
         }
       >
         {entities.length === 0 ? (

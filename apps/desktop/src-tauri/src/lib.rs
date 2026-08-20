@@ -75,6 +75,8 @@ pub fn run() {
             commands::vault_touch,
             commands::vault_init,
             commands::vault_unlock,
+            commands::license_status,
+            commands::license_install,
             commands::vault_lock,
             commands::vault_change_password,
             commands::vault_backup,

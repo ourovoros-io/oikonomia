@@ -39,6 +39,8 @@ vi.mock('./lib/api', () => ({
     getLocale: vi.fn(),
     setLocale: vi.fn(),
     getUiPrefs: vi.fn(),
+    licenseStatus: vi.fn(async () => ({ state: 'trial', days_remaining: 12 })),
+    licenseInstall: vi.fn(),
   },
 }))
 

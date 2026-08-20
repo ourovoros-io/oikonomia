@@ -7,7 +7,8 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, EntryStatus, Jo
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, account_register, create_entity,
-    get_entry, list_accounts, list_entries, post_simple_entry, set_entry_hidden, void_entry,
+    get_entry, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
+    set_entry_hidden, void_entry,
 };
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -448,5 +449,104 @@ fn register_includes_hidden_and_exposes_flag() {
             .iter()
             .any(|line| line.entry_id == hidden.entry.id && line.hidden),
         "register keeps hidden rows and exposes hidden: {lines:?}"
+    );
+}
+
+#[test]
+fn replacing_hidden_entry_keeps_replacement_hidden_and_omits_from_export() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+
+    let hidden = post_simple_entry(
+        conn,
+        &expense(
+            book.entity_id,
+            book.wallet,
+            book.expense,
+            "2026-03-15",
+            "SecretOriginal",
+            2_500,
+        ),
+    )
+    .expect("post hidden");
+    set_entry_hidden(conn, hidden.entry.id, true).expect("hide");
+
+    let mut corrected = expense(
+        book.entity_id,
+        book.wallet,
+        book.expense,
+        "2026-03-15",
+        "SecretReplacement",
+        3_100,
+    );
+    corrected.description = "SecretReplacement".into();
+    let replacement =
+        replace_simple_entry(conn, hidden.entry.id, &corrected).expect("replace hidden");
+    assert!(
+        replacement.entry.hidden,
+        "replacement of a hidden entry stays hidden"
+    );
+    assert_eq!(db_hidden(conn, replacement.entry.id), 1);
+    assert_eq!(db_hidden(conn, hidden.entry.id), 1);
+
+    assert!(
+        !export_mentions(conn, book.entity_id, "SecretOriginal"),
+        "voided hidden original omitted from CSV"
+    );
+    assert!(
+        !export_mentions(conn, book.entity_id, "VOID: SecretOriginal"),
+        "hidden VOID reverse omitted from CSV"
+    );
+    assert!(
+        !export_mentions(conn, book.entity_id, "SecretReplacement"),
+        "hidden replacement omitted from CSV"
+    );
+
+    let listed = list_entries(conn, book.entity_id, &EntryFilter::default()).expect("list");
+    assert!(
+        listed
+            .iter()
+            .any(|v| v.entry.id == hidden.entry.id && v.entry.hidden),
+        "list still has hidden original: {listed:?}"
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|v| v.entry.id == replacement.entry.id && v.entry.hidden),
+        "list still has hidden replacement: {listed:?}"
+    );
+
+    let visible = post_simple_entry(
+        conn,
+        &expense(
+            book.entity_id,
+            book.wallet,
+            book.expense,
+            "2026-03-16",
+            "VisibleOriginal",
+            1_200,
+        ),
+    )
+    .expect("post visible");
+    let mut visible_fix = expense(
+        book.entity_id,
+        book.wallet,
+        book.expense,
+        "2026-03-16",
+        "VisibleReplacement",
+        1_400,
+    );
+    visible_fix.description = "VisibleReplacement".into();
+    let visible_repl =
+        replace_simple_entry(conn, visible.entry.id, &visible_fix).expect("replace visible");
+    assert!(!visible_repl.entry.hidden);
+    assert!(
+        export_mentions(conn, book.entity_id, "VisibleReplacement"),
+        "visible replacement still exports"
+    );
+    assert!(
+        !export_mentions(conn, book.entity_id, "SecretReplacement"),
+        "hidden replacement stays omitted after a visible edit"
     );
 }
