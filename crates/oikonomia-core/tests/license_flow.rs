@@ -8,7 +8,7 @@ use oikonomia_core::documents::{attach_document, delete_document, get_document, 
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity,
+    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, archive_entity, create_entity,
     create_entity_allowed, get_lock_timeout_secs, list_accounts, list_entities, list_entries,
     post_simple_entry, set_lock_timeout_secs,
 };
@@ -390,6 +390,36 @@ fn trial_second_entity_is_license_entity_limit() {
         matches!(err, Error::LicenseEntityLimit),
         "trial + existing entity: {err:?}"
     );
+    assert_eq!(list_entities(conn).expect("list").len(), 1);
+}
+
+#[test]
+fn archived_entity_still_occupies_unlicensed_slot() {
+    let (dir, vault, keys) = setup();
+    record_trial_start(dir.path()).expect("trial");
+    let conn = vault.connection().expect("conn");
+    let first =
+        create_entity_allowed(dir.path(), &keys.verifier, conn, &book("One")).expect("first");
+    archive_entity(conn, first.id).expect("archive");
+    let err = create_entity_allowed(dir.path(), &keys.verifier, conn, &book("Two"))
+        .expect_err("after archive");
+    assert!(
+        matches!(err, Error::LicenseEntityLimit),
+        "archived book still occupies the unlicensed slot: {err:?}"
+    );
+    assert_eq!(list_entities(conn).expect("list").len(), 0);
+
+    let body = sign_lic(&keys.signing, "2099-12-31");
+    let src = dir.path().join("incoming.lic");
+    std::fs::write(&src, &body).expect("write lic");
+    assert_eq!(
+        install_license(dir.path(), &src, &keys.verifier)
+            .expect("install")
+            .state,
+        LicenseState::Licensed
+    );
+    create_entity_allowed(dir.path(), &keys.verifier, conn, &book("Two"))
+        .expect("licensed may add after archive");
     assert_eq!(list_entities(conn).expect("list").len(), 1);
 }
 
