@@ -157,6 +157,24 @@ pub fn lock_vault(vault: &Mutex<Vault>) -> std::sync::MutexGuard<'_, Vault> {
     }
 }
 
+/// Lock iff the vault is unlocked and idle time has reached the timeout.
+///
+/// Pure predicate for the idle watchdog. Tests cover the four launch cases
+/// without sleeping the 5s loop or constructing an `AppHandle`.
+#[must_use]
+pub fn should_auto_lock(idle_secs: u64, timeout_secs: u64, status: VaultStatus) -> bool {
+    status == VaultStatus::Unlocked && idle_secs >= timeout_secs
+}
+
+/// Whether a watchdog tick that just locked should emit `vault-locked`.
+///
+/// Emit needs `AppHandle`; this returns the decision so tests can assert the
+/// emit path without the Tauri runtime.
+#[must_use]
+pub fn should_emit_vault_locked(did_lock: bool) -> bool {
+    did_lock
+}
+
 /// Lock the vault from Rust when idle, regardless of webview state (F5).
 ///
 /// The frontend timer is only a fast-path duplicate; this thread guarantees
@@ -173,20 +191,18 @@ pub fn spawn_auto_lock(
             std::thread::sleep(Duration::from_secs(5));
 
             let idle = now_secs().saturating_sub(last_activity.load(Ordering::Relaxed));
-            if idle < lock_timeout_secs.load(Ordering::Relaxed) {
-                continue;
-            }
+            let timeout = lock_timeout_secs.load(Ordering::Relaxed);
 
             let mut locked_now = false;
             {
                 let mut vault = lock_vault(&vault);
-                if vault.status() == VaultStatus::Unlocked {
+                if should_auto_lock(idle, timeout, vault.status()) {
                     vault.lock();
                     locked_now = true;
                 }
             }
 
-            if locked_now {
+            if should_emit_vault_locked(locked_now) {
                 use tauri::Emitter;
                 let _ = app.emit("vault-locked", ());
             }
@@ -230,7 +246,8 @@ pub fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::path_is_allowed_set;
+    use super::{path_is_allowed_set, should_auto_lock, should_emit_vault_locked};
+    use oikonomia_core::vault::VaultStatus;
     use std::collections::HashSet;
     use std::fs;
 
@@ -253,5 +270,37 @@ mod tests {
         assert!(path_is_allowed_set(&allowed, &file));
         assert!(!path_is_allowed_set(&allowed, &dir.join("other.pdf")));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn auto_lock_when_unlocked_and_idle_meets_timeout() {
+        assert!(should_auto_lock(60, 60, VaultStatus::Unlocked));
+        assert!(should_auto_lock(61, 60, VaultStatus::Unlocked));
+        assert!(
+            should_emit_vault_locked(true),
+            "a successful idle lock would emit vault-locked"
+        );
+    }
+
+    #[test]
+    fn no_auto_lock_when_idle_below_timeout() {
+        assert!(!should_auto_lock(59, 60, VaultStatus::Unlocked));
+        assert!(!should_emit_vault_locked(false));
+    }
+
+    #[test]
+    fn no_auto_lock_after_activity_resets_idle() {
+        assert!(!should_auto_lock(0, 60, VaultStatus::Unlocked));
+        assert!(!should_emit_vault_locked(false));
+    }
+
+    #[test]
+    fn no_auto_lock_when_already_locked() {
+        assert!(!should_auto_lock(120, 60, VaultStatus::Locked));
+        assert!(!should_auto_lock(120, 60, VaultStatus::Uninitialized));
+        assert!(
+            !should_emit_vault_locked(false),
+            "already locked must not emit vault-locked"
+        );
     }
 }
