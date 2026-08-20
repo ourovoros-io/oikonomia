@@ -1,5 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
+import type { LicenseStatus } from './license'
 import { isTauri, type CommandError } from './tauri'
+
+export type { LicenseState, LicenseStatus } from './license'
 
 export type ChartTemplate = 'personal' | 'company' | 'blank'
 export type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense'
@@ -288,6 +291,13 @@ export const api = {
 
   getLockTimeout: () => call<number>('settings_get_lock_timeout'),
   setLockTimeout: (secs: number) => call<void>('settings_set_lock_timeout', { secs }),
+  /** Trial / signed-license state. Readable while unlocked. */
+  licenseStatus: () => call<LicenseStatus>('license_status'),
+  /**
+   * Native Open for a `.lic` file. `null` = cancelled.
+   * Returns the same status object as {@link api.licenseStatus} after install.
+   */
+  licenseInstall: () => call<LicenseStatus | null>('license_install'),
   /** Theme is a plaintext pref (Rust side): readable before unlock. */
   getTheme: () => call<Theme>('settings_get_theme'),
   setTheme: (theme: Theme) => call<void>('settings_set_theme', { theme }),
