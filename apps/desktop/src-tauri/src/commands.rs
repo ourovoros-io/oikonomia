@@ -140,8 +140,9 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("tmpdir");
         let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
         {
-            let mut vault = crate::state::lock_vault(&state.vault());
-            vault
+            let vault = state.vault();
+            let mut guard = crate::state::lock_vault(&vault);
+            guard
                 .init("correct horse battery staple")
                 .expect("vault init");
         }
