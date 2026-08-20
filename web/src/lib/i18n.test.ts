@@ -99,7 +99,7 @@ describe('Writer el catalog', () => {
     const writerKeys = Object.keys(flat).filter(
       (k) => !k.startsWith('settings.language.') && !k.startsWith('tx.csv.'),
     )
-    expect(writerKeys.length).toBe(566)
+    expect(writerKeys.length).toBe(568)
     expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
     expect(flat['tx.csv.kind.expense']).toBe('Έξοδα')
     expect(flat['tx.csv.kind.income']).toBe('Έσοδα')
@@ -127,6 +127,10 @@ describe('Writer el catalog', () => {
     expect(t('settings.license.import')).toBe('Εισαγωγή άδειας')
     expect(t('settings.trial.banner.active', { n: 12 })).toBe(
       'Απομένουν 12 ημέρες στη δοκιμαστική σας περίοδο',
+    )
+    expect(t('license.entityLimit')).toBe('Απαιτείται άδεια για την προσθήκη άλλου βιβλίου.')
+    expect(t('license.entityLimitHint')).toBe(
+      'Εισαγάγετε μια υπογεγραμμένη άδεια για περισσότερα από ένα βιβλία σε αυτή τη θυρίδα.',
     )
     expect(t('tx.title')).toBe('Κινήσεις')
     expect(t('dash.overview')).toBe('Επισκόπηση')
@@ -175,6 +179,8 @@ describe('Writer license catalog', () => {
     'settings.license.error.generic',
     'settings.trial.banner.active',
     'settings.trial.banner.expired',
+    'license.entityLimit',
+    'license.entityLimitHint',
   ] as const
 
   test('EL keys exist in both en and el catalogs', () => {
@@ -189,6 +195,18 @@ describe('Writer license catalog', () => {
     expect(enFlat['settings.license.error.generic']).toBe('Could not import the license.')
     expect(elFlat['settings.license.error.generic']).toBe(
       'Δεν ολοκληρώθηκε η εισαγωγή της άδειας.',
+    )
+    expect(enFlat['license.entityLimit']).toBe(
+      'A license is required to add another book.',
+    )
+    expect(elFlat['license.entityLimit']).toBe(
+      'Απαιτείται άδεια για την προσθήκη άλλου βιβλίου.',
+    )
+    expect(enFlat['license.entityLimitHint']).toBe(
+      'Import a signed license to keep more than one book in this vault.',
+    )
+    expect(elFlat['license.entityLimitHint']).toBe(
+      'Εισαγάγετε μια υπογεγραμμένη άδεια για περισσότερα από ένα βιβλία σε αυτή τη θυρίδα.',
     )
   })
 })
