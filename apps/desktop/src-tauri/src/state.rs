@@ -264,7 +264,8 @@ impl WatchdogGate {
         self.cond.notify_all();
     }
 
-    /// Wake any waiter and stop the loop. Used by tests; process exit also ends the thread.
+    /// Wake any waiter and stop the loop. Process exit also ends the thread.
+    #[cfg(test)]
     pub fn shutdown(&self) {
         let mut state = self.lock_state();
         *state = GateState::Shutdown;
@@ -288,8 +289,8 @@ impl WatchdogGate {
         *state
     }
 
+    #[cfg(test)]
     fn record_tick(&self) {
-        #[cfg(test)]
         self.ticks.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -386,6 +387,7 @@ fn run_auto_lock_loop(
             GateState::Running => {}
         }
 
+        #[cfg(test)]
         gate.record_tick();
 
         let idle = now_secs().saturating_sub(last_activity.load(Ordering::Relaxed));
@@ -578,7 +580,8 @@ mod tests {
         let (state, dir) = test_state("inflight");
         init_locked_vault(&state);
         {
-            let mut guard = lock_vault(&state.vault());
+            let vault = state.vault();
+            let mut guard = lock_vault(&vault);
             guard.unlock(TEST_PASSWORD).expect("unlock");
         }
         state.touch();
