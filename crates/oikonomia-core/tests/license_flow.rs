@@ -121,6 +121,16 @@ fn vault_init_starts_trial_clock_without_unlock() {
     assert_eq!(status.state, LicenseState::Trial);
     assert!(writes_allowed(&status));
 
+    let conn = vault.connection().expect("conn");
+    create_entity_allowed(dir.path(), &keys.verifier, conn, &book("One")).expect("first entity");
+    let err = create_entity_allowed(dir.path(), &keys.verifier, conn, &book("Two"))
+        .expect_err("second entity");
+    assert!(
+        matches!(err, Error::LicenseEntityLimit),
+        "trial after init is one book: {err:?}"
+    );
+    assert_eq!(list_entities(conn).expect("list").len(), 1);
+
     vault.lock();
     vault.unlock(PASSWORD).expect("later unlock");
     record_trial_start(dir.path()).expect("unlock must not restamp");
@@ -170,21 +180,71 @@ fn first_unlock_sets_trial_once_and_is_writable() {
 fn expired_license_allows_backup_export_restore_and_blocks_writes() {
     let (dir, vault, keys) = setup();
     let entity_id = seed_books(&vault);
+    let conn = vault.connection().expect("conn");
+    let accounts = list_accounts(conn, entity_id).expect("accounts");
+    let wallet_id = accounts
+        .iter()
+        .find(|a| a.code == "1010")
+        .expect("wallet")
+        .id;
+    let expense_id = accounts
+        .iter()
+        .find(|a| a.code == "5100")
+        .expect("expense")
+        .id;
+    let groceries = list_entries(conn, entity_id, &EntryFilter::default())
+        .expect("list")
+        .into_iter()
+        .find(|v| v.entry.description == "Groceries")
+        .expect("seed entry");
+    let receipt = attach_document(
+        conn,
+        entity_id,
+        groceries.entry.id,
+        "receipt.txt",
+        "text/plain",
+        b"keep-me",
+    )
+    .expect("attach while writable");
 
     let body = sign_lic(&keys.signing, "2020-01-01");
     let src = dir.path().join("incoming.lic");
     std::fs::write(&src, &body).expect("write lic");
     let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
     assert_eq!(status.state, LicenseState::Expired);
+
+    let post_err = when_writes_allowed(dir.path(), &keys.verifier, || {
+        post_simple_entry(
+            conn,
+            &PostSimpleEntry {
+                entity_id,
+                kind: SimpleEntryKind::Expense,
+                bill_status: None,
+                entry_date: "2026-03-16".into(),
+                description: "Blocked".into(),
+                reference: None,
+                amount_minor: 100,
+                category_account_id: Some(expense_id),
+                wallet_account_id: Some(wallet_id),
+                payable_account_id: None,
+                from_account_id: None,
+                to_account_id: None,
+            },
+        )
+    });
     assert_eq!(
-        require_writes_allowed(dir.path(), &keys.verifier),
-        Err(Error::LicenseExpired)
+        post_err,
+        Err(Error::LicenseExpired),
+        "expired post_simple_entry must be license_expired"
+    );
+    let after_block = list_entries(conn, entity_id, &EntryFilter::default()).expect("list");
+    assert_eq!(
+        after_block.len(),
+        1,
+        "expired post must not mutate the journal: {after_block:?}"
     );
 
-    let csv = {
-        let conn = vault.connection().expect("conn");
-        export_journal_csv(conn, entity_id).expect("export while expired")
-    };
+    let csv = export_journal_csv(conn, entity_id).expect("export while expired");
     assert!(csv.contains("Groceries"), "export stays allowed: {csv}");
 
     let archive_dir = TempDir::new().expect("archive dir");
@@ -196,11 +256,21 @@ fn expired_license_allows_backup_export_restore_and_blocks_writes() {
         .expect("restore while expired");
     let mut restored = Vault::open_path(restore_dir.path()).expect("open restored");
     restored.unlock(PASSWORD).expect("unlock restored");
-    let conn = restored.connection().expect("restored conn");
-    let listed = list_entries(conn, entity_id, &EntryFilter::default()).expect("list restored");
+    let restored_conn = restored.connection().expect("restored conn");
+    let listed =
+        list_entries(restored_conn, entity_id, &EntryFilter::default()).expect("list restored");
     assert!(
         listed.iter().any(|v| v.entry.description == "Groceries"),
         "restore kept the journal: {listed:?}"
+    );
+
+    let (meta, data) = get_document(conn, receipt.id).expect("document_export read");
+    let export_path = dir.path().join(meta.filename);
+    std::fs::write(&export_path, &data).expect("document_export write");
+    assert_eq!(
+        std::fs::read(&export_path).expect("exported bytes"),
+        b"keep-me",
+        "document export stays allowed while expired"
     );
 
     assert_eq!(

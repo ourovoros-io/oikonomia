@@ -34,7 +34,11 @@ impl AppState {
     ///
     /// Propagates vault I/O errors from the default data directory.
     pub fn new(ocr_model_dir: PathBuf) -> Result<Self, CoreError> {
-        let data_dir = default_data_dir()?;
+        Self::open_path(default_data_dir()?, ocr_model_dir)
+    }
+
+    /// Open a vault in `data_dir` (tests and [`Self::new`]).
+    pub(crate) fn open_path(data_dir: PathBuf, ocr_model_dir: PathBuf) -> Result<Self, CoreError> {
         let vault = Vault::open_path(data_dir.clone())?;
         Ok(Self {
             vault: Arc::new(Mutex::new(vault)),

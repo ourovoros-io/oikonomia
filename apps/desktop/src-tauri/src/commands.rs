@@ -120,6 +120,43 @@ fn stamp_trial_start(state: &AppState) -> CommandResult<()> {
     Ok(())
 }
 
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod tests {
+    use super::stamp_trial_start;
+    use crate::state::AppState;
+    use oikonomia_core::license::{LicenseState, LicenseVerifier, license_status};
+    use oikonomia_core::prefs::load_ui_prefs;
+
+    #[test]
+    fn vault_init_stamps_trial_without_unlock() {
+        let dir = std::env::temp_dir().join(format!(
+            "oiko-vault-init-trial-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        {
+            let mut vault = crate::state::lock_vault(&state.vault());
+            vault
+                .init("correct horse battery staple")
+                .expect("vault init");
+        }
+        stamp_trial_start(&state).expect("stamp");
+        assert!(
+            load_ui_prefs(state.data_dir()).trial_started_at.is_some(),
+            "vault_init helper must stamp trial_started_at"
+        );
+        let verifier = LicenseVerifier::production().expect("production verifier");
+        let status = license_status(state.data_dir(), &verifier).expect("status");
+        assert_eq!(status.state, LicenseState::Trial);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 /// Change the master password (requires the current password).
 #[tauri::command]
 pub async fn vault_change_password(
