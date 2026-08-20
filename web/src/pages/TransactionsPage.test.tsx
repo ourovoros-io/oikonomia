@@ -291,6 +291,35 @@ describe('TransactionsPage hidden paint', () => {
       expect(api.entrySetHidden).toHaveBeenCalledWith('j1', true)
     })
   })
+
+  test('unhide calls entrySetHidden(id, false)', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([hiddenEntry])
+    await renderReady()
+    await userEvent.click(screen.getByText('ATM cash'))
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox', { name: /hide/i })).toBeChecked()
+    })
+    await userEvent.click(screen.getByRole('checkbox', { name: /hide/i }))
+    await waitFor(() => {
+      expect(api.entrySetHidden).toHaveBeenCalledWith('j2', false)
+    })
+  })
+
+  test('setHidden reject shows ErrorBanner', async () => {
+    vi.mocked(api.entrySetHidden).mockRejectedValue({
+      code: 'unknown',
+      message: 'could not hide entry',
+    })
+    await renderReady()
+    await userEvent.click(screen.getByText('Alpha supermarket'))
+    await waitFor(() => {
+      expect(screen.getByRole('checkbox', { name: /hide/i })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('checkbox', { name: /hide/i }))
+    await waitFor(() => {
+      expect(screen.getByText('could not hide entry')).toBeTruthy()
+    })
+  })
 })
 
 describe('TransactionsPage CSV mapping and preview', () => {

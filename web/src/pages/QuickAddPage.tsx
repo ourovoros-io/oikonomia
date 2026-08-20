@@ -625,7 +625,13 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               )
             : await api.entryPostSimple(input)
       if (hidden) {
-        await api.entrySetHidden(posted.entry.id, true)
+        try {
+          await api.entrySetHidden(posted.entry.id, true)
+        } catch {
+          // Retry hide. Do not void: the posted row stays; a second failure
+          // surfaces on the existing save error alert.
+          await api.entrySetHidden(posted.entry.id, true)
+        }
       }
       const roles: LastRoleAccounts = {
         category_account_id: categoryId || null,

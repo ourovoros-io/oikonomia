@@ -17,6 +17,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       getUiPrefs: vi.fn(),
       entryPostSimple: vi.fn(),
       entrySetHidden: vi.fn(),
+      entryVoid: vi.fn(),
       rememberQuickAdd: vi.fn(),
     },
   }
@@ -94,6 +95,7 @@ beforeEach(() => {
     entry: { ...posted.entry, hidden: true },
   })
   vi.mocked(api.rememberQuickAdd).mockReset().mockResolvedValue(undefined)
+  vi.mocked(api.entryVoid).mockReset()
 })
 
 const ROLL_MS = 230
@@ -147,5 +149,41 @@ describe('QuickAddPage hidden paint', () => {
       expect(api.entryPostSimple).toHaveBeenCalledTimes(1)
     })
     expect(api.entrySetHidden).not.toHaveBeenCalled()
+  })
+
+  test('Hide after post fails: retries hide, shows error, does not void', async () => {
+    const onPosted = vi.fn()
+    vi.mocked(api.entrySetHidden).mockRejectedValue({
+      code: 'unknown',
+      message: 'hide failed',
+    })
+    render(<QuickAddPage onPosted={onPosted} />)
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: 'Expense' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('radio', { name: 'Expense' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Amount (EUR)')).toBeTruthy()
+    })
+    await afterRoll()
+    await userEvent.type(screen.getByLabelText('Amount (EUR)'), '12.50')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Category')).toBeTruthy()
+    })
+    await afterRoll()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Save' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('checkbox', { name: /hide/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(api.entrySetHidden).toHaveBeenCalledTimes(2)
+    })
+    expect(api.entryPostSimple).toHaveBeenCalledTimes(1)
+    expect(api.entryVoid).not.toHaveBeenCalled()
+    expect(onPosted).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert')).toHaveTextContent('hide failed')
   })
 })
