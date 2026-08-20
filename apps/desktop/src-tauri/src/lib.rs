@@ -101,6 +101,7 @@ pub fn run() {
             commands::entry_post_simple_with_document,
             commands::entry_post_simple_with_document_path,
             commands::entry_void,
+            commands::entry_set_hidden,
             commands::csv_import_preview,
             commands::csv_import_post,
             commands::csv_export_journal,

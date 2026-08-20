@@ -22,7 +22,8 @@ use oikonomia_core::ledger::{
     balance_sheet, create_account, create_entity, dashboard_summary, delete_entity, get_entity,
     get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries, post_entry,
     post_simple_entry, profit_and_loss, replace_simple_entry, set_account_opening_balance,
-    set_lock_timeout_secs, trial_balance, update_account, update_entity, void_entry,
+    set_entry_hidden, set_lock_timeout_secs, trial_balance, update_account, update_entity,
+    void_entry,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
@@ -644,6 +645,20 @@ pub async fn entry_replace_simple(
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         replace_simple_entry(conn, original_id, &input)
+    })
+    .await
+}
+
+/// Set the owner-only hidden flag on an existing journal entry.
+#[tauri::command]
+pub async fn entry_set_hidden(
+    state: State<'_, AppState>,
+    id: JournalEntryId,
+    hidden: bool,
+) -> CommandResult<PostedEntryView> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        set_entry_hidden(conn, id, hidden)
     })
     .await
 }

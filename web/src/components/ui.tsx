@@ -123,6 +123,7 @@ export function Hero({
 export function Panel({
   title,
   description,
+  whisper,
   icon,
   actions,
   children,
@@ -130,6 +131,8 @@ export function Panel({
 }: {
   title: string
   description?: string
+  /** Quieter second line under list meta (export omit reminder). */
+  whisper?: string
   icon?: ReactNode
   actions?: ReactNode
   children: ReactNode
@@ -147,6 +150,7 @@ export function Panel({
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
           {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
+          {whisper ? <p className="text-[11px] text-[var(--color-muted)]">{whisper}</p> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {actions}

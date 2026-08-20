@@ -12,6 +12,7 @@ import type { CommandError } from '../lib/tauri'
 import { fileToBase64, formatBytes, mimeFromName } from '../lib/files'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Modal } from './Modal'
+import { HideFromExportControl } from './hiddenUi'
 import { Button } from './ui'
 import { useI18n } from '../lib/I18nProvider'
 
@@ -45,6 +46,7 @@ export function EntryDetailModal({
   const { t } = useI18n()
   const [busyId, setBusyId] = useState<string | null>(null)
   const [attachBusy, setAttachBusy] = useState(false)
+  const [hideBusy, setHideBusy] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -54,7 +56,7 @@ export function EntryDetailModal({
   // One operation at a time: busyId is shared by export and delete, so a
   // second action while either is in flight must be refused, not just
   // silently overwrite the flag and re-enable controls mid-operation.
-  const anyBusy = attachBusy || busyId !== null
+  const anyBusy = attachBusy || hideBusy || busyId !== null
 
   async function onAttach(file: File) {
     if (!view) return
@@ -94,6 +96,20 @@ export function EntryDetailModal({
       onError((err as CommandError).message || t('entry.deleteFailed'))
     } finally {
       setBusyId(null)
+    }
+  }
+
+  async function onToggleHidden(hidden: boolean) {
+    if (!view) return
+    if (anyBusy) return
+    setHideBusy(true)
+    try {
+      await api.entrySetHidden(view.entry.id, hidden)
+      await onChanged()
+    } catch (err) {
+      onError((err as CommandError).message || t('tx.form.hidden.label'))
+    } finally {
+      setHideBusy(false)
     }
   }
 
@@ -167,6 +183,12 @@ export function EntryDetailModal({
             </tbody>
           </table>
         </div>
+
+        <HideFromExportControl
+          checked={entry.hidden}
+          disabled={anyBusy}
+          onChange={(hidden) => void onToggleHidden(hidden)}
+        />
 
         <div>
           <div className="mb-2 flex items-center justify-between">

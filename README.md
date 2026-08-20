@@ -25,6 +25,7 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 - Chart of accounts (create, deactivate)
 - Journal entries (two-line post + void with reverse)
 - Bank CSV import (confirm before post) and journal CSV export
+- Mark entries Hidden so journal CSV omits them; the vault backup still includes those lines
 - Reports: trial balance, profit & loss, balance sheet
 - Dashboard (MTD income/expense, assets)
 - Dark / light theme; locale money formatting

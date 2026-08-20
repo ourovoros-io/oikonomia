@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Latest schema version applied by migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 5;
+pub const CURRENT_SCHEMA_VERSION: i64 = 6;
 
 /// Apply pending migrations. Safe to call on every unlock.
 ///
@@ -37,6 +37,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 
     if version < 5 {
         migrate_v5(conn)?;
+    }
+
+    if version < 6 {
+        migrate_v6(conn)?;
     }
 
     if version < CURRENT_SCHEMA_VERSION {
@@ -228,6 +232,29 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_lines_entry ON journal_lines(entry_id);
         CREATE INDEX IF NOT EXISTS idx_lines_account ON journal_lines(account_id);
         UPDATE vault_meta SET schema_version = 5 WHERE id = 1;
+        ",
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(())
+}
+
+/// v6: per-entry owner-only hidden flag on `journal_entries`.
+///
+/// `0` = visible (default), `1` = hidden from CSV export. The owner still
+/// sees hidden rows in list/get/register. Existing pre-v6 rows become
+/// visible via `DEFAULT 0`. Not extra encryption.
+fn migrate_v6(conn: &Connection) -> Result<()> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.execute_batch(
+        "
+        ALTER TABLE journal_entries
+            ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
+        UPDATE vault_meta SET schema_version = 6 WHERE id = 1;
         ",
     )
     .map_err(|err| Error::Io(err.to_string()))?;

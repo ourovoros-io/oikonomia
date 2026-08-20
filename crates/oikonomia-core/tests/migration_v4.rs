@@ -19,6 +19,7 @@ fn setup_vault() -> (TempDir, Vault) {
 fn downgrade_to_v3_with_bad_data(conn: &Connection) {
     conn.execute_batch(
         "
+        ALTER TABLE journal_entries DROP COLUMN hidden;
         DROP TABLE documents;
         CREATE TABLE documents (
             id TEXT PRIMARY KEY NOT NULL,

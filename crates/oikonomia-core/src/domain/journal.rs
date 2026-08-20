@@ -72,6 +72,10 @@ pub struct JournalEntry {
     pub reference: Option<String>,
     /// Draft vs posted.
     pub status: EntryStatus,
+    /// Owner-only visibility flag. Hidden rows stay in the book and in
+    /// list/get/register; [`crate::csv::export_journal_csv`] omits them.
+    /// Not extra encryption.
+    pub hidden: bool,
 }
 
 /// One debit or credit line on a journal entry.

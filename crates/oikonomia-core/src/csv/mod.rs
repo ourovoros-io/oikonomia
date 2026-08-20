@@ -31,6 +31,8 @@
 //! Journal export writes **integer minor units** in `debit_minor` and
 //! `credit_minor` (not decimal major units). Status is `posted` or `voided`.
 //! Voided originals and their reversing entries are included and marked.
+//! Hidden entries are omitted from the export (the owner still sees them
+//! in-app).
 
 mod amount;
 mod export;

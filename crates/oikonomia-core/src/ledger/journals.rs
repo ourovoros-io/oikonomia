@@ -71,6 +71,8 @@ pub struct RegisterLine {
     pub credit_minor: i64,
     /// Running normal balance after this line.
     pub balance_minor: i64,
+    /// Owner-only hidden flag from the parent entry.
+    pub hidden: bool,
 }
 
 /// High-level kind for the simple entry form (no debit/credit knowledge in the UI).
@@ -197,7 +199,7 @@ pub fn list_entries(
         .prepare(
             "
             SELECT je.id, je.entity_id, je.entry_date, je.description, je.reference,
-                   je.status, je.voided_by_entry_id,
+                   je.status, je.hidden, je.voided_by_entry_id,
                    je.voided_by_entry_id IS NOT NULL
                        OR EXISTS (
                            SELECT 1 FROM journal_entries x
@@ -228,7 +230,7 @@ pub fn list_entries(
         .query_map(
             rusqlite::params![entity_id.0.to_string(), from, to, pattern, account],
             |row| {
-                let is_voided: i64 = row.get(7)?;
+                let is_voided: i64 = row.get(8)?;
                 Ok((map_entry_row(row)?, is_voided != 0))
             },
         )
@@ -277,12 +279,13 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
     let (entry, mut is_voided) = conn
         .query_row(
             "
-            SELECT id, entity_id, entry_date, description, reference, status, voided_by_entry_id
+            SELECT id, entity_id, entry_date, description, reference, status, hidden,
+                   voided_by_entry_id
             FROM journal_entries WHERE id = ?1
             ",
             [id.0.to_string()],
             |row| {
-                let voided: Option<String> = row.get(6)?;
+                let voided: Option<String> = row.get(7)?;
                 Ok((map_entry_row(row)?, voided.is_some()))
             },
         )
@@ -303,6 +306,35 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
     })
 }
 
+/// Set the owner-only hidden flag on an existing journal entry.
+///
+/// Hidden is a visibility flag for CSV export, not extra encryption and not
+/// a second password. The owner still sees the row via [`list_entries`],
+/// [`get_entry`], and [`account_register`].
+///
+/// v1: any existing entry the owner can load (draft or posted, including
+/// voided) can be hidden or unhidden. A missing id is [`Error::NotFound`].
+///
+/// # Errors
+///
+/// Not found or database errors.
+pub fn set_entry_hidden(
+    conn: &Connection,
+    id: JournalEntryId,
+    hidden: bool,
+) -> Result<PostedEntryView> {
+    let n = conn
+        .execute(
+            "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
+            rusqlite::params![i64::from(hidden), id.0.to_string()],
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+    if n == 0 {
+        return Err(Error::NotFound("journal entry".into()));
+    }
+    get_entry(conn, id)
+}
+
 /// Validate and post a journal entry atomically.
 ///
 /// # Errors
@@ -312,7 +344,7 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
     let tx = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
-    let view = insert_posted_entry(&tx, input)?;
+    let view = insert_posted_entry(&tx, input, false)?;
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(view)
 }
@@ -321,7 +353,12 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 ///
 /// Callers own the transaction: [`post_entry`] and [`void_entry`] wrap this so
 /// a failure mid-insert can never leave a partial posted entry behind.
-fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
+/// `hidden` is for [`void_entry`]: a reverse of a hidden original stays hidden.
+fn insert_posted_entry(
+    conn: &Connection,
+    input: &PostJournal,
+    hidden: bool,
+) -> Result<PostedEntryView> {
     // Description may be empty (tray quick-add memo is optional); still trim.
     let description = input.description.trim();
 
@@ -367,8 +404,8 @@ fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedE
         "
         INSERT INTO journal_entries (
             id, entity_id, entry_date, description, reference,
-            status, created_at, posted_at, voided_by_entry_id
-        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL)
+            status, created_at, posted_at, voided_by_entry_id, hidden
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7)
         ",
         rusqlite::params![
             entry_id.0.to_string(),
@@ -377,6 +414,7 @@ fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedE
             description,
             reference,
             now,
+            i64::from(hidden),
         ],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
@@ -448,6 +486,7 @@ pub(crate) fn post_simple_entry_unchecked(
             reference: input.reference.clone(),
             lines,
         },
+        false,
     )
 }
 
@@ -530,6 +569,9 @@ fn simple_entry_sides(
 /// Void a posted entry by posting a reverse entry and linking `voided_by`.
 ///
 /// The reverse insert and both link updates happen in one transaction.
+/// If the original is hidden, the reverse `VOID:` row inherits that flag so
+/// journal CSV omits both. A visible void still exports the original and the
+/// reverse.
 ///
 /// # Errors
 ///
@@ -572,7 +614,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult>
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
-    let reverse = insert_posted_entry(conn, &reverse_input)?;
+    let reverse = insert_posted_entry(conn, &reverse_input, view.entry.hidden)?;
 
     // Link original → reverse (original is voided).
     conn.execute(
@@ -775,7 +817,7 @@ pub fn account_register(
     let list_sql = format!(
         "
         SELECT je.id, je.entry_date, je.description,
-               jl.debit_minor, jl.credit_minor
+               jl.debit_minor, jl.credit_minor, je.hidden
         FROM journal_lines jl
         JOIN journal_entries je ON je.id = jl.entry_id
         WHERE jl.account_id = ?1
@@ -800,6 +842,7 @@ pub fn account_register(
                     row.get::<_, String>(2)?,
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             },
         )
@@ -807,7 +850,7 @@ pub fn account_register(
 
     let mut result = Vec::new();
     for row in rows {
-        let (id_s, date_s, description, debit, credit) =
+        let (id_s, date_s, description, debit, credit, hidden) =
             row.map_err(|err| Error::Io(err.to_string()))?;
         let entry_id = JournalEntryId(parse_uuid(&id_s)?);
         let entry_date = parse_date(&date_s)?;
@@ -820,6 +863,7 @@ pub fn account_register(
             debit_minor: debit,
             credit_minor: credit,
             balance_minor: running,
+            hidden: hidden != 0,
         });
     }
 
@@ -934,6 +978,7 @@ fn map_entry_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntry> {
         description: row.get(3)?,
         reference: row.get(4)?,
         status,
+        hidden: row.get::<_, i64>(6)? != 0,
     })
 }
 
