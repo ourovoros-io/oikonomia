@@ -27,7 +27,7 @@ pub const PRODUCT: &str = "oikonomia";
 /// File name next to `ui-prefs.json` in the app data directory.
 pub const LICENSE_FILE_NAME: &str = "license.lic";
 
-/// Length of the trial window after the first successful unlock.
+/// Length of the trial window after `trial_started_at`.
 pub const TRIAL_DAYS: i64 = 30;
 
 const PRODUCTION_PUBLIC_KEY: [u8; 32] = decode_hex32(PRODUCTION_PUBLIC_KEY_HEX);
@@ -36,9 +36,9 @@ const PRODUCTION_PUBLIC_KEY: [u8; 32] = decode_hex32(PRODUCTION_PUBLIC_KEY_HEX);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LicenseState {
-    /// Vault has never been unlocked; `trial_started_at` is absent.
+    /// `trial_started_at` is absent.
     None,
-    /// Inside the 30-day window after first unlock, and no valid unexpired license.
+    /// Inside the 30-day window after the trial stamp, and no valid unexpired license.
     Trial,
     /// A signature-valid `.lic` whose expiry is today or later (UTC).
     Licensed,
@@ -134,9 +134,8 @@ pub fn license_path(data_dir: &Path) -> PathBuf {
 
 /// Whether mutating ledger / vault-password commands may proceed.
 ///
-/// Only [`LicenseState::Expired`] is blocked. `none` is the pre-first-unlock
-/// window (including the session after `vault_init`); `trial` and `licensed`
-/// are writable.
+/// Only [`LicenseState::Expired`] is blocked. `none` (trial not yet stamped),
+/// `trial`, and `licensed` are writable.
 #[must_use]
 pub fn writes_allowed(status: &LicenseStatus) -> bool {
     !matches!(status.state, LicenseState::Expired)
@@ -231,7 +230,7 @@ pub fn license_status_at(
         return LicenseStatus::none();
     };
     let Some(start) = OffsetDateTime::parse(raw, &Rfc3339).ok() else {
-        return LicenseStatus::none();
+        return LicenseStatus::expired();
     };
     let Some(end) = start.checked_add(Duration::days(TRIAL_DAYS)) else {
         return LicenseStatus::expired();
@@ -269,15 +268,26 @@ pub fn install_license(
     let dest = license_path(data_dir);
     let tmp = data_dir.join("license.lic.tmp");
     fs::write(&tmp, &bytes).map_err(|err| Error::Io(format!("could not stage license: {err}")))?;
-    if let Err(err) = fs::rename(&tmp, &dest) {
+    if let Err(err) = replace_license_file(&tmp, &dest) {
         let _ = fs::remove_file(&tmp);
-        return Err(Error::Io(format!("could not install license: {err}")));
+        return Err(err);
     }
 
     license_status(data_dir, verifier)
 }
 
-/// Set `trial_started_at` once on first successful unlock. Never resets.
+/// Rename `tmp` onto `dest`. Windows `rename` fails when `dest` exists, so
+/// drop `dest` first there; Unix rename still replaces atomically.
+fn replace_license_file(tmp: &Path, dest: &Path) -> Result<()> {
+    #[cfg(windows)]
+    if dest.exists() {
+        fs::remove_file(dest)
+            .map_err(|err| Error::Io(format!("could not replace license: {err}")))?;
+    }
+    fs::rename(tmp, dest).map_err(|err| Error::Io(format!("could not install license: {err}")))
+}
+
+/// Set `trial_started_at` once. Never resets an existing stamp.
 ///
 /// Uses the system clock. No NTP, no network.
 ///
@@ -665,6 +675,57 @@ mod tests {
         let status = license_status(dir.path(), &keys.verifier).expect("status");
         assert_eq!(status.state, LicenseState::None);
         assert_eq!(load_ui_prefs(dir.path()).trial_started_at, None);
+    }
+
+    #[test]
+    fn unparseable_trial_started_at_is_expired() {
+        let dir = tempdir().expect("tempdir");
+        let keys = ephemeral();
+        let mut prefs = load_ui_prefs(dir.path());
+        prefs.trial_started_at = Some("not-a-date".into());
+        save_ui_prefs(dir.path(), &prefs).expect("save");
+        let status = license_status(dir.path(), &keys.verifier).expect("status");
+        assert_eq!(status.state, LicenseState::Expired);
+        assert!(!writes_allowed(&status));
+        assert_eq!(
+            require_writes_allowed(dir.path(), &keys.verifier),
+            Err(Error::LicenseExpired)
+        );
+        record_trial_start(dir.path()).expect("must not restamp garbage");
+        assert_eq!(
+            load_ui_prefs(dir.path()).trial_started_at.as_deref(),
+            Some("not-a-date")
+        );
+    }
+
+    #[test]
+    fn install_license_replaces_existing_file() {
+        let dir = tempdir().expect("tempdir");
+        let keys = ephemeral();
+        let first = sign_lic(
+            &keys.signing,
+            PRODUCT,
+            "2099-12-31",
+            "buyer@example.com",
+            "2026-08-20T12:00:00Z",
+        );
+        let second = sign_lic(
+            &keys.signing,
+            PRODUCT,
+            "2098-06-15",
+            "renew@example.com",
+            "2026-08-20T13:00:00Z",
+        );
+        let first_src = write_lic(dir.path(), &first);
+        install_license(dir.path(), &first_src, &keys.verifier).expect("first");
+        let renew_dir = dir.path().join("renew");
+        fs::create_dir_all(&renew_dir).expect("renew dir");
+        let second_src = write_lic(&renew_dir, &second);
+        let status = install_license(dir.path(), &second_src, &keys.verifier).expect("replace");
+        assert_eq!(status.state, LicenseState::Licensed);
+        assert_eq!(status.licensed_until.as_deref(), Some("2098-06-15"));
+        let stored = fs::read_to_string(license_path(dir.path())).expect("stored");
+        assert_eq!(stored, second, "second signed body replaces the first");
     }
 
     #[test]

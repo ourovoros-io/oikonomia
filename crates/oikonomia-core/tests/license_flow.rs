@@ -108,6 +108,30 @@ fn seed_books(vault: &Vault) -> oikonomia_core::domain::EntityId {
 }
 
 #[test]
+fn vault_init_starts_trial_clock_without_unlock() {
+    let dir = TempDir::new().expect("tempdir");
+    let keys = ephemeral();
+    let mut vault = Vault::open_path(dir.path()).expect("open");
+    vault.init(PASSWORD).expect("init");
+    record_trial_start(dir.path()).expect("stamp after init");
+
+    let stamp = load_ui_prefs(dir.path()).trial_started_at;
+    assert!(stamp.is_some(), "init stamps trial_started_at");
+    let status = license_status(dir.path(), &keys.verifier).expect("status");
+    assert_eq!(status.state, LicenseState::Trial);
+    assert!(writes_allowed(&status));
+
+    vault.lock();
+    vault.unlock(PASSWORD).expect("later unlock");
+    record_trial_start(dir.path()).expect("unlock must not restamp");
+    assert_eq!(
+        load_ui_prefs(dir.path()).trial_started_at,
+        stamp,
+        "later unlock must not reset trial_started_at"
+    );
+}
+
+#[test]
 fn first_unlock_sets_trial_once_and_is_writable() {
     let dir = TempDir::new().expect("tempdir");
     let keys = ephemeral();

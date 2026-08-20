@@ -76,11 +76,13 @@ pub async fn vault_init(
     state: State<'_, AppState>,
     password: String,
 ) -> CommandResult<VaultStatus> {
-    with_vault_blocking(&state, move |vault| {
+    let status = with_vault_blocking(&state, move |vault| {
         vault.init(&password)?;
         Ok(vault.status())
     })
-    .await
+    .await?;
+    stamp_trial_start(&state)?;
+    Ok(status)
 }
 
 /// Unlock an existing vault.
@@ -89,7 +91,6 @@ pub async fn vault_unlock(
     state: State<'_, AppState>,
     password: String,
 ) -> CommandResult<VaultStatus> {
-    let data_dir = state.data_dir().to_path_buf();
     let (status, secs) = with_vault_blocking(&state, move |vault| {
         vault.unlock(&password)?;
 
@@ -107,13 +108,16 @@ pub async fn vault_unlock(
     })
     .await?;
 
-    {
-        let _guard = state.lock_prefs();
-        record_trial_start(&data_dir)?;
-    }
-
+    stamp_trial_start(&state)?;
     state.set_lock_timeout_cache(secs);
     Ok(status)
+}
+
+/// Stamp `trial_started_at` once after a successful vault init or unlock.
+fn stamp_trial_start(state: &AppState) -> CommandResult<()> {
+    let _guard = state.lock_prefs();
+    record_trial_start(state.data_dir())?;
+    Ok(())
 }
 
 /// Change the master password (requires the current password).
