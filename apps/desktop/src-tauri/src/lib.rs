@@ -44,7 +44,7 @@ pub fn run() {
             log::info!("OCR model dir: {}", ocr_dir.display());
 
             let app_state = AppState::new(ocr_dir).expect("failed to open vault data directory");
-            let (vault, last_activity, lock_timeout) = app_state.watchdog_handles();
+            let watchdog = app_state.watchdog_handles();
 
             // Native window appearance (scrollbars, controls, title bar) must
             // match the stored theme, not the OS preference.
@@ -58,7 +58,7 @@ pub fn run() {
 
             // Rust-side idle lock: guarantees the vault locks even if the
             // webview throttles timers or stalls entirely.
-            state::spawn_auto_lock(app.handle().clone(), vault, last_activity, lock_timeout);
+            state::spawn_auto_lock(app.handle().clone(), watchdog);
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(

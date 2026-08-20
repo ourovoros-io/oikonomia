@@ -81,6 +81,7 @@ pub async fn vault_init(
         Ok(vault.status())
     })
     .await?;
+    state.sync_watchdog_gate(status);
     stamp_trial_start(&state)?;
     Ok(status)
 }
@@ -108,8 +109,9 @@ pub async fn vault_unlock(
     })
     .await?;
 
-    stamp_trial_start(&state)?;
     state.set_lock_timeout_cache(secs);
+    state.sync_watchdog_gate(status);
+    stamp_trial_start(&state)?;
     Ok(status)
 }
 
@@ -188,6 +190,7 @@ pub async fn vault_lock(
         Ok(vault.status())
     })
     .await?;
+    state.sync_watchdog_gate(status);
     let _ = app.emit("vault-locked", ());
     Ok(status)
 }
@@ -381,6 +384,9 @@ async fn lock_vault_session(
         Ok(was_unlocked)
     })
     .await?;
+    // Always park: restore (and any other session lock) leaves the vault
+    // closed even when it was already locked.
+    state.sync_watchdog_gate(VaultStatus::Locked);
     if was_unlocked {
         let _ = app.emit("vault-locked", ());
     }
