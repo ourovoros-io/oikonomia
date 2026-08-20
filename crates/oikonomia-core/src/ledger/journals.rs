@@ -344,7 +344,7 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
     let tx = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
-    let view = insert_posted_entry(&tx, input)?;
+    let view = insert_posted_entry(&tx, input, false)?;
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(view)
 }
@@ -353,7 +353,12 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 ///
 /// Callers own the transaction: [`post_entry`] and [`void_entry`] wrap this so
 /// a failure mid-insert can never leave a partial posted entry behind.
-fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
+/// `hidden` is for [`void_entry`]: a reverse of a hidden original stays hidden.
+fn insert_posted_entry(
+    conn: &Connection,
+    input: &PostJournal,
+    hidden: bool,
+) -> Result<PostedEntryView> {
     // Description may be empty (tray quick-add memo is optional); still trim.
     let description = input.description.trim();
 
@@ -399,8 +404,8 @@ fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedE
         "
         INSERT INTO journal_entries (
             id, entity_id, entry_date, description, reference,
-            status, created_at, posted_at, voided_by_entry_id
-        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL)
+            status, created_at, posted_at, voided_by_entry_id, hidden
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7)
         ",
         rusqlite::params![
             entry_id.0.to_string(),
@@ -409,6 +414,7 @@ fn insert_posted_entry(conn: &Connection, input: &PostJournal) -> Result<PostedE
             description,
             reference,
             now,
+            i64::from(hidden),
         ],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
@@ -480,6 +486,7 @@ pub(crate) fn post_simple_entry_unchecked(
             reference: input.reference.clone(),
             lines,
         },
+        false,
     )
 }
 
@@ -562,6 +569,9 @@ fn simple_entry_sides(
 /// Void a posted entry by posting a reverse entry and linking `voided_by`.
 ///
 /// The reverse insert and both link updates happen in one transaction.
+/// If the original is hidden, the reverse `VOID:` row inherits that flag so
+/// journal CSV omits both. A visible void still exports the original and the
+/// reverse.
 ///
 /// # Errors
 ///
@@ -604,7 +614,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult>
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
-    let reverse = insert_posted_entry(conn, &reverse_input)?;
+    let reverse = insert_posted_entry(conn, &reverse_input, view.entry.hidden)?;
 
     // Link original → reverse (original is voided).
     conn.execute(

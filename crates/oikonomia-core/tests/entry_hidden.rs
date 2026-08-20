@@ -191,6 +191,54 @@ fn export_omits_hidden_keeps_visible_posted_and_voided() {
 }
 
 #[test]
+fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+
+    let view = post_simple_entry(
+        conn,
+        &expense(
+            book.entity_id,
+            book.wallet,
+            book.expense,
+            "2026-03-15",
+            "Secret",
+            2_500,
+        ),
+    )
+    .expect("post");
+    set_entry_hidden(conn, view.entry.id, true).expect("hide");
+    let voided = void_entry(conn, view.entry.id).expect("void");
+
+    assert!(!export_mentions(conn, book.entity_id, "Secret"));
+    assert!(!export_mentions(conn, book.entity_id, "VOID: Secret"));
+
+    let original = get_entry(conn, view.entry.id).expect("original");
+    let reverse = get_entry(conn, voided.reverse_id).expect("reverse");
+    assert!(original.entry.hidden);
+    assert!(reverse.entry.hidden);
+    assert!(original.is_voided);
+    assert!(reverse.is_voided);
+    assert_eq!(db_hidden(conn, view.entry.id), 1);
+    assert_eq!(db_hidden(conn, voided.reverse_id), 1);
+
+    let listed = list_entries(conn, book.entity_id, &EntryFilter::default()).expect("list");
+    assert!(
+        listed
+            .iter()
+            .any(|v| v.entry.id == view.entry.id && v.entry.hidden),
+        "list still returns hidden original: {listed:?}"
+    );
+    assert!(
+        listed
+            .iter()
+            .any(|v| v.entry.id == voided.reverse_id && v.entry.hidden),
+        "list still returns hidden reverse: {listed:?}"
+    );
+}
+
+#[test]
 fn unhide_puts_entry_back_in_export() {
     let (_dir, vault) = setup();
     let conn = vault.connection().expect("conn");
