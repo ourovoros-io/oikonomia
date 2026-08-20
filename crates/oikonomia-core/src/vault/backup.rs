@@ -837,6 +837,33 @@ mod tests {
     }
 
     #[test]
+    fn reject_plaintext_sqlite_refuses_sqlite_magic() {
+        let dir = TempDir::new().expect("dir");
+        let magic_path = dir.path().join("magic.db");
+        write_file(&magic_path, b"SQLite format 3\0");
+        let err = reject_plaintext_sqlite(&magic_path).expect_err("sqlite magic");
+        assert!(
+            matches!(err, Error::Io(ref msg) if msg.contains("plaintext")),
+            "SQLite magic must be refused, got {err:?}"
+        );
+
+        let db_path = dir.path().join("plain.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open plaintext sqlite");
+            conn.execute_batch("CREATE TABLE t (id INTEGER);")
+                .expect("schema");
+        }
+        let err = reject_plaintext_sqlite(&db_path).expect_err("plaintext sqlite");
+        assert!(
+            matches!(
+                err,
+                Error::Io(ref msg) if msg == "online backup produced a plaintext database"
+            ),
+            "plaintext sqlite must be refused, got {err:?}"
+        );
+    }
+
+    #[test]
     fn default_backup_file_name_is_dated_local_iso() {
         let name = default_backup_file_name();
         let prefix = "oikonomia-backup-";

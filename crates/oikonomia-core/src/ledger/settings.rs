@@ -55,3 +55,45 @@ pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
     .map_err(|err| Error::Io(err.to_string()))?;
     Ok(())
 }
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod tests {
+    use super::*;
+    use crate::vault::Vault;
+    use tempfile::TempDir;
+
+    const PASSWORD: &str = "correct horse battery staple";
+
+    #[test]
+    fn set_lock_timeout_rejects_below_sixty_seconds() {
+        let conn = Connection::open_in_memory().expect("memory");
+        let err = set_lock_timeout_secs(&conn, 59);
+        assert_eq!(
+            err,
+            Err(Error::Validation(
+                "lock timeout must be at least 60 seconds".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn set_lock_timeout_persists_after_lock_and_unlock() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut vault = Vault::open_path(dir.path()).expect("open");
+        vault.init(PASSWORD).expect("init");
+
+        set_lock_timeout_secs(vault.connection().expect("conn"), 120).expect("set");
+        assert_eq!(
+            get_lock_timeout_secs(vault.connection().expect("conn")).expect("get"),
+            120
+        );
+
+        vault.lock();
+        vault.unlock(PASSWORD).expect("unlock");
+        assert_eq!(
+            get_lock_timeout_secs(vault.connection().expect("conn")).expect("get after unlock"),
+            120
+        );
+    }
+}

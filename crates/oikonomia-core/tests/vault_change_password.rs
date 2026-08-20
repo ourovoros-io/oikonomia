@@ -120,6 +120,22 @@ fn interrupted_change_recovers_via_staged_header() {
 }
 
 #[test]
+fn init_rejects_password_shorter_than_min() {
+    let dir = TempDir::new().expect("tempdir");
+    let mut vault = Vault::open_path(dir.path()).expect("open vault");
+    let err = vault.init("short");
+    assert!(
+        matches!(err, Err(Error::Validation(ref msg)) if msg.contains("at least 12")),
+        "weak init password must be rejected, got {err:?}"
+    );
+    assert_eq!(vault.status(), VaultStatus::Uninitialized);
+    assert!(
+        !vault_db_path(dir.path()).exists(),
+        "rejected init must not leave a database"
+    );
+}
+
+#[test]
 fn change_password_requires_initialized_vault() {
     let dir = TempDir::new().expect("tempdir");
     let mut vault = Vault::open_path(dir.path()).expect("open vault");
