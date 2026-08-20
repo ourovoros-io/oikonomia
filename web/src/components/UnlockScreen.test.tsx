@@ -13,7 +13,7 @@ vi.mock('../lib/tauri', () => ({
   vaultPickBackup: vi.fn(),
 }))
 
-import { vaultPickBackup, vaultRestore, vaultStatus } from '../lib/tauri'
+import { vaultInit, vaultPickBackup, vaultRestore, vaultStatus, vaultUnlock } from '../lib/tauri'
 import { UnlockScreen } from './UnlockScreen'
 import { resetI18nForTests } from '../lib/i18n'
 
@@ -29,6 +29,103 @@ beforeEach(() => {
   vi.mocked(vaultStatus).mockReset()
   vi.mocked(vaultPickBackup).mockReset()
   vi.mocked(vaultPickBackup).mockResolvedValue(BACKUP_PATH)
+  vi.mocked(vaultInit).mockReset().mockResolvedValue('unlocked')
+  vi.mocked(vaultUnlock).mockReset().mockResolvedValue('unlocked')
+})
+
+describe('UnlockScreen submit', () => {
+  test('setup shows confirm field; mismatch uses unlock.passwordsMismatch', async () => {
+    render(<UnlockScreen status="uninitialized" onUnlocked={() => {}} />)
+    expect(screen.getByLabelText('Confirm password')).toBeTruthy()
+    await userEvent.type(screen.getByLabelText('Password'), 'alpha')
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'beta')
+    await userEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
+    expect(screen.getByText('Passwords do not match')).toBeTruthy()
+    expect(vaultInit).not.toHaveBeenCalled()
+    expect(vaultUnlock).not.toHaveBeenCalled()
+  })
+
+  test('setup matching submit calls vaultInit, not vaultUnlock', async () => {
+    const onUnlocked = vi.fn()
+    render(<UnlockScreen status="uninitialized" onUnlocked={onUnlocked} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
+    await waitFor(() => {
+      expect(vaultInit).toHaveBeenCalledWith('secret')
+    })
+    expect(vaultUnlock).not.toHaveBeenCalled()
+    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+  })
+
+  test('locked has no confirm field and submit calls vaultUnlock', async () => {
+    const onUnlocked = vi.fn()
+    render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
+    expect(screen.queryByLabelText('Confirm password')).toBeNull()
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(vaultUnlock).toHaveBeenCalledWith('secret')
+    })
+    expect(vaultInit).not.toHaveBeenCalled()
+    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+  })
+
+  test('invalid_password maps to Incorrect-password banner, never the Rust message', async () => {
+    vi.mocked(vaultUnlock).mockRejectedValue({
+      code: 'invalid_password',
+      message: 'sqlcipher: file is not a database',
+    })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'wrong')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(screen.getByText('Incorrect password — please try again.')).toBeTruthy()
+    })
+    expect(screen.queryByText('sqlcipher: file is not a database')).toBeNull()
+  })
+
+  test('generic unlock failure shows unlock.unlockFailed banner', async () => {
+    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'unknown', message: '' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(screen.getByText('Could not unlock the vault.')).toBeTruthy()
+    })
+  })
+})
+
+describe('UnlockScreen restore CommandError banners', () => {
+  const cases: Array<{ code: string; text: string }> = [
+    {
+      code: 'vault_uninitialized',
+      text: 'Nothing to back up. This vault has not been initialized yet.',
+    },
+    {
+      code: 'backup_invalid',
+      text: 'That file is not a valid Oikonomia backup.',
+    },
+    {
+      code: 'restore_would_overwrite',
+      text: 'A vault already exists on this computer. Confirm replace to continue.',
+    },
+    { code: 'not_found', text: 'Backup file not found.' },
+    { code: 'io', text: 'Could not read or write the backup file.' },
+  ]
+
+  test.each(cases)('vaultRestore $code renders ErrorBanner', async ({ code, text }) => {
+    vi.mocked(vaultRestore).mockRejectedValue({ code, message: '' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Restore from backup' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Replace local vault?' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
+    await waitFor(() => {
+      expect(screen.getByText(text)).toBeTruthy()
+    })
+  })
 })
 
 describe('UnlockScreen restore whisper', () => {
