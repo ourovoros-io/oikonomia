@@ -33,6 +33,9 @@ impl From<CoreError> for CommandError {
             CoreError::NotFound(_) => "not_found",
             CoreError::Analysis(_) => "analysis",
             CoreError::CsvParse(_) => "csv_parse",
+            CoreError::LicenseInvalid => "license_invalid",
+            CoreError::LicenseExpired => "license_expired",
+            _ => "unknown",
         };
 
         Self {

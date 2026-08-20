@@ -53,6 +53,15 @@ pub fn backup_filter_label(locale: Locale) -> &'static str {
     }
 }
 
+/// Native file-dialog filter for `.lic` license files.
+#[must_use]
+pub fn license_filter_label(locale: Locale) -> &'static str {
+    match locale {
+        Locale::En => "Oikonomia license",
+        Locale::El => "Άδεια Oikonomia",
+    }
+}
+
 /// Tray tooltip is the brand name in every locale.
 #[must_use]
 pub fn tray_tooltip(_locale: Locale) -> &'static str {
@@ -237,6 +246,8 @@ mod tests {
             backup_filter_label(Locale::El),
             "Αντίγραφο ασφαλείας Oikonomia"
         );
+        assert_eq!(license_filter_label(Locale::En), "Oikonomia license");
+        assert_eq!(license_filter_label(Locale::El), "Άδεια Oikonomia");
         assert_eq!(tray_tooltip(Locale::En), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::El), "Oikonomia");
     }
