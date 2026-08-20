@@ -4,15 +4,16 @@
 
 use ed25519_dalek::{Signer, SigningKey};
 use oikonomia_core::csv::export_journal_csv;
+use oikonomia_core::documents::{attach_document, delete_document, get_document, list_documents};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts, list_entries,
-    post_simple_entry,
+    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts,
+    list_entries, post_simple_entry,
 };
 use oikonomia_core::license::{
     LicenseState, LicenseVerifier, PRODUCT, install_license, license_status, record_trial_start,
-    require_writes_allowed, signed_payload, writes_allowed,
+    require_writes_allowed, signed_payload, when_writes_allowed, writes_allowed,
 };
 use oikonomia_core::prefs::load_ui_prefs;
 use oikonomia_core::vault::Vault;
@@ -171,12 +172,7 @@ fn expired_license_allows_backup_export_restore_and_blocks_writes() {
     let mut restored = Vault::open_path(restore_dir.path()).expect("open restored");
     restored.unlock(PASSWORD).expect("unlock restored");
     let conn = restored.connection().expect("restored conn");
-    let listed = list_entries(
-        conn,
-        entity_id,
-        &oikonomia_core::ledger::EntryFilter::default(),
-    )
-    .expect("list restored");
+    let listed = list_entries(conn, entity_id, &EntryFilter::default()).expect("list restored");
     assert!(
         listed.iter().any(|v| v.entry.description == "Groceries"),
         "restore kept the journal: {listed:?}"
@@ -186,5 +182,77 @@ fn expired_license_allows_backup_export_restore_and_blocks_writes() {
         require_writes_allowed(dir.path(), &keys.verifier),
         Err(Error::LicenseExpired),
         "a write still returns license_expired"
+    );
+}
+
+#[test]
+fn expired_license_rejects_document_attach_and_delete_but_allows_export() {
+    let (dir, vault, keys) = setup();
+    let entity_id = seed_books(&vault);
+    let conn = vault.connection().expect("conn");
+    let entry_id = list_entries(conn, entity_id, &EntryFilter::default())
+        .expect("list")
+        .into_iter()
+        .find(|v| v.entry.description == "Groceries")
+        .expect("seed entry")
+        .entry
+        .id;
+
+    let existing = attach_document(
+        conn,
+        entity_id,
+        entry_id,
+        "receipt.txt",
+        "text/plain",
+        b"keep-me",
+    )
+    .expect("attach while writable");
+
+    let body = sign_lic(&keys.signing, "2020-01-01");
+    let src = dir.path().join("incoming.lic");
+    std::fs::write(&src, &body).expect("write lic");
+    let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
+    assert_eq!(status.state, LicenseState::Expired);
+
+    let attach_err = when_writes_allowed(dir.path(), &keys.verifier, || {
+        attach_document(
+            conn,
+            entity_id,
+            entry_id,
+            "invoice.txt",
+            "text/plain",
+            b"blocked",
+        )
+    })
+    .expect_err("expired attach");
+    assert!(
+        matches!(attach_err, Error::LicenseExpired),
+        "expired attach must return license_expired: {attach_err:?}"
+    );
+
+    let delete_err = when_writes_allowed(dir.path(), &keys.verifier, || {
+        delete_document(conn, existing.id)
+    });
+    assert_eq!(
+        delete_err,
+        Err(Error::LicenseExpired),
+        "expired delete must return license_expired"
+    );
+
+    let docs = list_documents(conn, entity_id).expect("list docs");
+    assert_eq!(
+        docs.len(),
+        1,
+        "blocked attach/delete must not mutate: {docs:?}"
+    );
+    assert_eq!(docs[0].id, existing.id);
+
+    let (meta, data) = get_document(conn, existing.id).expect("export read");
+    let export_path = dir.path().join(meta.filename);
+    std::fs::write(&export_path, &data).expect("document export write");
+    assert_eq!(
+        std::fs::read(&export_path).expect("exported bytes"),
+        b"keep-me",
+        "document export stays allowed while expired"
     );
 }

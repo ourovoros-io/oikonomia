@@ -157,6 +157,21 @@ pub fn require_writes_allowed(data_dir: &Path, verifier: &LicenseVerifier) -> Re
     }
 }
 
+/// Run `write` only when [`writes_allowed`]. Document attach/delete use this
+/// so expired status returns [`Error::LicenseExpired`] before mutating.
+///
+/// # Errors
+///
+/// [`Error::LicenseExpired`], or whatever `write` returns.
+pub fn when_writes_allowed<T>(
+    data_dir: &Path,
+    verifier: &LicenseVerifier,
+    write: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    require_writes_allowed(data_dir, verifier)?;
+    write()
+}
+
 /// Current license / trial status using the system UTC clock.
 ///
 /// # Errors

@@ -1250,7 +1250,7 @@ pub async fn document_delete(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         delete_document(conn, document_id)
     })
@@ -1285,7 +1285,7 @@ pub async fn document_attach(
             message: format!("invalid file data: {e}"),
         })?;
 
-    with_vault_blocking(&state, move |vault| {
+    with_vault_write_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         attach_document(conn, entity_id, entry_id, &filename, &mime_type, &data)
     })
