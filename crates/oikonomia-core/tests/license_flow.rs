@@ -232,10 +232,9 @@ fn expired_license_allows_backup_export_restore_and_blocks_writes() {
             },
         )
     });
-    assert_eq!(
-        post_err,
-        Err(Error::LicenseExpired),
-        "expired post_simple_entry must be license_expired"
+    assert!(
+        matches!(post_err, Err(Error::LicenseExpired)),
+        "expired post_simple_entry must be license_expired: {post_err:?}"
     );
     let after_block = list_entries(conn, entity_id, &EntryFilter::default()).expect("list");
     assert_eq!(
