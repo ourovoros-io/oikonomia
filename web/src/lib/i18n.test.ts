@@ -99,7 +99,7 @@ describe('Writer el catalog', () => {
     const writerKeys = Object.keys(flat).filter(
       (k) => !k.startsWith('settings.language.') && !k.startsWith('tx.csv.'),
     )
-    expect(writerKeys.length).toBe(568)
+    expect(writerKeys.length).toBe(580)
     expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
     expect(flat['tx.csv.kind.expense']).toBe('Έξοδα')
     expect(flat['tx.csv.kind.income']).toBe('Έσοδα')
@@ -161,6 +161,42 @@ describe('Writer el catalog', () => {
     expect(t('quickAdd.amount', { ccy: 'EUR' })).toBe('Ποσό (EUR)')
     expect(t('tx.list.meta.counts', { posted: 24, hidden: 1 })).toBe('24 καταχωρισμένα · 1 κρυφά')
     expect(t('settings.deleteEntityBody', { name: 'Personal' })).toContain('Personal')
+  })
+})
+
+describe('Writer monthly-expense PDF catalog', () => {
+  const pdfKeys = [
+    'reports.exportPdf',
+    'reports.pdf.title',
+    'reports.pdf.meta',
+    'reports.pdf.totalExpenses',
+    'reports.pdf.sliceNote',
+    'reports.pdf.emptyTitle',
+    'reports.pdf.emptyBody',
+    'reports.pdf.footerPrivacy',
+    'reports.pdf.footerLocal',
+    'reports.pdf.other',
+    'reports.pdf.busy',
+    'reports.pdf.error',
+  ] as const
+
+  test('EN and EL keys exist with Writer copy', () => {
+    const enFlat = flattenMessages(en)
+    const elFlat = flattenMessages(el)
+    for (const key of pdfKeys) {
+      expect(enFlat[key]).toBeTruthy()
+      expect(elFlat[key]).toBeTruthy()
+    }
+    expect(enFlat['reports.exportPdf']).toBe('Export PDF')
+    expect(elFlat['reports.exportPdf']).toBe('Εξαγωγή PDF')
+    expect(enFlat['reports.pdf.title']).toBe('Monthly expenses')
+    expect(elFlat['reports.pdf.title']).toBe('Μηνιαία έξοδα')
+    expect(enFlat['reports.pdf.meta']).toContain('{currency}')
+    expect(elFlat['reports.pdf.meta']).toContain('{currency}')
+    expect(elFlat['reports.pdf.footerPrivacy']).toContain('σας')
+    expect(elFlat['reports.pdf.footerLocal']).toContain('Oikonomia')
+    expect(enFlat['reports.pdf.export']).toBeUndefined()
+    expect(elFlat['reports.pdf.export']).toBeUndefined()
   })
 })
 

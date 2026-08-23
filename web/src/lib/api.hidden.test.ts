@@ -81,6 +81,25 @@ describe('entry_set_hidden', () => {
   })
 })
 
+describe('report PDF export path', () => {
+  test('reportExportPdf invokes report_export_pdf with camelCase args', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/oikonomia-expenses.pdf')
+    await api.reportExportPdf({
+      bytesBase64: 'JVBERi0x',
+      suggestedName: 'oikonomia-expenses-2026-08-01_2026-08-31.pdf',
+    })
+    expect(invoke).toHaveBeenCalledWith('report_export_pdf', {
+      bytesBase64: 'JVBERi0x',
+      suggestedName: 'oikonomia-expenses-2026-08-01_2026-08-31.pdf',
+    })
+  })
+
+  test('maps cancel to null', async () => {
+    vi.mocked(invoke).mockResolvedValue(null)
+    expect(await api.reportExportPdf({ bytesBase64: 'JVBERi0x' })).toBeNull()
+  })
+})
+
 describe('csv journal export path', () => {
   test('csvExportJournal calls csv_export_journal with entityId only', async () => {
     vi.mocked(invoke).mockResolvedValue('/tmp/journal.csv')
