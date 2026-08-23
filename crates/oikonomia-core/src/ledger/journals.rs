@@ -915,11 +915,11 @@ fn load_lines_for_entries(
 }
 
 fn map_line_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalLine> {
-    let id = parse_uuid(&row.get::<_, String>(0)?).map_err(|e| row_err(&e))?;
-    let eid = parse_uuid(&row.get::<_, String>(1)?).map_err(|e| row_err(&e))?;
-    let aid = parse_uuid(&row.get::<_, String>(2)?).map_err(|e| row_err(&e))?;
-    let debit = Money::from_minor(row.get(3)?).map_err(|e| row_err(&e))?;
-    let credit = Money::from_minor(row.get(4)?).map_err(|e| row_err(&e))?;
+    let id = parse_uuid(&row.get::<_, String>(0)?).map_err(|e| sql_conversion_error(&e))?;
+    let eid = parse_uuid(&row.get::<_, String>(1)?).map_err(|e| sql_conversion_error(&e))?;
+    let aid = parse_uuid(&row.get::<_, String>(2)?).map_err(|e| sql_conversion_error(&e))?;
+    let debit = Money::from_minor(row.get(3)?).map_err(|e| sql_conversion_error(&e))?;
+    let credit = Money::from_minor(row.get(4)?).map_err(|e| sql_conversion_error(&e))?;
     Ok(JournalLine {
         id: JournalLineId(id),
         entry_id: JournalEntryId(eid),
@@ -944,11 +944,13 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
 
     let rows = stmt
         .query_map([entry_id.0.to_string()], |row| {
-            let id = parse_uuid(&row.get::<_, String>(0)?).map_err(|e| row_err(&e))?;
-            let eid = parse_uuid(&row.get::<_, String>(1)?).map_err(|e| row_err(&e))?;
-            let aid = parse_uuid(&row.get::<_, String>(2)?).map_err(|e| row_err(&e))?;
-            let debit = Money::from_minor(row.get(3)?).map_err(|e| row_err(&e))?;
-            let credit = Money::from_minor(row.get(4)?).map_err(|e| row_err(&e))?;
+            let id = parse_uuid(&row.get::<_, String>(0)?).map_err(|e| sql_conversion_error(&e))?;
+            let eid =
+                parse_uuid(&row.get::<_, String>(1)?).map_err(|e| sql_conversion_error(&e))?;
+            let aid =
+                parse_uuid(&row.get::<_, String>(2)?).map_err(|e| sql_conversion_error(&e))?;
+            let debit = Money::from_minor(row.get(3)?).map_err(|e| sql_conversion_error(&e))?;
+            let credit = Money::from_minor(row.get(4)?).map_err(|e| sql_conversion_error(&e))?;
             Ok(JournalLine {
                 id: JournalLineId(id),
                 entry_id: JournalEntryId(eid),
@@ -968,17 +970,17 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
 }
 
 fn map_entry_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntry> {
-    let id = parse_uuid(&row.get::<_, String>(0)?).map_err(|e| row_err(&e))?;
-    let entity_id = parse_uuid(&row.get::<_, String>(1)?).map_err(|e| row_err(&e))?;
+    let id = parse_uuid(&row.get::<_, String>(0)?).map_err(|e| sql_conversion_error(&e))?;
+    let entity_id = parse_uuid(&row.get::<_, String>(1)?).map_err(|e| sql_conversion_error(&e))?;
     let date_s: String = row.get(2)?;
-    let entry_date = parse_date(&date_s).map_err(|e| row_err(&e))?;
+    let entry_date = parse_date(&date_s).map_err(|e| sql_conversion_error(&e))?;
     let status_s: String = row.get(5)?;
     let status = match status_s.as_str() {
         "posted" => EntryStatus::Posted,
         "draft" => EntryStatus::Draft,
         other => {
             let err = Error::VaultCorrupt(format!("unknown entry status: {other}"));
-            return Err(row_err(&err));
+            return Err(sql_conversion_error(&err));
         }
     };
 
@@ -993,7 +995,8 @@ fn map_entry_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<JournalEntry> {
     })
 }
 
-fn row_err(err: &Error) -> rusqlite::Error {
+/// Map a domain error onto rusqlite's conversion failure while reading a row.
+fn sql_conversion_error(err: &Error) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
         std::io::ErrorKind::InvalidData,
         err.to_string(),

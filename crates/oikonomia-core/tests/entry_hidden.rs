@@ -87,7 +87,8 @@ fn export_mentions(conn: &Connection, entity_id: EntityId, description: &str) ->
         .any(|line| line.description == description)
 }
 
-fn db_hidden(conn: &Connection, id: JournalEntryId) -> i64 {
+/// Raw `journal_entries.hidden` column (0 or 1) for assertions.
+fn entry_hidden_flag(conn: &Connection, id: JournalEntryId) -> i64 {
     conn.query_row(
         "SELECT hidden FROM journal_entries WHERE id = ?1",
         [id.0.to_string()],
@@ -188,7 +189,7 @@ fn export_omits_hidden_keeps_visible_posted_and_voided() {
         "hidden-and-voided omitted"
     );
 
-    assert_eq!(db_hidden(conn, hidden.entry.id), 1);
+    assert_eq!(entry_hidden_flag(conn, hidden.entry.id), 1);
 }
 
 #[test]
@@ -297,8 +298,8 @@ fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
     assert!(reverse.entry.hidden);
     assert!(original.is_voided);
     assert!(reverse.is_voided);
-    assert_eq!(db_hidden(conn, view.entry.id), 1);
-    assert_eq!(db_hidden(conn, voided.reverse_id), 1);
+    assert_eq!(entry_hidden_flag(conn, view.entry.id), 1);
+    assert_eq!(entry_hidden_flag(conn, voided.reverse_id), 1);
 
     let listed = list_entries(conn, book.entity_id, &EntryFilter::default()).expect("list");
     assert!(
@@ -336,7 +337,7 @@ fn unhide_puts_entry_back_in_export() {
 
     set_entry_hidden(conn, view.entry.id, true).expect("hide");
     assert!(!export_mentions(conn, book.entity_id, "HiddenThenShown"));
-    assert_eq!(db_hidden(conn, view.entry.id), 1);
+    assert_eq!(entry_hidden_flag(conn, view.entry.id), 1);
 
     let listed = list_entries(conn, book.entity_id, &EntryFilter::default()).expect("list");
     assert!(
@@ -349,7 +350,7 @@ fn unhide_puts_entry_back_in_export() {
     let shown = set_entry_hidden(conn, view.entry.id, false).expect("unhide");
     assert!(!shown.entry.hidden);
     assert!(export_mentions(conn, book.entity_id, "HiddenThenShown"));
-    assert_eq!(db_hidden(conn, view.entry.id), 0);
+    assert_eq!(entry_hidden_flag(conn, view.entry.id), 0);
 }
 
 #[test]
@@ -375,7 +376,7 @@ fn hidden_persists_across_reopen_and_backup_restore() {
         set_entry_hidden(conn, view.entry.id, true).expect("hide");
         entry_id = view.entry.id;
         assert!(!export_mentions(conn, book.entity_id, "PersistedSecret"));
-        assert_eq!(db_hidden(conn, entry_id), 1);
+        assert_eq!(entry_hidden_flag(conn, entry_id), 1);
     }
 
     vault.lock();
@@ -389,7 +390,7 @@ fn hidden_persists_across_reopen_and_backup_restore() {
                 .any(|v| v.entry.id == entry_id && v.entry.hidden),
             "hidden survives lock/unlock + migrate"
         );
-        assert_eq!(db_hidden(conn, entry_id), 1);
+        assert_eq!(entry_hidden_flag(conn, entry_id), 1);
     }
 
     let archive_dir = TempDir::new().expect("archive dir");
@@ -408,7 +409,7 @@ fn hidden_persists_across_reopen_and_backup_restore() {
             .any(|v| v.entry.id == entry_id && v.entry.hidden),
         "hidden rows stay in a restored vault"
     );
-    assert_eq!(db_hidden(conn, entry_id), 1);
+    assert_eq!(entry_hidden_flag(conn, entry_id), 1);
     assert!(!export_mentions(conn, book.entity_id, "PersistedSecret"));
 
     // Source data dir still holds the row too (backup is a copy, not a filter).
@@ -465,8 +466,8 @@ fn hidden_works_for_personal_and_company_entities() {
 
     assert!(!export_mentions(conn, personal.entity_id, "PersonalSecret"));
     assert!(!export_mentions(conn, company.entity_id, "CompanySecret"));
-    assert_eq!(db_hidden(conn, p.entry.id), 1);
-    assert_eq!(db_hidden(conn, c.entry.id), 1);
+    assert_eq!(entry_hidden_flag(conn, p.entry.id), 1);
+    assert_eq!(entry_hidden_flag(conn, c.entry.id), 1);
 }
 
 #[test]
@@ -497,7 +498,7 @@ fn set_hidden_allows_draft_rows() {
     let hidden = set_entry_hidden(conn, id, true).expect("hide draft");
     assert!(hidden.entry.hidden);
     assert_eq!(hidden.entry.status, EntryStatus::Draft);
-    assert_eq!(db_hidden(conn, id), 1);
+    assert_eq!(entry_hidden_flag(conn, id), 1);
 }
 
 #[test]
@@ -563,8 +564,8 @@ fn replacing_hidden_entry_keeps_replacement_hidden_and_omits_from_export() {
         replacement.entry.hidden,
         "replacement of a hidden entry stays hidden"
     );
-    assert_eq!(db_hidden(conn, replacement.entry.id), 1);
-    assert_eq!(db_hidden(conn, hidden.entry.id), 1);
+    assert_eq!(entry_hidden_flag(conn, replacement.entry.id), 1);
+    assert_eq!(entry_hidden_flag(conn, hidden.entry.id), 1);
 
     assert!(
         !export_mentions(conn, book.entity_id, "SecretOriginal"),

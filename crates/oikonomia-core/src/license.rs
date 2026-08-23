@@ -61,6 +61,7 @@ pub struct LicenseStatus {
 }
 
 impl LicenseStatus {
+    /// No license file and no recorded trial.
     fn none() -> Self {
         Self {
             state: LicenseState::None,
@@ -69,6 +70,7 @@ impl LicenseStatus {
         }
     }
 
+    /// License or trial is past its end date.
     fn expired() -> Self {
         Self {
             state: LicenseState::Expired,
@@ -77,6 +79,7 @@ impl LicenseStatus {
         }
     }
 
+    /// Active trial with `days_remaining` until expiry.
     fn trial(days_remaining: u32) -> Self {
         Self {
             state: LicenseState::Trial,
@@ -85,6 +88,7 @@ impl LicenseStatus {
         }
     }
 
+    /// Verified paid license valid through `expiry` (`YYYY-MM-DD`).
     fn licensed(expiry: String, days_remaining: u32) -> Self {
         Self {
             state: LicenseState::Licensed,
@@ -441,7 +445,8 @@ mod tests {
         Ephemeral { verifier, signing }
     }
 
-    fn sign_lic(
+    /// Sign a v1 `.lic` JSON payload with the ephemeral test key.
+    fn sign_license(
         signing: &SigningKey,
         product: &str,
         expiry: &str,
@@ -461,7 +466,8 @@ mod tests {
         .to_string()
     }
 
-    fn write_lic(dir: &Path, body: &str) -> PathBuf {
+    /// Write `body` to `dir/incoming.lic` and return that path.
+    fn write_license_file(dir: &Path, body: &str) -> PathBuf {
         let path = dir.join("incoming.lic");
         fs::write(&path, body).expect("write incoming");
         path
@@ -532,14 +538,14 @@ mod tests {
     fn valid_lic_is_licensed() {
         let dir = tempdir().expect("tempdir");
         let keys = ephemeral();
-        let body = sign_lic(
+        let body = sign_license(
             &keys.signing,
             PRODUCT,
             "2099-12-31",
             "buyer@example.com",
             "2026-08-20T12:00:00Z",
         );
-        let src = write_lic(dir.path(), &body);
+        let src = write_license_file(dir.path(), &body);
         let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
         assert_eq!(status.state, LicenseState::Licensed);
         assert_eq!(status.licensed_until.as_deref(), Some("2099-12-31"));
@@ -553,14 +559,14 @@ mod tests {
     fn bad_sig_wrong_product_junk_leave_previous_license() {
         let dir = tempdir().expect("tempdir");
         let keys = ephemeral();
-        let good = sign_lic(
+        let good = sign_license(
             &keys.signing,
             PRODUCT,
             "2099-12-31",
             "buyer@example.com",
             "2026-08-20T12:00:00Z",
         );
-        let good_src = write_lic(dir.path(), &good);
+        let good_src = write_license_file(dir.path(), &good);
         install_license(dir.path(), &good_src, &keys.verifier).expect("install good");
 
         let junk = dir.path().join("junk.lic");
@@ -585,13 +591,13 @@ mod tests {
         .expect("bad sig json");
         let bad_dir = dir.path().join("bad");
         fs::create_dir_all(&bad_dir).expect("bad dir");
-        let bad_src = write_lic(&bad_dir, &bad_sig);
+        let bad_src = write_license_file(&bad_dir, &bad_sig);
         assert_eq!(
             install_license(dir.path(), &bad_src, &keys.verifier),
             Err(Error::LicenseInvalid)
         );
 
-        let wrong = sign_lic(
+        let wrong = sign_license(
             &keys.signing,
             "other-product",
             "2099-12-31",
@@ -600,7 +606,7 @@ mod tests {
         );
         let wrong_dir = dir.path().join("wrong");
         fs::create_dir_all(&wrong_dir).expect("wrong dir");
-        let wrong_src = write_lic(&wrong_dir, &wrong);
+        let wrong_src = write_license_file(&wrong_dir, &wrong);
         assert_eq!(
             install_license(dir.path(), &wrong_src, &keys.verifier),
             Err(Error::LicenseInvalid)
@@ -618,14 +624,14 @@ mod tests {
     fn expired_valid_signature_lic_is_expired_and_kept() {
         let dir = tempdir().expect("tempdir");
         let keys = ephemeral();
-        let body = sign_lic(
+        let body = sign_license(
             &keys.signing,
             PRODUCT,
             "2020-01-01",
             "buyer@example.com",
             "2020-01-01T00:00:00Z",
         );
-        let src = write_lic(dir.path(), &body);
+        let src = write_license_file(dir.path(), &body);
         let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
         assert_eq!(status.state, LicenseState::Expired);
         assert_eq!(status.days_remaining, None);
@@ -702,25 +708,25 @@ mod tests {
     fn install_license_replaces_existing_file() {
         let dir = tempdir().expect("tempdir");
         let keys = ephemeral();
-        let first = sign_lic(
+        let first = sign_license(
             &keys.signing,
             PRODUCT,
             "2099-12-31",
             "buyer@example.com",
             "2026-08-20T12:00:00Z",
         );
-        let second = sign_lic(
+        let second = sign_license(
             &keys.signing,
             PRODUCT,
             "2098-06-15",
             "renew@example.com",
             "2026-08-20T13:00:00Z",
         );
-        let first_src = write_lic(dir.path(), &first);
+        let first_src = write_license_file(dir.path(), &first);
         install_license(dir.path(), &first_src, &keys.verifier).expect("first");
         let renew_dir = dir.path().join("renew");
         fs::create_dir_all(&renew_dir).expect("renew dir");
-        let second_src = write_lic(&renew_dir, &second);
+        let second_src = write_license_file(&renew_dir, &second);
         let status = install_license(dir.path(), &second_src, &keys.verifier).expect("replace");
         assert_eq!(status.state, LicenseState::Licensed);
         assert_eq!(status.licensed_until.as_deref(), Some("2098-06-15"));
@@ -745,14 +751,14 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let keys = ephemeral();
         record_trial_start(dir.path()).expect("trial");
-        let body = sign_lic(
+        let body = sign_license(
             &keys.signing,
             PRODUCT,
             "2020-06-01",
             "buyer@example.com",
             "2020-01-01T00:00:00Z",
         );
-        let src = write_lic(dir.path(), &body);
+        let src = write_license_file(dir.path(), &body);
         let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
         assert_eq!(status.state, LicenseState::Expired);
         assert!(!writes_allowed(&status));
@@ -776,15 +782,19 @@ mod tests {
             Err(Error::LicenseEntityLimit)
         );
 
-        let expired = sign_lic(
+        let expired = sign_license(
             &keys.signing,
             PRODUCT,
             "2020-01-01",
             "buyer@example.com",
             "2020-01-01T00:00:00Z",
         );
-        install_license(dir.path(), &write_lic(dir.path(), &expired), &keys.verifier)
-            .expect("expired");
+        install_license(
+            dir.path(),
+            &write_license_file(dir.path(), &expired),
+            &keys.verifier,
+        )
+        .expect("expired");
         assert_eq!(
             require_entity_create_allowed(dir.path(), &keys.verifier, 0),
             Err(Error::LicenseExpired)
@@ -794,14 +804,19 @@ mod tests {
             Err(Error::LicenseExpired)
         );
 
-        let valid = sign_lic(
+        let valid = sign_license(
             &keys.signing,
             PRODUCT,
             "2099-12-31",
             "buyer@example.com",
             "2026-08-20T12:00:00Z",
         );
-        install_license(dir.path(), &write_lic(dir.path(), &valid), &keys.verifier).expect("lic");
+        install_license(
+            dir.path(),
+            &write_license_file(dir.path(), &valid),
+            &keys.verifier,
+        )
+        .expect("lic");
         assert!(require_entity_create_allowed(dir.path(), &keys.verifier, 3).is_ok());
     }
 }

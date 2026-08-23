@@ -141,7 +141,7 @@ pub fn validate_lines_for_post(lines: &[JournalLine]) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn line(debit: i64, credit: i64) -> JournalLine {
+    fn journal_line(debit: i64, credit: i64) -> JournalLine {
         let debit = Money::from_minor(debit).unwrap_or(Money::ZERO);
         let credit = Money::from_minor(credit).unwrap_or(Money::ZERO);
 
@@ -157,13 +157,13 @@ mod tests {
 
     #[test]
     fn balanced_two_line_entry_ok() {
-        let lines = vec![line(500, 0), line(0, 500)];
+        let lines = vec![journal_line(500, 0), journal_line(0, 500)];
         assert!(validate_lines_for_post(&lines).is_ok());
     }
 
     #[test]
     fn unbalanced_rejected() {
-        let lines = vec![line(500, 0), line(0, 400)];
+        let lines = vec![journal_line(500, 0), journal_line(0, 400)];
         assert_eq!(
             validate_lines_for_post(&lines),
             Err(Error::UnbalancedEntry {
@@ -175,14 +175,14 @@ mod tests {
 
     #[test]
     fn too_few_lines_rejected() {
-        let lines = vec![line(100, 0)];
+        let lines = vec![journal_line(100, 0)];
         assert_eq!(validate_lines_for_post(&lines), Err(Error::TooFewLines));
     }
 
     #[test]
     fn both_sides_rejected() {
         // first line both debit and credit non-zero
-        let lines = vec![line(50, 50), line(0, 50)];
+        let lines = vec![journal_line(50, 50), journal_line(0, 50)];
         assert_eq!(
             validate_lines_for_post(&lines),
             Err(Error::InvalidLineAmounts)
@@ -191,7 +191,11 @@ mod tests {
 
     #[test]
     fn zero_line_rejected() {
-        let lines = vec![line(0, 0), line(100, 0), line(0, 100)];
+        let lines = vec![
+            journal_line(0, 0),
+            journal_line(100, 0),
+            journal_line(0, 100),
+        ];
         assert_eq!(
             validate_lines_for_post(&lines),
             Err(Error::InvalidLineAmounts)

@@ -52,6 +52,11 @@ Follow global `~/.grok/rules/AGENTS.md` and the `rust-style` skill.
 `rustfmt.toml`: `use_small_heuristics = "Default"` (never `"Max"`).
 Workspace Clippy: `unwrap_used = deny`, `panic = deny`, etc.
 
+- Function names are full words. Cryptic abbreviations (`ta`, `row_err`, `sign_lic`)
+  are not allowed. Prefer associated constructors (`TemplateAccount::new`) over
+  2–3 letter helpers. Public and `pub(crate)` items have rustdoc. Comments
+  explain intent and invariants, not the identifier.
+
 ## Product decisions (locked)
 
 See `docs/superpowers/specs/2026-08-10-oikonomia-design.md`.

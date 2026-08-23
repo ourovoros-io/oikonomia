@@ -289,6 +289,7 @@ pub fn normalize_description(raw: &str) -> String {
     out
 }
 
+/// Map one parsed bank row onto a simple journal entry using the import role accounts.
 pub(crate) fn suggested_entry(
     entity_id: EntityId,
     row: &ParsedBankRow,

@@ -352,9 +352,9 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
 
 fn map_entity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entity> {
     let id_s: String = row.get(0)?;
-    let id = parse_uuid(&id_s).map_err(|e| row_err(0, &e))?;
+    let id = parse_uuid(&id_s).map_err(|e| sql_conversion_error(0, &e))?;
     let template_s: String = row.get(4)?;
-    let template = parse_chart_template(&template_s).map_err(|e| row_err(4, &e))?;
+    let template = parse_chart_template(&template_s).map_err(|e| sql_conversion_error(4, &e))?;
     let month_raw: i64 = row.get(3)?;
     let month = u8::try_from(month_raw)
         .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(3, month_raw))?;
@@ -368,7 +368,8 @@ fn map_entity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entity> {
     })
 }
 
-fn row_err(col: usize, err: &Error) -> rusqlite::Error {
+/// Map a domain error to rusqlite's row-conversion failure for column `col`.
+fn sql_conversion_error(col: usize, err: &Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(
         col,
         rusqlite::types::Type::Text,
@@ -379,6 +380,7 @@ fn row_err(col: usize, err: &Error) -> rusqlite::Error {
     )
 }
 
+/// Persist `ChartTemplate` as the stable on-disk string.
 fn chart_template_str(t: ChartTemplate) -> &'static str {
     match t {
         ChartTemplate::Personal => "personal",
@@ -387,6 +389,7 @@ fn chart_template_str(t: ChartTemplate) -> &'static str {
     }
 }
 
+/// Parse the on-disk chart-template string written by [`chart_template_str`].
 fn parse_chart_template(s: &str) -> Result<ChartTemplate> {
     match s {
         "personal" => Ok(ChartTemplate::Personal),
