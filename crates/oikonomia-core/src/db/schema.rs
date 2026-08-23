@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::{Error, Result};
 
 /// Latest schema version applied by migrations.
-pub const CURRENT_SCHEMA_VERSION: i64 = 6;
+pub const CURRENT_SCHEMA_VERSION: i64 = 7;
 
 /// Apply pending migrations. Safe to call on every unlock.
 ///
@@ -41,6 +41,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 
     if version < 6 {
         migrate_v6(conn)?;
+    }
+
+    if version < 7 {
+        migrate_v7(conn)?;
     }
 
     if version < CURRENT_SCHEMA_VERSION {
@@ -255,6 +259,51 @@ fn migrate_v6(conn: &Connection) -> Result<()> {
         ALTER TABLE journal_entries
             ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
         UPDATE vault_meta SET schema_version = 6 WHERE id = 1;
+        ",
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(())
+}
+
+/// v7: local-only recurring entry templates in the encrypted vault.
+///
+/// No calendar sync, no network, no auto-post. `next_date` is advanced only
+/// after an explicit user post. Role-account columns match
+/// [`crate::ledger::PostSimpleEntry`].
+fn migrate_v7(conn: &Connection) -> Result<()> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS recurring_templates (
+            id TEXT PRIMARY KEY NOT NULL,
+            entity_id TEXT NOT NULL REFERENCES entities(id),
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),
+            cadence TEXT NOT NULL,
+            day_of_month INTEGER CHECK (
+                day_of_month IS NULL OR (day_of_month >= 1 AND day_of_month <= 31)
+            ),
+            category_account_id TEXT REFERENCES accounts(id),
+            wallet_account_id TEXT REFERENCES accounts(id),
+            payable_account_id TEXT REFERENCES accounts(id),
+            from_account_id TEXT REFERENCES accounts(id),
+            to_account_id TEXT REFERENCES accounts(id),
+            memo TEXT,
+            next_date TEXT NOT NULL,
+            bill_status TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_recurring_entity
+            ON recurring_templates(entity_id);
+        CREATE INDEX IF NOT EXISTS idx_recurring_entity_next
+            ON recurring_templates(entity_id, next_date);
+        UPDATE vault_meta SET schema_version = 7 WHERE id = 1;
         ",
     )
     .map_err(|err| Error::Io(err.to_string()))?;

@@ -31,7 +31,7 @@ fn hidden_of(conn: &Connection, entry_id: &str) -> i64 {
 fn pre_v6_row_becomes_visible() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
-    assert_eq!(CURRENT_SCHEMA_VERSION, 6);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
 
     let entity = create_entity(
         conn,
@@ -77,7 +77,7 @@ fn pre_v6_row_becomes_visible() {
     conn.execute("UPDATE vault_meta SET schema_version = 5 WHERE id = 1", [])
         .expect("mark v5");
 
-    migrate(conn).expect("v5 -> v6");
+    migrate(conn).expect("v5 -> current");
 
     let version: i64 = conn
         .query_row(
@@ -86,7 +86,7 @@ fn pre_v6_row_becomes_visible() {
             |r| r.get(0),
         )
         .expect("version");
-    assert_eq!(version, 6);
+    assert_eq!(version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         hidden_of(conn, &entry_id),
         0,
