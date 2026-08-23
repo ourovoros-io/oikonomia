@@ -177,9 +177,11 @@ export type UiPrefs = {
 }
 
 /** Simple-form posting input; the kind → debit/credit mapping lives in Rust. */
+export type SimpleEntryKind = 'expense' | 'income' | 'bill' | 'transfer'
+
 export type SimpleEntryInput = {
   entity_id: string
-  kind: 'expense' | 'income' | 'bill' | 'transfer'
+  kind: SimpleEntryKind
   bill_status: 'paid' | 'unpaid' | 'pay_existing' | null
   entry_date: string
   description: string
@@ -190,6 +192,64 @@ export type SimpleEntryInput = {
   payable_account_id: string | null
   from_account_id: string | null
   to_account_id: string | null
+}
+
+/** Same kinds as journal entries — a template is a recipe, not a new type. */
+export type RecurringKind = SimpleEntryKind
+
+/** Cadence is a closed set. Monthly is the v1 default; Weekly/Yearly are available. */
+export type RecurringCadence = 'monthly' | 'weekly' | 'yearly'
+
+/**
+ * Recurring template as returned by Rust (`RecurringTemplateView`).
+ * `due` is `next_date` on/before today (UTC) — Rust defines that.
+ */
+export type RecurringTemplate = {
+  id: string
+  entity_id: string
+  name: string
+  kind: RecurringKind
+  bill_status: 'paid' | 'unpaid' | 'pay_existing' | null
+  amount_minor: number
+  cadence: RecurringCadence
+  day_of_month: number | null
+  category_account_id: string | null
+  wallet_account_id: string | null
+  payable_account_id: string | null
+  from_account_id: string | null
+  to_account_id: string | null
+  memo: string | null
+  next_date: string
+  due: boolean
+}
+
+/** Create body. Matches `CreateRecurringTemplate`. Rust assigns id and due. */
+export type RecurringTemplateInput = {
+  entity_id: string
+  name: string
+  kind: RecurringKind
+  bill_status: 'paid' | 'unpaid' | 'pay_existing' | null
+  amount_minor: number
+  cadence: RecurringCadence
+  day_of_month: number | null
+  category_account_id: string | null
+  wallet_account_id: string | null
+  payable_account_id: string | null
+  from_account_id: string | null
+  to_account_id: string | null
+  memo: string | null
+  next_date: string
+}
+
+/** Update body. Matches `UpdateRecurringTemplate` (`entity_id` is immutable). */
+export type RecurringTemplateUpdate = Omit<RecurringTemplateInput, 'entity_id'> & {
+  id: string
+}
+
+/** `recurring_post` result: one journal entry plus the advanced template. */
+export type RecurringPostResult = {
+  entry: PostedEntryView
+  template: RecurringTemplate
 }
 
 export const api = {
@@ -399,6 +459,32 @@ export const api = {
   /** Native Save dialog. `null` = cancelled. Writes an unencrypted accountant CSV. */
   csvExportJournal: (entityId: string) =>
     call<string | null>('csv_export_journal', { entityId }),
+
+  /**
+   * Recurring templates are recipes, not a second ledger.
+   * `due` / `next_due` are Rust-owned — the UI must not recompute them.
+   * Command names match the agreed IPC; serde field names follow Rust when present.
+   */
+  recurringList: (entityId: string) => call<RecurringTemplate[]>('recurring_list', { entityId }),
+  recurringGet: (id: string) => call<RecurringTemplate>('recurring_get', { id }),
+  recurringCreate: (input: RecurringTemplateInput) =>
+    call<RecurringTemplate>('recurring_create', { input }),
+  recurringUpdate: (input: RecurringTemplateUpdate) =>
+    call<RecurringTemplate>('recurring_update', { input }),
+  recurringDelete: (id: string) => call<void>('recurring_delete', { id }),
+  /**
+   * Manual post → one journal entry via the existing simple-entry path.
+   * `entry_date` / `amount_minor` are optional overrides for “adjust before saving”.
+   */
+  recurringPost: (
+    id: string,
+    opts?: { entry_date?: string | null; amount_minor?: number | null },
+  ) =>
+    call<RecurringPostResult>('recurring_post', {
+      id,
+      entryDate: opts?.entry_date ?? null,
+      amountMinor: opts?.amount_minor ?? null,
+    }),
 }
 
 export type AnalyzerStatus = {
