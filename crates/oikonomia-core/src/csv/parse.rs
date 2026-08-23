@@ -253,7 +253,7 @@ fn mapping_from_headers(headers: &StringRecord, map: ColumnMap) -> CsvColumnMapp
     }
 }
 
-fn nonempty(value: Option<&str>) -> Option<&str> {
+fn trimmed_nonempty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
 }
 
@@ -269,18 +269,18 @@ fn resolve_user_mapping(
     headers: &StringRecord,
     mapping: &CsvColumnMapping,
 ) -> crate::error::Result<ColumnMap> {
-    let Some(date) = nonempty(mapping.date.as_deref()) else {
+    let Some(date) = trimmed_nonempty(mapping.date.as_deref()) else {
         return Err(CsvError::InvalidMapping("CSV mapping is missing a date column".into()).into());
     };
-    let Some(description) = nonempty(mapping.description.as_deref()) else {
+    let Some(description) = trimmed_nonempty(mapping.description.as_deref()) else {
         return Err(
             CsvError::InvalidMapping("CSV mapping is missing a description column".into()).into(),
         );
     };
-    let amount = nonempty(mapping.amount.as_deref());
-    let debit = nonempty(mapping.debit.as_deref());
-    let credit = nonempty(mapping.credit.as_deref());
-    let reference = nonempty(mapping.reference.as_deref());
+    let amount = trimmed_nonempty(mapping.amount.as_deref());
+    let debit = trimmed_nonempty(mapping.debit.as_deref());
+    let credit = trimmed_nonempty(mapping.credit.as_deref());
+    let reference = trimmed_nonempty(mapping.reference.as_deref());
 
     let has_amount = amount.is_some();
     let has_dc = debit.is_some() || credit.is_some();
@@ -391,14 +391,14 @@ fn parse_record_inner(
     let Some(date_idx) = columns.date else {
         return Err(CsvError::InvalidDate(String::new()));
     };
-    let date_raw = cell(record, date_idx);
+    let date_raw = record_cell(record, date_idx);
     let entry_date = parse_csv_date(date_raw)?;
     let description = columns
         .description
-        .map(|idx| cell(record, idx).trim().to_owned())
+        .map(|idx| record_cell(record, idx).trim().to_owned())
         .unwrap_or_default();
     let reference = columns.reference.and_then(|idx| {
-        let value = cell(record, idx).trim();
+        let value = record_cell(record, idx).trim();
         if value.is_empty() {
             None
         } else {
@@ -430,9 +430,9 @@ fn parse_record_inner(
 
 fn signed_amount(record: &StringRecord, columns: ColumnMap, exponent: u8) -> CsvResult<i64> {
     if let Some(idx) = columns.amount {
-        let mut signed = parse_signed_minor(cell(record, idx), exponent)?;
+        let mut signed = parse_signed_minor(record_cell(record, idx), exponent)?;
         if let Some(dir_idx) = columns.direction {
-            signed = apply_direction(signed, cell(record, dir_idx))?;
+            signed = apply_direction(signed, record_cell(record, dir_idx))?;
         }
         return Ok(signed);
     }
@@ -459,7 +459,7 @@ fn optional_signed(
     let Some(idx) = idx else {
         return Ok(None);
     };
-    let raw = cell(record, idx).trim();
+    let raw = record_cell(record, idx).trim();
     if raw.is_empty() {
         return Ok(None);
     }
@@ -489,7 +489,7 @@ fn apply_direction(signed: i64, raw: &str) -> CsvResult<i64> {
     Err(CsvError::InvalidAmount(format!("unknown type: {raw}")))
 }
 
-fn cell(record: &StringRecord, idx: usize) -> &str {
+fn record_cell(record: &StringRecord, idx: usize) -> &str {
     record.get(idx).unwrap_or("")
 }
 
@@ -499,12 +499,12 @@ fn cell(record: &StringRecord, idx: usize) -> &str {
 mod tests {
     use super::*;
 
-    fn parsed(text: &str) -> Vec<CsvRowOutcome> {
+    fn parse_rows(text: &str) -> Vec<CsvRowOutcome> {
         parse_bank_csv(text, 2, None).expect("parse csv").rows
     }
 
-    fn first_ok(text: &str) -> ParsedBankRow {
-        match parsed(text).into_iter().next() {
+    fn first_parsed_row(text: &str) -> ParsedBankRow {
+        match parse_rows(text).into_iter().next() {
             Some(CsvRowOutcome::Parsed(row)) => row,
             other => panic!("expected parsed row, got {other:?}"),
         }
@@ -512,7 +512,7 @@ mod tests {
 
     #[test]
     fn comma_iso_and_dot_amount() {
-        let row = first_ok("Date,Description,Amount\n2026-03-15,Coffee,-3.50\n");
+        let row = first_parsed_row("Date,Description,Amount\n2026-03-15,Coffee,-3.50\n");
         assert_eq!(row.entry_date, "2026-03-15");
         assert_eq!(row.description, "Coffee");
         assert_eq!(row.signed_amount_minor, -350);
@@ -523,7 +523,7 @@ mod tests {
     #[test]
     fn semicolon_quotes_european_date_and_amount() {
         let csv = "Date;Description;Amount\n15/03/2026;\"Coffee, Inc\";-1.234,56\n";
-        let row = first_ok(csv);
+        let row = first_parsed_row(csv);
         assert_eq!(row.entry_date, "2026-03-15");
         assert_eq!(row.description, "Coffee, Inc");
         assert_eq!(row.signed_amount_minor, -123_456);
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn positive_amount_is_income() {
-        let row = first_ok("date,memo,amount\n2026-01-02,Salary,\"1234,56\"\n");
+        let row = first_parsed_row("date,memo,amount\n2026-01-02,Salary,\"1234,56\"\n");
         assert_eq!(row.kind, SimpleEntryKind::Income);
         assert_eq!(row.amount_minor, 123_456);
         assert_eq!(row.signed_amount_minor, 123_456);
@@ -542,7 +542,7 @@ mod tests {
     fn debit_credit_columns() {
         let csv =
             "Date,Description,Debit,Credit\n01/04/2026,Rent,800.00,\n01/04/2026,Pay,,2500.00\n";
-        let rows = parsed(csv);
+        let rows = parse_rows(csv);
         let CsvRowOutcome::Parsed(rent) = &rows[0] else {
             panic!("rent");
         };
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn junk_rows_are_invalid_not_file_errors() {
         let csv = "Date,Description,Amount\nnot-a-date,X,1.00\n2026-03-15,Y,abc\n2026-03-15,Z,0\n";
-        let rows = parsed(csv);
+        let rows = parse_rows(csv);
         assert_eq!(rows.len(), 3);
         for row in &rows {
             assert!(
@@ -579,7 +579,7 @@ mod tests {
     #[test]
     fn quoted_semicolon_inside_field() {
         let csv = "Date;Description;Amount\n2026-08-01;\"a;b;c\";10.00\n";
-        let row = first_ok(csv);
+        let row = first_parsed_row(csv);
         assert_eq!(row.description, "a;b;c");
         assert_eq!(row.kind, SimpleEntryKind::Income);
     }
@@ -593,7 +593,7 @@ mod tests {
         assert!(parse_csv_date("32/01/2026").is_err());
     }
 
-    fn names(
+    fn column_mapping(
         date: &str,
         description: &str,
         amount: Option<&str>,
@@ -647,7 +647,7 @@ mod tests {
         };
         assert_eq!(row.description, "Coffee");
 
-        let mapping = names("Date", "Notes", Some("Amount"), None, None);
+        let mapping = column_mapping("Date", "Notes", Some("Amount"), None, None);
         let mapped = parse_bank_csv(csv, 2, Some(&mapping)).expect("mapped");
         assert_eq!(
             mapped.detected_mapping.description.as_deref(),
@@ -663,7 +663,7 @@ mod tests {
     #[test]
     fn mapping_override_debit_credit() {
         let csv = "When,What,Out,In\n01/04/2026,Rent,800.00,\n";
-        let mapping = names("When", "What", None, Some("Out"), Some("In"));
+        let mapping = column_mapping("When", "What", None, Some("Out"), Some("In"));
         let parsed = parse_bank_csv(csv, 2, Some(&mapping)).expect("dc");
         let CsvRowOutcome::Parsed(row) = &parsed.rows[0] else {
             panic!("row");
@@ -699,14 +699,14 @@ mod tests {
             "{err}"
         );
 
-        let missing_amount = names("Date", "Description", None, None, None);
+        let missing_amount = column_mapping("Date", "Description", None, None, None);
         let err = parse_bank_csv(csv, 2, Some(&missing_amount)).expect_err("amount");
         assert!(
             matches!(err, Error::CsvParse(ref m) if m.contains("amount")),
             "{err}"
         );
 
-        let both = names(
+        let both = column_mapping(
             "Date",
             "Description",
             Some("Amount"),
@@ -719,7 +719,7 @@ mod tests {
             "{err}"
         );
 
-        let unknown = names("Date", "Nope", Some("Amount"), None, None);
+        let unknown = column_mapping("Date", "Nope", Some("Amount"), None, None);
         let err = parse_bank_csv(csv, 2, Some(&unknown)).expect_err("unknown");
         assert!(
             matches!(err, Error::CsvParse(ref m) if m.contains("Nope")),

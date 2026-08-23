@@ -159,38 +159,38 @@ fn split_decimal(body: &str, exponent: u8) -> Result<(String, &str), CsvError> {
 mod tests {
     use super::*;
 
-    fn eur(raw: &str) -> i64 {
+    fn parse_eur_minor(raw: &str) -> i64 {
         parse_signed_minor(raw, 2).expect(raw)
     }
 
     #[test]
     fn comma_and_dot_decimals() {
-        assert_eq!(eur("1.234,56"), 123_456);
-        assert_eq!(eur("1234,56"), 123_456);
-        assert_eq!(eur("1234.56"), 123_456);
-        assert_eq!(eur("1,234.56"), 123_456);
-        assert_eq!(eur("1.234"), 123_400);
-        assert_eq!(eur("1,234"), 123_400);
-        assert_eq!(eur("25"), 2_500);
-        assert_eq!(eur("25.5"), 2_550);
-        assert_eq!(eur("25,5"), 2_550);
+        assert_eq!(parse_eur_minor("1.234,56"), 123_456);
+        assert_eq!(parse_eur_minor("1234,56"), 123_456);
+        assert_eq!(parse_eur_minor("1234.56"), 123_456);
+        assert_eq!(parse_eur_minor("1,234.56"), 123_456);
+        assert_eq!(parse_eur_minor("1.234"), 123_400);
+        assert_eq!(parse_eur_minor("1,234"), 123_400);
+        assert_eq!(parse_eur_minor("25"), 2_500);
+        assert_eq!(parse_eur_minor("25.5"), 2_550);
+        assert_eq!(parse_eur_minor("25,5"), 2_550);
     }
 
     #[test]
     fn signs_symbols_and_parens() {
-        assert_eq!(eur("-25.00"), -2_500);
-        assert_eq!(eur("+25.00"), 2_500);
-        assert_eq!(eur("(25,00)"), -2_500);
-        assert_eq!(eur("€1.234,56"), 123_456);
-        assert_eq!(eur("1234.56EUR"), 123_456);
-        assert_eq!(eur("EUR -12.00"), -1_200);
-        assert_eq!(eur("1 234,56"), 123_456);
+        assert_eq!(parse_eur_minor("-25.00"), -2_500);
+        assert_eq!(parse_eur_minor("+25.00"), 2_500);
+        assert_eq!(parse_eur_minor("(25,00)"), -2_500);
+        assert_eq!(parse_eur_minor("€1.234,56"), 123_456);
+        assert_eq!(parse_eur_minor("1234.56EUR"), 123_456);
+        assert_eq!(parse_eur_minor("EUR -12.00"), -1_200);
+        assert_eq!(parse_eur_minor("1 234,56"), 123_456);
     }
 
     #[test]
     fn zero_and_overflow_and_junk() {
-        assert_eq!(eur("0"), 0);
-        assert_eq!(eur("0,00"), 0);
+        assert_eq!(parse_eur_minor("0"), 0);
+        assert_eq!(parse_eur_minor("0,00"), 0);
         assert!(matches!(
             parse_signed_minor("abc", 2),
             Err(CsvError::InvalidAmount(_))

@@ -15,6 +15,7 @@ pub(crate) enum Service {
 }
 
 impl Service {
+    /// English display label used in suggested descriptions.
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Electricity => "Electricity",

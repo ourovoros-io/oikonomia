@@ -159,6 +159,7 @@ pub(crate) fn sum_types_in_range(
     Ok(total)
 }
 
+/// Persist `AccountType` as the stable on-disk string.
 pub(crate) fn account_type_str(t: AccountType) -> &'static str {
     match t {
         AccountType::Asset => "asset",
@@ -169,6 +170,7 @@ pub(crate) fn account_type_str(t: AccountType) -> &'static str {
     }
 }
 
+/// Parse the on-disk account-type string written by [`account_type_str`].
 pub(crate) fn parse_account_type(s: &str) -> Result<AccountType> {
     match s {
         "asset" => Ok(AccountType::Asset),

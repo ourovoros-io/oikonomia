@@ -48,7 +48,7 @@ fn encode_hex(bytes: &[u8]) -> String {
     out
 }
 
-fn sign_lic(signing: &SigningKey, expiry: &str) -> String {
+fn sign_license(signing: &SigningKey, expiry: &str) -> String {
     let email = "buyer@example.com";
     let issued_at = "2026-01-15T12:00:00Z";
     let payload = signed_payload(PRODUCT, expiry, email, issued_at);
@@ -207,7 +207,7 @@ fn expired_license_allows_backup_export_restore_and_blocks_writes() {
     )
     .expect("attach while writable");
 
-    let body = sign_lic(&keys.signing, "2020-01-01");
+    let body = sign_license(&keys.signing, "2020-01-01");
     let src = dir.path().join("incoming.lic");
     std::fs::write(&src, &body).expect("write lic");
     let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
@@ -302,7 +302,7 @@ fn expired_license_rejects_document_attach_and_delete_but_allows_export() {
     )
     .expect("attach while writable");
 
-    let body = sign_lic(&keys.signing, "2020-01-01");
+    let body = sign_license(&keys.signing, "2020-01-01");
     let src = dir.path().join("incoming.lic");
     std::fs::write(&src, &body).expect("write lic");
     let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
@@ -357,7 +357,7 @@ fn expired_license_does_not_mutate_lock_timeout() {
     let conn = vault.connection().expect("conn");
     let before = get_lock_timeout_secs(conn).expect("default timeout");
 
-    let body = sign_lic(&keys.signing, "2020-01-01");
+    let body = sign_license(&keys.signing, "2020-01-01");
     let src = dir.path().join("incoming.lic");
     std::fs::write(&src, &body).expect("write lic");
     assert_eq!(
@@ -400,7 +400,7 @@ fn document_export_still_works_when_expired() {
     )
     .expect("attach while writable");
 
-    let body = sign_lic(&keys.signing, "2020-01-01");
+    let body = sign_license(&keys.signing, "2020-01-01");
     let src = dir.path().join("incoming.lic");
     std::fs::write(&src, &body).expect("write lic");
     assert_eq!(
@@ -478,7 +478,7 @@ fn archived_entity_still_occupies_unlicensed_slot() {
     );
     assert_eq!(list_entities(conn).expect("list").len(), 0);
 
-    let body = sign_lic(&keys.signing, "2099-12-31");
+    let body = sign_license(&keys.signing, "2099-12-31");
     let src = dir.path().join("incoming.lic");
     std::fs::write(&src, &body).expect("write lic");
     assert_eq!(
@@ -497,7 +497,7 @@ fn licensed_second_entity_is_ok() {
     let (dir, vault, keys) = setup();
     let conn = vault.connection().expect("conn");
     create_entity(conn, &book("One")).expect("seed");
-    let body = sign_lic(&keys.signing, "2099-12-31");
+    let body = sign_license(&keys.signing, "2099-12-31");
     let src = dir.path().join("incoming.lic");
     std::fs::write(&src, &body).expect("write lic");
     assert_eq!(
@@ -516,7 +516,7 @@ fn expired_entity_create_is_license_expired() {
     let (dir, vault, keys) = setup();
     let conn = vault.connection().expect("conn");
     create_entity(conn, &book("One")).expect("seed");
-    let body = sign_lic(&keys.signing, "2020-01-01");
+    let body = sign_license(&keys.signing, "2020-01-01");
     let src = dir.path().join("incoming.lic");
     std::fs::write(&src, &body).expect("write lic");
     assert_eq!(
