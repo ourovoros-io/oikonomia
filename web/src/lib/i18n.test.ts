@@ -166,7 +166,7 @@ describe('Writer el catalog', () => {
 
 describe('Writer monthly-expense PDF catalog', () => {
   const pdfKeys = [
-    'reports.exportPdf',
+    'reports.pdf.export',
     'reports.pdf.title',
     'reports.pdf.meta',
     'reports.pdf.totalExpenses',
@@ -187,16 +187,36 @@ describe('Writer monthly-expense PDF catalog', () => {
       expect(enFlat[key]).toBeTruthy()
       expect(elFlat[key]).toBeTruthy()
     }
-    expect(enFlat['reports.exportPdf']).toBe('Export PDF')
-    expect(elFlat['reports.exportPdf']).toBe('Εξαγωγή PDF')
+    expect(enFlat['reports.pdf.export']).toBe('Export PDF')
+    expect(elFlat['reports.pdf.export']).toBe('Εξαγωγή PDF')
     expect(enFlat['reports.pdf.title']).toBe('Monthly expenses')
     expect(elFlat['reports.pdf.title']).toBe('Μηνιαία έξοδα')
-    expect(enFlat['reports.pdf.meta']).toContain('{currency}')
-    expect(elFlat['reports.pdf.meta']).toContain('{currency}')
-    expect(elFlat['reports.pdf.footerPrivacy']).toContain('σας')
+    expect(enFlat['reports.pdf.meta']).toBe(
+      'Expense categories · amounts in {currency} · Hidden entries omitted',
+    )
+    expect(elFlat['reports.pdf.meta']).toBe(
+      'Κατηγορίες εξόδων · ποσά σε {currency} · Οι κρυφές γραμμές παραλείπονται',
+    )
+    expect(enFlat['reports.pdf.sliceNote']).toBe(
+      'Top 6 categories by amount; remaining categories folded into Other…',
+    )
+    expect(elFlat['reports.pdf.sliceNote']).toBe(
+      'Οι 6 μεγαλύτερες κατηγορίες· οι υπόλοιπες στο Λοιπά…',
+    )
+    expect(enFlat['reports.pdf.emptyBody']).toContain('{period}')
+    expect(elFlat['reports.pdf.emptyBody']).toBe(
+      'Δεν υπάρχει τίποτα για διάγραμμα στην περίοδο {period}. Αλλάξτε τις ημερομηνίες της αναφοράς ή προσθέστε έξοδα στις Κινήσεις.',
+    )
+    expect(elFlat['reports.pdf.footerPrivacy']).toBe(
+      'Τα βιβλία σας δεν φεύγουν ποτέ από αυτόν τον υπολογιστή',
+    )
     expect(elFlat['reports.pdf.footerLocal']).toContain('Oikonomia')
-    expect(enFlat['reports.pdf.export']).toBeUndefined()
-    expect(elFlat['reports.pdf.export']).toBeUndefined()
+    expect(enFlat['reports.pdf.busy']).toBe('Exporting…')
+    expect(elFlat['reports.pdf.busy']).toBe('Εξαγωγή…')
+    expect(enFlat['reports.pdf.error']).toBe('Could not export the PDF.')
+    expect(elFlat['reports.pdf.error']).toBe('Δεν ολοκληρώθηκε η εξαγωγή PDF.')
+    expect(enFlat['reports.exportPdf']).toBeUndefined()
+    expect(elFlat['reports.exportPdf']).toBeUndefined()
   })
 })
 

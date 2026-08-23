@@ -95,7 +95,7 @@ afterEach(() => {
 })
 
 describe('ReportsPage Export PDF', () => {
-  test('toolbar button is on P&L only and uses reports.exportPdf', async () => {
+  test('toolbar button is on P&L only and uses reports.pdf.export', async () => {
     render(<ReportsPage entity={entity} />)
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Export PDF' })).toBeTruthy()
@@ -172,7 +172,7 @@ describe('ReportsPage Export PDF', () => {
     )
   })
 
-  test('EL toolbar uses Writer reports.exportPdf', async () => {
+  test('EL toolbar uses Writer reports.pdf.export', async () => {
     setLocale('el')
     render(<ReportsPage entity={entity} />)
     await waitFor(() => {

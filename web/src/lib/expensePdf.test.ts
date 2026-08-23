@@ -138,10 +138,10 @@ describe('buildExpensePdfBytes', () => {
 describe('pdfExportErrorMessage', () => {
   test('maps io by code only', () => {
     expect(pdfExportErrorMessage({ code: 'io', message: 'EACCES /tmp/x.pdf' })).toBe(
-      'Could not export PDF',
+      'Could not export the PDF.',
     )
     expect(pdfExportErrorMessage({ code: 'validation', message: 'invalid file data' })).toBe(
-      'Could not export PDF',
+      'Could not export the PDF.',
     )
     expect(pdfExportErrorMessage({ code: 'vault_locked', message: 'Vault is locked' })).toBe(
       'Vault is locked',
