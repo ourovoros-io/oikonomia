@@ -462,8 +462,8 @@ export const api = {
 
   /**
    * Recurring templates are recipes, not a second ledger.
-   * `due` / `next_due` are Rust-owned — the UI must not recompute them.
-   * Command names match the agreed IPC; serde field names follow Rust when present.
+   * `due` is Rust-owned (`next_date` on/before today) — the UI must not recompute it.
+   * Commands: recurring_list / create / update / delete / post.
    */
   recurringList: (entityId: string) => call<RecurringTemplate[]>('recurring_list', { entityId }),
   recurringGet: (id: string) => call<RecurringTemplate>('recurring_get', { id }),
