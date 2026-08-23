@@ -331,21 +331,47 @@ export function Field({
  */
 export function PageHeader({
   eyebrow,
+  breadcrumb,
   title,
   description,
   actions,
   meta,
 }: {
   eyebrow?: string
+  /** Sub-view trail (Transactions / Recurring). Last crumb is the current page. */
+  breadcrumb?: Array<{ label: string; onClick?: () => void }>
   title: string
   description?: string
   actions?: ReactNode
   meta?: ReactNode
 }) {
+  const hasLead = Boolean(eyebrow || (breadcrumb && breadcrumb.length > 0))
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
-        {eyebrow ? (
+        {breadcrumb && breadcrumb.length > 0 ? (
+          <nav
+            className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase"
+            aria-label={breadcrumb.map((c) => c.label).join(' / ')}
+          >
+            {breadcrumb.map((crumb, i) => (
+              <span key={`${crumb.label}-${i}`} className="inline-flex items-center gap-1.5">
+                {i > 0 ? <span aria-hidden>/</span> : null}
+                {crumb.onClick ? (
+                  <button
+                    type="button"
+                    onClick={crumb.onClick}
+                    className="hover:text-[var(--color-fg)]"
+                  >
+                    {crumb.label}
+                  </button>
+                ) : (
+                  <span className="text-[var(--color-fg-secondary)]">{crumb.label}</span>
+                )}
+              </span>
+            ))}
+          </nav>
+        ) : eyebrow ? (
           <p className="text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
             {eyebrow}
           </p>
@@ -353,7 +379,7 @@ export function PageHeader({
         <h2
           className={cn(
             'leading-tight font-semibold tracking-tight text-[var(--color-fg)]',
-            eyebrow ? 'mt-1 text-[1.75rem]' : 'text-[1.5rem]',
+            hasLead ? 'mt-1 text-[1.75rem]' : 'text-[1.5rem]',
           )}
         >
           {title}
