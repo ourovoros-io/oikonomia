@@ -6,6 +6,7 @@ import {
   FileText,
   Paperclip,
   Plus,
+  Repeat,
   Trash2,
 } from 'lucide-react'
 import {
@@ -55,6 +56,7 @@ import type { CommandError } from '../lib/tauri'
 import type { DocumentSuggestion } from '../lib/api'
 import { formatMoney as fmtMoney } from '../lib/money'
 import { useI18n } from '../lib/I18nProvider'
+import { RecurringPage } from './RecurringPage'
 
 type Props = { entity: Entity | null }
 
@@ -126,6 +128,7 @@ export function TransactionsPage({ entity }: Props) {
   const [accountFilter, setAccountFilter] = useState('')
   const [csvPreview, setCsvPreview] = useState<CsvImportPreview | null>(null)
   const [csvStep, setCsvStep] = useState<'closed' | 'mapping' | 'preview'>('closed')
+  const [subview, setSubview] = useState<'journal' | 'recurring'>('journal')
   const [csvBusy, setCsvBusy] = useState<'import' | 'export' | 'post' | null>(null)
   const [csvRoles, setCsvRoles] = useState<{
     wallet_account_id: string | null
@@ -531,8 +534,16 @@ export function TransactionsPage({ entity }: Props) {
 
   const ccy = entity.base_currency
 
+  if (subview === 'recurring') {
+    return <RecurringPage entity={entity} onBack={() => setSubview('journal')} />
+  }
+
   const csvActions = (
     <>
+      <Button variant="secondary" size="sm" onClick={() => setSubview('recurring')}>
+        <Repeat className="size-3" />
+        {t('tx.recurring')}
+      </Button>
       <Button
         variant="secondary"
         size="sm"
