@@ -99,7 +99,7 @@ describe('Writer el catalog', () => {
     const writerKeys = Object.keys(flat).filter(
       (k) => !k.startsWith('settings.language.') && !k.startsWith('tx.csv.'),
     )
-    expect(writerKeys.length).toBe(568)
+    expect(writerKeys.length).toBe(580)
     expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
     expect(flat['tx.csv.kind.expense']).toBe('Έξοδα')
     expect(flat['tx.csv.kind.income']).toBe('Έσοδα')
@@ -161,6 +161,62 @@ describe('Writer el catalog', () => {
     expect(t('quickAdd.amount', { ccy: 'EUR' })).toBe('Ποσό (EUR)')
     expect(t('tx.list.meta.counts', { posted: 24, hidden: 1 })).toBe('24 καταχωρισμένα · 1 κρυφά')
     expect(t('settings.deleteEntityBody', { name: 'Personal' })).toContain('Personal')
+  })
+})
+
+describe('Writer monthly-expense PDF catalog', () => {
+  const pdfKeys = [
+    'reports.exportPdf',
+    'reports.pdf.title',
+    'reports.pdf.meta',
+    'reports.pdf.totalExpenses',
+    'reports.pdf.sliceNote',
+    'reports.pdf.emptyTitle',
+    'reports.pdf.emptyBody',
+    'reports.pdf.footerPrivacy',
+    'reports.pdf.footerLocal',
+    'reports.pdf.other',
+    'reports.pdf.busy',
+    'reports.pdf.error',
+  ] as const
+
+  test('EN and EL keys exist with Writer copy', () => {
+    const enFlat = flattenMessages(en)
+    const elFlat = flattenMessages(el)
+    for (const key of pdfKeys) {
+      expect(enFlat[key]).toBeTruthy()
+      expect(elFlat[key]).toBeTruthy()
+    }
+    expect(enFlat['reports.exportPdf']).toBe('Export PDF')
+    expect(elFlat['reports.exportPdf']).toBe('Εξαγωγή PDF')
+    expect(enFlat['reports.pdf.title']).toBe('Monthly expenses')
+    expect(elFlat['reports.pdf.title']).toBe('Μηνιαία έξοδα')
+    expect(enFlat['reports.pdf.meta']).toBe(
+      'Expense categories · amounts in {currency} · Hidden entries omitted',
+    )
+    expect(elFlat['reports.pdf.meta']).toBe(
+      'Κατηγορίες εξόδων · ποσά σε {currency} · Οι κρυφές γραμμές παραλείπονται',
+    )
+    expect(enFlat['reports.pdf.sliceNote']).toBe(
+      'Top 6 categories by amount; remaining categories folded into Other…',
+    )
+    expect(elFlat['reports.pdf.sliceNote']).toBe(
+      'Οι 6 μεγαλύτερες κατηγορίες· οι υπόλοιπες στο Λοιπά…',
+    )
+    expect(enFlat['reports.pdf.emptyBody']).toContain('{period}')
+    expect(elFlat['reports.pdf.emptyBody']).toBe(
+      'Δεν υπάρχει τίποτα για διάγραμμα στην περίοδο {period}. Αλλάξτε τις ημερομηνίες της αναφοράς ή προσθέστε έξοδα στις Κινήσεις.',
+    )
+    expect(elFlat['reports.pdf.footerPrivacy']).toBe(
+      'Τα βιβλία σας δεν φεύγουν ποτέ από αυτόν τον υπολογιστή',
+    )
+    expect(elFlat['reports.pdf.footerLocal']).toContain('Oikonomia')
+    expect(enFlat['reports.pdf.busy']).toBe('Exporting…')
+    expect(elFlat['reports.pdf.busy']).toBe('Εξαγωγή…')
+    expect(enFlat['reports.pdf.error']).toBe('Could not export the PDF.')
+    expect(elFlat['reports.pdf.error']).toBe('Δεν ολοκληρώθηκε η εξαγωγή PDF.')
+    expect(enFlat['reports.pdf.export']).toBeUndefined()
+    expect(elFlat['reports.pdf.export']).toBeUndefined()
   })
 })
 

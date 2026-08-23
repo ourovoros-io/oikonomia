@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { BarChart3, FileSpreadsheet, PieChart, RefreshCw, Scale } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { BarChart3, FileSpreadsheet, FileText, PieChart, RefreshCw, Scale } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -12,6 +12,13 @@ import {
   type ReportLine,
   type TrialBalance,
 } from '../lib/api'
+import {
+  buildExpensePdfBytes,
+  bytesToBase64,
+  pdfExportErrorMessage,
+  suggestedExpensePdfName,
+} from '../lib/expensePdf'
+import { beginExclusive } from '../lib/guards'
 import { DateInput } from '../components/DateInput'
 import { ExpenseDonut } from '../components/ExpenseDonut'
 import {
@@ -50,6 +57,8 @@ export function ReportsPage({ entity }: Props) {
   const [tb, setTb] = useState<TrialBalance | null>(null)
   const [pnl, setPnl] = useState<PnL | null>(null)
   const [bs, setBs] = useState<BalanceSheet | null>(null)
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const pdfBusyRef = useRef(false)
 
   async function run() {
     if (!entity) return
@@ -60,6 +69,33 @@ export function ReportsPage({ entity }: Props) {
       if (tab === 'bs') setBs(await api.reportBalanceSheet(entity.id, asOf))
     } catch (err) {
       setError((err as CommandError).message)
+    }
+  }
+
+  async function onExportPdf() {
+    if (!entity || tab !== 'pnl') return
+    if (!beginExclusive(pdfBusyRef)) return
+    setPdfBusy(true)
+    setError(null)
+    try {
+      // PDF uses export P&L (Hidden omitted). In-app Reports stay on reportPnl.
+      const data = await api.reportPnlExport(entity.id, from, to)
+      const bytes = await buildExpensePdfBytes({
+        entityName: entity.name,
+        currency: entity.base_currency,
+        from: data.from,
+        to: data.to,
+        expenses: data.expenses,
+      })
+      await api.reportExportPdf({
+        bytesBase64: bytesToBase64(bytes),
+        suggestedName: suggestedExpensePdfName(data.from, data.to),
+      })
+    } catch (err) {
+      setError(pdfExportErrorMessage(err as CommandError))
+    } finally {
+      pdfBusyRef.current = false
+      setPdfBusy(false)
     }
   }
 
@@ -120,10 +156,21 @@ export function ReportsPage({ entity }: Props) {
               <DateInput value={asOf} onChange={setAsOf} required aria-label={t('rpt.asOfDate')} />
             </Field>
           )}
-          <Button variant="secondary" onClick={() => void run()}>
+          <Button variant="secondary" onClick={() => void run()} disabled={pdfBusy}>
             <RefreshCw className="size-4" />
             {t('rpt.refresh')}
           </Button>
+          {tab === 'pnl' ? (
+            <Button
+              variant="secondary"
+              busy={pdfBusy}
+              disabled={pdfBusy}
+              onClick={() => void onExportPdf()}
+            >
+              <FileText className="size-4" />
+              {pdfBusy ? t('reports.pdf.busy') : t('reports.exportPdf')}
+            </Button>
+          ) : null}
         </div>
       </Card>
 

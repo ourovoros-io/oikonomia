@@ -277,8 +277,20 @@ export const api = {
     call<TrialBalance>('report_trial_balance', { entityId, asOf }),
   reportPnl: (entityId: string, from: string, to: string) =>
     call<PnL>('report_pnl', { entityId, from, to }),
+  /** Accountant / PDF P&L. Same args as `reportPnl`; Hidden omitted. */
+  reportPnlExport: (entityId: string, from: string, to: string) =>
+    call<PnL>('report_pnl_export', { entityId, from, to }),
   reportBalanceSheet: (entityId: string, asOf: string) =>
     call<BalanceSheet>('report_balance_sheet', { entityId, asOf }),
+  /**
+   * Native Save for a generated monthly-expenses PDF. `null` = cancelled.
+   * Bytes stay local; Rust opens the dialog and writes the file.
+   */
+  reportExportPdf: (input: { bytesBase64: string; suggestedName?: string }) =>
+    call<string | null>('report_export_pdf', {
+      bytesBase64: input.bytesBase64,
+      suggestedName: input.suggestedName ?? null,
+    }),
   dashboardSummary: (entityId: string, from: string, to: string, assetsAsOf: string) =>
     call<DashboardSummary>('dashboard_summary_cmd', { entityId, from, to, assetsAsOf }),
 

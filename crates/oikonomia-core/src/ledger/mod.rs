@@ -25,6 +25,6 @@ pub use journals::{
 };
 pub use reports::{
     BalanceSheet, BalanceSheetSection, DashboardSummary, PnL, ReportLine, TrialBalance,
-    balance_sheet, dashboard_summary, profit_and_loss, trial_balance,
+    balance_sheet, dashboard_summary, profit_and_loss, profit_and_loss_export, trial_balance,
 };
 pub use settings::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs, set_lock_timeout_secs};

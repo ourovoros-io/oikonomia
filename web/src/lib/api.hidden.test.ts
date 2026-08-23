@@ -81,6 +81,44 @@ describe('entry_set_hidden', () => {
   })
 })
 
+describe('report PDF export path', () => {
+  test('reportPnlExport invokes report_pnl_export with camelCase args', async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      entity_id: 'e1',
+      from: '2026-08-01',
+      to: '2026-08-31',
+      income: [],
+      expenses: [],
+      total_income: 0,
+      total_expenses: 0,
+      net_income: 0,
+    })
+    await api.reportPnlExport('e1', '2026-08-01', '2026-08-31')
+    expect(invoke).toHaveBeenCalledWith('report_pnl_export', {
+      entityId: 'e1',
+      from: '2026-08-01',
+      to: '2026-08-31',
+    })
+  })
+
+  test('reportExportPdf invokes report_export_pdf with camelCase args', async () => {
+    vi.mocked(invoke).mockResolvedValue('/tmp/oikonomia-expenses.pdf')
+    await api.reportExportPdf({
+      bytesBase64: 'JVBERi0x',
+      suggestedName: 'oikonomia-expenses-2026-08-01_2026-08-31.pdf',
+    })
+    expect(invoke).toHaveBeenCalledWith('report_export_pdf', {
+      bytesBase64: 'JVBERi0x',
+      suggestedName: 'oikonomia-expenses-2026-08-01_2026-08-31.pdf',
+    })
+  })
+
+  test('maps cancel to null', async () => {
+    vi.mocked(invoke).mockResolvedValue(null)
+    expect(await api.reportExportPdf({ bytesBase64: 'JVBERi0x' })).toBeNull()
+  })
+})
+
 describe('csv journal export path', () => {
   test('csvExportJournal calls csv_export_journal with entityId only', async () => {
     vi.mocked(invoke).mockResolvedValue('/tmp/journal.csv')

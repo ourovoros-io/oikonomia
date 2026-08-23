@@ -1,61 +1,15 @@
 import { useState } from 'react'
 import { formatMoney, type ReportLine } from '../lib/api'
+import { buildSlices, vizVar } from '../lib/expenseSlices'
 import { cn } from '../lib/cn'
 import { t } from '../lib/i18n'
 import { useI18n } from '../lib/I18nProvider'
-
-/**
- * Slices beyond this fold into a neutral "Other" — more hues would stop being
- * tellable apart (the palette's slot order is validated for adjacency).
- */
-const MAX_SLICES = 6
 
 const SIZE = 180
 const RADIUS = 70
 const STROKE = 24
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 const GAP = 2
-
-type Slice = {
-  name: string
-  amount: number
-  share: number
-  color: string
-}
-
-function buildSlices(lines: ReportLine[]): { slices: Slice[]; total: number } {
-  const positive = lines.filter((l) => l.balance_minor > 0)
-  const total = positive.reduce((sum, l) => sum + l.balance_minor, 0)
-  if (total <= 0) return { slices: [], total: 0 }
-
-  const sorted = [...positive].sort((a, b) => b.balance_minor - a.balance_minor)
-  const top = sorted.slice(0, MAX_SLICES)
-  const rest = sorted.slice(MAX_SLICES)
-
-  // Hue follows the account, not its rank: slots are assigned in stable code
-  // order so a category keeps its color when the period changes.
-  const byCode = [...top].sort((a, b) => a.code.localeCompare(b.code))
-  const colorOf = new Map(byCode.map((l, i) => [l.code, `var(--viz-${i + 1})`]))
-
-  const slices: Slice[] = top.map((l) => ({
-    name: l.name,
-    amount: l.balance_minor,
-    share: l.balance_minor / total,
-    color: colorOf.get(l.code) ?? 'var(--viz-other)',
-  }))
-
-  if (rest.length > 0) {
-    const other = rest.reduce((sum, l) => sum + l.balance_minor, 0)
-    slices.push({
-      name: t('donut.other', { count: rest.length }),
-      amount: other,
-      share: other / total,
-      color: 'var(--viz-other)',
-    })
-  }
-
-  return { slices, total }
-}
 
 /** Donut of period expenses by category, with a hover readout in the hole. */
 export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string }) {
@@ -94,7 +48,7 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string 
                 cy={SIZE / 2}
                 r={RADIUS}
                 fill="none"
-                stroke={slices[i].color}
+                stroke={vizVar(slices[i].slot)}
                 strokeWidth={hover === i ? STROKE + 4 : STROKE}
                 strokeDasharray={`${seg.length} ${CIRCUMFERENCE - seg.length}`}
                 strokeDashoffset={-seg.start}
@@ -107,7 +61,7 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string 
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-9 text-center">
           <span className="w-full truncate text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-            {active ? active.name : t('donut.totalExpenses')}
+            {active ? active.name : t('reports.pdf.totalExpenses')}
           </span>
           <span className="mt-1 w-full truncate text-lg font-semibold tabular-nums text-[var(--color-fg)]">
             {formatMoney(active ? active.amount : total, ccy)}
@@ -132,7 +86,7 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string 
           >
             <span
               className="size-2.5 shrink-0 rounded-sm"
-              style={{ background: slice.color }}
+              style={{ background: vizVar(slice.slot) }}
               aria-hidden
             />
             <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-fg-secondary)]">
