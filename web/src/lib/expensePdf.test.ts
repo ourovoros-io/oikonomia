@@ -4,15 +4,17 @@ import { PDFDocument } from 'pdf-lib'
 import {
   A4_HEIGHT,
   A4_WIDTH,
+  BRAND_MARK,
   buildExpensePdfBytes,
   buildExpensePdfModel,
   buildExpenseReportSvg,
   bytesToBase64,
+  flipSvgPathY,
   formatPdfPeriod,
   pdfExportErrorMessage,
   suggestedExpensePdfName,
 } from './expensePdf'
-import { resetI18nForTests, setLocale } from './i18n'
+import { resetI18nForTests, setLocale, t } from './i18n'
 
 afterEach(() => {
   resetI18nForTests()
@@ -58,6 +60,14 @@ describe('suggestedExpensePdfName', () => {
   })
 })
 
+describe('flipSvgPathY', () => {
+  test('flips 24-unit y-down house paths so pdf-lib matches svgShield', () => {
+    expect(flipSvgPathY(BRAND_MARK.house)).toContain('v -5.2')
+    expect(flipSvgPathY(BRAND_MARK.pediment)).toContain('L 12 15.6')
+    expect(flipSvgPathY(BRAND_MARK.shield)).toMatch(/^M 20 11/)
+  })
+})
+
 describe('formatPdfPeriod', () => {
   test('collapses a same-month range like the mock', () => {
     expect(formatPdfPeriod('2026-08-01', '2026-08-31', 'en')).toBe('1 – 31 Aug 2026')
@@ -82,6 +92,11 @@ describe('buildExpenseReportSvg', () => {
     expect(svg).toContain('Oikonomia · local report')
     expect(svg).toContain('Other (3 categories)')
     expect(svg).toContain('Hidden entries omitted')
+    expect(svg).toContain(BRAND_MARK.shield)
+    expect(svg).toContain(BRAND_MARK.pediment)
+    expect(svg).toContain(BRAND_MARK.house)
+    expect(svg).toContain('rx="2"')
+    expect(svg).toContain(t('reports.pdf.sliceNote'))
   })
 
   test('empty period still builds the dashed empty state', () => {

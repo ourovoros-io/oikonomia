@@ -80,6 +80,9 @@ export function ReportsPage({ entity }: Props) {
     try {
       let data = pnl
       if (!data || data.from !== from || data.to !== to) {
+        // TODO(reports-pdf-hidden): when Rust lands an export PnL that omits
+        // Hidden (CSV-equivalent), call that here instead of reportPnl. Keep
+        // the reports.pdf.meta whisper. Do not filter aggregated lines in FE.
         data = await api.reportPnl(entity.id, from, to)
         setPnl(data)
       }

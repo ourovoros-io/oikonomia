@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { LineCapStyle, PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { PDFFont, PDFPage } from 'pdf-lib'
 import interRegularUrl from '../assets/fonts/Inter-Regular.ttf?url'
 import interSemiBoldUrl from '../assets/fonts/Inter-SemiBold.ttf?url'
@@ -157,15 +157,121 @@ function svgEmptyRing(cx: number, cy: number): string {
   return `<circle cx="${cx}" cy="${cy}" r="70" fill="none" stroke="${EMPTY_RING}" stroke-width="22"/>`
 }
 
-function svgShield(x: number, y: number, size: number, filled = true): string {
+/** House-in-shield mark in 24×24 lucide space (same art as `svgShield` / Logo). */
+export const BRAND_MARK = {
+  shield:
+    'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z',
+  pediment: 'M8.2 11.2 L12 8.4 L15.8 11.2',
+  house: 'M9.2 11.4 h5.6 v5.2 h-2.05 v-2.1 a1.15 1.15 0 1 0-1.5 0 v2.1 H9.2 z',
+} as const
+
+function svgShield(x: number, y: number, size: number): string {
   const s = size / 24
-  const stroke = filled ? ACCENT : ACCENT
-  const fill = filled ? 'none' : 'none'
   return `<g transform="translate(${x} ${y}) scale(${s})">
-    <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z" fill="${fill}" stroke="${stroke}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M8.2 11.2 L12 8.4 L15.8 11.2" fill="none" stroke="${stroke}" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M9.2 11.4 h5.6 v5.2 h-2.05 v-2.1 a1.15 1.15 0 1 0-1.5 0 v2.1 H9.2 z" fill="${stroke}"/>
+    <path d="${BRAND_MARK.shield}" fill="none" stroke="${ACCENT}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${BRAND_MARK.pediment}" fill="none" stroke="${ACCENT}" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="${BRAND_MARK.house}" fill="${ACCENT}"/>
   </g>`
+}
+
+/** Flip a 24-unit y-down SVG path into PDF y-up so drawSvgPath matches `svgShield`. */
+export function flipSvgPathY(d: string, box = 24): string {
+  const tokens = d.match(/[A-Za-z]|[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?/g)
+  if (!tokens) return d
+  let i = 0
+  let cmd = ''
+  const out: string[] = []
+  const num = () => Number(tokens[i++])
+  const push = (...xs: Array<string | number>) => {
+    for (const x of xs) out.push(String(x))
+  }
+  while (i < tokens.length) {
+    const tok = tokens[i]
+    if (/^[A-Za-z]$/.test(tok)) {
+      cmd = tok
+      out.push(tok)
+      i += 1
+      continue
+    }
+    switch (cmd) {
+      case 'H':
+      case 'h':
+        push(num())
+        break
+      case 'V':
+        push(box - num())
+        break
+      case 'v':
+        push(-num())
+        break
+      case 'A': {
+        const rx = num()
+        const ry = num()
+        const rot = num()
+        const large = num()
+        const sweep = num()
+        const x = num()
+        const y = num()
+        push(rx, ry, rot, large, sweep ? 0 : 1, x, box - y)
+        break
+      }
+      case 'a': {
+        const rx = num()
+        const ry = num()
+        const rot = num()
+        const large = num()
+        const sweep = num()
+        const dx = num()
+        const dy = num()
+        push(rx, ry, rot, large, sweep ? 0 : 1, dx, -dy)
+        break
+      }
+      case 'C':
+      case 'c':
+      case 'S':
+      case 's':
+      case 'Q':
+      case 'q':
+      case 'T':
+      case 't':
+      case 'M':
+      case 'm':
+      case 'L':
+      case 'l': {
+        const pair = cmd === 'C' || cmd === 'c' ? 3 : cmd === 'S' || cmd === 's' || cmd === 'Q' || cmd === 'q' ? 2 : 1
+        const rel = cmd === cmd.toLowerCase()
+        for (let p = 0; p < pair; p += 1) {
+          const x = num()
+          const y = num()
+          push(x, rel ? -y : box - y)
+        }
+        break
+      }
+      default:
+        push(num())
+    }
+  }
+  return out.join(' ')
+}
+
+function drawBrandMark(page: PDFPage, x: number, yTop: number, size: number) {
+  const s = size / 24
+  const originY = yPdf(yTop + size)
+  const stroke = {
+    borderColor: hexRgb(ACCENT),
+    borderLineCap: LineCapStyle.Round,
+    x,
+    y: originY,
+    scale: s,
+  }
+  page.drawSvgPath(flipSvgPathY(BRAND_MARK.shield), { ...stroke, borderWidth: 1.4 })
+  page.drawSvgPath(flipSvgPathY(BRAND_MARK.pediment), { ...stroke, borderWidth: 1.3 })
+  page.drawSvgPath(flipSvgPathY(BRAND_MARK.house), {
+    x,
+    y: originY,
+    scale: s,
+    color: hexRgb(ACCENT),
+  })
 }
 
 /** Dark A4 SVG matching the owner-greenlit monthly-expenses mocks. */
@@ -186,7 +292,7 @@ export function buildExpenseReportSvg(input: ExpensePdfInput): string {
       const y = legendY + i * 28
       const pct = `${(slice.share * 100).toFixed(1)}%`
       return `<g>
-        <circle cx="${legendX}" cy="${y}" r="4.5" fill="${vizHex(slice.slot)}"/>
+        <rect x="${legendX - 4}" y="${y - 4}" width="8" height="8" rx="2" fill="${vizHex(slice.slot)}"/>
         <text x="${legendX + 14}" y="${y + 4}" fill="${FG}" font-size="12">${escapeXml(slice.name)}</text>
         <text x="${MARGIN + cardW - 72}" y="${y + 4}" fill="${FG}" font-size="12" font-weight="600" text-anchor="end">${escapeXml(formatMoney(slice.amount, model.currency, getLocale() === 'el' ? 'el-GR' : 'en-US'))}</text>
         <text x="${MARGIN + cardW - 16}" y="${y + 4}" fill="${MUTED}" font-size="11" text-anchor="end">${pct}</text>
@@ -227,7 +333,7 @@ export function buildExpenseReportSvg(input: ExpensePdfInput): string {
   <text x="${MARGIN + cardW - 16}" y="${barY + 28}" fill="${FG}" font-size="16" font-weight="700" text-anchor="end">${escapeXml(labels.totalAmount)}</text>
   ${note}
   <rect x="${MARGIN}" y="${A4_HEIGHT - 52}" width="${cardW}" height="1" fill="#232c26"/>
-  ${svgShield(MARGIN, A4_HEIGHT - 38, 12, false)}
+  ${svgShield(MARGIN, A4_HEIGHT - 38, 12)}
   <text x="${MARGIN + 18}" y="${A4_HEIGHT - 26}" fill="${MUTED}" font-size="9">${escapeXml(labels.footerPrivacy)}</text>
   <text x="${A4_WIDTH - MARGIN}" y="${A4_HEIGHT - 26}" fill="${MUTED}" font-size="9" text-anchor="end">${escapeXml(labels.footerLocal)}</text>
 </svg>`
@@ -389,17 +495,7 @@ function paintPdfPage(
   })
 
   roundedRect(page, MARGIN, MARGIN, LOGO, LOGO, 7, SURFACE)
-  // Brand shield (stroke) inside the plate.
-  page.drawSvgPath(
-    'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z',
-    {
-      borderColor: hexRgb(ACCENT),
-      borderWidth: 1.3,
-      x: MARGIN + 2,
-      y: yPdf(MARGIN + 26),
-      scale: 28 / 24,
-    },
-  )
+  drawBrandMark(page, MARGIN + 2, MARGIN + 2, 24)
 
   drawText(page, fonts.semibold, labels.brand, MARGIN + LOGO + 10, MARGIN + 13, 15, FG)
   drawText(page, fonts.regular, labels.context, MARGIN + LOGO + 10, MARGIN + 27, 10, MUTED)
@@ -470,12 +566,7 @@ function paintPdfPage(
     let ly = cardTop + 40
     const moneyLocale = getLocale() === 'el' ? 'el-GR' : 'en-US'
     for (const slice of slices) {
-      page.drawCircle({
-        x: legendX,
-        y: yPdf(ly),
-        size: 4.2,
-        color: hexRgb(vizHex(slice.slot)),
-      })
+      roundedRect(page, legendX - 4, ly - 4, 8, 8, 2, vizHex(slice.slot))
       drawText(page, fonts.regular, slice.name, legendX + 14, ly + 4, 11, FG, {
         maxWidth: 130,
       })
@@ -522,16 +613,7 @@ function paintPdfPage(
     height: 1,
     color: hexRgb('#232c26'),
   })
-  page.drawSvgPath(
-    'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.5 3.8 17 5 19 5a1 1 0 0 1 1 1z',
-    {
-      borderColor: hexRgb(ACCENT),
-      borderWidth: 1.2,
-      x: MARGIN,
-      y: 28,
-      scale: 0.5,
-    },
-  )
+  drawBrandMark(page, MARGIN, A4_HEIGHT - 38, 12)
   drawText(page, fonts.regular, labels.footerPrivacy, MARGIN + 18, A4_HEIGHT - 30, 9, MUTED)
   drawText(page, fonts.regular, labels.footerLocal, A4_WIDTH - MARGIN, A4_HEIGHT - 30, 9, MUTED, {
     align: 'right',
