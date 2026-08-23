@@ -78,11 +78,13 @@ export function ReportsPage({ entity }: Props) {
     setPdfBusy(true)
     setError(null)
     try {
+      // TODO(reports-pdf-hidden): when Rust SHA lands report_pnl_export,
+      // fetch PDF rows only via api.reportPnlExport(entity.id, from, to)
+      // (same PnL shape, Hidden omitted). Do not reuse `pnl`, do not setPnl
+      // from export, keep in-app Reports on reportPnl, keep the whisper.
+      // Do not filter aggregated lines in FE.
       let data = pnl
       if (!data || data.from !== from || data.to !== to) {
-        // TODO(reports-pdf-hidden): when Rust lands an export PnL that omits
-        // Hidden (CSV-equivalent), call that here instead of reportPnl. Keep
-        // the reports.pdf.meta whisper. Do not filter aggregated lines in FE.
         data = await api.reportPnl(entity.id, from, to)
         setPnl(data)
       }
