@@ -171,7 +171,7 @@ export function ReportsPage({ entity }: Props) {
               onClick={() => void onExportPdf()}
             >
               <FileText className="size-4" />
-              {pdfBusy ? t('reports.pdf.busy') : t('reports.pdf.export')}
+              {pdfBusy ? t('reports.pdf.busy') : t('reports.exportPdf')}
             </Button>
           ) : null}
         </div>

@@ -166,7 +166,7 @@ describe('Writer el catalog', () => {
 
 describe('Writer monthly-expense PDF catalog', () => {
   const pdfKeys = [
-    'reports.pdf.export',
+    'reports.exportPdf',
     'reports.pdf.title',
     'reports.pdf.meta',
     'reports.pdf.totalExpenses',
@@ -187,8 +187,8 @@ describe('Writer monthly-expense PDF catalog', () => {
       expect(enFlat[key]).toBeTruthy()
       expect(elFlat[key]).toBeTruthy()
     }
-    expect(enFlat['reports.pdf.export']).toBe('Export PDF')
-    expect(elFlat['reports.pdf.export']).toBe('Εξαγωγή PDF')
+    expect(enFlat['reports.exportPdf']).toBe('Export PDF')
+    expect(elFlat['reports.exportPdf']).toBe('Εξαγωγή PDF')
     expect(enFlat['reports.pdf.title']).toBe('Monthly expenses')
     expect(elFlat['reports.pdf.title']).toBe('Μηνιαία έξοδα')
     expect(enFlat['reports.pdf.meta']).toBe(
@@ -215,8 +215,8 @@ describe('Writer monthly-expense PDF catalog', () => {
     expect(elFlat['reports.pdf.busy']).toBe('Εξαγωγή…')
     expect(enFlat['reports.pdf.error']).toBe('Could not export the PDF.')
     expect(elFlat['reports.pdf.error']).toBe('Δεν ολοκληρώθηκε η εξαγωγή PDF.')
-    expect(enFlat['reports.exportPdf']).toBeUndefined()
-    expect(elFlat['reports.exportPdf']).toBeUndefined()
+    expect(enFlat['reports.pdf.export']).toBeUndefined()
+    expect(elFlat['reports.pdf.export']).toBeUndefined()
   })
 })
 

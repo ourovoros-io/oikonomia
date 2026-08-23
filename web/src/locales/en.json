@@ -439,7 +439,7 @@
   "rpt.section.liabilities": "liabilities",
   "rpt.section.equity": "equity",
 
-  "reports.pdf.export": "Export PDF",
+  "reports.exportPdf": "Export PDF",
   "reports.pdf.title": "Monthly expenses",
   "reports.pdf.meta": "Expense categories · amounts in {currency} · Hidden entries omitted",
   "reports.pdf.totalExpenses": "Total expenses",
