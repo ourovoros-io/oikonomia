@@ -950,6 +950,169 @@ pub async fn report_balance_sheet(
     .await
 }
 
+/// Client-built PDF bytes; native Save dialog writes them. No vault, no write gate.
+#[tauri::command]
+pub async fn report_export_pdf(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    bytes_base64: String,
+    suggested_name: Option<String>,
+) -> CommandResult<Option<String>> {
+    let data = decode_pdf_export_bytes(&bytes_base64)?;
+    state.touch();
+
+    let file_name = pdf_export_file_name(suggested_name.as_deref());
+    let picked = await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        Ok(app
+            .dialog()
+            .file()
+            .add_filter("PDF", &["pdf"])
+            .set_file_name(&file_name)
+            .blocking_save_file())
+    }))
+    .await?;
+
+    let Some(file_path) = picked else {
+        return Ok(None);
+    };
+    let dest = ensure_pdf_path(file_path.into_path().map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("invalid save location: {e}"),
+    })?);
+
+    std::fs::write(&dest, &data).map_err(|e| CommandError {
+        code: "io".into(),
+        message: format!("could not save PDF: {e}"),
+    })?;
+
+    Ok(Some(dest.display().to_string()))
+}
+
+/// Decoded PDF cap for a monthly expense report (webview-generated).
+const MAX_PDF_EXPORT_BYTES: usize = 32 * 1024 * 1024;
+
+fn decode_pdf_export_bytes(bytes_base64: &str) -> CommandResult<Vec<u8>> {
+    decode_capped_base64(bytes_base64, MAX_PDF_EXPORT_BYTES)
+}
+
+/// Reject on inflated base64 length before decode so a huge payload cannot balloon memory.
+fn decode_capped_base64(bytes_base64: &str, max_decoded: usize) -> CommandResult<Vec<u8>> {
+    let trimmed = bytes_base64.trim();
+    let max_base64_len = max_decoded / 3 * 4 + 4;
+    if trimmed.len() > max_base64_len {
+        return Err(pdf_too_large_error(max_decoded));
+    }
+
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(trimmed)
+        .map_err(|e| CommandError {
+            code: "validation".into(),
+            message: format!("invalid file data: {e}"),
+        })?;
+
+    if data.len() > max_decoded {
+        return Err(pdf_too_large_error(max_decoded));
+    }
+    Ok(data)
+}
+
+fn pdf_too_large_error(max_decoded: usize) -> CommandError {
+    CommandError {
+        code: "validation".into(),
+        message: format!("PDF too large (max {} MB)", max_decoded / (1024 * 1024)),
+    }
+}
+
+fn pdf_export_file_name(suggested_name: Option<&str>) -> String {
+    match suggested_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        Some(name) => name.to_owned(),
+        None => "oikonomia-expenses.pdf".to_owned(),
+    }
+}
+
+fn ensure_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("pdf") => path,
+        _ => {
+            let mut name = path.file_name().map_or_else(
+                || std::ffi::OsString::from("oikonomia-expenses"),
+                std::ffi::OsString::from,
+            );
+            name.push(".pdf");
+            match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+                Some(parent) => parent.join(name),
+                None => std::path::PathBuf::from(name),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod pdf_export_tests {
+    use super::{
+        decode_capped_base64, decode_pdf_export_bytes, ensure_pdf_path, pdf_export_file_name,
+    };
+    use base64::Engine;
+
+    #[test]
+    fn decode_pdf_export_rejects_invalid_base64() {
+        let err = decode_pdf_export_bytes("not-valid-base64!!!").expect_err("invalid");
+        assert_eq!(err.code, "validation");
+    }
+
+    #[test]
+    fn decode_pdf_export_rejects_oversized_before_decode() {
+        // max_decoded=2 → max_base64 = 4; six chars must fail before decode.
+        let err = decode_capped_base64("AAAAAA", 2).expect_err("cap");
+        assert_eq!(err.code, "validation");
+        assert!(err.message.contains("large"), "{}", err.message);
+    }
+
+    #[test]
+    fn decode_pdf_export_rejects_oversized_after_decode() {
+        // max_decoded=3 → max_base64 = 8; 4 decoded bytes encode to 8 chars.
+        let encoded = base64::engine::general_purpose::STANDARD.encode([1_u8, 2, 3, 4]);
+        assert_eq!(encoded.len(), 8);
+        let err = decode_capped_base64(&encoded, 3).expect_err("after decode");
+        assert_eq!(err.code, "validation");
+    }
+
+    #[test]
+    fn decode_pdf_export_round_trips_tiny_pdf_header() {
+        let pdf = b"%PDF-1.4\n";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(pdf);
+        let decoded = decode_pdf_export_bytes(&encoded).expect("decode");
+        assert_eq!(decoded, pdf);
+        let padded = format!("  {encoded}  ");
+        assert_eq!(decode_pdf_export_bytes(&padded).expect("trim"), pdf);
+    }
+
+    #[test]
+    fn pdf_export_file_name_uses_trimmed_suggestion() {
+        assert_eq!(
+            pdf_export_file_name(Some("  august-2026.pdf  ")),
+            "august-2026.pdf"
+        );
+        assert_eq!(pdf_export_file_name(Some("   ")), "oikonomia-expenses.pdf");
+        assert_eq!(pdf_export_file_name(None), "oikonomia-expenses.pdf");
+    }
+
+    #[test]
+    fn ensure_pdf_path_appends_extension() {
+        let with = std::path::PathBuf::from("/tmp/report.PDF");
+        assert_eq!(ensure_pdf_path(with.clone()), with);
+        assert_eq!(
+            ensure_pdf_path(std::path::PathBuf::from("/tmp/report")),
+            std::path::PathBuf::from("/tmp/report.pdf")
+        );
+    }
+}
+
 /// Dashboard summary.
 #[tauri::command]
 pub async fn dashboard_summary_cmd(

@@ -110,6 +110,7 @@ pub fn run() {
             commands::report_trial_balance,
             commands::report_pnl,
             commands::report_balance_sheet,
+            commands::report_export_pdf,
             commands::dashboard_summary_cmd,
             commands::settings_get_lock_timeout,
             commands::settings_set_lock_timeout,
