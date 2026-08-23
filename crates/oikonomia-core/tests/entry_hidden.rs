@@ -7,8 +7,8 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, EntryStatus, Jo
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, account_register, create_entity,
-    get_entry, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
-    set_entry_hidden, void_entry,
+    get_entry, list_accounts, list_entries, post_simple_entry, profit_and_loss,
+    profit_and_loss_export, replace_simple_entry, set_entry_hidden, void_entry,
 };
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -189,6 +189,82 @@ fn export_omits_hidden_keeps_visible_posted_and_voided() {
     );
 
     assert_eq!(db_hidden(conn, hidden.entry.id), 1);
+}
+
+#[test]
+fn pnl_includes_hidden_export_omits() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+    let transport = list_accounts(conn, book.entity_id)
+        .expect("accounts")
+        .into_iter()
+        .find(|a| a.code == "5200")
+        .map(|a| a.id)
+        .expect("5200");
+
+    post_simple_entry(
+        conn,
+        &expense(
+            book.entity_id,
+            book.wallet,
+            book.expense,
+            "2026-03-15",
+            "Groceries",
+            2_500,
+        ),
+    )
+    .expect("visible");
+
+    let hidden = post_simple_entry(
+        conn,
+        &expense(
+            book.entity_id,
+            book.wallet,
+            transport,
+            "2026-03-16",
+            "Secret",
+            1_000,
+        ),
+    )
+    .expect("hidden seed");
+    set_entry_hidden(conn, hidden.entry.id, true).expect("hide");
+
+    let in_app = profit_and_loss(conn, book.entity_id, "2026-03-01", "2026-03-31").expect("in-app");
+    assert_eq!(
+        in_app.total_expenses, 3_500,
+        "in-app Reports include Hidden: {in_app:?}"
+    );
+    assert!(
+        in_app.expenses.iter().any(|l| l.code == "5200"),
+        "in-app keeps the Hidden expense line: {:?}",
+        in_app.expenses
+    );
+
+    let export =
+        profit_and_loss_export(conn, book.entity_id, "2026-03-01", "2026-03-31").expect("export");
+    assert_eq!(
+        export.total_expenses, 2_500,
+        "export P&L omits Hidden: {export:?}"
+    );
+    assert!(
+        !export.expenses.iter().any(|l| l.code == "5200"),
+        "Hidden expense must not appear on export: {:?}",
+        export.expenses
+    );
+    assert!(
+        export
+            .expenses
+            .iter()
+            .any(|l| l.code == "5100" && l.balance_minor == 2_500),
+        "visible expense stays on export: {:?}",
+        export.expenses
+    );
+
+    assert!(
+        !export_mentions(conn, book.entity_id, "Secret"),
+        "CSV export also omits the Hidden description"
+    );
 }
 
 #[test]

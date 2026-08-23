@@ -128,7 +128,7 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     let as_of_d = parse_date(as_of)?;
     let _ = get_entity(conn, entity_id)?;
 
-    let all_lines = account_activity_lines(conn, entity_id, None, None, as_of_d)?;
+    let all_lines = account_activity_lines(conn, entity_id, None, None, as_of_d, false)?;
 
     let mut lines = Vec::new();
     let mut total_debits = 0_i64;
@@ -163,6 +163,32 @@ pub fn profit_and_loss(
     from: &str,
     to: &str,
 ) -> Result<PnL> {
+    profit_and_loss_filtered(conn, entity_id, from, to, false)
+}
+
+/// Accountant / PDF export P&L: same window as [`profit_and_loss`], Hidden omitted.
+///
+/// In-app Reports keep using [`profit_and_loss`] so the owner still sees Hidden.
+///
+/// # Errors
+///
+/// Validation or DB errors.
+pub fn profit_and_loss_export(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: &str,
+    to: &str,
+) -> Result<PnL> {
+    profit_and_loss_filtered(conn, entity_id, from, to, true)
+}
+
+fn profit_and_loss_filtered(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: &str,
+    to: &str,
+    omit_hidden: bool,
+) -> Result<PnL> {
     let from_d = parse_date(from)?;
     let to_d = parse_date(to)?;
     if from_d > to_d {
@@ -172,8 +198,22 @@ pub fn profit_and_loss(
     }
     let _ = get_entity(conn, entity_id)?;
 
-    let income = period_lines(conn, entity_id, AccountType::Income, from_d, to_d)?;
-    let expenses = period_lines(conn, entity_id, AccountType::Expense, from_d, to_d)?;
+    let income = period_lines(
+        conn,
+        entity_id,
+        AccountType::Income,
+        from_d,
+        to_d,
+        omit_hidden,
+    )?;
+    let expenses = period_lines(
+        conn,
+        entity_id,
+        AccountType::Expense,
+        from_d,
+        to_d,
+        omit_hidden,
+    )?;
 
     let total_income: i64 = income.iter().map(|l| l.balance_minor).sum();
     let total_expenses: i64 = expenses.iter().map(|l| l.balance_minor).sum();
@@ -342,16 +382,22 @@ pub fn dashboard_summary(
 
 /// Per-account debit/credit sums over posted, non-voided entries in a window.
 ///
-/// The entry-level predicates live in an inner join inside the subquery, so a
-/// line whose entry falls outside the window contributes nothing — accounts
-/// with no matching activity still appear with zero sums via the outer join.
+/// Entry-level predicates (status, void, optional Hidden) live in the inner
+/// subquery WHERE — never on the outer LEFT JOIN ON — so a filtered-out entry
+/// contributes nothing and accounts with no matching activity stay at zero.
 fn account_activity_lines(
     conn: &Connection,
     entity_id: EntityId,
     account_type: Option<AccountType>,
     from: Option<Date>,
     to: Date,
+    omit_hidden: bool,
 ) -> Result<Vec<ReportLine>> {
+    let hidden_predicate = if omit_hidden {
+        "AND (je.hidden = 0 OR je.hidden IS NULL)"
+    } else {
+        ""
+    };
     let sql = format!(
         "
         SELECT a.code, a.name, a.account_type,
@@ -366,6 +412,7 @@ fn account_activity_lines(
             JOIN journal_entries je ON je.id = jl.entry_id
             WHERE je.status = 'posted'
               AND {ACTIVE_ENTRY_PREDICATE}
+              {hidden_predicate}
               AND (?2 IS NULL OR je.entry_date >= ?2)
               AND je.entry_date <= ?3
             GROUP BY jl.account_id
@@ -405,8 +452,16 @@ fn period_lines(
     account_type: AccountType,
     from: Date,
     to: Date,
+    omit_hidden: bool,
 ) -> Result<Vec<ReportLine>> {
-    let lines = account_activity_lines(conn, entity_id, Some(account_type), Some(from), to)?;
+    let lines = account_activity_lines(
+        conn,
+        entity_id,
+        Some(account_type),
+        Some(from),
+        to,
+        omit_hidden,
+    )?;
     Ok(lines
         .into_iter()
         .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)
@@ -419,7 +474,7 @@ fn as_of_lines(
     account_type: AccountType,
     as_of: Date,
 ) -> Result<Vec<ReportLine>> {
-    let lines = account_activity_lines(conn, entity_id, Some(account_type), None, as_of)?;
+    let lines = account_activity_lines(conn, entity_id, Some(account_type), None, as_of, false)?;
     Ok(lines
         .into_iter()
         .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)

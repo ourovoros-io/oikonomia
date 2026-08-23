@@ -21,7 +21,7 @@ use oikonomia_core::ledger::{
     UpdateAccount, VoidResult, account_balance, account_register, archive_account, archive_entity,
     balance_sheet, create_account, create_entity_allowed, dashboard_summary, delete_entity,
     get_entity, get_entry, get_lock_timeout_secs, list_accounts, list_entities, list_entries,
-    post_entry, post_simple_entry, profit_and_loss, replace_simple_entry,
+    post_entry, post_simple_entry, profit_and_loss, profit_and_loss_export, replace_simple_entry,
     set_account_opening_balance, set_entry_hidden, set_lock_timeout_secs, trial_balance,
     update_account, update_entity, void_entry,
 };
@@ -932,6 +932,21 @@ pub async fn report_pnl(
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         profit_and_loss(conn, entity_id, &from, &to)
+    })
+    .await
+}
+
+/// Accountant / PDF export P&L. Same args as [`report_pnl`]; Hidden omitted.
+#[tauri::command]
+pub async fn report_pnl_export(
+    state: State<'_, AppState>,
+    entity_id: EntityId,
+    from: String,
+    to: String,
+) -> CommandResult<PnL> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        profit_and_loss_export(conn, entity_id, &from, &to)
     })
     .await
 }

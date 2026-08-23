@@ -13,6 +13,7 @@ vi.mock('../lib/api', async (importOriginal) => {
     api: {
       ...actual.api,
       reportPnl: vi.fn(),
+      reportPnlExport: vi.fn(),
       reportBalanceSheet: vi.fn(),
       reportTrialBalance: vi.fn(),
       reportExportPdf: vi.fn(),
@@ -28,7 +29,7 @@ vi.mock('../lib/expensePdf', async (importOriginal) => {
   }
 })
 
-import { api } from '../lib/api'
+import { api, todayISO, yearStartISO } from '../lib/api'
 import { buildExpensePdfBytes, suggestedExpensePdfName } from '../lib/expensePdf'
 import { resetI18nForTests, setLocale } from '../lib/i18n'
 import { ReportsPage } from './ReportsPage'
@@ -69,6 +70,7 @@ function pnl(over: Partial<PnL> = {}): PnL {
 beforeEach(() => {
   resetI18nForTests()
   vi.mocked(api.reportPnl).mockReset().mockResolvedValue(pnl())
+  vi.mocked(api.reportPnlExport).mockReset().mockResolvedValue(pnl())
   vi.mocked(api.reportBalanceSheet).mockReset().mockResolvedValue({
     entity_id: 'e1',
     as_of: '2026-08-23',
@@ -134,6 +136,7 @@ describe('ReportsPage Export PDF', () => {
       to: '2026-08-31',
       expenses: [expense({ code: '6100', name: 'Rent', balance_minor: 850_00 })],
     })
+    expect(api.reportPnlExport).toHaveBeenCalledWith('e1', yearStartISO(), todayISO())
     expect(api.reportExportPdf).toHaveBeenCalledWith({
       bytesBase64: expect.any(String),
       suggestedName: suggestedExpensePdfName('2026-08-01', '2026-08-31'),
@@ -155,8 +158,42 @@ describe('ReportsPage Export PDF', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  test('empty period still builds and exports', async () => {
+  test('PDF uses export P&L and leaves in-app Hidden totals alone', async () => {
     vi.mocked(api.reportPnl).mockResolvedValue(
+      pnl({
+        expenses: [
+          expense({ code: '5100', name: 'Food', balance_minor: 2_500 }),
+          expense({ code: '5200', name: 'Secret trip', balance_minor: 1_000 }),
+        ],
+        total_expenses: 3_500,
+        net_income: -3_500,
+      }),
+    )
+    vi.mocked(api.reportPnlExport).mockResolvedValue(
+      pnl({
+        expenses: [expense({ code: '5100', name: 'Food', balance_minor: 2_500 })],
+        total_expenses: 2_500,
+        net_income: -2_500,
+      }),
+    )
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getAllByText('Secret trip').length).toBeGreaterThan(0)
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Export PDF' }))
+    await waitFor(() => {
+      expect(api.reportPnlExport).toHaveBeenCalledWith('e1', yearStartISO(), todayISO())
+    })
+    expect(buildExpensePdfBytes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expenses: [expense({ code: '5100', name: 'Food', balance_minor: 2_500 })],
+      }),
+    )
+    expect(screen.getAllByText('Secret trip').length).toBeGreaterThan(0)
+  })
+
+  test('empty period still builds and exports', async () => {
+    vi.mocked(api.reportPnlExport).mockResolvedValue(
       pnl({ expenses: [], total_expenses: 0, net_income: 0 }),
     )
     render(<ReportsPage entity={entity} />)

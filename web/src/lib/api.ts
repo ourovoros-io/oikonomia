@@ -277,6 +277,9 @@ export const api = {
     call<TrialBalance>('report_trial_balance', { entityId, asOf }),
   reportPnl: (entityId: string, from: string, to: string) =>
     call<PnL>('report_pnl', { entityId, from, to }),
+  /** Accountant / PDF P&L. Same args as `reportPnl`; Hidden omitted. */
+  reportPnlExport: (entityId: string, from: string, to: string) =>
+    call<PnL>('report_pnl_export', { entityId, from, to }),
   reportBalanceSheet: (entityId: string, asOf: string) =>
     call<BalanceSheet>('report_balance_sheet', { entityId, asOf }),
   /**

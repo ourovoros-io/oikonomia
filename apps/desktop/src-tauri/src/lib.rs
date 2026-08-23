@@ -109,6 +109,7 @@ pub fn run() {
             commands::csv_export_journal,
             commands::report_trial_balance,
             commands::report_pnl,
+            commands::report_pnl_export,
             commands::report_balance_sheet,
             commands::report_export_pdf,
             commands::dashboard_summary_cmd,
