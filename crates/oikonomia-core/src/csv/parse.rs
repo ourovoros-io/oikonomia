@@ -253,7 +253,6 @@ fn mapping_from_headers(headers: &StringRecord, map: ColumnMap) -> CsvColumnMapp
     }
 }
 
-/// Trimmed `Some` only when the mapping string is present and not blank.
 fn trimmed_nonempty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|s| !s.is_empty())
 }
@@ -490,7 +489,6 @@ fn apply_direction(signed: i64, raw: &str) -> CsvResult<i64> {
     Err(CsvError::InvalidAmount(format!("unknown type: {raw}")))
 }
 
-/// Cell text at `idx`, or `""` when the column is missing on this row.
 fn record_cell(record: &StringRecord, idx: usize) -> &str {
     record.get(idx).unwrap_or("")
 }

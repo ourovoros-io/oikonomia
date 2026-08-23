@@ -18,7 +18,6 @@ pub struct TemplateAccount {
 }
 
 impl TemplateAccount {
-    /// One seed account in a chart template, before the ledger assigns an id.
     #[must_use]
     const fn new(
         code: &'static str,

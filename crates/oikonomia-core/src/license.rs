@@ -466,7 +466,6 @@ mod tests {
         .to_string()
     }
 
-    /// Write `body` to `dir/incoming.lic` and return that path.
     fn write_license_file(dir: &Path, body: &str) -> PathBuf {
         let path = dir.join("incoming.lic");
         fs::write(&path, body).expect("write incoming");
