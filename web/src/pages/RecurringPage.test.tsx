@@ -124,6 +124,7 @@ describe('RecurringPage empty state', () => {
     await renderPage()
     expect(screen.getByRole('navigation', { name: 'Transactions / Recurring' })).toBeTruthy()
     expect(screen.getAllByRole('heading', { name: 'Recurring' }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { name: 'Templates' })).toBeTruthy()
     expect(screen.getByText('A lightweight recipe — not a second ledger.')).toBeTruthy()
     expect(screen.getByText('No recurring templates yet')).toBeTruthy()
     expect(
@@ -150,11 +151,14 @@ describe('RecurringPage list affordances', () => {
 
   test('shows Due pill and solid Post when due; ghost Post when not', async () => {
     await renderPage()
+    expect(screen.getByRole('heading', { name: 'Templates' })).toBeTruthy()
     expect(screen.getByText('2 templates · 1 due · EUR')).toBeTruthy()
     expect(screen.getByText('Due')).toBeTruthy()
     expect(screen.getByText('Expense')).toBeTruthy()
     expect(screen.getByText('Income')).toBeTruthy()
     expect(screen.getByText('local only')).toBeTruthy()
+    expect(screen.getByText(/Housing → Checking/)).toBeTruthy()
+    expect(screen.getByText(/Salary → Checking/)).toBeTruthy()
 
     const postButtons = screen.getAllByRole('button', { name: 'Post' })
     expect(postButtons).toHaveLength(2)
@@ -183,6 +187,9 @@ describe('RecurringPage new template modal', () => {
     expect(screen.getByRole('button', { name: 'Income' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Bill' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Transfer' })).toBeTruthy()
+    for (const kind of ['Expense', 'Income', 'Bill', 'Transfer'] as const) {
+      expect(screen.getByRole('button', { name: kind }).querySelector('svg')).toBeTruthy()
+    }
     expect(screen.getByPlaceholderText('e.g. Rent')).toBeTruthy()
     expect(screen.getByText('Amount (EUR)')).toBeTruthy()
     expect(screen.getByLabelText('Cadence')).toBeTruthy()

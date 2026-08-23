@@ -23,7 +23,7 @@ export function IconBadge({
 }: {
   children: ReactNode
   tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted'
-  size?: 'sm' | 'md'
+  size?: 'xs' | 'sm' | 'md'
   className?: string
 }) {
   const tones = {
@@ -35,6 +35,7 @@ export function IconBadge({
     muted: 'bg-[var(--color-surface-elevated)] text-[var(--color-muted)]',
   }
   const sizes = {
+    xs: 'size-6',
     sm: 'size-8',
     md: 'size-9',
   }
@@ -542,13 +543,20 @@ export function Segmented<T extends string>({
   value,
   onChange,
   options,
+  className = '',
 }: {
   value: T
   onChange: (v: T) => void
   options: Array<{ id: T; label: string; icon?: ReactNode }>
+  className?: string
 }) {
   return (
-    <div className="inline-flex h-10 items-stretch rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5">
+    <div
+      className={cn(
+        'inline-flex h-10 items-stretch rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5',
+        className,
+      )}
+    >
       {options.map((opt) => {
         const active = value === opt.id
         return (

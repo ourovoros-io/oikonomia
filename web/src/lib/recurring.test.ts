@@ -8,6 +8,7 @@ import {
   formCadenceLabelKey,
   isRecurringCadence,
   isRecurringKind,
+  kindBadgeTone,
   kindLabelKey,
   recurringAccountIds,
 } from './recurring'
@@ -83,6 +84,15 @@ describe('billStatusForKind', () => {
     expect(billStatusForKind('expense')).toBeNull()
     expect(billStatusForKind('income')).toBeNull()
     expect(billStatusForKind('transfer')).toBeNull()
+  })
+})
+
+describe('kindBadgeTone', () => {
+  test('maps journal kinds onto IconBadge tones', () => {
+    expect(kindBadgeTone('income')).toBe('success')
+    expect(kindBadgeTone('expense')).toBe('danger')
+    expect(kindBadgeTone('bill')).toBe('danger')
+    expect(kindBadgeTone('transfer')).toBe('muted')
   })
 })
 

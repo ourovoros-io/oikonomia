@@ -65,6 +65,19 @@ export function kindLabelKey(kind: RecurringKind): `tx.form.kind.${RecurringKind
   return `tx.form.kind.${kind}`
 }
 
+/** List/sheet kind tiles follow Transactions: income green, spend red, transfer muted. */
+export function kindBadgeTone(kind: RecurringKind): 'success' | 'danger' | 'muted' {
+  switch (kind) {
+    case 'income':
+      return 'success'
+    case 'expense':
+    case 'bill':
+      return 'danger'
+    case 'transfer':
+      return 'muted'
+  }
+}
+
 export function cadenceLabelKey(
   cadence: RecurringCadence,
 ): 'recurring.cadence.monthly' | 'recurring.cadence.weekly' | 'recurring.cadence.yearly' {

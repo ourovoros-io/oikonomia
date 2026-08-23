@@ -172,6 +172,7 @@ describe('Writer recurring catalog', () => {
   const recurringKeys = [
     'tx.recurring',
     'recurring.title',
+    'recurring.templates',
     'recurring.subtitle',
     'recurring.whisper',
     'recurring.new',
@@ -231,6 +232,8 @@ describe('Writer recurring catalog', () => {
     expect(elFlat['tx.recurring']).toBe('Επαναλαμβανόμενα')
     expect(enFlat['recurring.title']).toBe('Recurring')
     expect(elFlat['recurring.title']).toBe('Επαναλαμβανόμενα')
+    expect(enFlat['recurring.templates']).toBe('Templates')
+    expect(elFlat['recurring.templates']).toBe('Πρότυπα')
     expect(enFlat['recurring.subtitle']).toBe('A lightweight recipe — not a second ledger.')
     expect(elFlat['recurring.subtitle']).toBe('Μια ελαφριά συνταγή — όχι δεύτερο ημερολόγιο.')
     expect(enFlat['recurring.whisper']).toBe('local only')

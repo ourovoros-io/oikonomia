@@ -338,6 +338,7 @@
 
   "tx.recurring": "Recurring",
   "recurring.title": "Recurring",
+  "recurring.templates": "Templates",
   "recurring.subtitle": "A lightweight recipe — not a second ledger.",
   "recurring.whisper": "local only",
   "recurring.new": "New template",

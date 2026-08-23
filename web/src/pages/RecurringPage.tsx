@@ -27,6 +27,7 @@ import {
   dayOfMonthForCadence,
   formCadenceLabelKey,
   isRecurringCadence,
+  kindBadgeTone,
   kindLabelKey,
   recurringAccountIds,
 } from '../lib/recurring'
@@ -38,6 +39,7 @@ import {
   EmptyState,
   ErrorBanner,
   Field,
+  IconBadge,
   Input,
   PageHeader,
   Panel,
@@ -77,11 +79,25 @@ function majorString(minor: number, currency: string): string {
   return (minor / 10 ** digits).toFixed(digits)
 }
 
-function KindIcon({ kind }: { kind: RecurringKind }) {
-  if (kind === 'income') return <ArrowDownLeft className="size-3.5" />
-  if (kind === 'bill') return <FileText className="size-3.5" />
-  if (kind === 'transfer') return <ArrowLeftRight className="size-3.5" />
-  return <ArrowUpRight className="size-3.5" />
+function KindIcon({ kind, className }: { kind: RecurringKind; className: string }) {
+  if (kind === 'income') return <ArrowDownLeft className={className} />
+  if (kind === 'bill') return <FileText className={className} />
+  if (kind === 'transfer') return <ArrowLeftRight className={className} />
+  return <ArrowUpRight className={className} />
+}
+
+function KindTile({
+  kind,
+  size = 'md',
+}: {
+  kind: RecurringKind
+  size?: 'xs' | 'md'
+}) {
+  return (
+    <IconBadge tone={kindBadgeTone(kind)} size={size}>
+      <KindIcon kind={kind} className={size === 'xs' ? 'size-3.5' : 'size-4'} />
+    </IconBadge>
+  )
 }
 
 function Pill({
@@ -225,7 +241,7 @@ export function RecurringPage({ entity, onBack }: Props) {
     }
     const category = accountMap.get(row.category_account_id ?? '')?.name
     const wallet = accountMap.get(row.wallet_account_id ?? '')?.name
-    return [category, wallet].filter(Boolean).join(' · ') || '—'
+    return [category, wallet].filter(Boolean).join(' → ') || '—'
   }
 
   async function onSave(ev: FormEvent) {
@@ -361,14 +377,27 @@ export function RecurringPage({ entity, onBack }: Props) {
           <Segmented<RecurringKind>
             value={kind}
             onChange={setKindAndDefaults}
+            className="h-11"
             options={[
-              { id: 'expense', label: t('tx.form.kind.expense'), icon: <KindIcon kind="expense" /> },
-              { id: 'income', label: t('tx.form.kind.income'), icon: <KindIcon kind="income" /> },
-              { id: 'bill', label: t('tx.form.kind.bill'), icon: <KindIcon kind="bill" /> },
+              {
+                id: 'expense',
+                label: t('tx.form.kind.expense'),
+                icon: <KindTile kind="expense" size="xs" />,
+              },
+              {
+                id: 'income',
+                label: t('tx.form.kind.income'),
+                icon: <KindTile kind="income" size="xs" />,
+              },
+              {
+                id: 'bill',
+                label: t('tx.form.kind.bill'),
+                icon: <KindTile kind="bill" size="xs" />,
+              },
               {
                 id: 'transfer',
                 label: t('tx.form.kind.transfer'),
-                icon: <KindIcon kind="transfer" />,
+                icon: <KindTile kind="transfer" size="xs" />,
               },
             ]}
           />
@@ -561,7 +590,7 @@ export function RecurringPage({ entity, onBack }: Props) {
       />
 
       <Panel
-        title={t('recurring.title')}
+        title={t('recurring.templates')}
         description={listMeta}
         whisper={templates.length > 0 ? t('recurring.whisper') : undefined}
         actions={
@@ -585,6 +614,7 @@ export function RecurringPage({ entity, onBack }: Props) {
               const income = row.kind === 'income'
               return (
                 <li key={row.id} className="flex items-center gap-4 px-5 py-3.5">
+                  <KindTile kind={row.kind} />
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                       <span className="truncate text-sm font-medium text-[var(--color-fg)]">
@@ -594,16 +624,16 @@ export function RecurringPage({ entity, onBack }: Props) {
                       <Pill>{t(kindLabelKey(row.kind))}</Pill>
                     </div>
                     <div className="truncate text-xs text-[var(--color-muted)]">
-                      {t(cadenceLabelKey(row.cadence))}
-                      {row.cadence === 'monthly' && row.day_of_month != null
-                        ? ` · ${t('recurring.form.dayOfMonth')} ${row.day_of_month}`
-                        : ''}
-                      {row.next_date ? (
-                        <>
-                          <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                          {formatDate(row.next_date)}
-                        </>
-                      ) : null}
+                      {[
+                        t(cadenceLabelKey(row.cadence)),
+                        row.cadence === 'monthly' && row.day_of_month != null
+                          ? String(row.day_of_month)
+                          : null,
+                        accountSummary(row),
+                        row.next_date ? formatDate(row.next_date) : null,
+                      ]
+                        .filter((part): part is string => Boolean(part))
+                        .join(' · ')}
                     </div>
                   </div>
                   <div
