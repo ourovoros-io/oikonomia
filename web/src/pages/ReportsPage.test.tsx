@@ -125,10 +125,15 @@ describe('ReportsPage Export PDF', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Export PDF' })).toBeTruthy()
     })
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalled()
+    })
+    const inAppCalls = vi.mocked(api.reportPnl).mock.calls.length
     await userEvent.click(screen.getByRole('button', { name: 'Export PDF' }))
     await waitFor(() => {
       expect(api.reportExportPdf).toHaveBeenCalledTimes(1)
     })
+    expect(api.reportPnl).toHaveBeenCalledTimes(inAppCalls)
     expect(buildExpensePdfBytes).toHaveBeenCalledWith({
       entityName: 'Personal',
       currency: 'EUR',

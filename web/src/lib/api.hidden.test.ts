@@ -82,6 +82,25 @@ describe('entry_set_hidden', () => {
 })
 
 describe('report PDF export path', () => {
+  test('reportPnlExport invokes report_pnl_export with camelCase args', async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      entity_id: 'e1',
+      from: '2026-08-01',
+      to: '2026-08-31',
+      income: [],
+      expenses: [],
+      total_income: 0,
+      total_expenses: 0,
+      net_income: 0,
+    })
+    await api.reportPnlExport('e1', '2026-08-01', '2026-08-31')
+    expect(invoke).toHaveBeenCalledWith('report_pnl_export', {
+      entityId: 'e1',
+      from: '2026-08-01',
+      to: '2026-08-31',
+    })
+  })
+
   test('reportExportPdf invokes report_export_pdf with camelCase args', async () => {
     vi.mocked(invoke).mockResolvedValue('/tmp/oikonomia-expenses.pdf')
     await api.reportExportPdf({
