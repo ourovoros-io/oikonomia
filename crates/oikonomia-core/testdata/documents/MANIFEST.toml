@@ -1,0 +1,177 @@
+# Offline document corpus index.
+# Public rows are synthetic only. Private rows are optional local files.
+
+schema_version = 1
+
+# --- Promoted from invoice.rs inline samples (week 1) ---
+
+[[documents]]
+id = "greek-sales-invoice"
+path = "synthetic/text/greek_sales_invoice.txt"
+golden = "golden/greek_sales_invoice.json"
+sector = "sales"
+brand = "generic"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "dei-settlement"
+path = "synthetic/text/dei_settlement.txt"
+golden = "golden/dei_settlement.json"
+sector = "electricity"
+brand = "dei"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "cosmote-pay-via"
+path = "synthetic/text/cosmote_pay_via.txt"
+golden = "golden/cosmote_pay_via.json"
+sector = "telecom"
+brand = "cosmote"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "volton-myon-gas"
+path = "synthetic/text/volton_myon_gas.txt"
+golden = "golden/volton_myon_gas.json"
+sector = "gas"
+brand = "volton"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "nova-telecom"
+path = "synthetic/text/nova_telecom.txt"
+golden = "golden/nova_telecom.json"
+sector = "telecom"
+brand = "nova"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "zenith-electricity"
+path = "synthetic/text/zenith_electricity.txt"
+golden = "golden/zenith_electricity.json"
+sector = "electricity"
+brand = "zenith"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "ngs-gas-bill"
+path = "synthetic/text/ngs_gas_bill.txt"
+golden = "golden/ngs_gas_bill.json"
+sector = "gas"
+brand = "volton"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "zenith-supplier-vs-grid"
+path = "synthetic/text/zenith_supplier_vs_grid.txt"
+golden = "golden/zenith_supplier_vs_grid.json"
+sector = "electricity"
+brand = "zenith"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+# --- New synthetic Greek utility / telecom bills ---
+
+[[documents]]
+id = "dei-electricity-current"
+path = "synthetic/text/dei_electricity_current.txt"
+golden = "golden/dei_electricity_current.json"
+sector = "electricity"
+brand = "dei"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "volton-myon-gas-current"
+path = "synthetic/text/volton_myon_gas_current.txt"
+golden = "golden/volton_myon_gas_current.json"
+sector = "gas"
+brand = "volton"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "cosmote-telecom-current"
+path = "synthetic/text/cosmote_telecom_current.txt"
+golden = "golden/cosmote_telecom_current.json"
+sector = "telecom"
+brand = "cosmote"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+[[documents]]
+id = "eydap-water-current"
+path = "synthetic/text/eydap_water_current.txt"
+golden = "golden/eydap_water_current.json"
+sector = "water"
+brand = "eydap"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
+# --- Holdout synthetic ---
+
+[[documents]]
+id = "dei-electricity-holdout"
+path = "holdout/dei_electricity_holdout.txt"
+golden = "golden/dei_electricity_holdout.json"
+sector = "electricity"
+brand = "dei"
+split = "holdout"
+rights = "synthetic"
+parser = "invoice_text"
+
+# --- Text-layer PDF smoke ---
+
+[[documents]]
+id = "english-total-pdf"
+path = "synthetic/pdf/english_total.pdf"
+golden = "golden/english_total_pdf.json"
+sector = "sales"
+brand = "generic"
+split = "train"
+rights = "synthetic"
+parser = "analyze_bytes"
+mime = "application/pdf"
+
+# --- JPEG OCR smoke (skipped when bundled models are absent) ---
+
+[[documents]]
+id = "english-total-jpeg"
+path = "synthetic/image/english_total.jpg"
+golden = "golden/english_total_jpeg.json"
+sector = "sales"
+brand = "generic"
+split = "train"
+rights = "synthetic"
+parser = "ocr_smoke"
+mime = "image/jpeg"
+
+# Private fixtures (gitignored). Uncomment locally when the file exists:
+# [[documents]]
+# id = "private-example"
+# path = "private/example.txt"
+# golden = "private/example.json"
+# sector = "electricity"
+# brand = "dei"
+# split = "private"
+# rights = "private"
+# parser = "invoice_text"

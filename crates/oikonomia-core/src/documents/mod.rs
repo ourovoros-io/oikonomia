@@ -13,6 +13,7 @@ pub use analyze::{
     AnalyzeSource, AnalyzerStatus, DocumentSuggestion, EntryKindSuggestion, analyze_document_bytes,
     analyzer_status,
 };
+pub use invoice::parse_invoice_text;
 pub use ocr::OcrModelPaths;
 pub use store::{
     DocumentId, DocumentMeta, MAX_DOCUMENT_BYTES, attach_document, delete_document, get_document,

@@ -39,6 +39,10 @@ vault.db
 coverage/
 lcov.info
 
+# Local-only document corpus (may contain real bills). Keep .gitkeep.
+crates/oikonomia-core/testdata/documents/private/**
+!crates/oikonomia-core/testdata/documents/private/.gitkeep
+
 # Git worktrees (local isolation)
 .worktrees/
 .superpowers/
