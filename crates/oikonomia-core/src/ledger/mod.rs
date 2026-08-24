@@ -4,6 +4,7 @@ mod accounts;
 mod balance;
 mod entities;
 mod journals;
+mod recurring;
 mod reports;
 mod settings;
 
@@ -22,6 +23,13 @@ pub use journals::{
     SimpleBillStatus, SimpleEntryKind, VoidResult, account_register, get_entry, list_entries,
     post_entry, post_simple_entry, replace_simple_entry, set_account_opening_balance,
     set_entry_hidden, void_entry,
+};
+pub use recurring::{
+    CreateRecurringTemplate, RecurringCadence, RecurringPostResult, RecurringTemplateView,
+    UpdateRecurringTemplate, advance_next_date, create_recurring_template,
+    delete_recurring_template, get_recurring_template, list_recurring_templates,
+    list_recurring_templates_as_of, post_recurring_template, template_is_due,
+    update_recurring_template,
 };
 pub use reports::{
     BalanceSheet, BalanceSheetSection, DashboardSummary, PnL, ReportLine, TrialBalance,

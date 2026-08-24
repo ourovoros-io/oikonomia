@@ -22,7 +22,7 @@ fn setup_vault() -> (TempDir, Vault) {
 fn v5_rejects_double_sided_journal_line() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
-    assert_eq!(CURRENT_SCHEMA_VERSION, 6);
+    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
 
     let entity = create_entity(
         conn,

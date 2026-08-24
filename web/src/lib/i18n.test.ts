@@ -97,7 +97,11 @@ describe('Writer el catalog', () => {
     )
     expect(flat['error.core']).toBeUndefined()
     const writerKeys = Object.keys(flat).filter(
-      (k) => !k.startsWith('settings.language.') && !k.startsWith('tx.csv.'),
+      (k) =>
+        !k.startsWith('settings.language.') &&
+        !k.startsWith('tx.csv.') &&
+        !k.startsWith('recurring.') &&
+        k !== 'tx.recurring',
     )
     expect(writerKeys.length).toBe(580)
     expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
@@ -161,6 +165,104 @@ describe('Writer el catalog', () => {
     expect(t('quickAdd.amount', { ccy: 'EUR' })).toBe('Ποσό (EUR)')
     expect(t('tx.list.meta.counts', { posted: 24, hidden: 1 })).toBe('24 καταχωρισμένα · 1 κρυφά')
     expect(t('settings.deleteEntityBody', { name: 'Personal' })).toContain('Personal')
+  })
+})
+
+describe('Writer recurring catalog', () => {
+  const recurringKeys = [
+    'tx.recurring',
+    'recurring.title',
+    'recurring.templates',
+    'recurring.subtitle',
+    'recurring.whisper',
+    'recurring.new',
+    'recurring.backToEntries',
+    'recurring.emptyTitle',
+    'recurring.emptyBody',
+    'recurring.templatesCount',
+    'recurring.dueCount',
+    'recurring.due',
+    'recurring.post',
+    'recurring.postConfirm.title',
+    'recurring.postConfirm.body',
+    'recurring.postConfirm.confirm',
+    'recurring.postConfirm.cancel',
+    'recurring.form.titleNew',
+    'recurring.form.titleEdit',
+    'recurring.form.kind',
+    'recurring.form.name',
+    'recurring.form.namePlaceholder',
+    'recurring.form.amount',
+    'recurring.form.cadence',
+    'recurring.form.dayOfMonth',
+    'recurring.form.dayOfMonthHint',
+    'recurring.form.category',
+    'recurring.form.fromAccount',
+    'recurring.form.memo',
+    'recurring.form.memoPlaceholder',
+    'recurring.form.save',
+    'recurring.form.cancel',
+    'recurring.form.busy',
+    'recurring.form.error',
+    'recurring.delete.title',
+    'recurring.delete.body',
+    'recurring.delete.confirm',
+    'recurring.cadence.monthly',
+    'recurring.cadence.weekly',
+    'recurring.cadence.yearly',
+    'recurring.posting.busy',
+    'recurring.posting.error',
+    'recurring.form.cadenceMonthly',
+    'recurring.form.cadenceWeekly',
+    'recurring.form.cadenceYearly',
+    'tx.form.kind.expense',
+    'tx.form.kind.income',
+    'tx.form.kind.bill',
+    'tx.form.kind.transfer',
+  ] as const
+
+  test('EN and EL keys exist for critical Recurring chrome', () => {
+    const enFlat = flattenMessages(en)
+    const elFlat = flattenMessages(el)
+    for (const key of recurringKeys) {
+      expect(enFlat[key], key).toBeTruthy()
+      expect(elFlat[key], key).toBeTruthy()
+    }
+    expect(enFlat['tx.recurring']).toBe('Recurring')
+    expect(elFlat['tx.recurring']).toBe('Επαναλαμβανόμενα')
+    expect(enFlat['recurring.title']).toBe('Recurring')
+    expect(elFlat['recurring.title']).toBe('Επαναλαμβανόμενα')
+    expect(enFlat['recurring.templates']).toBe('Templates')
+    expect(elFlat['recurring.templates']).toBe('Πρότυπα')
+    expect(enFlat['recurring.subtitle']).toBe('A lightweight recipe — not a second ledger.')
+    expect(elFlat['recurring.subtitle']).toBe('Μια ελαφριά συνταγή — όχι δεύτερο ημερολόγιο.')
+    expect(enFlat['recurring.whisper']).toBe('local only')
+    expect(elFlat['recurring.whisper']).toBe('μόνο τοπικά')
+    expect(enFlat['recurring.emptyTitle']).toBe('No recurring templates yet')
+    expect(elFlat['recurring.emptyTitle']).toBe('Δεν υπάρχουν επαναλαμβανόμενα πρότυπα ακόμη')
+    expect(enFlat['recurring.post']).toBe('Post')
+    expect(elFlat['recurring.post']).toBe('Καταχώριση')
+    expect(enFlat['recurring.postConfirm.title']).toBe('Post {name}?')
+    expect(elFlat['recurring.postConfirm.title']).toBe('Καταχώριση του «{name}»;')
+    expect(enFlat['recurring.form.cadenceMonthly']).toBe('Monthly')
+    expect(elFlat['recurring.form.cadenceMonthly']).toBe('Μηνιαία')
+    expect(enFlat['tx.form.kind.expense']).toBe('Expense')
+    expect(elFlat['tx.form.kind.expense']).toBe('Έξοδο')
+    expect(elFlat['recurring.templatesCount']).toContain('{n}')
+    expect(elFlat['recurring.dueCount']).toContain('{n}')
+    expect(elFlat['recurring.title']).not.toMatch(/Oikonomia/i)
+    expect(enFlat['recurring.title']).toBe('Recurring')
+  })
+
+  test('t() interpolates template and due counts', () => {
+    expect(t('recurring.templatesCount', { n: 0 })).toBe('0 templates')
+    expect(t('recurring.dueCount', { n: 2 })).toBe('2 due')
+    setLocale('el')
+    expect(t('tx.recurring')).toBe('Επαναλαμβανόμενα')
+    expect(t('recurring.templatesCount', { n: 0 })).toBe('0 πρότυπα')
+    expect(t('recurring.postConfirm.title', { name: 'Rent' })).toBe(
+      'Καταχώριση του «Rent»;',
+    )
   })
 })
 

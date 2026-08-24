@@ -63,5 +63,5 @@ See `docs/superpowers/specs/2026-08-10-oikonomia-design.md`.
 
 ## Schema
 
-- `vault_meta.schema_version` starts at 1 on init; `db::migrate` upgrades to current (v2 = ledger tables).
+- `vault_meta.schema_version` starts at 1 on init; `db::migrate` upgrades to current (v7 = recurring templates).
 - Migrations run on vault init and unlock.

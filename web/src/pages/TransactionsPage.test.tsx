@@ -24,6 +24,9 @@ vi.mock('../lib/api', async (importOriginal) => {
       csvImportPost: vi.fn(),
       csvExportJournal: vi.fn(),
       entrySetHidden: vi.fn(),
+      recurringList: vi.fn(),
+      recurringCreate: vi.fn(),
+      recurringPost: vi.fn(),
     },
   }
 })
@@ -169,6 +172,9 @@ beforeEach(() => {
     ...postedEntry,
     entry: { ...postedEntry.entry, id, hidden },
   }))
+  vi.mocked(api.recurringList).mockReset().mockResolvedValue([])
+  vi.mocked(api.recurringCreate).mockReset()
+  vi.mocked(api.recurringPost).mockReset()
 })
 
 async function renderReady() {
@@ -179,11 +185,31 @@ async function renderReady() {
 }
 
 describe('TransactionsPage CSV toolbar', () => {
-  test('toolbar shows Import CSV, Export CSV, New Entry', async () => {
+  test('toolbar shows Recurring left of Import CSV, Export CSV, New Entry', async () => {
     await renderReady()
-    expect(screen.getByRole('button', { name: 'Import CSV' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'New Entry' })).toBeTruthy()
+    const names = screen.getAllByRole('button').map((el) => el.textContent?.replace(/\s+/g, ' ').trim())
+    const recurring = names.indexOf('Recurring')
+    const importCsv = names.indexOf('Import CSV')
+    const exportCsv = names.indexOf('Export CSV')
+    const newEntry = names.indexOf('New Entry')
+    expect(recurring).toBeGreaterThanOrEqual(0)
+    expect(importCsv).toBeGreaterThan(recurring)
+    expect(exportCsv).toBeGreaterThan(importCsv)
+    expect(newEntry).toBeGreaterThan(exportCsv)
+  })
+
+  test('Recurring opens the empty templates sub-view', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Recurring' }))
+    await waitFor(() => {
+      expect(screen.getByText('No recurring templates yet')).toBeTruthy()
+    })
+    expect(api.recurringList).toHaveBeenCalledWith('e1')
+    expect(screen.queryByRole('button', { name: 'Import CSV' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Back to entries' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Import CSV' })).toBeTruthy()
+    })
   })
 
   test('Export CSV calls csvExportJournal with entityId', async () => {

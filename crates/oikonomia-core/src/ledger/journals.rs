@@ -517,6 +517,11 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
     Ok(view)
 }
 
+/// Check that role accounts exist and match `kind` (same rules as post).
+pub(crate) fn ensure_simple_entry_roles(conn: &Connection, input: &PostSimpleEntry) -> Result<()> {
+    simple_entry_sides(conn, input).map(|_| ())
+}
+
 /// Resolve the (debit, credit) account pair for a simple entry.
 fn simple_entry_sides(
     conn: &Connection,

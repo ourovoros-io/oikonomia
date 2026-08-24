@@ -218,8 +218,8 @@ pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
     Ok(())
 }
 
-/// Permanently delete an entity and all of its accounts, documents, and
-/// journal data in one transaction.
+/// Permanently delete an entity and all of its accounts, documents,
+/// recurring templates, and journal data in one transaction.
 ///
 /// # Errors
 ///
@@ -271,6 +271,13 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
     // Documents reference journal_entries (entry_id FK), so they must go first.
     conn.execute("DELETE FROM documents WHERE entity_id = ?1", [&id_s])
         .map_err(|err| Error::Io(err.to_string()))?;
+
+    // Templates reference accounts and the entity; drop them before both.
+    conn.execute(
+        "DELETE FROM recurring_templates WHERE entity_id = ?1",
+        [&id_s],
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
 
     conn.execute("DELETE FROM journal_entries WHERE entity_id = ?1", [&id_s])
         .map_err(|err| Error::Io(err.to_string()))?;
