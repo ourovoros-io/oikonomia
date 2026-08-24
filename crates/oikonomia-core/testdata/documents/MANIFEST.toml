@@ -1,5 +1,6 @@
 # Offline document corpus index.
-# Public rows are synthetic only. Private rows are optional local files.
+# Public rows are synthetic only (scrubbed placeholders). Private rows are
+# optional local files.
 
 schema_version = 1
 

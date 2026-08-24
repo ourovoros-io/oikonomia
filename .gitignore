@@ -43,6 +43,10 @@ lcov.info
 crates/oikonomia-core/testdata/documents/private/**
 !crates/oikonomia-core/testdata/documents/private/.gitkeep
 
+# Optional local PDFs / live extracts — never commit.
+crates/oikonomia-core/tests/fixtures/*.pdf
+crates/oikonomia-core/tests/fixtures/ngs_gas_pdf_extract.txt
+
 # Git worktrees (local isolation)
 .worktrees/
 .superpowers/

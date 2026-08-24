@@ -33,9 +33,9 @@ The public corpus must contain **zero real PII**:
 If a fixture would need a real identifier to be useful, put it under `private/`
 and keep it gitignored.
 
-Promoted week-1 cases are the existing in-tree `invoice.rs` samples (already
-synthetic / fictional counterparties). Do not “improve” them with details from
-a real bill.
+Public fixtures use **scrubbed placeholders** only (invented names, invalid
+ΑΦΜ such as `000000000`, synthetic supply / ΗΚΑΣΠ / RF digit runs). Do not
+“improve” them with details from a live bill.
 
 ## Layout
 

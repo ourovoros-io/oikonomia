@@ -751,7 +751,7 @@ fn parse_eu_date(s: &str) -> Option<String> {
 fn find_invoice_reference(text: &str, lower: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
 
-    // Supply / meter codes (e.g. NGS000009414) — value often on the next line in PDF extract.
+    // Supply / meter codes (e.g. NGS000000001) — value often on the next line in PDF extract.
     for (i, line) in lines.iter().enumerate() {
         let l = line.to_lowercase();
         if l.contains("κωδικός παροχής")
@@ -873,7 +873,7 @@ fn long_digit_token(line: &str) -> Option<String> {
     best
 }
 
-/// Alphanumeric supply / point-of-delivery codes (e.g. `NGS000009414`).
+/// Alphanumeric supply / point-of-delivery codes (e.g. `NGS000000001`).
 fn alnum_supply_code(line: &str) -> Option<String> {
     for tok in line.split_whitespace() {
         let t = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
@@ -891,7 +891,7 @@ fn alnum_supply_code(line: &str) -> Option<String> {
             return Some(t.to_owned());
         }
     }
-    // Also scan without whitespace (jumbled extract: "NGS000009414" alone is fine).
+    // Also scan without whitespace (jumbled extract: "NGS000000001" alone is fine).
     let mut buf = String::new();
     for ch in line.chars() {
         if ch.is_ascii_alphanumeric() {
@@ -1173,11 +1173,11 @@ mod tests {
         assert_eq!(s.amount_minor, Some(186_000), "expected €1860.00");
         assert_eq!(s.kind, EntryKindSuggestion::Income);
         assert_eq!(s.entry_date.as_deref(), Some("2026-06-25"));
-        assert_eq!(s.reference.as_deref(), Some("400014111102934"));
+        assert_eq!(s.reference.as_deref(), Some("900000000000001"));
         assert!(
             s.merchant
                 .as_deref()
-                .is_some_and(|m| m.contains("SALESMEDIA") || m.contains("SMC")),
+                .is_some_and(|m| m.contains("ACME CONSULTING")),
             "merchant={:?}",
             s.merchant
         );
@@ -1189,7 +1189,7 @@ mod tests {
         let text = "\
 Τιμολόγιο Παροχής Υπηρεσιών
 Επωνυμία: ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ
-Α.Φ.Μ.: 123456789
+Α.Φ.Μ.: 000000000
 Πληρωτέο (€): 200,00
 ";
         let s = parse_invoice_text(text);
@@ -1231,8 +1231,8 @@ mod tests {
 
     #[test]
     fn rejects_afm_as_money() {
-        assert_eq!(parse_money_token("801837924"), None);
-        assert_eq!(parse_money_token("400014111102934"), None);
+        assert_eq!(parse_money_token("000000000"), None);
+        assert_eq!(parse_money_token("900000000000001"), None);
         assert_eq!(parse_money_token("1860,00"), Some(186_000));
     }
 
@@ -1263,10 +1263,10 @@ mod tests {
     #[test]
     fn sales_invoice_titles_carry_the_customer() {
         let s = parse_invoice_text(
-            "Επωνυμία ΟΥΡΟΒΟΡΟΣ ΜΟΝΟΠΡΟΣΩΠΗ Ι Κ Ε\n\
+            "Επωνυμία ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\n\
              Τιμολόγιο Παροχής / Ενδοκοινοτική Παροχή Υπηρεσιών\n\
-             400014111102934 Επί πιστώσειB 51 25/06/2026\n\
-             Στοιχεία Πελάτη\nΑ.Φ.Μ.: 10341039B\nΕπωνυμία: ACME CONSULTING LTD\n\
+             900000000000001 Επί πιστώσειB 51 25/06/2026\n\
+             Στοιχεία Πελάτη\nΑ.Φ.Μ.: 000000000\nΕπωνυμία: ACME CONSULTING LTD\n\
              Πληρωτέο (€): 1860,00",
         );
         assert_eq!(s.kind, EntryKindSuggestion::Income);
@@ -1282,7 +1282,7 @@ mod tests {
         // The issuer's payment footer must not hijack the merchant.
         let with_bank = parse_invoice_text(
             "Τιμολόγιο Παροχής Υπηρεσιών\nΣτοιχεία Πελάτη\nΕπωνυμία: ACME CONSULTING LTD\n\
-             Πληρωτέο (€): 500,00\nPIRAEUS BANK, GREECE, IBAN: GR7901712150006215162659390",
+             Πληρωτέο (€): 500,00\nPIRAEUS BANK, GREECE, IBAN: GR0000000000000000000000000",
         );
         assert_eq!(with_bank.merchant.as_deref(), Some("ACME CONSULTING LTD"));
     }
@@ -1314,9 +1314,7 @@ mod tests {
             s.merchant
         );
         assert!(
-            s.reference
-                .as_deref()
-                .is_some_and(|r| r.starts_with("RF") || r.contains("21743093")),
+            s.reference.as_deref().is_some_and(|r| r.starts_with("RF")),
             "reference={:?}",
             s.reference
         );
@@ -1351,7 +1349,7 @@ mod tests {
         assert!(
             s.reference
                 .as_deref()
-                .is_some_and(|r| r.contains("NGS") || r.starts_with("RF")),
+                .is_some_and(|r| { r.contains("NGS") || r.contains("SYN") || r.starts_with("RF") }),
             "reference={:?}",
             s.reference
         );
@@ -1359,17 +1357,17 @@ mod tests {
 }
 
 #[cfg(test)]
-mod live_fixture {
+mod jumbled_extract {
     use super::*;
 
-    /// Text as actually produced by `pdf_extract` on `NGS000009414_0113405.pdf`
-    /// (layout is jumbled vs clean pdftotext — this is what the app sees).
+    /// Synthetic jumbled layout (the shape `pdf_extract` produces on a
+    /// text-layer utility PDF). Placeholders only — not a live dump.
     #[test]
     #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
-    fn parse_real_ngs_pdf_extract_fixture() {
+    fn parse_jumbled_ngs_extract_fixture() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/ngs_gas_pdf_extract.txt"
+            "/tests/fixtures/ngs_gas_jumbled_extract.txt"
         ))
         .expect("fixture extract");
         let s = parse_invoice_text(&text);
@@ -1384,7 +1382,7 @@ mod live_fixture {
         assert!(
             s.reference
                 .as_deref()
-                .is_some_and(|r| r.contains("NGS") || r.starts_with("RF")),
+                .is_some_and(|r| { r.contains("NGS") || r.contains("SYN") || r.starts_with("RF") }),
             "reference={:?}",
             s.reference
         );
@@ -1407,10 +1405,13 @@ mod live_fixture {
 
     #[test]
     #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
-    fn parse_real_ngs_pdf_bytes_end_to_end() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ngs_gas.pdf");
+    fn parse_optional_local_gas_pdf_bytes() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/local_gas_bill.pdf"
+        );
         let Ok(bytes) = std::fs::read(path) else {
-            // PDF fixture optional if extract-only is checked in.
+            // Optional local PDF — never required in the public tree.
             return;
         };
         let text = pdf_extract::extract_text_from_mem(&bytes).expect("pdf text");
@@ -1418,7 +1419,7 @@ mod live_fixture {
         assert_eq!(
             s.amount_minor,
             Some(7_253),
-            "live pdf_extract amount={:?}\ntext excerpt:\n{}",
+            "local pdf_extract amount={:?}\ntext excerpt:\n{}",
             s.amount_minor,
             text.chars().take(800).collect::<String>()
         );

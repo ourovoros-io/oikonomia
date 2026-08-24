@@ -2,8 +2,8 @@
   "amount_minor": 186000,
   "entry_date": "2026-06-25",
   "kind": "income",
-  "merchant": "SMC SALESMEDIA CONSULTING LTD",
-  "merchant_aliases": ["SALESMEDIA", "SMC"],
+  "merchant": "ACME CONSULTING LTD",
+  "merchant_aliases": ["ACME CONSULTING"],
   "bill_unpaid": true,
-  "description": "SMC SALESMEDIA CONSULTING LTD — Invoice 400014111102934"
+  "description": "ACME CONSULTING LTD — Invoice 900000000000001"
 }
