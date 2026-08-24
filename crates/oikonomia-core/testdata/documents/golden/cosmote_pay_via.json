@@ -1,0 +1,7 @@
+{
+  "amount_minor": 3000,
+  "kind": "bill",
+  "merchant": "Cosmote",
+  "bill_unpaid": false,
+  "description": "Cosmote — Telecom bill"
+}

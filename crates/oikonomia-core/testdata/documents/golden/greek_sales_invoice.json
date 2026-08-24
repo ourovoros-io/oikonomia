@@ -1,0 +1,9 @@
+{
+  "amount_minor": 186000,
+  "entry_date": "2026-06-25",
+  "kind": "income",
+  "merchant": "ACME CONSULTING LTD",
+  "merchant_aliases": ["ACME CONSULTING"],
+  "bill_unpaid": true,
+  "description": "ACME CONSULTING LTD — Invoice 900000000000001"
+}

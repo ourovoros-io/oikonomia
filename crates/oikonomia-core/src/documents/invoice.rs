@@ -751,7 +751,7 @@ fn parse_eu_date(s: &str) -> Option<String> {
 fn find_invoice_reference(text: &str, lower: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
 
-    // Supply / meter codes (e.g. NGS000009414) — value often on the next line in PDF extract.
+    // Supply / meter codes (e.g. NGS000000001) — value often on the next line in PDF extract.
     for (i, line) in lines.iter().enumerate() {
         let l = line.to_lowercase();
         if l.contains("κωδικός παροχής")
@@ -873,7 +873,7 @@ fn long_digit_token(line: &str) -> Option<String> {
     best
 }
 
-/// Alphanumeric supply / point-of-delivery codes (e.g. `NGS000009414`).
+/// Alphanumeric supply / point-of-delivery codes (e.g. `NGS000000001`).
 fn alnum_supply_code(line: &str) -> Option<String> {
     for tok in line.split_whitespace() {
         let t = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
@@ -891,7 +891,7 @@ fn alnum_supply_code(line: &str) -> Option<String> {
             return Some(t.to_owned());
         }
     }
-    // Also scan without whitespace (jumbled extract: "NGS000009414" alone is fine).
+    // Also scan without whitespace (jumbled extract: "NGS000000001" alone is fine).
     let mut buf = String::new();
     for ch in line.chars() {
         if ch.is_ascii_alphanumeric() {
@@ -1156,32 +1156,28 @@ fn build_notes(
 mod tests {
     use super::*;
 
-    const SAMPLE_GREEK_INVOICE: &str = r"
-Επωνυμία                            ΟΥΡΟΒΟΡΟΣ ΜΟΝΟΠΡΟΣΩΠΗ Ι Κ Ε
-Α.Φ.Μ.                             801837924
-Τιμολόγιο Παροχής / Ενδοκοινοτική Παροχή Υπηρεσιών
-Σειρά             Α.Α.            Ημερομηνία                     ΜΑΡΚ                               Τρόπος Πληρωμής
-B                 51              25/06/2026                     400014111102934                    Επί πιστώσει
-Στοιχεία Πελάτη
-Α.Φ.Μ.:                10341039B
-Επωνυμία:              SMC SALESMEDIA CONSULTING LTD
- 1          60           security advise           1                       1860,00           0,00         1860,00
-                                                                              Σύνολα        0,00          1860,00                           0,00         1860,00
-     1860,00               0,00                        0,00                 0,00            0,00              0,00               0,00                 0,00
-                                                                                                          Πληρωτέο (€): 1860,00
-";
+    /// Load a week-1 corpus fixture so unit tests share the public golden tree.
+    fn corpus_text(relative: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("testdata/documents")
+            .join(relative);
+        #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
+        {
+            std::fs::read_to_string(&path).expect("corpus fixture")
+        }
+    }
 
     #[test]
     fn greek_service_invoice_total_and_kind() {
-        let s = parse_invoice_text(SAMPLE_GREEK_INVOICE);
+        let s = parse_invoice_text(&corpus_text("synthetic/text/greek_sales_invoice.txt"));
         assert_eq!(s.amount_minor, Some(186_000), "expected €1860.00");
         assert_eq!(s.kind, EntryKindSuggestion::Income);
         assert_eq!(s.entry_date.as_deref(), Some("2026-06-25"));
-        assert_eq!(s.reference.as_deref(), Some("400014111102934"));
+        assert_eq!(s.reference.as_deref(), Some("900000000000001"));
         assert!(
             s.merchant
                 .as_deref()
-                .is_some_and(|m| m.contains("SALESMEDIA") || m.contains("SMC")),
+                .is_some_and(|m| m.contains("ACME CONSULTING")),
             "merchant={:?}",
             s.merchant
         );
@@ -1193,7 +1189,7 @@ B                 51              25/06/2026                     400014111102934
         let text = "\
 Τιμολόγιο Παροχής Υπηρεσιών
 Επωνυμία: ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ
-Α.Φ.Μ.: 123456789
+Α.Φ.Μ.: 000000000
 Πληρωτέο (€): 200,00
 ";
         let s = parse_invoice_text(text);
@@ -1208,14 +1204,7 @@ B                 51              25/06/2026                     400014111102934
 
     #[test]
     fn settlement_bill_is_not_automatically_unpaid() {
-        let text = "\
-ΔΕΗ
-ΕΚΚΑΘΑΡΙΣΤΙΚΟΣ ΛΟΓΑΡΙΑΣΜΟΣ
-Πληρωμή εμπρόθεσμα έως 10/08/2026
-Εξόφληση μέσω τραπέζης
-Συνολικό Ποσό Πληρωμής 50,00 €
-";
-        let s = parse_invoice_text(text);
+        let s = parse_invoice_text(&corpus_text("synthetic/text/dei_settlement.txt"));
         assert!(
             !s.bill_unpaid,
             "εμπρόθεσμο/εκκαθαριστικό/εξόφληση μέσω must not force unpaid"
@@ -1224,12 +1213,7 @@ B                 51              25/06/2026                     400014111102934
 
     #[test]
     fn cosmote_pay_via_is_not_unpaid() {
-        let text = "\
-Cosmote λογαριασμός κινητής
-Εξόφληση μέσω τραπέζης
-Ποσό Πληρωμής 30,00 €
-";
-        let s = parse_invoice_text(text);
+        let s = parse_invoice_text(&corpus_text("synthetic/text/cosmote_pay_via.txt"));
         assert_eq!(s.kind, EntryKindSuggestion::Bill);
         assert!(
             !s.bill_unpaid,
@@ -1247,26 +1231,20 @@ Cosmote λογαριασμός κινητής
 
     #[test]
     fn rejects_afm_as_money() {
-        assert_eq!(parse_money_token("801837924"), None);
-        assert_eq!(parse_money_token("400014111102934"), None);
+        assert_eq!(parse_money_token("000000000"), None);
+        assert_eq!(parse_money_token("900000000000001"), None);
         assert_eq!(parse_money_token("1860,00"), Some(186_000));
     }
 
     #[test]
     fn utility_titles_are_company_first() {
         // Gas bill whose issuer only appears via the MyON portal branding.
-        let gas = parse_invoice_text(
-            "ΈΝΑΝΤΙ\nΚωδικός Παροχής: 36008034944\nΣυνδέσου στο MyON\n\
-             ΠΡΟΜΗΘΕΙΑ ΦΥΣΙΚΟΥ ΑΕΡΙΟΥ\nΣυνολικό Ποσό Πληρωμής 72,53 €",
-        );
+        let gas = parse_invoice_text(&corpus_text("synthetic/text/volton_myon_gas.txt"));
         assert_eq!(gas.merchant.as_deref(), Some("Volton"));
         assert_eq!(gas.description.as_deref(), Some("Volton — Gas bill"));
 
         // Telecom bill: brand implies the service without utility markers.
-        let telecom = parse_invoice_text(
-            "Για αναφορά βλάβης Σταθερού ή Κινητού Nova, καλώ στο 13700.\n\
-             ΚΑΤΑΣΤΗΜΑΤΑ: Nova (μετρητά ή πιστωτική κάρτα)\nΠοσό Πληρωμής 60,10 €",
-        );
+        let telecom = parse_invoice_text(&corpus_text("synthetic/text/nova_telecom.txt"));
         assert_eq!(telecom.merchant.as_deref(), Some("Nova"));
         assert_eq!(telecom.description.as_deref(), Some("Nova — Telecom bill"));
         assert_eq!(telecom.kind, EntryKindSuggestion::Bill);
@@ -1277,11 +1255,7 @@ Cosmote λογαριασμός κινητής
         // Every Greek electricity bill mentions ΔΕΔΔΗΕ (grid operator) and a
         // national energy-mix table that includes natural gas; neither may
         // decide the title.
-        let s = parse_invoice_text(
-            "Εκκαθαριστικός\nΠρομήθεια Ρεύματος ZeniΘ (€): 25,29\n\
-             Δίκτυο ΔΕΔΔΗΕ\nΣύνολο Κατανάλωσης Περιόδου (kWh): 119\n\
-             2. ΦΥΣΙΚΟΥ ΑΕΡΙΟΥ 1410.00 30%\nΣυνολικό Ποσό 76,65 €",
-        );
+        let s = parse_invoice_text(&corpus_text("synthetic/text/zenith_supplier_vs_grid.txt"));
         assert_eq!(s.merchant.as_deref(), Some("ZeniΘ"));
         assert_eq!(s.description.as_deref(), Some("ZeniΘ — Electricity bill"));
     }
@@ -1289,10 +1263,10 @@ Cosmote λογαριασμός κινητής
     #[test]
     fn sales_invoice_titles_carry_the_customer() {
         let s = parse_invoice_text(
-            "Επωνυμία ΟΥΡΟΒΟΡΟΣ ΜΟΝΟΠΡΟΣΩΠΗ Ι Κ Ε\n\
+            "Επωνυμία ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\n\
              Τιμολόγιο Παροχής / Ενδοκοινοτική Παροχή Υπηρεσιών\n\
-             400014111102934 Επί πιστώσειB 51 25/06/2026\n\
-             Στοιχεία Πελάτη\nΑ.Φ.Μ.: 10341039B\nΕπωνυμία: ACME CONSULTING LTD\n\
+             900000000000001 Επί πιστώσειB 51 25/06/2026\n\
+             Στοιχεία Πελάτη\nΑ.Φ.Μ.: 000000000\nΕπωνυμία: ACME CONSULTING LTD\n\
              Πληρωτέο (€): 1860,00",
         );
         assert_eq!(s.kind, EntryKindSuggestion::Income);
@@ -1308,38 +1282,14 @@ Cosmote λογαριασμός κινητής
         // The issuer's payment footer must not hijack the merchant.
         let with_bank = parse_invoice_text(
             "Τιμολόγιο Παροχής Υπηρεσιών\nΣτοιχεία Πελάτη\nΕπωνυμία: ACME CONSULTING LTD\n\
-             Πληρωτέο (€): 500,00\nPIRAEUS BANK, GREECE, IBAN: GR7901712150006215162659390",
+             Πληρωτέο (€): 500,00\nPIRAEUS BANK, GREECE, IBAN: GR0000000000000000000000000",
         );
         assert_eq!(with_bank.merchant.as_deref(), Some("ACME CONSULTING LTD"));
     }
 
-    /// Excerpt of a `ZeniΘ` electricity settlement bill (payment total 76,65 €).
-    const SAMPLE_ZENITH_BILL: &str = r"
-Εκκαθαριστικός
-ΟΥΡΟΒΟΡΟΣ ΜΟΝΟΠΡΟΣΩΠΗ Ι.Κ.Ε.
-Α.Φ.Μ. 801837924
-Power Business Trust 4.0
-Σταθερό Τιμολόγιο
-Προμήθεια Ρεύματος ZeniΘ (€):                                                                  25,29
-Ρυθμιζόμενες Χρεώσεις (€):                                                                     13,14
-Αξία Φ.Π.Α. (€):                                                                                2,34
-Χρεώσεις Δήμου & ΕΡΤ (€):                                                                      35,09
-                                                                                               76,65
-            18/08/2026                                                  76,65 €
-Σύνολο Κατανάλωσης Περιόδου (kWh):                                                  119
-Πάγιο Τέλος (€):                                                                    10,90
-Ημερήσια Κατανάλωση Ιουν.26-Ιουλ.26 (€):             119 kWh x     0,235 €/kWh =    27,96
-Σύνολο (€):                                                                        25,29
-Τιμή Ζώνης (€)   1800,00
- ΣΥΝΟΛΟ ΓΙΑ ΔΗΜΟ ΠΥΛΑΙΑΣ-ΧΟΡΤΙΑΤΗ (€)                                                                                           32,13
-RF77901058000022174309305
-                                                                                                                         76,65 €
-www.zenith.gr
-";
-
     #[test]
     fn zenith_electricity_bill_total() {
-        let s = parse_invoice_text(SAMPLE_ZENITH_BILL);
+        let s = parse_invoice_text(&corpus_text("synthetic/text/zenith_electricity.txt"));
         assert_eq!(
             s.amount_minor,
             Some(7_665),
@@ -1364,39 +1314,15 @@ www.zenith.gr
             s.merchant
         );
         assert!(
-            s.reference
-                .as_deref()
-                .is_some_and(|r| r.starts_with("RF") || r.contains("21743093")),
+            s.reference.as_deref().is_some_and(|r| r.starts_with("RF")),
             "reference={:?}",
             s.reference
         );
     }
 
-    /// NGS / Gas Simple Home interim gas bill (Έναντι).
-    const SAMPLE_NGS_GAS_BILL: &str = r"
-ΈΝΑΝΤΙ
-ΗΚΑΣΠ:            20190002009749
-Κωδικός Παροχής: NGS000009414
-Α.Φ.Μ. / Δ.Ο.Υ.   108464511     / Ε ΘΕΣΣΑΛΟΝΙΚΗΣ
-Εγγύηση:          60,00 €
-    ΛΦΑ0113405                     22/07/2026                          Οικιακή                  Gas Simple Home
-      008034944                26/05/2026 - 30/06/2026                     36                  16-30 ΣΕΠΤΕΜΒΡΙΟΥ
-Χρέωση Προμήθειας Φ.Α.                           50,50 €
-Ρυθμιζόμενες Χρεώσεις                            17,92 €
-Φ.Π.Α. & Φόροι-Τέλη                               4,11 €
-Σύνολο Τρέχοντος Λογαριασμού                     72,53 €
-Συνολικό Ποσό Πληρωμής                          72,53 €
-     13/08/2026                      72,53 €
-                              RF80905688990000000009414
-ΠΡΟΜΗΘΕΙΑ ΦΥΣΙΚΟΥ ΑΕΡΙΟΥ
-Κατανάλωση                      01/06/26   30/06/26   30   47,87   11,66500             558,41           0,06648          37,12 €
-Σύνολο Φ.Π.Α. 6%                                                              68,42 x                 6% =                4,11 €
-                                                                                                                       72,53 €
-";
-
     #[test]
     fn ngs_gas_bill_payment_total() {
-        let s = parse_invoice_text(SAMPLE_NGS_GAS_BILL);
+        let s = parse_invoice_text(&corpus_text("synthetic/text/ngs_gas_bill.txt"));
         assert_eq!(
             s.amount_minor,
             Some(7_253),
@@ -1423,7 +1349,7 @@ www.zenith.gr
         assert!(
             s.reference
                 .as_deref()
-                .is_some_and(|r| r.contains("NGS") || r.starts_with("RF")),
+                .is_some_and(|r| { r.contains("NGS") || r.contains("SYN") || r.starts_with("RF") }),
             "reference={:?}",
             s.reference
         );
@@ -1431,17 +1357,17 @@ www.zenith.gr
 }
 
 #[cfg(test)]
-mod live_fixture {
+mod jumbled_extract {
     use super::*;
 
-    /// Text as actually produced by `pdf_extract` on `NGS000009414_0113405.pdf`
-    /// (layout is jumbled vs clean pdftotext — this is what the app sees).
+    /// Synthetic jumbled layout (the shape `pdf_extract` produces on a
+    /// text-layer utility PDF). Placeholders only — not a live dump.
     #[test]
     #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
-    fn parse_real_ngs_pdf_extract_fixture() {
+    fn parse_jumbled_ngs_extract_fixture() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/ngs_gas_pdf_extract.txt"
+            "/tests/fixtures/ngs_gas_jumbled_extract.txt"
         ))
         .expect("fixture extract");
         let s = parse_invoice_text(&text);
@@ -1456,7 +1382,7 @@ mod live_fixture {
         assert!(
             s.reference
                 .as_deref()
-                .is_some_and(|r| r.contains("NGS") || r.starts_with("RF")),
+                .is_some_and(|r| { r.contains("NGS") || r.contains("SYN") || r.starts_with("RF") }),
             "reference={:?}",
             s.reference
         );
@@ -1479,10 +1405,13 @@ mod live_fixture {
 
     #[test]
     #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
-    fn parse_real_ngs_pdf_bytes_end_to_end() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ngs_gas.pdf");
+    fn parse_optional_local_gas_pdf_bytes() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/local_gas_bill.pdf"
+        );
         let Ok(bytes) = std::fs::read(path) else {
-            // PDF fixture optional if extract-only is checked in.
+            // Optional local PDF — never required in the public tree.
             return;
         };
         let text = pdf_extract::extract_text_from_mem(&bytes).expect("pdf text");
@@ -1490,7 +1419,7 @@ mod live_fixture {
         assert_eq!(
             s.amount_minor,
             Some(7_253),
-            "live pdf_extract amount={:?}\ntext excerpt:\n{}",
+            "local pdf_extract amount={:?}\ntext excerpt:\n{}",
             s.amount_minor,
             text.chars().take(800).collect::<String>()
         );

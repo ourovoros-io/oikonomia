@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn gas_bill_classifies_as_gas() {
-        let lower = "προμηθεια φυσικου αεριου κατανάλωση ηκασπ 20190002009749";
+        let lower = "προμηθεια φυσικου αεριου κατανάλωση ηκασπ SYN000000001";
 
         assert_eq!(classify_service(lower), Some(Service::Gas));
     }

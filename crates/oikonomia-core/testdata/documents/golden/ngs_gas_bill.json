@@ -1,0 +1,9 @@
+{
+  "amount_minor": 7253,
+  "entry_date": "2026-08-13",
+  "kind": "bill",
+  "merchant": "Natural gas",
+  "merchant_aliases": ["gas", "NGS"],
+  "bill_unpaid": false,
+  "description": "Natural gas — Gas bill"
+}
