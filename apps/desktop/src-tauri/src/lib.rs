@@ -10,6 +10,7 @@ mod commands;
 #[cfg(test)]
 mod config_checks;
 mod error;
+mod nav_guard;
 mod state;
 mod tray;
 
@@ -24,6 +25,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(nav_guard::plugin())
         .plugin(tauri_plugin_dialog::init())
         // Remember window size/position across launches. VISIBLE is excluded:
         // quitting from the tray while hidden must not restore an invisible
