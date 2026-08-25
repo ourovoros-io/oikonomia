@@ -1,5 +1,7 @@
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
+import fr from '../locales/fr.json' with { type: 'json' }
+import de from '../locales/de.json' with { type: 'json' }
 
 /** Optimistic mirror only. Durable store is UiPrefs.locale. */
 export const LOCALE_STORAGE_KEY = 'oikonomia.locale'
@@ -476,9 +478,8 @@ for (const [from, to] of Object.entries(KEY_ALIASES)) {
 const catalogs: Record<Locale, Record<string, string>> = {
   en: flattenMessages(en),
   el: flattenMessages(el),
-  // Writer fr/de catalogs land in a follow-up commit; empty maps fall back to EN.
-  fr: {},
-  de: {},
+  fr: flattenMessages(fr),
+  de: flattenMessages(de),
 }
 
 let current: Locale = 'en'

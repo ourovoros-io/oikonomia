@@ -17,6 +17,8 @@ import {
 } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
+import fr from '../locales/fr.json' with { type: 'json' }
+import de from '../locales/de.json' with { type: 'json' }
 
 afterEach(() => {
   resetI18nForTests()
@@ -38,6 +40,53 @@ describe('parseLocale', () => {
     expect(parseLocale('')).toBe('en')
     expect(parseLocale(undefined)).toBe('en')
     expect(parseLocale(1)).toBe('en')
+  })
+})
+
+describe('Writer fr and de catalogs', () => {
+  const sampleKeys = [
+    'nav.dashboard',
+    'unlock.titleWelcome',
+    'drop.title',
+    'settings.license.title',
+    'settings.language.title',
+  ] as const
+
+  test('flatten(fr) key-set equals flatten(de) equals flatten(el)', () => {
+    const elKeys = new Set(Object.keys(flattenMessages(el)))
+    const frKeys = new Set(Object.keys(flattenMessages(fr)))
+    const deKeys = new Set(Object.keys(flattenMessages(de)))
+    expect(frKeys).toEqual(elKeys)
+    expect(deKeys).toEqual(elKeys)
+  })
+
+  test('t() in fr and de is not English and not the raw key', () => {
+    const english = Object.fromEntries(sampleKeys.map((key) => [key, t(key)]))
+    for (const locale of ['fr', 'de'] as const) {
+      setLocale(locale)
+      for (const key of sampleKeys) {
+        const value = t(key)
+        expect(value, `${locale} ${key}`).not.toBe(english[key])
+        expect(value, `${locale} ${key}`).not.toBe(key)
+      }
+    }
+  })
+
+  test('catalogs do not mention AI, IA, or KI', () => {
+    const catalogs = { fr: JSON.stringify(fr), de: JSON.stringify(de) }
+    const forbidden = [
+      /\bAI\b/,
+      /\bIA\b/,
+      /\bKI\b/,
+      /intelligence artificielle/i,
+      /künstliche Intelligenz/i,
+      /KI-Modell/,
+    ]
+    for (const [name, text] of Object.entries(catalogs)) {
+      for (const pattern of forbidden) {
+        expect(text, `${name} ${pattern}`).not.toMatch(pattern)
+      }
+    }
   })
 })
 
