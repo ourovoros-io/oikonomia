@@ -180,6 +180,6 @@ fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
     if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event
         && let Some(state) = window.try_state::<AppState>()
     {
-        state.remember_drop_paths(paths.iter().cloned());
+        state.grant_paths(paths.iter().cloned());
     }
 }

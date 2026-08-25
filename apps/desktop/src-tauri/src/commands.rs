@@ -38,7 +38,7 @@ use oikonomia_core::prefs::{
 };
 use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
 
@@ -130,21 +130,45 @@ fn stamp_trial_start(state: &AppState) -> CommandResult<()> {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::stamp_trial_start;
+    use super::{require_granted_path, stamp_trial_start};
     use crate::state::AppState;
     use oikonomia_core::license::{LicenseState, LicenseVerifier, license_status};
     use oikonomia_core::prefs::load_ui_prefs;
 
-    #[test]
-    fn vault_init_stamps_trial_without_unlock() {
+    fn temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "oiko-vault-init-trial-{}-{}",
+            "oiko-{label}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_nanos())
         ));
         std::fs::create_dir_all(&dir).expect("tmpdir");
+        dir
+    }
+
+    #[test]
+    fn webview_supplied_paths_need_a_native_grant() {
+        let dir = temp_dir("path-grant");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        let archive = dir.join("books.oikonomia-backup");
+        std::fs::write(&archive, b"OIKOBACK").expect("write");
+        let text = archive.to_str().expect("utf-8 path");
+
+        let refused = require_granted_path(&state, text).expect_err("ungranted path");
+        assert_eq!(refused.code, "validation");
+
+        state.grant_paths([archive.clone()]);
+        assert_eq!(
+            require_granted_path(&state, text).expect("granted path"),
+            archive
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn vault_init_stamps_trial_without_unlock() {
+        let dir = temp_dir("vault-init-trial");
         let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
         {
             let vault = state.vault();
@@ -251,10 +275,10 @@ pub async fn vault_backup(
 /// Restore a portable vault archive and leave the vault locked.
 ///
 /// `path` is the archive to unpack. When `path` is `None`, a native open
-/// dialog chooses the file (the in-app path). A concrete path is accepted so
-/// a caller that already picked via [`vault_pick_backup`] can pass it through.
-/// Decrypt is not performed; the owner unlocks afterwards with the existing
-/// master password.
+/// dialog chooses the file (the in-app path). A concrete path is accepted only
+/// if [`vault_pick_backup`] returned it, so the webview cannot name arbitrary
+/// files. Decrypt is not performed; the owner unlocks afterwards with the
+/// existing master password.
 ///
 /// Existing vault files are not overwritten unless `replace` is `true`.
 /// An uninitialized data directory accepts `replace: false`.
@@ -268,13 +292,16 @@ pub async fn vault_restore(
     path: Option<String>,
     replace: bool,
 ) -> CommandResult<Option<String>> {
+    // Refuse an ungranted path before touching the session.
+    let granted = path
+        .map(|chosen| require_granted_path(&state, &chosen))
+        .transpose()?;
     lock_vault_session(&app, &state).await?;
 
-    let archive = if let Some(chosen) = path {
-        std::path::PathBuf::from(chosen)
+    let archive = if let Some(chosen) = granted {
+        chosen
     } else {
-        let Some(picked) = pick_backup_path(&app, load_ui_prefs(state.data_dir()).locale).await?
-        else {
+        let Some(picked) = pick_backup_path(&app, &state).await? else {
             return Ok(None);
         };
         picked
@@ -298,7 +325,7 @@ pub async fn vault_pick_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<Option<String>> {
-    let Some(path) = pick_backup_path(&app, load_ui_prefs(state.data_dir()).locale).await? else {
+    let Some(path) = pick_backup_path(&app, &state).await? else {
         return Ok(None);
     };
     Ok(Some(path.display().to_string()))
@@ -351,11 +378,12 @@ pub async fn license_install(
 }
 
 /// Native Open dialog for a `.oikonomia-backup` file. `None` if cancelled.
+/// The chosen path is granted so [`vault_restore`] may receive it back.
 async fn pick_backup_path(
     app: &tauri::AppHandle,
-    locale: Locale,
-) -> CommandResult<Option<std::path::PathBuf>> {
-    let filter_label = crate::tray::backup_filter_label(locale);
+    state: &AppState,
+) -> CommandResult<Option<PathBuf>> {
+    let filter_label = crate::tray::backup_filter_label(load_ui_prefs(state.data_dir()).locale);
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
@@ -371,10 +399,12 @@ async fn pick_backup_path(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    file_path.into_path().map(Some).map_err(|e| CommandError {
+    let path = file_path.into_path().map_err(|e| CommandError {
         code: "io".into(),
         message: format!("invalid backup location: {e}"),
-    })
+    })?;
+    state.grant_paths([path.clone()]);
+    Ok(Some(path))
 }
 
 /// Close any open `SQLCipher` connection and notify the UI when the session
@@ -699,19 +729,12 @@ pub async fn entry_post_simple_with_document_path(
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
     require_writes(&state)?;
-    let path_buf = std::path::PathBuf::from(&path);
-    if !state.drop_path_allowed(&path_buf) {
-        return Err(CommandError {
-            code: "validation".into(),
-            message: "file path was not dropped into the app".into(),
-        });
-    }
+    let path = require_granted_path(&state, &path)?;
 
     let vault = state.vault();
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let path = path_buf;
         let filename = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -887,10 +910,10 @@ pub async fn csv_import_preview(
     state: State<'_, AppState>,
     input: CsvImportPreviewInput,
 ) -> CommandResult<Option<CsvImportPreview>> {
-    let path = if let Some(chosen) = input.path.clone() {
-        std::path::PathBuf::from(chosen)
+    let path = if let Some(chosen) = input.path.as_deref() {
+        require_granted_path(&state, chosen)?
     } else {
-        let Some(picked) = pick_csv_path(&app).await? else {
+        let Some(picked) = pick_csv_path(&app, &state).await? else {
             return Ok(None);
         };
         picked
@@ -973,8 +996,9 @@ pub async fn csv_export_journal(
     Ok(Some(dest.display().to_string()))
 }
 
-/// Native Open dialog for a `.csv` file. `None` if cancelled.
-async fn pick_csv_path(app: &tauri::AppHandle) -> CommandResult<Option<std::path::PathBuf>> {
+/// Native Open dialog for a `.csv` file. `None` if cancelled. The chosen path
+/// is granted so a re-preview with a column mapping may pass it back.
+async fn pick_csv_path(app: &tauri::AppHandle, state: &AppState) -> CommandResult<Option<PathBuf>> {
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
@@ -990,10 +1014,12 @@ async fn pick_csv_path(app: &tauri::AppHandle) -> CommandResult<Option<std::path
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    file_path.into_path().map(Some).map_err(|e| CommandError {
+    let path = file_path.into_path().map_err(|e| CommandError {
         code: "io".into(),
         message: format!("invalid CSV location: {e}"),
-    })
+    })?;
+    state.grant_paths([path.clone()]);
+    Ok(Some(path))
 }
 
 // --- Reports ---------------------------------------------------------------
@@ -1403,20 +1429,13 @@ pub async fn document_analyze_path(
     entity_id: EntityId,
     path: String,
 ) -> CommandResult<DocumentSuggestion> {
-    let path_buf = std::path::PathBuf::from(&path);
-    if !state.drop_path_allowed(&path_buf) {
-        return Err(CommandError {
-            code: "validation".into(),
-            message: "file path was not dropped into the app".into(),
-        });
-    }
+    let path = require_granted_path(&state, &path)?;
 
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let path = path_buf;
         let filename = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -1444,6 +1463,20 @@ pub async fn document_analyze_path(
 fn require_writes(state: &AppState) -> CommandResult<()> {
     let verifier = LicenseVerifier::production()?;
     require_writes_allowed(state.data_dir(), &verifier).map_err(CommandError::from)
+}
+
+/// Accept a webview-supplied path only if the user handed it to the app
+/// through a native drop or dialog ([`AppState::grant_paths`]).
+fn require_granted_path(state: &AppState, path: &str) -> CommandResult<PathBuf> {
+    let path = PathBuf::from(path);
+    if state.path_is_granted(&path) {
+        Ok(path)
+    } else {
+        Err(CommandError {
+            code: "validation".into(),
+            message: "file path was not chosen through the app".into(),
+        })
+    }
 }
 
 /// Same as [`with_vault_blocking`], but refuse the call when the trial/license
