@@ -7,6 +7,8 @@
 #![allow(clippy::exit)]
 
 mod commands;
+#[cfg(test)]
+mod config_checks;
 mod error;
 mod state;
 mod tray;
