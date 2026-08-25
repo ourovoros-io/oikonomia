@@ -322,6 +322,13 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     let conn =
         Connection::open_with_flags(path, flags).map_err(|err| Error::Io(err.to_string()))?;
 
+    // SQLCipher 4.5+ ships with this off. On, it locks and wipes its key and
+    // page buffers instead of leaving plaintext in freed heap or swap. The
+    // flag is process-global and can only be turned on, so set it before the
+    // key so the key material itself is covered.
+    conn.pragma_update(None, "cipher_memory_security", "ON")
+        .map_err(|err| Error::Crypto(err.to_string()))?;
+
     let pragma_key = crypto::key_to_sqlcipher_pragma(key);
     // `SQLCipher` requires key before other operations.
     conn.pragma_update(None, "key", pragma_key.as_str())
@@ -426,6 +433,30 @@ mod tests {
         };
         assert!(bytes.len() > 16);
         assert_ne!(&bytes[0..6], b"SQLite");
+    }
+
+    #[test]
+    fn open_enables_sqlcipher_memory_security() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+        let Ok(mut vault) = Vault::open_path(dir.path()) else {
+            return;
+        };
+        assert!(vault.init("correct horse battery staple").is_ok());
+        let Ok(conn) = vault.connection() else {
+            return;
+        };
+
+        // SQLCipher reports "1" only once the pragma is on and its guarded
+        // allocator has run, i.e. the key was handled under memory security.
+        let state: String = conn
+            .query_row("PRAGMA cipher_memory_security", [], |row| row.get(0))
+            .unwrap_or_default();
+        assert_eq!(
+            state, "1",
+            "SQLCipher must lock and wipe its key and page buffers"
+        );
     }
 
     #[test]
