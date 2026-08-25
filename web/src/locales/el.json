@@ -195,7 +195,9 @@
       "description": "Μενού, ετικέτες και Γρήγορη καταχώριση.",
       "option": {
         "en": "English",
-        "el": "Ελληνικά"
+        "el": "Ελληνικά",
+        "fr": "Français",
+        "de": "Deutsch"
       }
     },
     "license": {

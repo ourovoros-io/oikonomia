@@ -4,7 +4,8 @@ import el from '../locales/el.json' with { type: 'json' }
 /** Optimistic mirror only. Durable store is UiPrefs.locale. */
 export const LOCALE_STORAGE_KEY = 'oikonomia.locale'
 
-export type Locale = 'en' | 'el'
+export type Locale = 'en' | 'el' | 'fr' | 'de'
+export const LOCALES: readonly Locale[] = ['en', 'el', 'fr', 'de']
 export type MessageKey = keyof typeof en
 export type TranslateVars = Record<string, string | number>
 
@@ -475,6 +476,9 @@ for (const [from, to] of Object.entries(KEY_ALIASES)) {
 const catalogs: Record<Locale, Record<string, string>> = {
   en: flattenMessages(en),
   el: flattenMessages(el),
+  // Writer fr/de catalogs land in a follow-up commit; empty maps fall back to EN.
+  fr: {},
+  de: {},
 }
 
 let current: Locale = 'en'
@@ -482,7 +486,15 @@ const listeners = new Set<() => void>()
 let testMessages: Partial<Record<Locale, Record<string, string>>> = {}
 
 export function parseLocale(value: unknown): Locale {
-  return value === 'el' || value === 'en' ? value : 'en'
+  switch (value) {
+    case 'en':
+    case 'el':
+    case 'fr':
+    case 'de':
+      return value
+    default:
+      return 'en'
+  }
 }
 
 export function getLocale(): Locale {

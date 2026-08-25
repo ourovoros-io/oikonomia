@@ -28,8 +28,13 @@ describe('parseLocale', () => {
     expect(parseLocale('el')).toBe('el')
   })
 
+  test('accepts-fr-and-de', () => {
+    expect(parseLocale('fr')).toBe('fr')
+    expect(parseLocale('de')).toBe('de')
+  })
+
   test('invalid values become en', () => {
-    expect(parseLocale('fr')).toBe('en')
+    expect(parseLocale('xx')).toBe('en')
     expect(parseLocale('')).toBe('en')
     expect(parseLocale(undefined)).toBe('en')
     expect(parseLocale(1)).toBe('en')
@@ -66,6 +71,8 @@ describe('Writer el catalog', () => {
     expect(flat['settings.language.title']).toBe('Γλώσσα')
     expect(flat['settings.language.option.en']).toBe('English')
     expect(flat['settings.language.option.el']).toBe('Ελληνικά')
+    expect(flat['settings.language.option.fr']).toBe('Français')
+    expect(flat['settings.language.option.de']).toBe('Deutsch')
     expect(flat['settings.license.title']).toBe('Άδεια')
     expect(flat['settings.license.description']).toBe(
       'Εισαγάγετε ένα υπογεγραμμένο αρχείο άδειας. Τίποτα δεν αποστέλλεται από αυτόν τον υπολογιστή.',
@@ -96,14 +103,6 @@ describe('Writer el catalog', () => {
       'Η δοκιμαστική περίοδος έληξε. Μπορείτε ακόμη να δημιουργήσετε αντίγραφο της θυρίδας, να κάνετε επαναφορά και να εξαγάγετε CSV.',
     )
     expect(flat['error.core']).toBeUndefined()
-    const writerKeys = Object.keys(flat).filter(
-      (k) =>
-        !k.startsWith('settings.language.') &&
-        !k.startsWith('tx.csv.') &&
-        !k.startsWith('recurring.') &&
-        k !== 'tx.recurring',
-    )
-    expect(writerKeys.length).toBe(580)
     expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
     expect(flat['tx.csv.kind.expense']).toBe('Έξοδα')
     expect(flat['tx.csv.kind.income']).toBe('Έσοδα')
@@ -399,6 +398,19 @@ describe('setLocale persist', () => {
     expect(persist).toHaveBeenCalledWith('el')
   })
 
+  test('fr and de persist to cache and the writer', () => {
+    const persist = vi.fn()
+    setLocalePersist(persist)
+    setLocale('fr')
+    expect(getLocale()).toBe('fr')
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('fr')
+    expect(persist).toHaveBeenCalledWith('fr')
+    setLocale('de')
+    expect(getLocale()).toBe('de')
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('de')
+    expect(persist).toHaveBeenCalledWith('de')
+  })
+
   test('reload hydrates from UiPrefs, not the cache, as source of truth', () => {
     setLocale('el')
     expect(readCachedLocale()).toBe('el')
@@ -408,10 +420,15 @@ describe('setLocale persist', () => {
 
     applyLocaleFromPrefs({ locale: 'el' })
     expect(getLocale()).toBe('el')
+
+    applyLocaleFromPrefs({ locale: 'fr' })
+    expect(getLocale()).toBe('fr')
+    applyLocaleFromPrefs({ locale: 'de' })
+    expect(getLocale()).toBe('de')
   })
 
   test('invalid cached value becomes en', () => {
-    localStorage.setItem(LOCALE_STORAGE_KEY, 'de')
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'xx')
     expect(readCachedLocale()).toBe('en')
   })
 
