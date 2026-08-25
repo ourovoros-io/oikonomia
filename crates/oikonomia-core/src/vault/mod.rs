@@ -4,6 +4,7 @@ mod backup;
 mod crypto;
 mod header;
 mod paths;
+mod permissions;
 mod store;
 
 pub use backup::{BACKUP_EXTENSION, backup_to_path, default_backup_file_name, restore_from_path};

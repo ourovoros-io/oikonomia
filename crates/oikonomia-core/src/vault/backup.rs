@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
+use super::permissions::{create_private_dir, create_private_file};
 use super::store::Vault;
 use crate::error::{Error, Result};
 
@@ -82,7 +83,7 @@ pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
 /// file; [`Error::RestoreWouldOverwrite`] when vault files exist and
 /// `replace` is false; [`Error::Io`] on filesystem failures.
 pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Result<()> {
-    fs::create_dir_all(data_dir).map_err(|err| Error::Io(err.to_string()))?;
+    create_private_dir(data_dir)?;
 
     let header_dest = vault_header_path(data_dir);
     let db_dest = vault_db_path(data_dir);
@@ -231,7 +232,7 @@ fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> 
             fs::create_dir_all(parent).map_err(|err| Error::Io(err.to_string()))?;
         }
 
-        let mut out = File::create(&tmp).map_err(|err| Error::Io(err.to_string()))?;
+        let mut out = create_private_file(&tmp)?;
         out.write_all(MAGIC)
             .map_err(|err| Error::Io(err.to_string()))?;
         out.write_all(&FORMAT_VERSION.to_le_bytes())
@@ -346,7 +347,7 @@ fn write_member_prefix(out: &mut impl Write, name: &str, len: u64) -> Result<()>
 }
 
 fn write_exact_member(input: &mut impl Read, dest: &Path, len: u64) -> Result<()> {
-    let mut file = File::create(dest).map_err(|err| Error::Io(err.to_string()))?;
+    let mut file = create_private_file(dest)?;
     copy_exact(input, &mut file, len)?;
     file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
     Ok(())
@@ -808,6 +809,27 @@ mod tests {
             matches!(err, Error::BackupInvalid(ref msg) if msg.contains("trailing") || msg.contains("unexpected")),
             "got {err:?}"
         );
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).expect("metadata").permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_and_restore_write_owner_only_files() {
+        let (_src, vault) = init_vault();
+        let (_archive_dir, archive) = backup_of(&vault);
+        assert_eq!(mode_of(&archive), 0o600, "archive");
+
+        let restore_dir = TempDir::new().expect("restore");
+        let data_dir = restore_dir.path().join("vault");
+        restore_from_path(&archive, &data_dir, false).expect("restore");
+        assert_eq!(mode_of(&data_dir), 0o700, "data directory");
+        assert_eq!(mode_of(&vault_header_path(&data_dir)), 0o600, "header");
+        assert_eq!(mode_of(&vault_db_path(&data_dir)), 0o600, "database");
     }
 
     #[test]
