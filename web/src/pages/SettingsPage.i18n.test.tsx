@@ -59,6 +59,15 @@ describe('SettingsPage i18n', () => {
     expect(screen.getByRole('radio', { name: 'Français' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'Deutsch' })).toBeTruthy()
     expect(screen.getAllByRole('radio')).toHaveLength(4)
+    const group = screen.getByRole('radiogroup', { name: 'Γλώσσα' })
+    expect(group.className).toMatch(/\bgrid\b/)
+    expect(group.className).toMatch(/\bgrid-cols-2\b/)
+    expect(group.className).not.toMatch(/\binline-flex\b/)
+    expect(group.className).not.toMatch(/\bflex-wrap\b/)
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio.className).toMatch(/\bw-full\b/)
+      expect(radio.className).toMatch(/\bjustify-center\b/)
+    }
   })
 
   test('language pill persists via settings_set_locale and mirrors oikonomia.locale', async () => {

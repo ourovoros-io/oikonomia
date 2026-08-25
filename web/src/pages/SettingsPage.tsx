@@ -95,7 +95,7 @@ const TEMPLATES: Array<{
   },
 ]
 
-/** Designer-locked language pills. Autonyms wrap to two rows in a Settings card. */
+/** Designer-locked language pills. Two equal columns so row-2 cells share one left edge. */
 function LanguagePill({
   value,
   onChange,
@@ -110,7 +110,7 @@ function LanguagePill({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="inline-flex max-w-[14rem] flex-wrap items-center rounded-[18px] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
+      className="grid max-w-[14rem] grid-cols-2 rounded-[18px] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
     >
       {LOCALES.map((id) => {
         const active = value === id
@@ -122,7 +122,7 @@ function LanguagePill({
             aria-checked={active}
             onClick={() => onChange(id)}
             className={cn(
-              'inline-flex h-[26px] items-center rounded-full px-3 text-sm font-medium transition',
+              'inline-flex h-[26px] w-full items-center justify-center rounded-full px-3 text-sm font-medium transition',
               active
                 ? 'bg-[#f4f6f4] text-[#131b15] shadow-sm'
                 : 'text-[var(--color-muted)]',
