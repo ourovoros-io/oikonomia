@@ -82,8 +82,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo install cargo-audit --locked
+      - run: cargo install cargo-audit cargo-deny --locked
 
       # Blocking by design: cargo audit exits nonzero only for actual
       # vulnerabilities; unmaintained-crate warnings do not fail the job.
       - run: cargo audit
+
+      # deny.toml bans every crate that could open a socket on the desktop
+      # targets, so "never connects to the network" survives new dependencies.
+      - run: cargo deny check

@@ -40,8 +40,16 @@ cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
 - Multi-statement ledger writes run inside transactions (`unchecked_transaction`).
 - Report queries put entry predicates in an **inner-join subquery**, never in a
   `LEFT JOIN ... ON` clause (that pattern silently disables the filters).
-- Vault data is **encrypted at rest**; no plaintext DB on disk.
-- v1 Tauri capabilities: **no network** permission.
+- Vault data is **encrypted at rest**; no plaintext DB on disk. Vault files are
+  owner-only (`vault/permissions.rs`).
+- v1 Tauri capabilities: **no network** permission. `deny.toml` bans every
+  socket-capable crate on the desktop targets (`cargo deny check` in CI), the
+  `nav_guard` plugin keeps every webview on the app origin, and
+  `config_checks.rs` pins the CSP.
+- Path-taking IPC commands accept only paths the user handed over through a
+  native drop or a native dialog (`AppState::grant_paths`).
+- Journal CSV export neutralizes formula-leading cells; `parse_journal_export`
+  reverses it.
 - Idle auto-lock is enforced by the Rust watchdog (`spawn_auto_lock`), not the UI timer.
 - Tray left-click opens the quick-add companion window (`quick-add` label); right-click is the tray menu.
 - No emojis in UI chrome, code, or commits.
