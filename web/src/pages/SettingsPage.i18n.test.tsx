@@ -56,6 +56,9 @@ describe('SettingsPage i18n', () => {
     await userEvent.click(screen.getByRole('button', { name: /γλώσσα/i }))
     expect(screen.getByRole('radio', { name: 'English' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'Ελληνικά' })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'Français' })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'Deutsch' })).toBeTruthy()
+    expect(screen.getAllByRole('radio')).toHaveLength(4)
   })
 
   test('language pill persists via settings_set_locale and mirrors oikonomia.locale', async () => {
@@ -68,13 +71,19 @@ describe('SettingsPage i18n', () => {
       expect(api.getLocale).toHaveBeenCalled()
     })
     await userEvent.click(screen.getByRole('button', { name: /language/i }))
-    await userEvent.click(screen.getByRole('radio', { name: 'Ελληνικά' }))
-    await waitFor(() => {
-      expect(getLocale()).toBe('el')
-      expect(api.setLocale).toHaveBeenCalledWith('el')
-      expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('el')
-    })
-    expect(screen.getByRole('heading', { name: 'Ρυθμίσεις' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Γλώσσα' })).toBeTruthy()
+    const choices = [
+      { locale: 'el' as const, label: 'Ελληνικά' },
+      { locale: 'fr' as const, label: 'Français' },
+      { locale: 'de' as const, label: 'Deutsch' },
+      { locale: 'en' as const, label: 'English' },
+    ]
+    for (const choice of choices) {
+      await userEvent.click(screen.getByRole('radio', { name: choice.label }))
+      await waitFor(() => {
+        expect(getLocale()).toBe(choice.locale)
+        expect(api.setLocale).toHaveBeenCalledWith(choice.locale)
+        expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe(choice.locale)
+      })
+    }
   })
 })
