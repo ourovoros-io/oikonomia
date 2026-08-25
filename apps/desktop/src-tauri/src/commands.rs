@@ -41,6 +41,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, State};
+use zeroize::Zeroizing;
 
 /// Static app metadata for the about screen / diagnostics.
 #[derive(Debug, Serialize)]
@@ -76,10 +77,13 @@ pub fn vault_touch(state: State<'_, AppState>) {
 }
 
 /// Create a new encrypted vault with the master password.
+///
+/// The password is wiped from memory when the command returns; only the
+/// derived key lives on, inside `SQLCipher`.
 #[tauri::command]
 pub async fn vault_init(
     state: State<'_, AppState>,
-    password: String,
+    password: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
     let status = with_vault_blocking(&state, move |vault| {
         vault.init(&password)?;
@@ -91,11 +95,11 @@ pub async fn vault_init(
     Ok(status)
 }
 
-/// Unlock an existing vault.
+/// Unlock an existing vault. The password is wiped when the command returns.
 #[tauri::command]
 pub async fn vault_unlock(
     state: State<'_, AppState>,
-    password: String,
+    password: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
     let (status, secs) = with_vault_blocking(&state, move |vault| {
         vault.unlock(&password)?;
@@ -189,12 +193,13 @@ mod tests {
     }
 }
 
-/// Change the master password (requires the current password).
+/// Change the master password (requires the current password). Both
+/// passwords are wiped when the command returns.
 #[tauri::command]
 pub async fn vault_change_password(
     state: State<'_, AppState>,
-    old: String,
-    new: String,
+    old: Zeroizing<String>,
+    new: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
     require_writes(&state)?;
     let vault = state.vault();

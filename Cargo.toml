@@ -22,7 +22,7 @@ thiserror = "2.0"
 tracing = "0.1"
 uuid = { version = "1.18", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["formatting", "parsing", "serde", "macros", "local-offset"] }
-zeroize = { version = "1.8", features = ["derive"] }
+zeroize = { version = "1.8", features = ["derive", "serde"] }
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
 argon2 = "0.5"
 rand = "0.8"
