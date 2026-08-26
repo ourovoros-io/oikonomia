@@ -7,7 +7,10 @@
 #![allow(clippy::exit)]
 
 mod commands;
+#[cfg(test)]
+mod config_checks;
 mod error;
+mod nav_guard;
 mod state;
 mod tray;
 
@@ -22,6 +25,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(nav_guard::plugin())
         .plugin(tauri_plugin_dialog::init())
         // Remember window size/position across launches. VISIBLE is excluded:
         // quitting from the tray while hidden must not restore an invisible
@@ -70,74 +74,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::vault_status,
-            commands::vault_touch,
-            commands::vault_init,
-            commands::vault_unlock,
-            commands::license_status,
-            commands::license_install,
-            commands::vault_lock,
-            commands::vault_change_password,
-            commands::vault_backup,
-            commands::vault_restore,
-            commands::vault_pick_backup,
-            commands::app_info,
-            commands::entity_list,
-            commands::entity_create,
-            commands::entity_update,
-            commands::entity_archive,
-            commands::entity_delete,
-            commands::account_list,
-            commands::account_create,
-            commands::account_update,
-            commands::account_archive,
-            commands::account_register_cmd,
-            commands::account_balance_cmd,
-            commands::account_set_opening_balance,
-            commands::entry_list,
-            commands::entry_replace_simple,
-            commands::entry_get,
-            commands::entry_post,
-            commands::entry_post_simple,
-            commands::entry_post_simple_with_document,
-            commands::entry_post_simple_with_document_path,
-            commands::entry_void,
-            commands::entry_set_hidden,
-            commands::recurring_list,
-            commands::recurring_get,
-            commands::recurring_create,
-            commands::recurring_update,
-            commands::recurring_delete,
-            commands::recurring_post,
-            commands::csv_import_preview,
-            commands::csv_import_post,
-            commands::csv_export_journal,
-            commands::report_trial_balance,
-            commands::report_pnl,
-            commands::report_pnl_export,
-            commands::report_balance_sheet,
-            commands::report_export_pdf,
-            commands::dashboard_summary_cmd,
-            commands::settings_get_lock_timeout,
-            commands::settings_set_lock_timeout,
-            commands::settings_get_theme,
-            commands::settings_set_theme,
-            commands::settings_get_locale,
-            commands::settings_set_locale,
-            commands::settings_get_ui_prefs,
-            commands::settings_remember_quick_add,
-            commands::open_main_window,
-            commands::quick_add_hide,
-            commands::document_analyzer_status,
-            commands::document_analyze,
-            commands::document_analyze_path,
-            commands::document_list,
-            commands::document_get,
-            commands::document_delete,
-            commands::document_attach,
-            commands::document_export,
-        ])
+        .invoke_handler(ipc_commands())
         .on_window_event(on_window_event)
         .build(tauri::generate_context!())
         .expect("failed to start Oikonomia")
@@ -151,6 +88,78 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+/// Every IPC command the webview may invoke; nothing else is reachable.
+fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        commands::vault_status,
+        commands::vault_touch,
+        commands::vault_init,
+        commands::vault_unlock,
+        commands::license_status,
+        commands::license_install,
+        commands::vault_lock,
+        commands::vault_change_password,
+        commands::vault_backup,
+        commands::vault_restore,
+        commands::vault_pick_backup,
+        commands::app_info,
+        commands::entity_list,
+        commands::entity_create,
+        commands::entity_update,
+        commands::entity_archive,
+        commands::entity_delete,
+        commands::account_list,
+        commands::account_create,
+        commands::account_update,
+        commands::account_archive,
+        commands::account_register_cmd,
+        commands::account_balance_cmd,
+        commands::account_set_opening_balance,
+        commands::entry_list,
+        commands::entry_replace_simple,
+        commands::entry_get,
+        commands::entry_post,
+        commands::entry_post_simple,
+        commands::entry_post_simple_with_document,
+        commands::entry_post_simple_with_document_path,
+        commands::entry_void,
+        commands::entry_set_hidden,
+        commands::recurring_list,
+        commands::recurring_get,
+        commands::recurring_create,
+        commands::recurring_update,
+        commands::recurring_delete,
+        commands::recurring_post,
+        commands::csv_import_preview,
+        commands::csv_import_post,
+        commands::csv_export_journal,
+        commands::report_trial_balance,
+        commands::report_pnl,
+        commands::report_pnl_export,
+        commands::report_balance_sheet,
+        commands::report_export_pdf,
+        commands::dashboard_summary_cmd,
+        commands::settings_get_lock_timeout,
+        commands::settings_set_lock_timeout,
+        commands::settings_get_theme,
+        commands::settings_set_theme,
+        commands::settings_get_locale,
+        commands::settings_set_locale,
+        commands::settings_get_ui_prefs,
+        commands::settings_remember_quick_add,
+        commands::open_main_window,
+        commands::quick_add_hide,
+        commands::document_analyzer_status,
+        commands::document_analyze,
+        commands::document_analyze_path,
+        commands::document_list,
+        commands::document_get,
+        commands::document_delete,
+        commands::document_attach,
+        commands::document_export,
+    ]
 }
 
 fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
@@ -171,6 +180,6 @@ fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
     if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event
         && let Some(state) = window.try_state::<AppState>()
     {
-        state.remember_drop_paths(paths.iter().cloned());
+        state.grant_paths(paths.iter().cloned());
     }
 }

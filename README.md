@@ -44,6 +44,9 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 cargo test -p oikonomia-core
 cargo clippy --all-targets --all-features -- -D warnings
 
+# Dependency policy (no network crates); needs `cargo install cargo-deny`
+cargo deny check
+
 # Frontend
 cd web && npm install && npm run dev
 cd web && npm test        # vitest: money parsing, date normalization
@@ -66,8 +69,13 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 - Vault files live under the OS app-data directory for `com.georgiosdelkos.oikonomia`.
 - v1 has no network capability in Tauri permissions; idle auto-lock is enforced
   from Rust, not the webview.
-- `reqwest` appears in `Cargo.lock` only as an optional, never-enabled Tauri
-  dependency; `cargo tree --target all -i reqwest` confirms it is not built.
+- `reqwest` appears in `Cargo.lock` only because Tauri needs it on Android and
+  iOS; on the desktop targets `cargo tree -p oikonomia -i reqwest` prints
+  nothing. `deny.toml` bans it and every other socket-capable crate, and CI
+  runs `cargo deny check` so that stays true.
+- Every webview is pinned to the app's own origin (`nav_guard`), and the CSP
+  allows no remote source.
+- Journal CSV exports neutralize cells that spreadsheets would run as formulas.
 - On first run you will be warned: choose a strong password.
 
 ## Threat model (v1)

@@ -12,7 +12,9 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # Package list from https://v2.tauri.app/start/prerequisites/ (Debian/Ubuntu).
       # perl is required by the vendored OpenSSL build pulled in via rusqlite's
@@ -32,11 +34,12 @@ jobs:
             librsvg2-dev \
             perl
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
 
       # tauri-build requires the frontendDist directory (web/dist) to exist at
       # compile time; CI compiles the shell crate without bundling a frontend.
@@ -57,9 +60,11 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -76,14 +81,22 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
 
-      - run: cargo install cargo-audit --locked
+      - run: cargo install cargo-audit cargo-deny --locked
 
       # Blocking by design: cargo audit exits nonzero only for actual
       # vulnerabilities; unmaintained-crate warnings do not fail the job.
       - run: cargo audit
+
+      # deny.toml bans every crate that could open a socket on the desktop
+      # targets, so "never connects to the network" survives new dependencies.
+      - run: cargo deny check

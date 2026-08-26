@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' data: blob:; frame-src blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'"
     }
   },
   "bundle": {
@@ -33,6 +33,9 @@
     "resources": [
       "resources/ocr/*"
     ],
+    "windows": {
+      "webviewInstallMode": { "type": "offlineInstaller" }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -90,7 +90,9 @@ jobs:
     runs-on: macos-latest
     environment: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Require Apple signing and notarytool secrets (fail-closed)
         env:
@@ -134,7 +136,7 @@ jobs:
           echo "APPLE_API_KEY=${key_id}" >> "${GITHUB_ENV}"
           echo "APPLE_API_KEY_PATH=${key_path}" >> "${GITHUB_ENV}"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -144,15 +146,17 @@ jobs:
         working-directory: web
         run: npm ci
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
 
       # Official Tauri v2 action. projectPath is the crate that owns tauri.conf.json.
       # beforeBuildCommand already runs `npm run build` in web/ (no web/dist placeholder).
       # Signing/notarization use the env vars below when secrets exist; this job
       # never reaches here if they are missing.
-      - uses: tauri-apps/tauri-action@v1
+      - uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1, 2026-08-25
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -178,7 +182,9 @@ jobs:
     runs-on: windows-latest
     environment: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Require Windows cloud-HSM secrets (fail-closed)
         env:
@@ -221,7 +227,7 @@ jobs:
           $overlay | ConvertTo-Json -Depth 6 | Set-Content -Path $path -Encoding utf8
           "TAURI_WINDOWS_SIGN_CONFIG=$path" | Add-Content $env:GITHUB_ENV
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -231,11 +237,13 @@ jobs:
         working-directory: web
         run: npm ci
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
 
-      - uses: tauri-apps/tauri-action@v1
+      - uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1, 2026-08-25
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ES_USERNAME: ${{ secrets.ES_USERNAME }}
@@ -264,7 +272,9 @@ jobs:
     runs-on: ubuntu-22.04
     environment: release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       # Same Debian packages as ci.yml, plus patchelf/xdg-utils/libfuse2 for
       # Tauri's default Linux bundles (.deb + AppImage). perl is required by
@@ -287,7 +297,7 @@ jobs:
             xdg-utils \
             libfuse2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -297,11 +307,13 @@ jobs:
         working-directory: web
         run: npm ci
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
 
-      - uses: tauri-apps/tauri-action@v1
+      - uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1, 2026-08-25
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

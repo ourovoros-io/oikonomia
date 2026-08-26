@@ -1,0 +1,16 @@
+# Keeps the SHA-pinned Actions, Cargo and npm dependencies current so a pin
+# never quietly ages into a known-vulnerable version.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly

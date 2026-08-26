@@ -23,8 +23,9 @@ pub struct AppState {
     lock_timeout_secs: Arc<AtomicU64>,
     /// Parks the idle watchdog while the vault is not unlocked.
     gate: Arc<WatchdogGate>,
-    /// Canonical paths from native drag-drop; path IPC commands accept only these.
-    allowed_drop_paths: Mutex<HashSet<PathBuf>>,
+    /// Canonical paths the user handed over through a native drop or a native
+    /// file dialog; path-taking IPC commands accept only these.
+    granted_paths: Mutex<HashSet<PathBuf>>,
     /// Serializes plaintext prefs load-mutate-save.
     prefs_lock: Mutex<()>,
 }
@@ -49,7 +50,7 @@ impl AppState {
             last_activity: Arc::new(AtomicU64::new(now_secs())),
             lock_timeout_secs: Arc::new(AtomicU64::new(DEFAULT_LOCK_TIMEOUT_SECS)),
             gate: Arc::new(WatchdogGate::new()),
-            allowed_drop_paths: Mutex::new(HashSet::new()),
+            granted_paths: Mutex::new(HashSet::new()),
             prefs_lock: Mutex::new(()),
         })
     }
@@ -83,33 +84,34 @@ impl AppState {
         }
     }
 
-    /// Record native drop paths for later path-based analyze/post commands.
-    pub fn remember_drop_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
-        let mut allowed = match self.allowed_drop_paths.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                self.allowed_drop_paths.clear_poison();
-                poisoned.into_inner()
-            }
-        };
+    /// Record paths the user chose through a native drop or dialog, so a
+    /// later path-taking command may accept them.
+    pub fn grant_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        let mut granted = self.lock_granted_paths();
         for path in paths {
             if let Ok(canonical) = path.canonicalize() {
-                allowed.insert(canonical);
+                granted.insert(canonical);
             }
         }
     }
 
-    /// True when `path` was recorded from a native drop (after canonicalize).
+    /// True when `path` resolves to a granted path.
     #[must_use]
-    pub fn drop_path_allowed(&self, path: &Path) -> bool {
-        let allowed = match self.allowed_drop_paths.lock() {
-            Ok(set) => set,
+    pub fn path_is_granted(&self, path: &Path) -> bool {
+        let granted = self.lock_granted_paths();
+        path.canonicalize()
+            .ok()
+            .is_some_and(|canonical| granted.contains(&canonical))
+    }
+
+    fn lock_granted_paths(&self) -> std::sync::MutexGuard<'_, HashSet<PathBuf>> {
+        match self.granted_paths.lock() {
+            Ok(guard) => guard,
             Err(poisoned) => {
-                self.allowed_drop_paths.clear_poison();
+                self.granted_paths.clear_poison();
                 poisoned.into_inner()
             }
-        };
-        path_is_allowed_set(&allowed, path)
+        }
     }
 
     /// Record command activity for the idle watchdog.
@@ -144,14 +146,6 @@ impl AppState {
             self.gate.set_parked();
         }
     }
-}
-
-/// Compare a candidate path against a set of already-canonicalized drop paths.
-#[must_use]
-pub fn path_is_allowed_set(allowed: &HashSet<PathBuf>, path: &Path) -> bool {
-    path.canonicalize()
-        .ok()
-        .is_some_and(|canonical| allowed.contains(&canonical))
 }
 
 fn now_secs() -> u64 {
@@ -450,11 +444,10 @@ pub fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{
-        AUTO_LOCK_POLL_INTERVAL, AppState, WatchdogGate, lock_vault, path_is_allowed_set,
-        run_auto_lock_loop, should_auto_lock, should_emit_vault_locked,
+        AUTO_LOCK_POLL_INTERVAL, AppState, WatchdogGate, lock_vault, run_auto_lock_loop,
+        should_auto_lock, should_emit_vault_locked,
     };
     use oikonomia_core::vault::VaultStatus;
-    use std::collections::HashSet;
     use std::fs;
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
@@ -466,23 +459,20 @@ mod tests {
     const PAST_POLL: Duration = Duration::from_millis(5_500);
 
     #[test]
-    fn path_is_allowed_requires_canonical_membership() {
-        let dir = std::env::temp_dir().join(format!("oiko-allow-{}", std::process::id()));
-        if fs::create_dir_all(&dir).is_err() {
-            return;
-        }
-        let file = dir.join("drop.pdf");
-        if fs::write(&file, b"%PDF").is_err() {
-            return;
-        }
-        let Ok(canonical) = file.canonicalize() else {
-            return;
-        };
-        let mut allowed = HashSet::new();
-        allowed.insert(canonical);
+    fn granted_paths_match_after_canonicalization() {
+        let (state, dir) = test_state("grants");
+        let picked = dir.join("picked.csv");
+        fs::write(&picked, b"date,amount\n").expect("write");
+        fs::create_dir_all(dir.join("sub")).expect("subdir");
+        let indirect = dir.join("sub").join("..").join("picked.csv");
 
-        assert!(path_is_allowed_set(&allowed, &file));
-        assert!(!path_is_allowed_set(&allowed, &dir.join("other.pdf")));
+        assert!(!state.path_is_granted(&picked), "nothing granted yet");
+
+        state.grant_paths([picked.clone()]);
+
+        assert!(state.path_is_granted(&picked));
+        assert!(state.path_is_granted(&indirect), "same file through ..");
+        assert!(!state.path_is_granted(&dir.join("other.csv")));
         let _ = fs::remove_dir_all(&dir);
     }
 

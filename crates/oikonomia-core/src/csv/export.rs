@@ -1,5 +1,6 @@
 //! Journal CSV export (current entity) and a parser for round-trip tests.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use csv::{ReaderBuilder, Trim, Writer};
@@ -46,6 +47,30 @@ pub struct JournalCsvLine {
     pub credit_minor: i64,
     /// `posted` or `voided`.
     pub status: JournalCsvStatus,
+}
+
+/// Leading characters that Excel, `LibreOffice` and Numbers read as the start
+/// of a formula.
+const FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
+/// Make a text cell inert for spreadsheet apps.
+///
+/// A bank memo or OCR'd line can start with `=`; exported as-is it becomes a
+/// live `HYPERLINK`/DDE formula on the accountant's machine. A leading
+/// apostrophe turns the cell into literal text. [`restore_formula`] undoes it.
+fn neutralize_formula(cell: &str) -> Cow<'_, str> {
+    if cell.starts_with(FORMULA_TRIGGERS) {
+        Cow::Owned(format!("'{cell}"))
+    } else {
+        Cow::Borrowed(cell)
+    }
+}
+
+/// Inverse of [`neutralize_formula`], so a parsed export equals the ledger.
+fn restore_formula(cell: &str) -> &str {
+    cell.strip_prefix('\'')
+        .filter(|rest| rest.starts_with(FORMULA_TRIGGERS))
+        .unwrap_or(cell)
 }
 
 /// Suggested filename for the native save dialog.
@@ -146,13 +171,18 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             let debit: i64 = row.get(5).map_err(|err| Error::Io(err.to_string()))?;
             let credit: i64 = row.get(6).map_err(|err| Error::Io(err.to_string()))?;
             let status: String = row.get(7).map_err(|err| Error::Io(err.to_string()))?;
+
+            let description = neutralize_formula(&description);
+            let reference = neutralize_formula(reference.as_deref().unwrap_or(""));
+            let code = neutralize_formula(&code);
+            let name = neutralize_formula(&name);
             writer
                 .write_record([
                     date.as_str(),
-                    description.as_str(),
-                    reference.as_deref().unwrap_or(""),
-                    code.as_str(),
-                    name.as_str(),
+                    &*description,
+                    &*reference,
+                    &*code,
+                    &*name,
                     &debit.to_string(),
                     &credit.to_string(),
                     status.as_str(),
@@ -234,7 +264,7 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
     let mut out = Vec::new();
     for record in reader.records() {
         let record = record.map_err(|err| Error::CsvParse(err.to_string()))?;
-        let reference = record.get(ref_i).unwrap_or("").trim();
+        let reference = restore_formula(record.get(ref_i).unwrap_or("").trim());
         let status_raw = record.get(status_i).unwrap_or("").trim();
         let status = match status_raw {
             "posted" => JournalCsvStatus::Posted,
@@ -245,14 +275,14 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
         };
         out.push(JournalCsvLine {
             date: record.get(date_i).unwrap_or("").to_owned(),
-            description: record.get(desc_i).unwrap_or("").to_owned(),
+            description: restore_formula(record.get(desc_i).unwrap_or("")).to_owned(),
             reference: if reference.is_empty() {
                 None
             } else {
                 Some(reference.to_owned())
             },
-            account_code: record.get(code_i).unwrap_or("").to_owned(),
-            account_name: record.get(name_i).unwrap_or("").to_owned(),
+            account_code: restore_formula(record.get(code_i).unwrap_or("")).to_owned(),
+            account_name: restore_formula(record.get(name_i).unwrap_or("")).to_owned(),
             debit_minor: parse_i64(record.get(debit_i).unwrap_or(""))?,
             credit_minor: parse_i64(record.get(credit_i).unwrap_or(""))?,
             status,
@@ -277,6 +307,38 @@ fn parse_i64(raw: &str) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn formula_triggers_get_a_literal_text_prefix() {
+        let cases = [
+            ("=SUM(A1)", "'=SUM(A1)"),
+            ("+1", "'+1"),
+            ("-5% discount", "'-5% discount"),
+            ("@user", "'@user"),
+            ("\tcmd", "'\tcmd"),
+            ("\rcmd", "'\rcmd"),
+            ("Groceries", "Groceries"),
+            ("'quoted", "'quoted"),
+            ("", ""),
+        ];
+        for (input, want) in cases {
+            assert_eq!(neutralize_formula(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn restore_strips_only_the_guard_prefix() {
+        let cases = [
+            ("'=SUM(A1)", "=SUM(A1)"),
+            ("'-5% discount", "-5% discount"),
+            ("'quoted", "'quoted"),
+            ("Groceries", "Groceries"),
+            ("'", "'"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(restore_formula(input), want, "input {input:?}");
+        }
+    }
 
     #[test]
     fn sanitize_entity_name_for_filename() {

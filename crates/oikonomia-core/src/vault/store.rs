@@ -9,6 +9,7 @@ use rusqlite::{Connection, OpenFlags};
 use super::crypto::{self, VaultKey};
 use super::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
 use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
+use super::permissions::{create_private_dir, create_private_file, restrict_to_owner};
 use crate::error::{Error, Result};
 
 /// Lifecycle status for the vault (serializable to the UI).
@@ -38,10 +39,17 @@ impl Vault {
     /// Returns I/O errors when the directory cannot be created or the header is unreadable.
     pub fn open_path(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
-        fs::create_dir_all(&data_dir).map_err(|err| Error::Io(err.to_string()))?;
+        create_private_dir(&data_dir)?;
 
         let header_path = vault_header_path(&data_dir);
         let db_path = vault_db_path(&data_dir);
+
+        // Vaults created before modes were restricted are world-readable.
+        for path in [&header_path, &db_path] {
+            if path.exists() {
+                restrict_to_owner(path);
+            }
+        }
 
         let header = if header_path.exists() {
             let raw = fs::read_to_string(&header_path).map_err(|err| Error::Io(err.to_string()))?;
@@ -103,7 +111,7 @@ impl Vault {
         let header_json =
             serde_json::to_string_pretty(&header).map_err(|err| Error::Io(err.to_string()))?;
         let staged_header = header_path.with_extension("json.init");
-        fs::write(&staged_header, &header_json).map_err(|err| Error::Io(err.to_string()))?;
+        write_synced(&staged_header, header_json.as_bytes())?;
         fs::rename(&staged_header, &header_path).map_err(|err| Error::Io(err.to_string()))?;
 
         let db_path = vault_db_path(&self.data_dir);
@@ -322,6 +330,19 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     let conn =
         Connection::open_with_flags(path, flags).map_err(|err| Error::Io(err.to_string()))?;
 
+    // SQLite creates the file with the umask; its WAL and SHM sidecars copy
+    // the database file's mode, so tighten it before the first write.
+    if create {
+        restrict_to_owner(path);
+    }
+
+    // SQLCipher 4.5+ ships with this off. On, it locks and wipes its key and
+    // page buffers instead of leaving plaintext in freed heap or swap. The
+    // flag is process-global and can only be turned on, so set it before the
+    // key so the key material itself is covered.
+    conn.pragma_update(None, "cipher_memory_security", "ON")
+        .map_err(|err| Error::Crypto(err.to_string()))?;
+
     let pragma_key = crypto::key_to_sqlcipher_pragma(key);
     // `SQLCipher` requires key before other operations.
     conn.pragma_update(None, "key", pragma_key.as_str())
@@ -345,7 +366,7 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
 fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
 
-    let mut file = fs::File::create(path).map_err(|err| Error::Io(err.to_string()))?;
+    let mut file = create_private_file(path)?;
     file.write_all(bytes)
         .map_err(|err| Error::Io(err.to_string()))?;
     file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
@@ -426,6 +447,77 @@ mod tests {
         };
         assert!(bytes.len() > 16);
         assert_ne!(&bytes[0..6], b"SQLite");
+    }
+
+    #[test]
+    fn open_enables_sqlcipher_memory_security() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+        let Ok(mut vault) = Vault::open_path(dir.path()) else {
+            return;
+        };
+        assert!(vault.init("correct horse battery staple").is_ok());
+        let Ok(conn) = vault.connection() else {
+            return;
+        };
+
+        // SQLCipher reports "1" only once the pragma is on and its guarded
+        // allocator has run, i.e. the key was handled under memory security.
+        let state: String = conn
+            .query_row("PRAGMA cipher_memory_security", [], |row| row.get(0))
+            .unwrap_or_default();
+        assert_eq!(
+            state, "1",
+            "SQLCipher must lock and wipe its key and page buffers"
+        );
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(path).map_or(0, |meta| meta.permissions().mode() & 0o777)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_creates_owner_only_directory_and_files() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+        let data_dir = dir.path().join("vault");
+        let Ok(mut vault) = Vault::open_path(&data_dir) else {
+            return;
+        };
+        assert!(vault.init("correct horse battery staple").is_ok());
+
+        assert_eq!(mode_of(&data_dir), 0o700, "data directory");
+        assert_eq!(mode_of(&vault_header_path(&data_dir)), 0o600, "header");
+        assert_eq!(mode_of(&vault_db_path(&data_dir)), 0o600, "database");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_tightens_permissions_of_an_existing_vault() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+        let Ok(mut vault) = Vault::open_path(dir.path()) else {
+            return;
+        };
+        assert!(vault.init("correct horse battery staple").is_ok());
+        drop(vault);
+
+        // Vaults created before modes were restricted are world-readable.
+        for path in [vault_header_path(dir.path()), vault_db_path(dir.path())] {
+            assert!(fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).is_ok());
+        }
+
+        assert!(Vault::open_path(dir.path()).is_ok());
+        assert_eq!(mode_of(&vault_header_path(dir.path())), 0o600, "header");
+        assert_eq!(mode_of(&vault_db_path(dir.path())), 0o600, "database");
     }
 
     #[test]
