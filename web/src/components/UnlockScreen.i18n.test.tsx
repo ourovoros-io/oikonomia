@@ -10,6 +10,8 @@ vi.mock('../lib/tauri', () => ({
   vaultRestore: vi.fn(),
   vaultStatus: vi.fn(),
   vaultPickBackup: vi.fn(),
+  updateCheck: vi.fn(),
+  updateInstall: vi.fn(),
 }))
 
 import { UnlockScreen } from './UnlockScreen'
@@ -37,5 +39,6 @@ describe('UnlockScreen i18n', () => {
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
     expect(screen.getByRole('heading', { name: 'Καλωσορίσατε' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Ξεκλείδωμα' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Έλεγχος ενημέρωσης' })).toBeTruthy()
   })
 })

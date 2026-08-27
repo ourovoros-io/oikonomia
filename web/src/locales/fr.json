@@ -72,6 +72,36 @@
     "restore": {
       "link": "Restaurer depuis une sauvegarde"
     },
+    "update": {
+      "button": "Rechercher une mise à jour",
+      "dialogTitle": "Mise à jour",
+      "checking": {
+        "title": "Vérification",
+        "body": "Recherche d’une nouvelle application."
+      },
+      "upToDate": {
+        "title": "Vous êtes à jour",
+        "body": "C’est le dernier Oikonomia."
+      },
+      "available": {
+        "title": "Une nouvelle application est prête",
+        "version": "Oikonomia {version}",
+        "notesLabel": "Nouveautés",
+        "size": "{size}",
+        "honesty": "C’est le seul contact avec Internet, et uniquement pour récupérer une nouvelle application.",
+        "confirm": "Installer et redémarrer"
+      },
+      "failed": {
+        "title": "Vérification impossible",
+        "body": "Vous restez sur cette version."
+      },
+      "installing": {
+        "title": "Installation",
+        "body": "Oikonomia redémarrera une fois terminé."
+      },
+      "cancel": "Annuler",
+      "close": "Fermer"
+    },
     "error": {
       "mismatch": "Les mots de passe ne correspondent pas",
       "badPassword": "Mot de passe incorrect — veuillez réessayer.",
