@@ -395,7 +395,7 @@ fn is_plausible_payee(name: &str) -> bool {
         .replace("ονοματεπωνυμο", " ")
         .replace("επωνυμια", " ")
         .replace("δικαιουχου", " ")
-        .replace(['/', ':', '：'], ' ');
+        .replace(['/', ':', '：'], " ");
     stripped.chars().any(char::is_alphabetic)
 }
 
@@ -475,15 +475,14 @@ fn find_transfer_date(text: &str) -> Option<String> {
             labeled = Some(date);
         }
     }
-    if labeled.is_some() {
-        return labeled;
-    }
-    text.lines().find_map(|line| {
-        if is_value_date_line(&line.to_lowercase()) {
-            None
-        } else {
-            first_date_on_line(line)
-        }
+    labeled.or_else(|| {
+        text.lines().find_map(|line| {
+            if is_value_date_line(&line.to_lowercase()) {
+                None
+            } else {
+                first_date_on_line(line)
+            }
+        })
     })
 }
 
@@ -1076,24 +1075,24 @@ fn parse_money_token(s: &str) -> Option<i64> {
 fn find_best_date(text: &str) -> Option<String> {
     // Prefer due/payment date on the same line as a € amount (utility payment slips).
     for line in text.lines() {
-        if line.contains('€') && line_has_date(line) {
-            if let Some(iso) = first_date_on_line(line) {
-                return Some(iso);
-            }
+        if line.contains('€')
+            && line_has_date(line)
+            && let Some(iso) = first_date_on_line(line)
+        {
+            return Some(iso);
         }
     }
 
     for line in text.lines() {
         let l = line.to_lowercase();
-        if l.contains("ημερομην")
+        if (l.contains("ημερομην")
             || l.contains("date")
             || l.contains("έκδοσ")
             || l.contains("ληξ")
-            || l.contains("due")
+            || l.contains("due"))
+            && let Some(iso) = first_date_on_line(line)
         {
-            if let Some(iso) = first_date_on_line(line) {
-                return Some(iso);
-            }
+            return Some(iso);
         }
     }
 
@@ -1715,6 +1714,7 @@ mod tests {
     }
 
     #[test]
+    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn greek_bank_transfer_receipt_principal_not_fee_or_clock() {
         let text = corpus_text("synthetic/text/greek_bank_embasma.txt");
         let suggestion = parse_invoice_text(&text);
