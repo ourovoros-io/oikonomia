@@ -1,13 +1,34 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Account, CsvImportPreview, Entity, PostedEntryView, SimpleEntryInput } from '../lib/api'
+import type {
+  Account,
+  CsvImportPreview,
+  DocumentSuggestion,
+  Entity,
+  PendingDocSource,
+  PostedEntryView,
+  SimpleEntryInput,
+} from '../lib/api'
+
+const dropZone = vi.hoisted(() => ({
+  onSuggestion: null as
+    | ((suggestion: DocumentSuggestion, source: PendingDocSource) => void)
+    | null,
+}))
 
 vi.mock('../components/DocumentDropZone', () => ({
-  DocumentDropZone: () => null,
+  DocumentDropZone: ({
+    onSuggestion,
+  }: {
+    onSuggestion: (suggestion: DocumentSuggestion, source: PendingDocSource) => void
+  }) => {
+    dropZone.onSuggestion = onSuggestion
+    return <div data-testid="document-drop-zone" />
+  },
 }))
 
 vi.mock('../lib/api', async (importOriginal) => {
@@ -152,8 +173,29 @@ const postedEntry: PostedEntryView = {
   is_voided: false,
 }
 
+function documentSuggestion(over: Partial<DocumentSuggestion> = {}): DocumentSuggestion {
+  return {
+    source: 'heuristic',
+    model: null,
+    kind: 'expense',
+    amount_minor: null,
+    entry_date: null,
+    description: null,
+    reference: null,
+    merchant: null,
+    bill_unpaid: false,
+    category_account_id: null,
+    wallet_account_id: null,
+    payable_account_id: null,
+    confidence: 0.4,
+    notes: '',
+    ...over,
+  }
+}
+
 afterEach(() => {
   cleanup()
+  dropZone.onSuggestion = null
   resetI18nForTests()
 })
 
@@ -481,5 +523,96 @@ describe('TransactionsPage CSV mapping and preview', () => {
       rows: [grocery],
       include_duplicates: false,
     })
+  })
+})
+
+async function fillLeftoverDraft() {
+  await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+  await waitFor(() => {
+    expect(screen.getByRole('heading', { name: 'New entry' })).toBeTruthy()
+  })
+  await userEvent.type(screen.getByLabelText('Description'), 'LEFTOVER DRAFT PAYEE')
+  await userEvent.type(screen.getByLabelText('Amount (EUR)'), '99.99')
+  await userEvent.type(screen.getByLabelText('Reference (optional)'), 'DRAFT-REF-999')
+}
+
+function deliverDrop(suggestion: DocumentSuggestion) {
+  const deliver = dropZone.onSuggestion
+  expect(deliver).toBeTruthy()
+  act(() => {
+    deliver!(suggestion, { kind: 'path', path: '/tmp/receipt.pdf' })
+  })
+}
+
+describe('TransactionsPage discards unfinished draft', () => {
+  test('close then drop uses that file suggestion, not leftover draft fields', async () => {
+    await renderReady()
+    await fillLeftoverDraft()
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'New entry' })).toBeNull()
+    })
+
+    deliverDrop(
+      documentSuggestion({
+        amount_minor: 1234,
+        description: null,
+        reference: null,
+        notes: 'Partial scan — amount only',
+      }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'New entry' })).toBeTruthy()
+    })
+    expect(screen.getByLabelText('Description')).toHaveValue('')
+    expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('12.34')
+    expect(screen.getByLabelText('Reference (optional)')).toHaveValue('')
+    expect(screen.getByText('Partial scan — amount only')).toBeTruthy()
+    expect(screen.queryByDisplayValue('LEFTOVER DRAFT PAYEE')).toBeNull()
+    expect(screen.queryByDisplayValue('99.99')).toBeNull()
+    expect(screen.queryByDisplayValue('DRAFT-REF-999')).toBeNull()
+  })
+
+  test('close then New Entry is a clean form, not the leftover draft', async () => {
+    await renderReady()
+    await fillLeftoverDraft()
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'New entry' })).toBeNull()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'New entry' })).toBeTruthy()
+    })
+    expect(screen.getByLabelText('Description')).toHaveValue('')
+    expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('')
+    expect(screen.getByLabelText('Reference (optional)')).toHaveValue('')
+    expect(screen.queryByDisplayValue('LEFTOVER DRAFT PAYEE')).toBeNull()
+    expect(screen.queryByText('Partial scan — amount only')).toBeNull()
+  })
+
+  test('startEdit still populates from the posted entry after a discarded draft', async () => {
+    await renderReady()
+    await fillLeftoverDraft()
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'New entry' })).toBeNull()
+    })
+
+    await userEvent.click(screen.getByText('Alpha supermarket'))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Edit entry' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Edit entry' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Edit entry' })).toBeTruthy()
+    })
+    expect(screen.getByLabelText('Description')).toHaveValue('Alpha supermarket')
+    expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('42.50')
+    expect(screen.getByLabelText('Reference (optional)')).toHaveValue('')
+    expect(screen.queryByDisplayValue('LEFTOVER DRAFT PAYEE')).toBeNull()
+    expect(screen.queryByDisplayValue('99.99')).toBeNull()
   })
 })
