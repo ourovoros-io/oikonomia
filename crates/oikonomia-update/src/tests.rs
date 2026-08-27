@@ -17,24 +17,39 @@ use minisign::{KeyPair, SecretKey};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use url::Url;
 
 struct SpyInstaller {
     calls: Arc<AtomicUsize>,
+    last_path: Mutex<Option<PathBuf>>,
     fail: bool,
 }
 
 impl ArtifactInstaller for SpyInstaller {
-    fn install(&self, _artifact: &Path) -> crate::Result<()> {
+    fn install(&self, artifact: &Path) -> crate::Result<()> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        let mut last = self.last_path.lock().expect("spy path");
+        *last = Some(artifact.to_path_buf());
         if self.fail {
             return Err(UpdateError::ArtifactIntegrity);
         }
         Ok(())
     }
+}
+
+fn spy(fail: bool) -> (SpyInstaller, Arc<AtomicUsize>) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    (
+        SpyInstaller {
+            calls: Arc::clone(&calls),
+            last_path: Mutex::new(None),
+            fail,
+        },
+        calls,
+    )
 }
 
 fn test_keys() -> (String, SecretKey) {
@@ -114,14 +129,36 @@ fn static_manifest(
 }
 
 fn serve_signed_manifest(server: &Server, body: &str, sig: &str) {
+    serve_signed_manifest_times(server, body, sig, 1..);
+}
+
+fn serve_signed_manifest_times(
+    server: &Server,
+    body: &str,
+    sig: &str,
+    times: std::ops::RangeFrom<usize>,
+) {
     server.expect(
         Expectation::matching(request::method_path("GET", "/latest.json"))
-            .times(1..)
+            .times(times.clone())
             .respond_with(status_code(200).body(body.to_owned())),
     );
     server.expect(
         Expectation::matching(request::method_path("GET", "/latest.json.sig"))
-            .times(1..)
+            .times(times)
+            .respond_with(status_code(200).body(sig.to_owned())),
+    );
+}
+
+fn serve_signed_manifest_once(server: &Server, body: &str, sig: &str) {
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/latest.json"))
+            .times(1)
+            .respond_with(status_code(200).body(body.to_owned())),
+    );
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/latest.json.sig"))
+            .times(1)
             .respond_with(status_code(200).body(sig.to_owned())),
     );
 }
@@ -171,10 +208,7 @@ fn offline_dns_check_is_failed_no_file_no_exec() {
         Duration::from_millis(400),
     )
     .expect("config");
-    let installer = SpyInstaller {
-        calls: Arc::new(AtomicUsize::new(0)),
-        fail: false,
-    };
+    let (installer, _calls) = spy(false);
     let mut machine = UpdateMachine::new();
     let status = machine.check(&config);
     assert_eq!(status, UpdateStatus::Failed);
@@ -291,10 +325,7 @@ fn signed_update_is_available_without_install() {
         cache.clone(),
         Duration::from_secs(2),
     );
-    let installer = SpyInstaller {
-        calls: Arc::new(AtomicUsize::new(0)),
-        fail: false,
-    };
+    let (installer, _calls) = spy(false);
     let mut machine = UpdateMachine::new();
     let status = machine.check(&config);
     assert_eq!(
@@ -478,11 +509,7 @@ fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
         cache.clone(),
         Duration::from_secs(2),
     );
-    let calls = Arc::new(AtomicUsize::new(0));
-    let installer = SpyInstaller {
-        calls: Arc::clone(&calls),
-        fail: false,
-    };
+    let (installer, calls) = spy(false);
     let mut machine = UpdateMachine::new();
     assert!(matches!(
         machine.check(&config),
@@ -524,11 +551,7 @@ fn artifact_sig_mismatch_deletes_partial_and_does_not_exec() {
         cache.clone(),
         Duration::from_secs(2),
     );
-    let calls = Arc::new(AtomicUsize::new(0));
-    let installer = SpyInstaller {
-        calls: Arc::clone(&calls),
-        fail: false,
-    };
+    let (installer, calls) = spy(false);
     let mut machine = UpdateMachine::new();
     assert!(matches!(
         machine.check(&config),
@@ -553,10 +576,7 @@ fn install_from_idle_is_hard_error() {
         cache_dir(),
         Duration::from_secs(1),
     );
-    let installer = SpyInstaller {
-        calls: Arc::new(AtomicUsize::new(0)),
-        fail: false,
-    };
+    let (installer, _calls) = spy(false);
     let err = machine.install(&config, &installer).expect_err("idle");
     assert_eq!(err.code(), "update_install_not_allowed");
     assert_eq!(machine.status(), UpdateStatus::Idle);
@@ -580,10 +600,7 @@ fn install_from_failed_is_hard_error() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    let installer = SpyInstaller {
-        calls: Arc::new(AtomicUsize::new(0)),
-        fail: false,
-    };
+    let (installer, _calls) = spy(false);
     let err = machine.install(&config, &installer).expect_err("failed");
     assert_eq!(err.code(), "update_install_not_allowed");
 }
@@ -602,10 +619,7 @@ fn install_from_checking_is_hard_error() {
         cache_dir(),
         Duration::from_secs(1),
     );
-    let installer = SpyInstaller {
-        calls: Arc::new(AtomicUsize::new(0)),
-        fail: false,
-    };
+    let (installer, _calls) = spy(false);
     let err = machine.install(&config, &installer).expect_err("checking");
     assert_eq!(err.code(), "update_install_not_allowed");
 }
@@ -660,9 +674,10 @@ fn successful_install_calls_exec_once() {
         &sha256_hex(payload),
     );
     let sig = sign(&sk, body.as_bytes());
-    serve_signed_manifest(&server, &body, &sig);
+    serve_signed_manifest_once(&server, &body, &sig);
     server.expect(
         Expectation::matching(request::method_path("GET", "/Oikonomia.AppImage"))
+            .times(1)
             .respond_with(status_code(200).body(payload.as_slice())),
     );
     let cache = cache_dir();
@@ -674,16 +689,23 @@ fn successful_install_calls_exec_once() {
         cache.clone(),
         Duration::from_secs(2),
     );
-    let calls = Arc::new(AtomicUsize::new(0));
-    let installer = SpyInstaller {
-        calls: Arc::clone(&calls),
-        fail: false,
-    };
+    let (installer, calls) = spy(false);
     let mut machine = UpdateMachine::new();
     machine.check(&config);
     let status = machine.install(&config, &installer).expect("legal");
     assert!(matches!(status, UpdateStatus::Available { .. }));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let exec_path = installer
+        .last_path
+        .lock()
+        .expect("path")
+        .clone()
+        .expect("installer received a path");
+    assert!(
+        exec_path.starts_with(&cache),
+        "exec path must be the wrapper-verified cache file, got {}",
+        exec_path.display()
+    );
     assert!(leftover_files(&cache).is_empty());
 }
 

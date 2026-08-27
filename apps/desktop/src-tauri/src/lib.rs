@@ -11,6 +11,7 @@ mod error;
 mod state;
 mod tray;
 mod update;
+mod update_exec;
 mod update_key;
 
 use state::{AppState, resolve_ocr_model_dir};
@@ -133,16 +134,18 @@ pub fn run() {
         .on_window_event(on_window_event)
         .build(tauri::generate_context!())
         .expect("failed to start Oikonomia")
-        .run(|app, event| {
-            // Clicking the Dock icon while the window is hidden reopens it.
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                tray::show_main_window(app);
-            }
+        .run(on_run_event);
+}
 
-            #[cfg(not(target_os = "macos"))]
-            let _ = (app, event);
-        });
+fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
+    // Clicking the Dock icon while the window is hidden reopens it.
+    #[cfg(target_os = "macos")]
+    if let tauri::RunEvent::Reopen { .. } = event {
+        tray::show_main_window(app);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, event);
 }
 
 /// Dialog, window-state, and updater install engine. No `check()` here.
@@ -160,7 +163,7 @@ fn with_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<t
                 )
                 .build(),
         )
-        // Install engine only. No check() / spawn here. Unlock never awaits this.
+        // Registered only. Install execs the wrapper-verified path; no check API.
         .plugin(tauri_plugin_updater::Builder::new().build())
 }
 
