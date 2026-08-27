@@ -80,6 +80,8 @@ function readUnlockUpdateQuery(): string | null {
 export function readDevUnlockUpdatePreview(): UpdateUiState | null {
   const raw = readUnlockUpdateQuery()
   switch (raw) {
+    case 'idle':
+      return { kind: 'idle' }
     case 'checking':
       return { kind: 'checking' }
     case 'uptodate':

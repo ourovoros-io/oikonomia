@@ -85,6 +85,9 @@ describe('DEV unlockUpdate query', () => {
     })
     expect(stubUpdateCheckResult()).toEqual({ kind: 'available', version: '0.1.1' })
 
+    window.history.replaceState({}, '', '/?unlockUpdate=idle')
+    expect(readDevUnlockUpdatePreview()).toEqual({ kind: 'idle' })
+
     window.history.replaceState({}, '', '/?unlockUpdate=checking')
     expect(readDevUnlockUpdatePreview()).toEqual({ kind: 'checking' })
     expect(stubUpdateCheckResult()).toEqual({ kind: 'upToDate' })
