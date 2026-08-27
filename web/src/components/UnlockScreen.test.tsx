@@ -11,9 +11,19 @@ vi.mock('../lib/tauri', () => ({
   vaultRestore: vi.fn(),
   vaultStatus: vi.fn(),
   vaultPickBackup: vi.fn(),
+  updateCheck: vi.fn(),
+  updateInstall: vi.fn(),
 }))
 
-import { vaultInit, vaultPickBackup, vaultRestore, vaultStatus, vaultUnlock } from '../lib/tauri'
+import {
+  updateCheck,
+  updateInstall,
+  vaultInit,
+  vaultPickBackup,
+  vaultRestore,
+  vaultStatus,
+  vaultUnlock,
+} from '../lib/tauri'
 import { UnlockScreen } from './UnlockScreen'
 import { resetI18nForTests } from '../lib/i18n'
 
@@ -31,6 +41,8 @@ beforeEach(() => {
   vi.mocked(vaultPickBackup).mockResolvedValue(BACKUP_PATH)
   vi.mocked(vaultInit).mockReset().mockResolvedValue('unlocked')
   vi.mocked(vaultUnlock).mockReset().mockResolvedValue('unlocked')
+  vi.mocked(updateCheck).mockReset().mockResolvedValue({ kind: 'upToDate' })
+  vi.mocked(updateInstall).mockReset().mockResolvedValue(undefined)
 })
 
 describe('UnlockScreen submit', () => {
@@ -194,5 +206,173 @@ describe('UnlockScreen restore whisper', () => {
     expect(vaultRestore).not.toHaveBeenCalled()
     expect(vaultStatus).not.toHaveBeenCalled()
     expect(onUnlocked).not.toHaveBeenCalled()
+  })
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
+describe('UnlockScreen check for update', () => {
+  test('idle stacks Check for update above Restore; Unlock still submits', async () => {
+    const onUnlocked = vi.fn()
+    render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
+
+    const check = screen.getByRole('button', { name: 'Check for update' })
+    const restore = screen.getByRole('button', { name: 'Restore from backup' })
+    expect(
+      check.compareDocumentPosition(restore) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(vaultUnlock).toHaveBeenCalledWith('secret')
+    })
+    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    expect(updateCheck).not.toHaveBeenCalled()
+  })
+
+  test('Check for update opens checking; password and Unlock stay enabled; foot label unchanged', async () => {
+    const pending = deferred<{ kind: 'upToDate' }>()
+    vi.mocked(updateCheck).mockReturnValue(pending.promise)
+
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+
+    expect(screen.getByRole('dialog', { name: 'Checking' })).toBeTruthy()
+    expect(screen.getByText('Looking for a new application.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+
+    const password = screen.getByLabelText('Password')
+    const unlock = screen.getByRole('button', { name: 'Unlock' })
+    expect(password).not.toBeDisabled()
+    expect(unlock).not.toBeDisabled()
+    expect(unlock).toHaveTextContent('Unlock')
+    expect(screen.getByRole('button', { name: 'Check for update' })).toHaveTextContent(
+      'Check for update',
+    )
+    expect(screen.queryByText('What’s new')).toBeNull()
+  })
+
+  test('Cancel from checking closes the dialog and ignores a late result; Unlock still works', async () => {
+    const pending = deferred<{ kind: 'available'; version: string }>()
+    vi.mocked(updateCheck).mockReturnValue(pending.promise)
+    const onUnlocked = vi.fn()
+    render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    expect(screen.getByRole('dialog', { name: 'Checking' })).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    pending.resolve({ kind: 'available', version: '9.9.9' })
+    await waitFor(() => {
+      expect(screen.queryByText('Oikonomia 9.9.9')).toBeNull()
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(updateInstall).not.toHaveBeenCalled()
+
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(vaultUnlock).toHaveBeenCalledWith('secret')
+    })
+    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+  })
+
+  test('stub upToDate shows Writer copy and Close', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'upToDate' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'You’re up to date' })).toBeTruthy()
+    })
+    expect(screen.getByText('This is the latest Oikonomia.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Install and restart' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  test('available renders version + honesty, never notes or size, and install is the only invoke', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.1' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'A new application is ready' })).toBeTruthy()
+    })
+    expect(screen.getByText('Oikonomia 0.1.1')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'This is the only internet contact, and only to fetch a new application.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText('What’s new')).toBeNull()
+    expect(screen.queryByText('{size}')).toBeNull()
+    expect(screen.queryByText('12 MB')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Install and restart' }))
+    await waitFor(() => {
+      expect(updateInstall).toHaveBeenCalledTimes(1)
+    })
+    expect(updateInstall).toHaveBeenCalledWith({ kind: 'available', version: '0.1.1' })
+    expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+    expect(screen.getByText('Oikonomia will restart when this finishes.')).toBeTruthy()
+    expect(screen.getByRole('progressbar')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+  })
+
+  test('failed is Close only — no retry, no Settings', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'failed' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+    })
+    expect(screen.getByText('You stay on this version.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Install and restart' })).toBeNull()
+    expect(updateInstall).not.toHaveBeenCalled()
+  })
+
+  test('honesty is the Writer string, not a feed field', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '1.2.3' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await waitFor(() => {
+      expect(screen.getByText('Oikonomia 1.2.3')).toBeTruthy()
+    })
+    expect(screen.queryByText('FEED HONESTY')).toBeNull()
+    expect(
+      screen.getByText(
+        'This is the only internet contact, and only to fetch a new application.',
+      ),
+    ).toBeTruthy()
+  })
+
+  test('update_install is not invoked from upToDate, failed, or checking', async () => {
+    const pending = deferred<{ kind: 'upToDate' }>()
+    vi.mocked(updateCheck).mockReturnValueOnce(pending.promise)
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    expect(screen.getByRole('dialog', { name: 'Checking' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Install and restart' })).toBeNull()
+    expect(updateInstall).not.toHaveBeenCalled()
+    pending.resolve({ kind: 'upToDate' })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'You’re up to date' })).toBeTruthy()
+    })
+    expect(updateInstall).not.toHaveBeenCalled()
   })
 })

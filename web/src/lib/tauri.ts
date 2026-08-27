@@ -1,4 +1,16 @@
 import { invoke } from '@tauri-apps/api/core'
+import {
+  isAvailableUpdate,
+  isMissingIpcCommand,
+  parseUpdateCheckResult,
+  readDevUnlockUpdatePreview,
+  stubUpdateCheckResult,
+  type AvailableUpdate,
+  type UpdateCheckResult,
+} from './updateCheck'
+
+export type { AvailableUpdate, UpdateCheckResult, UpdateUiState } from './updateCheck'
+export { isAvailableUpdate, parseUpdateCheckResult, readDevUnlockUpdatePreview }
 
 export type VaultStatus = 'uninitialized' | 'locked' | 'unlocked'
 
@@ -29,7 +41,9 @@ function asCommandError(err: unknown): CommandError {
 
 export async function vaultStatus(): Promise<VaultStatus> {
   if (!isTauri()) {
-    return 'uninitialized'
+    // Designer QA of the six unlock-update frames needs Welcome chrome.
+    // Dead in production: `readDevUnlockUpdatePreview` is DEV-gated.
+    return readDevUnlockUpdatePreview() ? 'locked' : 'uninitialized'
   }
   return invoke<VaultStatus>('vault_status')
 }
@@ -145,5 +159,50 @@ export async function vaultRestore(opts: {
     return await invoke<string | null>('vault_restore', payload)
   } catch (err) {
     throw asCommandError(err)
+  }
+}
+
+/**
+ * Ask Rust whether a new application is available. The webview only renders
+ * the returned enum — it does not fetch, and it does not see a download URL.
+ *
+ * Until `update_check` exists on the backend, a local stub answers so paint
+ * and tests stay reviewable.
+ */
+export async function updateCheck(): Promise<UpdateCheckResult> {
+  if (!isTauri()) {
+    return stubUpdateCheckResult()
+  }
+  try {
+    const raw = await invoke<unknown>('update_check')
+    return parseUpdateCheckResult(raw)
+  } catch (err) {
+    const cmd = asCommandError(err)
+    if (isMissingIpcCommand(cmd, 'update_check')) {
+      return stubUpdateCheckResult()
+    }
+    return { kind: 'failed' }
+  }
+}
+
+/**
+ * Install the already-checked update. Accepts only {@link AvailableUpdate}
+ * so Checking / Failed / Up-to-date cannot request an install.
+ */
+export async function updateInstall(available: AvailableUpdate): Promise<void> {
+  if (!isAvailableUpdate(available)) {
+    return
+  }
+  if (!isTauri()) {
+    return
+  }
+  try {
+    await invoke<void>('update_install')
+  } catch (err) {
+    const cmd = asCommandError(err)
+    if (isMissingIpcCommand(cmd, 'update_install')) {
+      return
+    }
+    throw cmd
   }
 }

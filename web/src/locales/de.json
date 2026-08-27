@@ -72,6 +72,36 @@
     "restore": {
       "link": "Aus Sicherung wiederherstellen"
     },
+    "update": {
+      "button": "Nach Update suchen",
+      "dialogTitle": "Update",
+      "checking": {
+        "title": "Prüfung",
+        "body": "Es wird nach einer neuen Anwendung gesucht."
+      },
+      "upToDate": {
+        "title": "Sie sind auf dem neuesten Stand",
+        "body": "Das ist das aktuelle Oikonomia."
+      },
+      "available": {
+        "title": "Eine neue Anwendung ist bereit",
+        "version": "Oikonomia {version}",
+        "notesLabel": "Neuigkeiten",
+        "size": "{size}",
+        "honesty": "Das ist der einzige Kontakt zum Internet, und nur, um eine neue Anwendung zu holen.",
+        "confirm": "Installieren und neu starten"
+      },
+      "failed": {
+        "title": "Prüfung nicht möglich",
+        "body": "Sie bleiben bei dieser Version."
+      },
+      "installing": {
+        "title": "Installation",
+        "body": "Oikonomia startet neu, wenn dies fertig ist."
+      },
+      "cancel": "Abbrechen",
+      "close": "Schließen"
+    },
     "error": {
       "mismatch": "Die Passwörter stimmen nicht überein",
       "badPassword": "Falsches Passwort — bitte noch einmal.",

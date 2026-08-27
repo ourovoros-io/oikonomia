@@ -417,6 +417,65 @@ describe('Writer license catalog', () => {
   })
 })
 
+describe('Writer unlock.update catalog', () => {
+  const updateKeys = [
+    'unlock.update.button',
+    'unlock.update.dialogTitle',
+    'unlock.update.checking.title',
+    'unlock.update.checking.body',
+    'unlock.update.upToDate.title',
+    'unlock.update.upToDate.body',
+    'unlock.update.available.title',
+    'unlock.update.available.version',
+    'unlock.update.available.notesLabel',
+    'unlock.update.available.size',
+    'unlock.update.available.honesty',
+    'unlock.update.available.confirm',
+    'unlock.update.failed.title',
+    'unlock.update.failed.body',
+    'unlock.update.installing.title',
+    'unlock.update.installing.body',
+    'unlock.update.cancel',
+    'unlock.update.close',
+  ] as const
+
+  test('keys exist in en, el, fr, and de with Writer copy', () => {
+    const catalogs = {
+      en: flattenMessages(en),
+      el: flattenMessages(el),
+      fr: flattenMessages(fr),
+      de: flattenMessages(de),
+    }
+    for (const [name, flat] of Object.entries(catalogs)) {
+      for (const key of updateKeys) {
+        expect(flat[key], `${name} ${key}`).toBeTruthy()
+      }
+    }
+
+    expect(catalogs.en['unlock.update.button']).toBe('Check for update')
+    expect(catalogs.el['unlock.update.button']).toBe('Έλεγχος ενημέρωσης')
+    expect(catalogs.fr['unlock.update.button']).toBe('Rechercher une mise à jour')
+    expect(catalogs.de['unlock.update.button']).toBe('Nach Update suchen')
+
+    expect(catalogs.en['unlock.update.upToDate.title']).toBe('You’re up to date')
+    expect(catalogs.en['unlock.update.failed.title']).toBe('Couldn’t check')
+    expect(catalogs.fr['unlock.update.checking.body']).toBe(
+      'Recherche d’une nouvelle application.',
+    )
+    expect(catalogs.fr['unlock.update.upToDate.body']).toBe('C’est le dernier Oikonomia.')
+    expect(catalogs.fr['unlock.update.upToDate.title']).toBe('Vous êtes à jour')
+    expect(catalogs.en['unlock.update.available.honesty']).toBe(
+      'This is the only internet contact, and only to fetch a new application.',
+    )
+    expect(catalogs.en['unlock.update.available.version']).toBe('Oikonomia {version}')
+    expect(catalogs.el['unlock.update.available.version']).toContain('Oikonomia')
+    expect(catalogs.fr['unlock.update.available.version']).toContain('Oikonomia')
+    expect(catalogs.de['unlock.update.available.version']).toContain('Oikonomia')
+    expect(catalogs.en['unlock.update.available.notesLabel']).toBe('What’s new')
+    expect(catalogs.en['unlock.update.available.size']).toBe('{size}')
+  })
+})
+
 describe('t fallback', () => {
   test('missing el key falls back to English or the key', () => {
     setLocale('el')
