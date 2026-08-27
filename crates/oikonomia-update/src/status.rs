@@ -17,7 +17,7 @@ pub enum UpdateStatus {
     UpToDate,
     /// Manifest verified and a newer artifact URL passed the allow-list.
     Available {
-        /// Remote SemVer from the signed manifest.
+        /// Remote `SemVer` from the signed manifest.
         version: String,
         /// Release notes, HTML-stripped and escaped. Plain text only.
         notes: String,

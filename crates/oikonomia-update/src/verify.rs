@@ -14,20 +14,17 @@ pub fn parse_public_key(raw: &str) -> Result<PublicKey> {
     if raw.is_empty() {
         return Err(UpdateError::MissingPublicKey);
     }
-    match PublicKey::decode(raw) {
-        Ok(key) => Ok(key),
-        Err(_) => {
-            let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw.as_bytes())
-            else {
-                return Err(UpdateError::MissingPublicKey);
-            };
-            let Ok(text) = String::from_utf8(decoded) else {
-                return Err(UpdateError::MissingPublicKey);
-            };
-            let text = text.trim();
-            PublicKey::decode(text).map_err(|_| UpdateError::MissingPublicKey)
-        }
+    if let Ok(key) = PublicKey::decode(raw) {
+        return Ok(key);
     }
+    let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw.as_bytes()) else {
+        return Err(UpdateError::MissingPublicKey);
+    };
+    let Ok(text) = String::from_utf8(decoded) else {
+        return Err(UpdateError::MissingPublicKey);
+    };
+    let text = text.trim();
+    PublicKey::decode(text).map_err(|_| UpdateError::MissingPublicKey)
 }
 
 /// Verifies `data` against a raw minisign signature or a Tauri base64-wrapped `.sig`.
@@ -40,19 +37,18 @@ pub fn verify_minisign(public_key: &PublicKey, data: &[u8], signature: &str) -> 
     if signature.is_empty() {
         return Err(UpdateError::ManifestSignature);
     }
-    let decoded = match Signature::decode(signature) {
-        Ok(signature) => signature,
-        Err(_) => {
-            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(signature.as_bytes())
-            else {
-                return Err(UpdateError::ManifestSignature);
-            };
-            let Ok(text) = String::from_utf8(bytes) else {
-                return Err(UpdateError::ManifestSignature);
-            };
-            let text = text.trim();
-            Signature::decode(text).map_err(|_| UpdateError::ManifestSignature)?
-        }
+    let decoded = if let Ok(signature) = Signature::decode(signature) {
+        signature
+    } else {
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(signature.as_bytes())
+        else {
+            return Err(UpdateError::ManifestSignature);
+        };
+        let Ok(text) = String::from_utf8(bytes) else {
+            return Err(UpdateError::ManifestSignature);
+        };
+        let text = text.trim();
+        Signature::decode(text).map_err(|_| UpdateError::ManifestSignature)?
     };
     public_key
         .verify(data, &decoded, true)

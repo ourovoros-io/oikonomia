@@ -1,8 +1,8 @@
 //! Session state machine for unlock-screen update check / install.
 
 use crate::client::{
-    delete_artifact, download_and_verify, perform_check, ArtifactInstaller, CheckOutcome,
-    ClientConfig, VerifiedOffer,
+    ArtifactInstaller, CheckOutcome, ClientConfig, VerifiedOffer, delete_artifact,
+    download_and_verify, perform_check,
 };
 use crate::error::{Result, UpdateError};
 use crate::status::UpdateStatus;
@@ -64,7 +64,7 @@ impl UpdateMachine {
     ///
     /// # Errors
     ///
-    /// Returns [`UpdateError::InstallNotAvailable`] from Idle, Checking, UpToDate, or Failed.
+    /// Returns [`UpdateError::InstallNotAvailable`] from Idle, Checking, `UpToDate`, or Failed.
     pub fn require_available(&self) -> Result<&VerifiedOffer> {
         let UpdateStatus::Available { .. } = &self.status else {
             return Err(UpdateError::InstallNotAvailable);

@@ -11,7 +11,7 @@ pub type Result<T> = std::result::Result<T, UpdateError>;
 /// illegal unless the machine is [`crate::UpdateStatus::Available`].
 #[derive(Debug, Error)]
 pub enum UpdateError {
-    /// `update_install` was called from Idle, Checking, UpToDate, or Failed.
+    /// `update_install` was called from Idle, Checking, `UpToDate`, or Failed.
     #[error("install is only allowed after a check that found an update")]
     InstallNotAvailable,
 

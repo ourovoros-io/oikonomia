@@ -50,7 +50,7 @@ impl HostPolicy {
 
     /// Artifact URLs must pass [`Self::is_allowed_fetch_url`] and must not be `.deb`.
     ///
-    /// Linux in-app updates are AppImage only; `.deb` stays a manual download.
+    /// Linux in-app updates are `AppImage` only; `.deb` stays a manual download.
     #[must_use]
     pub fn is_allowed_artifact_url(&self, url: &Url) -> bool {
         if !self.is_allowed_fetch_url(url) {
@@ -91,6 +91,7 @@ impl HostPolicy {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::HostPolicy;
     use url::Url;

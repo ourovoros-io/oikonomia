@@ -1,24 +1,24 @@
 //! Local httptest fixtures. Never contacts production GitHub.
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
-#![expect(clippy::unwrap_used, reason = "tests fail loudly by design")]
+#![expect(clippy::panic, reason = "tests fail loudly by design")]
 
-use crate::client::{download_and_verify, ArtifactInstaller, ClientConfig};
+use crate::UPDATE_FEED_URL;
+use crate::client::{ArtifactInstaller, ClientConfig, download_and_verify};
 use crate::error::UpdateError;
 use crate::hosts::HostPolicy;
 use crate::machine::UpdateMachine;
 use crate::notes::sanitize_notes;
 use crate::status::UpdateStatus;
 use crate::verify::{parse_public_key, to_hex};
-use crate::UPDATE_FEED_URL;
 use httptest::responders::status_code;
-use httptest::{matchers::request, Expectation, Server};
+use httptest::{Expectation, Server, matchers::request};
 use minisign::{KeyPair, SecretKey};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use url::Url;
 
@@ -55,11 +55,15 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 fn cache_dir() -> PathBuf {
-    tempfile::tempdir().expect("tmpdir").into_path()
+    tempfile::tempdir().expect("tmpdir").keep()
+}
+
+fn server_url(server: &Server, path: &str) -> Url {
+    Url::parse(&server.url_str(path)).expect("server url")
 }
 
 fn policy_for(server: &Server) -> HostPolicy {
-    let url = server.url("/");
+    let url = server_url(server, "/");
     let host = url.host_str().expect("host").to_owned();
     HostPolicy::test_http_hosts([host])
 }
@@ -72,7 +76,7 @@ fn config(
     cache: PathBuf,
     timeout: Duration,
 ) -> ClientConfig {
-    let feed_url = server.url(feed_path);
+    let feed_url = server_url(server, feed_path);
     ClientConfig::for_test(
         feed_url,
         public_key,
@@ -85,7 +89,13 @@ fn config(
     .expect("config")
 }
 
-fn static_manifest(version: &str, notes: &str, artifact_url: &str, signature: &str, sha256: &str) -> String {
+fn static_manifest(
+    version: &str,
+    notes: &str,
+    artifact_url: &str,
+    signature: &str,
+    sha256: &str,
+) -> String {
     format!(
         r#"{{
   "version": "{version}",
@@ -203,7 +213,7 @@ fn timeout_check_is_failed_no_file_no_exec() {
 fn same_version_is_up_to_date_no_download() {
     let (pk, sk) = test_keys();
     let server = Server::run();
-    let artifact = server.url("/Oikonomia.AppImage");
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
     let payload = b"artifact-bytes";
     let body = static_manifest(
         "0.1.0",
@@ -221,7 +231,14 @@ fn same_version_is_up_to_date_no_download() {
     );
 
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::UpToDate);
     assert!(leftover_files(&cache).is_empty());
@@ -236,7 +253,14 @@ fn http_204_is_up_to_date_no_download() {
             .respond_with(status_code(204)),
     );
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::UpToDate);
     assert!(leftover_files(&cache).is_empty());
@@ -247,7 +271,7 @@ fn signed_update_is_available_without_install() {
     let (pk, sk) = test_keys();
     let server = Server::run();
     let payload = b"newer-artifact";
-    let artifact = server.url("/Oikonomia.AppImage");
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
     let body = static_manifest(
         "0.2.0",
         "plain notes",
@@ -259,7 +283,14 @@ fn signed_update_is_available_without_install() {
     serve_signed_manifest(&server, &body, &sig);
 
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let installer = SpyInstaller {
         calls: Arc::new(AtomicUsize::new(0)),
         fail: false,
@@ -285,7 +316,7 @@ fn missing_manifest_sig_is_failed() {
     let body = static_manifest(
         "0.2.0",
         "n",
-        server.url("/Oikonomia.AppImage").as_str(),
+        server_url(&server, "/Oikonomia.AppImage").as_str(),
         &sign(&sk, payload),
         &sha256_hex(payload),
     );
@@ -298,7 +329,14 @@ fn missing_manifest_sig_is_failed() {
             .respond_with(status_code(404)),
     );
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
     assert!(leftover_files(&cache).is_empty());
@@ -314,14 +352,21 @@ fn bad_manifest_sig_is_failed() {
     let body = static_manifest(
         "0.2.0",
         "n",
-        server.url("/Oikonomia.AppImage").as_str(),
+        server_url(&server, "/Oikonomia.AppImage").as_str(),
         &sign(&sk, payload),
         &sha256_hex(payload),
     );
     let wrong = sign(&other_sk, body.as_bytes());
     serve_signed_manifest(&server, &body, &wrong);
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
     assert!(leftover_files(&cache).is_empty());
@@ -333,13 +378,16 @@ fn truncated_json_after_valid_sig_is_failed() {
     let server = Server::run();
     let truncated = b"{\"version\":\"0.2.0\"";
     let sig = sign(&sk, truncated);
-    serve_signed_manifest(
-        &server,
-        std::str::from_utf8(truncated).expect("utf8"),
-        &sig,
-    );
+    serve_signed_manifest(&server, std::str::from_utf8(truncated).expect("utf8"), &sig);
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
     assert!(leftover_files(&cache).is_empty());
@@ -360,7 +408,14 @@ fn host_not_allow_listed_is_failed_no_file() {
     let sig = sign(&sk, body.as_bytes());
     serve_signed_manifest(&server, &body, &sig);
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
     assert!(leftover_files(&cache).is_empty());
@@ -381,7 +436,14 @@ fn file_url_artifact_is_failed() {
     let sig = sign(&sk, body.as_bytes());
     serve_signed_manifest(&server, &body, &sig);
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
     assert!(leftover_files(&cache).is_empty());
@@ -392,7 +454,7 @@ fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
     let (pk, sk) = test_keys();
     let server = Server::run();
     let payload = b"real-bytes";
-    let artifact = server.url("/Oikonomia.AppImage");
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
     let body = static_manifest(
         "0.2.0",
         "n",
@@ -408,7 +470,14 @@ fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
     );
 
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let calls = Arc::new(AtomicUsize::new(0));
     let installer = SpyInstaller {
         calls: Arc::clone(&calls),
@@ -431,7 +500,7 @@ fn artifact_sig_mismatch_deletes_partial_and_does_not_exec() {
     let (_other_pk, other_sk) = test_keys();
     let server = Server::run();
     let payload = b"real-bytes";
-    let artifact = server.url("/Oikonomia.AppImage");
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
     let body = static_manifest(
         "0.2.0",
         "n",
@@ -447,7 +516,14 @@ fn artifact_sig_mismatch_deletes_partial_and_does_not_exec() {
     );
 
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let calls = Arc::new(AtomicUsize::new(0));
     let installer = SpyInstaller {
         calls: Arc::clone(&calls),
@@ -539,7 +615,7 @@ fn html_notes_are_plain_text() {
     let (pk, sk) = test_keys();
     let server = Server::run();
     let payload = b"newer";
-    let artifact = server.url("/Oikonomia.AppImage");
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
     let body = static_manifest(
         "0.2.0",
         "Read <a href=\"https://evil.example/nav\">here</a>",
@@ -562,7 +638,10 @@ fn html_notes_are_plain_text() {
         panic!("expected available");
     };
     assert_eq!(version, "0.2.0");
-    assert_eq!(notes, sanitize_notes("Read <a href=\"https://evil.example/nav\">here</a>"));
+    assert_eq!(
+        notes,
+        sanitize_notes("Read <a href=\"https://evil.example/nav\">here</a>")
+    );
     assert!(!notes.contains('<') || notes.contains("&lt;"));
     assert!(!notes.contains("href"));
 }
@@ -572,7 +651,7 @@ fn successful_install_calls_exec_once() {
     let (pk, sk) = test_keys();
     let server = Server::run();
     let payload = b"install-me";
-    let artifact = server.url("/Oikonomia.AppImage");
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
     let body = static_manifest(
         "0.2.0",
         "ok",
@@ -587,7 +666,14 @@ fn successful_install_calls_exec_once() {
             .respond_with(status_code(200).body(payload.as_slice())),
     );
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let calls = Arc::new(AtomicUsize::new(0));
     let installer = SpyInstaller {
         calls: Arc::clone(&calls),
@@ -606,7 +692,7 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
     let (pk, sk) = test_keys();
     let server = Server::run();
     let payload = b"real-bytes";
-    let artifact = server.url("/Oikonomia.AppImage");
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
     let body = static_manifest(
         "0.2.0",
         "n",
@@ -621,7 +707,14 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
             .respond_with(status_code(200).body(payload.as_slice())),
     );
     let cache = cache_dir();
-    let config = config(&server, "/latest.json", &pk, "0.1.0", cache.clone(), Duration::from_secs(2));
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
     let mut machine = UpdateMachine::new();
     machine.check(&config);
     let offer = machine.require_available().expect("offer").clone();
@@ -632,8 +725,7 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
 
 #[test]
 fn license_hex_is_not_a_minisign_public_key() {
-    const LICENSE_HEX: &str =
-        "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
+    const LICENSE_HEX: &str = "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
     let err = parse_public_key(LICENSE_HEX).expect_err("license hex");
     assert_eq!(err.code(), "update_missing_public_key");
 }

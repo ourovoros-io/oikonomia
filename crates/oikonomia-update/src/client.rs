@@ -60,12 +60,8 @@ impl ClientConfig {
     ///
     /// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or invalid,
     /// [`UpdateError::InvalidFeedUrl`] when the feed constant does not parse, or
-    /// [`UpdateError::ManifestParse`] when `current_version` is not SemVer.
-    pub fn production(
-        public_key: &str,
-        current_version: &str,
-        cache_dir: PathBuf,
-    ) -> Result<Self> {
+    /// [`UpdateError::ManifestParse`] when `current_version` is not `SemVer`.
+    pub fn production(public_key: &str, current_version: &str, cache_dir: PathBuf) -> Result<Self> {
         let feed_url = Url::parse(UPDATE_FEED_URL).map_err(|_| UpdateError::InvalidFeedUrl)?;
         let host_policy = HostPolicy::production();
         if !host_policy.is_allowed_fetch_url(&feed_url) {
@@ -115,7 +111,6 @@ impl ClientConfig {
 
 #[cfg(test)]
 impl ClientConfig {
-    #[allow(clippy::too_many_arguments, reason = "test fixture constructor")]
     pub(crate) fn for_test(
         feed_url: Url,
         public_key: &str,
@@ -221,13 +216,14 @@ fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome> {
         return Err(UpdateError::Network);
     }
 
-    let signature_url = signature_url_for(&final_url)?;
+    let signature_url = signature_url_for(&final_url);
     let (_sig_url, signature_bytes, sig_status) =
         fetch_bytes(config, &signature_url, MAX_SIGNATURE_BYTES, true)?;
     if sig_status != 200 {
         return Err(UpdateError::ManifestSignature);
     }
-    let signature = std::str::from_utf8(&signature_bytes).map_err(|_| UpdateError::ManifestSignature)?;
+    let signature =
+        std::str::from_utf8(&signature_bytes).map_err(|_| UpdateError::ManifestSignature)?;
     verify_minisign(&config.public_key, &body, signature)?;
 
     let manifest: RawManifest =
@@ -242,25 +238,25 @@ fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome> {
 }
 
 fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<VerifiedOffer> {
-    let (url_text, signature, sha256_hex) = if let Some(platform) = manifest.platforms.get(&config.platform)
-    {
-        (
-            platform.url.as_str(),
-            platform.signature.as_str(),
-            platform.sha256.as_str(),
-        )
-    } else {
-        let url = manifest.url.as_deref().ok_or(UpdateError::ManifestParse)?;
-        let signature = manifest
-            .signature
-            .as_deref()
-            .ok_or(UpdateError::ManifestParse)?;
-        let sha256 = manifest
-            .sha256
-            .as_deref()
-            .ok_or(UpdateError::ArtifactIntegrity)?;
-        (url, signature, sha256)
-    };
+    let (url_text, signature, sha256_hex) =
+        if let Some(platform) = manifest.platforms.get(&config.platform) {
+            (
+                platform.url.as_str(),
+                platform.signature.as_str(),
+                platform.sha256.as_str(),
+            )
+        } else {
+            let url = manifest.url.as_deref().ok_or(UpdateError::ManifestParse)?;
+            let signature = manifest
+                .signature
+                .as_deref()
+                .ok_or(UpdateError::ManifestParse)?;
+            let sha256 = manifest
+                .sha256
+                .as_deref()
+                .ok_or(UpdateError::ArtifactIntegrity)?;
+            (url, signature, sha256)
+        };
 
     let artifact_url = Url::parse(url_text).map_err(|_| UpdateError::ArtifactUrl)?;
     if !config.host_policy.is_allowed_artifact_url(&artifact_url) {
@@ -309,7 +305,10 @@ fn download_and_verify_inner(
     offer: &VerifiedOffer,
     dest: &Path,
 ) -> Result<()> {
-    if !config.host_policy.is_allowed_artifact_url(&offer.artifact_url) {
+    if !config
+        .host_policy
+        .is_allowed_artifact_url(&offer.artifact_url)
+    {
         return Err(UpdateError::ArtifactUrl);
     }
     let (_url, bytes, status) =
@@ -339,11 +338,11 @@ pub fn delete_artifact(path: &Path) {
     }
 }
 
-fn signature_url_for(feed: &Url) -> Result<Url> {
+fn signature_url_for(feed: &Url) -> Url {
     let mut signature = feed.clone();
     let path = format!("{}.sig", feed.path());
     signature.set_path(&path);
-    Ok(signature)
+    signature
 }
 
 fn fetch_bytes(
@@ -433,7 +432,10 @@ fn split_platform(platform: &str) -> (&str, &str) {
     }
 }
 
-fn read_capped(response: ureq::Response, max_bytes: usize) -> std::result::Result<Vec<u8>, FetchFail> {
+fn read_capped(
+    response: ureq::Response,
+    max_bytes: usize,
+) -> std::result::Result<Vec<u8>, FetchFail> {
     let mut reader = response.into_reader();
     let mut buf = Vec::new();
     let mut chunk = [0_u8; 8192];

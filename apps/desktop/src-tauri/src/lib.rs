@@ -23,21 +23,7 @@ use tauri::Manager;
 /// Panics if the Tauri runtime fails to start or the vault data dir is unusable.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        // Remember window size/position across launches. VISIBLE is excluded:
-        // quitting from the tray while hidden must not restore an invisible
-        // window on the next start.
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::all()
-                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
-                )
-                .build(),
-        )
-        // Install engine only. No check() / spawn here. Unlock never awaits this.
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    with_desktop_plugins(tauri::Builder::default())
         .setup(|app| {
             // The bundled .app gets its Dock icon from icon.icns; dev mode runs
             // the bare binary, so set the icon at runtime as well.
@@ -157,6 +143,25 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+/// Dialog, window-state, and updater install engine. No `check()` here.
+fn with_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder
+        .plugin(tauri_plugin_dialog::init())
+        // Remember window size/position across launches. VISIBLE is excluded:
+        // quitting from the tray while hidden must not restore an invisible
+        // window on the next start.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
+                )
+                .build(),
+        )
+        // Install engine only. No check() / spawn here. Unlock never awaits this.
+        .plugin(tauri_plugin_updater::Builder::new().build())
 }
 
 fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {

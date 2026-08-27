@@ -10,8 +10,8 @@ use crate::error::{CommandError, CommandResult};
 use crate::state::AppState;
 use crate::update_key::UPDATER_PUBLIC_KEY;
 use oikonomia_update::{
-    default_updater_cache_dir, delete_artifact, download_and_verify, perform_check, CheckOutcome,
-    ClientConfig, HostPolicy, UpdateError, UpdateStatus, UPDATE_FEED_URL,
+    CheckOutcome, ClientConfig, HostPolicy, UPDATE_FEED_URL, UpdateError, UpdateStatus,
+    default_updater_cache_dir, delete_artifact, download_and_verify, perform_check,
 };
 use tauri::State;
 
@@ -100,18 +100,13 @@ pub async fn update_install(
     let plugin_result = install_with_plugin(&app).await;
     delete_artifact(&artifact);
 
-    match plugin_result {
-        Ok(()) => {
-            app.restart();
-            Ok(UpdateStatus::Failed)
-        }
-        Err(err) => {
-            log::warn!("update plugin install failed: {err}");
-            let mut guard = crate::state::lock_update(&machine);
-            guard.fail();
-            Ok(UpdateStatus::Failed)
-        }
+    if let Err(err) = plugin_result {
+        log::warn!("update plugin install failed: {err}");
+        let mut guard = crate::state::lock_update(&machine);
+        guard.fail();
+        return Ok(UpdateStatus::Failed);
     }
+    app.restart()
 }
 
 /// Plugin install engine: baked feed URL and baked pubkey only. Not from IPC.
@@ -154,7 +149,7 @@ mod tests {
 
     #[test]
     fn baked_key_is_nonempty_minisign_and_not_the_license_key() {
-        assert!(!UPDATER_PUBLIC_KEY.is_empty());
+        assert!(UPDATER_PUBLIC_KEY.len() > 32);
         assert_ne!(UPDATER_PUBLIC_KEY, PRODUCTION_PUBLIC_KEY_HEX);
         parse_public_key(UPDATER_PUBLIC_KEY).expect("ops minisign public key must decode");
     }
@@ -168,13 +163,13 @@ mod tests {
             .and_then(serde_json::Value::as_str)
             .expect("pubkey");
         assert_eq!(pubkey, UPDATER_PUBLIC_KEY);
-        assert!(!pubkey.is_empty());
+        assert!(pubkey.len() > 32);
     }
 
     #[test]
     fn empty_key_is_a_compile_fail_gate() {
         const EMPTY: &str = "";
-        assert!(EMPTY.is_empty());
-        assert!(!UPDATER_PUBLIC_KEY.is_empty());
+        assert_eq!(EMPTY.len(), 0);
+        assert!(UPDATER_PUBLIC_KEY.len() > 32);
     }
 }

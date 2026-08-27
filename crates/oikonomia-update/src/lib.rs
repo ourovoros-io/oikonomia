@@ -14,8 +14,9 @@ mod status;
 mod verify;
 
 pub use client::{
+    ArtifactInstaller, CheckOutcome, ClientConfig, UPDATE_FEED_URL, VerifiedOffer,
     current_updater_platform, default_updater_cache_dir, delete_artifact, download_and_verify,
-    perform_check, ArtifactInstaller, CheckOutcome, ClientConfig, VerifiedOffer, UPDATE_FEED_URL,
+    perform_check,
 };
 pub use error::{Result, UpdateError};
 pub use hosts::HostPolicy;

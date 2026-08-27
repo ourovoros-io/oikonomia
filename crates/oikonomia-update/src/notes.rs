@@ -8,9 +8,20 @@
 pub fn sanitize_notes(input: &str) -> String {
     let mut stripped = String::new();
     let mut in_tag = false;
+    let mut pending_lt = false;
     for ch in input.chars() {
+        if pending_lt {
+            pending_lt = false;
+            if ch.is_ascii_alphabetic() || ch == '/' || ch == '!' || ch == '?' {
+                in_tag = true;
+            } else {
+                stripped.push('<');
+                stripped.push(ch);
+                continue;
+            }
+        }
         if ch == '<' {
-            in_tag = true;
+            pending_lt = true;
             continue;
         }
         if ch == '>' && in_tag {
@@ -20,6 +31,9 @@ pub fn sanitize_notes(input: &str) -> String {
         if !in_tag {
             stripped.push(ch);
         }
+    }
+    if pending_lt {
+        stripped.push('<');
     }
 
     let mut escaped = String::new();
