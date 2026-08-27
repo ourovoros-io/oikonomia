@@ -1,0 +1,103 @@
+//! Minisign verify for the detached manifest and the artifact.
+
+use crate::error::{Result, UpdateError};
+use base64::Engine;
+use minisign_verify::{PublicKey, Signature};
+
+/// Parses a Tauri-format (base64 of the minisign public-key file) or raw minisign key.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::MissingPublicKey`] when `raw` is empty or does not decode.
+pub fn parse_public_key(raw: &str) -> Result<PublicKey> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Err(UpdateError::MissingPublicKey);
+    }
+    match PublicKey::decode(raw) {
+        Ok(key) => Ok(key),
+        Err(_) => {
+            let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(raw.as_bytes())
+            else {
+                return Err(UpdateError::MissingPublicKey);
+            };
+            let Ok(text) = String::from_utf8(decoded) else {
+                return Err(UpdateError::MissingPublicKey);
+            };
+            let text = text.trim();
+            PublicKey::decode(text).map_err(|_| UpdateError::MissingPublicKey)
+        }
+    }
+}
+
+/// Verifies `data` against a raw minisign signature or a Tauri base64-wrapped `.sig`.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ManifestSignature`] when the signature is missing or invalid.
+pub fn verify_minisign(public_key: &PublicKey, data: &[u8], signature: &str) -> Result<()> {
+    let signature = signature.trim();
+    if signature.is_empty() {
+        return Err(UpdateError::ManifestSignature);
+    }
+    let decoded = match Signature::decode(signature) {
+        Ok(signature) => signature,
+        Err(_) => {
+            let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(signature.as_bytes())
+            else {
+                return Err(UpdateError::ManifestSignature);
+            };
+            let Ok(text) = String::from_utf8(bytes) else {
+                return Err(UpdateError::ManifestSignature);
+            };
+            let text = text.trim();
+            Signature::decode(text).map_err(|_| UpdateError::ManifestSignature)?
+        }
+    };
+    public_key
+        .verify(data, &decoded, true)
+        .map_err(|_| UpdateError::ManifestSignature)
+}
+
+/// Decodes a 64-character lowercase or mixed hex SHA-256 digest.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ArtifactIntegrity`] when the string is not 32 bytes of hex.
+pub fn parse_sha256_hex(hex: &str) -> Result<[u8; 32]> {
+    let hex = hex.trim();
+    if hex.len() != 64 {
+        return Err(UpdateError::ArtifactIntegrity);
+    }
+    let mut out = [0_u8; 32];
+    let bytes = hex.as_bytes();
+    let mut index = 0;
+    while index < 32 {
+        let hi = hex_nibble(bytes[index * 2])?;
+        let lo = hex_nibble(bytes[index * 2 + 1])?;
+        out[index] = (hi << 4) | lo;
+        index += 1;
+    }
+    Ok(out)
+}
+
+fn hex_nibble(byte: u8) -> Result<u8> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(UpdateError::ArtifactIntegrity),
+    }
+}
+
+/// Lowercase hex encoding for cache file names and tests.
+#[must_use]
+pub fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}

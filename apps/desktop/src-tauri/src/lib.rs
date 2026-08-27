@@ -10,6 +10,8 @@ mod commands;
 mod error;
 mod state;
 mod tray;
+mod update;
+mod update_key;
 
 use state::{AppState, resolve_ocr_model_dir};
 use tauri::Manager;
@@ -34,6 +36,8 @@ pub fn run() {
                 )
                 .build(),
         )
+        // Install engine only. No check() / spawn here. Unlock never awaits this.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // The bundled .app gets its Dock icon from icon.icns; dev mode runs
             // the bare binary, so set the icon at runtime as well.
@@ -77,6 +81,8 @@ pub fn run() {
             commands::vault_unlock,
             commands::license_status,
             commands::license_install,
+            update::update_check,
+            update::update_install,
             commands::vault_lock,
             commands::vault_change_password,
             commands::vault_backup,
