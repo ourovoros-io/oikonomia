@@ -68,6 +68,7 @@ documents/
    - `amount_minor`, `entry_date`, `kind`, `bill_unpaid` — exact
    - `merchant` — exact, or any string in `merchant_aliases` (contains)
    - `description` — optional; if present, the suggestion must contain it
+   - `reference` — optional; exact when present
 5. Run `cargo test -p oikonomia-core --test document_corpus`.
 
 ΑΦΜ / IBAN / MARK digit runs must **not** become `amount_minor` (existing

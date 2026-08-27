@@ -1,15 +1,24 @@
 //! Offline structured parsing for invoices / bills / receipts.
 //!
 //! Tuned for European (incl. Greek) tax documents: labeled totals, MARK/AFM
-//! rejection, and sales-invoice vs expense detection. No network.
+//! rejection, and sales-invoice vs expense detection. Greek bank transfer
+//! receipts (`έμβασμα`) are a separate class: the labeled principal is the
+//! amount, never a clock on `Ημερομηνία Αξίας` or the transfer fee. No network.
 
 use super::analyze::{DocumentSuggestion, EntryKindSuggestion};
 
 /// Parse extracted document text into a draft suggestion.
+///
+/// Bank transfer receipts stay [`EntryKindSuggestion::Expense`]. The
+/// posted amount is the capital debit (`Ποσό Χρέωσης Κεφαλαίου` / `Ποσό:`),
+/// not the fee and not a `hh:mm` time.
 #[must_use]
 pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
     let normalized = normalize(text);
     let lower_full = normalized.to_lowercase();
+    if is_bank_transfer_receipt(&fold_greek(&lower_full)) {
+        return parse_bank_transfer(&normalized);
+    }
 
     let amount_minor = find_total_amount(&normalized, &lower_full);
     let entry_date = find_best_date(&normalized);
@@ -224,6 +233,296 @@ fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
     }
 }
 
+/// Fold monotonic Greek accents so label matching is accent-insensitive.
+fn fold_greek(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'ά' | 'ὰ' | 'ᾶ' | 'ἀ' | 'ἁ' | 'ᾳ' => 'α',
+            'έ' | 'ὲ' | 'ἐ' | 'ἑ' => 'ε',
+            'ή' | 'ὴ' | 'ῆ' | 'ἠ' | 'ἡ' | 'ῃ' => 'η',
+            'ί' | 'ὶ' | 'ῖ' | 'ϊ' | 'ΐ' | 'ἰ' | 'ἱ' => 'ι',
+            'ό' | 'ὸ' | 'ὀ' | 'ὁ' => 'ο',
+            'ύ' | 'ὺ' | 'ῦ' | 'ϋ' | 'ΰ' | 'ὐ' | 'ὑ' => 'υ',
+            'ώ' | 'ὼ' | 'ῶ' | 'ὠ' | 'ὡ' | 'ῳ' => 'ω',
+            other => other,
+        })
+        .collect()
+}
+
+fn is_bank_transfer_receipt(folded: &str) -> bool {
+    folded.contains("εμβασμα")
+        || folded.contains("μεταφορα σε αλλη τραπεζα")
+        || folded.contains("κωδικος συναλλαγης")
+}
+
+/// Expense fill for a Greek bank `έμβασμα` / other-bank transfer receipt.
+fn parse_bank_transfer(text: &str) -> DocumentSuggestion {
+    let amount_minor = find_transfer_principal(text);
+    let entry_date = find_transfer_date(text);
+    let reference = find_transfer_reference(text);
+    let merchant = find_transfer_payee(text);
+    let description = Some(match merchant.as_deref() {
+        Some(payee) => format!("Έμβασμα — {payee}"),
+        None => "Έμβασμα".to_owned(),
+    });
+    let fee_minor = find_transfer_fee(text);
+    let kind = EntryKindSuggestion::Expense;
+    let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
+
+    DocumentSuggestion {
+        source: super::analyze::AnalyzeSource::Heuristic,
+        model: Some("invoice-parser-v1".into()),
+        kind,
+        amount_minor,
+        entry_date,
+        description,
+        reference,
+        merchant,
+        bill_unpaid: false,
+        category_account_id: None,
+        wallet_account_id: None,
+        payable_account_id: None,
+        confidence,
+        notes: build_transfer_notes(amount_minor, fee_minor),
+    }
+}
+
+fn find_transfer_principal(text: &str) -> Option<i64> {
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let folded = fold_greek(&line.to_lowercase());
+        if is_transfer_fee_line(&folded) {
+            continue;
+        }
+        if folded.contains("ποσο χρεωσης κεφαλαιου")
+            && let Some(amount) = amount_on_line_or_next(&lines, i)
+        {
+            return Some(amount);
+        }
+    }
+    for (i, line) in lines.iter().enumerate() {
+        let folded = fold_greek(&line.to_lowercase());
+        if is_transfer_fee_line(&folded) {
+            continue;
+        }
+        if is_transfer_poso_label(&folded)
+            && let Some(amount) = amount_on_line_or_next(&lines, i)
+        {
+            return Some(amount);
+        }
+    }
+    None
+}
+
+fn amount_on_line_or_next(lines: &[&str], index: usize) -> Option<i64> {
+    for candidate in [lines[index], lines.get(index + 1).copied().unwrap_or("")] {
+        if candidate.is_empty() {
+            continue;
+        }
+        if let Some(amount) = money_amounts_on_line(candidate)
+            .into_iter()
+            .filter(|value| is_plausible_money(*value) && *value > 0)
+            .max()
+        {
+            return Some(amount);
+        }
+    }
+    None
+}
+
+fn is_transfer_fee_line(folded: &str) -> bool {
+    folded.contains("προμηθεια") || folded.contains("εξοδων") || folded.contains("εξοδα")
+}
+
+fn is_transfer_poso_label(folded: &str) -> bool {
+    let trimmed = folded.trim();
+    trimmed == "ποσο"
+        || trimmed.starts_with("ποσο:")
+        || folded.contains("ποσο:")
+        || (folded.contains("ποσο") && folded.contains(':') && !is_transfer_fee_line(folded))
+}
+
+fn find_transfer_fee(text: &str) -> Option<i64> {
+    for line in text.lines() {
+        let folded = fold_greek(&line.to_lowercase());
+        if !is_transfer_fee_line(&folded) {
+            continue;
+        }
+        if let Some(amount) = money_amounts_on_line(line)
+            .into_iter()
+            .filter(|value| is_plausible_money(*value) && *value > 0)
+            .min()
+        {
+            return Some(amount);
+        }
+    }
+    None
+}
+
+fn find_transfer_payee(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let folded = fold_greek(&line.to_lowercase());
+        let beneficiary = folded.contains("δικαιουχου")
+            || (folded.contains("ονοματεπωνυμο") && folded.contains("επωνυμια"));
+        if !beneficiary {
+            continue;
+        }
+        if let Some(name) = value_after_colon(line)
+            && is_plausible_payee(&name)
+        {
+            return Some(name);
+        }
+        if let Some(next) = lines.get(i + 1)
+            && is_plausible_payee(next)
+        {
+            return Some(next.trim().to_owned());
+        }
+    }
+    None
+}
+
+fn is_plausible_payee(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.chars().count() < 3 || !trimmed.chars().any(char::is_alphabetic) {
+        return false;
+    }
+    let folded = fold_greek(&trimmed.to_lowercase());
+    if is_bank_counterparty(&folded) || folded.contains("iban") {
+        return false;
+    }
+    let stripped = folded
+        .replace("ονοματεπωνυμο", " ")
+        .replace("επωνυμια", " ")
+        .replace("δικαιουχου", " ")
+        .replace(['/', ':', '：'], ' ');
+    stripped.chars().any(char::is_alphabetic)
+}
+
+fn is_bank_counterparty(folded: &str) -> bool {
+    folded.contains("τραπεζα") || folded.contains("bank")
+}
+
+fn find_transfer_reference(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let folded = fold_greek(&line.to_lowercase());
+        if !folded.contains("κωδικος συναλλαγης") {
+            continue;
+        }
+        for candidate in [*line, lines.get(i + 1).copied().unwrap_or("")] {
+            if let Some(code) = transfer_code_token(candidate) {
+                return Some(code);
+            }
+        }
+    }
+    None
+}
+
+fn transfer_code_token(line: &str) -> Option<String> {
+    for tok in line.split_whitespace() {
+        let token = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        if is_transfer_code(token) {
+            return Some(token.to_ascii_uppercase());
+        }
+    }
+    None
+}
+
+fn is_transfer_code(token: &str) -> bool {
+    if token.len() < 10 || token.len() > 24 {
+        return false;
+    }
+    if !token.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    if !token.chars().any(|c| c.is_ascii_alphabetic()) || !token.chars().any(|c| c.is_ascii_digit())
+    {
+        return false;
+    }
+    let upper = token.to_ascii_uppercase();
+    if upper.starts_with("RF") && upper.chars().skip(2).all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    // IBAN-shaped: two letters then only digits.
+    if upper.len() >= 15
+        && upper.chars().take(2).all(|c| c.is_ascii_alphabetic())
+        && upper.chars().skip(2).all(|c| c.is_ascii_digit())
+    {
+        return false;
+    }
+    true
+}
+
+fn find_transfer_date(text: &str) -> Option<String> {
+    let mut labeled: Option<String> = None;
+    for line in text.lines() {
+        if is_value_date_line(&line.to_lowercase()) {
+            continue;
+        }
+        let Some(date) = first_date_on_line(line) else {
+            continue;
+        };
+        let folded = fold_greek(&line.to_lowercase());
+        if folded.contains("εκτελεσ") || folded.contains("execution") {
+            return Some(date);
+        }
+        if labeled.is_none()
+            && (folded.contains("ημερομην")
+                || folded.contains("date")
+                || folded.contains("συναλλαγ"))
+        {
+            labeled = Some(date);
+        }
+    }
+    if labeled.is_some() {
+        return labeled;
+    }
+    text.lines().find_map(|line| {
+        if is_value_date_line(&line.to_lowercase()) {
+            None
+        } else {
+            first_date_on_line(line)
+        }
+    })
+}
+
+fn first_date_on_line(line: &str) -> Option<String> {
+    for token in line.split_whitespace() {
+        let trimmed =
+            token.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
+        if let Some(iso) = parse_eu_date(trimmed).or_else(|| parse_iso_date(trimmed)) {
+            return Some(iso);
+        }
+    }
+    None
+}
+
+fn build_transfer_notes(amount: Option<i64>, fee_minor: Option<i64>) -> String {
+    let mut parts = vec![
+        "Parsed offline with the built-in invoice reader (no internet).".to_owned(),
+        "Detected a bank transfer / εμβασμα receipt (expense).".to_owned(),
+    ];
+    if amount.is_none() {
+        parts.push(
+            "Could not confidently detect the transfer principal — please enter the amount.".into(),
+        );
+    }
+    if let Some(fee) = fee_minor {
+        parts.push(format!(
+            "Transfer fee {} is shown on the receipt and is not the posted amount.",
+            format_minor_comma(fee)
+        ));
+    }
+    parts.join(" ")
+}
+
+fn format_minor_comma(minor: i64) -> String {
+    let whole = minor / 100;
+    let cents = minor.rem_euclid(100);
+    format!("{whole},{cents:02}")
+}
+
 fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
     // 1) Strong labeled totals always win — even when PDF extract is jumbled.
     //    (Utility frequency scoring used to run first and could pick date days as €.)
@@ -262,7 +561,11 @@ fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
             continue;
         }
         let mut w = 1;
-        if line_l.contains("αξία") || line_l.contains("value") || line_l.contains("total") {
+        // `αξία` on invoices means line-value; `Ημερομηνία Αξίας` is a value
+        // date and must not boost a clock (`7:00` → 700 minor).
+        if !is_value_date_line(&line_l)
+            && (line_l.contains("αξία") || line_l.contains("value") || line_l.contains("total"))
+        {
             w += 3;
         }
         if line_l.contains('€') {
@@ -476,6 +779,11 @@ fn is_noise_amount_line(line_l: &str) -> bool {
         || line_l.contains('×')
 }
 
+fn is_value_date_line(line_l: &str) -> bool {
+    let folded = fold_greek(line_l);
+    folded.contains("ημερομηνια αξιας") || folded.contains("value date")
+}
+
 fn is_amount_only_line(line: &str) -> bool {
     // Ignore date tokens when deciding if the line is "just an amount".
     let stripped = mask_date_tokens(line);
@@ -502,62 +810,163 @@ fn line_has_date(line: &str) -> bool {
 /// Blank out EU/ISO date tokens so day/month numbers are not parsed as euros.
 ///
 /// Real PDF extracts often put `13/08/2026 72,53 €` on one line — without this,
-/// `13`, `08`, and `2026` become €13 / €8 / €2026 candidates.
+/// `13`, `08`, and `2026` become €13 / €8 / €2026 candidates. Bank receipts
+/// also print unpadded `27/8/2026`, which must not become €27 / €8.
 fn mask_date_tokens(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let chars: Vec<char> = line.chars().collect();
     let n = chars.len();
     let mut i = 0;
     while i < n {
-        // ISO yyyy-mm-dd
-        if i + 9 < n
-            && chars[i].is_ascii_digit()
-            && chars[i + 1].is_ascii_digit()
-            && chars[i + 2].is_ascii_digit()
-            && chars[i + 3].is_ascii_digit()
-            && chars[i + 4] == '-'
-            && chars[i + 5].is_ascii_digit()
-            && chars[i + 6].is_ascii_digit()
-            && chars[i + 7] == '-'
-            && chars[i + 8].is_ascii_digit()
-            && chars[i + 9].is_ascii_digit()
-        {
+        if is_iso_date_at(&chars, i) {
             out.push_str("          ");
             i += 10;
             continue;
         }
-        // EU dd/mm/yyyy or dd.mm.yyyy or dd-mm-yyyy
-        if i + 7 < n
-            && chars[i].is_ascii_digit()
-            && chars[i + 1].is_ascii_digit()
-            && (chars[i + 2] == '/' || chars[i + 2] == '.' || chars[i + 2] == '-')
-            && chars[i + 3].is_ascii_digit()
-            && chars[i + 4].is_ascii_digit()
-            && chars[i + 5] == chars[i + 2]
-            && chars[i + 6].is_ascii_digit()
-            && chars[i + 7].is_ascii_digit()
-        {
-            // 4-digit year
-            if i + 9 < n && chars[i + 8].is_ascii_digit() && chars[i + 9].is_ascii_digit() {
-                let token: String = chars[i..=i + 9].iter().collect();
-                if parse_eu_date(&token).is_some() {
-                    out.push_str("          ");
-                    i += 10;
-                    continue;
-                }
+        if let Some(len) = eu_date_len_at(&chars, i) {
+            for _ in 0..len {
+                out.push(' ');
             }
-            // 2-digit year dd/mm/yy
-            let token: String = chars[i..=i + 7].iter().collect();
-            if parse_eu_date(&token).is_some() {
-                out.push_str("        ");
-                i += 8;
-                continue;
-            }
+            i += len;
+            continue;
         }
         out.push(chars[i]);
         i += 1;
     }
     out
+}
+
+fn is_iso_date_at(chars: &[char], i: usize) -> bool {
+    i + 9 < chars.len()
+        && chars[i].is_ascii_digit()
+        && chars[i + 1].is_ascii_digit()
+        && chars[i + 2].is_ascii_digit()
+        && chars[i + 3].is_ascii_digit()
+        && chars[i + 4] == '-'
+        && chars[i + 5].is_ascii_digit()
+        && chars[i + 6].is_ascii_digit()
+        && chars[i + 7] == '-'
+        && chars[i + 8].is_ascii_digit()
+        && chars[i + 9].is_ascii_digit()
+}
+
+/// Length of a `d/m/yyyy` (or `dd.mm.yy`, …) token starting at `i`.
+fn eu_date_len_at(chars: &[char], i: usize) -> Option<usize> {
+    if i > 0 && chars[i - 1].is_ascii_digit() {
+        return None;
+    }
+    if i >= chars.len() || !chars[i].is_ascii_digit() {
+        return None;
+    }
+
+    let mut j = i;
+    while j < chars.len() && chars[j].is_ascii_digit() && j - i < 2 {
+        j += 1;
+    }
+    if j == i || j >= chars.len() {
+        return None;
+    }
+    let sep = chars[j];
+    if sep != '/' && sep != '.' && sep != '-' {
+        return None;
+    }
+    j += 1;
+
+    let month_start = j;
+    while j < chars.len() && chars[j].is_ascii_digit() && j - month_start < 2 {
+        j += 1;
+    }
+    if j == month_start || j >= chars.len() || chars[j] != sep {
+        return None;
+    }
+    j += 1;
+
+    let year_start = j;
+    while j < chars.len() && chars[j].is_ascii_digit() && j - year_start < 4 {
+        j += 1;
+    }
+    let year_len = j - year_start;
+    if year_len != 2 && year_len != 4 {
+        return None;
+    }
+    if j < chars.len() && chars[j].is_ascii_digit() {
+        return None;
+    }
+
+    let token: String = chars[i..j].iter().collect();
+    parse_eu_date(&token).map(|_| j - i)
+}
+
+/// Blank out `h:mm` / `hh:mm` clocks so `7:00` is not parsed as €7.00.
+fn mask_time_tokens(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let chars: Vec<char> = line.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    while i < n {
+        if let Some(len) = time_len_at(&chars, i) {
+            for _ in 0..len {
+                out.push(' ');
+            }
+            i += len;
+            continue;
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+fn time_len_at(chars: &[char], i: usize) -> Option<usize> {
+    if i > 0 && chars[i - 1].is_ascii_digit() {
+        return None;
+    }
+    if i >= chars.len() || !chars[i].is_ascii_digit() {
+        return None;
+    }
+
+    let two_digit_hour = i + 1 < chars.len() && chars[i + 1].is_ascii_digit();
+    let (hour, after_hour) = if two_digit_hour {
+        let hour = chars[i].to_digit(10)? * 10 + chars[i + 1].to_digit(10)?;
+        if hour <= 23 && i + 2 < chars.len() && chars[i + 2] == ':' {
+            (hour, i + 2)
+        } else {
+            (chars[i].to_digit(10)?, i + 1)
+        }
+    } else {
+        (chars[i].to_digit(10)?, i + 1)
+    };
+    if hour > 23 || after_hour >= chars.len() || chars[after_hour] != ':' {
+        return None;
+    }
+
+    let minute_at = after_hour + 1;
+    if minute_at + 1 >= chars.len()
+        || !chars[minute_at].is_ascii_digit()
+        || !chars[minute_at + 1].is_ascii_digit()
+    {
+        return None;
+    }
+    let minutes = chars[minute_at].to_digit(10)? * 10 + chars[minute_at + 1].to_digit(10)?;
+    if minutes > 59 {
+        return None;
+    }
+
+    let mut j = minute_at + 2;
+    if j + 2 < chars.len()
+        && chars[j] == ':'
+        && chars[j + 1].is_ascii_digit()
+        && chars[j + 2].is_ascii_digit()
+    {
+        let seconds = chars[j + 1].to_digit(10)? * 10 + chars[j + 2].to_digit(10)?;
+        if seconds <= 59 {
+            j += 3;
+        }
+    }
+    if j < chars.len() && chars[j].is_ascii_digit() {
+        return None;
+    }
+    Some(j - i)
 }
 
 /// Accept amounts that look like currency, not AFM / invoice IDs / ZIPs.
@@ -567,7 +976,7 @@ fn is_plausible_money(minor: i64) -> bool {
 }
 
 fn money_amounts_on_line(line: &str) -> Vec<i64> {
-    let line = mask_date_tokens(line);
+    let line = mask_time_tokens(&mask_date_tokens(line));
     let mut out = Vec::new();
     let mut buf = String::new();
     for ch in line.chars() {
@@ -668,13 +1077,8 @@ fn find_best_date(text: &str) -> Option<String> {
     // Prefer due/payment date on the same line as a € amount (utility payment slips).
     for line in text.lines() {
         if line.contains('€') && line_has_date(line) {
-            for token in line.split_whitespace() {
-                let t = token.trim_matches(|c: char| {
-                    !c.is_ascii_digit() && c != '/' && c != '.' && c != '-'
-                });
-                if let Some(iso) = parse_eu_date(t).or_else(|| parse_iso_date(t)) {
-                    return Some(iso);
-                }
+            if let Some(iso) = first_date_on_line(line) {
+                return Some(iso);
             }
         }
     }
@@ -687,25 +1091,13 @@ fn find_best_date(text: &str) -> Option<String> {
             || l.contains("ληξ")
             || l.contains("due")
         {
-            for token in line.split_whitespace() {
-                let t = token.trim_matches(|c: char| {
-                    !c.is_ascii_digit() && c != '/' && c != '.' && c != '-'
-                });
-                if let Some(iso) = parse_eu_date(t).or_else(|| parse_iso_date(t)) {
-                    return Some(iso);
-                }
+            if let Some(iso) = first_date_on_line(line) {
+                return Some(iso);
             }
         }
     }
 
-    for token in text.split_whitespace() {
-        let t =
-            token.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
-        if let Some(iso) = parse_eu_date(t).or_else(|| parse_iso_date(t)) {
-            return Some(iso);
-        }
-    }
-    None
+    text.lines().find_map(first_date_on_line)
 }
 
 fn parse_iso_date(s: &str) -> Option<String> {
@@ -728,6 +1120,8 @@ fn parse_eu_date(s: &str) -> Option<String> {
         '/'
     } else if s.contains('.') {
         '.'
+    } else if s.contains('-') {
+        '-'
     } else {
         return None;
     };
@@ -1321,6 +1715,70 @@ mod tests {
     }
 
     #[test]
+    fn greek_bank_transfer_receipt_principal_not_fee_or_clock() {
+        let text = corpus_text("synthetic/text/greek_bank_embasma.txt");
+        let suggestion = parse_invoice_text(&text);
+        assert_eq!(
+            suggestion.amount_minor,
+            Some(31_000),
+            "expected €310,00 not fee 1,40 or clock 7:00, got {:?}",
+            suggestion.amount_minor
+        );
+        assert_eq!(suggestion.kind, EntryKindSuggestion::Expense);
+        assert!(!suggestion.bill_unpaid);
+        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-27"));
+        assert_eq!(suggestion.merchant.as_deref(), Some("HELIOS TRADING IKE"));
+        assert_eq!(suggestion.reference.as_deref(), Some("F000TO0000000001"));
+        assert_eq!(
+            suggestion.description.as_deref(),
+            Some("Έμβασμα — HELIOS TRADING IKE")
+        );
+        assert!(
+            suggestion.notes.contains("1,40"),
+            "notes should mention the fee only: {}",
+            suggestion.notes
+        );
+        assert_ne!(suggestion.amount_minor, Some(140));
+        assert_ne!(suggestion.amount_minor, Some(700));
+
+        let via_analyze = crate::documents::analyze_document_bytes(
+            "greek_bank_embasma.txt",
+            "text/plain",
+            text.as_bytes(),
+            &[],
+            "EUR",
+            None,
+        );
+        let analyzed = via_analyze.expect("analyze text/plain");
+        assert_eq!(analyzed.amount_minor, suggestion.amount_minor);
+        assert_eq!(analyzed.entry_date, suggestion.entry_date);
+        assert_eq!(analyzed.kind, suggestion.kind);
+        assert_eq!(analyzed.merchant, suggestion.merchant);
+        assert_eq!(analyzed.reference, suggestion.reference);
+        assert_eq!(analyzed.description, suggestion.description);
+    }
+
+    #[test]
+    fn unaccented_bank_transfer_markers_are_detected() {
+        let text = "\
+Εμβασμα
+Μεταφορα σε αλλη τραπεζα
+Ημερομηνια Εκτελεσης: 27/8/2026
+Ημερομηνια Αξιας: 28/8/2026 7:00 μ.μ.
+Ποσο Χρεωσης Κεφαλαιου 310,00
+Προμηθεια 1,40
+Ονοματεπωνυμο / Επωνυμια Δικαιουχου: HELIOS TRADING IKE
+Κωδικος Συναλλαγης: F000TO0000000001
+";
+        let suggestion = parse_invoice_text(text);
+        assert_eq!(suggestion.amount_minor, Some(31_000));
+        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-27"));
+        assert_eq!(suggestion.merchant.as_deref(), Some("HELIOS TRADING IKE"));
+        assert_eq!(suggestion.reference.as_deref(), Some("F000TO0000000001"));
+        assert_eq!(suggestion.kind, EntryKindSuggestion::Expense);
+    }
+
+    #[test]
     fn ngs_gas_bill_payment_total() {
         let s = parse_invoice_text(&corpus_text("synthetic/text/ngs_gas_bill.txt"));
         assert_eq!(
@@ -1399,8 +1857,18 @@ mod jumbled_extract {
         assert!(money_amounts_on_line("13/08/2026 72,53 €").contains(&7_253));
         assert!(!money_amounts_on_line("13/08/2026 72,53 €").contains(&1_300));
         assert!(!money_amounts_on_line("26/05/2026 30/06/2026").contains(&2_600));
+        assert!(!money_amounts_on_line("27/8/2026 310,00").contains(&2_700));
+        assert!(!money_amounts_on_line("27/8/2026 310,00").contains(&800));
+        assert!(money_amounts_on_line("27/8/2026 310,00").contains(&31_000));
         assert_eq!(parse_money_token("08"), None);
         assert_eq!(parse_money_token("2026"), None);
+    }
+
+    #[test]
+    fn clock_tokens_are_not_money() {
+        assert!(!money_amounts_on_line("Ημερομηνία Αξίας 28/8/2026 7:00 μ.μ.").contains(&700));
+        assert!(money_amounts_on_line("7:00").is_empty());
+        assert!(money_amounts_on_line("19:30").is_empty());
     }
 
     #[test]
