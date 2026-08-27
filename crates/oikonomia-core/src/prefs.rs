@@ -32,6 +32,10 @@ pub enum Locale {
     En,
     /// Greek.
     El,
+    /// French.
+    Fr,
+    /// German.
+    De,
 }
 
 /// Last role-account picks for a single entity+kind tray post.
@@ -242,6 +246,36 @@ mod tests {
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
         assert_eq!(load_ui_prefs(dir.path()), prefs);
         assert_eq!(load_ui_prefs(dir.path()).locale, Locale::El);
+    }
+
+    #[test]
+    fn locale_round_trips_fr() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let prefs = UiPrefs {
+            locale: Locale::Fr,
+            ..UiPrefs::default()
+        };
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+        assert_eq!(load_ui_prefs(dir.path()), prefs);
+        assert_eq!(load_ui_prefs(dir.path()).locale, Locale::Fr);
+    }
+
+    #[test]
+    fn locale_round_trips_de() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let prefs = UiPrefs {
+            locale: Locale::De,
+            ..UiPrefs::default()
+        };
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+        assert_eq!(load_ui_prefs(dir.path()), prefs);
+        assert_eq!(load_ui_prefs(dir.path()).locale, Locale::De);
     }
 
     #[test]

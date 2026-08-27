@@ -21,7 +21,8 @@ const QUICK_ADD_SAVE_HEIGHT: f64 = 96.0;
 #[must_use]
 pub fn tray_open_label(locale: Locale) -> &'static str {
     match locale {
-        Locale::En => "Open Oikonomia",
+        // FR/DE tray copy is out of this PR.
+        Locale::En | Locale::Fr | Locale::De => "Open Oikonomia",
         Locale::El => "Άνοιγμα Oikonomia",
     }
 }
@@ -30,7 +31,8 @@ pub fn tray_open_label(locale: Locale) -> &'static str {
 #[must_use]
 pub fn tray_quit_label(locale: Locale) -> &'static str {
     match locale {
-        Locale::En => "Quit Oikonomia",
+        // FR/DE tray copy is out of this PR.
+        Locale::En | Locale::Fr | Locale::De => "Quit Oikonomia",
         Locale::El => "Έξοδος από το Oikonomia",
     }
 }
@@ -39,7 +41,8 @@ pub fn tray_quit_label(locale: Locale) -> &'static str {
 #[must_use]
 pub fn quick_add_title(locale: Locale) -> &'static str {
     match locale {
-        Locale::En => "Quick add",
+        // FR/DE tray copy is out of this PR.
+        Locale::En | Locale::Fr | Locale::De => "Quick add",
         Locale::El => "Γρήγορη καταχώριση",
     }
 }
@@ -48,7 +51,8 @@ pub fn quick_add_title(locale: Locale) -> &'static str {
 #[must_use]
 pub fn backup_filter_label(locale: Locale) -> &'static str {
     match locale {
-        Locale::En => "Oikonomia backup",
+        // FR/DE tray copy is out of this PR.
+        Locale::En | Locale::Fr | Locale::De => "Oikonomia backup",
         Locale::El => "Αντίγραφο ασφαλείας Oikonomia",
     }
 }
@@ -57,7 +61,8 @@ pub fn backup_filter_label(locale: Locale) -> &'static str {
 #[must_use]
 pub fn license_filter_label(locale: Locale) -> &'static str {
     match locale {
-        Locale::En => "Oikonomia license",
+        // FR/DE tray copy is out of this PR.
+        Locale::En | Locale::Fr | Locale::De => "Oikonomia license",
         Locale::El => "Άδεια Oikonomia",
     }
 }
@@ -250,5 +255,27 @@ mod tests {
         assert_eq!(license_filter_label(Locale::El), "Άδεια Oikonomia");
         assert_eq!(tray_tooltip(Locale::En), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::El), "Oikonomia");
+        assert_eq!(tray_open_label(Locale::Fr), tray_open_label(Locale::En));
+        assert_eq!(tray_open_label(Locale::De), tray_open_label(Locale::En));
+        assert_eq!(tray_quit_label(Locale::Fr), tray_quit_label(Locale::En));
+        assert_eq!(tray_quit_label(Locale::De), tray_quit_label(Locale::En));
+        assert_eq!(quick_add_title(Locale::Fr), quick_add_title(Locale::En));
+        assert_eq!(quick_add_title(Locale::De), quick_add_title(Locale::En));
+        assert_eq!(
+            backup_filter_label(Locale::Fr),
+            backup_filter_label(Locale::En)
+        );
+        assert_eq!(
+            backup_filter_label(Locale::De),
+            backup_filter_label(Locale::En)
+        );
+        assert_eq!(
+            license_filter_label(Locale::Fr),
+            license_filter_label(Locale::En)
+        );
+        assert_eq!(
+            license_filter_label(Locale::De),
+            license_filter_label(Locale::En)
+        );
     }
 }

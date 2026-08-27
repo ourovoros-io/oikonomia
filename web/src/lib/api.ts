@@ -156,7 +156,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 export type Theme = 'dark' | 'light'
 
 /** UI language, persisted on UiPrefs (plaintext, readable before unlock). */
-export type Locale = 'en' | 'el'
+export type Locale = 'en' | 'el' | 'fr' | 'de'
 
 /** Last role-account picks for a single entity+kind tray post (snake_case matches Rust). */
 export type LastRoleAccounts = {

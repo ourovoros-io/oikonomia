@@ -50,6 +50,7 @@ import {
   vaultBackupHint,
 } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
+import { LOCALES } from '../lib/i18n'
 import { cn } from '../lib/cn'
 import type { Locale } from '../lib/api'
 
@@ -94,48 +95,40 @@ const TEMPLATES: Array<{
   },
 ]
 
-/** Designer-locked language pill. Option labels stay native-script in both locales. */
+/** Designer-locked language pills. Two equal columns so row-2 cells share one left edge. */
 function LanguagePill({
   value,
   onChange,
   ariaLabel,
-  englishLabel,
-  greekLabel,
 }: {
   value: Locale
   onChange: (locale: Locale) => void
   ariaLabel: string
-  englishLabel: string
-  greekLabel: string
 }) {
+  const { t } = useI18n()
   return (
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="inline-flex h-8 items-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
+      className="grid max-w-[14rem] grid-cols-2 rounded-[18px] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
     >
-      {(
-        [
-          { id: 'en', label: englishLabel },
-          { id: 'el', label: greekLabel },
-        ] as const
-      ).map((opt) => {
-        const active = value === opt.id
+      {LOCALES.map((id) => {
+        const active = value === id
         return (
           <button
-            key={opt.id}
+            key={id}
             type="button"
             role="radio"
             aria-checked={active}
-            onClick={() => onChange(opt.id)}
+            onClick={() => onChange(id)}
             className={cn(
-              'inline-flex h-[26px] items-center rounded-full px-3 text-sm font-medium transition',
+              'inline-flex h-[26px] w-full items-center justify-center rounded-full px-3 text-sm font-medium transition',
               active
                 ? 'bg-[#f4f6f4] text-[#131b15] shadow-sm'
                 : 'text-[var(--color-muted)]',
             )}
           >
-            {opt.label}
+            {t(`settings.language.option.${id}`)}
           </button>
         )
       })}
@@ -459,8 +452,6 @@ export function SettingsPage({
           value={locale}
           onChange={setLocale}
           ariaLabel={t('settings.language.title')}
-          englishLabel={t('settings.language.option.en')}
-          greekLabel={t('settings.language.option.el')}
         />
       </CollapsibleSection>
 
