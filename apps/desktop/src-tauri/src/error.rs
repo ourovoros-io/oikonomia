@@ -1,6 +1,7 @@
 //! Serializable errors for the web frontend.
 
 use oikonomia_core::Error as CoreError;
+use oikonomia_update::UpdateError;
 use serde::Serialize;
 
 /// Error payload returned from Tauri commands.
@@ -41,6 +42,15 @@ impl From<CoreError> for CommandError {
 
         Self {
             code: code.to_owned(),
+            message: value.to_string(),
+        }
+    }
+}
+
+impl From<UpdateError> for CommandError {
+    fn from(value: UpdateError) -> Self {
+        Self {
+            code: value.code().to_owned(),
             message: value.to_string(),
         }
     }
