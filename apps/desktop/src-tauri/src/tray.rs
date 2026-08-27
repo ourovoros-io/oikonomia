@@ -1,6 +1,6 @@
 //! System tray: left-click quick-add; menu Open / Quit; close hides windows.
 
-use oikonomia_core::prefs::{load_ui_prefs, Locale};
+use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
