@@ -14,6 +14,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail-closed machine gate: the updater public key must be baked before
+      # CI can go green. Empty/whitespace is not a skip. This is not the
+      # license signing key and is not a private key.
+      - name: Require baked updater public key (fail-closed)
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+
+          path = "apps/desktop/src-tauri/tauri.conf.json"
+          with open(path, encoding="utf-8") as handle:
+              config = json.load(handle)
+          plugins = config.get("plugins")
+          updater = plugins.get("updater") if isinstance(plugins, dict) else None
+          pubkey = updater.get("pubkey") if isinstance(updater, dict) else None
+          if not isinstance(pubkey, str) or not pubkey.strip():
+              print(
+                  "::error::plugins.updater.pubkey is missing or empty in tauri.conf.json"
+              )
+              print("Refusing to pass CI without a baked updater public key.")
+              print("Do not invent a key here; bake the real minisign public key.")
+              sys.exit(1)
+          PY
+
       # Package list from https://v2.tauri.app/start/prerequisites/ (Debian/Ubuntu).
       # perl is required by the vendored OpenSSL build pulled in via rusqlite's
       # bundled-sqlcipher-vendored-openssl feature.
