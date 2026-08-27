@@ -35,21 +35,36 @@ export function isAvailableUpdate(value: UpdateUiState): value is AvailableUpdat
 }
 
 /**
- * Decode an IPC payload into the update enum. Unknown shapes and extra
- * fields become `failed` or a version-only `available` — never a URL.
+ * Wire payload after decode. `idle` means a non-terminal Rust kind
+ * (`idle` / `checking`) — not a finished check, and not Failed.
  */
-export function parseUpdateCheckResult(value: unknown): UpdateCheckResult {
+export type ParsedIpcUpdate = UpdateCheckResult | { kind: 'idle' }
+
+/**
+ * Decode the published Rust enum (`tag = kind`, `rename_all = snake_case`).
+ *
+ * `up_to_date` must map to the internal `upToDate` variant. Treating the
+ * snake_case kind as unknown would paint a successful check as Failed.
+ * `notes`, `url`, `size`, and pubkey never enter the UI union — available
+ * keeps `version` only. Non-terminal `idle` / `checking` become `idle`
+ * so they cannot leak a leftover version into the form.
+ */
+export function parseUpdateCheckResult(value: unknown): ParsedIpcUpdate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { kind: 'failed' }
   }
   const record = value as Record<string, unknown>
-  if (record.kind === 'upToDate') {
+  const kind = record.kind
+  if (kind === 'idle' || kind === 'checking') {
+    return { kind: 'idle' }
+  }
+  if (kind === 'up_to_date' || kind === 'upToDate') {
     return { kind: 'upToDate' }
   }
-  if (record.kind === 'failed') {
+  if (kind === 'failed') {
     return { kind: 'failed' }
   }
-  if (record.kind === 'available' && typeof record.version === 'string') {
+  if (kind === 'available' && typeof record.version === 'string') {
     const version = record.version.trim()
     if (version) return { kind: 'available', version }
   }

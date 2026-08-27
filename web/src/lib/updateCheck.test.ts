@@ -23,6 +23,27 @@ describe('parseUpdateCheckResult', () => {
     })
   })
 
+  test('accepts published snake_case up_to_date', () => {
+    expect(parseUpdateCheckResult({ kind: 'up_to_date' })).toEqual({ kind: 'upToDate' })
+  })
+
+  test('available+notes keeps version and discards notes', () => {
+    const parsed = parseUpdateCheckResult({
+      kind: 'available',
+      version: '0.1.1',
+      notes: 'sanitized plain text from the feed',
+    })
+    expect(parsed).toEqual({ kind: 'available', version: '0.1.1' })
+    expect(parsed).not.toHaveProperty('notes')
+  })
+
+  test('non-terminal idle and checking do not become failed', () => {
+    expect(parseUpdateCheckResult({ kind: 'idle' })).toEqual({ kind: 'idle' })
+    expect(parseUpdateCheckResult({ kind: 'checking', version: '9.9.9' })).toEqual({
+      kind: 'idle',
+    })
+  })
+
   test('drops feed fields the webview must not render', () => {
     const parsed = parseUpdateCheckResult({
       kind: 'available',

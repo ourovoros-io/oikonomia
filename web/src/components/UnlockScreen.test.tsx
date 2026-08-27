@@ -331,6 +331,29 @@ describe('UnlockScreen check for update', () => {
     expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
   })
 
+  test('install returning failed shows Failed and Unlock stays usable', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.1' })
+    vi.mocked(updateInstall).mockResolvedValue({ kind: 'failed' })
+    const onUnlocked = vi.fn()
+    render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Install and restart' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Install and restart' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+    })
+    expect(screen.getByLabelText('Password')).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Unlock' })).not.toBeDisabled()
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(vaultUnlock).toHaveBeenCalledWith('secret')
+    })
+    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+  })
+
   test('failed is Close only — no retry, no Settings', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'failed' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)

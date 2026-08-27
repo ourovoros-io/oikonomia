@@ -141,7 +141,10 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
     const available = update
     setUpdate({ kind: 'installing' })
     try {
-      await updateInstall(available)
+      const result = await updateInstall(available)
+      if (result?.kind === 'failed') {
+        setUpdate({ kind: 'failed' })
+      }
     } catch {
       setUpdate({ kind: 'failed' })
     }
@@ -296,7 +299,7 @@ function UnlockUpdateDialog({
         ) : null}
         {state.kind === 'installing' ? (
           <div
-            className="mt-4 h-1 overflow-hidden rounded-[2px] bg-[#232c26]"
+            className="mt-6 h-1 overflow-hidden rounded-[2px] bg-[#232c26]"
             role="progressbar"
             aria-label={copy.title}
           >

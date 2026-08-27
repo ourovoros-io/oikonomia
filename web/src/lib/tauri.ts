@@ -6,10 +6,10 @@ import {
   readDevUnlockUpdatePreview,
   stubUpdateCheckResult,
   type AvailableUpdate,
-  type UpdateCheckResult,
+  type ParsedIpcUpdate,
 } from './updateCheck'
 
-export type { AvailableUpdate, UpdateCheckResult, UpdateUiState } from './updateCheck'
+export type { AvailableUpdate, ParsedIpcUpdate, UpdateCheckResult, UpdateUiState } from './updateCheck'
 export { isAvailableUpdate, parseUpdateCheckResult, readDevUnlockUpdatePreview }
 
 export type VaultStatus = 'uninitialized' | 'locked' | 'unlocked'
@@ -169,7 +169,7 @@ export async function vaultRestore(opts: {
  * Until `update_check` exists on the backend, a local stub answers so paint
  * and tests stay reviewable.
  */
-export async function updateCheck(): Promise<UpdateCheckResult> {
+export async function updateCheck(): Promise<ParsedIpcUpdate> {
   if (!isTauri()) {
     return stubUpdateCheckResult()
   }
@@ -188,20 +188,28 @@ export async function updateCheck(): Promise<UpdateCheckResult> {
 /**
  * Install the already-checked update. Accepts only {@link AvailableUpdate}
  * so Checking / Failed / Up-to-date cannot request an install.
+ *
+ * The webview passes no URL, endpoint, or pubkey. On success Rust restarts
+ * the app. On `{ kind: "failed" }` the UI shows Failed and unlock stays usable.
  */
-export async function updateInstall(available: AvailableUpdate): Promise<void> {
+export async function updateInstall(
+  available: AvailableUpdate,
+): Promise<{ kind: 'failed' } | undefined> {
   if (!isAvailableUpdate(available)) {
-    return
+    return undefined
   }
   if (!isTauri()) {
-    return
+    return undefined
   }
   try {
-    await invoke<void>('update_install')
+    const raw = await invoke<unknown>('update_install')
+    const parsed = parseUpdateCheckResult(raw)
+    if (parsed.kind === 'failed') return { kind: 'failed' }
+    return undefined
   } catch (err) {
     const cmd = asCommandError(err)
     if (isMissingIpcCommand(cmd, 'update_install')) {
-      return
+      return undefined
     }
     throw cmd
   }

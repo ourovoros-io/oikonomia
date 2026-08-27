@@ -34,6 +34,12 @@ describe('updateCheck / updateInstall wrappers', () => {
     await expect(updateCheck()).resolves.toEqual({ kind: 'upToDate' })
   })
 
+  test('registered update_check accepts snake_case up_to_date', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true })
+    invoke.mockResolvedValue({ kind: 'up_to_date' })
+    await expect(updateCheck()).resolves.toEqual({ kind: 'upToDate' })
+  })
+
   test('registered update_check is parsed and extra feed fields are dropped', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true })
     invoke.mockResolvedValue({
@@ -51,5 +57,13 @@ describe('updateCheck / updateInstall wrappers', () => {
     invoke.mockResolvedValue(undefined)
     await updateInstall({ kind: 'available', version: '0.1.1' })
     expect(invoke).toHaveBeenCalledWith('update_install')
+  })
+
+  test('update_install returns failed when Rust yields { kind: failed }', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true })
+    invoke.mockResolvedValue({ kind: 'failed' })
+    await expect(updateInstall({ kind: 'available', version: '0.1.1' })).resolves.toEqual({
+      kind: 'failed',
+    })
   })
 })
