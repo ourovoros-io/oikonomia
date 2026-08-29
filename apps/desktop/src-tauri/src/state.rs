@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::DEFAULT_LOCK_TIMEOUT_SECS;
 use oikonomia_core::vault::{Vault, VaultStatus, default_data_dir};
+use oikonomia_update::UpdateMachine;
 
 /// Shared state behind Tauri commands.
 pub struct AppState {
@@ -28,6 +29,8 @@ pub struct AppState {
     granted_paths: Mutex<HashSet<PathBuf>>,
     /// Serializes plaintext prefs load-mutate-save.
     prefs_lock: Mutex<()>,
+    /// Unlock-screen update check / install machine. Independent of the vault.
+    update: Arc<Mutex<UpdateMachine>>,
 }
 
 impl AppState {
@@ -52,6 +55,7 @@ impl AppState {
             gate: Arc::new(WatchdogGate::new()),
             granted_paths: Mutex::new(HashSet::new()),
             prefs_lock: Mutex::new(()),
+            update: Arc::new(Mutex::new(UpdateMachine::new())),
         })
     }
 
@@ -71,6 +75,12 @@ impl AppState {
     #[must_use]
     pub fn vault(&self) -> Arc<Mutex<Vault>> {
         Arc::clone(&self.vault)
+    }
+
+    /// Shared update machine. Never awaited from `vault_unlock`.
+    #[must_use]
+    pub fn update_machine(&self) -> Arc<Mutex<UpdateMachine>> {
+        Arc::clone(&self.update)
     }
 
     /// Hold across a prefs load-mutate-save so theme and tray last-used cannot clobber.
@@ -298,6 +308,17 @@ impl WatchdogGate {
 impl Default for WatchdogGate {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Lock the update machine, recovering from poisoning.
+pub fn lock_update(machine: &Mutex<UpdateMachine>) -> std::sync::MutexGuard<'_, UpdateMachine> {
+    match machine.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            machine.clear_poison();
+            poisoned.into_inner()
+        }
     }
 }
 

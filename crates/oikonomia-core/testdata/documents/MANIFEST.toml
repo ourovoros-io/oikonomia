@@ -128,6 +128,16 @@ split = "train"
 rights = "synthetic"
 parser = "invoice_text"
 
+[[documents]]
+id = "greek-bank-embasma"
+path = "synthetic/text/greek_bank_embasma.txt"
+golden = "golden/greek_bank_embasma.json"
+sector = "transfer"
+brand = "generic"
+split = "train"
+rights = "synthetic"
+parser = "invoice_text"
+
 # --- Holdout synthetic ---
 
 [[documents]]

@@ -23,6 +23,8 @@ pub fn tray_open_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Open Oikonomia",
         Locale::El => "Άνοιγμα Oikonomia",
+        Locale::Fr => "Ouvrir Oikonomia",
+        Locale::De => "Oikonomia öffnen",
     }
 }
 
@@ -32,6 +34,8 @@ pub fn tray_quit_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Quit Oikonomia",
         Locale::El => "Έξοδος από το Oikonomia",
+        Locale::Fr => "Quitter Oikonomia",
+        Locale::De => "Oikonomia beenden",
     }
 }
 
@@ -41,6 +45,8 @@ pub fn quick_add_title(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Quick add",
         Locale::El => "Γρήγορη καταχώριση",
+        Locale::Fr => "Saisie rapide",
+        Locale::De => "Schnellerfassung",
     }
 }
 
@@ -50,6 +56,8 @@ pub fn backup_filter_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Oikonomia backup",
         Locale::El => "Αντίγραφο ασφαλείας Oikonomia",
+        Locale::Fr => "Sauvegarde Oikonomia",
+        Locale::De => "Oikonomia-Sicherung",
     }
 }
 
@@ -59,6 +67,8 @@ pub fn license_filter_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Oikonomia license",
         Locale::El => "Άδεια Oikonomia",
+        Locale::Fr => "Licence Oikonomia",
+        Locale::De => "Oikonomia-Lizenz",
     }
 }
 
@@ -234,21 +244,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_labels_switch_en_el() {
+    fn native_labels_switch_en_el_fr_de() {
         assert_eq!(tray_open_label(Locale::En), "Open Oikonomia");
         assert_eq!(tray_open_label(Locale::El), "Άνοιγμα Oikonomia");
+        assert_eq!(tray_open_label(Locale::Fr), "Ouvrir Oikonomia");
+        assert_eq!(tray_open_label(Locale::De), "Oikonomia öffnen");
         assert_eq!(tray_quit_label(Locale::En), "Quit Oikonomia");
         assert_eq!(tray_quit_label(Locale::El), "Έξοδος από το Oikonomia");
+        assert_eq!(tray_quit_label(Locale::Fr), "Quitter Oikonomia");
+        assert_eq!(tray_quit_label(Locale::De), "Oikonomia beenden");
         assert_eq!(quick_add_title(Locale::En), "Quick add");
         assert_eq!(quick_add_title(Locale::El), "Γρήγορη καταχώριση");
+        assert_eq!(quick_add_title(Locale::Fr), "Saisie rapide");
+        assert_eq!(quick_add_title(Locale::De), "Schnellerfassung");
         assert_eq!(backup_filter_label(Locale::En), "Oikonomia backup");
         assert_eq!(
             backup_filter_label(Locale::El),
             "Αντίγραφο ασφαλείας Oikonomia"
         );
+        assert_eq!(backup_filter_label(Locale::Fr), "Sauvegarde Oikonomia");
+        assert_eq!(backup_filter_label(Locale::De), "Oikonomia-Sicherung");
         assert_eq!(license_filter_label(Locale::En), "Oikonomia license");
         assert_eq!(license_filter_label(Locale::El), "Άδεια Oikonomia");
+        assert_eq!(license_filter_label(Locale::Fr), "Licence Oikonomia");
+        assert_eq!(license_filter_label(Locale::De), "Oikonomia-Lizenz");
         assert_eq!(tray_tooltip(Locale::En), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::El), "Oikonomia");
+        assert_eq!(tray_tooltip(Locale::Fr), "Oikonomia");
+        assert_eq!(tray_tooltip(Locale::De), "Oikonomia");
     }
 }

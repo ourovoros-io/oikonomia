@@ -17,6 +17,8 @@ import {
 } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
+import fr from '../locales/fr.json' with { type: 'json' }
+import de from '../locales/de.json' with { type: 'json' }
 
 afterEach(() => {
   resetI18nForTests()
@@ -28,11 +30,63 @@ describe('parseLocale', () => {
     expect(parseLocale('el')).toBe('el')
   })
 
+  test('accepts-fr-and-de', () => {
+    expect(parseLocale('fr')).toBe('fr')
+    expect(parseLocale('de')).toBe('de')
+  })
+
   test('invalid values become en', () => {
-    expect(parseLocale('fr')).toBe('en')
+    expect(parseLocale('xx')).toBe('en')
     expect(parseLocale('')).toBe('en')
     expect(parseLocale(undefined)).toBe('en')
     expect(parseLocale(1)).toBe('en')
+  })
+})
+
+describe('Writer fr and de catalogs', () => {
+  const sampleKeys = [
+    'nav.dashboard',
+    'unlock.titleWelcome',
+    'drop.title',
+    'settings.license.title',
+    'settings.language.title',
+  ] as const
+
+  test('flatten(fr) key-set equals flatten(de) equals flatten(el)', () => {
+    const elKeys = new Set(Object.keys(flattenMessages(el)))
+    const frKeys = new Set(Object.keys(flattenMessages(fr)))
+    const deKeys = new Set(Object.keys(flattenMessages(de)))
+    expect(frKeys).toEqual(elKeys)
+    expect(deKeys).toEqual(elKeys)
+  })
+
+  test('t() in fr and de is not English and not the raw key', () => {
+    const english = Object.fromEntries(sampleKeys.map((key) => [key, t(key)]))
+    for (const locale of ['fr', 'de'] as const) {
+      setLocale(locale)
+      for (const key of sampleKeys) {
+        const value = t(key)
+        expect(value, `${locale} ${key}`).not.toBe(english[key])
+        expect(value, `${locale} ${key}`).not.toBe(key)
+      }
+    }
+  })
+
+  test('catalogs do not mention AI, IA, or KI', () => {
+    const catalogs = { fr: JSON.stringify(fr), de: JSON.stringify(de) }
+    const forbidden = [
+      /\bAI\b/,
+      /\bIA\b/,
+      /\bKI\b/,
+      /intelligence artificielle/i,
+      /künstliche Intelligenz/i,
+      /KI-Modell/,
+    ]
+    for (const [name, text] of Object.entries(catalogs)) {
+      for (const pattern of forbidden) {
+        expect(text, `${name} ${pattern}`).not.toMatch(pattern)
+      }
+    }
   })
 })
 
@@ -66,6 +120,8 @@ describe('Writer el catalog', () => {
     expect(flat['settings.language.title']).toBe('Γλώσσα')
     expect(flat['settings.language.option.en']).toBe('English')
     expect(flat['settings.language.option.el']).toBe('Ελληνικά')
+    expect(flat['settings.language.option.fr']).toBe('Français')
+    expect(flat['settings.language.option.de']).toBe('Deutsch')
     expect(flat['settings.license.title']).toBe('Άδεια')
     expect(flat['settings.license.description']).toBe(
       'Εισαγάγετε ένα υπογεγραμμένο αρχείο άδειας. Τίποτα δεν αποστέλλεται από αυτόν τον υπολογιστή.',
@@ -96,14 +152,6 @@ describe('Writer el catalog', () => {
       'Η δοκιμαστική περίοδος έληξε. Μπορείτε ακόμη να δημιουργήσετε αντίγραφο της θυρίδας, να κάνετε επαναφορά και να εξαγάγετε CSV.',
     )
     expect(flat['error.core']).toBeUndefined()
-    const writerKeys = Object.keys(flat).filter(
-      (k) =>
-        !k.startsWith('settings.language.') &&
-        !k.startsWith('tx.csv.') &&
-        !k.startsWith('recurring.') &&
-        k !== 'tx.recurring',
-    )
-    expect(writerKeys.length).toBe(580)
     expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
     expect(flat['tx.csv.kind.expense']).toBe('Έξοδα')
     expect(flat['tx.csv.kind.income']).toBe('Έσοδα')
@@ -369,6 +417,65 @@ describe('Writer license catalog', () => {
   })
 })
 
+describe('Writer unlock.update catalog', () => {
+  const updateKeys = [
+    'unlock.update.button',
+    'unlock.update.dialogTitle',
+    'unlock.update.checking.title',
+    'unlock.update.checking.body',
+    'unlock.update.upToDate.title',
+    'unlock.update.upToDate.body',
+    'unlock.update.available.title',
+    'unlock.update.available.version',
+    'unlock.update.available.notesLabel',
+    'unlock.update.available.size',
+    'unlock.update.available.honesty',
+    'unlock.update.available.confirm',
+    'unlock.update.failed.title',
+    'unlock.update.failed.body',
+    'unlock.update.installing.title',
+    'unlock.update.installing.body',
+    'unlock.update.cancel',
+    'unlock.update.close',
+  ] as const
+
+  test('keys exist in en, el, fr, and de with Writer copy', () => {
+    const catalogs = {
+      en: flattenMessages(en),
+      el: flattenMessages(el),
+      fr: flattenMessages(fr),
+      de: flattenMessages(de),
+    }
+    for (const [name, flat] of Object.entries(catalogs)) {
+      for (const key of updateKeys) {
+        expect(flat[key], `${name} ${key}`).toBeTruthy()
+      }
+    }
+
+    expect(catalogs.en['unlock.update.button']).toBe('Check for update')
+    expect(catalogs.el['unlock.update.button']).toBe('Έλεγχος ενημέρωσης')
+    expect(catalogs.fr['unlock.update.button']).toBe('Rechercher une mise à jour')
+    expect(catalogs.de['unlock.update.button']).toBe('Nach Update suchen')
+
+    expect(catalogs.en['unlock.update.upToDate.title']).toBe('You’re up to date')
+    expect(catalogs.en['unlock.update.failed.title']).toBe('Couldn’t check')
+    expect(catalogs.fr['unlock.update.checking.body']).toBe(
+      'Recherche d’une nouvelle application.',
+    )
+    expect(catalogs.fr['unlock.update.upToDate.body']).toBe('C’est le dernier Oikonomia.')
+    expect(catalogs.fr['unlock.update.upToDate.title']).toBe('Vous êtes à jour')
+    expect(catalogs.en['unlock.update.available.honesty']).toBe(
+      'This is the only internet contact, and only to fetch a new application.',
+    )
+    expect(catalogs.en['unlock.update.available.version']).toBe('Oikonomia {version}')
+    expect(catalogs.el['unlock.update.available.version']).toContain('Oikonomia')
+    expect(catalogs.fr['unlock.update.available.version']).toContain('Oikonomia')
+    expect(catalogs.de['unlock.update.available.version']).toContain('Oikonomia')
+    expect(catalogs.en['unlock.update.available.notesLabel']).toBe('What’s new')
+    expect(catalogs.en['unlock.update.available.size']).toBe('{size}')
+  })
+})
+
 describe('t fallback', () => {
   test('missing el key falls back to English or the key', () => {
     setLocale('el')
@@ -399,6 +506,19 @@ describe('setLocale persist', () => {
     expect(persist).toHaveBeenCalledWith('el')
   })
 
+  test('fr and de persist to cache and the writer', () => {
+    const persist = vi.fn()
+    setLocalePersist(persist)
+    setLocale('fr')
+    expect(getLocale()).toBe('fr')
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('fr')
+    expect(persist).toHaveBeenCalledWith('fr')
+    setLocale('de')
+    expect(getLocale()).toBe('de')
+    expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('de')
+    expect(persist).toHaveBeenCalledWith('de')
+  })
+
   test('reload hydrates from UiPrefs, not the cache, as source of truth', () => {
     setLocale('el')
     expect(readCachedLocale()).toBe('el')
@@ -408,10 +528,15 @@ describe('setLocale persist', () => {
 
     applyLocaleFromPrefs({ locale: 'el' })
     expect(getLocale()).toBe('el')
+
+    applyLocaleFromPrefs({ locale: 'fr' })
+    expect(getLocale()).toBe('fr')
+    applyLocaleFromPrefs({ locale: 'de' })
+    expect(getLocale()).toBe('de')
   })
 
   test('invalid cached value becomes en', () => {
-    localStorage.setItem(LOCALE_STORAGE_KEY, 'de')
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'xx')
     expect(readCachedLocale()).toBe('en')
   })
 

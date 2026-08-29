@@ -29,7 +29,7 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 - Reports: trial balance, profit & loss, balance sheet
 - Dashboard (MTD income/expense, assets)
 - Dark / light theme; locale money formatting
-- UI language: English and Ελληνικά; switch in Settings; persists across relaunch
+- UI language: English, Ελληνικά, Français, and Deutsch; switch in Settings; persists across relaunch
 
 ## Prerequisites
 

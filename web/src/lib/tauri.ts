@@ -1,4 +1,16 @@
 import { invoke } from '@tauri-apps/api/core'
+import {
+  isAvailableUpdate,
+  isMissingIpcCommand,
+  parseUpdateCheckResult,
+  readDevUnlockUpdatePreview,
+  stubUpdateCheckResult,
+  type AvailableUpdate,
+  type ParsedIpcUpdate,
+} from './updateCheck'
+
+export type { AvailableUpdate, ParsedIpcUpdate, UpdateCheckResult, UpdateUiState } from './updateCheck'
+export { isAvailableUpdate, parseUpdateCheckResult, readDevUnlockUpdatePreview }
 
 export type VaultStatus = 'uninitialized' | 'locked' | 'unlocked'
 
@@ -29,7 +41,9 @@ function asCommandError(err: unknown): CommandError {
 
 export async function vaultStatus(): Promise<VaultStatus> {
   if (!isTauri()) {
-    return 'uninitialized'
+    // Designer QA of the six unlock-update frames needs Welcome chrome.
+    // Dead in production: `readDevUnlockUpdatePreview` is DEV-gated.
+    return readDevUnlockUpdatePreview() ? 'locked' : 'uninitialized'
   }
   return invoke<VaultStatus>('vault_status')
 }
@@ -145,5 +159,58 @@ export async function vaultRestore(opts: {
     return await invoke<string | null>('vault_restore', payload)
   } catch (err) {
     throw asCommandError(err)
+  }
+}
+
+/**
+ * Ask Rust whether a new application is available. The webview only renders
+ * the returned enum — it does not fetch, and it does not see a download URL.
+ *
+ * Until `update_check` exists on the backend, a local stub answers so paint
+ * and tests stay reviewable.
+ */
+export async function updateCheck(): Promise<ParsedIpcUpdate> {
+  if (!isTauri()) {
+    return stubUpdateCheckResult()
+  }
+  try {
+    const raw = await invoke<unknown>('update_check')
+    return parseUpdateCheckResult(raw)
+  } catch (err) {
+    const cmd = asCommandError(err)
+    if (isMissingIpcCommand(cmd, 'update_check')) {
+      return stubUpdateCheckResult()
+    }
+    return { kind: 'failed' }
+  }
+}
+
+/**
+ * Install the already-checked update. Accepts only {@link AvailableUpdate}
+ * so Checking / Failed / Up-to-date cannot request an install.
+ *
+ * The webview passes no URL, endpoint, or pubkey. On success Rust restarts
+ * the app. On `{ kind: "failed" }` the UI shows Failed and unlock stays usable.
+ */
+export async function updateInstall(
+  available: AvailableUpdate,
+): Promise<{ kind: 'failed' } | undefined> {
+  if (!isAvailableUpdate(available)) {
+    return undefined
+  }
+  if (!isTauri()) {
+    return undefined
+  }
+  try {
+    const raw = await invoke<unknown>('update_install')
+    const parsed = parseUpdateCheckResult(raw)
+    if (parsed.kind === 'failed') return { kind: 'failed' }
+    return undefined
+  } catch (err) {
+    const cmd = asCommandError(err)
+    if (isMissingIpcCommand(cmd, 'update_install')) {
+      return undefined
+    }
+    throw cmd
   }
 }

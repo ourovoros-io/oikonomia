@@ -1,0 +1,28 @@
+[package]
+name = "oikonomia-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Signed update-check wrapper for the Oikonomia desktop shell (no vault, no license I/O)"
+
+[dependencies]
+base64 = { workspace = true }
+log = "0.4"
+minisign-verify = "0.2"
+semver = "1"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+url = { version = "2", features = ["serde"] }
+
+[dev-dependencies]
+httptest = "0.16"
+minisign = "0.7"
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

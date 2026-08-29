@@ -365,8 +365,33 @@ export function TransactionsPage({ entity }: Props) {
     }
   }
 
+  /**
+   * Blank new-entry baseline. Close and applySuggestion only write fields
+   * the next source provides, so leftover description/amount/reference
+   * would otherwise survive a sparse drop.
+   */
+  function resetDraft() {
+    setKind('expense')
+    setBillStatus('paid')
+    setDate(todayISO())
+    setDescription('')
+    setReference('')
+    setAmount('')
+    setPendingDoc(null)
+    setPendingAnalysis(null)
+    setScanNotes(null)
+    setEditId(null)
+    applyKindDefaults('expense', accounts)
+  }
+
+  function closeForm() {
+    if (busy) return
+    resetDraft()
+    setShowForm(false)
+  }
+
   function openNewEntry() {
-    applyKindDefaults(kind, accounts)
+    resetDraft()
     setShowForm(true)
   }
 
@@ -409,6 +434,7 @@ export function TransactionsPage({ entity }: Props) {
   }
 
   function applySuggestion(s: DocumentSuggestion, source: PendingDocSource) {
+    resetDraft()
     setShowForm(true)
     setPendingDoc(source)
     setPendingAnalysis(JSON.stringify(s))
@@ -416,11 +442,14 @@ export function TransactionsPage({ entity }: Props) {
 
     if (s.kind === 'bill') {
       setKind('bill')
+      applyKindDefaults('bill', accounts)
       setBillStatus(s.bill_unpaid ? 'unpaid' : 'paid')
     } else if (s.kind === 'income') {
       setKind('income')
+      applyKindDefaults('income', accounts)
     } else {
       setKind('expense')
+      applyKindDefaults('expense', accounts)
     }
 
     if (s.entry_date) setDate(s.entry_date)
@@ -487,13 +516,7 @@ export function TransactionsPage({ entity }: Props) {
       } else {
         await api.entryPostSimple(input)
       }
-      setDescription('')
-      setReference('')
-      setAmount('')
-      setPendingDoc(null)
-      setPendingAnalysis(null)
-      setScanNotes(null)
-      setEditId(null)
+      resetDraft()
       setShowForm(false)
       await reload()
     } catch (err) {
@@ -579,6 +602,8 @@ export function TransactionsPage({ entity }: Props) {
     const debit = view.lines.find((l) => l.debit.amount_minor > 0)
     const credit = view.lines.find((l) => l.credit.amount_minor > 0)
     if (!debit || !credit) return
+
+    resetDraft()
 
     const debitType = accountMap.get(debit.account_id)?.account_type
     const creditType = accountMap.get(credit.account_id)?.account_type
@@ -698,14 +723,7 @@ export function TransactionsPage({ entity }: Props) {
         open={showForm}
         title={editId ? t('tx.editTitle') : t('tx.newTitle')}
         description={editId ? t('tx.editDescription') : t('tx.newDescription')}
-        onClose={() => {
-          if (!busy) {
-            setShowForm(false)
-            setPendingDoc(null)
-            setPendingAnalysis(null)
-            setEditId(null)
-          }
-        }}
+        onClose={closeForm}
       >
         <div className="mb-5">
           <Segmented<EntryKind>
@@ -928,12 +946,7 @@ export function TransactionsPage({ entity }: Props) {
               type="button"
               variant="secondary"
               disabled={busy}
-              onClick={() => {
-                setShowForm(false)
-                setPendingDoc(null)
-                setPendingAnalysis(null)
-                setEditId(null)
-              }}
+              onClick={closeForm}
             >
               {t('common.cancel')}
             </Button>

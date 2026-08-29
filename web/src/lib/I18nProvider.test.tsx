@@ -103,4 +103,51 @@ describe('I18nProvider', () => {
       expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('el')
     })
   })
+
+  test('last-used fr persists on hydrate from getLocale', async () => {
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'en')
+    vi.mocked(api.getLocale).mockResolvedValue('fr')
+    render(
+      <I18nProvider>
+        <Probe />
+      </I18nProvider>,
+    )
+    await waitFor(() => {
+      expect(getLocale()).toBe('fr')
+      expect(screen.getByText('fr')).toBeTruthy()
+    })
+  })
+
+  test('last-used de persists on hydrate from prefs when getLocale fails', async () => {
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'en')
+    vi.mocked(api.getLocale).mockRejectedValue(new Error('no getLocale'))
+    vi.mocked(api.getUiPrefs).mockResolvedValue({
+      theme: 'dark',
+      last_entity_id: null,
+      last_accounts_by_entity_kind: {},
+      locale: 'de',
+    })
+    render(
+      <I18nProvider>
+        <Probe />
+      </I18nProvider>,
+    )
+    await waitFor(() => {
+      expect(getLocale()).toBe('de')
+    })
+  })
+
+  test('last-used locale persists on hydrate from localStorage when commands fail', async () => {
+    localStorage.setItem(LOCALE_STORAGE_KEY, 'fr')
+    vi.mocked(api.getLocale).mockRejectedValue(new Error('no tauri'))
+    vi.mocked(api.getUiPrefs).mockRejectedValue(new Error('no tauri'))
+    render(
+      <I18nProvider>
+        <Probe />
+      </I18nProvider>,
+    )
+    await waitFor(() => {
+      expect(getLocale()).toBe('fr')
+    })
+  })
 })
