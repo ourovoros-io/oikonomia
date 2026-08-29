@@ -34,6 +34,8 @@ struct Golden {
     bill_unpaid: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reference: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -259,6 +261,9 @@ fn assert_against_golden(id: &str, got: &DocumentSuggestion, golden: &Golden) {
             got.description
         );
     }
+    if let Some(reference) = golden.reference.as_deref() {
+        assert_eq!(got.reference.as_deref(), Some(reference), "{id}: reference");
+    }
 }
 
 fn is_private_row(entry: &ManifestEntry) -> bool {
@@ -284,6 +289,7 @@ fn write_golden(path: &Path, suggestion: &DocumentSuggestion) {
         merchant_aliases: Vec::new(),
         bill_unpaid: Some(suggestion.bill_unpaid),
         description: suggestion.description.clone(),
+        reference: suggestion.reference.clone(),
     };
     let json = serde_json::to_string_pretty(&golden).expect("serialize golden");
     fs::write(path, format!("{json}\n")).expect("write golden");
@@ -394,6 +400,23 @@ fn text_mime_analyze_path_matches_invoice_reader() {
     assert_eq!(via_analyze.kind, via_parse.kind);
     assert_eq!(via_analyze.merchant, via_parse.merchant);
     assert_eq!(via_analyze.bill_unpaid, via_parse.bill_unpaid);
+
+    let transfer = fs::read(root.join("synthetic/text/greek_bank_embasma.txt")).expect("transfer");
+    let transfer_parse = parse_invoice_text(&String::from_utf8_lossy(&transfer));
+    let transfer_analyze = analyze_document_bytes(
+        "greek_bank_embasma.txt",
+        "text/plain",
+        &transfer,
+        &[],
+        "EUR",
+        None,
+    )
+    .expect("analyze transfer text/plain");
+    assert_eq!(transfer_analyze.amount_minor, transfer_parse.amount_minor);
+    assert_eq!(transfer_analyze.entry_date, transfer_parse.entry_date);
+    assert_eq!(transfer_analyze.kind, transfer_parse.kind);
+    assert_eq!(transfer_analyze.merchant, transfer_parse.merchant);
+    assert_eq!(transfer_analyze.reference, transfer_parse.reference);
 }
 
 #[test]
