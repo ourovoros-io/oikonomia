@@ -95,7 +95,7 @@ const TEMPLATES: Array<{
   },
 ]
 
-/** Designer-locked language pills. Two equal columns so row-2 cells share one left edge. */
+/** Language pills: one row of equal-width segments (fr columns under w-fit size to the widest autonym). */
 function LanguagePill({
   value,
   onChange,
@@ -110,7 +110,7 @@ function LanguagePill({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="grid max-w-[14rem] grid-cols-2 rounded-[18px] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
+      className="grid w-fit grid-flow-col auto-cols-fr rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
     >
       {LOCALES.map((id) => {
         const active = value === id

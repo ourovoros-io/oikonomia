@@ -61,8 +61,9 @@ describe('SettingsPage i18n', () => {
     expect(screen.getAllByRole('radio')).toHaveLength(4)
     const group = screen.getByRole('radiogroup', { name: 'Γλώσσα' })
     expect(group.className).toMatch(/\bgrid\b/)
-    expect(group.className).toMatch(/\bgrid-cols-2\b/)
-    expect(group.className).not.toMatch(/\binline-flex\b/)
+    expect(group.className).toMatch(/\bgrid-flow-col\b/)
+    expect(group.className).toMatch(/\bw-fit\b/)
+    expect(group.className).not.toMatch(/\bgrid-cols-2\b/)
     expect(group.className).not.toMatch(/\bflex-wrap\b/)
     for (const radio of screen.getAllByRole('radio')) {
       expect(radio.className).toMatch(/\bw-full\b/)
