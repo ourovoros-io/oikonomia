@@ -462,34 +462,36 @@ export function SettingsPage({
         defaultOpen
       >
         <div className="space-y-4">
-          {license?.state === 'trial' && license.days_remaining != null ? (
-            <div className="inline-flex items-center rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-sm font-medium text-[var(--color-accent)]">
-              {t('settings.trial.banner.active', { n: license.days_remaining })}
-            </div>
-          ) : null}
-          {license?.state === 'licensed' && license.licensed_until ? (
-            <div className="inline-flex items-center rounded-full bg-[var(--color-surface-elevated)] px-3 py-1 text-sm font-medium text-[var(--color-fg-secondary)]">
-              {t('settings.license.licensedUntil', {
-                date: formatLicensedUntil(license.licensed_until, locale),
-              })}
-            </div>
-          ) : null}
-          {license?.state === 'expired' ? (
-            <div className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-3 py-1 text-sm font-medium text-[var(--color-warning)]">
-              {licenseExpiredBanner(license)}
-            </div>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-3">
+            {license?.state === 'trial' && license.days_remaining != null ? (
+              <div className="inline-flex items-center rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-sm font-medium text-[var(--color-accent)]">
+                {t('settings.trial.banner.active', { n: license.days_remaining })}
+              </div>
+            ) : null}
+            {license?.state === 'licensed' && license.licensed_until ? (
+              <div className="inline-flex items-center rounded-full bg-[var(--color-surface-elevated)] px-3 py-1 text-sm font-medium text-[var(--color-fg-secondary)]">
+                {t('settings.license.licensedUntil', {
+                  date: formatLicensedUntil(license.licensed_until, locale),
+                })}
+              </div>
+            ) : null}
+            {license?.state === 'expired' ? (
+              <div className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-3 py-1 text-sm font-medium text-[var(--color-warning)]">
+                {licenseExpiredBanner(license)}
+              </div>
+            ) : null}
+            <Button
+              variant="secondary"
+              busy={licenseBusy}
+              onClick={() => void onImportLicense()}
+            >
+              <Upload className="size-3.5" />
+              {license?.state === 'licensed'
+                ? t('settings.license.replace')
+                : t('settings.license.import')}
+            </Button>
+          </div>
           <ErrorBanner message={licenseError} className="" />
-          <Button
-            variant="secondary"
-            busy={licenseBusy}
-            onClick={() => void onImportLicense()}
-          >
-            <Upload className="size-3.5" />
-            {license?.state === 'licensed'
-              ? t('settings.license.replace')
-              : t('settings.license.import')}
-          </Button>
         </div>
       </CollapsibleSection>
 
@@ -520,7 +522,7 @@ export function SettingsPage({
         description={t('settings.masterPassword.description')}
         icon={<KeyRound className="size-4" />}
       >
-        <form onSubmit={onChangePassword} className="grid gap-4 sm:grid-cols-3">
+        <form onSubmit={onChangePassword} className="grid max-w-3xl gap-4 sm:grid-cols-3">
           <Field label={t('settings.currentPassword')}>
             <Input
               type="password"
@@ -672,27 +674,6 @@ export function SettingsPage({
         icon={<Building2 className="size-4" />}
         tone="success"
         flush
-        actions={
-          <div className="flex max-w-[16rem] flex-col items-end gap-1">
-            <Button
-              size="sm"
-              disabled={!addAnotherBook}
-              title={addAnotherBook ? undefined : t('license.entityLimitHint')}
-              onClick={() => {
-                if (!addAnotherBook) return
-                setShowCreate(true)
-              }}
-            >
-              <Plus className="size-3.5" />
-              {t('settings.entities.new')}
-            </Button>
-            {addAnotherBook ? null : (
-              <p className="text-right text-[11px] leading-snug text-[var(--color-muted)]">
-                {t('license.entityLimitHint')}
-              </p>
-            )}
-          </div>
-        }
       >
         {entities.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[var(--color-muted)]">
@@ -737,6 +718,22 @@ export function SettingsPage({
             ))}
           </ul>
         )}
+        <div className="flex flex-wrap items-center gap-3 border-t border-[var(--color-border)] px-5 py-3.5">
+          {addAnotherBook ? null : (
+            <p className="text-xs leading-snug text-[var(--color-muted)]">
+              {t('license.entityLimitHint')}
+            </p>
+          )}
+          <Button
+            size="sm"
+            className="ml-auto"
+            disabled={!addAnotherBook}
+            onClick={() => setShowCreate(true)}
+          >
+            <Plus className="size-3.5" />
+            {t('settings.entities.new')}
+          </Button>
+        </div>
       </CollapsibleSection>
     </div>
   )

@@ -64,6 +64,10 @@ async function expandVaultBackup() {
   await userEvent.click(screen.getByRole('button', { name: /vault backup/i }))
 }
 
+async function expandEntities() {
+  await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+}
+
 describe('SettingsPage license', () => {
   test('Language is first; License is present without Buy or extra trial helper', async () => {
     render(
@@ -214,6 +218,7 @@ describe('SettingsPage license', () => {
         onSelectEntity={() => {}}
       />,
     )
+    await expandEntities()
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /new entity/i })).toBeEnabled()
     })
@@ -240,6 +245,7 @@ describe('SettingsPage license', () => {
     await waitFor(() => {
       expect(screen.getByText('12 days left in your trial')).toBeTruthy()
     })
+    await expandEntities()
     const add = screen.getByRole('button', { name: /new entity/i })
     expect(add).toBeDisabled()
     expect(
@@ -271,6 +277,7 @@ describe('SettingsPage license', () => {
         onSelectEntity={onSelectEntity}
       />,
     )
+    await expandEntities()
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /new entity/i })).toBeEnabled()
     })
@@ -296,6 +303,7 @@ describe('SettingsPage license', () => {
         onSelectEntity={() => {}}
       />,
     )
+    await expandEntities()
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /new entity/i })).toBeEnabled()
     })
@@ -327,6 +335,7 @@ describe('SettingsPage license', () => {
         onSelectEntity={() => {}}
       />,
     )
+    await expandEntities()
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /new entity/i })).toBeEnabled()
     })
@@ -535,5 +544,73 @@ describe('SettingsPage vault backup', () => {
     })
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(vaultRestore).not.toHaveBeenCalled()
+  })
+})
+
+describe('SettingsPage section design', () => {
+  test('New entity lives in the Entities body, gated without a native tooltip', async () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /new entity/i })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    const newEntity = await screen.findByRole('button', { name: /new entity/i })
+    expect(newEntity).toBeDisabled()
+    expect(newEntity).not.toHaveAttribute('title')
+    expect(
+      screen.getAllByText('Import a signed license to keep more than one book in this vault.'),
+    ).toHaveLength(1)
+  })
+
+  test('licensed vault enables New entity and drops the limit hint', async () => {
+    vi.mocked(api.licenseStatus).mockResolvedValue({
+      state: 'licensed',
+      licensed_until: '2027-08-20',
+    })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    const newEntity = await screen.findByRole('button', { name: /new entity/i })
+    await waitFor(() => {
+      expect(newEntity).toBeEnabled()
+    })
+    expect(screen.queryByText(/keep more than one book/i)).toBeNull()
+  })
+
+  test('trial pill and Import license share one centered row', async () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    const pill = await screen.findByText('12 days left in your trial')
+    const row = pill.parentElement as HTMLElement
+    expect(row.className).toMatch(/\bflex\b/)
+    expect(row.className).toMatch(/\bitems-center\b/)
+    expect(row).toContainElement(screen.getByRole('button', { name: /import license/i }))
+  })
+
+  test('master password form is width-constrained', async () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /master password/i }))
+    const submit = await screen.findByRole('button', { name: /change password/i })
+    expect(submit.closest('form')?.className).toMatch(/\bmax-w-3xl\b/)
   })
 })
