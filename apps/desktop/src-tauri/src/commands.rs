@@ -31,7 +31,8 @@ use oikonomia_core::ledger::{
     update_account, update_entity, update_recurring_template, void_entry,
 };
 use oikonomia_core::license::{
-    LicenseStatus, LicenseVerifier, install_license, record_trial_start, require_writes_allowed,
+    LicenseStatus, LicenseVerifier, install_license, license_status_with, record_trial_start_with,
+    require_writes_allowed_with,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
@@ -125,9 +126,13 @@ pub async fn vault_unlock(
 }
 
 /// Stamp `trial_started_at` once after a successful vault init or unlock.
+///
+/// Also mirrors the stamp to the platform's secondary store (the macOS
+/// Keychain), so deleting the app-data directory alone cannot reset the
+/// trial.
 fn stamp_trial_start(state: &AppState) -> CommandResult<()> {
     let _guard = state.lock_prefs();
-    record_trial_start(state.data_dir())?;
+    record_trial_start_with(state.data_dir(), crate::trial_store::default_trial_store())?;
     Ok(())
 }
 
@@ -352,7 +357,11 @@ pub(crate) struct LicenseStatusPayload {
 #[tauri::command]
 pub fn license_status(state: State<'_, AppState>) -> CommandResult<LicenseStatusPayload> {
     let verifier = LicenseVerifier::production()?;
-    let status = oikonomia_core::license::license_status(state.data_dir(), &verifier)?;
+    let status = license_status_with(
+        state.data_dir(),
+        &verifier,
+        crate::trial_store::default_trial_store(),
+    )?;
     Ok(LicenseStatusPayload {
         status,
         buy_url: BUY_URL.to_owned(),
@@ -391,7 +400,12 @@ pub async fn license_install(
     })?;
 
     let verifier = LicenseVerifier::production()?;
-    let status = install_license(state.data_dir(), &path, &verifier)?;
+    install_license(state.data_dir(), &path, &verifier)?;
+    let status = license_status_with(
+        state.data_dir(),
+        &verifier,
+        crate::trial_store::default_trial_store(),
+    )?;
     Ok(Some(LicenseStatusPayload {
         status,
         buy_url: BUY_URL.to_owned(),
@@ -1503,7 +1517,12 @@ pub async fn document_analyze_path(
 
 fn require_writes(state: &AppState) -> CommandResult<()> {
     let verifier = LicenseVerifier::production()?;
-    require_writes_allowed(state.data_dir(), &verifier).map_err(CommandError::from)
+    require_writes_allowed_with(
+        state.data_dir(),
+        &verifier,
+        crate::trial_store::default_trial_store(),
+    )
+    .map_err(CommandError::from)
 }
 
 /// Accept a webview-supplied path only if the user handed it to the app

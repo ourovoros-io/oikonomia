@@ -13,6 +13,7 @@ mod error;
 mod nav_guard;
 mod state;
 mod tray;
+mod trial_store;
 mod update;
 mod update_exec;
 mod update_key;

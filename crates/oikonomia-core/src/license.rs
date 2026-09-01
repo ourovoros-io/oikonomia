@@ -136,6 +136,39 @@ pub fn license_path(data_dir: &Path) -> PathBuf {
     data_dir.join(LICENSE_FILE_NAME)
 }
 
+/// Secondary, best-effort location for the trial-start stamp.
+///
+/// The primary stamp lives in `ui-prefs.json`; a platform can additionally
+/// mirror it somewhere that survives deleting the app-data directory (on
+/// macOS, the login Keychain). Reading is used to recover the earliest known
+/// stamp; writing is best-effort and must never fail the caller, so
+/// implementations swallow their own errors (logging is appropriate).
+pub trait TrialStampStore {
+    /// The previously stored stamp (RFC3339, UTC), if any.
+    fn read_stamp(&self) -> Option<String>;
+
+    /// Best-effort write of `rfc3339`. Implementations must not panic and
+    /// must not propagate failure; a write that cannot be performed (for
+    /// example, an unavailable Keychain) is silently dropped.
+    fn write_stamp(&self, rfc3339: &str);
+}
+
+/// A [`TrialStampStore`] with no secondary location: reads are always
+/// absent, writes are always no-ops.
+///
+/// Used by every caller that has not opted into a secondary stamp (all
+/// pre-Task-16 call sites, and non-macOS desktop builds), so the trial
+/// behaves exactly as it did before the secondary store existed.
+pub struct NoTrialStampStore;
+
+impl TrialStampStore for NoTrialStampStore {
+    fn read_stamp(&self) -> Option<String> {
+        None
+    }
+
+    fn write_stamp(&self, _rfc3339: &str) {}
+}
+
 /// Whether mutating ledger / vault-password commands may proceed.
 ///
 /// Only [`LicenseState::Expired`] is blocked. `none` (trial not yet stamped),
@@ -152,7 +185,23 @@ pub fn writes_allowed(status: &LicenseStatus) -> bool {
 /// [`Error::LicenseExpired`] when the current status is expired;
 /// [`Error::Crypto`] if the verifier cannot be used (caller supplies it).
 pub fn require_writes_allowed(data_dir: &Path, verifier: &LicenseVerifier) -> Result<()> {
-    let status = license_status(data_dir, verifier)?;
+    require_writes_allowed_with(data_dir, verifier, &NoTrialStampStore)
+}
+
+/// Same as [`require_writes_allowed`], additionally consulting `store` (the
+/// secondary trial stamp) so a deleted app-data directory alone cannot
+/// resurrect writes that a still-expired trial should block.
+///
+/// # Errors
+///
+/// [`Error::LicenseExpired`] when the current status is expired;
+/// [`Error::Crypto`] if the verifier cannot be used (caller supplies it).
+pub fn require_writes_allowed_with(
+    data_dir: &Path,
+    verifier: &LicenseVerifier,
+    store: &dyn TrialStampStore,
+) -> Result<()> {
+    let status = license_status_with(data_dir, verifier, store)?;
     if writes_allowed(&status) {
         Ok(())
     } else {
@@ -206,10 +255,26 @@ pub fn require_entity_create_allowed(
 /// Does not fail on a missing or unreadable `.lic` (that is treated as no
 /// license). Prefs load is infallible.
 pub fn license_status(data_dir: &Path, verifier: &LicenseVerifier) -> Result<LicenseStatus> {
-    Ok(license_status_at(
+    license_status_with(data_dir, verifier, &NoTrialStampStore)
+}
+
+/// Same as [`license_status`], additionally consulting `store` (the
+/// secondary trial stamp) when no valid license file is installed.
+///
+/// # Errors
+///
+/// Does not fail on a missing or unreadable `.lic` (that is treated as no
+/// license). Prefs load is infallible.
+pub fn license_status_with(
+    data_dir: &Path,
+    verifier: &LicenseVerifier,
+    store: &dyn TrialStampStore,
+) -> Result<LicenseStatus> {
+    Ok(license_status_at_with(
         data_dir,
         verifier,
         OffsetDateTime::now_utc(),
+        store,
     ))
 }
 
@@ -219,6 +284,24 @@ pub fn license_status_at(
     data_dir: &Path,
     verifier: &LicenseVerifier,
     now: OffsetDateTime,
+) -> LicenseStatus {
+    license_status_at_with(data_dir, verifier, now, &NoTrialStampStore)
+}
+
+/// Same as [`license_status_at`], additionally consulting `store` (the
+/// secondary trial stamp).
+///
+/// The trial branch uses the *earliest* of the prefs stamp and the store
+/// stamp: whichever the two records the older date wins, so a still-running
+/// trial cannot be reset by deleting one of the two locations. A stamp that
+/// is present in either location but fails to parse as RFC3339 is treated as
+/// expired, matching the historical single-stamp behavior for corrupt data.
+#[must_use]
+pub fn license_status_at_with(
+    data_dir: &Path,
+    verifier: &LicenseVerifier,
+    now: OffsetDateTime,
+    store: &dyn TrialStampStore,
 ) -> LicenseStatus {
     let today = now.date();
     if let Some(file) = load_verified_license(data_dir, verifier) {
@@ -230,11 +313,12 @@ pub fn license_status_at(
     }
 
     let prefs = load_ui_prefs(data_dir);
-    let Some(raw) = prefs.trial_started_at.as_deref() else {
-        return LicenseStatus::none();
-    };
-    let Some(start) = OffsetDateTime::parse(raw, &Rfc3339).ok() else {
-        return LicenseStatus::expired();
+    let store_raw = store.read_stamp();
+    let start = match earliest_trial_start(prefs.trial_started_at.as_deref(), store_raw.as_deref())
+    {
+        TrialStartLookup::NotStarted => return LicenseStatus::none(),
+        TrialStartLookup::Corrupt => return LicenseStatus::expired(),
+        TrialStartLookup::Started(start) => start,
     };
     let Some(end) = start.checked_add(Duration::days(TRIAL_DAYS)) else {
         return LicenseStatus::expired();
@@ -245,6 +329,41 @@ pub fn license_status_at(
     } else {
         LicenseStatus::expired()
     }
+}
+
+/// Outcome of resolving the trial-start instant from the primary (prefs)
+/// and secondary (store) raw stamps. See [`earliest_trial_start`].
+enum TrialStartLookup {
+    /// Neither location has a stamp: no trial recorded yet.
+    NotStarted,
+    /// A stamp is present in at least one location but fails to parse as
+    /// RFC3339 (matches the historical single-stamp "corrupt = expired"
+    /// behavior).
+    Corrupt,
+    /// The earliest of the stamps that did parse.
+    Started(OffsetDateTime),
+}
+
+/// Earliest parsed trial-start instant across the primary (`prefs`) and
+/// secondary (`store`) raw stamps. See [`TrialStartLookup`] for the three
+/// possible outcomes.
+fn earliest_trial_start(prefs: Option<&str>, store: Option<&str>) -> TrialStartLookup {
+    if prefs.is_none() && store.is_none() {
+        return TrialStartLookup::NotStarted;
+    }
+    let mut earliest: Option<OffsetDateTime> = None;
+    for raw in [prefs, store].into_iter().flatten() {
+        match parse_rfc3339(raw) {
+            Some(parsed) => earliest = Some(earliest.map_or(parsed, |current| current.min(parsed))),
+            None => return TrialStartLookup::Corrupt,
+        }
+    }
+    earliest.map_or(TrialStartLookup::NotStarted, TrialStartLookup::Started)
+}
+
+/// Parse `raw` as an RFC3339 timestamp, or `None` if it is not one.
+fn parse_rfc3339(raw: &str) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(raw, &Rfc3339).ok()
 }
 
 /// Verify `source` and atomically copy the original bytes to `license.lic`.
@@ -299,12 +418,58 @@ fn replace_license_file(tmp: &Path, dest: &Path) -> Result<()> {
 ///
 /// [`Error::Io`] when prefs cannot be written.
 pub fn record_trial_start(data_dir: &Path) -> Result<()> {
+    record_trial_start_with(data_dir, &NoTrialStampStore)
+}
+
+/// Same as [`record_trial_start`], additionally reading and writing a
+/// secondary stamp via `store`.
+///
+/// The canonical stamp is the earliest parseable RFC3339 timestamp between
+/// the prefs stamp and the store stamp (or now, if neither is present), and
+/// is written to both: prefs unconditionally, the store on a best-effort
+/// basis (a write failure there is swallowed by [`TrialStampStore`]'s
+/// contract). This is what lets the trial survive deleting `ui-prefs.json`
+/// alone: the secondary store still has the original date to restore.
+///
+/// A stamp that is present but fails to parse is preserved verbatim rather
+/// than being replaced by "now", matching [`record_trial_start`]'s
+/// historical "never resets an existing stamp" contract even for corrupt
+/// data.
+///
+/// # Errors
+///
+/// [`Error::Io`] when prefs cannot be written.
+pub fn record_trial_start_with(data_dir: &Path, store: &dyn TrialStampStore) -> Result<()> {
     let mut prefs = load_ui_prefs(data_dir);
-    if prefs.trial_started_at.is_some() {
-        return Ok(());
-    }
-    prefs.trial_started_at = Some(rfc3339_now());
+    let store_raw = store.read_stamp();
+    let canonical = earliest_present_stamp(prefs.trial_started_at.as_deref(), store_raw.as_deref());
+    prefs.trial_started_at = Some(canonical.clone());
+    store.write_stamp(&canonical);
     save_ui_prefs(data_dir, &prefs)
+}
+
+/// Pick the canonical trial-start stamp from the primary (`prefs`) and
+/// secondary (`store`) raw stamps.
+///
+/// When only one side is present, the other is adopted outright: this is
+/// what lets the secondary store restore the original date after the
+/// primary prefs file is deleted, and what keeps the primary stamp in place
+/// when the secondary store has nothing (for example, [`NoTrialStampStore`]
+/// or an unavailable Keychain). When both are present and parse, the
+/// earlier of the two wins. A stamp that fails to parse is never preferred
+/// over one that does, and a lone unparseable stamp is kept as-is rather
+/// than replaced. Neither present: "now".
+fn earliest_present_stamp(prefs: Option<&str>, store: Option<&str>) -> String {
+    match (prefs, store) {
+        (None, None) => rfc3339_now(),
+        (Some(p), None) => p.to_owned(),
+        (None, Some(s)) => s.to_owned(),
+        (Some(p), Some(s)) => match (parse_rfc3339(p), parse_rfc3339(s)) {
+            (Some(pp), Some(ss)) if ss < pp => s.to_owned(),
+            (None, Some(_)) => s.to_owned(),
+            _ => p.to_owned(),
+        },
+    }
 }
 
 /// Canonical bytes that a `.lic` signature covers.
@@ -761,6 +926,51 @@ mod tests {
         let status = install_license(dir.path(), &src, &keys.verifier).expect("install");
         assert_eq!(status.state, LicenseState::Expired);
         assert!(!writes_allowed(&status));
+    }
+
+    /// In-memory stand-in for the desktop's macOS Keychain trial stamp.
+    struct FakeStampStore(std::sync::Mutex<Option<String>>);
+
+    impl TrialStampStore for FakeStampStore {
+        fn read_stamp(&self) -> Option<String> {
+            self.0.lock().ok().and_then(|guard| guard.clone())
+        }
+
+        fn write_stamp(&self, rfc3339: &str) {
+            if let Ok(mut guard) = self.0.lock() {
+                *guard = Some(rfc3339.to_owned());
+            }
+        }
+    }
+
+    #[test]
+    fn deleting_the_prefs_stamp_does_not_reset_the_trial() {
+        let dir = tempdir().expect("tempdir");
+        let store = FakeStampStore(std::sync::Mutex::new(None));
+        record_trial_start_with(dir.path(), &store).expect("stamp");
+        let stamped = store.read_stamp().expect("secondary stamp written");
+
+        // Casual reset: user deletes ui-prefs.json.
+        std::fs::remove_file(crate::prefs::ui_prefs_path(dir.path())).expect("delete prefs");
+
+        // Re-stamping must restore the ORIGINAL date from the secondary store.
+        record_trial_start_with(dir.path(), &store).expect("re-stamp");
+        let prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs.trial_started_at.as_deref(), Some(stamped.as_str()));
+    }
+
+    #[test]
+    fn earliest_stamp_wins_for_status() {
+        let dir = tempdir().expect("tempdir");
+        let keys = ephemeral();
+        let old = "2020-01-01T00:00:00Z";
+        let store = FakeStampStore(std::sync::Mutex::new(Some(old.to_owned())));
+
+        // Prefs say "today", keychain says 2020: trial is long over.
+        record_trial_start_with(dir.path(), &NoTrialStampStore).expect("prefs stamp");
+        let now = OffsetDateTime::now_utc();
+        let status = license_status_at_with(dir.path(), &keys.verifier, now, &store);
+        assert_eq!(status.state, LicenseState::Expired);
     }
 
     #[test]
