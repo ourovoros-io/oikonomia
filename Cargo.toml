@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/oikonomia-core",
     "crates/oikonomia-update",
+    "crates/oikonomia-mint",
     "crates/macos-dock-icon",
     "apps/desktop/src-tauri",
 ]
@@ -36,6 +37,9 @@ ocrs = "0.12"
 rten = { version = "0.24", default-features = false, features = ["rten_format"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 # 2.x patches RUSTSEC-2022-0093 (ed25519-dalek 1.x). Verify-only in product code.
+# oikonomia-core's workspace_pins_ed25519_dalek_v2 test text-parses this entry
+# as a plain version string below, so keep it that way (no inline table here).
+# oikonomia-mint adds the rand_core feature itself, per-crate, instead.
 ed25519-dalek = "2.2"
 
 [workspace.lints.rust]

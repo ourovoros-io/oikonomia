@@ -1,0 +1,24 @@
+[package]
+name = "oikonomia-mint"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Offline license minting for Oikonomia. Run only on an operator machine; the secret key never leaves it."
+publish = false
+
+[dependencies]
+oikonomia-core = { workspace = true }
+# rand_core is not on by default at the workspace level (the core crate's
+# workspace_pins_ed25519_dalek_v2 test text-parses a plain-string entry); add
+# it here so SigningKey::generate is available for offline keygen.
+ed25519-dalek = { workspace = true, features = ["rand_core"] }
+rand = { workspace = true }
+serde_json = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
