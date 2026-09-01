@@ -6,10 +6,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// `kind` is the discriminant the webview matches on. [`UpdateStatus::Available`]
 /// carries version and sanitized notes only — never a URL or pubkey.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UpdateStatus {
     /// No check has been requested this session.
+    #[default]
     Idle,
     /// `update_check` is in flight.
     Checking,
@@ -24,10 +25,4 @@ pub enum UpdateStatus {
     },
     /// Check or install failed. Unlock, export, and license import stay usable.
     Failed,
-}
-
-impl Default for UpdateStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
 }

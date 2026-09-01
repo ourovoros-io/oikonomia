@@ -97,3 +97,12 @@ pub fn to_hex(bytes: &[u8]) -> String {
     }
     out
 }
+
+/// Verify a detached minisign signature over raw manifest bytes.
+///
+/// # Errors
+///
+/// [`UpdateError::ManifestSignature`] when verification fails.
+pub fn verify_manifest_bytes(key: &PublicKey, body: &[u8], signature: &str) -> Result<()> {
+    verify_minisign(key, body, signature)
+}
