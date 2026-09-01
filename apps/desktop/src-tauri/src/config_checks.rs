@@ -93,3 +93,18 @@ fn bundle_identity_belongs_to_ourovoros() {
         "shortDescription must be set"
     );
 }
+
+#[test]
+fn versions_are_in_sync_everywhere() {
+    let conf = config();
+    let workspace = env!("CARGO_PKG_VERSION");
+    assert_eq!(conf["version"], workspace, "tauri.conf.json vs workspace");
+
+    let package: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../web/package.json"))
+            .expect("web/package.json is valid JSON");
+    assert_eq!(
+        package["version"], workspace,
+        "web/package.json vs workspace"
+    );
+}
