@@ -83,7 +83,7 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 ## Threat model (v1)
 
 **Protects against:** stolen disk / backup of app data, casual browsing of the vault file.  
-**Does not protect against:** malware while unlocked, keyloggers, memory forensics while the app is open, a compromised GitHub account shipping a malicious update (artifacts are minisign-verified against the baked key, but a compromised signing key can — the key ceremony in docs/release.md keeps it offline).
+**Does not protect against:** a compromised GitHub account cannot ship a malicious update (artifacts are minisign-verified against the baked key), but a compromised signing key can — the key ceremony in docs/release.md keeps it offline.
 
 ## Layout
 

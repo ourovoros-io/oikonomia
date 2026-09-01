@@ -5,7 +5,7 @@
 
 [graph]
 # Tauri pulls reqwest for Android and iOS only. Evaluating just the desktop
-# targets keeps that edge out of the graph so the ban below can hold.
+# targets keeps mobile-only network edges out of the graph, so scoped bans hold.
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
