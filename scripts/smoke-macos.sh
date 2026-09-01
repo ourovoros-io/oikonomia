@@ -6,7 +6,11 @@ cd "$(dirname "$0")/.."
 
 app="target/release/bundle/macos/Oikonomia.app"
 if [ "${SMOKE_SKIP_BUILD:-0}" != "1" ]; then
-  cargo tauri build --bundles app
+  # Local smoke needs no updater artifacts; the release lane builds them with the real key.
+  overlay="$(mktemp -t oikonomia-smoke-config)"
+  printf '{"bundle": {"createUpdaterArtifacts": false}}' > "$overlay"
+  cargo tauri build --bundles app --config "$overlay"
+  rm -f "$overlay"
 fi
 [ -d "$app" ] || { echo "error: $app missing" >&2; exit 1; }
 
