@@ -78,6 +78,5 @@ deny = [
     { crate = "tauri-plugin-http", reason = "the webview gets no HTTP" },
     { crate = "tauri-plugin-websocket", reason = "offline only" },
     { crate = "tauri-plugin-shell", reason = "the webview must not spawn processes" },
-    { crate = "tauri-plugin-opener", reason = "removed in phase 2 with a URL-scoped capability" },
     { crate = "tauri-plugin-deep-link", reason = "no URL handlers" },
 ]

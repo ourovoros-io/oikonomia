@@ -97,6 +97,8 @@ fn with_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<t
                 )
                 .build(),
         )
+        // URL opening is capability-scoped to the buy page only.
+        .plugin(tauri_plugin_opener::init())
         // Registered only. Install execs the wrapper-verified path; no check API.
         .plugin(tauri_plugin_updater::Builder::new().build())
 }

@@ -15,6 +15,7 @@ import {
   Upload,
   User,
 } from 'lucide-react'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { api, type ChartTemplate, type Entity } from '../lib/api'
 import {
   canAddAnotherBook,
@@ -498,6 +499,15 @@ export function SettingsPage({
                 ? t('settings.license.replace')
                 : t('settings.license.import')}
             </Button>
+            {license && license.state !== 'licensed' && license.buy_url ? (
+              <Button
+                onClick={() => {
+                  void openUrl(license.buy_url ?? '')
+                }}
+              >
+                {t('settings.license.buy')}
+              </Button>
+            ) : null}
           </div>
           <ErrorBanner message={licenseError} className="" />
           <button

@@ -95,6 +95,23 @@ fn bundle_identity_belongs_to_ourovoros() {
 }
 
 #[test]
+fn opener_capability_is_scoped_to_the_buy_page_only() {
+    let capabilities: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json"))
+            .expect("capabilities json");
+    let entries: Vec<&serde_json::Value> = capabilities["permissions"]
+        .as_array()
+        .expect("permissions array")
+        .iter()
+        .filter(|p| p["identifier"] == "opener:allow-open-url")
+        .collect();
+    assert_eq!(entries.len(), 1, "exactly one opener permission");
+    let allow = entries[0]["allow"].as_array().expect("allow list");
+    assert_eq!(allow.len(), 1);
+    assert_eq!(allow[0]["url"], "https://ourovoros.io/oikonomia*");
+}
+
+#[test]
 fn versions_are_in_sync_everywhere() {
     let conf = config();
     let workspace = env!("CARGO_PKG_VERSION");
