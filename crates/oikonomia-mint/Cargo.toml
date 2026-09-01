@@ -16,6 +16,7 @@ ed25519-dalek = { workspace = true, features = ["rand_core"] }
 rand = { workspace = true }
 serde_json = { workspace = true }
 time = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

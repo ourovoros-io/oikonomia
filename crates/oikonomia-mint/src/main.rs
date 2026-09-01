@@ -8,11 +8,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use zeroize::Zeroizing;
 
-/// Random 32-byte Ed25519 seed as lowercase hex.
-fn generate_secret_key_hex() -> String {
+/// Random 32-byte Ed25519 seed as lowercase hex, zeroized on drop.
+fn generate_secret_key_hex() -> Zeroizing<String> {
     let key = SigningKey::generate(&mut rand::rngs::OsRng);
-    hex_encode(key.as_bytes())
+    Zeroizing::new(hex_encode(key.as_bytes()))
 }
 
 /// Hex verifying key for a hex secret key (what gets baked into the app).
@@ -49,9 +50,11 @@ fn mint_license_json(secret_hex: &str, email: &str, expiry: &str) -> Result<Stri
     serde_json::to_string_pretty(&json).map_err(|err| err.to_string())
 }
 
-/// Ed25519 signing key from a 64-hex-character secret seed.
+/// Ed25519 signing key from a 64-hex-character secret seed. The decoded
+/// seed bytes are held in a zeroizing buffer and wiped as soon as the
+/// `SigningKey` is constructed from them.
 fn signing_key_from_hex(secret_hex: &str) -> Result<SigningKey, String> {
-    let seed = decode_hex32(secret_hex, "secret key")?;
+    let seed = Zeroizing::new(decode_hex32(secret_hex, "secret key")?);
     Ok(SigningKey::from_bytes(&seed))
 }
 
@@ -109,15 +112,18 @@ fn main() -> ExitCode {
     }
 }
 
-/// Generate a fresh keypair; write the secret to `--out` (0600 on unix) and
-/// print the public key hex as the last stdout line, for scripted capture.
+/// Generate a fresh keypair; write the secret to `--out` (0600 from the
+/// first instant on unix; refuses to overwrite an existing file on any
+/// platform) and print the public key hex as the last stdout line, for
+/// scripted capture.
 fn run_keygen(args: &[String]) -> Result<(), String> {
     let out = PathBuf::from(flag_value(args, "--out").ok_or(USAGE)?);
     let secret_hex = generate_secret_key_hex();
     let public_hex = verifying_key_hex(&secret_hex)?;
 
-    std::fs::write(&out, &secret_hex).map_err(|err| format!("{}: {err}", out.display()))?;
-    restrict_secret_key_permissions(&out)?;
+    let mut file = open_secret_key_file(&out)?;
+    file.write_all(secret_hex.as_bytes())
+        .map_err(|err| format!("{}: {err}", out.display()))?;
 
     writeln!(
         std::io::stdout(),
@@ -128,18 +134,30 @@ fn run_keygen(args: &[String]) -> Result<(), String> {
     writeln!(std::io::stdout(), "{public_hex}").map_err(|err| err.to_string())
 }
 
-/// Restrict the secret key file to owner read/write only.
-#[cfg(unix)]
-fn restrict_secret_key_permissions(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|err| format!("{}: {err}", path.display()))
-}
-
-/// No-op outside unix; there is no portable equivalent of 0600 here.
-#[cfg(not(unix))]
-fn restrict_secret_key_permissions(_path: &Path) -> Result<(), String> {
-    Ok(())
+/// Create the secret key file with no window where it is readable beyond
+/// the owner: on unix the mode is set in the same `open` syscall that
+/// creates the file (not a `write` followed by a separate `chmod`, which
+/// briefly leaves the file at the process umask, e.g. 0644). Refuses to
+/// overwrite an existing file on every platform, so a re-run never
+/// silently clobbers a production signing key.
+fn open_secret_key_file(path: &Path) -> Result<std::fs::File, String> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "{} already exists; move the existing key aside before running keygen again",
+                path.display()
+            )
+        } else {
+            format!("{}: {err}", path.display())
+        }
+    })
 }
 
 /// Mint a license for one buyer from a secret key file and write it out.
@@ -149,8 +167,9 @@ fn run_issue(args: &[String]) -> Result<(), String> {
     let expiry = flag_value(args, "--expiry").ok_or(USAGE)?;
     let out = PathBuf::from(flag_value(args, "--out").ok_or(USAGE)?);
 
-    let secret_hex =
-        std::fs::read_to_string(&key_path).map_err(|err| format!("{key_path}: {err}"))?;
+    let secret_hex = Zeroizing::new(
+        std::fs::read_to_string(&key_path).map_err(|err| format!("{key_path}: {err}"))?,
+    );
     let json = mint_license_json(secret_hex.trim(), &email, &expiry)?;
     std::fs::write(&out, json).map_err(|err| format!("{}: {err}", out.display()))?;
     writeln!(std::io::stdout(), "wrote {}", out.display()).map_err(|err| err.to_string())
@@ -207,7 +226,7 @@ impl Drop for ScratchDir {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::{generate_secret_key_hex, mint_license_json, verifying_key_hex};
+    use super::{generate_secret_key_hex, mint_license_json, run_keygen, verifying_key_hex};
     use oikonomia_core::license::{LicenseState, LicenseVerifier, install_license, license_status};
 
     fn hex_to_key(hex: &str) -> [u8; 32] {
@@ -257,5 +276,34 @@ mod tests {
         let secret_hex = generate_secret_key_hex();
         assert!(mint_license_json(&secret_hex, "b@example.com", "not-a-date").is_err());
         assert!(mint_license_json(&secret_hex, "", "2999-12-31").is_err());
+    }
+
+    #[test]
+    fn keygen_writes_0600_from_creation_and_refuses_to_overwrite() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let key_path = dir.path().join("mint.key");
+        let args = vec!["--out".to_owned(), key_path.to_string_lossy().into_owned()];
+
+        run_keygen(&args).expect("first keygen");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&key_path)
+                .expect("metadata")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(
+                mode, 0o600,
+                "secret key file must be owner-only from creation"
+            );
+        }
+
+        let err = run_keygen(&args).expect_err("second keygen onto the same path must refuse");
+        assert!(
+            err.contains("already exists"),
+            "error should tell the operator the key already exists, got: {err}"
+        );
     }
 }
