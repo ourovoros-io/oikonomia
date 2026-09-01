@@ -34,3 +34,16 @@ Until Apple and Windows HSM secrets are present, the macOS and Windows jobs **fa
 Windows Authenticode is still a placeholder even after HSM secrets exist: replace `.github/scripts/windows-cloud-hsm-sign.ps1` with a live CodeSignTool or `smctl` invocation at go-live. macOS uses Tauri’s official `APPLE_*` environment variables once those secrets are set.
 
 Optional: Actions → Release → Run workflow with `dry_run` still requires Environment `release` and does not attach a GitHub Release.
+
+## Promote to the public releases repo
+
+Once testing is complete, promote the draft release to the public releases repository (`ourovoros-io/oikonomia-releases`):
+
+1. Run the Promote workflow: `gh workflow run promote.yml -f tag=vX.Y.Z` (requires Environment `release` review).
+2. The workflow downloads the draft's artifacts from the private repo, assembles and signs `latest.json` with the updater minisign key, verifies the signature with the app's baked public key, then publishes everything to `ourovoros-io/oikonomia-releases`.
+3. The updater reads `latest.json` and artifacts **only** from the public releases repo.
+
+### Secrets
+
+Add to Environment `release`:
+- `RELEASES_REPO_TOKEN`: fine-grained PAT with `contents:write` permission on the public `ourovoros-io/oikonomia-releases` repository.
