@@ -174,7 +174,7 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2, 2026-08-25
 
       # Official Tauri v2 action. projectPath is the crate that owns tauri.conf.json.
       # beforeBuildCommand already runs `npm run build` in web/ (no web/dist placeholder).
@@ -283,7 +283,7 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2, 2026-08-25
 
       - uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1, 2026-08-25
         env:
@@ -367,7 +367,7 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2, 2026-08-25
 
       # --bundles deb,appimage attaches .deb for manual download. tauri-action
       # latest.json Linux target is AppImage only (no .deb updater URL).
