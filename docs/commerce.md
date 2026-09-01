@@ -46,7 +46,7 @@ To import it:
 2. Go to Settings → License → Import license
 3. Select license.lic
 
-Your license expires on YYYY-MM-DD. Read the full license agreement at https://github.com/ourovoros-io/oikonomia/blob/main/EULA.md.
+Your license expires on YYYY-MM-DD. Read the full license agreement inside the app (Settings → License → License agreement) or at https://ourovoros.io/oikonomia.
 
 Refunds: Contact Paddle (refunds handled by Paddle, not here).
 
