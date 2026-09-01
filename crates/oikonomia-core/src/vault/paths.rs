@@ -51,16 +51,18 @@ mod tests {
         let data_dir = default_data_dir().expect("app-data dir must be resolvable");
         let path_str = data_dir.to_string_lossy();
 
-        // The resolved directory must contain the new bundle identifier as a path component
-        assert!(
-            path_str.contains("io.ourovoros.oikonomia"),
-            "data directory must contain new identity io.ourovoros.oikonomia: {path_str}"
-        );
-
-        // The old bundle identifier must not appear anywhere in the path
+        // All platforms: the old bundle identifier must not appear anywhere in the path.
         assert!(
             !path_str.contains("com.georgiosdelkos"),
             "data directory must not contain old bundle identifier com.georgiosdelkos: {path_str}"
+        );
+
+        // macOS only: directories::ProjectDirs includes qualifier/organization in the path.
+        // On Linux, the path is ~/.local/share/<app>, omitting qualifier/organization.
+        #[cfg(target_os = "macos")]
+        assert!(
+            path_str.contains("io.ourovoros.oikonomia"),
+            "on macOS, data directory must contain new identity io.ourovoros.oikonomia: {path_str}"
         );
     }
 }
