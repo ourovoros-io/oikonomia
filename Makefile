@@ -1,4 +1,4 @@
-.PHONY: app bundle test check
+.PHONY: app bundle test check smoke
 
 # Run the desktop app in dev mode (vite + tauri, live reload).
 app:
@@ -7,6 +7,10 @@ app:
 # Build the distributable bundle (target/release/bundle/).
 bundle:
 	cargo tauri build
+
+# Build the .app bundle and verify it renders (never smoke the bare binary).
+smoke:
+	./scripts/smoke-macos.sh
 
 # Core library tests.
 test:

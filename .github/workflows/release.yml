@@ -203,6 +203,9 @@ jobs:
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
 
+      - name: Smoke-test the bundled app
+        run: SMOKE_SKIP_BUILD=1 ./scripts/smoke-macos.sh
+
   windows:
     name: windows
     runs-on: windows-latest
