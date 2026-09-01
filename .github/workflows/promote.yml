@@ -70,12 +70,21 @@ jobs:
       - name: Assemble latest.json (darwin only in v1)
         run: |
           set -euo pipefail
+          shopt -s nullglob
           # tauri-action uploads its own latest.json to the draft; ours is the only one that ships.
           rm -f artifacts/latest.json artifacts/latest.json.sig
-          aarch64="$(basename "$(ls artifacts/*aarch64*.app.tar.gz)")"
-          x64="$(basename "$(ls artifacts/*x64*.app.tar.gz 2>/dev/null || true)")"
+          matches=(artifacts/*.app.tar.gz)
+          if [ "${#matches[@]}" -ne 1 ]; then
+            found="${matches[*]:-}"
+            if [ -z "$found" ]; then
+              found="(no matches)"
+            fi
+            echo "::error::expected exactly one .app.tar.gz, found: $found"
+            exit 1
+          fi
+          aarch64="$(basename "${matches[0]}")"
+          # macos-latest builds arm64 and Tauri 2 omits the arch from macOS bundle names; a second darwin arch will need explicit naming when it exists.
           platforms=(--platform "darwin-aarch64=${aarch64}")
-          [ -n "${x64}" ] && platforms+=(--platform "darwin-x86_64=${x64}")
           printf '%s' "Oikonomia ${TAG}" > notes.txt
           cargo run -p oikonomia-update --bin assemble_feed -- assemble \
             --version "${TAG}" \

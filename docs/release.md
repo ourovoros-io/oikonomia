@@ -37,11 +37,12 @@ Optional: Actions → Release → Run workflow with `dry_run` still requires Env
 
 ## Promote to the public releases repo
 
-Once testing is complete, promote the draft release to the public releases repository (`ourovoros-io/oikonomia-releases`):
+A tag push builds draft releases in the private repo. Once testing is complete, promote the draft release to the public releases repository (`ourovoros-io/oikonomia-releases`):
 
 1. Run the Promote workflow: `gh workflow run promote.yml -f tag=vX.Y.Z` (requires Environment `release` review).
 2. The workflow downloads the draft's artifacts from the private repo, assembles and signs `latest.json` with the updater minisign key, verifies the signature with the app's baked public key, then publishes everything to `ourovoros-io/oikonomia-releases`.
-3. The updater reads `latest.json` and artifacts **only** from the public releases repo.
+3. The promoted feed carries a single `darwin-aarch64` entry in v1 (macOS only; Windows and Linux updates are not yet supported).
+4. The updater reads `latest.json` and artifacts **only** from the public releases repo.
 
 ### Secrets
 
