@@ -1,0 +1,123 @@
+# Promote a draft release from this private repo to the public releases repo.
+#
+# Manual, reviewed, fail-closed. Steps: download the draft's artifacts,
+# assemble latest.json ourselves (sha256 + per-artifact minisign sigs),
+# sign latest.json with the updater minisign key, verify with the app's
+# baked public key, then publish everything to ourovoros-io/oikonomia-releases.
+#
+# Needs (Environment `release`):
+#   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#   RELEASES_REPO_TOKEN  fine-grained PAT, contents:write on the public repo
+name: Promote release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag of the draft release to promote (e.g. v1.0.0)
+        required: true
+        type: string
+      dry_run:
+        description: Assemble, sign, and verify the feed without publishing
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      TAG: ${{ inputs.tag }}
+      PUBLIC_REPO: ourovoros-io/oikonomia-releases
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Require promote secrets (fail-closed)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RELEASES_REPO_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          missing=()
+          [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ] && missing+=(TAURI_SIGNING_PRIVATE_KEY)
+          [ -z "${RELEASES_REPO_TOKEN}" ] && missing+=(RELEASES_REPO_TOKEN)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
+
+      # gh resolves draft releases by tag when authenticated with repo access.
+      # If this ever stops matching the draft, list releases via
+      # `gh api repos/${GITHUB_REPOSITORY}/releases` and download assets by id.
+      - name: Download draft release artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p artifacts
+          gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" --dir artifacts
+          ls -la artifacts
+
+      - name: Assemble latest.json (darwin only in v1)
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # tauri-action uploads its own latest.json to the draft; ours is the only one that ships.
+          rm -f artifacts/latest.json artifacts/latest.json.sig
+          matches=(artifacts/*.app.tar.gz)
+          if [ "${#matches[@]}" -ne 1 ]; then
+            found="${matches[*]:-}"
+            if [ -z "$found" ]; then
+              found="(no matches)"
+            fi
+            echo "::error::expected exactly one .app.tar.gz, found: $found"
+            exit 1
+          fi
+          aarch64="$(basename "${matches[0]}")"
+          # macos-latest builds arm64 and Tauri 2 omits the arch from macOS bundle names; a second darwin arch will need explicit naming when it exists.
+          platforms=(--platform "darwin-aarch64=${aarch64}")
+          printf '%s' "Oikonomia ${TAG}" > notes.txt
+          cargo run -p oikonomia-update --bin assemble_feed -- assemble \
+            --version "${TAG}" \
+            --base-url "https://github.com/${PUBLIC_REPO}/releases/download/${TAG}" \
+            --dir artifacts --out artifacts/latest.json --notes-file notes.txt \
+            "${platforms[@]}"
+
+      - name: Sign latest.json with the updater key
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          extra=()
+          [ -n "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ] \
+            && extra=(--password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD}")
+          npx --yes @tauri-apps/cli signer sign \
+            --private-key "${TAURI_SIGNING_PRIVATE_KEY}" \
+            "${extra[@]}" artifacts/latest.json
+          test -s artifacts/latest.json.sig
+
+      - name: Verify the signed manifest with the app's baked public key
+        run: |
+          pubkey="$(python3 -c 'import json;print(json.load(open("apps/desktop/src-tauri/tauri.conf.json"))["plugins"]["updater"]["pubkey"])')"
+          cargo run -p oikonomia-update --bin assemble_feed -- verify \
+            --manifest artifacts/latest.json --sig artifacts/latest.json.sig \
+            --pubkey "${pubkey}"
+
+      - name: Publish to the public releases repo
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          gh release create "${TAG}" artifacts/* \
+            --repo "${PUBLIC_REPO}" \
+            --title "Oikonomia ${TAG}" \
+            --notes "Signed release. The app verifies the minisign signature of latest.json and of every artifact before installing."

@@ -7,6 +7,7 @@
 
 mod client;
 mod error;
+pub mod feed;
 mod hosts;
 mod machine;
 mod notes;
@@ -19,11 +20,12 @@ pub use client::{
     perform_check,
 };
 pub use error::{Result, UpdateError};
+pub use feed::{FeedArtifact, assemble_manifest};
 pub use hosts::HostPolicy;
 pub use machine::UpdateMachine;
 pub use notes::sanitize_notes;
 pub use status::UpdateStatus;
-pub use verify::parse_public_key;
+pub use verify::{parse_public_key, verify_manifest_bytes};
 
 #[cfg(test)]
 mod tests;

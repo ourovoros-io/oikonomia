@@ -4,8 +4,11 @@
 #![expect(clippy::panic, reason = "tests fail loudly by design")]
 
 use crate::UPDATE_FEED_URL;
-use crate::client::{ArtifactInstaller, ClientConfig, download_and_verify};
+use crate::client::{
+    ArtifactInstaller, CheckOutcome, ClientConfig, download_and_verify, perform_check,
+};
 use crate::error::UpdateError;
+use crate::feed::{FeedArtifact, assemble_manifest};
 use crate::hosts::HostPolicy;
 use crate::machine::UpdateMachine;
 use crate::notes::sanitize_notes;
@@ -750,4 +753,57 @@ fn license_hex_is_not_a_minisign_public_key() {
     const LICENSE_HEX: &str = "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
     let err = parse_public_key(LICENSE_HEX).expect_err("license hex");
     assert_eq!(err.code(), "update_missing_public_key");
+}
+
+/// Proves the promote lane (`assemble_manifest`) and the client (`perform_check`,
+/// `download_and_verify`) agree on the wire shape: a manifest built the same way
+/// `assemble_feed` builds it for the public releases repo, served over httptest,
+/// must check as `Available` and its artifact must download and verify.
+#[test]
+fn promoted_feed_round_trips_through_check_and_download() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+
+    let artifact_bytes = b"new-app-bytes".to_vec();
+    let artifact_signature = sign(&sk, &artifact_bytes);
+    let artifact_sha256_hex = sha256_hex(&artifact_bytes);
+    let base_url = server_url(&server, "/").to_string();
+
+    let manifest_body = assemble_manifest(
+        "9.9.9",
+        "Promoted release.",
+        &base_url,
+        &[FeedArtifact {
+            platform: "linux-x86_64".to_owned(),
+            file_name: "Oikonomia_test.app.tar.gz".to_owned(),
+            signature: artifact_signature,
+            sha256_hex: artifact_sha256_hex,
+        }],
+    )
+    .expect("assemble");
+    let manifest_sig = sign(&sk, manifest_body.as_bytes());
+
+    serve_signed_manifest(&server, &manifest_body, &manifest_sig);
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/Oikonomia_test.app.tar.gz"))
+            .respond_with(status_code(200).body(artifact_bytes.clone())),
+    );
+
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.clone(),
+        Duration::from_secs(2),
+    );
+
+    let outcome = perform_check(&config);
+    let CheckOutcome::Available(offer) = outcome else {
+        panic!("promoted feed must yield Available, got {outcome:?}");
+    };
+    let path = download_and_verify(&config, &offer).expect("download");
+    assert!(path.exists());
+    assert_eq!(leftover_files(&cache).len(), 1);
 }
