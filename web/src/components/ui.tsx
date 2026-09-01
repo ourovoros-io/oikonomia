@@ -431,12 +431,12 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)]/50 px-6 py-16 text-center">
       {icon ? (
-        <div className="mb-4 flex size-12 items-center justify-center rounded-xl bg-[var(--color-surface-elevated)] text-[var(--color-muted)]">
+        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center rounded-xl bg-[var(--color-surface-elevated)] text-[var(--color-muted)]">
           {icon}
         </div>
       ) : null}
-      <p className="text-sm font-semibold text-[var(--color-fg)]">{title}</p>
-      <p className="mt-1.5 max-w-sm text-sm text-[var(--color-muted)]">{body}</p>
+      <p className="oik-empty-title text-sm font-semibold text-[var(--color-fg)]">{title}</p>
+      <p className="oik-empty-body mt-1.5 max-w-sm text-sm text-[var(--color-muted)]">{body}</p>
       {action ? <div className="mt-6">{action}</div> : null}
     </div>
   )

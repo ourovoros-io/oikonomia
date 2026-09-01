@@ -239,3 +239,137 @@ html:not(.dark) {
   animation: qa-exit-to-right 220ms cubic-bezier(0.4, 0, 0.2, 1) both;
   pointer-events: none;
 }
+
+/* One-shot SVG entrances: unlock logo draw-in and pulse, wrong-password
+   shake, dashboard donut sweep, empty-state settle. Stilled under
+   prefers-reduced-motion at the end of this block. */
+@keyframes oik-logo-draw {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes oik-logo-rise {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes oik-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes oik-logo-pulse {
+  0% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  40% {
+    transform: scale(1.05);
+    filter: brightness(1.18);
+  }
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+@keyframes oik-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-5px);
+  }
+  40% {
+    transform: translateX(5px);
+  }
+  60% {
+    transform: translateX(-3px);
+  }
+  80% {
+    transform: translateX(3px);
+  }
+}
+@keyframes oik-donut-sweep {
+  /* Grows to each segment's inline stroke-dasharray attribute. */
+  from {
+    stroke-dasharray: 0 1000;
+  }
+}
+@keyframes oik-empty-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@keyframes oik-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* The shield outline draws itself; pathLength=100 normalizes the dash math. */
+.oik-logo-draw {
+  stroke-dasharray: 100;
+  animation: oik-logo-draw 700ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+/* translateY here is in SVG user units (viewBox 512), not screen px. */
+.oik-logo-rise {
+  animation: oik-logo-rise 400ms cubic-bezier(0.22, 1, 0.36, 1) 280ms both;
+}
+.oik-logo-glow-in {
+  animation: oik-fade-in 400ms ease-out 500ms both;
+}
+.oik-logo-pulse {
+  animation: oik-logo-pulse 400ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.oik-shake {
+  animation: oik-shake 320ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+/* backwards keeps a delayed segment hidden until its turn in the sweep. */
+.oik-donut-seg {
+  animation: oik-donut-sweep 600ms cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+.oik-empty-icon {
+  animation: oik-empty-pop 350ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.oik-empty-title {
+  animation: oik-rise 300ms cubic-bezier(0.22, 1, 0.36, 1) 80ms both;
+}
+.oik-empty-body {
+  animation: oik-rise 300ms cubic-bezier(0.22, 1, 0.36, 1) 140ms both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oik-logo-draw,
+  .oik-logo-rise,
+  .oik-logo-glow-in,
+  .oik-logo-pulse,
+  .oik-shake,
+  .oik-donut-seg,
+  .oik-empty-icon,
+  .oik-empty-title,
+  .oik-empty-body {
+    animation: none;
+  }
+}

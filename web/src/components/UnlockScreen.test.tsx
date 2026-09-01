@@ -67,7 +67,9 @@ describe('UnlockScreen submit', () => {
       expect(vaultInit).toHaveBeenCalledWith('secret')
     })
     expect(vaultUnlock).not.toHaveBeenCalled()
-    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    await waitFor(() => {
+      expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    })
   })
 
   test('locked has no confirm field and submit calls vaultUnlock', async () => {
@@ -80,7 +82,9 @@ describe('UnlockScreen submit', () => {
       expect(vaultUnlock).toHaveBeenCalledWith('secret')
     })
     expect(vaultInit).not.toHaveBeenCalled()
-    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    await waitFor(() => {
+      expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    })
   })
 
   test('invalid_password maps to Incorrect-password banner, never the Rust message', async () => {
@@ -104,6 +108,24 @@ describe('UnlockScreen submit', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
     await waitFor(() => {
       expect(screen.getByText('Could not unlock the vault.')).toBeTruthy()
+    })
+  })
+})
+
+describe('UnlockScreen success beat', () => {
+  test('unlock handoff waits for the success beat before reporting status', async () => {
+    const onUnlocked = vi.fn()
+    render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(vaultUnlock).toHaveBeenCalledWith('secret')
+    })
+
+    // The beat plays first; the status handoff lands only after it.
+    expect(onUnlocked).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(onUnlocked).toHaveBeenCalledWith('unlocked')
     })
   })
 })
@@ -234,7 +256,9 @@ describe('UnlockScreen check for update', () => {
     await waitFor(() => {
       expect(vaultUnlock).toHaveBeenCalledWith('secret')
     })
-    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    await waitFor(() => {
+      expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    })
     expect(updateCheck).not.toHaveBeenCalled()
   })
 
@@ -284,7 +308,9 @@ describe('UnlockScreen check for update', () => {
     await waitFor(() => {
       expect(vaultUnlock).toHaveBeenCalledWith('secret')
     })
-    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    await waitFor(() => {
+      expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    })
   })
 
   test('stub upToDate shows Writer copy and Close', async () => {
@@ -351,7 +377,9 @@ describe('UnlockScreen check for update', () => {
     await waitFor(() => {
       expect(vaultUnlock).toHaveBeenCalledWith('secret')
     })
-    expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    await waitFor(() => {
+      expect(onUnlocked).toHaveBeenCalledWith('unlocked')
+    })
   })
 
   test('failed is Close only — no retry, no Settings', async () => {

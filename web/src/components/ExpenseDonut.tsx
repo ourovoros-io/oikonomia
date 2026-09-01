@@ -53,7 +53,11 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string 
                 strokeDasharray={`${seg.length} ${CIRCUMFERENCE - seg.length}`}
                 strokeDashoffset={-seg.start}
                 opacity={hover === null || hover === i ? 1 : 0.35}
-                className="transition-[stroke-width,opacity] duration-150"
+                className="oik-donut-seg transition-[stroke-width,opacity] duration-150"
+                style={{
+                  // Stagger by start angle so the ring reads as one clockwise sweep.
+                  animationDelay: `${Math.round((seg.start / CIRCUMFERENCE) * 250)}ms`,
+                }}
                 onMouseEnter={() => setHover(i)}
               />
             ))}

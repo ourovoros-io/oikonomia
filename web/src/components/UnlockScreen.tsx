@@ -1,5 +1,6 @@
-import { useId, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { KeyRound } from 'lucide-react'
+import { cn } from '../lib/cn'
 import { Logo } from './Logo'
 import { ConfirmDialog } from './ConfirmDialog'
 import { useDialogFocus } from './useDialogFocus'
@@ -30,6 +31,10 @@ type Props = {
 
 const IDLE: UpdateUiState = { kind: 'idle' }
 
+// Long enough for the logo's oik-logo-pulse to finish, short enough
+// that unlocking never feels slower.
+const SUCCESS_BEAT_MS = 420
+
 export function UnlockScreen({ status, onUnlocked }: Props) {
   const { t } = useI18n()
   const [password, setPassword] = useState('')
@@ -43,17 +48,24 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
   const [update, setUpdate] = useState<UpdateUiState>(
     () => readDevUnlockUpdatePreview() ?? IDLE,
   )
+  const [unlocking, setUnlocking] = useState(false)
+  const [shaking, setShaking] = useState(false)
   const checkGeneration = useRef(0)
+  const handoffTimer = useRef<number | undefined>(undefined)
 
   const isSetup = status === 'uninitialized'
   const restorePrompt = restoreConfirm(isSetup ? 'load' : 'replace')
 
+  useEffect(() => () => window.clearTimeout(handoffTimer.current), [])
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
+    if (unlocking) return
     setError(null)
 
     if (isSetup && password !== confirm) {
       setError(t('unlock.passwordsMismatch'))
+      setShaking(true)
       return
     }
 
@@ -61,7 +73,9 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
     setBusy(true)
     try {
       const next = isSetup ? await vaultInit(password) : await vaultUnlock(password)
-      onUnlocked(next)
+      // Success beat: let the logo pulse once before the app takes over.
+      setUnlocking(true)
+      handoffTimer.current = window.setTimeout(() => onUnlocked(next), SUCCESS_BEAT_MS)
     } catch (err) {
       const cmd = err as CommandError
       setError(
@@ -69,6 +83,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
           ? t('unlock.incorrectPassword')
           : cmd.message || t('unlock.unlockFailed'),
       )
+      setShaking(true)
     } finally {
       setBusy(false)
       setPassword('')
@@ -77,7 +92,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
   }
 
   async function beginRestore() {
-    if (busy || restoreBusy || restorePicking || restoreOpen) return
+    if (busy || unlocking || restoreBusy || restorePicking || restoreOpen) return
     setError(null)
     setRestorePicking(true)
     try {
@@ -157,7 +172,13 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
       <div className="flex min-h-0 flex-1 overflow-y-auto px-4">
         <div className="m-auto w-full max-w-md py-8">
           <div className="mb-8 flex flex-col items-center text-center">
-            <Logo className="mb-4 size-14 rounded-2xl shadow-lg shadow-[var(--color-accent)]/20" />
+            <Logo
+              animateIn
+              className={cn(
+                'mb-4 size-14 rounded-2xl shadow-lg shadow-[var(--color-accent)]/20',
+                unlocking && 'oik-logo-pulse',
+              )}
+            />
             <h1 className="text-2xl font-semibold tracking-tight">
               {isSetup ? t('unlock.titleCreate') : t('unlock.titleWelcome')}
             </h1>
@@ -167,8 +188,15 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
           </div>
 
           <form
-            className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
+            className={cn(
+              'rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl',
+              shaking && 'oik-shake',
+            )}
             onSubmit={onSubmit}
+            onAnimationEnd={(event) => {
+              // Clear the flag so the next failed attempt can shake again.
+              if (event.animationName === 'oik-shake') setShaking(false)
+            }}
           >
             <div className="space-y-4">
               <Field label={t('unlock.password')}>
@@ -200,8 +228,12 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
 
               <ErrorBanner message={error} className="text-center" />
 
-              <Button type="submit" busy={busy} className="w-full">
-                {busy ? t('common.working') : isSetup ? t('unlock.createVault') : t('unlock.unlock')}
+              <Button type="submit" busy={busy || unlocking} className="w-full">
+                {busy || unlocking
+                  ? t('common.working')
+                  : isSetup
+                    ? t('unlock.createVault')
+                    : t('unlock.unlock')}
               </Button>
             </div>
           </form>
