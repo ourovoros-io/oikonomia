@@ -236,6 +236,8 @@
       "import": "Lizenz importieren",
       "licensedUntil": "Lizenziert bis {date}",
       "replace": "Andere Datei importieren",
+      "viewEula": "Lizenzvereinbarung",
+      "eulaTitle": "Lizenzvereinbarung",
       "banner": {
         "expired": "Die Lizenz ist abgelaufen. Sichern, Wiederherstellen und CSV-Export funktionieren weiter."
       },

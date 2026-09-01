@@ -370,6 +370,11 @@ export const api = {
    * Returns the same status object as {@link api.licenseStatus} after install.
    */
   licenseInstall: () => call<LicenseStatus | null>('license_install'),
+  /**
+   * Bundled EULA text for the Settings license viewer. Empty (not an
+   * error) outside the desktop app, since it is purely informational chrome.
+   */
+  eulaText: () => (isTauri() ? call<string>('eula_text') : Promise.resolve('')),
   /** Theme is a plaintext pref (Rust side): readable before unlock. */
   getTheme: () => call<Theme>('settings_get_theme'),
   setTheme: (theme: Theme) => call<void>('settings_set_theme', { theme }),

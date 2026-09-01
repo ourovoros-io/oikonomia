@@ -1691,3 +1691,28 @@ pub async fn document_export(
 
     Ok(Some(path.display().to_string()))
 }
+
+// --- Legal -------------------------------------------------------------
+
+/// The bundled end-user license agreement (EULA.md at the repo root).
+pub(crate) fn eula_text_content() -> &'static str {
+    include_str!("../../../../EULA.md")
+}
+
+/// Return the EULA for the Settings "About" section.
+#[tauri::command]
+pub fn eula_text() -> String {
+    eula_text_content().to_owned()
+}
+
+#[cfg(test)]
+mod eula_tests {
+    use super::eula_text_content;
+
+    #[test]
+    fn eula_text_is_bundled_and_nonempty() {
+        let text = eula_text_content();
+        assert!(text.contains("Ourovoros.io"));
+        assert!(text.len() > 1000, "EULA suspiciously short");
+    }
+}

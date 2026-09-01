@@ -4,7 +4,11 @@ version.workspace = true
 edition.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+license-file.workspace = true
 description = "Offline license minting for Oikonomia. Run only on an operator machine; the secret key never leaves it."
+# Never published to crates.io; deny.toml's [licenses.private] relies on this
+# field (a proprietary license-file, not an SPDX id, so cargo-deny cannot
+# classify it).
 publish = false
 
 [dependencies]

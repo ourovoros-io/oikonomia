@@ -236,6 +236,8 @@
       "import": "Importer la licence",
       "licensedUntil": "Licence jusqu'au {date}",
       "replace": "Importer un autre fichier",
+      "viewEula": "Contrat de licence",
+      "eulaTitle": "Contrat de licence",
       "banner": {
         "expired": "La licence a pris fin. La sauvegarde, la restauration et l'export CSV fonctionnent toujours."
       },

@@ -19,6 +19,7 @@ vi.mock('../lib/api', () => ({
     setLockTimeout: vi.fn(),
     licenseStatus: vi.fn(),
     licenseInstall: vi.fn(),
+    eulaText: vi.fn(),
     entityCreate: vi.fn(),
   },
 }))
@@ -56,6 +57,7 @@ beforeEach(() => {
     days_remaining: 12,
   })
   vi.mocked(api.licenseInstall).mockReset()
+  vi.mocked(api.eulaText).mockReset().mockResolvedValue('')
   vi.mocked(api.entityCreate).mockReset()
   vi.mocked(api.setLockTimeout).mockReset()
 })
@@ -185,6 +187,24 @@ describe('SettingsPage license', () => {
     })
     expect(screen.getByText('12 days left in your trial')).toBeTruthy()
     expect(screen.queryByText('Could not import the license.')).toBeNull()
+  })
+
+  test('clicking License agreement shows the bundled EULA text', async () => {
+    vi.mocked(api.eulaText).mockResolvedValue('OIKONOMIA END-USER LICENSE AGREEMENT — Ourovoros.io')
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    expect(screen.queryByText(/OIKONOMIA END-USER LICENSE AGREEMENT/)).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /license agreement/i }))
+    await waitFor(() => {
+      expect(
+        screen.getByText(/OIKONOMIA END-USER LICENSE AGREEMENT — Ourovoros\.io/),
+      ).toBeTruthy()
+    })
   })
 
   test('expired Settings still enables Backup and Restore', async () => {
