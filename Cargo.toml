@@ -11,8 +11,7 @@ default-members = ["crates/oikonomia-core"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-license = "MIT"
-repository = "https://github.com/GeorgiosDelkos/oikonomia"
+repository = "https://github.com/ourovoros-io/oikonomia"
 rust-version = "1.88"
 
 [workspace.dependencies]

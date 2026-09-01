@@ -3,7 +3,6 @@ name = "macos-dock-icon"
 version.workspace = true
 description = "Runtime Dock icon for unbundled (dev-mode) macOS binaries"
 edition.workspace = true
-license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 

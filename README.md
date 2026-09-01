@@ -66,7 +66,7 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 - Master password is never stored; vault key is derived with Argon2id.
 - Password change re-encrypts the vault via SQLCipher rekey (Settings).
 - Lost password means lost data (no recovery key in v1).
-- Vault files live under the OS app-data directory for `com.georgiosdelkos.oikonomia`.
+- Vault files live under the OS app-data directory for `io.ourovoros.oikonomia`.
 - v1 has no network capability in Tauri permissions; idle auto-lock is enforced
   from Rust, not the webview.
 - `reqwest` appears in `Cargo.lock` only because Tauri needs it on Android and

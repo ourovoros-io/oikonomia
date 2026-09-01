@@ -2,7 +2,6 @@
 name = "oikonomia-update"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Signed update-check wrapper for the Oikonomia desktop shell (no vault, no license I/O)"
