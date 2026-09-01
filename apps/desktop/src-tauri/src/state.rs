@@ -110,8 +110,7 @@ impl AppState {
     pub fn path_is_granted(&self, path: &Path) -> bool {
         let granted = self.lock_granted_paths();
         path.canonicalize()
-            .ok()
-            .is_some_and(|canonical| granted.contains(&canonical))
+            .is_ok_and(|canonical| granted.contains(&canonical))
     }
 
     fn lock_granted_paths(&self) -> std::sync::MutexGuard<'_, HashSet<PathBuf>> {
