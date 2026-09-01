@@ -42,10 +42,7 @@ cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
   `LEFT JOIN ... ON` clause (that pattern silently disables the filters).
 - Vault data is **encrypted at rest**; no plaintext DB on disk. Vault files are
   owner-only (`vault/permissions.rs`).
-- v1 Tauri capabilities: **no network** permission. `deny.toml` bans every
-  socket-capable crate on the desktop targets (`cargo deny check` in CI), the
-  `nav_guard` plugin keeps every webview on the app origin, and
-  `config_checks.rs` pins the CSP.
+- Network exists ONLY on the click-driven update path (`oikonomia-update` + `tauri-plugin-updater` install engine). `oikonomia-core` stays fully offline (`scripts/assert-core-offline.sh`); `deny.toml` wrappers confine every socket-capable crate to that path.
 - Path-taking IPC commands accept only paths the user handed over through a
   native drop or a native dialog (`AppState::grant_paths`).
 - Journal CSV export neutralizes formula-leading cells; `parse_journal_export`

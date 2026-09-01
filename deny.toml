@@ -1,6 +1,7 @@
-# cargo-deny policy: Oikonomia never connects to the network, so no crate
-# that can open a socket may reach the desktop binaries. `cargo deny check`
-# runs in CI; run it locally after touching any Cargo.toml.
+# Oikonomia's network policy: network crates are banned everywhere except the
+# user-initiated update path (wrappers under oikonomia-update / tauri-plugin-updater).
+# The core subtree stays fully offline (scripts/assert-core-offline.sh enforces it).
+# cargo deny check runs in CI.
 
 [graph]
 # Tauri pulls reqwest for Android and iOS only. Evaluating just the desktop

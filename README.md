@@ -67,21 +67,23 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 - Password change re-encrypts the vault via SQLCipher rekey (Settings).
 - Lost password means lost data (no recovery key in v1).
 - Vault files live under the OS app-data directory for `io.ourovoros.oikonomia`.
-- v1 has no network capability in Tauri permissions; idle auto-lock is enforced
-  from Rust, not the webview.
-- `reqwest` appears in `Cargo.lock` only because Tauri needs it on Android and
-  iOS; on the desktop targets `cargo tree -p oikonomia -i reqwest` prints
-  nothing. `deny.toml` bans it and every other socket-capable crate, and CI
-  runs `cargo deny check` so that stays true.
+- Offline by design: the app performs **no background network activity**. The
+  single network action is the update check you click on the unlock screen; it
+  talks only to `github.com` (the public `ourovoros-io/oikonomia-releases`
+  repo) and verifies a minisign signature over both the update manifest and
+  the downloaded artifact before anything is installed. The vault, ledger, and
+  license paths (`oikonomia-core`) contain no network code at all —
+  `scripts/assert-core-offline.sh` and `cargo deny check` enforce this in CI.
 - Every webview is pinned to the app's own origin (`nav_guard`), and the CSP
-  allows no remote source.
+  allows no remote source. The webview cannot supply a URL or key to the
+  updater.
 - Journal CSV exports neutralize cells that spreadsheets would run as formulas.
 - On first run you will be warned: choose a strong password.
 
 ## Threat model (v1)
 
 **Protects against:** stolen disk / backup of app data, casual browsing of the vault file.  
-**Does not protect against:** malware while unlocked, keyloggers, memory forensics while the app is open.
+**Does not protect against:** malware while unlocked, keyloggers, memory forensics while the app is open, a compromised GitHub account shipping a malicious update (artifacts are minisign-verified against the baked key, but a compromised signing key can — the key ceremony in docs/release.md keeps it offline).
 
 ## Layout
 
