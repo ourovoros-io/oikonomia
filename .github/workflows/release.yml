@@ -180,7 +180,7 @@ jobs:
       # beforeBuildCommand already runs `npm run build` in web/ (no web/dist placeholder).
       # Signing/notarization use the env vars below when secrets exist; this job
       # never reaches here if they are missing.
-      - uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1, 2026-08-25
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1, 2026-08-25
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -282,7 +282,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2, 2026-08-25
 
-      - uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1, 2026-08-25
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1, 2026-08-25
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ES_USERNAME: ${{ secrets.ES_USERNAME }}
@@ -368,7 +368,7 @@ jobs:
 
       # --bundles deb,appimage attaches .deb for manual download. tauri-action
       # latest.json Linux target is AppImage only (no .deb updater URL).
-      - uses: tauri-apps/tauri-action@944946e3e4cac6603d1fe8f514171e9ecd3c78aa # v1, 2026-08-25
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1, 2026-08-25
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
