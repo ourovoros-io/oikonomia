@@ -5,6 +5,9 @@ description = "Oikonomia desktop shell (Tauri)"
 edition.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# Never published to crates.io; Phase 2 adds a license-file for the bundle
+# itself. deny.toml's [licenses.private] relies on this field.
+publish = false
 
 [lib]
 name = "oikonomia_lib"

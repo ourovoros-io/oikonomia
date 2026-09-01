@@ -17,5 +17,6 @@ check:
 	cargo fmt --all -- --check
 	cargo clippy --all-targets --all-features -- -D warnings
 	cargo deny check
+	./scripts/assert-core-offline.sh
 	cargo test -p oikonomia-core
 	cd web && npx tsc -b && npm test && npm run build
