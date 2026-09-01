@@ -11,6 +11,8 @@ permissions:
 jobs:
   rust:
     runs-on: ubuntu-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -98,6 +100,8 @@ jobs:
 
       - run: npx tsc -b
 
+      - run: npm run lint
+
       - run: npm test
 
       - run: npm run build
@@ -121,6 +125,9 @@ jobs:
       # vulnerabilities; unmaintained-crate warnings do not fail the job.
       - run: cargo audit
 
-      # deny.toml bans every crate that could open a socket on the desktop
-      # targets, so "never connects to the network" survives new dependencies.
+      # deny.toml confines network crates to the click-driven update path.
       - run: cargo deny check
+
+      # The wrappers in deny.toml allow network crates under the updater;
+      # core's own subtree must stay at zero.
+      - run: ./scripts/assert-core-offline.sh

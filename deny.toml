@@ -1,10 +1,11 @@
-# cargo-deny policy: Oikonomia never connects to the network, so no crate
-# that can open a socket may reach the desktop binaries. `cargo deny check`
-# runs in CI; run it locally after touching any Cargo.toml.
+# Oikonomia's network policy: network crates are banned everywhere except the
+# user-initiated update path (wrappers under oikonomia-update / tauri-plugin-updater).
+# The core subtree stays fully offline (scripts/assert-core-offline.sh enforces it).
+# cargo deny check runs in CI.
 
 [graph]
 # Tauri pulls reqwest for Android and iOS only. Evaluating just the desktop
-# targets keeps that edge out of the graph so the ban below can hold.
+# targets keeps mobile-only network edges out of the graph, so scoped bans hold.
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
@@ -35,6 +36,7 @@ allow = [
     "BSD-3-Clause",
     "BSL-1.0",
     "CC0-1.0",
+    "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
     "MIT-0",
@@ -44,32 +46,38 @@ allow = [
     "Zlib",
 ]
 
+[licenses.private]
+# Task 2 stripped the `license` key from every workspace crate ahead of
+# Phase 2's license-file; all four are `publish = false` and never ship to
+# crates.io, so they carry no SPDX classification for cargo-deny to check.
+ignore = true
+
 [bans]
 multiple-versions = "allow"
+# Network crates are banned everywhere EXCEPT the user-initiated update path.
+# `wrappers` = the only crates allowed to depend on the banned crate directly.
+# Never widen a wrapper list for a non-updater parent; oikonomia-core stays
+# fully offline (scripts/assert-core-offline.sh enforces the subtree).
 deny = [
-    { crate = "reqwest", reason = "Oikonomia never connects to the network" },
-    { crate = "ureq", reason = "offline only" },
-    { crate = "isahc", reason = "offline only" },
-    { crate = "attohttpc", reason = "offline only" },
-    { crate = "minreq", reason = "offline only" },
-    { crate = "curl", reason = "offline only" },
-    { crate = "curl-sys", reason = "offline only" },
-    { crate = "hyper", reason = "offline only" },
-    { crate = "hyper-util", reason = "offline only" },
-    { crate = "h2", reason = "offline only" },
-    { crate = "tungstenite", reason = "offline only" },
-    { crate = "tokio-tungstenite", reason = "offline only" },
-    { crate = "socket2", reason = "offline only: no socket stack" },
-    { crate = "mio", reason = "offline only: no socket stack" },
-    { crate = "rustls", reason = "offline only: no TLS client" },
-    { crate = "native-tls", reason = "offline only: no TLS client" },
-    { crate = "tauri-plugin-http", reason = "offline only" },
-    { crate = "tauri-plugin-updater", reason = "no in-app updater" },
+    { crate = "reqwest", wrappers = ["tauri-plugin-updater"], reason = "network only inside the updater install engine" },
+    { crate = "ureq", wrappers = ["oikonomia-update"], reason = "network only inside the click-driven update client" },
+    { crate = "isahc", reason = "offline except the update path" },
+    { crate = "attohttpc", reason = "offline except the update path" },
+    { crate = "minreq", reason = "offline except the update path" },
+    { crate = "curl", reason = "offline except the update path" },
+    { crate = "curl-sys", reason = "offline except the update path" },
+    { crate = "hyper", wrappers = ["reqwest", "hyper-util", "hyper-rustls", "httptest"], reason = "network only inside the updater install engine" },
+    { crate = "hyper-util", wrappers = ["reqwest", "hyper-rustls", "httptest"], reason = "network only inside the updater install engine" },
+    { crate = "h2", wrappers = ["reqwest", "hyper"], reason = "network only inside the updater install engine" },
+    { crate = "tungstenite", reason = "no websockets" },
+    { crate = "tokio-tungstenite", reason = "no websockets" },
+    { crate = "socket2", wrappers = ["tokio", "hyper-util"], reason = "sockets only under the updater engine" },
+    { crate = "mio", wrappers = ["tokio"], reason = "sockets only under the updater engine" },
+    { crate = "rustls", wrappers = ["ureq", "hyper-rustls", "tokio-rustls", "rustls-platform-verifier", "reqwest", "tauri-plugin-updater"], reason = "TLS only on the update path" },
+    { crate = "native-tls", reason = "rustls only" },
+    { crate = "tauri-plugin-http", reason = "the webview gets no HTTP" },
     { crate = "tauri-plugin-websocket", reason = "offline only" },
-    { crate = "tauri-plugin-shell", reason = "the webview must not spawn processes or open URLs" },
-    { crate = "tauri-plugin-opener", reason = "the webview must not open URLs" },
+    { crate = "tauri-plugin-shell", reason = "the webview must not spawn processes" },
+    { crate = "tauri-plugin-opener", reason = "removed in phase 2 with a URL-scoped capability" },
     { crate = "tauri-plugin-deep-link", reason = "no URL handlers" },
-]
-features = [
-    { crate = "tokio", deny = ["net"], reason = "no socket stack" },
 ]

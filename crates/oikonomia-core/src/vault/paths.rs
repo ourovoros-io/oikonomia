@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-const QUALIFIER: &str = "com";
-const ORGANIZATION: &str = "georgiosdelkos";
+const QUALIFIER: &str = "io";
+const ORGANIZATION: &str = "ourovoros";
 const APPLICATION: &str = "oikonomia";
 
 /// Platform app-data directory for Oikonomia.
@@ -39,4 +39,30 @@ pub fn vault_header_path(data_dir: &Path) -> PathBuf {
 #[must_use]
 pub fn vault_staged_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json.tmp")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
+    fn default_data_dir_uses_ourovoros_identity() {
+        let data_dir = default_data_dir().expect("app-data dir must be resolvable");
+        let path_str = data_dir.to_string_lossy();
+
+        // All platforms: the old bundle identifier must not appear anywhere in the path.
+        assert!(
+            !path_str.contains("com.georgiosdelkos"),
+            "data directory must not contain old bundle identifier com.georgiosdelkos: {path_str}"
+        );
+
+        // macOS only: directories::ProjectDirs includes qualifier/organization in the path.
+        // On Linux, the path is ~/.local/share/<app>, omitting qualifier/organization.
+        #[cfg(target_os = "macos")]
+        assert!(
+            path_str.contains("io.ourovoros.oikonomia"),
+            "on macOS, data directory must contain new identity io.ourovoros.oikonomia: {path_str}"
+        );
+    }
 }
