@@ -34,7 +34,7 @@ tempfile = "3.14"
 pdf-extract = "0.12"
 lopdf = "0.42"
 ocrs = "0.12"
-rten = { version = "0.24", default-features = false, features = ["rten_format"] }
+rten = { version = "0.26", default-features = false, features = ["rten_format"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 # 2.x patches RUSTSEC-2022-0093 (ed25519-dalek 1.x). Verify-only in product code.
 ed25519-dalek = "2.2"
