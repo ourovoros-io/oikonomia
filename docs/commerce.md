@@ -18,6 +18,8 @@ Expiry default: issue date + 1 year. This date is written into the `.lic` file a
 
 ## Fulfillment workflow (v1 — manual)
 
+**Precondition:** Fulfillment must not begin until go-live checklist item 6 (lawyer review of EULA.md) has cleared. The EULA buyers receive is always the reviewed version.
+
 1. Buyer completes checkout on Paddle and receives an order confirmation email. Paddle also sends the operator an order notification.
 
 2. On the operator machine (air-gapped or at least offline key management), run:
@@ -51,6 +53,10 @@ Refunds: Contact Paddle (refunds handled by Paddle, not here).
 Best,
 [Operator name]
 ```
+
+## Access after trial or license expiry
+
+An expired trial or license never locks the books. Reading, backup, restore, and CSV export keep working indefinitely. Only new writes (adding transactions, categories, entities) require an active license or trial.
 
 ## Constraints
 
