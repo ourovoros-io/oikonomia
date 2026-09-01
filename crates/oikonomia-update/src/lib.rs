@@ -25,7 +25,7 @@ pub use hosts::HostPolicy;
 pub use machine::UpdateMachine;
 pub use notes::sanitize_notes;
 pub use status::UpdateStatus;
-pub use verify::{parse_public_key, to_hex, verify_manifest_bytes};
+pub use verify::{parse_public_key, verify_manifest_bytes};
 
 #[cfg(test)]
 mod tests;

@@ -41,7 +41,8 @@ struct Manifest {
 /// # Errors
 ///
 /// [`UpdateError::ManifestParse`] when there are no artifacts, or an entry has
-/// an empty platform/file/signature or a malformed `sha256_hex`.
+/// an empty platform/file/signature. [`UpdateError::ArtifactIntegrity`] when
+/// `sha256_hex` is malformed (not 64 hex characters).
 pub fn assemble_manifest(
     version: &str,
     notes: &str,

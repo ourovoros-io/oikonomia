@@ -3,8 +3,9 @@
 //! `assemble` scans an artifact directory; `verify` checks a manifest and its
 //! detached minisign signature with the client's own verifier code.
 
-use oikonomia_update::{FeedArtifact, assemble_manifest, parse_public_key, to_hex};
+use oikonomia_update::{FeedArtifact, assemble_manifest, parse_public_key};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -72,7 +73,11 @@ fn run_assemble(args: &[String]) -> Result<(), String> {
             .map_err(|e| format!("{}: {e}", signature_path.display()))?;
         let mut hasher = Sha256::new();
         hasher.update(&bytes);
-        let sha256_hex = to_hex(&hasher.finalize());
+        let digest = hasher.finalize();
+        let mut sha256_hex = String::with_capacity(64);
+        for byte in digest {
+            let _ = write!(sha256_hex, "{byte:02x}");
+        }
         artifacts.push(FeedArtifact {
             platform: platform.to_owned(),
             file_name: file_name.to_owned(),
