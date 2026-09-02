@@ -253,6 +253,12 @@
         "generic": "Die Lizenz konnte nicht importiert werden."
       }
     },
+    "support": {
+      "title": "Support",
+      "description": "Fragen, Fehlermeldungen und Lizenzprobleme: {email}",
+      "body": "Schreiben Sie an {email} und nennen Sie die App-Version ({version}) und was Sie gerade getan haben, als das Problem auftrat. Hängen Sie niemals Ihren Tresor oder Ihre Sicherungsdatei an.",
+      "contact": "Support per E-Mail"
+    },
     "trial": {
       "banner": {
         "active": "Noch {n} Tage in Ihrer Testphase",

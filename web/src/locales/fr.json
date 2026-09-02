@@ -253,6 +253,12 @@
         "generic": "Impossible d'importer la licence."
       }
     },
+    "support": {
+      "title": "Assistance",
+      "description": "Questions, rapports de bogue et problèmes de licence : {email}",
+      "body": "Écrivez à {email} en indiquant la version de l'application ({version}) et ce que vous faisiez quand le problème est apparu. Ne joignez jamais votre coffre ni votre fichier de sauvegarde.",
+      "contact": "Écrire à l'assistance"
+    },
     "trial": {
       "banner": {
         "active": "Il vous reste {n} jours d'essai",

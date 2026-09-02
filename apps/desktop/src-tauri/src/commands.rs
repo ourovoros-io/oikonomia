@@ -44,6 +44,10 @@ use std::sync::Mutex;
 use tauri::{Emitter, State};
 use zeroize::Zeroizing;
 
+/// Where customers send questions, bug reports, and license problems. Every
+/// support pointer the app shows derives from this one address.
+pub(crate) const SUPPORT_EMAIL: &str = "info@ourovoros.io";
+
 /// Static app metadata for the about screen / diagnostics.
 #[derive(Debug, Serialize)]
 pub struct AppInfo {
@@ -51,6 +55,11 @@ pub struct AppInfo {
     pub version: &'static str,
     /// Product name.
     pub name: &'static str,
+    /// Support mailbox, shown verbatim so a user can copy it.
+    pub support_email: &'static str,
+    /// `mailto:` link to the support mailbox with the version already in the
+    /// subject. Must stay inside the opener capability scope.
+    pub support_mailto: String,
 }
 
 // --- Vault -----------------------------------------------------------------
@@ -501,12 +510,74 @@ fn with_backup_extension(path: std::path::PathBuf) -> std::path::PathBuf {
     }
 }
 
-/// Return build identity (no secrets).
+/// Return build identity and the support contact (no secrets).
 #[tauri::command]
 pub fn app_info() -> AppInfo {
+    let version = env!("CARGO_PKG_VERSION");
     AppInfo {
-        version: env!("CARGO_PKG_VERSION"),
+        version,
         name: "Oikonomia",
+        support_email: SUPPORT_EMAIL,
+        support_mailto: support_mailto(version),
+    }
+}
+
+/// `mailto:` link to [`SUPPORT_EMAIL`] whose subject names the app version,
+/// so every support thread opens with the one fact each report needs.
+fn support_mailto(version: &str) -> String {
+    let subject = percent_encode(&format!("Oikonomia v{version} support"));
+    format!("mailto:{SUPPORT_EMAIL}?subject={subject}")
+}
+
+/// RFC 3986 percent-encoding for a `mailto:` query value: unreserved bytes
+/// pass through, everything else becomes `%XX`.
+fn percent_encode(input: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0x0F)]));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod app_info_tests {
+    use super::{SUPPORT_EMAIL, app_info, percent_encode, support_mailto};
+
+    #[test]
+    fn app_info_carries_the_support_contact() {
+        let json = serde_json::to_value(app_info()).expect("serialize");
+        assert_eq!(json["support_email"], "info@ourovoros.io");
+        assert_eq!(
+            json["support_mailto"],
+            format!(
+                "mailto:info@ourovoros.io?subject=Oikonomia%20v{}%20support",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
+
+    #[test]
+    fn support_mailto_targets_the_support_mailbox_with_the_version() {
+        let mailto = support_mailto("1.2.3");
+        assert!(mailto.starts_with(&format!("mailto:{SUPPORT_EMAIL}?")));
+        assert_eq!(
+            mailto,
+            "mailto:info@ourovoros.io?subject=Oikonomia%20v1.2.3%20support"
+        );
+    }
+
+    #[test]
+    fn percent_encode_keeps_unreserved_bytes_and_escapes_the_rest() {
+        assert_eq!(percent_encode("a-b.c_d~1"), "a-b.c_d~1");
+        assert_eq!(percent_encode("a b&c=d?é"), "a%20b%26c%3Dd%3F%C3%A9");
     }
 }
 

@@ -96,7 +96,12 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.mocked(vaultStatus).mockReset().mockResolvedValue('unlocked')
-  vi.mocked(appInfo).mockReset().mockResolvedValue({ name: 'Oikonomia', version: '0.1.0-dev' })
+  vi.mocked(appInfo).mockReset().mockResolvedValue({
+    name: 'Oikonomia',
+    version: '0.1.0-dev',
+    support_email: 'info@ourovoros.io',
+    support_mailto: 'mailto:info@ourovoros.io?subject=Oikonomia%20v0.1.0-dev%20support',
+  })
   vi.mocked(vaultTouch).mockReset().mockResolvedValue(undefined)
   vi.mocked(vaultPickBackup).mockReset().mockResolvedValue(BACKUP_PATH)
   vi.mocked(vaultRestore).mockReset().mockResolvedValue(BACKUP_PATH)

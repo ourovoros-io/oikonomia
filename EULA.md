@@ -141,5 +141,6 @@ for an existing license.
 
 ## 13. Contact
 
-Questions about this agreement, licensing, or Oikonomia can be sent through
-https://ourovoros.io/oikonomia.
+Questions about this agreement, licensing, or Oikonomia, as well as support
+requests and bug reports, can be sent to info@ourovoros.io. Product
+information is available at https://ourovoros.io/oikonomia.
