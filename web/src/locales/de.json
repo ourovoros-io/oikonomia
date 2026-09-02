@@ -1055,7 +1055,7 @@
     "invalidPassword": "Dieses Passwort ist falsch.",
     "unbalancedEntry": "Soll und Haben stimmen nicht überein.",
     "tooFewLines": "Eine Buchung benötigt mindestens zwei Zeilen.",
-    "invalidLineAmounts": "Jede Zeile braucht entweder Soll oder Haben, nicht beides und nicht keines.",
+    "invalidLineAmounts": "Jede Zeile braucht entweder Soll oder Haben, nie beides und nie keins.",
     "accountWrongEntity": "Dieses Konto gehört nicht zu diesem Buch.",
     "moneyOverflow": "Dieser Betrag ist zu groß.",
     "negativeMoney": "Dieser Betrag darf nicht negativ sein.",

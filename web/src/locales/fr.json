@@ -1055,7 +1055,7 @@
     "invalidPassword": "Ce mot de passe est incorrect.",
     "unbalancedEntry": "Les débits et les crédits ne s’équilibrent pas.",
     "tooFewLines": "Une écriture nécessite au moins deux lignes.",
-    "invalidLineAmounts": "Chaque ligne doit avoir un débit ou un crédit, pas les deux ni aucun.",
+    "invalidLineAmounts": "Chaque ligne doit avoir un débit ou un crédit, pas les deux, ni aucun des deux.",
     "accountWrongEntity": "Ce compte n’appartient pas à ce livre.",
     "moneyOverflow": "Ce montant est trop élevé.",
     "negativeMoney": "Ce montant ne peut pas être négatif.",
