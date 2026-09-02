@@ -59,7 +59,7 @@ import { formatMoney as fmtMoney } from '../lib/money'
 import { useI18n } from '../lib/I18nProvider'
 import { RecurringPage } from './RecurringPage'
 
-type Props = { entity: Entity | null }
+type Props = { entity: Entity | null; onCreateBook?: () => void }
 
 /** High-level entry kinds so users don't think in debit/credit. */
 type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
@@ -94,7 +94,7 @@ function inferKind(
   return 'other'
 }
 
-export function TransactionsPage({ entity }: Props) {
+export function TransactionsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -552,6 +552,11 @@ export function TransactionsPage({ entity }: Props) {
         icon={<ArrowLeftRight className="size-5" />}
         title={t('tx.noBookTitle')}
         body={t('tx.noBookBody')}
+        action={
+          onCreateBook ? (
+            <Button onClick={onCreateBook}>{t('empty.createBook')}</Button>
+          ) : undefined
+        }
       />
     )
   }

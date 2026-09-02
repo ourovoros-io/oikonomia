@@ -697,3 +697,66 @@ describe('SettingsPage section design', () => {
     expect(submit.closest('form')?.className).toMatch(/\bmax-w-3xl\b/)
   })
 })
+
+describe('SettingsPage createBookIntent', () => {
+  afterEach(() => {
+    delete (window.HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
+  })
+
+  test('opens the new-entity form and scrolls to it when createBookIntent increments', async () => {
+    const scrollIntoView = vi.fn()
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView
+    const { rerender } = render(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        createBookIntent={0}
+      />,
+    )
+    expect(screen.queryByRole('dialog', { name: /new entity/i })).toBeNull()
+
+    rerender(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        createBookIntent={1}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /new entity/i })).toBeTruthy()
+    })
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' })
+  })
+
+  test('does not open the form when createBookIntent is not provided', () => {
+    render(
+      <SettingsPage entities={[]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+    expect(screen.queryByRole('dialog', { name: /new entity/i })).toBeNull()
+  })
+
+  test('missing scrollIntoView in the test DOM does not throw (jsdom guard)', async () => {
+    const { rerender } = render(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        createBookIntent={0}
+      />,
+    )
+    rerender(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        createBookIntent={1}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /new entity/i })).toBeTruthy()
+    })
+  })
+})

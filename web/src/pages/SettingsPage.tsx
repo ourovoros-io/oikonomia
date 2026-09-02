@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   Archive,
   Briefcase,
@@ -62,6 +62,8 @@ type Props = {
   onEntitiesChange: () => Promise<void>
   onSelectEntity: (id: string) => void
   onLockTimeoutChange?: (secs: number) => void
+  /** Bumped by App's empty-state CTAs to pop the new-entity form open and scroll to it. */
+  createBookIntent?: number
 }
 
 const TEMPLATES: Array<{
@@ -150,6 +152,7 @@ export function SettingsPage({
   onEntitiesChange,
   onSelectEntity,
   onLockTimeoutChange,
+  createBookIntent,
 }: Props) {
   const { t, locale, setLocale } = useI18n()
   const [error, setError] = useState<string | null>(null)
@@ -177,6 +180,7 @@ export function SettingsPage({
   const [licenseBusy, setLicenseBusy] = useState(false)
   const [eulaText, setEulaText] = useState('')
   const [eulaOpen, setEulaOpen] = useState(false)
+  const newEntityAnchorRef = useRef<HTMLDivElement>(null)
 
   const backupAvailability = vaultBackupAvailability({
     vaultPresent,
@@ -206,6 +210,15 @@ export function SettingsPage({
         /* ignore — the viewer link simply stays inert */
       })
   }, [])
+
+  // App bumps createBookIntent from the five empty-state CTAs. Pop the
+  // create-entity form open and scroll to it — scrollIntoView is undefined
+  // in jsdom, so guard it.
+  useEffect(() => {
+    if (!createBookIntent) return
+    setShowCreate(true)
+    newEntityAnchorRef.current?.scrollIntoView?.({ behavior: 'smooth' })
+  }, [createBookIntent])
 
   function applyExpiredFromWrite(): void {
     setLicense((prev) => ({
@@ -620,6 +633,8 @@ export function SettingsPage({
           </Button>
         </div>
       </CollapsibleSection>
+
+      <div ref={newEntityAnchorRef} />
 
       <Modal
         open={showCreate}

@@ -51,6 +51,9 @@
       "blank": "vide"
     }
   },
+  "empty": {
+    "createBook": "Créer un livre"
+  },
   "unlock": {
     "title": {
       "setup": "Créez votre coffre",

@@ -57,6 +57,7 @@ export default function App() {
   const [entities, setEntities] = useState<Entity[]>([])
   const [entityId, setEntityId] = useState<string | null>(null)
   const [lockTimeoutSecs, setLockTimeoutSecs] = useState(15 * 60)
+  const [createBookIntent, setCreateBookIntent] = useState(0)
 
   const entity = entities.find((e) => e.id === entityId) ?? entities[0] ?? null
 
@@ -78,6 +79,11 @@ export default function App() {
     setDark(next)
     void api.setTheme(next ? 'dark' : 'light').catch(() => undefined)
   }
+
+  const openCreateBook = useCallback(() => {
+    setActive('settings')
+    setCreateBookIntent((n) => n + 1)
+  }, [])
 
   const loadEntities = useCallback(async () => {
     const list = await api.entityList()
@@ -308,23 +314,44 @@ export default function App() {
             ) : null}
 
             {active === 'dashboard' ? (
-              <DashboardPage key={entity?.id ?? 'none'} entity={entity} />
+              <DashboardPage
+                key={entity?.id ?? 'none'}
+                entity={entity}
+                onCreateBook={openCreateBook}
+              />
             ) : null}
             {active === 'transactions' ? (
-              <TransactionsPage key={entity?.id ?? 'none'} entity={entity} />
+              <TransactionsPage
+                key={entity?.id ?? 'none'}
+                entity={entity}
+                onCreateBook={openCreateBook}
+              />
             ) : null}
             {active === 'documents' ? (
-              <DocumentsPage key={entity?.id ?? 'none'} entity={entity} />
+              <DocumentsPage
+                key={entity?.id ?? 'none'}
+                entity={entity}
+                onCreateBook={openCreateBook}
+              />
             ) : null}
             {active === 'accounts' ? (
-              <AccountsPage key={entity?.id ?? 'none'} entity={entity} />
+              <AccountsPage
+                key={entity?.id ?? 'none'}
+                entity={entity}
+                onCreateBook={openCreateBook}
+              />
             ) : null}
             {active === 'reports' ? (
-              <ReportsPage key={entity?.id ?? 'none'} entity={entity} />
+              <ReportsPage
+                key={entity?.id ?? 'none'}
+                entity={entity}
+                onCreateBook={openCreateBook}
+              />
             ) : null}
             {active === 'settings' ? (
               <SettingsPage
                 entities={entities}
+                createBookIntent={createBookIntent}
                 onLockTimeoutChange={setLockTimeoutSecs}
                 onEntitiesChange={async () => {
                   try {

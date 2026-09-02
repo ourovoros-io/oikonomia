@@ -48,7 +48,16 @@ vi.mock('./lib/api', () => ({
 }))
 
 vi.mock('./pages/DashboardPage', () => ({
-  DashboardPage: () => <div>Dashboard stub</div>,
+  DashboardPage: ({ onCreateBook }: { onCreateBook?: () => void }) => (
+    <div>
+      Dashboard stub
+      {onCreateBook ? (
+        <button type="button" onClick={onCreateBook}>
+          Create a book
+        </button>
+      ) : null}
+    </div>
+  ),
 }))
 vi.mock('./pages/TransactionsPage', () => ({
   TransactionsPage: () => null,
@@ -124,5 +133,21 @@ describe('App restore-while-unlocked', () => {
     })
     expect(screen.getByRole('button', { name: 'Unlock' })).toBeTruthy()
     expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull()
+  })
+})
+
+describe('App create-book intent', () => {
+  test('clicking the dashboard empty-state CTA opens Settings and the new-entity form', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([])
+    render(<App />)
+    const cta = await screen.findByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+    })
   })
 })

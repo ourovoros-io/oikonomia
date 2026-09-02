@@ -14,6 +14,8 @@
   "common.active": "Active",
   "common.inactive": "Inactive",
 
+  "empty.createBook": "Create a book",
+
   "kind.expense": "Expense",
   "kind.income": "Income",
   "kind.bill": "Bill",

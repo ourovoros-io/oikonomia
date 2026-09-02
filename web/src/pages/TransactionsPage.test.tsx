@@ -616,3 +616,18 @@ describe('TransactionsPage discards unfinished draft', () => {
     expect(screen.queryByDisplayValue('99.99')).toBeNull()
   })
 })
+
+describe('TransactionsPage empty-state CTA', () => {
+  test('no-book empty state renders Create a book and calls onCreateBook', async () => {
+    const onCreateBook = vi.fn()
+    render(<TransactionsPage entity={null} onCreateBook={onCreateBook} />)
+    const cta = screen.getByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta)
+    expect(onCreateBook).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders without a CTA when onCreateBook is not supplied', () => {
+    render(<TransactionsPage entity={null} />)
+    expect(screen.queryByRole('button', { name: 'Create a book' })).toBeNull()
+  })
+})

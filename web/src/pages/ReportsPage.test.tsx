@@ -222,3 +222,18 @@ describe('ReportsPage Export PDF', () => {
     })
   })
 })
+
+describe('ReportsPage empty-state CTA', () => {
+  test('no-book empty state renders Create a book and calls onCreateBook', async () => {
+    const onCreateBook = vi.fn()
+    render(<ReportsPage entity={null} onCreateBook={onCreateBook} />)
+    const cta = screen.getByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta)
+    expect(onCreateBook).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders without a CTA when onCreateBook is not supplied', () => {
+    render(<ReportsPage entity={null} />)
+    expect(screen.queryByRole('button', { name: 'Create a book' })).toBeNull()
+  })
+})

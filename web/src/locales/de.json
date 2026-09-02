@@ -51,6 +51,9 @@
       "blank": "leer"
     }
   },
+  "empty": {
+    "createBook": "Buch erstellen"
+  },
   "unlock": {
     "title": {
       "setup": "Tresor anlegen",

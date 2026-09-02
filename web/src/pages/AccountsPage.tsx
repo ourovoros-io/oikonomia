@@ -33,7 +33,7 @@ import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import { useI18n } from '../lib/I18nProvider'
 
-type Props = { entity: Entity | null }
+type Props = { entity: Entity | null; onCreateBook?: () => void }
 
 const TYPES: Array<{
   id: AccountType
@@ -63,7 +63,7 @@ function typeTone(t: AccountType): 'accent' | 'success' | 'danger' | 'muted' {
   return 'muted'
 }
 
-export function AccountsPage({ entity }: Props) {
+export function AccountsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -175,6 +175,11 @@ export function AccountsPage({ entity }: Props) {
         icon={<Wallet className="size-5" />}
         title={t('acct.noBookTitle')}
         body={t('acct.noBookBody')}
+        action={
+          onCreateBook ? (
+            <Button onClick={onCreateBook}>{t('empty.createBook')}</Button>
+          ) : undefined
+        }
       />
     )
   }
