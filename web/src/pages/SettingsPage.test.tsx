@@ -738,6 +738,48 @@ describe('SettingsPage createBookIntent', () => {
     expect(screen.queryByRole('dialog', { name: /new entity/i })).toBeNull()
   })
 
+  test('calls onCreateBookIntentHandled once the intent is consumed', async () => {
+    const onCreateBookIntentHandled = vi.fn()
+    const { rerender } = render(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        createBookIntent={0}
+        onCreateBookIntentHandled={onCreateBookIntentHandled}
+      />,
+    )
+    expect(onCreateBookIntentHandled).not.toHaveBeenCalled()
+
+    rerender(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        createBookIntent={1}
+        onCreateBookIntentHandled={onCreateBookIntentHandled}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: /new entity/i })).toBeTruthy()
+    })
+    expect(onCreateBookIntentHandled).toHaveBeenCalledTimes(1)
+
+    // App resets the prop back to 0 in response; that rerender must not
+    // call the handler again (the effect's guard makes it a no-op).
+    rerender(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        createBookIntent={0}
+        onCreateBookIntentHandled={onCreateBookIntentHandled}
+      />,
+    )
+    expect(onCreateBookIntentHandled).toHaveBeenCalledTimes(1)
+  })
+
   test('missing scrollIntoView in the test DOM does not throw (jsdom guard)', async () => {
     const { rerender } = render(
       <SettingsPage

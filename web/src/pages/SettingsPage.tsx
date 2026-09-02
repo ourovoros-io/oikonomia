@@ -64,6 +64,8 @@ type Props = {
   onLockTimeoutChange?: (secs: number) => void
   /** Bumped by App's empty-state CTAs to pop the new-entity form open and scroll to it. */
   createBookIntent?: number
+  /** Called once the current createBookIntent has been consumed (form opened, scrolled to). */
+  onCreateBookIntentHandled?: () => void
 }
 
 const TEMPLATES: Array<{
@@ -153,6 +155,7 @@ export function SettingsPage({
   onSelectEntity,
   onLockTimeoutChange,
   createBookIntent,
+  onCreateBookIntentHandled,
 }: Props) {
   const { t, locale, setLocale } = useI18n()
   const [error, setError] = useState<string | null>(null)
@@ -213,12 +216,16 @@ export function SettingsPage({
 
   // App bumps createBookIntent from the five empty-state CTAs. Pop the
   // create-entity form open and scroll to it — scrollIntoView is undefined
-  // in jsdom, so guard it.
+  // in jsdom, so guard it. Then tell App the intent was consumed, so a later
+  // remount of this page (main's key={active} tears Settings down on every
+  // navigation) does not replay a stale nonzero intent and reopen the
+  // dialog on every subsequent visit.
   useEffect(() => {
     if (!createBookIntent) return
     setShowCreate(true)
     newEntityAnchorRef.current?.scrollIntoView?.({ behavior: 'smooth' })
-  }, [createBookIntent])
+    onCreateBookIntentHandled?.()
+  }, [createBookIntent, onCreateBookIntentHandled])
 
   function applyExpiredFromWrite(): void {
     setLicense((prev) => ({

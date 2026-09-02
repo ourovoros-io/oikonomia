@@ -150,4 +150,55 @@ describe('App create-book intent', () => {
       expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
     })
   })
+
+  test('closing the dialog then navigating away and back to Settings does not reopen it', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([])
+    render(<App />)
+    const cta = await screen.findByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta)
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard stub')).toBeTruthy()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
+    })
+    expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+  })
+
+  test('a second CTA click still reopens the dialog', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([])
+    render(<App />)
+    const cta1 = await screen.findByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta1)
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard stub')).toBeTruthy()
+    })
+    const cta2 = await screen.findByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta2)
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+    })
+  })
 })

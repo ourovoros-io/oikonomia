@@ -85,6 +85,14 @@ export default function App() {
     setCreateBookIntent((n) => n + 1)
   }, [])
 
+  // SettingsPage calls this once it has consumed the current intent (opened
+  // the form, scrolled to it), so a later remount (main's key={active} tears
+  // Settings down on every navigation) does not replay a stale intent and
+  // reopen the dialog on every subsequent visit to Settings.
+  const onCreateBookIntentHandled = useCallback(() => {
+    setCreateBookIntent(0)
+  }, [])
+
   const loadEntities = useCallback(async () => {
     const list = await api.entityList()
     setEntities(list)
@@ -352,6 +360,7 @@ export default function App() {
               <SettingsPage
                 entities={entities}
                 createBookIntent={createBookIntent}
+                onCreateBookIntentHandled={onCreateBookIntentHandled}
                 onLockTimeoutChange={setLockTimeoutSecs}
                 onEntitiesChange={async () => {
                   try {
