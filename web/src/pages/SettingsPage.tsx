@@ -394,6 +394,17 @@ export function SettingsPage({
     }
   }
 
+  async function onEmailSupport() {
+    if (!appInfo) return
+    try {
+      await api.openSupportEmail()
+    } catch {
+      // No associated mail client, or the OS refused. The address is on
+      // screen already, so the fallback copy just points at it.
+      setPageError(t('settings.support.openFailed', { email: appInfo.support_email }))
+    }
+  }
+
   async function onImportLicense() {
     setLicenseBusy(true)
     setLicenseError(null)
@@ -602,12 +613,7 @@ export function SettingsPage({
                 version: appInfo.version,
               })}
             </p>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                void openUrl(appInfo.support_mailto)
-              }}
-            >
+            <Button variant="secondary" onClick={() => void onEmailSupport()}>
               <Mail className="size-3.5" />
               {t('settings.support.contact')}
             </Button>

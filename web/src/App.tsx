@@ -213,6 +213,7 @@ export default function App() {
     return (
       <UnlockScreen
         status={status}
+        supportEmail={info?.support_email}
         onUnlocked={(next) => {
           setStatus(next)
           void refresh()

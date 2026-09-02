@@ -393,6 +393,8 @@ export const api = {
    * error) outside the desktop app, since it is purely informational chrome.
    */
   eulaText: () => (isTauri() ? call<string>('eula_text') : Promise.resolve('')),
+  /** Opens the mail client on the support mailbox. Rust builds the mailto; nothing is passed in. */
+  openSupportEmail: () => call<void>('open_support_email'),
   /** Theme is a plaintext pref (Rust side): readable before unlock. */
   getTheme: () => call<Theme>('settings_get_theme'),
   setTheme: (theme: Theme) => call<void>('settings_set_theme', { theme }),

@@ -20,6 +20,7 @@ vi.mock('../lib/api', () => ({
     licenseStatus: vi.fn(),
     licenseInstall: vi.fn(),
     eulaText: vi.fn(),
+    openSupportEmail: vi.fn(),
     entityCreate: vi.fn(),
   },
 }))
@@ -64,6 +65,7 @@ beforeEach(() => {
   })
   vi.mocked(api.licenseInstall).mockReset()
   vi.mocked(api.eulaText).mockReset().mockResolvedValue('')
+  vi.mocked(api.openSupportEmail).mockReset().mockResolvedValue(undefined)
   vi.mocked(api.entityCreate).mockReset()
   vi.mocked(api.setLockTimeout).mockReset()
   vi.mocked(openUrl).mockReset()
@@ -384,18 +386,15 @@ describe('SettingsPage license', () => {
     })
   })
 
-  test('Support section shows the Rust-provided address and opens its mailto', async () => {
+  const appInfo = { name: 'Oikonomia', version: '0.1.0-dev', support_email: 'info@ourovoros.io' }
+
+  test('Support section shows the Rust-provided address and asks Rust to open the mail client', async () => {
     render(
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
         onSelectEntity={() => {}}
-        appInfo={{
-          name: 'Oikonomia',
-          version: '0.1.0-dev',
-          support_email: 'info@ourovoros.io',
-          support_mailto: 'mailto:info@ourovoros.io?subject=Oikonomia%20v0.1.0-dev%20support',
-        }}
+        appInfo={appInfo}
       />,
     )
     expect(
@@ -404,9 +403,29 @@ describe('SettingsPage license', () => {
     await userEvent.click(screen.getByRole('button', { name: /^support/i }))
     expect(screen.getByText(/Write to info@ourovoros\.io with the app version \(0\.1\.0-dev\)/)).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: /email support/i }))
-    expect(openUrl).toHaveBeenCalledWith(
-      'mailto:info@ourovoros.io?subject=Oikonomia%20v0.1.0-dev%20support',
+    expect(api.openSupportEmail).toHaveBeenCalledTimes(1)
+    // The webview never builds or opens the mailto itself.
+    expect(openUrl).not.toHaveBeenCalled()
+  })
+
+  test('Support button failure falls back to the on-screen address', async () => {
+    vi.mocked(api.openSupportEmail).mockRejectedValue({ code: 'io', message: 'no mail client' })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        appInfo={appInfo}
+      />,
     )
+    await userEvent.click(screen.getByRole('button', { name: /^support/i }))
+    await userEvent.click(screen.getByRole('button', { name: /email support/i }))
+    await waitFor(() => {
+      expect(
+        screen.getByText('Could not open your mail app. Write to info@ourovoros.io instead.'),
+      ).toBeTruthy()
+    })
+    expect(screen.queryByText('no mail client')).toBeNull()
   })
 
   test('Support section waits for app info instead of inventing an address', () => {
