@@ -27,6 +27,8 @@ import { Button, ErrorBanner, Field, Input } from './ui'
 type Props = {
   status: Exclude<VaultStatus, 'unlocked'>
   onUnlocked: (status: VaultStatus) => void
+  /** Support mailbox from Rust `app_info`, shown so a locked-out user still has somewhere to write. */
+  supportEmail?: string | null
 }
 
 const IDLE: UpdateUiState = { kind: 'idle' }
@@ -35,7 +37,7 @@ const IDLE: UpdateUiState = { kind: 'idle' }
 // that unlocking never feels slower.
 const SUCCESS_BEAT_MS = 420
 
-export function UnlockScreen({ status, onUnlocked }: Props) {
+export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props) {
   const { t } = useI18n()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -276,6 +278,11 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
         >
           {t('unlock.restoreFromBackup')}
         </button>
+        {supportEmail ? (
+          <p className="mt-2 text-[12px] text-[var(--color-muted)]">
+            {t('unlock.support', { email: supportEmail })}
+          </p>
+        ) : null}
       </div>
 
       <UnlockUpdateDialog

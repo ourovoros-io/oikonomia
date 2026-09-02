@@ -121,6 +121,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::vault_restore,
         commands::vault_pick_backup,
         commands::app_info,
+        commands::open_support_email,
         commands::eula_text,
         commands::entity_list,
         commands::entity_create,
