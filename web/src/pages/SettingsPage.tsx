@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import {
   Archive,
   Briefcase,
@@ -162,6 +162,7 @@ export function SettingsPage({
 }: Props) {
   const { t, locale, setLocale } = useI18n()
   const [error, setError] = useState<string | null>(null)
+  const errorBannerId = useId()
   const [notice, setNotice] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState('EUR')
@@ -176,6 +177,9 @@ export function SettingsPage({
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordBusy, setPasswordBusy] = useState(false)
+  const [passwordErrorField, setPasswordErrorField] = useState<'current' | 'confirm' | null>(
+    null,
+  )
   const [backupBusy, setBackupBusy] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
@@ -330,9 +334,11 @@ export function SettingsPage({
     ev.preventDefault()
     setError(null)
     setNotice(null)
+    setPasswordErrorField(null)
 
     if (newPassword !== confirmPassword) {
       setError(t('settings.passwordsMismatch'))
+      setPasswordErrorField('confirm')
       return
     }
     // Password strength rules live in Rust; its Validation error surfaces below.
@@ -360,6 +366,7 @@ export function SettingsPage({
           ? t('settings.currentPasswordIncorrect')
           : cmd.message || t('settings.changePasswordFailed'),
       )
+      setPasswordErrorField('current')
     } finally {
       setPasswordBusy(false)
     }
@@ -452,7 +459,7 @@ export function SettingsPage({
         meta={t('settings.meta')}
       />
 
-      <ErrorBanner message={error} />
+      <ErrorBanner id={errorBannerId} message={error} />
       {notice ? (
         <div className="rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]">
           {notice}
@@ -592,8 +599,13 @@ export function SettingsPage({
               type="password"
               autoComplete="current-password"
               value={oldPassword}
-              onChange={(e) => setOldPassword(e.target.value)}
+              onChange={(e) => {
+                setOldPassword(e.target.value)
+                setPasswordErrorField(null)
+              }}
               required
+              aria-invalid={passwordErrorField === 'current' || undefined}
+              aria-describedby={passwordErrorField === 'current' ? errorBannerId : undefined}
             />
           </Field>
           <Field label={t('settings.newPassword')}>
@@ -601,7 +613,10 @@ export function SettingsPage({
               type="password"
               autoComplete="new-password"
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              onChange={(e) => {
+                setNewPassword(e.target.value)
+                setPasswordErrorField(null)
+              }}
               required
             />
           </Field>
@@ -610,8 +625,13 @@ export function SettingsPage({
               type="password"
               autoComplete="new-password"
               value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value)
+                setPasswordErrorField(null)
+              }}
               required
+              aria-invalid={passwordErrorField === 'confirm' || undefined}
+              aria-describedby={passwordErrorField === 'confirm' ? errorBannerId : undefined}
             />
           </Field>
           <div className="sm:col-span-3">

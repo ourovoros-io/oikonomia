@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -99,6 +99,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
+  const errorBannerId = useId()
   const [showForm, setShowForm] = useState(false)
 
   const [kind, setKind] = useState<EntryKind>('expense')
@@ -112,6 +113,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
   const [fromId, setFromId] = useState('') // transfer
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
+  const [amountInvalid, setAmountInvalid] = useState(false)
   const [busy, setBusy] = useState(false)
   const [voidId, setVoidId] = useState<string | null>(null)
   const [voidBusy, setVoidBusy] = useState(false)
@@ -378,6 +380,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
     setDescription('')
     setReference('')
     setAmount('')
+    setAmountInvalid(false)
     setPendingDoc(null)
     setPendingAnalysis(null)
     setScanNotes(null)
@@ -476,6 +479,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
     if (minor === null || minor <= 0) {
       busyRef.current = false
       setError(t('tx.invalidAmount'))
+      setAmountInvalid(true)
       return
     }
     // Role/account rules live in Rust (post_simple_entry); its Validation
@@ -483,6 +487,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
 
     setBusy(true)
     setError(null)
+    setAmountInvalid(false)
     try {
       const input = {
         entity_id: entity.id,
@@ -650,7 +655,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
         meta={t('tx.meta')}
       />
 
-      <ErrorBanner message={error} />
+      <ErrorBanner id={errorBannerId} message={error} />
 
       <CsvMappingModal
         open={csvStep === 'mapping'}
@@ -786,9 +791,14 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
               inputMode="decimal"
               placeholder={t('tx.amountPlaceholder')}
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value)
+                setAmountInvalid(false)
+              }}
               className="tabular-nums"
               required
+              aria-invalid={amountInvalid || undefined}
+              aria-describedby={amountInvalid ? errorBannerId : undefined}
             />
           </Field>
           <Field label={t('tx.reference')}>

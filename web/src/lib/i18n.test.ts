@@ -10,6 +10,7 @@ import {
   parseLocale,
   readCachedLocale,
   resetI18nForTests,
+  resolvesInLocale,
   setLocale,
   setLocaleMessagesForTests,
   setLocalePersist,
@@ -487,11 +488,16 @@ describe('t fallback', () => {
 
   test('en.json key missing or empty in el.json falls back to English', () => {
     setLocale('el')
-    expect(t('kind.other')).toBe(en['kind.other'])
+    // A key that exists only in the English test overlay (never in the el
+    // catalog) still resolves, via the en fallback in t().
+    setLocaleMessagesForTests('en', { '__test.onlyEnglish__': 'Only in English' })
+    expect(t('__test.onlyEnglish__')).toBe('Only in English')
     expect(t('tx.hidden.badge')).toBe('Κρυφή')
 
-    setLocaleMessagesForTests('el', { 'kind.other': '   ' })
-    expect(t('kind.other')).toBe(en['kind.other'])
+    // An empty/whitespace-only el override for that same key is treated as
+    // absent, so t() still falls back to the English overlay.
+    setLocaleMessagesForTests('el', { '__test.onlyEnglish__': '   ' })
+    expect(t('__test.onlyEnglish__')).toBe('Only in English')
   })
 
   test('interpolates {name} placeholders in English', () => {
@@ -547,6 +553,43 @@ describe('setLocale persist', () => {
     applyLocale('el')
     applyLocaleFromPrefs({})
     expect(getLocale()).toBe('en')
+  })
+})
+
+describe('audited English-identical leftovers are genuinely correct', () => {
+  test('fr CSV field/column labels are real French words, properly cased', () => {
+    const flat = flattenMessages(fr)
+    // "Date", "Description", "Type", and "Note" are unmodified French
+    // vocabulary in this context (loanwords with identical spelling), not
+    // untranslated leftovers.
+    expect(flat['tx.csv.field.date']).toBe('Date')
+    expect(flat['tx.csv.field.description']).toBe('Description')
+    expect(flat['tx.csv.col.type']).toBe('Type')
+    expect(flat['tx.csv.col.note']).toBe('Note')
+  })
+
+  test('de recurring form "Name" is the correct German word, not a leftover', () => {
+    expect(flattenMessages(de)['recurring.form.name']).toBe('Name')
+  })
+
+  test('de "November" is the correct full German month name, matching the other 11', () => {
+    const flat = flattenMessages(de)
+    // date.month.* renders as "{month} {year}" in DateInput's calendar
+    // header; November is genuinely spelled the same in German, so
+    // abbreviating only this one month would be the inconsistent choice.
+    expect(flat['date.month.11']).toBe('November')
+    expect(flat['date.month.10']).toBe('Oktober')
+    expect(flat['date.month.12']).toBe('Dezember')
+  })
+})
+
+describe('locale parity guard', () => {
+  test('every english catalog key resolves in every locale', () => {
+    const englishKeys = Object.keys(flattenMessages(en))
+    for (const locale of ['el', 'fr', 'de'] as const) {
+      const missing = englishKeys.filter((key) => !resolvesInLocale(locale, key))
+      expect(missing, `${locale} silently falls back for: ${missing.join(', ')}`).toEqual([])
+    }
   })
 })
 

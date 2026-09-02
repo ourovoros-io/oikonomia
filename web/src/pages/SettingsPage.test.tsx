@@ -29,7 +29,7 @@ vi.mock('@tauri-apps/plugin-opener', () => ({
 }))
 
 import { api } from '../lib/api'
-import { vaultBackup, vaultPickBackup, vaultRestore } from '../lib/tauri'
+import { vaultBackup, vaultChangePassword, vaultPickBackup, vaultRestore } from '../lib/tauri'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { SettingsPage } from './SettingsPage'
 import { resetI18nForTests } from '../lib/i18n'
@@ -54,6 +54,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(vaultBackup).mockReset()
   vi.mocked(vaultRestore).mockReset()
+  vi.mocked(vaultChangePassword).mockReset()
   vi.mocked(vaultPickBackup).mockReset()
   vi.mocked(vaultPickBackup).mockResolvedValue(BACKUP_PATH)
   vi.mocked(api.getLockTimeout).mockReset().mockResolvedValue(900)
@@ -695,6 +696,58 @@ describe('SettingsPage section design', () => {
     await userEvent.click(screen.getByRole('button', { name: /master password/i }))
     const submit = await screen.findByRole('button', { name: /change password/i })
     expect(submit.closest('form')?.className).toMatch(/\bmax-w-3xl\b/)
+  })
+
+  test('mismatched new passwords mark the confirm field invalid and describe it', async () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /master password/i }))
+    const current = await screen.findByLabelText('Current password')
+    const next = screen.getByLabelText('New password')
+    const confirm = screen.getByLabelText('Confirm new password')
+    expect(confirm).not.toHaveAttribute('aria-invalid')
+
+    await userEvent.type(current, 'oldpass')
+    await userEvent.type(next, 'newpass1')
+    await userEvent.type(confirm, 'newpass2')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    expect(confirm).toHaveAttribute('aria-invalid', 'true')
+    expect(confirm).toHaveAccessibleDescription('New passwords do not match')
+    expect(vaultChangePassword).not.toHaveBeenCalled()
+
+    await userEvent.type(confirm, '3')
+    expect(confirm).not.toHaveAttribute('aria-invalid')
+  })
+
+  test('an incorrect current password marks that field invalid and describes it', async () => {
+    vi.mocked(vaultChangePassword).mockRejectedValue({ code: 'invalid_password', message: '' })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /master password/i }))
+    const current = await screen.findByLabelText('Current password')
+    const next = screen.getByLabelText('New password')
+    const confirm = screen.getByLabelText('Confirm new password')
+
+    await userEvent.type(current, 'wrongpass')
+    await userEvent.type(next, 'newpass1')
+    await userEvent.type(confirm, 'newpass1')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    await waitFor(() => {
+      expect(current).toHaveAttribute('aria-invalid', 'true')
+    })
+    expect(current).toHaveAccessibleDescription('Current password is incorrect.')
   })
 })
 

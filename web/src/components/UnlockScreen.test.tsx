@@ -112,6 +112,34 @@ describe('UnlockScreen submit', () => {
   })
 })
 
+describe('UnlockScreen aria wiring', () => {
+  test('an incorrect password marks the password field invalid and describes it', async () => {
+    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'invalid_password', message: '' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    const password = screen.getByLabelText('Password')
+    expect(password).not.toHaveAttribute('aria-invalid')
+    await userEvent.type(password, 'wrong')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(password).toHaveAttribute('aria-invalid', 'true')
+    })
+    expect(password).toHaveAccessibleDescription('Incorrect password — please try again.')
+  })
+
+  test('mismatched setup passwords mark both fields invalid and describe them', async () => {
+    render(<UnlockScreen status="uninitialized" onUnlocked={() => {}} />)
+    const password = screen.getByLabelText('Password')
+    const confirm = screen.getByLabelText('Confirm password')
+    await userEvent.type(password, 'alpha')
+    await userEvent.type(confirm, 'beta')
+    await userEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
+    expect(password).toHaveAttribute('aria-invalid', 'true')
+    expect(confirm).toHaveAttribute('aria-invalid', 'true')
+    expect(password).toHaveAccessibleDescription('Passwords do not match')
+    expect(confirm).toHaveAccessibleDescription('Passwords do not match')
+  })
+})
+
 describe('UnlockScreen success beat', () => {
   test('unlock handoff waits for the success beat before reporting status', async () => {
     const onUnlocked = vi.fn()

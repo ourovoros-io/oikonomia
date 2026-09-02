@@ -52,6 +52,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
   const [shaking, setShaking] = useState(false)
   const checkGeneration = useRef(0)
   const handoffTimer = useRef<number | undefined>(undefined)
+  const errorId = useId()
 
   const isSetup = status === 'uninitialized'
   const restorePrompt = restoreConfirm(isSetup ? 'load' : 'replace')
@@ -210,6 +211,8 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
                     className="pl-10"
                     required
                     autoFocus
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={error ? errorId : undefined}
                   />
                 </div>
               </Field>
@@ -222,11 +225,13 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}
                     required
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={error ? errorId : undefined}
                   />
                 </Field>
               ) : null}
 
-              <ErrorBanner message={error} className="text-center" />
+              <ErrorBanner id={errorId} message={error} className="text-center" />
 
               <Button type="submit" busy={busy || unlocking} className="w-full">
                 {busy || unlocking

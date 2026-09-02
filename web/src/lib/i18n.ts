@@ -82,6 +82,7 @@ const KEY_ALIASES: Record<string, string> = {
   'kind.income': 'quickAdd.kind.income',
   'kind.bill': 'quickAdd.kind.bill',
   'kind.transfer': 'quickAdd.kind.transfer',
+  'kind.other': 'entry.kind.other',
   'kind.expenseShort': 'quickAdd.kind.expenseShort',
   'kind.incomeShort': 'quickAdd.kind.incomeShort',
   'kind.billShort': 'quickAdd.kind.billShort',
@@ -574,6 +575,11 @@ function interpolate(template: string, vars?: TranslateVars): string {
   return template.replace(/\{(\w+)\}/g, (match, name: string) =>
     expanded[name] === undefined ? match : String(expanded[name]),
   )
+}
+
+/** Test-only: true when `key` resolves in `locale` without the en fallback. */
+export function resolvesInLocale(locale: Locale, key: string): boolean {
+  return lookup(locale, key) !== undefined
 }
 
 /** Look up `key`. Empty/missing `el` values fall back to English. */

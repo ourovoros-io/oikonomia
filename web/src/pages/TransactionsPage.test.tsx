@@ -304,6 +304,28 @@ describe('TransactionsPage CSV toolbar', () => {
     expect(screen.queryByText('Hide from export')).toBeNull()
   })
 
+  test('invalid amount marks the Amount field invalid and describes the error', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'New entry' })).toBeTruthy()
+    })
+    const amountField = screen.getByRole('textbox', { name: /amount/i })
+    expect(amountField).not.toHaveAttribute('aria-invalid')
+    await userEvent.type(screen.getByLabelText(/description/i), 'Coffee')
+    await userEvent.type(amountField, '0')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+    await waitFor(() => {
+      expect(amountField).toHaveAttribute('aria-invalid', 'true')
+    })
+    expect(amountField).toHaveAccessibleDescription(
+      'Enter a valid amount (e.g. 25.50 or 25,50)',
+    )
+
+    await userEvent.type(amountField, '12.50')
+    expect(amountField).not.toHaveAttribute('aria-invalid')
+  })
+
   test('cancelled import does not open mapping or preview', async () => {
     vi.mocked(api.csvImportPreview).mockResolvedValue(null)
     await renderReady()
