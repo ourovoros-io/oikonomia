@@ -376,6 +376,12 @@
     "entityLimit": "Une licence est requise pour ajouter un autre livre.",
     "entityLimitHint": "Importez une licence signée pour conserver plus d'un livre dans ce coffre."
   },
+  "trial": {
+    "banner": {
+      "expiring": "Il vous reste {n} jours d'essai.",
+      "expired": "Période d'essai terminée. Vos livres restent consultables ; achetez une licence pour continuer à écrire."
+    }
+  },
   "tray": {
     "menu": {
       "open": "Ouvrir Oikonomia",

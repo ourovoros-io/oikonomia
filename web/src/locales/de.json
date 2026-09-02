@@ -376,6 +376,12 @@
     "entityLimit": "Für ein weiteres Buch brauchen Sie eine Lizenz.",
     "entityLimitHint": "Importieren Sie eine signierte Lizenz, wenn Sie mehr als ein Buch in diesem Tresor führen möchten."
   },
+  "trial": {
+    "banner": {
+      "expiring": "Noch {n} Tage in Ihrer Testphase.",
+      "expired": "Testphase beendet. Ihre Bücher bleiben lesbar; kaufen Sie eine Lizenz, um weiter zu schreiben."
+    }
+  },
   "tray": {
     "menu": {
       "open": "Oikonomia öffnen",

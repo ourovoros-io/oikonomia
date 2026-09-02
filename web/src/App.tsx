@@ -11,6 +11,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { Logo } from './components/Logo'
+import { TrialBanner } from './components/TrialBanner'
 import { UnlockScreen } from './components/UnlockScreen'
 import { Button, Select } from './components/ui'
 import { cn } from './lib/cn'
@@ -27,6 +28,7 @@ import {
 import { api, type Entity } from './lib/api'
 import { commandErrorMessage } from './lib/commandError'
 import type { CommandError } from './lib/tauri'
+import type { LicenseStatus } from './lib/license'
 import { DashboardPage } from './pages/DashboardPage'
 import { TransactionsPage } from './pages/TransactionsPage'
 import { DocumentsPage } from './pages/DocumentsPage'
@@ -58,6 +60,7 @@ export default function App() {
   const [entityId, setEntityId] = useState<string | null>(null)
   const [lockTimeoutSecs, setLockTimeoutSecs] = useState(15 * 60)
   const [createBookIntent, setCreateBookIntent] = useState(0)
+  const [license, setLicense] = useState<LicenseStatus | null>(null)
 
   const entity = entities.find((e) => e.id === entityId) ?? entities[0] ?? null
 
@@ -114,6 +117,11 @@ export default function App() {
           setLockTimeoutSecs(await api.getLockTimeout())
         } catch {
           /* optional */
+        }
+        try {
+          setLicense(await api.licenseStatus())
+        } catch {
+          /* optional — TrialBanner simply stays hidden */
         }
       }
     } catch (err) {
@@ -277,6 +285,7 @@ export default function App() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <TrialBanner license={license} />
         <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 px-6 backdrop-blur">
           <div className="min-w-0">
             <div className="truncate text-sm font-medium text-[var(--color-fg)]">
@@ -362,6 +371,7 @@ export default function App() {
                 createBookIntent={createBookIntent}
                 onCreateBookIntentHandled={onCreateBookIntentHandled}
                 onLockTimeoutChange={setLockTimeoutSecs}
+                onLicenseChanged={setLicense}
                 onEntitiesChange={async () => {
                   try {
                     await loadEntities()

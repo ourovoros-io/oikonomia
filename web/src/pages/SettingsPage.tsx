@@ -66,6 +66,8 @@ type Props = {
   createBookIntent?: number
   /** Called once the current createBookIntent has been consumed (form opened, scrolled to). */
   onCreateBookIntentHandled?: () => void
+  /** Mirrors this page's license status up to App, so TrialBanner reflects an install/expiry without waiting for a relock or reload. */
+  onLicenseChanged?: (status: LicenseStatus | null) => void
 }
 
 const TEMPLATES: Array<{
@@ -156,6 +158,7 @@ export function SettingsPage({
   onLockTimeoutChange,
   createBookIntent,
   onCreateBookIntentHandled,
+  onLicenseChanged,
 }: Props) {
   const { t, locale, setLocale } = useI18n()
   const [error, setError] = useState<string | null>(null)
@@ -213,6 +216,13 @@ export function SettingsPage({
         /* ignore — the viewer link simply stays inert */
       })
   }, [])
+
+  // Mirror this page's license state up to App on every change (initial
+  // fetch, install, and the expired-on-write transition below) so the
+  // global TrialBanner refreshes without waiting for a relock or reload.
+  useEffect(() => {
+    onLicenseChanged?.(license)
+  }, [license, onLicenseChanged])
 
   // App bumps createBookIntent from the five empty-state CTAs. Pop the
   // create-entity form open and scroll to it — scrollIntoView is undefined
