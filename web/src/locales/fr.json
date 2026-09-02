@@ -731,6 +731,12 @@
     "empty": {
       "title": "Aucun compte",
       "body": "Cette entité a un plan comptable vide."
+    },
+    "register": {
+      "title": "Relevé de {name}",
+      "back": "Tous les comptes",
+      "balance": "Solde",
+      "empty": "Aucune écriture comptabilisée pour ce compte pour le moment."
     }
   },
   "reports": {

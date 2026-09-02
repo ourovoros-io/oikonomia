@@ -115,6 +115,17 @@ export type CreateJournalLine = {
   memo?: string | null
 }
 
+/** One line in an account register, with a running normal balance. */
+export type RegisterLine = {
+  entry_id: string
+  entry_date: string
+  description: string
+  debit_minor: number
+  credit_minor: number
+  balance_minor: number
+  hidden: boolean
+}
+
 function asCommandError(err: unknown): CommandError {
   if (typeof err === 'string') {
     return { code: 'unknown', message: err }
@@ -357,6 +368,13 @@ export const api = {
   /** Signed normal balance of one account as of an ISO date. */
   accountBalance: (accountId: string, asOf: string) =>
     call<number>('account_balance_cmd', { accountId, asOf }),
+  /** Register lines (with running balance) for one account, optionally date-bounded. */
+  accountRegister: (accountId: string, from?: string, to?: string) =>
+    call<RegisterLine[]>('account_register_cmd', {
+      accountId,
+      from: from ?? null,
+      to: to ?? null,
+    }),
   /** Set the account's actual balance; Rust posts the delta against equity. */
   accountSetOpeningBalance: (accountId: string, targetMinor: number, asOf: string) =>
     call<PostedEntryView>('account_set_opening_balance', { accountId, targetMinor, asOf }),

@@ -731,6 +731,12 @@
     "empty": {
       "title": "Keine Konten",
       "body": "Dieses Buch hat einen leeren Kontenplan."
+    },
+    "register": {
+      "title": "Kontoblatt – {name}",
+      "back": "Alle Konten",
+      "balance": "Saldo",
+      "empty": "Für dieses Konto liegen noch keine gebuchten Einträge vor."
     }
   },
   "reports": {

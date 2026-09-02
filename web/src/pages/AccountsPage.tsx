@@ -7,13 +7,24 @@ import {
   Landmark,
   PieChart,
   Plus,
+  Receipt,
   TrendingDown,
   TrendingUp,
   Wallet,
 } from 'lucide-react'
-import { api, formatMoney, todayISO, type Account, type AccountType, type Entity } from '../lib/api'
+import {
+  api,
+  formatDate,
+  formatMoney,
+  todayISO,
+  type Account,
+  type AccountType,
+  type Entity,
+  type RegisterLine,
+} from '../lib/api'
 import { parseMajorToMinor } from '../lib/money'
 import { DateInput } from '../components/DateInput'
+import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
 import {
   Button,
@@ -78,6 +89,10 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   const [balanceCurrent, setBalanceCurrent] = useState<number | null>(null)
   const [balanceError, setBalanceError] = useState<string | null>(null)
   const [balanceBusy, setBalanceBusy] = useState(false)
+  const [registerAccount, setRegisterAccount] = useState<Account | null>(null)
+  const [registerLines, setRegisterLines] = useState<RegisterLine[]>([])
+  const [registerError, setRegisterError] = useState<string | null>(null)
+  const [registerBusy, setRegisterBusy] = useState(false)
 
   async function reload() {
     if (!entity) return
@@ -146,6 +161,33 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       .catch(() => setBalanceCurrent(null))
   }
 
+  function openRegister(account: Account) {
+    setRegisterAccount(account)
+    setRegisterLines([])
+    setRegisterError(null)
+  }
+
+  useEffect(() => {
+    if (!registerAccount) return
+    let cancelled = false
+    setRegisterBusy(true)
+    setRegisterError(null)
+    void api
+      .accountRegister(registerAccount.id)
+      .then((lines) => {
+        if (!cancelled) setRegisterLines(lines)
+      })
+      .catch((err) => {
+        if (!cancelled) setRegisterError(commandErrorMessage(err as CommandError))
+      })
+      .finally(() => {
+        if (!cancelled) setRegisterBusy(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [registerAccount?.id])
+
   async function onSetBalance(ev: FormEvent) {
     ev.preventDefault()
     if (!balanceAccount || !entity) return
@@ -181,6 +223,74 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
           ) : undefined
         }
       />
+    )
+  }
+
+  if (registerAccount) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          eyebrow={t('acct.eyebrow')}
+          title={t('accounts.register.title', { name: registerAccount.name })}
+          actions={
+            <Button variant="secondary" onClick={() => setRegisterAccount(null)}>
+              {t('accounts.register.back')}
+            </Button>
+          }
+        />
+
+        <ErrorBanner message={registerError} />
+
+        <Panel title={registerAccount.name} icon={<Receipt className="size-4" />}>
+          {registerBusy ? (
+            <p className="px-5 py-10 text-center text-sm text-[var(--color-muted)]">
+              {t('common.loading')}
+            </p>
+          ) : registerLines.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-[var(--color-muted)]">
+              {t('accounts.register.empty')}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)] text-left text-xs text-[var(--color-muted)]">
+                    <th className="px-5 py-2 font-medium">{t('tx.date')}</th>
+                    <th className="px-5 py-2 font-medium">{t('tx.descriptionLabel')}</th>
+                    <th className="px-5 py-2 text-right font-medium">{t('rpt.debit')}</th>
+                    <th className="px-5 py-2 text-right font-medium">{t('rpt.credit')}</th>
+                    <th className="px-5 py-2 text-right font-medium">
+                      {t('accounts.register.balance')}
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-border)]">
+                  {registerLines.map((line) => (
+                    <tr key={line.entry_id} className={cn(line.hidden && 'opacity-50')}>
+                      <td className="px-5 py-3 whitespace-nowrap text-xs text-[var(--color-muted)]">
+                        {formatDate(line.entry_date)}
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="text-[var(--color-fg)]">{line.description}</span>
+                        {line.hidden ? <HiddenBadge className="ml-2" /> : null}
+                      </td>
+                      <td className="px-5 py-3 text-right tabular-nums text-[var(--color-fg)]">
+                        {line.debit_minor ? formatMoney(line.debit_minor, entity.base_currency) : ''}
+                      </td>
+                      <td className="px-5 py-3 text-right tabular-nums text-[var(--color-fg)]">
+                        {line.credit_minor ? formatMoney(line.credit_minor, entity.base_currency) : ''}
+                      </td>
+                      <td className="px-5 py-3 text-right font-medium tabular-nums text-[var(--color-fg)]">
+                        {formatMoney(line.balance_minor, entity.base_currency)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </div>
     )
   }
 
@@ -376,6 +486,16 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                       {a.is_active ? t('common.active') : t('common.inactive')}
                     </div>
                   </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0"
+                    onClick={() => openRegister(a)}
+                    aria-label={t('accounts.register.title', { name: a.name })}
+                    title={t('accounts.register.title', { name: a.name })}
+                  >
+                    <Receipt className="size-4" />
+                  </Button>
                   {a.is_active &&
                   (a.account_type === 'asset' || a.account_type === 'liability') ? (
                     <Button

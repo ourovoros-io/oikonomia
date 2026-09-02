@@ -474,6 +474,10 @@
   "acct.setBalanceAria": "Set balance for {name}",
   "acct.deactivate": "Deactivate",
   "acct.deactivateAria": "Deactivate account",
+  "accounts.register.title": "{name} register",
+  "accounts.register.back": "All accounts",
+  "accounts.register.balance": "Balance",
+  "accounts.register.empty": "No posted entries for this account yet.",
 
   "rpt.noBookTitle": "No book selected",
   "rpt.noBookBody": "Create or select a book first.",
