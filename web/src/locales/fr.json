@@ -51,6 +51,9 @@
       "blank": "vide"
     }
   },
+  "empty": {
+    "createBook": "Créer un livre"
+  },
   "unlock": {
     "title": {
       "setup": "Créez votre coffre",
@@ -372,6 +375,12 @@
   "license": {
     "entityLimit": "Une licence est requise pour ajouter un autre livre.",
     "entityLimitHint": "Importez une licence signée pour conserver plus d'un livre dans ce coffre."
+  },
+  "trial": {
+    "banner": {
+      "expiring": "Il vous reste {n} jours d'essai.",
+      "expired": "Période d'essai terminée. Vos livres restent consultables ; achetez une licence pour continuer à écrire."
+    }
   },
   "tray": {
     "menu": {
@@ -1049,7 +1058,29 @@
     "backup": {
       "notOikonomia": "ce n’est pas une sauvegarde de coffre Oikonomia",
       "unsupportedVersion": "version de sauvegarde {version} non prise en charge"
-    }
+    },
+    "vaultUninitialized": "Le coffre n’a pas encore été configuré.",
+    "vaultLocked": "Le coffre est verrouillé.",
+    "invalidPassword": "Ce mot de passe est incorrect.",
+    "unbalancedEntry": "Les débits et les crédits ne s’équilibrent pas.",
+    "tooFewLines": "Une écriture nécessite au moins deux lignes.",
+    "invalidLineAmounts": "Chaque ligne doit avoir un débit ou un crédit, pas les deux, ni aucun des deux.",
+    "accountWrongEntity": "Ce compte n’appartient pas à ce livre.",
+    "moneyOverflow": "Ce montant est trop élevé.",
+    "negativeMoney": "Ce montant ne peut pas être négatif.",
+    "validation": "Cette saisie n’est pas valide.",
+    "io": "Une opération sur un fichier a échoué.",
+    "crypto": "Une opération de sécurité a échoué.",
+    "vaultCorrupt": "Le fichier du coffre est corrompu.",
+    "backupInvalid": "Ce fichier de sauvegarde n’est pas valide.",
+    "restoreWouldOverwrite": "Un coffre existe déjà ; la restauration l’écraserait.",
+    "notFound": "Cet élément est introuvable.",
+    "analysis": "L’analyse du document a échoué.",
+    "csvParse": "Ce fichier CSV n’a pas pu être lu.",
+    "licenseInvalid": "Cette licence n’est pas valide.",
+    "licenseExpired": "Votre licence a expiré.",
+    "licenseEntityLimit": "Sans licence, un seul livre est autorisé.",
+    "unknown": "Une erreur est survenue."
   },
   "analyze": {
     "hint": {

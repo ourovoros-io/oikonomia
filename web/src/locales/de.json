@@ -51,6 +51,9 @@
       "blank": "leer"
     }
   },
+  "empty": {
+    "createBook": "Buch erstellen"
+  },
   "unlock": {
     "title": {
       "setup": "Tresor anlegen",
@@ -372,6 +375,12 @@
   "license": {
     "entityLimit": "Für ein weiteres Buch brauchen Sie eine Lizenz.",
     "entityLimitHint": "Importieren Sie eine signierte Lizenz, wenn Sie mehr als ein Buch in diesem Tresor führen möchten."
+  },
+  "trial": {
+    "banner": {
+      "expiring": "Noch {n} Tage in Ihrer Testphase.",
+      "expired": "Testphase beendet. Ihre Bücher bleiben lesbar; kaufen Sie eine Lizenz, um weiter zu schreiben."
+    }
   },
   "tray": {
     "menu": {
@@ -1049,7 +1058,29 @@
     "backup": {
       "notOikonomia": "ist keine Oikonomia-Tresorsicherung",
       "unsupportedVersion": "nicht unterstützte Sicherungsversion {version}"
-    }
+    },
+    "vaultUninitialized": "Der Tresor wurde noch nicht eingerichtet.",
+    "vaultLocked": "Der Tresor ist gesperrt.",
+    "invalidPassword": "Dieses Passwort ist falsch.",
+    "unbalancedEntry": "Soll und Haben stimmen nicht überein.",
+    "tooFewLines": "Eine Buchung benötigt mindestens zwei Zeilen.",
+    "invalidLineAmounts": "Jede Zeile braucht entweder Soll oder Haben, nie beides und nie keins.",
+    "accountWrongEntity": "Dieses Konto gehört nicht zu diesem Buch.",
+    "moneyOverflow": "Dieser Betrag ist zu groß.",
+    "negativeMoney": "Dieser Betrag darf nicht negativ sein.",
+    "validation": "Diese Eingabe ist ungültig.",
+    "io": "Ein Dateivorgang ist fehlgeschlagen.",
+    "crypto": "Ein Sicherheitsvorgang ist fehlgeschlagen.",
+    "vaultCorrupt": "Die Tresordatei ist beschädigt.",
+    "backupInvalid": "Diese Sicherungsdatei ist ungültig.",
+    "restoreWouldOverwrite": "Es existiert bereits ein Tresor; die Wiederherstellung würde ihn überschreiben.",
+    "notFound": "Dieses Element wurde nicht gefunden.",
+    "analysis": "Die Dokumentanalyse ist fehlgeschlagen.",
+    "csvParse": "Diese CSV-Datei konnte nicht gelesen werden.",
+    "licenseInvalid": "Diese Lizenz ist ungültig.",
+    "licenseExpired": "Ihre Lizenz ist abgelaufen.",
+    "licenseEntityLimit": "Ohne Lizenz ist nur ein Buch erlaubt.",
+    "unknown": "Etwas ist schiefgelaufen."
   },
   "analyze": {
     "hint": {

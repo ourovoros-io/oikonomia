@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowDownLeft,
   ArrowLeftRight,
@@ -52,13 +52,14 @@ import {
   Select,
 } from '../components/ui'
 import { cn } from '../lib/cn'
+import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import type { DocumentSuggestion } from '../lib/api'
 import { formatMoney as fmtMoney } from '../lib/money'
 import { useI18n } from '../lib/I18nProvider'
 import { RecurringPage } from './RecurringPage'
 
-type Props = { entity: Entity | null }
+type Props = { entity: Entity | null; onCreateBook?: () => void }
 
 /** High-level entry kinds so users don't think in debit/credit. */
 type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
@@ -93,11 +94,12 @@ function inferKind(
   return 'other'
 }
 
-export function TransactionsPage({ entity }: Props) {
+export function TransactionsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
+  const errorBannerId = useId()
   const [showForm, setShowForm] = useState(false)
 
   const [kind, setKind] = useState<EntryKind>('expense')
@@ -111,6 +113,7 @@ export function TransactionsPage({ entity }: Props) {
   const [fromId, setFromId] = useState('') // transfer
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
+  const [amountInvalid, setAmountInvalid] = useState(false)
   const [busy, setBusy] = useState(false)
   const [voidId, setVoidId] = useState<string | null>(null)
   const [voidBusy, setVoidBusy] = useState(false)
@@ -292,7 +295,7 @@ export function TransactionsPage({ entity }: Props) {
       setCsvPreview(preview)
       setCsvStep('mapping')
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -325,7 +328,7 @@ export function TransactionsPage({ entity }: Props) {
       setCsvPreview(preview)
       setCsvStep('preview')
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -340,7 +343,7 @@ export function TransactionsPage({ entity }: Props) {
     try {
       await api.csvExportJournal(entity.id)
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -358,7 +361,7 @@ export function TransactionsPage({ entity }: Props) {
       setCsvRoles(null)
       await reload()
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -377,6 +380,7 @@ export function TransactionsPage({ entity }: Props) {
     setDescription('')
     setReference('')
     setAmount('')
+    setAmountInvalid(false)
     setPendingDoc(null)
     setPendingAnalysis(null)
     setScanNotes(null)
@@ -424,7 +428,7 @@ export function TransactionsPage({ entity }: Props) {
         return
       }
     }
-    void reload().catch((err) => setError((err as CommandError).message))
+    void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id, debouncedSearch, fromDate, toDate, accountFilter])
 
@@ -475,6 +479,7 @@ export function TransactionsPage({ entity }: Props) {
     if (minor === null || minor <= 0) {
       busyRef.current = false
       setError(t('tx.invalidAmount'))
+      setAmountInvalid(true)
       return
     }
     // Role/account rules live in Rust (post_simple_entry); its Validation
@@ -482,6 +487,7 @@ export function TransactionsPage({ entity }: Props) {
 
     setBusy(true)
     setError(null)
+    setAmountInvalid(false)
     try {
       const input = {
         entity_id: entity.id,
@@ -520,7 +526,7 @@ export function TransactionsPage({ entity }: Props) {
       setShowForm(false)
       await reload()
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       busyRef.current = false
       setBusy(false)
@@ -539,7 +545,7 @@ export function TransactionsPage({ entity }: Props) {
       setEntries((prev) => prev.filter((e) => e.entry.id !== id && !e.is_voided))
       await reload()
     } catch (err) {
-      setError((err as CommandError).message || t('tx.deleteFailed'))
+      setError(commandErrorMessage(err as CommandError) || t('tx.deleteFailed'))
     } finally {
       setVoidBusy(false)
     }
@@ -551,6 +557,11 @@ export function TransactionsPage({ entity }: Props) {
         icon={<ArrowLeftRight className="size-5" />}
         title={t('tx.noBookTitle')}
         body={t('tx.noBookBody')}
+        action={
+          onCreateBook ? (
+            <Button onClick={onCreateBook}>{t('empty.createBook')}</Button>
+          ) : undefined
+        }
       />
     )
   }
@@ -644,7 +655,7 @@ export function TransactionsPage({ entity }: Props) {
         meta={t('tx.meta')}
       />
 
-      <ErrorBanner message={error} />
+      <ErrorBanner id={errorBannerId} message={error} />
 
       <CsvMappingModal
         open={csvStep === 'mapping'}
@@ -780,9 +791,14 @@ export function TransactionsPage({ entity }: Props) {
               inputMode="decimal"
               placeholder={t('tx.amountPlaceholder')}
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value)
+                setAmountInvalid(false)
+              }}
               className="tabular-nums"
               required
+              aria-invalid={amountInvalid || undefined}
+              aria-describedby={amountInvalid ? errorBannerId : undefined}
             />
           </Field>
           <Field label={t('tx.reference')}>

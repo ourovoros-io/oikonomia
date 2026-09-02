@@ -27,6 +27,7 @@ import {
   type PostedEntryView,
 } from '../lib/api'
 import {
+  Button,
   EmptyState,
   ErrorBanner,
   FlowBar,
@@ -41,7 +42,7 @@ import { cn } from '../lib/cn'
 import type { CommandError } from '../lib/tauri'
 import { useI18n } from '../lib/I18nProvider'
 
-type Props = { entity: Entity | null }
+type Props = { entity: Entity | null; onCreateBook?: () => void }
 
 type Period = 'month' | 'year'
 
@@ -77,7 +78,7 @@ function inferActivity(view: PostedEntryView, accounts: Account[]): ActivityRow 
   }
 }
 
-export function DashboardPage({ entity }: Props) {
+export function DashboardPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [data, setData] = useState<DashboardSummary | null>(null)
   const [entries, setEntries] = useState<PostedEntryView[]>([])
@@ -140,6 +141,11 @@ export function DashboardPage({ entity }: Props) {
         icon={<Landmark className="size-5" />}
         title={t('dash.createTitle')}
         body={t('dash.createBody')}
+        action={
+          onCreateBook ? (
+            <Button onClick={onCreateBook}>{t('empty.createBook')}</Button>
+          ) : undefined
+        }
       />
     )
   }

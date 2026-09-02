@@ -48,7 +48,16 @@ vi.mock('./lib/api', () => ({
 }))
 
 vi.mock('./pages/DashboardPage', () => ({
-  DashboardPage: () => <div>Dashboard stub</div>,
+  DashboardPage: ({ onCreateBook }: { onCreateBook?: () => void }) => (
+    <div>
+      Dashboard stub
+      {onCreateBook ? (
+        <button type="button" onClick={onCreateBook}>
+          Create a book
+        </button>
+      ) : null}
+    </div>
+  ),
 }))
 vi.mock('./pages/TransactionsPage', () => ({
   TransactionsPage: () => null,
@@ -124,5 +133,98 @@ describe('App restore-while-unlocked', () => {
     })
     expect(screen.getByRole('button', { name: 'Unlock' })).toBeTruthy()
     expect(screen.queryByRole('heading', { name: 'Settings' })).toBeNull()
+  })
+})
+
+describe('App create-book intent', () => {
+  test('clicking the dashboard empty-state CTA opens Settings and the new-entity form', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([])
+    render(<App />)
+    const cta = await screen.findByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+    })
+  })
+
+  test('closing the dialog then navigating away and back to Settings does not reopen it', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([])
+    render(<App />)
+    const cta = await screen.findByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta)
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard stub')).toBeTruthy()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
+    })
+    expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+  })
+
+  test('a second CTA click still reopens the dialog', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([])
+    render(<App />)
+    const cta1 = await screen.findByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta1)
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard stub')).toBeTruthy()
+    })
+    const cta2 = await screen.findByRole('button', { name: 'Create a book' })
+    await userEvent.click(cta2)
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+    })
+  })
+})
+
+describe('App trial banner survives Settings visits', () => {
+  test('navigating to Settings does not blank an already-visible trial banner', async () => {
+    // App's own fetch (on unlock) resolves with an expiring trial. Settings'
+    // own fetch (on mount, when the user navigates there) then fails — this
+    // must not blank the banner App already has.
+    vi.mocked(api.licenseStatus).mockReset()
+    vi.mocked(api.licenseStatus).mockResolvedValueOnce({ state: 'trial', days_remaining: 3 })
+    vi.mocked(api.licenseStatus).mockRejectedValueOnce(new Error('network'))
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('3 days left in your trial.')
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
+    })
+
+    // Settings' own licenseStatus() call has now rejected (second mocked
+    // call). The banner must still show App's originally fetched status.
+    expect(screen.getByRole('status')).toHaveTextContent('3 days left in your trial.')
   })
 })

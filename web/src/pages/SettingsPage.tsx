@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import {
   Archive,
   Briefcase,
@@ -62,6 +62,12 @@ type Props = {
   onEntitiesChange: () => Promise<void>
   onSelectEntity: (id: string) => void
   onLockTimeoutChange?: (secs: number) => void
+  /** Bumped by App's empty-state CTAs to pop the new-entity form open and scroll to it. */
+  createBookIntent?: number
+  /** Called once the current createBookIntent has been consumed (form opened, scrolled to). */
+  onCreateBookIntentHandled?: () => void
+  /** Mirrors this page's license status up to App, so TrialBanner reflects an install/expiry without waiting for a relock or reload. */
+  onLicenseChanged?: (status: LicenseStatus | null) => void
 }
 
 const TEMPLATES: Array<{
@@ -150,9 +156,13 @@ export function SettingsPage({
   onEntitiesChange,
   onSelectEntity,
   onLockTimeoutChange,
+  createBookIntent,
+  onCreateBookIntentHandled,
+  onLicenseChanged,
 }: Props) {
   const { t, locale, setLocale } = useI18n()
   const [error, setError] = useState<string | null>(null)
+  const errorBannerId = useId()
   const [notice, setNotice] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState('EUR')
@@ -167,6 +177,21 @@ export function SettingsPage({
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordBusy, setPasswordBusy] = useState(false)
+  const [passwordErrorField, setPasswordErrorField] = useState<'current' | 'confirm' | null>(
+    null,
+  )
+  // Single write path for the page-wide error banner: every other handler
+  // (entity create/delete, auto-lock, backup, restore) shares `error` with
+  // the password form, so routing all of them through here guarantees a
+  // non-password error clears any stale aria-invalid left on a password
+  // field by an earlier password-change failure.
+  function setPageError(
+    message: string | null,
+    passwordField: 'current' | 'confirm' | null = null,
+  ) {
+    setError(message)
+    setPasswordErrorField(passwordField)
+  }
   const [backupBusy, setBackupBusy] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
@@ -177,6 +202,7 @@ export function SettingsPage({
   const [licenseBusy, setLicenseBusy] = useState(false)
   const [eulaText, setEulaText] = useState('')
   const [eulaOpen, setEulaOpen] = useState(false)
+  const newEntityAnchorRef = useRef<HTMLDivElement>(null)
 
   const backupAvailability = vaultBackupAvailability({
     vaultPresent,
@@ -195,7 +221,10 @@ export function SettingsPage({
       })
     void api
       .licenseStatus()
-      .then(setLicense)
+      .then((status) => {
+        setLicense(status)
+        onLicenseChanged?.(status)
+      })
       .catch(() => {
         /* ignore — Rust command lands on the same PR */
       })
@@ -205,16 +234,39 @@ export function SettingsPage({
       .catch(() => {
         /* ignore — the viewer link simply stays inert */
       })
+    // onLicenseChanged is intentionally excluded: this effect only fetches
+    // once on mount. Forwarding it here would mean a fresh SettingsPage
+    // mount (main's key={active} remounts Settings on every nav) reports
+    // its still-unresolved null state upward before the fetch above
+    // settles, blanking App's already-fetched TrialBanner license. Every
+    // real license change is forwarded imperatively at its write site
+    // instead — see onImportLicense and applyExpiredFromWrite below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // App bumps createBookIntent from the five empty-state CTAs. Pop the
+  // create-entity form open and scroll to it — scrollIntoView is undefined
+  // in jsdom, so guard it. Then tell App the intent was consumed, so a later
+  // remount of this page (main's key={active} tears Settings down on every
+  // navigation) does not replay a stale nonzero intent and reopen the
+  // dialog on every subsequent visit.
+  useEffect(() => {
+    if (!createBookIntent) return
+    setShowCreate(true)
+    newEntityAnchorRef.current?.scrollIntoView?.({ behavior: 'smooth' })
+    onCreateBookIntentHandled?.()
+  }, [createBookIntent, onCreateBookIntentHandled])
+
   function applyExpiredFromWrite(): void {
-    setLicense((prev) => ({
+    const next: LicenseStatus = {
       state: 'expired',
-      days_remaining: prev?.days_remaining,
-      licensed_until: prev?.licensed_until,
-    }))
+      days_remaining: license?.days_remaining,
+      licensed_until: license?.licensed_until,
+    }
+    setLicense(next)
+    onLicenseChanged?.(next)
     setLicenseError(null)
-    setError(null)
+    setPageError(null)
   }
 
   function commandErrorMessage(err: unknown, fallback = ''): string | null {
@@ -234,7 +286,7 @@ export function SettingsPage({
     ev.preventDefault()
     if (!canAddAnotherBook(license, entities.length)) return
     setBusy(true)
-    setError(null)
+    setPageError(null)
     try {
       const entity = await api.entityCreate({
         name,
@@ -248,7 +300,7 @@ export function SettingsPage({
       onSelectEntity(entity.id)
     } catch (err) {
       const message = commandErrorMessage(err)
-      if (message !== null) setError(message)
+      if (message !== null) setPageError(message)
     } finally {
       setBusy(false)
     }
@@ -257,14 +309,14 @@ export function SettingsPage({
   async function confirmDelete() {
     if (!pendingDelete) return
     setDeleteBusy(true)
-    setError(null)
+    setPageError(null)
     try {
       await api.entityDelete(pendingDelete.id)
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
       const message = commandErrorMessage(err, t('settings.deleteFailed'))
-      if (message !== null) setError(message)
+      if (message !== null) setPageError(message)
     } finally {
       setDeleteBusy(false)
     }
@@ -272,11 +324,11 @@ export function SettingsPage({
 
   async function saveLock(mins: number) {
     if (!Number.isFinite(mins) || mins < 1) {
-      setError(t('settings.lockTimeoutMin'))
+      setPageError(t('settings.lockTimeoutMin'))
       return
     }
     setLockBusy(true)
-    setError(null)
+    setPageError(null)
     try {
       const secs = Math.round(mins * 60)
       await api.setLockTimeout(secs)
@@ -284,7 +336,7 @@ export function SettingsPage({
       onLockTimeoutChange?.(secs)
     } catch (err) {
       const message = commandErrorMessage(err)
-      if (message !== null) setError(message)
+      if (message !== null) setPageError(message)
     } finally {
       setLockBusy(false)
     }
@@ -292,11 +344,11 @@ export function SettingsPage({
 
   async function onChangePassword(ev: FormEvent) {
     ev.preventDefault()
-    setError(null)
+    setPageError(null)
     setNotice(null)
 
     if (newPassword !== confirmPassword) {
-      setError(t('settings.passwordsMismatch'))
+      setPageError(t('settings.passwordsMismatch'), 'confirm')
       return
     }
     // Password strength rules live in Rust; its Validation error surfaces below.
@@ -316,13 +368,14 @@ export function SettingsPage({
       }
       const licenseCopy = licenseErrorMessage(cmd.code)
       if (licenseCopy !== undefined) {
-        setError(licenseCopy)
+        setPageError(licenseCopy)
         return
       }
-      setError(
+      setPageError(
         cmd.code === 'invalid_password'
           ? t('settings.currentPasswordIncorrect')
           : cmd.message || t('settings.changePasswordFailed'),
+        'current',
       )
     } finally {
       setPasswordBusy(false)
@@ -336,14 +389,17 @@ export function SettingsPage({
       const next = await api.licenseInstall()
       if (next === null) return
       setLicense(next)
+      onLicenseChanged?.(next)
     } catch (err) {
       const cmd = err as CommandError
       if (isLicenseExpiredCode(cmd.code)) {
-        setLicense((prev) => ({
+        const next: LicenseStatus = {
           state: 'expired',
-          days_remaining: prev?.days_remaining,
-          licensed_until: prev?.licensed_until,
-        }))
+          days_remaining: license?.days_remaining,
+          licensed_until: license?.licensed_until,
+        }
+        setLicense(next)
+        onLicenseChanged?.(next)
         return
       }
       setLicenseError(licenseImportError(cmd))
@@ -354,13 +410,13 @@ export function SettingsPage({
 
   async function onBackup() {
     if (!backupEnabled) return
-    setError(null)
+    setPageError(null)
     setNotice(null)
     setBackupBusy(true)
     try {
       await vaultBackup()
     } catch (err) {
-      setError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err as CommandError))
     } finally {
       setBackupBusy(false)
     }
@@ -368,7 +424,7 @@ export function SettingsPage({
 
   async function beginRestore() {
     if (restoreBusy || restorePicking || restoreOpen) return
-    setError(null)
+    setPageError(null)
     setRestorePicking(true)
     try {
       const path = await vaultPickBackup()
@@ -376,7 +432,7 @@ export function SettingsPage({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err as CommandError))
     } finally {
       setRestorePicking(false)
     }
@@ -385,7 +441,7 @@ export function SettingsPage({
   async function confirmRestore() {
     if (!restorePath) return
     setRestoreBusy(true)
-    setError(null)
+    setPageError(null)
     try {
       const result = await vaultRestore({ path: restorePath, replace: replaceConfirm.replace })
       if (result === null) {
@@ -396,7 +452,7 @@ export function SettingsPage({
       setRestoreOpen(false)
       setRestorePath(undefined)
     } catch (err) {
-      setError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err as CommandError))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {
@@ -413,7 +469,7 @@ export function SettingsPage({
         meta={t('settings.meta')}
       />
 
-      <ErrorBanner message={error} />
+      <ErrorBanner id={errorBannerId} message={error} />
       {notice ? (
         <div className="rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]">
           {notice}
@@ -553,8 +609,13 @@ export function SettingsPage({
               type="password"
               autoComplete="current-password"
               value={oldPassword}
-              onChange={(e) => setOldPassword(e.target.value)}
+              onChange={(e) => {
+                setOldPassword(e.target.value)
+                setPasswordErrorField(null)
+              }}
               required
+              aria-invalid={passwordErrorField === 'current' || undefined}
+              aria-describedby={passwordErrorField === 'current' ? errorBannerId : undefined}
             />
           </Field>
           <Field label={t('settings.newPassword')}>
@@ -562,7 +623,10 @@ export function SettingsPage({
               type="password"
               autoComplete="new-password"
               value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              onChange={(e) => {
+                setNewPassword(e.target.value)
+                setPasswordErrorField(null)
+              }}
               required
             />
           </Field>
@@ -571,8 +635,13 @@ export function SettingsPage({
               type="password"
               autoComplete="new-password"
               value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
+              onChange={(e) => {
+                setConfirmPassword(e.target.value)
+                setPasswordErrorField(null)
+              }}
               required
+              aria-invalid={passwordErrorField === 'confirm' || undefined}
+              aria-describedby={passwordErrorField === 'confirm' ? errorBannerId : undefined}
             />
           </Field>
           <div className="sm:col-span-3">
@@ -620,6 +689,8 @@ export function SettingsPage({
           </Button>
         </div>
       </CollapsibleSection>
+
+      <div ref={newEntityAnchorRef} />
 
       <Modal
         open={showCreate}

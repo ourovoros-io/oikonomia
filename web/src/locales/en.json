@@ -14,6 +14,8 @@
   "common.active": "Active",
   "common.inactive": "Inactive",
 
+  "empty.createBook": "Create a book",
+
   "kind.expense": "Expense",
   "kind.income": "Income",
   "kind.bill": "Bill",
@@ -122,6 +124,8 @@
   "settings.trial.banner.expired": "Trial ended. You can still back up, restore, and export CSV.",
   "license.entityLimit": "A license is required to add another book.",
   "license.entityLimitHint": "Import a signed license to keep more than one book in this vault.",
+  "trial.banner.expiring": "{n} days left in your trial.",
+  "trial.banner.expired": "Trial ended. Your books stay readable; buy a license to keep writing.",
   "settings.deleteEntityTitle": "Delete entity?",
   "settings.deleteEntityBody": "“{name}” and all of its accounts and transactions will be permanently removed. This cannot be undone.",
   "settings.deleteFailed": "Failed to delete entity",
@@ -606,5 +610,28 @@
   "date.month.9": "September",
   "date.month.10": "October",
   "date.month.11": "November",
-  "date.month.12": "December"
+  "date.month.12": "December",
+
+  "error.vaultUninitialized": "The vault has not been set up yet.",
+  "error.vaultLocked": "The vault is locked.",
+  "error.invalidPassword": "That password is incorrect.",
+  "error.unbalancedEntry": "Debits and credits do not balance.",
+  "error.tooFewLines": "An entry needs at least two lines.",
+  "error.invalidLineAmounts": "Each line needs a debit or a credit, not both or neither.",
+  "error.accountWrongEntity": "That account does not belong to this book.",
+  "error.moneyOverflow": "That amount is too large.",
+  "error.negativeMoney": "That amount cannot be negative.",
+  "error.validation": "That input is not valid.",
+  "error.io": "A file operation failed.",
+  "error.crypto": "A security operation failed.",
+  "error.vaultCorrupt": "The vault file is corrupt.",
+  "error.backupInvalid": "That backup file is not valid.",
+  "error.restoreWouldOverwrite": "A vault already exists; restoring would overwrite it.",
+  "error.notFound": "That item could not be found.",
+  "error.analysis": "Document analysis failed.",
+  "error.csvParse": "That CSV file could not be read.",
+  "error.licenseInvalid": "That license is not valid.",
+  "error.licenseExpired": "Your license has expired.",
+  "error.licenseEntityLimit": "Unlicensed books are limited to one entity.",
+  "error.unknown": "Something went wrong."
 }

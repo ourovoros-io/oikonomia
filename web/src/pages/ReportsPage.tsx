@@ -32,11 +32,12 @@ import {
   Segmented,
 } from '../components/ui'
 import { cn } from '../lib/cn'
+import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import { t } from '../lib/i18n'
 import { useI18n } from '../lib/I18nProvider'
 
-type Props = { entity: Entity | null }
+type Props = { entity: Entity | null; onCreateBook?: () => void }
 type Tab = 'trial' | 'pnl' | 'bs'
 
 function sectionTitle(title: string): string {
@@ -47,7 +48,7 @@ function sectionTitle(title: string): string {
   return title
 }
 
-export function ReportsPage({ entity }: Props) {
+export function ReportsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [tab, setTab] = useState<Tab>('pnl')
   const [asOf, setAsOf] = useState(todayISO())
@@ -68,7 +69,7 @@ export function ReportsPage({ entity }: Props) {
       if (tab === 'pnl') setPnl(await api.reportPnl(entity.id, from, to))
       if (tab === 'bs') setBs(await api.reportBalanceSheet(entity.id, asOf))
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     }
   }
 
@@ -110,6 +111,11 @@ export function ReportsPage({ entity }: Props) {
         icon={<BarChart3 className="size-5" />}
         title={t('rpt.noBookTitle')}
         body={t('rpt.noBookBody')}
+        action={
+          onCreateBook ? (
+            <Button onClick={onCreateBook}>{t('empty.createBook')}</Button>
+          ) : undefined
+        }
       />
     )
   }

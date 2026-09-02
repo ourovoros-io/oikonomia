@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Download, Eye, FolderOpen, Trash2 } from 'lucide-react'
 import { api, type DocumentMeta, type Entity } from '../lib/api'
+import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
@@ -8,7 +9,7 @@ import { formatBytes } from '../lib/files'
 import { Button, EmptyState, ErrorBanner, PageHeader, Panel } from '../components/ui'
 import { useI18n } from '../lib/I18nProvider'
 
-type Props = { entity: Entity | null }
+type Props = { entity: Entity | null; onCreateBook?: () => void }
 
 /** created_at is the app-wide "unix:<seconds>" ordering key; render as dd/mm/yyyy. */
 function formatCreatedAt(createdAt: string): string {
@@ -22,7 +23,7 @@ function formatCreatedAt(createdAt: string): string {
 }
 
 /** Every file in the book's vault — always linked to the entry it was saved with. */
-export function DocumentsPage({ entity }: Props) {
+export function DocumentsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [docs, setDocs] = useState<DocumentMeta[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +46,7 @@ export function DocumentsPage({ entity }: Props) {
       setDocs([])
       return
     }
-    void reload().catch((err) => setError((err as CommandError).message))
+    void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id])
 
@@ -58,7 +59,7 @@ export function DocumentsPage({ entity }: Props) {
       setDeleteId(null)
       await reload()
     } catch (err) {
-      setError((err as CommandError).message || t('docs.deleteFailed'))
+      setError(commandErrorMessage(err as CommandError) || t('docs.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -70,7 +71,7 @@ export function DocumentsPage({ entity }: Props) {
     try {
       await api.documentExport(id)
     } catch (err) {
-      setError((err as CommandError).message || t('docs.exportFailed'))
+      setError(commandErrorMessage(err as CommandError) || t('docs.exportFailed'))
     } finally {
       setBusyId(null)
     }
@@ -82,6 +83,11 @@ export function DocumentsPage({ entity }: Props) {
         icon={<FolderOpen className="size-5" />}
         title={t('docs.noBookTitle')}
         body={t('docs.noBookBody')}
+        action={
+          onCreateBook ? (
+            <Button onClick={onCreateBook}>{t('empty.createBook')}</Button>
+          ) : undefined
+        }
       />
     )
   }

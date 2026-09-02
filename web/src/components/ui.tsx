@@ -395,14 +395,19 @@ export function ErrorBanner({
   message,
   title,
   className = 'mb-4',
+  id,
 }: {
   message: string | null
   title?: string
   className?: string
+  id?: string
 }) {
   if (!message && !title) return null
   return (
     <div
+      id={id}
+      role="alert"
+      aria-live="assertive"
       className={cn(
         'flex items-start gap-2 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger)]',
         className,
