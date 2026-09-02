@@ -31,7 +31,8 @@ use oikonomia_core::ledger::{
     update_account, update_entity, update_recurring_template, void_entry,
 };
 use oikonomia_core::license::{
-    LicenseStatus, LicenseVerifier, install_license, record_trial_start, require_writes_allowed,
+    LicenseStatus, LicenseVerifier, install_license, license_status_with, record_trial_start_with,
+    require_writes_allowed_with,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
@@ -125,9 +126,13 @@ pub async fn vault_unlock(
 }
 
 /// Stamp `trial_started_at` once after a successful vault init or unlock.
+///
+/// Also mirrors the stamp to the platform's secondary store (the macOS
+/// Keychain), so deleting the app-data directory alone cannot reset the
+/// trial.
 fn stamp_trial_start(state: &AppState) -> CommandResult<()> {
     let _guard = state.lock_prefs();
-    record_trial_start(state.data_dir())?;
+    record_trial_start_with(state.data_dir(), crate::trial_store::default_trial_store())?;
     Ok(())
 }
 
@@ -336,14 +341,31 @@ pub async fn vault_pick_backup(
     Ok(Some(path.display().to_string()))
 }
 
+/// Where a customer buys a license. The page carries the Paddle checkout;
+/// the app itself never talks to it - the browser does.
+pub(crate) const BUY_URL: &str = "https://ourovoros.io/oikonomia";
+
+/// `license_status` IPC payload: core status plus the buy link.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct LicenseStatusPayload {
+    #[serde(flatten)]
+    pub(crate) status: LicenseStatus,
+    pub(crate) buy_url: String,
+}
+
 /// Offline license / trial status. Never contacts the network.
 #[tauri::command]
-pub fn license_status(state: State<'_, AppState>) -> CommandResult<LicenseStatus> {
+pub fn license_status(state: State<'_, AppState>) -> CommandResult<LicenseStatusPayload> {
     let verifier = LicenseVerifier::production()?;
-    Ok(oikonomia_core::license::license_status(
+    let status = license_status_with(
         state.data_dir(),
         &verifier,
-    )?)
+        crate::trial_store::default_trial_store(),
+    )?;
+    Ok(LicenseStatusPayload {
+        status,
+        buy_url: BUY_URL.to_owned(),
+    })
 }
 
 /// Native Open for a `.lic` file; verify, then atomically copy as `license.lic`.
@@ -354,7 +376,7 @@ pub fn license_status(state: State<'_, AppState>) -> CommandResult<LicenseStatus
 pub async fn license_install(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-) -> CommandResult<Option<LicenseStatus>> {
+) -> CommandResult<Option<LicenseStatusPayload>> {
     let filter_label = crate::tray::license_filter_label(load_ui_prefs(state.data_dir()).locale);
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
@@ -378,8 +400,36 @@ pub async fn license_install(
     })?;
 
     let verifier = LicenseVerifier::production()?;
-    let status = install_license(state.data_dir(), &path, &verifier)?;
-    Ok(Some(status))
+    install_license(state.data_dir(), &path, &verifier)?;
+    let status = license_status_with(
+        state.data_dir(),
+        &verifier,
+        crate::trial_store::default_trial_store(),
+    )?;
+    Ok(Some(LicenseStatusPayload {
+        status,
+        buy_url: BUY_URL.to_owned(),
+    }))
+}
+
+#[cfg(test)]
+mod license_payload_tests {
+    use super::{BUY_URL, LicenseStatusPayload};
+
+    #[test]
+    fn license_status_payload_carries_the_buy_url() {
+        let payload = LicenseStatusPayload {
+            status: oikonomia_core::license::LicenseStatus {
+                state: oikonomia_core::license::LicenseState::None,
+                days_remaining: None,
+                licensed_until: None,
+            },
+            buy_url: BUY_URL.to_owned(),
+        };
+        let json = serde_json::to_value(&payload).expect("serialize");
+        assert_eq!(json["state"], "none");
+        assert_eq!(json["buy_url"], "https://ourovoros.io/oikonomia");
+    }
 }
 
 /// Native Open dialog for a `.oikonomia-backup` file. `None` if cancelled.
@@ -1467,7 +1517,12 @@ pub async fn document_analyze_path(
 
 fn require_writes(state: &AppState) -> CommandResult<()> {
     let verifier = LicenseVerifier::production()?;
-    require_writes_allowed(state.data_dir(), &verifier).map_err(CommandError::from)
+    require_writes_allowed_with(
+        state.data_dir(),
+        &verifier,
+        crate::trial_store::default_trial_store(),
+    )
+    .map_err(CommandError::from)
 }
 
 /// Accept a webview-supplied path only if the user handed it to the app
@@ -1690,4 +1745,29 @@ pub async fn document_export(
     })?;
 
     Ok(Some(path.display().to_string()))
+}
+
+// --- Legal -------------------------------------------------------------
+
+/// The bundled end-user license agreement (EULA.md at the repo root).
+pub(crate) fn eula_text_content() -> &'static str {
+    include_str!("../../../../EULA.md")
+}
+
+/// Return the EULA for the Settings "About" section.
+#[tauri::command]
+pub fn eula_text() -> String {
+    eula_text_content().to_owned()
+}
+
+#[cfg(test)]
+mod eula_tests {
+    use super::eula_text_content;
+
+    #[test]
+    fn eula_text_is_bundled_and_nonempty() {
+        let text = eula_text_content();
+        assert!(text.contains("Ourovoros.io"));
+        assert!(text.len() > 1000, "EULA suspiciously short");
+    }
 }

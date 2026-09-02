@@ -4,9 +4,11 @@ version.workspace = true
 edition.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+license-file.workspace = true
 description = "Double-entry ledger domain, vault crypto, and reports for Oikonomia"
-# Never published to crates.io; Phase 2 adds a license-file for the bundle
-# itself. deny.toml's [licenses.private] relies on this field.
+# Never published to crates.io; deny.toml's [licenses.private] relies on this
+# field (a proprietary license-file, not an SPDX id, so cargo-deny cannot
+# classify it).
 publish = false
 
 [dependencies]

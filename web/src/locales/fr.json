@@ -232,10 +232,13 @@
     },
     "license": {
       "title": "Licence",
-      "description": "Importez un fichier de licence signé. Rien n'est envoyé depuis cet ordinateur.",
+      "description": "Importez un fichier de licence signé. Achetez-en une sur ourovoros.io/oikonomia. Rien n'est envoyé depuis cet ordinateur.",
       "import": "Importer la licence",
+      "buy": "Acheter une licence",
       "licensedUntil": "Licence jusqu'au {date}",
       "replace": "Importer un autre fichier",
+      "viewEula": "Contrat de licence",
+      "eulaTitle": "Contrat de licence",
       "banner": {
         "expired": "La licence a pris fin. La sauvegarde, la restauration et l'export CSV fonctionnent toujours."
       },

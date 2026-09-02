@@ -20,6 +20,7 @@ vi.mock('../lib/api', () => ({
     getUiPrefs: vi.fn(async () => ({ locale: 'en' })),
     licenseStatus: vi.fn(async () => ({ state: 'trial', days_remaining: 12 })),
     licenseInstall: vi.fn(),
+    eulaText: vi.fn(async () => ''),
   },
 }))
 

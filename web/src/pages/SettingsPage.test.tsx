@@ -19,12 +19,18 @@ vi.mock('../lib/api', () => ({
     setLockTimeout: vi.fn(),
     licenseStatus: vi.fn(),
     licenseInstall: vi.fn(),
+    eulaText: vi.fn(),
     entityCreate: vi.fn(),
   },
 }))
 
+vi.mock('@tauri-apps/plugin-opener', () => ({
+  openUrl: vi.fn(),
+}))
+
 import { api } from '../lib/api'
 import { vaultBackup, vaultPickBackup, vaultRestore } from '../lib/tauri'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { SettingsPage } from './SettingsPage'
 import { resetI18nForTests } from '../lib/i18n'
 
@@ -56,8 +62,10 @@ beforeEach(() => {
     days_remaining: 12,
   })
   vi.mocked(api.licenseInstall).mockReset()
+  vi.mocked(api.eulaText).mockReset().mockResolvedValue('')
   vi.mocked(api.entityCreate).mockReset()
   vi.mocked(api.setLockTimeout).mockReset()
+  vi.mocked(openUrl).mockReset()
 })
 
 async function expandVaultBackup() {
@@ -69,7 +77,7 @@ async function expandEntities() {
 }
 
 describe('SettingsPage license', () => {
-  test('Language is first; License is present without Buy or extra trial helper', async () => {
+  test('Language is first; License is present without a Buy button or extra trial helper', async () => {
     render(
       <SettingsPage
         entities={[entity]}
@@ -83,7 +91,10 @@ describe('SettingsPage license', () => {
     await waitFor(() => {
       expect(screen.getByText('12 days left in your trial')).toBeTruthy()
     })
-    expect(screen.queryByText(/buy/i)).toBeNull()
+    // No buy_url on this mock (pre-buy-path status shape), so no Buy button.
+    // (Not /buy/i: the section's collapsible header button also contains the
+    // description text, which now mentions where to buy a license.)
+    expect(screen.queryByRole('button', { name: /buy a license/i })).toBeNull()
     expect(screen.queryByText(/one machine/i)).toBeNull()
     expect(screen.queryByText(/full app during the trial/i)).toBeNull()
     expect(screen.getByRole('button', { name: /import license/i })).toBeTruthy()
@@ -185,6 +196,24 @@ describe('SettingsPage license', () => {
     })
     expect(screen.getByText('12 days left in your trial')).toBeTruthy()
     expect(screen.queryByText('Could not import the license.')).toBeNull()
+  })
+
+  test('clicking License agreement shows the bundled EULA text', async () => {
+    vi.mocked(api.eulaText).mockResolvedValue('OIKONOMIA END-USER LICENSE AGREEMENT — Ourovoros.io')
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    expect(screen.queryByText(/OIKONOMIA END-USER LICENSE AGREEMENT/)).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /license agreement/i }))
+    await waitFor(() => {
+      expect(
+        screen.getByText(/OIKONOMIA END-USER LICENSE AGREEMENT — Ourovoros\.io/),
+      ).toBeTruthy()
+    })
   })
 
   test('expired Settings still enables Backup and Restore', async () => {
@@ -317,6 +346,60 @@ describe('SettingsPage license', () => {
     })
     expect(screen.queryByText('A license is required to add another book.')).toBeNull()
     expect(screen.queryByText(/rust Display/i)).toBeNull()
+  })
+
+  test('Buy a license renders for a trial with a buy_url and opens it', async () => {
+    vi.mocked(api.licenseStatus).mockResolvedValue({
+      state: 'trial',
+      days_remaining: 3,
+      buy_url: 'https://ourovoros.io/oikonomia',
+    })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    const buy = await screen.findByRole('button', { name: /buy a license/i })
+    await userEvent.click(buy)
+    expect(openUrl).toHaveBeenCalledWith('https://ourovoros.io/oikonomia')
+  })
+
+  test('Buy a license renders for an expired status with a buy_url', async () => {
+    vi.mocked(api.licenseStatus).mockResolvedValue({
+      state: 'expired',
+      buy_url: 'https://ourovoros.io/oikonomia',
+    })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /buy a license/i })).toBeTruthy()
+    })
+  })
+
+  test('Buy a license is absent once licensed, even with a buy_url', async () => {
+    vi.mocked(api.licenseStatus).mockResolvedValue({
+      state: 'licensed',
+      licensed_until: '2027-08-20',
+      buy_url: 'https://ourovoros.io/oikonomia',
+    })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /import another file/i })).toBeTruthy()
+    })
+    expect(screen.queryByRole('button', { name: /buy a license/i })).toBeNull()
   })
 
   test('entity_create license_entity_limit shows Writer copy, not Rust Display', async () => {

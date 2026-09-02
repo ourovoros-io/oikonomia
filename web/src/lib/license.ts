@@ -9,6 +9,9 @@ export type LicenseStatus = {
   days_remaining?: number
   /** ISO `YYYY-MM-DD` when `state` is licensed (or a lapsed license). */
   licensed_until?: string
+  /** Where to buy a license. Carried by the native payload; absent in tests
+   * that predate the buy path. */
+  buy_url?: string
 }
 
 export function isLicenseExpiredCode(code: string): boolean {

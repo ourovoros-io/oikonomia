@@ -124,7 +124,7 @@ describe('Writer el catalog', () => {
     expect(flat['settings.language.option.de']).toBe('Deutsch')
     expect(flat['settings.license.title']).toBe('Άδεια')
     expect(flat['settings.license.description']).toBe(
-      'Εισαγάγετε ένα υπογεγραμμένο αρχείο άδειας. Τίποτα δεν αποστέλλεται από αυτόν τον υπολογιστή.',
+      'Εισαγάγετε ένα υπογεγραμμένο αρχείο άδειας. Αγοράστε μία στο ourovoros.io/oikonomia. Τίποτα δεν αποστέλλεται από αυτόν τον υπολογιστή.',
     )
     expect(flat['settings.license.import']).toBe('Εισαγωγή άδειας')
     expect(flat['settings.license.licensedUntil']).toBe('Άδεια έως {date}')
@@ -375,6 +375,7 @@ describe('Writer license catalog', () => {
     'settings.license.title',
     'settings.license.description',
     'settings.license.import',
+    'settings.license.buy',
     'settings.license.licensedUntil',
     'settings.license.replace',
     'settings.license.banner.expired',
@@ -398,6 +399,8 @@ describe('Writer license catalog', () => {
     }
     expect(enFlat['settings.license.title']).toBe('License')
     expect(elFlat['settings.license.title']).toBe('Άδεια')
+    expect(enFlat['settings.license.buy']).toBe('Buy a license')
+    expect(elFlat['settings.license.buy']).toBe('Αγορά άδειας')
     expect(enFlat['settings.license.error.generic']).toBe('Could not import the license.')
     expect(elFlat['settings.license.error.generic']).toBe(
       'Δεν ολοκληρώθηκε η εισαγωγή της άδειας.',

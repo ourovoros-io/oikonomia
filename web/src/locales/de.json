@@ -232,10 +232,13 @@
     },
     "license": {
       "title": "Lizenz",
-      "description": "Importieren Sie eine signierte Lizenzdatei. Von diesem Computer wird nichts gesendet.",
+      "description": "Importieren Sie eine signierte Lizenzdatei. Kaufen Sie eine unter ourovoros.io/oikonomia. Von diesem Computer wird nichts gesendet.",
       "import": "Lizenz importieren",
+      "buy": "Lizenz kaufen",
       "licensedUntil": "Lizenziert bis {date}",
       "replace": "Andere Datei importieren",
+      "viewEula": "Lizenzvereinbarung",
+      "eulaTitle": "Lizenzvereinbarung",
       "banner": {
         "expired": "Die Lizenz ist abgelaufen. Sichern, Wiederherstellen und CSV-Export funktionieren weiter."
       },

@@ -33,6 +33,7 @@
     "targets": "all",
     "publisher": "Ourovoros.io",
     "copyright": "Copyright (c) 2026 Ourovoros.io",
+    "licenseFile": "../../../EULA.md",
     "category": "Finance",
     "shortDescription": "Encrypted double-entry books for people and small companies.",
     "longDescription": "Oikonomia keeps personal and company double-entry books in an encrypted local vault. Offline by design: the only network action is the update check you click.",

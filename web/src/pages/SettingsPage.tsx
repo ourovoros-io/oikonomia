@@ -15,6 +15,7 @@ import {
   Upload,
   User,
 } from 'lucide-react'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { api, type ChartTemplate, type Entity } from '../lib/api'
 import {
   canAddAnotherBook,
@@ -174,6 +175,8 @@ export function SettingsPage({
   const [license, setLicense] = useState<LicenseStatus | null>(null)
   const [licenseError, setLicenseError] = useState<string | null>(null)
   const [licenseBusy, setLicenseBusy] = useState(false)
+  const [eulaText, setEulaText] = useState('')
+  const [eulaOpen, setEulaOpen] = useState(false)
 
   const backupAvailability = vaultBackupAvailability({
     vaultPresent,
@@ -195,6 +198,12 @@ export function SettingsPage({
       .then(setLicense)
       .catch(() => {
         /* ignore — Rust command lands on the same PR */
+      })
+    void api
+      .eulaText()
+      .then(setEulaText)
+      .catch(() => {
+        /* ignore — the viewer link simply stays inert */
       })
   }, [])
 
@@ -490,8 +499,24 @@ export function SettingsPage({
                 ? t('settings.license.replace')
                 : t('settings.license.import')}
             </Button>
+            {license && license.state !== 'licensed' && license.buy_url ? (
+              <Button
+                onClick={() => {
+                  void openUrl(license.buy_url ?? '')
+                }}
+              >
+                {t('settings.license.buy')}
+              </Button>
+            ) : null}
           </div>
           <ErrorBanner message={licenseError} className="" />
+          <button
+            type="button"
+            className="text-xs text-[var(--color-muted)] underline-offset-2 hover:text-[var(--color-fg)] hover:underline"
+            onClick={() => setEulaOpen(true)}
+          >
+            {t('settings.license.viewEula')}
+          </button>
         </div>
       </CollapsibleSection>
 
@@ -660,6 +685,16 @@ export function SettingsPage({
             </Button>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        open={eulaOpen}
+        title={t('settings.license.eulaTitle')}
+        onClose={() => setEulaOpen(false)}
+      >
+        <pre className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-[var(--color-fg-secondary)]">
+          {eulaText}
+        </pre>
       </Modal>
 
       <CollapsibleSection

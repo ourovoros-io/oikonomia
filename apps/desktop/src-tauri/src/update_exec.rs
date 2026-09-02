@@ -149,7 +149,11 @@ fn install_macos_from_path(artifact: &Path, current: &Path) -> Result<()> {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+    if name.ends_with(".tar.gz")
+        || artifact
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("tgz"))
+    {
         return extract_macos_app_archive(artifact, current);
     }
     let status = Command::new("open").arg(artifact).status().map_err(|err| {
