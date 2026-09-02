@@ -87,10 +87,11 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 - Vault files live under the OS app-data directory for `io.ourovoros.oikonomia`.
 - Offline by design: the app performs **no background network activity**. The
   single network action is the update check you click on the unlock screen; it
-  talks only to `github.com` (the public `ourovoros-io/oikonomia-releases`
-  repo) and verifies a minisign signature over both the update manifest and
-  the downloaded artifact before anything is installed. The vault, ledger, and
-  license paths (`oikonomia-core`) contain no network code at all —
+  talks only to GitHub's release hosts (the public
+  `ourovoros-io/oikonomia-releases` repo) and verifies a minisign signature
+  over both the update manifest and the downloaded artifact before anything is
+  installed. The vault, ledger, and license paths (`oikonomia-core`) contain
+  no network code at all —
   `scripts/assert-core-offline.sh` and `cargo deny check` enforce this in CI.
 - Every webview is pinned to the app's own origin (`nav_guard`), and the CSP
   allows no remote source. The webview cannot supply a URL or key to the
@@ -101,7 +102,8 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 ## Threat model (v1)
 
 **Protects against:** stolen disk / backup of app data, casual browsing of the vault file.  
-**Does not protect against:** a compromised GitHub account cannot ship a malicious update (artifacts are minisign-verified against the baked key), but a compromised signing key can — the key ceremony in docs/release.md keeps it offline.
+**Does not protect against:** malware while unlocked, keyloggers, memory forensics while the app is open.  
+**Update channel:** a compromised GitHub account cannot ship a malicious update (artifacts are minisign-verified against the baked key), but a compromised signing key can — the key ceremony in docs/release.md keeps it offline.
 
 ## Layout
 
