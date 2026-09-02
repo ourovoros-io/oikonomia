@@ -63,7 +63,7 @@ The current `PRODUCTION_PUBLIC_KEY_HEX` in `crates/oikonomia-core/src/license.rs
 1. Run `cargo run -p oikonomia-mint -- keygen --out license.key` on a fresh offline machine (or in an isolated environment).
 2. Copy the output hex into `PRODUCTION_PUBLIC_KEY_HEX`.
 3. Delete any test/placeholder keys.
-4. Commit the new public key hash.
+4. Commit the new public key hex.
 5. No old license files will verify (they used the old placeholder key), so this is safe as long as no customer licenses are in the wild yet.
 
 ## Cut a build
