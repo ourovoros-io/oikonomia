@@ -1,5 +1,7 @@
 # Review Fixes Implementation Plan
 
+> Completed and merged (see git history). Checkboxes below were never ticked during execution; do not re-execute.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix every finding of the 2026-08-10 top-to-bottom review (F1–F12 + hygiene): correct report math, transactional writes, entity deletion, dependency vulnerability, Rust-side auto-lock, password change, frontend logic leaks — each with regression tests.

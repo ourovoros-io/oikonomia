@@ -1,5 +1,7 @@
 # Document Invariants (No Orphans, Unique Names) Implementation Plan
 
+> Completed and merged (see git history). Checkboxes below were never ticked during execution; do not re-execute.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Enforce two vault invariants at the database level — every document row is linked to an entry (`entry_id NOT NULL`) and filenames are unique per book (`UNIQUE(entity_id, filename)`) — with a pure analyze step and transactional entry+document posting.
