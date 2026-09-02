@@ -7,6 +7,8 @@ const PRODUCTION_HOSTS: &[&str] = &[
     "github.com",
     "objects.githubusercontent.com",
     "github-releases.githubusercontent.com",
+    // GitHub's current release-asset CDN; trust is the minisign key, not the CDN.
+    "release-assets.githubusercontent.com",
 ];
 
 /// Which hosts (and schemes) a check/install may contact.
@@ -127,5 +129,30 @@ mod tests {
         .expect("url");
         assert!(policy.is_allowed_fetch_url(&url));
         assert!(!policy.is_allowed_artifact_url(&url));
+    }
+
+    #[test]
+    fn production_allows_release_assets_redirect_host() {
+        // GitHub 302s release-asset downloads to release-assets.githubusercontent.com;
+        // the client follows redirects and re-checks policy on every hop, so this
+        // host must be allowed for both the manifest fetch and the artifact itself.
+        let policy = HostPolicy::production();
+        let url = Url::parse(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/000000000/abc123def",
+        )
+        .expect("url");
+        assert!(policy.is_allowed_fetch_url(&url));
+        assert!(policy.is_allowed_artifact_url(&url));
+
+        let deb_url = Url::parse(
+            "https://release-assets.githubusercontent.com/github-production-release-asset/000000000/oikonomia.deb",
+        )
+        .expect("url");
+        assert!(policy.is_allowed_fetch_url(&deb_url));
+        assert!(!policy.is_allowed_artifact_url(&deb_url));
+
+        let other = Url::parse("https://evil.example/payload").expect("url");
+        assert!(!policy.is_allowed_fetch_url(&other));
+        assert!(!policy.is_allowed_artifact_url(&other));
     }
 }

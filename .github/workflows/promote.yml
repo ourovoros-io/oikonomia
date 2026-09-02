@@ -117,7 +117,37 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
-          gh release create "${TAG}" artifacts/* \
+          set -euo pipefail
+          shopt -s nullglob
+          # Publish an explicit allow-list only. The draft may also carry
+          # Linux AppImage/.deb (or other) assets that never went through the
+          # smoke-tested darwin feed above; ship exactly what the feed names
+          # and nothing un-vetted.
+          publish=(artifacts/*.app.tar.gz artifacts/*.app.tar.gz.sig artifacts/*.dmg artifacts/latest.json artifacts/latest.json.sig)
+
+          skipped=()
+          for f in artifacts/*; do
+            keep=0
+            for p in "${publish[@]}"; do
+              if [ "$f" = "$p" ]; then
+                keep=1
+                break
+              fi
+            done
+            if [ "$keep" -eq 0 ]; then
+              skipped+=("$f")
+            fi
+          done
+          if [ "${#skipped[@]}" -gt 0 ]; then
+            echo "::warning::skipping un-published artifacts (not part of the smoke-tested darwin feed): ${skipped[*]}"
+          fi
+
+          if [ "${#publish[@]}" -eq 0 ]; then
+            echo "::error::no publishable artifacts found (expected .app.tar.gz + .sig, latest.json + .sig)"
+            exit 1
+          fi
+
+          gh release create "${TAG}" "${publish[@]}" \
             --repo "${PUBLIC_REPO}" \
             --title "Oikonomia ${TAG}" \
             --notes "Signed release. The app verifies the minisign signature of latest.json and of every artifact before installing."

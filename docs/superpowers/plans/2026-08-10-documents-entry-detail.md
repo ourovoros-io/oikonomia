@@ -1,5 +1,7 @@
 # Documents Surfacing, Entry Detail, and Entry Filters — Implementation Plan
 
+> Completed and merged (see git history). Checkboxes below were never ticked during execution; do not re-execute.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Surface the encrypted documents already stored in the vault — paperclip badges and an entry-detail modal with an in-memory viewer, a Documents library page, attach-to-existing-entry — plus SQL-side search/date/account filters on the transactions list.

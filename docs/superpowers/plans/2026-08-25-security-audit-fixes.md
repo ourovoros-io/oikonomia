@@ -1,5 +1,7 @@
 # Security audit fixes (2026-08-25)
 
+> Completed and merged (see git history). Checkboxes below were never ticked during execution; do not re-execute.
+
 Closes the nine findings of the 2026-08-25 audit (main @ 328db30). One commit per
 finding, smallest change first. Tests are written before the code they cover.
 

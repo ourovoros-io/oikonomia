@@ -1,5 +1,7 @@
 # 2026-08-13 Review Fixes Implementation Plan
 
+> Completed and merged (see git history). Checkboxes below were never ticked during execution; do not re-execute.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix every bug and suggestion from the 2026-08-13 full-application review (`b92f17cb`): year-boundary balance-sheet math, invoice classify/parse panics, lock-event contract, vault open/create footgun, UI book isolation and double-submit, plus the listed hardening and performance items.
