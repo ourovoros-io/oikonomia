@@ -368,6 +368,7 @@ export default function App() {
             {active === 'settings' ? (
               <SettingsPage
                 entities={entities}
+                appInfo={info}
                 createBookIntent={createBookIntent}
                 onCreateBookIntentHandled={onCreateBookIntentHandled}
                 onLockTimeoutChange={setLockTimeoutSecs}

@@ -8,6 +8,8 @@ Oikonomia is sold via Paddle under the Ourovoros.io account. Paddle invoices the
 
 Checkout: https://ourovoros.io/oikonomia
 
+Support inbox: info@ourovoros.io. Every buyer question, bug report, and license re-issue lands there; it is the address the app, the EULA, and the fulfillment email all point to. Refunds still go through Paddle.
+
 ## Product and expiry convention
 
 Product name in Paddle: "Oikonomia license"
@@ -47,6 +49,8 @@ To import it:
 3. Select license.lic
 
 Your license expires on YYYY-MM-DD. Read the full license agreement inside the app (Settings → License → License agreement) or at https://ourovoros.io/oikonomia.
+
+Questions or problems: write to info@ourovoros.io.
 
 Refunds: Contact Paddle (refunds handled by Paddle, not here).
 

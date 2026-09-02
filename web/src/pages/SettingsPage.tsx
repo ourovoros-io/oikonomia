@@ -9,6 +9,8 @@ import {
   Key,
   KeyRound,
   Languages,
+  LifeBuoy,
+  Mail,
   Plus,
   Timer,
   Trash2,
@@ -26,7 +28,14 @@ import {
   licenseImportError,
   type LicenseStatus,
 } from '../lib/license'
-import { vaultBackup, vaultChangePassword, vaultPickBackup, vaultRestore, type CommandError } from '../lib/tauri'
+import {
+  vaultBackup,
+  vaultChangePassword,
+  vaultPickBackup,
+  vaultRestore,
+  type AppInfo,
+  type CommandError,
+} from '../lib/tauri'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
@@ -68,6 +77,8 @@ type Props = {
   onCreateBookIntentHandled?: () => void
   /** Mirrors this page's license status up to App, so TrialBanner reflects an install/expiry without waiting for a relock or reload. */
   onLicenseChanged?: (status: LicenseStatus | null) => void
+  /** Build identity from Rust `app_info`; the support address rides on it. Null until App has fetched it. */
+  appInfo?: AppInfo | null
 }
 
 const TEMPLATES: Array<{
@@ -159,6 +170,7 @@ export function SettingsPage({
   createBookIntent,
   onCreateBookIntentHandled,
   onLicenseChanged,
+  appInfo = null,
 }: Props) {
   const { t, locale, setLocale } = useI18n()
   const [error, setError] = useState<string | null>(null)
@@ -575,6 +587,33 @@ export function SettingsPage({
           </button>
         </div>
       </CollapsibleSection>
+
+      {appInfo ? (
+        <CollapsibleSection
+          title={t('settings.support.title')}
+          description={t('settings.support.description', { email: appInfo.support_email })}
+          icon={<LifeBuoy className="size-4" />}
+          tone="info"
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-[var(--color-fg-secondary)]">
+              {t('settings.support.body', {
+                email: appInfo.support_email,
+                version: appInfo.version,
+              })}
+            </p>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void openUrl(appInfo.support_mailto)
+              }}
+            >
+              <Mail className="size-3.5" />
+              {t('settings.support.contact')}
+            </Button>
+          </div>
+        </CollapsibleSection>
+      ) : null}
 
       <CollapsibleSection
         title={t('settings.autoLock.title')}

@@ -384,6 +384,43 @@ describe('SettingsPage license', () => {
     })
   })
 
+  test('Support section shows the Rust-provided address and opens its mailto', async () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+        appInfo={{
+          name: 'Oikonomia',
+          version: '0.1.0-dev',
+          support_email: 'info@ourovoros.io',
+          support_mailto: 'mailto:info@ourovoros.io?subject=Oikonomia%20v0.1.0-dev%20support',
+        }}
+      />,
+    )
+    expect(
+      screen.getByText('Questions, bug reports, and license problems: info@ourovoros.io'),
+    ).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /^support/i }))
+    expect(screen.getByText(/Write to info@ourovoros\.io with the app version \(0\.1\.0-dev\)/)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /email support/i }))
+    expect(openUrl).toHaveBeenCalledWith(
+      'mailto:info@ourovoros.io?subject=Oikonomia%20v0.1.0-dev%20support',
+    )
+  })
+
+  test('Support section waits for app info instead of inventing an address', () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /^support/i })).toBeNull()
+    expect(screen.queryByText(/info@ourovoros\.io/)).toBeNull()
+  })
+
   test('Buy a license is absent once licensed, even with a buy_url', async () => {
     vi.mocked(api.licenseStatus).mockResolvedValue({
       state: 'licensed',

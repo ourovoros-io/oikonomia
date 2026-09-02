@@ -39,6 +39,13 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 - Dark / light theme; locale money formatting
 - UI language: English, Ελληνικά, Français, and Deutsch; switch in Settings; persists across relaunch
 
+## Support
+
+Questions, bug reports, license problems, and security reports all go to
+**info@ourovoros.io**. The app shows the same address under Settings → Support,
+with a one-click email whose subject already carries the app version. Never
+attach a vault or backup file to a report.
+
 ## Prerequisites
 
 - Rust stable (1.88+)
@@ -98,6 +105,7 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
   updater.
 - Journal CSV exports neutralize cells that spreadsheets would run as formulas.
 - On first run you will be warned: choose a strong password.
+- Report security issues to info@ourovoros.io.
 
 ## Threat model (v1)
 

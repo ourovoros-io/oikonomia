@@ -94,8 +94,8 @@ fn bundle_identity_belongs_to_ourovoros() {
     );
 }
 
-#[test]
-fn opener_capability_is_scoped_to_the_buy_page_only() {
+/// URL globs the webview may hand to the opener plugin.
+fn opener_allow_globs() -> Vec<String> {
     let capabilities: serde_json::Value =
         serde_json::from_str(include_str!("../capabilities/default.json"))
             .expect("capabilities json");
@@ -106,9 +106,41 @@ fn opener_capability_is_scoped_to_the_buy_page_only() {
         .filter(|p| p["identifier"] == "opener:allow-open-url")
         .collect();
     assert_eq!(entries.len(), 1, "exactly one opener permission");
-    let allow = entries[0]["allow"].as_array().expect("allow list");
-    assert_eq!(allow.len(), 1);
-    assert_eq!(allow[0]["url"], "https://ourovoros.io/oikonomia*");
+
+    entries[0]["allow"]
+        .as_array()
+        .expect("allow list")
+        .iter()
+        .map(|entry| entry["url"].as_str().expect("url glob").to_owned())
+        .collect()
+}
+
+#[test]
+fn opener_capability_is_scoped_to_the_buy_page_and_the_support_mailbox() {
+    assert_eq!(
+        opener_allow_globs(),
+        [
+            "https://ourovoros.io/oikonomia*",
+            "mailto:info@ourovoros.io*"
+        ]
+    );
+}
+
+#[test]
+fn support_mailto_stays_inside_the_opener_scope() {
+    let mailto = crate::commands::app_info().support_mailto;
+
+    // Every glob is a plain prefix plus a trailing `*`, so a prefix check is
+    // exactly the match the opener plugin performs at runtime.
+    let allowed = opener_allow_globs().into_iter().any(|glob| {
+        let prefix = glob.strip_suffix('*').expect("trailing wildcard");
+        assert!(
+            !prefix.contains(['*', '?', '[']),
+            "glob {glob} is not a plain prefix"
+        );
+        mailto.starts_with(prefix)
+    });
+    assert!(allowed, "{mailto} is outside the opener scope");
 }
 
 #[test]
