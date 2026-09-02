@@ -205,7 +205,10 @@ export function SettingsPage({
       })
     void api
       .licenseStatus()
-      .then(setLicense)
+      .then((status) => {
+        setLicense(status)
+        onLicenseChanged?.(status)
+      })
       .catch(() => {
         /* ignore — Rust command lands on the same PR */
       })
@@ -215,14 +218,15 @@ export function SettingsPage({
       .catch(() => {
         /* ignore — the viewer link simply stays inert */
       })
+    // onLicenseChanged is intentionally excluded: this effect only fetches
+    // once on mount. Forwarding it here would mean a fresh SettingsPage
+    // mount (main's key={active} remounts Settings on every nav) reports
+    // its still-unresolved null state upward before the fetch above
+    // settles, blanking App's already-fetched TrialBanner license. Every
+    // real license change is forwarded imperatively at its write site
+    // instead — see onImportLicense and applyExpiredFromWrite below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  // Mirror this page's license state up to App on every change (initial
-  // fetch, install, and the expired-on-write transition below) so the
-  // global TrialBanner refreshes without waiting for a relock or reload.
-  useEffect(() => {
-    onLicenseChanged?.(license)
-  }, [license, onLicenseChanged])
 
   // App bumps createBookIntent from the five empty-state CTAs. Pop the
   // create-entity form open and scroll to it — scrollIntoView is undefined
@@ -238,11 +242,13 @@ export function SettingsPage({
   }, [createBookIntent, onCreateBookIntentHandled])
 
   function applyExpiredFromWrite(): void {
-    setLicense((prev) => ({
+    const next: LicenseStatus = {
       state: 'expired',
-      days_remaining: prev?.days_remaining,
-      licensed_until: prev?.licensed_until,
-    }))
+      days_remaining: license?.days_remaining,
+      licensed_until: license?.licensed_until,
+    }
+    setLicense(next)
+    onLicenseChanged?.(next)
     setLicenseError(null)
     setError(null)
   }
@@ -366,14 +372,17 @@ export function SettingsPage({
       const next = await api.licenseInstall()
       if (next === null) return
       setLicense(next)
+      onLicenseChanged?.(next)
     } catch (err) {
       const cmd = err as CommandError
       if (isLicenseExpiredCode(cmd.code)) {
-        setLicense((prev) => ({
+        const next: LicenseStatus = {
           state: 'expired',
-          days_remaining: prev?.days_remaining,
-          licensed_until: prev?.licensed_until,
-        }))
+          days_remaining: license?.days_remaining,
+          licensed_until: license?.licensed_until,
+        }
+        setLicense(next)
+        onLicenseChanged?.(next)
         return
       }
       setLicenseError(licenseImportError(cmd))
