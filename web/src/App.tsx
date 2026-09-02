@@ -25,6 +25,7 @@ import {
   type VaultStatus,
 } from './lib/tauri'
 import { api, type Entity } from './lib/api'
+import { commandErrorMessage } from './lib/commandError'
 import type { CommandError } from './lib/tauri'
 import { DashboardPage } from './pages/DashboardPage'
 import { TransactionsPage } from './pages/TransactionsPage'
@@ -329,7 +330,7 @@ export default function App() {
                   try {
                     await loadEntities()
                   } catch (err) {
-                    setError((err as CommandError).message)
+                    setError(commandErrorMessage(err as CommandError))
                   }
                 }}
                 onSelectEntity={(id) => {

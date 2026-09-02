@@ -52,6 +52,7 @@ import {
   Select,
 } from '../components/ui'
 import { cn } from '../lib/cn'
+import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import type { DocumentSuggestion } from '../lib/api'
 import { formatMoney as fmtMoney } from '../lib/money'
@@ -292,7 +293,7 @@ export function TransactionsPage({ entity }: Props) {
       setCsvPreview(preview)
       setCsvStep('mapping')
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -325,7 +326,7 @@ export function TransactionsPage({ entity }: Props) {
       setCsvPreview(preview)
       setCsvStep('preview')
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -340,7 +341,7 @@ export function TransactionsPage({ entity }: Props) {
     try {
       await api.csvExportJournal(entity.id)
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -358,7 +359,7 @@ export function TransactionsPage({ entity }: Props) {
       setCsvRoles(null)
       await reload()
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -424,7 +425,7 @@ export function TransactionsPage({ entity }: Props) {
         return
       }
     }
-    void reload().catch((err) => setError((err as CommandError).message))
+    void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id, debouncedSearch, fromDate, toDate, accountFilter])
 
@@ -520,7 +521,7 @@ export function TransactionsPage({ entity }: Props) {
       setShowForm(false)
       await reload()
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       busyRef.current = false
       setBusy(false)
@@ -539,7 +540,7 @@ export function TransactionsPage({ entity }: Props) {
       setEntries((prev) => prev.filter((e) => e.entry.id !== id && !e.is_voided))
       await reload()
     } catch (err) {
-      setError((err as CommandError).message || t('tx.deleteFailed'))
+      setError(commandErrorMessage(err as CommandError) || t('tx.deleteFailed'))
     } finally {
       setVoidBusy(false)
     }

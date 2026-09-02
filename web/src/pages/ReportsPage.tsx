@@ -32,6 +32,7 @@ import {
   Segmented,
 } from '../components/ui'
 import { cn } from '../lib/cn'
+import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import { t } from '../lib/i18n'
 import { useI18n } from '../lib/I18nProvider'
@@ -68,7 +69,7 @@ export function ReportsPage({ entity }: Props) {
       if (tab === 'pnl') setPnl(await api.reportPnl(entity.id, from, to))
       if (tab === 'bs') setBs(await api.reportBalanceSheet(entity.id, asOf))
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     }
   }
 

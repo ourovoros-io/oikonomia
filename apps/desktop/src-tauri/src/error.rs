@@ -58,3 +58,49 @@ impl From<UpdateError> for CommandError {
 
 /// Command result alias.
 pub type CommandResult<T> = Result<T, CommandError>;
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod tests {
+    use oikonomia_core::Error as CoreError;
+
+    #[test]
+    fn every_emitted_code_is_in_the_shared_fixture() {
+        let fixture: Vec<String> =
+            serde_json::from_str(include_str!("../../../../web/src/lib/errorCodes.json"))
+                .expect("errorCodes.json");
+        let samples: Vec<CoreError> = vec![
+            CoreError::VaultUninitialized,
+            CoreError::VaultLocked,
+            CoreError::InvalidPassword,
+            CoreError::UnbalancedEntry {
+                debits: 100,
+                credits: 50,
+            },
+            CoreError::TooFewLines,
+            CoreError::InvalidLineAmounts,
+            CoreError::AccountWrongEntity,
+            CoreError::MoneyOverflow,
+            CoreError::NegativeMoney,
+            CoreError::Validation("x".into()),
+            CoreError::Io("x".into()),
+            CoreError::Crypto("x".into()),
+            CoreError::VaultCorrupt("x".into()),
+            CoreError::BackupInvalid("x".into()),
+            CoreError::RestoreWouldOverwrite,
+            CoreError::NotFound("x".into()),
+            CoreError::Analysis("x".into()),
+            CoreError::CsvParse("x".into()),
+            CoreError::LicenseInvalid,
+            CoreError::LicenseExpired,
+            CoreError::LicenseEntityLimit,
+        ];
+        for sample in samples {
+            let code = super::CommandError::from(sample).code;
+            assert!(
+                fixture.contains(&code),
+                "code {code} missing from errorCodes.json"
+            );
+        }
+    }
+}

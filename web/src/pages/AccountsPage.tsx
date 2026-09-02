@@ -29,6 +29,7 @@ import {
   Select,
 } from '../components/ui'
 import { cn } from '../lib/cn'
+import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import { useI18n } from '../lib/I18nProvider'
 
@@ -88,7 +89,7 @@ export function AccountsPage({ entity }: Props) {
       setAccounts([])
       return
     }
-    void reload().catch((err) => setError((err as CommandError).message))
+    void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
   }, [entity?.id])
 
   const counts = useMemo(() => {
@@ -118,7 +119,7 @@ export function AccountsPage({ entity }: Props) {
       setShowForm(false)
       await reload()
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     } finally {
       setBusy(false)
     }
@@ -129,7 +130,7 @@ export function AccountsPage({ entity }: Props) {
       await api.accountArchive(id)
       await reload()
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err as CommandError))
     }
   }
 
@@ -162,7 +163,7 @@ export function AccountsPage({ entity }: Props) {
       setBalanceAccount(null)
       await reload()
     } catch (err) {
-      setBalanceError((err as CommandError).message)
+      setBalanceError(commandErrorMessage(err as CommandError))
     } finally {
       setBalanceBusy(false)
     }
