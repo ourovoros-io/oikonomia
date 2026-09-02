@@ -17,10 +17,7 @@
     "core:window:allow-is-visible",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [
-        { "url": "https://ourovoros.io/oikonomia*" },
-        { "url": "mailto:info@ourovoros.io*" }
-      ]
+      "allow": [{ "url": "https://ourovoros.io/oikonomia*" }]
     }
   ]
 }

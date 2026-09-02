@@ -45,6 +45,20 @@ beforeEach(() => {
   vi.mocked(updateInstall).mockReset().mockResolvedValue(undefined)
 })
 
+describe('UnlockScreen support pointer', () => {
+  test('renders the Rust-provided support address while locked', () => {
+    render(
+      <UnlockScreen status="locked" onUnlocked={() => {}} supportEmail="info@ourovoros.io" />,
+    )
+    expect(screen.getByText('Need help? Write to info@ourovoros.io.')).toBeTruthy()
+  })
+
+  test('shows no address until app info arrives', () => {
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    expect(screen.queryByText(/info@ourovoros\.io/)).toBeNull()
+  })
+})
+
 describe('UnlockScreen submit', () => {
   test('setup shows confirm field; mismatch uses unlock.passwordsMismatch', async () => {
     render(<UnlockScreen status="uninitialized" onUnlocked={() => {}} />)

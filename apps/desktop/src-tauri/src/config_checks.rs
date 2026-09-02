@@ -116,31 +116,24 @@ fn opener_allow_globs() -> Vec<String> {
 }
 
 #[test]
-fn opener_capability_is_scoped_to_the_buy_page_and_the_support_mailbox() {
-    assert_eq!(
-        opener_allow_globs(),
-        [
-            "https://ourovoros.io/oikonomia*",
-            "mailto:info@ourovoros.io*"
-        ]
-    );
+fn opener_capability_is_scoped_to_the_buy_page_only() {
+    assert_eq!(opener_allow_globs(), ["https://ourovoros.io/oikonomia*"]);
 }
 
 #[test]
-fn support_mailto_stays_inside_the_opener_scope() {
-    let mailto = crate::commands::app_info().support_mailto;
-
-    // Every glob is a plain prefix plus a trailing `*`, so a prefix check is
-    // exactly the match the opener plugin performs at runtime.
-    let allowed = opener_allow_globs().into_iter().any(|glob| {
-        let prefix = glob.strip_suffix('*').expect("trailing wildcard");
-        assert!(
-            !prefix.contains(['*', '?', '[']),
-            "glob {glob} is not a plain prefix"
-        );
-        mailto.starts_with(prefix)
-    });
-    assert!(allowed, "{mailto} is outside the opener scope");
+fn support_mail_is_opened_from_rust_not_through_a_webview_glob() {
+    // A `mailto:<address>*` glob cannot be anchored on the mailbox, so it
+    // would also admit extra recipients or a look-alike domain. The
+    // `open_support_email` command builds the URL in Rust instead; this pins
+    // that no such glob creeps back into the webview scope.
+    let mailto_globs: Vec<String> = opener_allow_globs()
+        .into_iter()
+        .filter(|glob| glob.starts_with("mailto:"))
+        .collect();
+    assert!(
+        mailto_globs.is_empty(),
+        "webview mailto globs: {mailto_globs:?}"
+    );
 }
 
 #[test]

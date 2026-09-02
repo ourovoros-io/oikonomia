@@ -19,8 +19,6 @@ export type AppInfo = {
   name: string
   /** Support mailbox. Carried by the native payload so the address lives in Rust. */
   support_email: string
-  /** `mailto:` link for the support mailbox; the app version is already in the subject. */
-  support_mailto: string
 }
 
 export type CommandError = {
@@ -116,7 +114,6 @@ export async function appInfo(): Promise<AppInfo> {
       name: 'Oikonomia',
       version: '0.1.0-dev',
       support_email: 'info@ourovoros.io',
-      support_mailto: 'mailto:info@ourovoros.io?subject=Oikonomia%20v0.1.0-dev%20support',
     }
   }
   return invoke<AppInfo>('app_info')

@@ -75,6 +75,7 @@
     "restore": {
       "link": "Restaurer depuis une sauvegarde"
     },
+    "support": "Besoin d'aide ? Écrivez à {email}.",
     "update": {
       "button": "Rechercher une mise à jour",
       "dialogTitle": "Mise à jour",
@@ -257,7 +258,8 @@
       "title": "Assistance",
       "description": "Questions, rapports de bogue et problèmes de licence : {email}",
       "body": "Écrivez à {email} en indiquant la version de l'application ({version}) et ce que vous faisiez quand le problème est apparu. Ne joignez jamais votre coffre ni votre fichier de sauvegarde.",
-      "contact": "Écrire à l'assistance"
+      "contact": "Écrire à l'assistance",
+      "openFailed": "Impossible d'ouvrir votre application de messagerie. Écrivez à {email}."
     },
     "trial": {
       "banner": {
