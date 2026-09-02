@@ -180,6 +180,18 @@ export function SettingsPage({
   const [passwordErrorField, setPasswordErrorField] = useState<'current' | 'confirm' | null>(
     null,
   )
+  // Single write path for the page-wide error banner: every other handler
+  // (entity create/delete, auto-lock, backup, restore) shares `error` with
+  // the password form, so routing all of them through here guarantees a
+  // non-password error clears any stale aria-invalid left on a password
+  // field by an earlier password-change failure.
+  function setPageError(
+    message: string | null,
+    passwordField: 'current' | 'confirm' | null = null,
+  ) {
+    setError(message)
+    setPasswordErrorField(passwordField)
+  }
   const [backupBusy, setBackupBusy] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
@@ -254,7 +266,7 @@ export function SettingsPage({
     setLicense(next)
     onLicenseChanged?.(next)
     setLicenseError(null)
-    setError(null)
+    setPageError(null)
   }
 
   function commandErrorMessage(err: unknown, fallback = ''): string | null {
@@ -274,7 +286,7 @@ export function SettingsPage({
     ev.preventDefault()
     if (!canAddAnotherBook(license, entities.length)) return
     setBusy(true)
-    setError(null)
+    setPageError(null)
     try {
       const entity = await api.entityCreate({
         name,
@@ -288,7 +300,7 @@ export function SettingsPage({
       onSelectEntity(entity.id)
     } catch (err) {
       const message = commandErrorMessage(err)
-      if (message !== null) setError(message)
+      if (message !== null) setPageError(message)
     } finally {
       setBusy(false)
     }
@@ -297,14 +309,14 @@ export function SettingsPage({
   async function confirmDelete() {
     if (!pendingDelete) return
     setDeleteBusy(true)
-    setError(null)
+    setPageError(null)
     try {
       await api.entityDelete(pendingDelete.id)
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
       const message = commandErrorMessage(err, t('settings.deleteFailed'))
-      if (message !== null) setError(message)
+      if (message !== null) setPageError(message)
     } finally {
       setDeleteBusy(false)
     }
@@ -312,11 +324,11 @@ export function SettingsPage({
 
   async function saveLock(mins: number) {
     if (!Number.isFinite(mins) || mins < 1) {
-      setError(t('settings.lockTimeoutMin'))
+      setPageError(t('settings.lockTimeoutMin'))
       return
     }
     setLockBusy(true)
-    setError(null)
+    setPageError(null)
     try {
       const secs = Math.round(mins * 60)
       await api.setLockTimeout(secs)
@@ -324,7 +336,7 @@ export function SettingsPage({
       onLockTimeoutChange?.(secs)
     } catch (err) {
       const message = commandErrorMessage(err)
-      if (message !== null) setError(message)
+      if (message !== null) setPageError(message)
     } finally {
       setLockBusy(false)
     }
@@ -332,13 +344,11 @@ export function SettingsPage({
 
   async function onChangePassword(ev: FormEvent) {
     ev.preventDefault()
-    setError(null)
+    setPageError(null)
     setNotice(null)
-    setPasswordErrorField(null)
 
     if (newPassword !== confirmPassword) {
-      setError(t('settings.passwordsMismatch'))
-      setPasswordErrorField('confirm')
+      setPageError(t('settings.passwordsMismatch'), 'confirm')
       return
     }
     // Password strength rules live in Rust; its Validation error surfaces below.
@@ -358,15 +368,15 @@ export function SettingsPage({
       }
       const licenseCopy = licenseErrorMessage(cmd.code)
       if (licenseCopy !== undefined) {
-        setError(licenseCopy)
+        setPageError(licenseCopy)
         return
       }
-      setError(
+      setPageError(
         cmd.code === 'invalid_password'
           ? t('settings.currentPasswordIncorrect')
           : cmd.message || t('settings.changePasswordFailed'),
+        'current',
       )
-      setPasswordErrorField('current')
     } finally {
       setPasswordBusy(false)
     }
@@ -400,13 +410,13 @@ export function SettingsPage({
 
   async function onBackup() {
     if (!backupEnabled) return
-    setError(null)
+    setPageError(null)
     setNotice(null)
     setBackupBusy(true)
     try {
       await vaultBackup()
     } catch (err) {
-      setError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err as CommandError))
     } finally {
       setBackupBusy(false)
     }
@@ -414,7 +424,7 @@ export function SettingsPage({
 
   async function beginRestore() {
     if (restoreBusy || restorePicking || restoreOpen) return
-    setError(null)
+    setPageError(null)
     setRestorePicking(true)
     try {
       const path = await vaultPickBackup()
@@ -422,7 +432,7 @@ export function SettingsPage({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err as CommandError))
     } finally {
       setRestorePicking(false)
     }
@@ -431,7 +441,7 @@ export function SettingsPage({
   async function confirmRestore() {
     if (!restorePath) return
     setRestoreBusy(true)
-    setError(null)
+    setPageError(null)
     try {
       const result = await vaultRestore({ path: restorePath, replace: replaceConfirm.replace })
       if (result === null) {
@@ -442,7 +452,7 @@ export function SettingsPage({
       setRestoreOpen(false)
       setRestorePath(undefined)
     } catch (err) {
-      setError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err as CommandError))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {

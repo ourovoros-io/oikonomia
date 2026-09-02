@@ -50,6 +50,10 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
   )
   const [unlocking, setUnlocking] = useState(false)
   const [shaking, setShaking] = useState(false)
+  // Scoped separately from `error`: the banner is shared with the restore
+  // flow (beginRestore/confirmRestore), which must never mark the password
+  // fields invalid — only a failed unlock/create submit does.
+  const [passwordInvalid, setPasswordInvalid] = useState(false)
   const checkGeneration = useRef(0)
   const handoffTimer = useRef<number | undefined>(undefined)
   const errorId = useId()
@@ -63,9 +67,11 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
     event.preventDefault()
     if (unlocking) return
     setError(null)
+    setPasswordInvalid(false)
 
     if (isSetup && password !== confirm) {
       setError(t('unlock.passwordsMismatch'))
+      setPasswordInvalid(true)
       setShaking(true)
       return
     }
@@ -84,6 +90,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
           ? t('unlock.incorrectPassword')
           : cmd.message || t('unlock.unlockFailed'),
       )
+      setPasswordInvalid(true)
       setShaking(true)
     } finally {
       setBusy(false)
@@ -95,6 +102,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
   async function beginRestore() {
     if (busy || unlocking || restoreBusy || restorePicking || restoreOpen) return
     setError(null)
+    setPasswordInvalid(false)
     setRestorePicking(true)
     try {
       const path = await vaultPickBackup()
@@ -112,6 +120,7 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
     if (!restorePath) return
     setRestoreBusy(true)
     setError(null)
+    setPasswordInvalid(false)
     try {
       const result = await vaultRestore({ path: restorePath, replace: restorePrompt.replace })
       if (result === null) {
@@ -207,12 +216,15 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
                     type="password"
                     autoComplete={isSetup ? 'new-password' : 'current-password'}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value)
+                      setPasswordInvalid(false)
+                    }}
                     className="pl-10"
                     required
                     autoFocus
-                    aria-invalid={error ? true : undefined}
-                    aria-describedby={error ? errorId : undefined}
+                    aria-invalid={passwordInvalid || undefined}
+                    aria-describedby={passwordInvalid ? errorId : undefined}
                   />
                 </div>
               </Field>
@@ -223,10 +235,13 @@ export function UnlockScreen({ status, onUnlocked }: Props) {
                     type="password"
                     autoComplete="new-password"
                     value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
+                    onChange={(e) => {
+                      setConfirm(e.target.value)
+                      setPasswordInvalid(false)
+                    }}
                     required
-                    aria-invalid={error ? true : undefined}
-                    aria-describedby={error ? errorId : undefined}
+                    aria-invalid={passwordInvalid || undefined}
+                    aria-describedby={passwordInvalid ? errorId : undefined}
                   />
                 </Field>
               ) : null}

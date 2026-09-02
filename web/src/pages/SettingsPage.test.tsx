@@ -749,6 +749,40 @@ describe('SettingsPage section design', () => {
     })
     expect(current).toHaveAccessibleDescription('Current password is incorrect.')
   })
+
+  test('an unrelated success after a failed password change clears the stale invalid field', async () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /master password/i }))
+    const current = await screen.findByLabelText('Current password')
+    const next = screen.getByLabelText('New password')
+    const confirm = screen.getByLabelText('Confirm new password')
+
+    await userEvent.type(current, 'oldpass')
+    await userEvent.type(next, 'newpass1')
+    await userEvent.type(confirm, 'newpass2')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+    expect(confirm).toHaveAttribute('aria-invalid', 'true')
+    expect(confirm).toHaveAttribute('aria-describedby')
+
+    // An unrelated action succeeds (auto-lock preset) — the stale
+    // aria-invalid/aria-describedby from the earlier password error must
+    // not survive it, or aria-describedby would point at a banner that no
+    // longer describes this field (or is unmounted once error clears).
+    await userEvent.click(screen.getByRole('button', { name: /auto-lock/i }))
+    await userEvent.click(await screen.findByRole('button', { name: '5 min' }))
+
+    await waitFor(() => {
+      expect(api.setLockTimeout).toHaveBeenCalled()
+    })
+    expect(confirm).not.toHaveAttribute('aria-invalid')
+    expect(confirm).not.toHaveAttribute('aria-describedby')
+  })
 })
 
 describe('SettingsPage createBookIntent', () => {
