@@ -19,7 +19,7 @@ use crate::util::parse_date;
 /// Baked production verifying key (32-byte hex). The matching secret is not
 /// in this repository, the app, the vault, CI, or tests.
 pub const PRODUCTION_PUBLIC_KEY_HEX: &str =
-    "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
+    "54ef40437de3579cfd3f94abf5760d9ef3bb53b1e57aa9c02126ae0b1d654133";
 
 /// Product string required inside a `.lic` payload.
 pub const PRODUCT: &str = "oikonomia";

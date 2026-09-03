@@ -11,7 +11,7 @@
 ///
 /// Must stay identical to `tauri.conf.json` `plugins.updater.pubkey`.
 /// Exact string from Ops; do not generate another key.
-pub const UPDATER_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ0NkIxNkZDMkE1MDBCOApSV1M0QUtYQ2I3RkdCR0hIQWVaTlFadDZHbGppOWkrejQ1M0c3WWFKMmx1ek50R09pZ1lQSnVJeAo=";
+pub const UPDATER_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM2RkYxMTYzMThFRDNDNkIKUldSclBPMFlZeEgvTnVjaENqMnQxU1VRY0VqYXRveEVJczE5bXF5dDFaWmtzMFF1d0Q5RGlIRlUK";
 
 const _: () = assert!(
     !UPDATER_PUBLIC_KEY.is_empty(),
