@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { BalanceSheet, Entity, PnL, ReportLine, TrialBalance } from '../lib/api'
@@ -51,6 +51,16 @@ function expense(
     credit_minor: 0,
     ...over,
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
 }
 
 function pnl(over: Partial<PnL> = {}): PnL {
@@ -266,6 +276,88 @@ describe('ReportsPage historical dates', () => {
     await waitFor(() => {
       expect(screen.queryAllByText('Rent')).toHaveLength(0)
     })
+  })
+
+  test('a completed refetch paints the new window and drops the previous lines', async () => {
+    vi.mocked(api.reportPnl)
+      .mockResolvedValueOnce(
+        pnl({
+          from: yearStartISO(),
+          to: todayISO(),
+          expenses: [expense({ code: '6100', name: 'Rent', balance_minor: 850_00 })],
+        }),
+      )
+      .mockResolvedValueOnce(
+        pnl({
+          from: '2025-01-01',
+          to: todayISO(),
+          expenses: [expense({ code: '5100', name: 'Groceries', balance_minor: 40_00 })],
+          total_expenses: 40_00,
+          net_income: -40_00,
+        }),
+      )
+
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getAllByText('Rent').length).toBeGreaterThan(0)
+    })
+
+    const from = screen.getByLabelText('Report from date')
+    await user.clear(from)
+    await user.type(from, '01/01/2025')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Groceries').length).toBeGreaterThan(0)
+    })
+    expect(screen.queryAllByText('Rent')).toHaveLength(0)
+  })
+
+  test('a late failure from the previous window does not overlay the new statement', async () => {
+    const first = deferred<PnL>()
+    const second = deferred<PnL>()
+    vi.mocked(api.reportPnl)
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledTimes(1)
+    })
+
+    const from = screen.getByLabelText('Report from date')
+    await user.clear(from)
+    await user.type(from, '01/01/2025')
+    await user.tab()
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledTimes(2)
+    })
+
+    await act(async () => {
+      second.resolve(
+        pnl({
+          from: '2025-01-01',
+          to: todayISO(),
+          expenses: [expense({ code: '5100', name: 'Groceries', balance_minor: 40_00 })],
+          total_expenses: 40_00,
+          net_income: -40_00,
+        }),
+      )
+    })
+    await waitFor(() => {
+      expect(screen.getAllByText('Groceries').length).toBeGreaterThan(0)
+    })
+
+    await act(async () => {
+      first.reject({
+        code: 'validation',
+        message: 'from date must be on or before to',
+      })
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getAllByText('Groceries').length).toBeGreaterThan(0)
   })
 
   test('changing As of on the balance sheet refetches that date', async () => {
