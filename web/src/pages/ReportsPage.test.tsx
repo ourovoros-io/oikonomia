@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Entity, PnL, ReportLine } from '../lib/api'
+import type { BalanceSheet, Entity, PnL, ReportLine, TrialBalance } from '../lib/api'
 
 vi.mock('../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/api')>()
@@ -220,6 +220,235 @@ describe('ReportsPage Export PDF', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Εξαγωγή PDF' })).toBeTruthy()
     })
+  })
+})
+
+describe('ReportsPage historical dates', () => {
+  test('changing From refetches P&L for the new window', async () => {
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', yearStartISO(), todayISO())
+    })
+
+    const from = screen.getByLabelText('Report from date')
+    await user.clear(from)
+    await user.type(from, '01/03/2025')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', '2025-03-01', todayISO())
+    })
+  })
+
+  test('hides the previous period while a new date range is loading', async () => {
+    vi.mocked(api.reportPnl)
+      .mockResolvedValueOnce(
+        pnl({
+          from: yearStartISO(),
+          to: todayISO(),
+          expenses: [expense({ code: '6100', name: 'Rent', balance_minor: 850_00 })],
+        }),
+      )
+      .mockImplementation(() => new Promise(() => {}))
+
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getAllByText('Rent').length).toBeGreaterThan(0)
+    })
+
+    const from = screen.getByLabelText('Report from date')
+    await user.clear(from)
+    await user.type(from, '01/01/2025')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(screen.queryAllByText('Rent')).toHaveLength(0)
+    })
+  })
+
+  test('changing As of on the balance sheet refetches that date', async () => {
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Balance sheet' }))
+    await waitFor(() => {
+      expect(api.reportBalanceSheet).toHaveBeenCalledWith('e1', todayISO())
+    })
+
+    const asOf = screen.getByLabelText('Report as-of date')
+    await user.clear(asOf)
+    await user.type(asOf, '31/12/2025')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(api.reportBalanceSheet).toHaveBeenCalledWith('e1', '2025-12-31')
+    })
+  })
+
+  test('changing To refetches P&L for the new window', async () => {
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', yearStartISO(), todayISO())
+    })
+
+    const to = screen.getByLabelText('Report to date')
+    await user.clear(to)
+    await user.type(to, '30/06/2025')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', yearStartISO(), '2025-06-30')
+    })
+  })
+
+  test('changing As of on the trial balance refetches that date', async () => {
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Trial balance' }))
+    await waitFor(() => {
+      expect(api.reportTrialBalance).toHaveBeenCalledWith('e1', todayISO())
+    })
+
+    const asOf = screen.getByLabelText('Report as-of date')
+    await user.clear(asOf)
+    await user.type(asOf, '15/03/2025')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(api.reportTrialBalance).toHaveBeenCalledWith('e1', '2025-03-15')
+    })
+  })
+
+  test('Refresh re-runs the current report', async () => {
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledTimes(1)
+    })
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledTimes(2)
+    })
+  })
+})
+
+describe('ReportsPage statements', () => {
+  test('shows the fetch error instead of a stale statement', async () => {
+    vi.mocked(api.reportPnl).mockRejectedValue({
+      code: 'validation',
+      message: 'from date must be on or before to',
+    })
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toBe('That input is not valid.')
+    })
+    expect(screen.queryByText('Profit & Loss')).toBeNull()
+  })
+
+  test('empty P&L period shows the empty-line copy', async () => {
+    vi.mocked(api.reportPnl).mockResolvedValue(
+      pnl({
+        from: yearStartISO(),
+        to: todayISO(),
+        income: [],
+        expenses: [],
+        total_income: 0,
+        total_expenses: 0,
+        net_income: 0,
+      }),
+    )
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getByText('No income recorded in this period.')).toBeTruthy()
+    })
+    expect(screen.getByText('No expenses recorded in this period.')).toBeTruthy()
+  })
+
+  test('balanced books show the balance copy', async () => {
+    const sheet: BalanceSheet = {
+      entity_id: 'e1',
+      as_of: todayISO(),
+      assets: {
+        title: 'Assets',
+        lines: [expense({ code: '1010', name: 'Checking', balance_minor: 100_00 })],
+        total: 100_00,
+      },
+      liabilities: { title: 'Liabilities', lines: [], total: 0 },
+      equity: {
+        title: 'Equity',
+        lines: [expense({ code: 'NI', name: 'Net Income (current period)', balance_minor: 100_00 })],
+        total: 100_00,
+      },
+      total_assets: 100_00,
+      total_liabilities_equity: 100_00,
+    }
+    vi.mocked(api.reportBalanceSheet).mockResolvedValue(sheet)
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Balance sheet' }))
+    await waitFor(() => {
+      expect(
+        screen.getByText('Assets equal liabilities plus equity — the books balance.'),
+      ).toBeTruthy()
+    })
+  })
+
+  test('out-of-balance sheet shows the difference', async () => {
+    const sheet: BalanceSheet = {
+      entity_id: 'e1',
+      as_of: todayISO(),
+      assets: { title: 'Assets', lines: [], total: 50_00 },
+      liabilities: { title: 'Liabilities', lines: [], total: 0 },
+      equity: { title: 'Equity', lines: [], total: 20_00 },
+      total_assets: 50_00,
+      total_liabilities_equity: 20_00,
+    }
+    vi.mocked(api.reportBalanceSheet).mockResolvedValue(sheet)
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Balance sheet' }))
+    await waitFor(() => {
+      expect(screen.getByText(/Out of balance by/)).toBeTruthy()
+    })
+  })
+
+  test('trial balance paints debit and credit columns', async () => {
+    const tb: TrialBalance = {
+      entity_id: 'e1',
+      as_of: todayISO(),
+      lines: [
+        {
+          code: '1010',
+          name: 'Checking',
+          account_type: 'asset',
+          debit_minor: 0,
+          credit_minor: 1_000,
+          balance_minor: -1_000,
+        },
+        {
+          code: '5100',
+          name: 'Food',
+          account_type: 'expense',
+          debit_minor: 1_000,
+          credit_minor: 0,
+          balance_minor: 1_000,
+        },
+      ],
+      total_debits: 1_000,
+      total_credits: 1_000,
+    }
+    vi.mocked(api.reportTrialBalance).mockResolvedValue(tb)
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Trial balance' }))
+    await waitFor(() => {
+      expect(screen.getByText('Checking')).toBeTruthy()
+    })
+    expect(screen.getByText('Food')).toBeTruthy()
+    expect(screen.getByText('Debit')).toBeTruthy()
+    expect(screen.getByText('Credit')).toBeTruthy()
   })
 })
 

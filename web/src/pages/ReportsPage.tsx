@@ -40,6 +40,15 @@ import { useI18n } from '../lib/I18nProvider'
 type Props = { entity: Entity | null; onCreateBook?: () => void }
 type Tab = 'trial' | 'pnl' | 'bs'
 
+/** Last successful fetch, so a date change cannot keep painting the previous window. */
+type AppliedQuery = {
+  tab: Tab
+  entityId: string
+  from: string
+  to: string
+  asOf: string
+}
+
 function sectionTitle(title: string): string {
   const key = title.toLowerCase()
   if (key === 'assets') return t('rpt.section.assets')
@@ -59,19 +68,20 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
   const [pnl, setPnl] = useState<PnL | null>(null)
   const [bs, setBs] = useState<BalanceSheet | null>(null)
   const [pdfBusy, setPdfBusy] = useState(false)
+  const [refreshNonce, setRefreshNonce] = useState(0)
+  const [applied, setApplied] = useState<AppliedQuery | null>(null)
   const pdfBusyRef = useRef(false)
 
-  async function run() {
-    if (!entity) return
-    setError(null)
-    try {
-      if (tab === 'trial') setTb(await api.reportTrialBalance(entity.id, asOf))
-      if (tab === 'pnl') setPnl(await api.reportPnl(entity.id, from, to))
-      if (tab === 'bs') setBs(await api.reportBalanceSheet(entity.id, asOf))
-    } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
-    }
+  function run() {
+    setRefreshNonce((n) => n + 1)
   }
+
+  const queryMatches =
+    entity !== null &&
+    applied !== null &&
+    applied.tab === tab &&
+    applied.entityId === entity.id &&
+    (tab === 'pnl' ? applied.from === from && applied.to === to : applied.asOf === asOf)
 
   async function onExportPdf() {
     if (!entity || tab !== 'pnl') return
@@ -101,9 +111,53 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
   }
 
   useEffect(() => {
-    if (entity) void run()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entity?.id, tab])
+    if (!entity) {
+      setTb(null)
+      setPnl(null)
+      setBs(null)
+      setApplied(null)
+      return
+    }
+    if (tab === 'pnl' && (!from || !to)) return
+    if (tab !== 'pnl' && !asOf) return
+
+    let cancelled = false
+    const entityId = entity.id
+    const requested: AppliedQuery = { tab, entityId, from, to, asOf }
+
+    void (async () => {
+      setError(null)
+      try {
+        if (tab === 'trial') {
+          const data = await api.reportTrialBalance(entityId, asOf)
+          if (!cancelled) {
+            setTb(data)
+            setApplied(requested)
+          }
+        }
+        if (tab === 'pnl') {
+          const data = await api.reportPnl(entityId, from, to)
+          if (!cancelled) {
+            setPnl(data)
+            setApplied(requested)
+          }
+        }
+        if (tab === 'bs') {
+          const data = await api.reportBalanceSheet(entityId, asOf)
+          if (!cancelled) {
+            setBs(data)
+            setApplied(requested)
+          }
+        }
+      } catch (err) {
+        if (!cancelled) setError(commandErrorMessage(err as CommandError))
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [entity, tab, from, to, asOf, refreshNonce])
 
   if (!entity) {
     return (
@@ -162,7 +216,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
               <DateInput value={asOf} onChange={setAsOf} required aria-label={t('rpt.asOfDate')} />
             </Field>
           )}
-          <Button variant="secondary" onClick={() => void run()} disabled={pdfBusy}>
+          <Button variant="secondary" onClick={run} disabled={pdfBusy}>
             <RefreshCw className="size-4" />
             {t('rpt.refresh')}
           </Button>
@@ -182,9 +236,13 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
 
       <ErrorBanner message={error} />
 
-      {tab === 'trial' && tb ? <TrialView tb={tb} entityName={entity.name} ccy={ccy} /> : null}
-      {tab === 'pnl' && pnl ? <PnlView pnl={pnl} entityName={entity.name} ccy={ccy} /> : null}
-      {tab === 'bs' && bs ? <BsView bs={bs} entityName={entity.name} ccy={ccy} /> : null}
+      {tab === 'trial' && tb && queryMatches ? (
+        <TrialView tb={tb} entityName={entity.name} ccy={ccy} />
+      ) : null}
+      {tab === 'pnl' && pnl && queryMatches ? (
+        <PnlView pnl={pnl} entityName={entity.name} ccy={ccy} />
+      ) : null}
+      {tab === 'bs' && bs && queryMatches ? <BsView bs={bs} entityName={entity.name} ccy={ccy} /> : null}
     </div>
   )
 }
