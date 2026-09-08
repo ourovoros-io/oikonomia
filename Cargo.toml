@@ -41,7 +41,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # oikonomia-core's workspace_pins_ed25519_dalek_v2 test text-parses this entry
 # as a plain version string below, so keep it that way (no inline table here).
 # oikonomia-mint adds the rand_core feature itself, per-crate, instead.
-ed25519-dalek = "2.2"
+ed25519-dalek = "3.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
