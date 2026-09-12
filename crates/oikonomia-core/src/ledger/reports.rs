@@ -121,26 +121,57 @@ pub struct DashboardSummary {
 
 /// Trial balance as of `as_of` (`YYYY-MM-DD`).
 ///
+/// Permanent accounts are cumulative. Income and expense show only the
+/// current fiscal year through `as_of`; earlier unclosed P&L is folded into a
+/// synthetic retained-earnings line so the sheet matches the balance sheet
+/// after a year boundary (there is no permanent year-end close).
+///
 /// # Errors
 ///
 /// Validation or DB errors.
 pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<TrialBalance> {
     let as_of_d = parse_date(as_of)?;
-    let _ = get_entity(conn, entity_id)?;
-
-    let all_lines = account_activity_lines(conn, entity_id, None, None, as_of_d, false)?;
+    let entity = get_entity(conn, entity_id)?;
+    let close = unclosed_pnl(conn, entity_id, as_of_d, entity.fiscal_year_start_month)?;
 
     let mut lines = Vec::new();
     let mut total_debits = 0_i64;
     let mut total_credits = 0_i64;
 
-    for line in all_lines {
+    let mut push = |line: ReportLine| {
         if line.debit_minor == 0 && line.credit_minor == 0 {
-            continue;
+            return;
         }
         total_debits = total_debits.saturating_add(line.debit_minor);
         total_credits = total_credits.saturating_add(line.credit_minor);
         lines.push(line);
+    };
+
+    for account_type in [
+        AccountType::Asset,
+        AccountType::Liability,
+        AccountType::Equity,
+    ] {
+        for line in as_of_lines(conn, entity_id, account_type, as_of_d)? {
+            push(line);
+        }
+    }
+
+    if close.prior_net != 0 {
+        push(retained_earnings_line(close.prior_net));
+    }
+
+    for account_type in [AccountType::Income, AccountType::Expense] {
+        for line in period_lines(
+            conn,
+            entity_id,
+            account_type,
+            close.fy_start,
+            as_of_d,
+            false,
+        )? {
+            push(line);
+        }
     }
 
     Ok(TrialBalance {
@@ -244,54 +275,14 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     let assets_lines = as_of_lines(conn, entity_id, AccountType::Asset, as_of_d)?;
     let liab_lines = as_of_lines(conn, entity_id, AccountType::Liability, as_of_d)?;
     let mut equity_lines = as_of_lines(conn, entity_id, AccountType::Equity, as_of_d)?;
+    let close = unclosed_pnl(conn, entity_id, as_of_d, entity.fiscal_year_start_month)?;
 
-    let fy_start = fiscal_year_start(as_of_d, entity.fiscal_year_start_month);
-    let net = sum_types_in_range(conn, entity_id, &[AccountType::Income], fy_start, as_of_d)?
-        .saturating_sub(sum_types_in_range(
-            conn,
-            entity_id,
-            &[AccountType::Expense],
-            fy_start,
-            as_of_d,
-        )?);
-
-    if let Some(prior_end) = fy_start.previous_day() {
-        let books_start = Date::from_calendar_date(1, time::Month::January, 1).unwrap_or(prior_end);
-        let prior_net = sum_types_in_range(
-            conn,
-            entity_id,
-            &[AccountType::Income],
-            books_start,
-            prior_end,
-        )?
-        .saturating_sub(sum_types_in_range(
-            conn,
-            entity_id,
-            &[AccountType::Expense],
-            books_start,
-            prior_end,
-        )?);
-        if prior_net != 0 {
-            equity_lines.push(ReportLine {
-                code: "RE".into(),
-                name: "Retained Earnings (prior periods)".into(),
-                account_type: AccountType::Equity,
-                debit_minor: 0,
-                credit_minor: 0,
-                balance_minor: prior_net,
-            });
-        }
+    if close.prior_net != 0 {
+        equity_lines.push(retained_earnings_line(close.prior_net));
     }
 
-    if net != 0 {
-        equity_lines.push(ReportLine {
-            code: "NI".into(),
-            name: "Net Income (current period)".into(),
-            account_type: AccountType::Equity,
-            debit_minor: 0,
-            credit_minor: 0,
-            balance_minor: net,
-        });
+    if close.current_net != 0 {
+        equity_lines.push(net_income_line(close.current_net));
     }
 
     let total_assets: i64 = assets_lines.iter().map(|l| l.balance_minor).sum();
@@ -479,6 +470,80 @@ fn as_of_lines(
         .into_iter()
         .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)
         .collect())
+}
+
+/// Current-FY net income and unclosed P&L from before `fy_start`.
+struct UnclosedPnl {
+    fy_start: Date,
+    current_net: i64,
+    prior_net: i64,
+}
+
+fn unclosed_pnl(
+    conn: &Connection,
+    entity_id: EntityId,
+    as_of: Date,
+    fy_start_month: u8,
+) -> Result<UnclosedPnl> {
+    let fy_start = fiscal_year_start(as_of, fy_start_month);
+    let current_net = sum_types_in_range(conn, entity_id, &[AccountType::Income], fy_start, as_of)?
+        .saturating_sub(sum_types_in_range(
+            conn,
+            entity_id,
+            &[AccountType::Expense],
+            fy_start,
+            as_of,
+        )?);
+
+    let prior_net = if let Some(prior_end) = fy_start.previous_day() {
+        let books_start = Date::from_calendar_date(1, time::Month::January, 1).unwrap_or(prior_end);
+        sum_types_in_range(
+            conn,
+            entity_id,
+            &[AccountType::Income],
+            books_start,
+            prior_end,
+        )?
+        .saturating_sub(sum_types_in_range(
+            conn,
+            entity_id,
+            &[AccountType::Expense],
+            books_start,
+            prior_end,
+        )?)
+    } else {
+        0
+    };
+
+    Ok(UnclosedPnl {
+        fy_start,
+        current_net,
+        prior_net,
+    })
+}
+
+fn equity_plug_line(code: &str, name: &str, net: i64) -> ReportLine {
+    let (debit_minor, credit_minor) = if net >= 0 {
+        (0, net)
+    } else {
+        (net.saturating_neg(), 0)
+    };
+    ReportLine {
+        code: code.into(),
+        name: name.into(),
+        account_type: AccountType::Equity,
+        debit_minor,
+        credit_minor,
+        balance_minor: net,
+    }
+}
+
+fn retained_earnings_line(prior_net: i64) -> ReportLine {
+    equity_plug_line("RE", "Retained Earnings (prior periods)", prior_net)
+}
+
+fn net_income_line(net: i64) -> ReportLine {
+    equity_plug_line("NI", "Net Income (current period)", net)
 }
 
 fn fiscal_year_start(as_of: Date, start_month: u8) -> Date {

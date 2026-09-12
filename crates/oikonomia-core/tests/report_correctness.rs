@@ -5,10 +5,12 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
-use oikonomia_core::domain::{ChartTemplate, EntityId};
+use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
+use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, balance_sheet, create_entity, list_accounts,
-    post_entry, profit_and_loss, trial_balance, void_entry,
+    CreateEntity, CreateJournalLine, PostJournal, ReportLine, balance_sheet, create_entity,
+    dashboard_summary, list_accounts, post_entry, profit_and_loss, set_account_opening_balance,
+    set_entry_hidden, trial_balance, void_entry,
 };
 use oikonomia_core::vault::Vault;
 use rand::rngs::StdRng;
@@ -41,15 +43,27 @@ fn setup_entity_fy(conn: &Connection, fiscal_year_start_month: u8) -> EntityId {
     .id
 }
 
+fn account_id(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
+    list_accounts(conn, entity_id)
+        .expect("accounts")
+        .iter()
+        .find(|a| a.code == code)
+        .map(|a| a.id)
+        .expect(code)
+}
+
+fn line<'a>(lines: &'a [ReportLine], code: &str) -> &'a ReportLine {
+    lines.iter().find(|l| l.code == code).expect(code)
+}
+
 fn post_expense(
     conn: &Connection,
     entity_id: EntityId,
     date: &str,
     minor: i64,
 ) -> oikonomia_core::domain::JournalEntryId {
-    let accounts = list_accounts(conn, entity_id).expect("accounts");
-    let checking = accounts.iter().find(|a| a.code == "1010").expect("1010");
-    let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
+    let checking = account_id(conn, entity_id, "1010");
+    let food = account_id(conn, entity_id, "5100");
 
     let view = post_entry(
         conn,
@@ -60,13 +74,13 @@ fn post_expense(
             reference: None,
             lines: vec![
                 CreateJournalLine {
-                    account_id: food.id,
+                    account_id: food,
                     debit_minor: minor,
                     credit_minor: 0,
                     memo: None,
                 },
                 CreateJournalLine {
-                    account_id: checking.id,
+                    account_id: checking,
                     debit_minor: 0,
                     credit_minor: minor,
                     memo: None,
@@ -183,6 +197,246 @@ fn balance_sheet_balances_when_activity_is_before_fy_start_month() {
         "March expense is prior-period RE: {:?}",
         bs.equity.lines
     );
+
+    let tb = trial_balance(conn, entity_id, "2026-08-01").expect("tb");
+    assert_eq!(tb.total_debits, tb.total_credits);
+    assert!(
+        tb.lines
+            .iter()
+            .any(|l| l.code == "RE" && l.balance_minor == -1_000),
+        "TB RE must match the July-FY balance sheet: {:?}",
+        tb.lines
+    );
+    assert!(
+        !tb.lines
+            .iter()
+            .any(|l| l.code == "5100" && l.debit_minor != 0),
+        "March expense is prior-period on a July FY: {:?}",
+        tb.lines
+    );
+}
+
+fn post_income(
+    conn: &Connection,
+    entity_id: EntityId,
+    date: &str,
+    minor: i64,
+) -> oikonomia_core::domain::JournalEntryId {
+    let checking = account_id(conn, entity_id, "1010");
+    let salary = account_id(conn, entity_id, "4000");
+
+    let view = post_entry(
+        conn,
+        &PostJournal {
+            entity_id,
+            entry_date: date.into(),
+            description: format!("earn {minor} on {date}"),
+            reference: None,
+            lines: vec![
+                CreateJournalLine {
+                    account_id: checking,
+                    debit_minor: minor,
+                    credit_minor: 0,
+                    memo: None,
+                },
+                CreateJournalLine {
+                    account_id: salary,
+                    debit_minor: 0,
+                    credit_minor: minor,
+                    memo: None,
+                },
+            ],
+        },
+    )
+    .expect("post income");
+    view.entry.id
+}
+
+fn post_transfer(
+    conn: &Connection,
+    entity_id: EntityId,
+    date: &str,
+    minor: i64,
+) -> oikonomia_core::domain::JournalEntryId {
+    let checking = account_id(conn, entity_id, "1010");
+    let savings = account_id(conn, entity_id, "1020");
+
+    let view = post_entry(
+        conn,
+        &PostJournal {
+            entity_id,
+            entry_date: date.into(),
+            description: format!("move {minor} on {date}"),
+            reference: None,
+            lines: vec![
+                CreateJournalLine {
+                    account_id: savings,
+                    debit_minor: minor,
+                    credit_minor: 0,
+                    memo: None,
+                },
+                CreateJournalLine {
+                    account_id: checking,
+                    debit_minor: 0,
+                    credit_minor: minor,
+                    memo: None,
+                },
+            ],
+        },
+    )
+    .expect("post transfer");
+    view.entry.id
+}
+
+fn post_unpaid_bill(
+    conn: &Connection,
+    entity_id: EntityId,
+    date: &str,
+    minor: i64,
+) -> oikonomia_core::domain::JournalEntryId {
+    let food = account_id(conn, entity_id, "5100");
+    let payable = account_id(conn, entity_id, "2050");
+
+    let view = post_entry(
+        conn,
+        &PostJournal {
+            entity_id,
+            entry_date: date.into(),
+            description: format!("bill {minor} on {date}"),
+            reference: None,
+            lines: vec![
+                CreateJournalLine {
+                    account_id: food,
+                    debit_minor: minor,
+                    credit_minor: 0,
+                    memo: None,
+                },
+                CreateJournalLine {
+                    account_id: payable,
+                    debit_minor: 0,
+                    credit_minor: minor,
+                    memo: None,
+                },
+            ],
+        },
+    )
+    .expect("post bill");
+    view.entry.id
+}
+
+#[test]
+fn trial_balance_folds_prior_year_pnl_like_balance_sheet() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-06-01", 1_000);
+
+    let tb_2026 = trial_balance(conn, entity_id, "2026-12-31").expect("tb 2026");
+    assert_eq!(tb_2026.total_debits, tb_2026.total_credits);
+    assert!(
+        tb_2026
+            .lines
+            .iter()
+            .any(|l| l.code == "5100" && l.debit_minor == 1_000),
+        "current-FY expense stays on the trial balance: {:?}",
+        tb_2026.lines
+    );
+    assert!(
+        !tb_2026.lines.iter().any(|l| l.code == "RE"),
+        "RE is omitted while the year is still open: {:?}",
+        tb_2026.lines
+    );
+
+    let tb_2027 = trial_balance(conn, entity_id, "2027-01-31").expect("tb 2027");
+    assert_eq!(
+        tb_2027.total_debits, tb_2027.total_credits,
+        "2027 TB must still balance: {:?}",
+        tb_2027.lines
+    );
+    assert!(
+        !tb_2027
+            .lines
+            .iter()
+            .any(|l| l.code == "5100" && l.debit_minor != 0),
+        "prior-year P&L must leave the expense account: {:?}",
+        tb_2027.lines
+    );
+    assert!(
+        tb_2027
+            .lines
+            .iter()
+            .any(|l| l.code == "RE" && l.debit_minor == 1_000 && l.balance_minor == -1_000),
+        "prior-year net loss must appear as RE: {:?}",
+        tb_2027.lines
+    );
+}
+
+#[test]
+fn historical_pnl_and_as_of_reports_agree_across_years() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_income(conn, entity_id, "2025-06-01", 5_000);
+    post_expense(conn, entity_id, "2026-03-01", 1_000);
+
+    let pnl_2025 = profit_and_loss(conn, entity_id, "2025-01-01", "2025-12-31").expect("pnl 2025");
+    assert_eq!(pnl_2025.total_income, 5_000);
+    assert_eq!(pnl_2025.total_expenses, 0);
+    assert_eq!(pnl_2025.net_income, 5_000);
+
+    let pnl_2026 = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl 2026");
+    assert_eq!(pnl_2026.total_income, 0);
+    assert_eq!(pnl_2026.total_expenses, 1_000);
+    assert_eq!(pnl_2026.net_income, -1_000);
+
+    let bs = balance_sheet(conn, entity_id, "2026-12-31").expect("bs");
+    assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+    assert_eq!(
+        bs.equity
+            .lines
+            .iter()
+            .find(|l| l.code == "RE")
+            .map(|l| l.balance_minor),
+        Some(5_000),
+        "2025 income is prior-period RE: {:?}",
+        bs.equity.lines
+    );
+    assert_eq!(
+        bs.equity
+            .lines
+            .iter()
+            .find(|l| l.code == "NI")
+            .map(|l| l.balance_minor),
+        Some(-1_000),
+        "2026 expense is current-FY NI: {:?}",
+        bs.equity.lines
+    );
+
+    let tb = trial_balance(conn, entity_id, "2026-12-31").expect("tb");
+    assert_eq!(tb.total_debits, tb.total_credits);
+    assert_eq!(
+        tb.lines
+            .iter()
+            .find(|l| l.code == "RE")
+            .map(|l| (l.credit_minor, l.balance_minor)),
+        Some((5_000, 5_000)),
+        "TB RE must match the balance sheet as a credit: {:?}",
+        tb.lines
+    );
+    assert!(
+        tb.lines
+            .iter()
+            .any(|l| l.code == "5100" && l.debit_minor == 1_000),
+        "current-FY expense stays on TB: {:?}",
+        tb.lines
+    );
+    assert!(
+        !tb.lines
+            .iter()
+            .any(|l| l.code == "4000" && l.credit_minor != 0),
+        "prior-year income must leave the income account: {:?}",
+        tb.lines
+    );
 }
 
 #[test]
@@ -252,6 +506,427 @@ fn randomized_entries_keep_reports_consistent() {
         assert_eq!(
             bs.total_assets, bs.total_liabilities_equity,
             "BS as of {as_of} must balance"
+        );
+    }
+}
+
+#[test]
+fn pnl_window_is_inclusive_on_both_ends() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-02-28", 100);
+    post_expense(conn, entity_id, "2026-03-01", 200);
+    post_expense(conn, entity_id, "2026-03-31", 400);
+    post_expense(conn, entity_id, "2026-04-01", 800);
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-03-01", "2026-03-31").expect("pnl");
+    assert_eq!(pnl.total_expenses, 600, "both March endpoints count");
+    assert_eq!(pnl.net_income, -600);
+}
+
+#[test]
+fn pnl_single_day_is_a_valid_window() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-03-14", 100);
+    post_expense(conn, entity_id, "2026-03-15", 250);
+    post_expense(conn, entity_id, "2026-03-16", 400);
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-03-15", "2026-03-15").expect("pnl");
+    assert_eq!(pnl.from.to_string(), "2026-03-15");
+    assert_eq!(pnl.to.to_string(), "2026-03-15");
+    assert_eq!(pnl.total_expenses, 250);
+}
+
+#[test]
+fn pnl_rejects_inverted_and_invalid_dates() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+
+    assert_eq!(
+        profit_and_loss(conn, entity_id, "2026-03-31", "2026-03-01").expect_err("inverted"),
+        Error::Validation("from date must be on or before to".into())
+    );
+    assert_eq!(
+        profit_and_loss(conn, entity_id, "2026-13-01", "2026-03-31").expect_err("bad date"),
+        Error::Validation("invalid date: 2026-13-01".into())
+    );
+}
+
+#[test]
+fn reports_reject_unknown_entity() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let missing = EntityId::new();
+
+    assert_eq!(
+        trial_balance(conn, missing, "2026-12-31").expect_err("tb"),
+        Error::NotFound("entity".into())
+    );
+    assert_eq!(
+        profit_and_loss(conn, missing, "2026-01-01", "2026-12-31").expect_err("pnl"),
+        Error::NotFound("entity".into())
+    );
+    assert_eq!(
+        balance_sheet(conn, missing, "2026-12-31").expect_err("bs"),
+        Error::NotFound("entity".into())
+    );
+}
+
+#[test]
+fn empty_books_reports_are_zero_and_balanced() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl");
+    assert!(pnl.income.is_empty());
+    assert!(pnl.expenses.is_empty());
+    assert_eq!(pnl.net_income, 0);
+
+    let tb = trial_balance(conn, entity_id, "2026-12-31").expect("tb");
+    assert!(tb.lines.is_empty());
+    assert_eq!(tb.total_debits, 0);
+    assert_eq!(tb.total_credits, 0);
+
+    let bs = balance_sheet(conn, entity_id, "2026-12-31").expect("bs");
+    assert!(bs.assets.lines.is_empty());
+    assert!(bs.liabilities.lines.is_empty());
+    assert!(bs.equity.lines.is_empty());
+    assert_eq!(bs.total_assets, 0);
+    assert_eq!(bs.total_liabilities_equity, 0);
+}
+
+#[test]
+fn as_of_is_inclusive_and_excludes_the_next_day() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-03-15", 1_000);
+
+    let before = balance_sheet(conn, entity_id, "2026-03-14").expect("before");
+    assert_eq!(before.total_assets, 0);
+    assert!(
+        trial_balance(conn, entity_id, "2026-03-14")
+            .expect("tb before")
+            .lines
+            .is_empty()
+    );
+
+    let on_day = balance_sheet(conn, entity_id, "2026-03-15").expect("on day");
+    assert_eq!(on_day.total_assets, -1_000);
+    assert_eq!(on_day.total_assets, on_day.total_liabilities_equity);
+}
+
+#[test]
+fn transfers_do_not_move_pnl_and_keep_the_balance_sheet_balanced() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_income(conn, entity_id, "2026-03-01", 10_000);
+    post_transfer(conn, entity_id, "2026-03-02", 4_000);
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-03-01", "2026-03-31").expect("pnl");
+    assert_eq!(pnl.total_income, 10_000);
+    assert_eq!(pnl.total_expenses, 0);
+    assert_eq!(pnl.net_income, 10_000);
+
+    let bs = balance_sheet(conn, entity_id, "2026-03-31").expect("bs");
+    assert_eq!(bs.total_assets, 10_000);
+    assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+    assert_eq!(line(&bs.assets.lines, "1010").balance_minor, 6_000);
+    assert_eq!(line(&bs.assets.lines, "1020").balance_minor, 4_000);
+}
+
+#[test]
+fn unpaid_bill_is_expense_and_liability_not_an_asset_hit() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_unpaid_bill(conn, entity_id, "2026-03-10", 7_253);
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-03-01", "2026-03-31").expect("pnl");
+    assert_eq!(pnl.total_expenses, 7_253);
+    assert_eq!(pnl.net_income, -7_253);
+
+    let bs = balance_sheet(conn, entity_id, "2026-03-31").expect("bs");
+    assert_eq!(bs.total_assets, 0);
+    assert_eq!(line(&bs.liabilities.lines, "2050").balance_minor, 7_253);
+    assert_eq!(line(&bs.equity.lines, "NI").balance_minor, -7_253);
+    assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+}
+
+#[test]
+fn opening_balance_is_equity_not_pnl() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    set_account_opening_balance(
+        conn,
+        account_id(conn, entity_id, "1010"),
+        250_000,
+        "2026-01-01",
+    )
+    .expect("opening");
+    post_expense(conn, entity_id, "2026-02-01", 1_000);
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl");
+    assert_eq!(pnl.total_income, 0);
+    assert_eq!(pnl.total_expenses, 1_000);
+
+    let bs = balance_sheet(conn, entity_id, "2026-12-31").expect("bs");
+    assert_eq!(bs.total_assets, 249_000);
+    assert_eq!(line(&bs.equity.lines, "3000").balance_minor, 250_000);
+    assert_eq!(line(&bs.equity.lines, "NI").balance_minor, -1_000);
+    assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+}
+
+#[test]
+fn reports_do_not_leak_across_entities() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let a = setup_entity(conn);
+    let b = create_entity(
+        conn,
+        &CreateEntity {
+            name: "Other".into(),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Personal,
+            fiscal_year_start_month: Some(1),
+        },
+    )
+    .expect("other")
+    .id;
+    post_expense(conn, a, "2026-03-01", 1_000);
+    post_expense(conn, b, "2026-03-01", 9_000);
+
+    let pnl_a = profit_and_loss(conn, a, "2026-01-01", "2026-12-31").expect("a");
+    let pnl_b = profit_and_loss(conn, b, "2026-01-01", "2026-12-31").expect("b");
+    assert_eq!(pnl_a.total_expenses, 1_000);
+    assert_eq!(pnl_b.total_expenses, 9_000);
+
+    let bs_a = balance_sheet(conn, a, "2026-12-31").expect("bs a");
+    assert_eq!(bs_a.total_assets, -1_000);
+}
+
+#[test]
+fn fy_start_date_is_current_period_the_day_before_is_retained_earnings() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2025-12-31", 1_000);
+    post_expense(conn, entity_id, "2026-01-01", 400);
+
+    let bs = balance_sheet(conn, entity_id, "2026-01-01").expect("bs");
+    assert_eq!(line(&bs.equity.lines, "RE").balance_minor, -1_000);
+    assert_eq!(line(&bs.equity.lines, "NI").balance_minor, -400);
+    assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+
+    let tb = trial_balance(conn, entity_id, "2026-01-01").expect("tb");
+    assert_eq!(tb.total_debits, tb.total_credits);
+    assert_eq!(line(&tb.lines, "RE").debit_minor, 1_000);
+    assert_eq!(line(&tb.lines, "5100").debit_minor, 400);
+}
+
+#[test]
+fn july_fy_start_day_is_current_period() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity_fy(conn, 7);
+    post_expense(conn, entity_id, "2026-06-30", 1_000);
+    post_expense(conn, entity_id, "2026-07-01", 250);
+
+    let bs = balance_sheet(conn, entity_id, "2026-07-01").expect("bs");
+    assert_eq!(line(&bs.equity.lines, "RE").balance_minor, -1_000);
+    assert_eq!(line(&bs.equity.lines, "NI").balance_minor, -250);
+    assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+
+    let tb = trial_balance(conn, entity_id, "2026-07-01").expect("tb");
+    assert_eq!(tb.total_debits, tb.total_credits);
+    assert_eq!(line(&tb.lines, "5100").debit_minor, 250);
+}
+
+#[test]
+fn voided_entry_leaves_no_trace_on_pnl_or_balance_sheet() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    let id = post_expense(conn, entity_id, "2026-03-15", 1_000);
+    void_entry(conn, id).expect("void");
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl");
+    assert_eq!(pnl.total_expenses, 0);
+    assert!(pnl.expenses.is_empty());
+
+    let bs = balance_sheet(conn, entity_id, "2026-12-31").expect("bs");
+    assert_eq!(bs.total_assets, 0);
+    assert_eq!(bs.total_liabilities_equity, 0);
+    assert!(bs.equity.lines.is_empty());
+}
+
+#[test]
+fn hidden_entries_stay_on_in_app_reports() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    let id = post_expense(conn, entity_id, "2026-03-15", 1_000);
+    set_entry_hidden(conn, id, true).expect("hide");
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl");
+    assert_eq!(pnl.total_expenses, 1_000);
+
+    let tb = trial_balance(conn, entity_id, "2026-12-31").expect("tb");
+    assert_eq!(line(&tb.lines, "5100").debit_minor, 1_000);
+
+    let bs = balance_sheet(conn, entity_id, "2026-12-31").expect("bs");
+    assert_eq!(bs.total_assets, -1_000);
+    assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+}
+
+#[test]
+fn pnl_omits_accounts_with_no_period_activity() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-03-15", 1_000);
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-03-01", "2026-03-31").expect("pnl");
+    assert!(pnl.income.is_empty());
+    assert_eq!(pnl.expenses.len(), 1);
+    assert_eq!(pnl.expenses[0].code, "5100");
+}
+
+#[test]
+fn ytd_pnl_matches_balance_sheet_net_income_and_dashboard() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_income(conn, entity_id, "2026-01-10", 8_000);
+    post_expense(conn, entity_id, "2026-02-10", 3_000);
+    post_expense(conn, entity_id, "2025-12-01", 500);
+
+    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-06-30").expect("pnl");
+    let bs = balance_sheet(conn, entity_id, "2026-06-30").expect("bs");
+    let dash =
+        dashboard_summary(conn, entity_id, "2026-01-01", "2026-06-30", "2026-06-30").expect("dash");
+
+    assert_eq!(pnl.net_income, 5_000);
+    assert_eq!(line(&bs.equity.lines, "NI").balance_minor, pnl.net_income);
+    assert_eq!(line(&bs.equity.lines, "RE").balance_minor, -500);
+    assert_eq!(dash.income, pnl.total_income);
+    assert_eq!(dash.expenses, pnl.total_expenses);
+    assert_eq!(dash.net_income, pnl.net_income);
+    assert_eq!(bs.total_assets, bs.total_liabilities_equity);
+}
+
+#[test]
+fn company_chart_synthetic_re_does_not_use_the_posted_re_account() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = create_entity(
+        conn,
+        &CreateEntity {
+            name: "Co".into(),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Company,
+            fiscal_year_start_month: Some(1),
+        },
+    )
+    .expect("entity")
+    .id;
+    post_expense(conn, entity_id, "2025-06-01", 1_000);
+
+    let bs = balance_sheet(conn, entity_id, "2026-01-31").expect("bs");
+    assert_eq!(line(&bs.equity.lines, "RE").balance_minor, -1_000);
+    assert!(
+        !bs.equity.lines.iter().any(|l| l.code == "3200"),
+        "posted Retained Earnings stays off the sheet until journaled: {:?}",
+        bs.equity.lines
+    );
+}
+
+#[test]
+fn randomized_multi_year_entries_keep_tb_bs_and_ytd_pnl_aligned() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    let accounts = list_accounts(conn, entity_id).expect("accounts");
+
+    let mut rng = StdRng::seed_from_u64(0x2025_2027);
+    for _ in 0..60 {
+        let debit_idx = rng.gen_range(0..accounts.len());
+        let credit_idx = (debit_idx + rng.gen_range(1..accounts.len())) % accounts.len();
+        let minor = rng.gen_range(1..=100_000);
+        let year = rng.gen_range(2025..=2027);
+        let month = rng.gen_range(1..=12);
+        let day = rng.gen_range(1..=28);
+
+        post_entry(
+            conn,
+            &PostJournal {
+                entity_id,
+                entry_date: format!("{year}-{month:02}-{day:02}"),
+                description: "random".into(),
+                reference: None,
+                lines: vec![
+                    CreateJournalLine {
+                        account_id: accounts[debit_idx].id,
+                        debit_minor: minor,
+                        credit_minor: 0,
+                        memo: None,
+                    },
+                    CreateJournalLine {
+                        account_id: accounts[credit_idx].id,
+                        debit_minor: 0,
+                        credit_minor: minor,
+                        memo: None,
+                    },
+                ],
+            },
+        )
+        .expect("post random");
+    }
+
+    for as_of in ["2025-12-31", "2026-06-15", "2026-12-31", "2027-03-01"] {
+        let tb = trial_balance(conn, entity_id, as_of).expect("tb");
+        assert_eq!(
+            tb.total_debits, tb.total_credits,
+            "TB as of {as_of} must balance"
+        );
+
+        let bs = balance_sheet(conn, entity_id, as_of).expect("bs");
+        assert_eq!(
+            bs.total_assets, bs.total_liabilities_equity,
+            "BS as of {as_of} must balance"
+        );
+
+        let tb_re = tb
+            .lines
+            .iter()
+            .find(|l| l.code == "RE")
+            .map_or(0, |l| l.balance_minor);
+        let bs_re = bs
+            .equity
+            .lines
+            .iter()
+            .find(|l| l.code == "RE")
+            .map_or(0, |l| l.balance_minor);
+        assert_eq!(tb_re, bs_re, "TB RE must match BS RE as of {as_of}");
+
+        let fy_start = format!("{}-01-01", &as_of[..4]);
+        let pnl = profit_and_loss(conn, entity_id, &fy_start, as_of).expect("pnl");
+        let bs_ni = bs
+            .equity
+            .lines
+            .iter()
+            .find(|l| l.code == "NI")
+            .map_or(0, |l| l.balance_minor);
+        assert_eq!(
+            pnl.net_income, bs_ni,
+            "YTD P&L must equal BS NI as of {as_of}"
         );
     }
 }
