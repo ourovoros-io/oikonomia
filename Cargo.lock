@@ -1649,10 +1649,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "wasi",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -2684,12 +2682,12 @@ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
 name = "minisign"
-version = "0.7.9"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26541387415a1e829df5d532aad019fb11bc723e2b5bc99edefa4cf5bfad0de7"
+checksum = "aefd422a7a8b5efced01cd7cdf3771e62ebecbc90e3d27695002d3af6af94586"
 dependencies = [
  "ct-codecs",
- "getrandom 0.2.17",
+ "getrandom 0.4.3",
  "rpassword",
  "scrypt",
 ]

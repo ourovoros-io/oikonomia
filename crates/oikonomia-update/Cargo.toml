@@ -25,7 +25,7 @@ url = { version = "2", features = ["serde"] }
 
 [dev-dependencies]
 httptest = "0.16"
-minisign = "0.7"
+minisign = "0.9"
 tempfile = { workspace = true }
 
 [lints]
