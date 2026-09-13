@@ -14,7 +14,7 @@ use oikonomia_core::ledger::{
 };
 use oikonomia_core::vault::Vault;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rusqlite::Connection;
 use tempfile::TempDir;
 
@@ -466,11 +466,11 @@ fn randomized_entries_keep_reports_consistent() {
 
     let mut rng = StdRng::seed_from_u64(0x0110_2026);
     for _ in 0..50 {
-        let debit_idx = rng.gen_range(0..accounts.len());
-        let credit_idx = (debit_idx + rng.gen_range(1..accounts.len())) % accounts.len();
-        let minor = rng.gen_range(1..=100_000);
-        let month = rng.gen_range(1..=12);
-        let day = rng.gen_range(1..=28);
+        let debit_idx = rng.random_range(0..accounts.len());
+        let credit_idx = (debit_idx + rng.random_range(1..accounts.len())) % accounts.len();
+        let minor = rng.random_range(1..=100_000);
+        let month = rng.random_range(1..=12);
+        let day = rng.random_range(1..=28);
 
         post_entry(
             conn,
@@ -857,12 +857,12 @@ fn randomized_multi_year_entries_keep_tb_bs_and_ytd_pnl_aligned() {
 
     let mut rng = StdRng::seed_from_u64(0x2025_2027);
     for _ in 0..60 {
-        let debit_idx = rng.gen_range(0..accounts.len());
-        let credit_idx = (debit_idx + rng.gen_range(1..accounts.len())) % accounts.len();
-        let minor = rng.gen_range(1..=100_000);
-        let year = rng.gen_range(2025..=2027);
-        let month = rng.gen_range(1..=12);
-        let day = rng.gen_range(1..=28);
+        let debit_idx = rng.random_range(0..accounts.len());
+        let credit_idx = (debit_idx + rng.random_range(1..accounts.len())) % accounts.len();
+        let minor = rng.random_range(1..=100_000);
+        let year = rng.random_range(2025..=2027);
+        let month = rng.random_range(1..=12);
+        let day = rng.random_range(1..=28);
 
         post_entry(
             conn,

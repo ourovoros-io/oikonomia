@@ -18,7 +18,7 @@ use oikonomia_core::license::{
 };
 use oikonomia_core::prefs::load_ui_prefs;
 use oikonomia_core::vault::Vault;
-use rand::RngCore;
+use rand::Rng;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -31,7 +31,7 @@ struct Ephemeral {
 
 fn ephemeral() -> Ephemeral {
     let mut seed = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut seed);
+    rand::rng().fill_bytes(&mut seed);
     let signing = SigningKey::from_bytes(&seed);
     let verifier = LicenseVerifier::from_public_key_bytes(&signing.verifying_key().to_bytes())
         .expect("ephemeral verifying key");
