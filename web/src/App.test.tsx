@@ -33,8 +33,6 @@ vi.mock('./lib/tauri', () => ({
 
 vi.mock('./lib/api', () => ({
   api: {
-    getTheme: vi.fn(async () => 'dark'),
-    setTheme: vi.fn(),
     entityList: vi.fn(),
     getLockTimeout: vi.fn(async () => 900),
     setLockTimeout: vi.fn(),

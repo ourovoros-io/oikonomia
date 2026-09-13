@@ -150,7 +150,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
                   </div>
                 </div>
 
-                <span className="max-w-48 truncate rounded-full bg-[var(--color-accent-soft)] px-2.5 py-1 text-xs text-[var(--color-accent)]">
+                <span className="max-w-48 truncate bg-[var(--color-accent-soft)] px-2.5 py-1 text-xs text-[var(--color-accent)]">
                   {doc.entry_description || t('docs.linkedEntry')}
                 </span>
 

@@ -128,7 +128,7 @@ function LanguagePill({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="grid w-fit grid-flow-col auto-cols-fr rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
+      className="grid w-fit grid-flow-col auto-cols-fr border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
     >
       {LOCALES.map((id) => {
         const active = value === id
@@ -140,9 +140,9 @@ function LanguagePill({
             aria-checked={active}
             onClick={() => onChange(id)}
             className={cn(
-              'inline-flex h-[26px] w-full items-center justify-center rounded-full px-3 text-sm font-medium transition',
+              'inline-flex h-[26px] w-full items-center justify-center px-3 text-sm font-medium transition',
               active
-                ? 'bg-[#f4f6f4] text-[#131b15] shadow-sm'
+                ? 'bg-[var(--color-fg)] text-[var(--color-canvas)]'
                 : 'text-[var(--color-muted)]',
             )}
           >
@@ -552,19 +552,19 @@ export function SettingsPage({
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             {license?.state === 'trial' && license.days_remaining != null ? (
-              <div className="inline-flex items-center rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-sm font-medium text-[var(--color-accent)]">
+              <div className="inline-flex items-center bg-[var(--color-accent-soft)] px-3 py-1 text-sm font-medium text-[var(--color-accent)]">
                 {t('settings.trial.banner.active', { n: license.days_remaining })}
               </div>
             ) : null}
             {license?.state === 'licensed' && license.licensed_until ? (
-              <div className="inline-flex items-center rounded-full bg-[var(--color-surface-elevated)] px-3 py-1 text-sm font-medium text-[var(--color-fg-secondary)]">
+              <div className="inline-flex items-center bg-[var(--color-surface-elevated)] px-3 py-1 text-sm font-medium text-[var(--color-fg-secondary)]">
                 {t('settings.license.licensedUntil', {
                   date: formatLicensedUntil(license.licensed_until, locale),
                 })}
               </div>
             ) : null}
             {license?.state === 'expired' ? (
-              <div className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-3 py-1 text-sm font-medium text-[var(--color-warning)]">
+              <div className="inline-flex items-center bg-[var(--color-warning-soft)] px-3 py-1 text-sm font-medium text-[var(--color-warning)]">
                 {licenseExpiredBanner(license)}
               </div>
             ) : null}

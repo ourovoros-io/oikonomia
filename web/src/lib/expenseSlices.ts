@@ -7,7 +7,7 @@ import { t } from './i18n'
  */
 export const MAX_SLICES = 6
 
-/** Dark-theme `--viz-*` hex from `web/src/index.css`. PDF always embeds these. */
+/** The `--viz-*` hex from `web/src/index.css`. PDF always embeds these. */
 export const VIZ_DARK_HEX = {
   1: '#3987e5',
   2: '#d95926',
@@ -15,7 +15,7 @@ export const VIZ_DARK_HEX = {
   4: '#c98500',
   5: '#d55181',
   6: '#008300',
-  other: '#4a554c',
+  other: '#5c6472',
 } as const
 
 export type VizSlot = 1 | 2 | 3 | 4 | 5 | 6 | 'other'

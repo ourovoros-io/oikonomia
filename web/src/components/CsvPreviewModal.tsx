@@ -234,7 +234,7 @@ export function CsvPreviewModal({
                     {kind ? (
                       <span
                         className={cn(
-                          'inline-flex rounded-full px-2 py-0.5 text-xs font-medium',
+                          'inline-flex px-2 py-0.5 text-xs font-medium',
                           income
                             ? 'bg-[var(--color-success-soft)] text-[var(--color-success)]'
                             : 'bg-[var(--color-surface-elevated)] text-[var(--color-fg-secondary)]',

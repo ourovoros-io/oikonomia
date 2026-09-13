@@ -341,7 +341,7 @@ function UnlockUpdateDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="w-full max-w-md rounded-[1rem] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 outline-none"
+        className="w-full max-w-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-6 outline-none"
       >
         <h2
           id={titleId}
@@ -352,17 +352,17 @@ function UnlockUpdateDialog({
         </h2>
         <p className="mt-2 text-sm leading-5 font-normal text-[var(--color-muted)]">{copy.body}</p>
         {state.kind === 'available' ? (
-          <p className="mt-4 text-[13px] leading-5 font-normal text-[#8f9a93]">
+          <p className="mt-4 text-[13px] leading-5 font-normal text-[var(--color-muted)]">
             {t('unlock.update.available.honesty')}
           </p>
         ) : null}
         {state.kind === 'installing' ? (
           <div
-            className="mt-6 h-1 overflow-hidden rounded-[2px] bg-[#232c26]"
+            className="mt-6 h-1 overflow-hidden bg-[var(--color-hair)]"
             role="progressbar"
             aria-label={copy.title}
           >
-            <div className="h-full w-[30%] rounded-[2px] bg-[var(--color-accent)]" />
+            <div className="h-full w-[30%] bg-[var(--color-accent)]" />
           </div>
         ) : null}
         {copy.actions.length > 0 ? (
@@ -372,7 +372,7 @@ function UnlockUpdateDialog({
                 <button
                   key={action.label}
                   type="button"
-                  className="h-10 rounded-lg bg-[#35b06b] px-4 text-sm font-medium text-[#0a0e0b] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"
+                  className="h-9 bg-[var(--color-accent)] px-4 font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-canvas)] uppercase outline-none"
                   onClick={onInstall}
                 >
                   {action.label}
@@ -381,7 +381,7 @@ function UnlockUpdateDialog({
                 <button
                   key={action.label}
                   type="button"
-                  className="h-10 rounded-lg border border-[#344038] bg-[var(--color-surface-2)] px-4 text-sm font-medium text-[var(--color-fg-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"
+                  className="lead-edge h-9 border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-4 pl-5 font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-fg-secondary)] uppercase outline-none"
                   onClick={onDismiss}
                 >
                   {action.label}

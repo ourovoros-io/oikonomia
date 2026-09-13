@@ -31,12 +31,6 @@
       "chartMeta": "{currency} · Kontenplan {template}",
       "createHint": "Legen Sie ein Buch unter Einstellungen an"
     },
-    "theme": {
-      "ariaToLight": "Zum hellen Design wechseln",
-      "ariaToDark": "Zum dunklen Design wechseln",
-      "titleLight": "Helles Design",
-      "titleDark": "Dunkles Design"
-    },
     "lock": {
       "aria": "Tresor sperren",
       "busy": "Sperren…",

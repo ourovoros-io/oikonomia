@@ -30,9 +30,9 @@ function Shell({
       <div
         className={cn(
           'flex h-full w-full flex-col overflow-hidden',
-          'rounded-[16px] border border-[var(--color-border-strong)]/65',
+          'border border-[var(--color-border-strong)]',
           'bg-[var(--color-surface)] text-[var(--color-fg)]',
-          'shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset,0_14px_44px_rgba(0,0,0,0.55),0_2px_10px_rgba(0,0,0,0.3)]',
+          'shadow-[0_14px_44px_rgba(0,0,0,0.55)]',
           appear && 'qa-appear',
           className,
         )}
@@ -46,7 +46,6 @@ function Shell({
 export default function QuickAddApp() {
   const { t } = useI18n()
   const [status, setStatus] = useState<VaultStatus | null>(null)
-  const [dark, setDark] = useState(true)
   const [phase, setPhase] = useState<'form' | 'success'>('form')
   const [successLabel, setSuccessLabel] = useState('')
   const [formEpoch, setFormEpoch] = useState(0)
@@ -54,17 +53,6 @@ export default function QuickAddApp() {
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Debounced hide so native <select> menus do not dismiss the panel. */
   const blurHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    void api
-      .getTheme()
-      .then((t) => setDark(t === 'dark'))
-      .catch(() => undefined)
-  }, [])
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-  }, [dark])
 
   useEffect(() => {
     void vaultStatus()
@@ -236,7 +224,7 @@ export default function QuickAddApp() {
           </p>
           <Button
             size="sm"
-            className="h-7 shrink-0 rounded-full px-2.5 text-[10px]"
+            className="h-7 shrink-0 px-2.5 text-[10px]"
             onClick={() => void api.openMainWindow()}
           >
             {t('common.open')}

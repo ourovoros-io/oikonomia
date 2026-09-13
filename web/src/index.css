@@ -1,46 +1,149 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
 
-@custom-variant dark (&:where(.dark, .dark *));
+/* ---- Livery ------------------------------------------------------------
+ * Oikonomia wears the chassis the GDA plugin faceplates wear. The source of
+ * truth for every token below is the sibling Rust workspace:
+ * `gda/crates/gd-faceplate-kit/src/theme.rs` (palette, duos, type ramp) and
+ * `gda/docs/superpowers/specs/2026-09-09-livery-ui-design.md` (the rules).
+ * When a value moves there, it moves here.
+ *
+ * Dark-only, like the rest of the suite: the chassis IS the brand, and there
+ * is no light Livery. Nothing here reads `prefers-color-scheme`.
+ *
+ * Oikonomia is not one of the five plugins, so it owns its own accent duo —
+ * emerald into cyan into indigo — carrying over the ledger green the app has
+ * always used as its flat accent.
+ */
 
-@theme {
-  /* One typeface, no exceptions: Inter Variable is bundled locally
-     (no network) and covers numerals via font-variant-numeric. */
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+/* ---- Brand typefaces ---------------------------------------------------
+ * The same three families the plugin editors embed, subset to the web range.
+ * Bundled locally under `public/fonts/`, never fetched: the app must render
+ * identically with no network, and their SIL OFL license texts sit beside
+ * them, which is what OFL condition 2 requires of a distributed copy.
+ */
 
-  /* Dark theme (default): green-tinted neutrals around a dollar-green accent. */
-  --color-canvas: #0a0e0b;
-  --color-surface: #101511;
-  --color-surface-2: #151b16;
-  --color-surface-elevated: #1b231d;
-  --color-border: #232c26;
-  --color-border-strong: #344038;
-  --color-muted: #8f9a93;
-  --color-fg: #f4f6f4;
-  --color-fg-secondary: #c5cdc7;
-  --color-accent: #35b06b;
-  --color-accent-hover: #4fc981;
-  --color-accent-soft: rgba(53, 176, 107, 0.16);
-  --color-accent-muted: #1c4a32;
-  --color-danger: #f43f5e;
-  --color-danger-soft: rgba(244, 63, 94, 0.13);
-  --color-success: #2dd4bf;
-  --color-success-soft: rgba(45, 212, 191, 0.13);
-  --color-warning: #fbbf24;
-  --color-warning-soft: rgba(251, 191, 36, 0.13);
-  --color-info: #38bdf8;
-  --color-info-soft: rgba(56, 189, 248, 0.13);
-
-  --radius-control: 0.5rem;
-  --control-h: 2.5rem;
-  --sidebar-w: 15.5rem;
+@font-face {
+  font-family: "Barlow";
+  src: url("/fonts/Barlow-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
-/* Categorical chart palette (dark-surface steps; validated with the dataviz
-   six-checks script against #101511). Slot order is the CVD-safety mechanism —
-   assign in order, never cycled; fold extra series into --viz-other. */
+@font-face {
+  font-family: "Barlow";
+  src: url("/fonts/Barlow-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Barlow";
+  src: url("/fonts/Barlow-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("/fonts/IBMPlexMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Sofia Sans";
+  src: url("/fonts/SofiaSans-Black-subset.woff2") format("woff2");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme {
+  --font-sans: "Barlow", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas,
+    monospace;
+  --font-display: "Sofia Sans", "Arial Black", "Helvetica Neue", sans-serif;
+
+  /* Surfaces (theme.rs §5.1). `canvas` is the window ground, `surface` the
+     panel every card and table is cut into, and the two lifts above it are
+     for hover and raised chrome. */
+  --color-canvas: #0b0c0f;
+  --color-surface: #0e1014;
+  --color-surface-2: #12151b;
+  --color-surface-elevated: #161a21;
+
+  /* Edges. `hair` is the quietest tier — row separators and tracks; `border`
+     is the panel/well outline; `border-strong` frames and dividers. */
+  --color-hair: #171a20;
+  --color-border: #1c2027;
+  --color-border-strong: #2a2f3a;
+  --color-dot: #2b3039;
+
+  /* Ink tiers. `muted` is the caption tier and stays >= 4.5:1 on the panel;
+     `dim` is a UI-component tier (>= 3:1), for index numbers, ticks and
+     inactive options — never body copy. */
+  --color-fg: #e7ebf1;
+  --color-fg-secondary: #9ca3ae;
+  --color-muted: #848b98;
+  --color-dim: #5c6472;
+
+  /* Oikonomia's accent duo: the light runs a -> b -> c. `a` is the flat
+     accent everything else in the app resolves to. */
+  --color-accent: #2ee6a6;
+  --color-accent-b: #37d5ff;
+  --color-accent-c: #7a8cff;
+  --color-accent-hover: #5aefbc;
+  --color-accent-soft: rgba(46, 230, 166, 0.14);
+  --color-accent-muted: #10382d;
+
+  /* Utility signals, suite-wide. Hazard means attention everywhere; signal
+     red is reserved for loss, deletion and the top meter segment. */
+  --color-hazard: #e2f23a;
+  --color-danger: #e0203a;
+  --color-danger-soft: rgba(224, 32, 58, 0.14);
+  --color-success: #2ee6a6;
+  --color-success-soft: rgba(46, 230, 166, 0.13);
+  --color-warning: #e2f23a;
+  --color-warning-soft: rgba(226, 242, 58, 0.12);
+  --color-info: #37d5ff;
+  --color-info-soft: rgba(55, 213, 255, 0.13);
+
+  /* The chassis is engineered, not soft: nothing on it is rounded. Zeroing
+     the scale squares every `rounded-lg`/`-xl`/`-2xl` in the app at once.
+     `rounded-full` is not tokenised in Tailwind, so genuinely circular
+     things (the donut, status dots) stay circular. */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-4xl: 0px;
+
+  --radius-control: 0px;
+  --control-h: 2.25rem;
+  --sidebar-w: 15.5rem;
+
+  /* The one suite angle: a rise of 600 over a run of 320, about 62 degrees.
+     Every band, cut corner and sliver in the app uses it. */
+  --livery-run: 320;
+  --livery-rise: 600;
+  --cut: 14px;
+}
+
+/* Categorical chart palette. Unchanged by the Livery port: re-run through
+   the dataviz six-checks script against the new panel (#0E1014) and it
+   still passes every one — lightness band, chroma floor, CVD separation
+   (worst adjacent 8.4 protan), normal-vision floor (19.3) and contrast.
+   The duo's neon stops are light, not fill, and sit far outside the dark
+   lightness band [0.48, 0.67], so they are deliberately NOT used here.
+   Slot order is the CVD-safety mechanism — assign in order, never cycled;
+   fold extra series into --viz-other. */
 :root {
   --viz-1: #3987e5;
   --viz-2: #d95926;
@@ -50,58 +153,18 @@
   --viz-6: #008300;
   --viz-7: #9085e9;
   --viz-8: #e66767;
-  --viz-other: #4a554c;
-}
-
-/* Light theme overrides via html:not(.dark) — deeper hues for contrast
-   on white, same green family. */
-html:not(.dark) {
-  /* Light-surface chart steps (validated against #ffffff). */
-  --viz-1: #2a78d6;
-  --viz-2: #eb6834;
-  --viz-3: #1baf7a;
-  --viz-4: #eda100;
-  --viz-5: #e87ba4;
-  --viz-6: #008300;
-  --viz-7: #4a3aa7;
-  --viz-8: #e34948;
-  --viz-other: #b9c4bb;
-
-  --color-canvas: #f6f9f6;
-  --color-surface: #ffffff;
-  --color-surface-2: #eff4ef;
-  --color-surface-elevated: #e7eee8;
-  --color-border: #e2e9e3;
-  --color-border-strong: #cfdad2;
-  --color-muted: #68766c;
-  --color-fg: #131b15;
-  --color-fg-secondary: #384740;
-  --color-accent: #178a4c;
-  --color-accent-hover: #116e3c;
-  --color-accent-soft: rgba(23, 138, 76, 0.1);
-  --color-accent-muted: #dcf3e6;
-  --color-danger: #e11d48;
-  --color-danger-soft: rgba(225, 29, 72, 0.08);
-  --color-success: #0d9488;
-  --color-success-soft: rgba(13, 148, 136, 0.1);
-  --color-warning: #d97706;
-  --color-warning-soft: rgba(217, 119, 6, 0.1);
-  --color-info: #0284c7;
-  --color-info-soft: rgba(2, 132, 199, 0.1);
+  /* Neutral, re-tinted from the old green family to the Livery ink tiers. */
+  --viz-other: #5c6472;
 }
 
 @layer base {
-  /* Native form controls must follow the app's theme class, not the OS
-     preference. Scrollbars additionally get explicit palette colors:
-     WKWebView styles inner scrollers from the window appearance, so
-     color-scheme alone leaves a light scrollbar on a dark window (the
-     Rust side also syncs the native window theme via set_theme). */
+  /* Dark-only: the window, its native form controls and its scrollbars are
+     all one appearance. WKWebView styles inner scrollers from the window
+     appearance, so the scrollbar colours are stated explicitly (the Rust
+     side also syncs the native window theme via set_theme). */
   html {
-    color-scheme: light;
-    scrollbar-color: var(--color-border-strong) transparent;
-  }
-  html.dark {
     color-scheme: dark;
+    scrollbar-color: var(--color-border-strong) transparent;
   }
 
   html,
@@ -133,6 +196,12 @@ html:not(.dark) {
     font: inherit;
   }
 
+  /* Hazard is the suite's attention colour, so it is also the focus ring. */
+  :focus-visible {
+    outline: 2px solid var(--color-hazard);
+    outline-offset: 2px;
+  }
+
   .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
@@ -143,7 +212,7 @@ html:not(.dark) {
     background-image: none;
   }
 
-  /* Tray quick-add: transparent OS window; the shell paints rounded corners. */
+  /* Tray quick-add: transparent OS window; the shell paints the corners. */
   html.quick-add,
   html.quick-add body,
   html.quick-add #root {
@@ -155,6 +224,174 @@ html:not(.dark) {
   html.quick-add body {
     /* Kill the full-app canvas fill so corners stay see-through. */
     background: transparent !important;
+  }
+}
+
+/* ---- Type ramp (spec §5.3) ---------------------------------------------
+ * Components reference tiers, never raw sizes, so weight, family, size and
+ * tracking move together from one place. Sizes are the web equivalents of
+ * the plugin ramp: a faceplate is a fixed 1180 px window read at arm's
+ * length, an app window is not, so the caption tiers gain a point or two.
+ * Tracked tiers switch kerning off, matching the painters that lay out one
+ * glyph at a time.
+ */
+
+@layer components {
+  .t-spine {
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: 76px;
+    line-height: 0.84;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  .t-display {
+    font-family: var(--font-display);
+    font-weight: 900;
+    line-height: 0.86;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    color: var(--color-fg);
+    text-wrap: balance;
+  }
+
+  .t-readout {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 30px;
+    line-height: 1;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .t-value {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 17px;
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .t-name {
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-fg-secondary);
+    font-kerning: none;
+  }
+
+  .t-option {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-fg);
+  }
+
+  .t-brand {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    font-kerning: none;
+  }
+
+  .t-caption {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    font-kerning: none;
+  }
+
+  .t-caption-head {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    font-kerning: none;
+  }
+
+  .t-readout-sm {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-fg);
+  }
+
+  .t-tick {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-dim);
+    font-kerning: none;
+  }
+}
+
+/* ---- Chassis parts -----------------------------------------------------
+ * The handful of Livery constructions that are pure paint, kept here rather
+ * than repeated as Tailwind soup at every call site.
+ */
+
+@layer components {
+  /* The decor dot grid, on the plugins' 8 px pitch. */
+  .dots {
+    background-image: radial-gradient(
+      circle,
+      var(--color-dot) 1px,
+      transparent 1.2px
+    );
+    background-size: 8px 8px;
+    background-position: 0 0;
+  }
+
+  /* A panel with the stage's cut top-right corner. The cut is the suite
+     angle read at the corner. */
+  .cut-panel {
+    clip-path: polygon(
+      0 0,
+      calc(100% - var(--cut)) 0,
+      100% var(--cut),
+      100% 100%,
+      0 100%
+    );
+  }
+
+  /* The 2 x 10 bar that marks a live row or an active option. */
+  .accent-bar {
+    width: 2px;
+    height: 10px;
+    background: var(--color-accent);
+    flex-shrink: 0;
+  }
+
+  /* A plate whose leading edge carries a signal: the Livery chip. Set
+     `--lead` to override the accent (danger chips carry signal red). */
+  .lead-edge {
+    position: relative;
+  }
+
+  .lead-edge::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--lead, var(--color-accent));
   }
 }
 

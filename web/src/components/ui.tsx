@@ -10,9 +10,13 @@ import type {
 import { cn } from '../lib/cn'
 
 const controlBase =
-  'h-10 w-full rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 text-sm text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/25 disabled:opacity-50'
+  'h-9 w-full rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 text-sm text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-dim)] focus:border-[var(--color-accent)] disabled:opacity-50'
 
-const surfaceShadow = 'shadow-[0_1px_0_rgba(255,255,255,0.03)]'
+/**
+ * Livery panels are flat: a hairline edge does the separating, never a drop
+ * shadow. Kept as a named empty so the call sites still read as deliberate.
+ */
+const surfaceShadow = ''
 
 /** Soft colored icon chip used across metric cards and activity rows. */
 export function IconBadge({
@@ -96,17 +100,20 @@ export function Hero({
   className?: string
   accent?: 'accent' | 'success' | 'neutral'
 }) {
+  // The stage's light, built from the duo: emerald (a) into cyan (b) into
+  // indigo (c). Light is the one thing in the chassis that is not on the
+  // grid, so it stays soft while everything around it stays hard-edged.
   const wash =
     accent === 'success'
-      ? 'radial-gradient(1000px 360px at 12% -10%, rgba(45,212,191,0.18), transparent 55%), radial-gradient(700px 280px at 90% 0%, rgba(53,176,107,0.12), transparent 50%)'
+      ? 'radial-gradient(1000px 360px at 12% -10%, rgba(46,230,166,0.16), transparent 55%), radial-gradient(700px 280px at 90% 0%, rgba(55,213,255,0.1), transparent 50%)'
       : accent === 'neutral'
-        ? 'radial-gradient(1000px 360px at 10% -10%, rgba(53,176,107,0.16), transparent 55%)'
-        : 'radial-gradient(1200px 400px at 10% -10%, rgba(53,176,107,0.3), transparent 55%), radial-gradient(800px 300px at 90% 0%, rgba(56,189,248,0.12), transparent 50%), radial-gradient(600px 260px at 55% 110%, rgba(45,212,191,0.1), transparent 55%)'
+        ? 'radial-gradient(1000px 360px at 10% -10%, rgba(122,140,255,0.12), transparent 55%)'
+        : 'radial-gradient(1200px 400px at 10% -10%, rgba(46,230,166,0.22), transparent 55%), radial-gradient(800px 300px at 90% 0%, rgba(55,213,255,0.12), transparent 50%), radial-gradient(600px 260px at 55% 110%, rgba(122,140,255,0.1), transparent 55%)'
 
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]',
+        'cut-panel relative overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface)]',
         className,
       )}
     >
@@ -115,6 +122,7 @@ export function Hero({
         style={{ background: wash }}
         aria-hidden
       />
+      <div className="dots pointer-events-none absolute right-4 bottom-4 h-4 w-12" aria-hidden />
       <div className="relative">{children}</div>
     </div>
   )
@@ -147,9 +155,9 @@ export function Panel({
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border-strong)] px-5 py-3.5">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
+          <h3 className="t-caption-head text-[var(--color-fg)]">{title}</h3>
           {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
           {whisper ? <p className="text-[11px] text-[var(--color-muted)]">{whisper}</p> : null}
         </div>
@@ -206,7 +214,7 @@ export function CollapsibleSection({
           </IconBadge>
         ) : null}
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
+          <h3 className="t-caption-head text-[var(--color-fg)]">{title}</h3>
           {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
         </div>
         <ChevronDown
@@ -240,25 +248,29 @@ export function Button({
   /** Shows a spinner and disables the button while a slow action runs. */
   busy?: boolean
 }) {
+  // The accent is a bright emerald, so the primary plate is inverted — dark
+  // ink on the accent — rather than white-on-accent, which does not clear
+  // 4.5:1 at this lightness.
   const styles = {
-    primary: 'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] shadow-sm',
+    primary:
+      'bg-[var(--color-accent)] text-[var(--color-canvas)] hover:bg-[var(--color-accent-hover)]',
     secondary:
-      'border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-fg-secondary)] hover:border-[var(--color-accent)] hover:text-[var(--color-fg)]',
+      'lead-edge border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-fg-secondary)] hover:border-[var(--color-dim)] hover:text-[var(--color-fg)]',
     danger:
-      'border border-transparent bg-[var(--color-danger-soft)] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20',
+      'lead-edge [--lead:var(--color-danger)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-danger)] hover:border-[var(--color-danger)]',
     ghost:
       'text-[var(--color-muted)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]',
   }
   const sizes = {
-    sm: 'h-8 gap-1.5 px-2.5 text-xs',
-    md: 'h-10 gap-2 px-3.5 text-sm',
-    icon: 'h-10 w-10 shrink-0 justify-center p-0',
+    sm: 'h-7 gap-1.5 px-2.5 text-[10px]',
+    md: 'h-9 gap-2 px-3.5 pl-4 text-[11px]',
+    icon: 'h-9 w-9 shrink-0 justify-center p-0',
   }
   return (
     <button
       type="button"
       className={cn(
-        'inline-flex items-center justify-center rounded-[var(--radius-control)] font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex items-center justify-center rounded-[var(--radius-control)] font-mono font-medium tracking-[0.14em] uppercase transition disabled:cursor-not-allowed disabled:opacity-50',
         styles[variant],
         sizes[size],
         className,
@@ -287,7 +299,7 @@ export function Select({
         {children}
       </select>
       <ChevronDown
-        className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-[var(--color-muted)]"
+        className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-[var(--color-dim)]"
         strokeWidth={1.75}
         aria-hidden
       />
@@ -297,9 +309,7 @@ export function Select({
 
 export function Label({ children }: { children: ReactNode }) {
   return (
-    <span className="mb-1.5 block text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-      {children}
-    </span>
+    <span className="t-caption mb-1.5 block">{children}</span>
   )
 }
 
@@ -346,7 +356,7 @@ export function PageHeader({
       <div className="min-w-0">
         {breadcrumb && breadcrumb.length > 0 ? (
           <nav
-            className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase"
+            className="t-caption flex flex-wrap items-center gap-1.5"
             aria-label={breadcrumb.map((c) => c.label).join(' / ')}
           >
             {breadcrumb.map((crumb, i) => (
@@ -367,9 +377,7 @@ export function PageHeader({
             ))}
           </nav>
         ) : eyebrow ? (
-          <p className="text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
-            {eyebrow}
-          </p>
+          <p className="t-caption">{eyebrow}</p>
         ) : null}
         <h2
           className={cn(
@@ -436,7 +444,7 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)]/50 px-6 py-16 text-center">
       {icon ? (
-        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center rounded-xl bg-[var(--color-surface-elevated)] text-[var(--color-muted)]">
+        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center border border-[var(--color-border-strong)] bg-[var(--color-surface-elevated)] text-[var(--color-dim)]">
           {icon}
         </div>
       ) : null}
@@ -476,7 +484,7 @@ export function ChoiceCard({
         className={cn(
           'flex size-8 items-center justify-center rounded-lg',
           selected
-            ? 'bg-[var(--color-accent)] text-white'
+            ? 'bg-[var(--color-accent)] text-[var(--color-canvas)]'
             : 'bg-[var(--color-surface-elevated)] text-[var(--color-muted)]',
         )}
       >
@@ -514,9 +522,7 @@ export function MetricCard({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
-            {label}
-          </div>
+          <div className="t-caption">{label}</div>
           {hint ? <div className="mt-0.5 text-xs text-[var(--color-muted)]">{hint}</div> : null}
         </div>
         {icon ? (
@@ -528,7 +534,7 @@ export function MetricCard({
       <div
         title={value}
         className={cn(
-          'mt-5 truncate text-2xl font-semibold tracking-tight tabular-nums',
+          't-readout mt-5 truncate',
           accent === 'danger' ? 'text-[var(--color-danger)]' : 'text-[var(--color-fg)]',
         )}
       >
@@ -552,7 +558,7 @@ export function Segmented<T extends string>({
   return (
     <div
       className={cn(
-        'inline-flex h-10 items-stretch rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5',
+        'inline-flex h-9 items-stretch rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5',
         className,
       )}
     >
@@ -565,10 +571,10 @@ export function Segmented<T extends string>({
             aria-pressed={active}
             onClick={() => onChange(opt.id)}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-[calc(var(--radius-control)-2px)] px-3 text-sm font-medium transition',
+              'inline-flex items-center gap-1.5 px-3 font-mono text-[11px] font-medium tracking-[0.06em] uppercase transition',
               active
-                ? 'bg-[var(--color-surface)] text-[var(--color-fg)] shadow-sm'
-                : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]',
+                ? 'bg-[var(--color-surface)] text-[var(--color-fg)]'
+                : 'text-[var(--color-dim)] hover:text-[var(--color-fg)]',
             )}
           >
             {opt.icon}
@@ -602,17 +608,17 @@ export function FlowBar({
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
-        <span className="shrink-0 text-[var(--color-muted)]">{label}</span>
+        <span className="t-caption shrink-0 normal-case">{label}</span>
         <span
           title={value}
-          className="min-w-0 truncate font-semibold tabular-nums text-[var(--color-fg)]"
+          className="t-readout-sm min-w-0 truncate"
         >
           {value}
         </span>
       </div>
-      <div className="h-2 overflow-hidden rounded bg-[var(--color-surface-elevated)]">
+      <div className="h-2 overflow-hidden bg-[var(--color-hair)]">
         <div
-          className={cn('h-full rounded transition-all duration-500', bar)}
+          className={cn('h-full transition-all duration-500', bar)}
           style={{ width: `${pct}%` }}
         />
       </div>

@@ -4,12 +4,11 @@ import {
   FolderOpen,
   LayoutDashboard,
   Lock,
-  Moon,
   Receipt,
   Settings,
-  Sun,
   Wallet,
 } from 'lucide-react'
+import { Decor } from './components/Decor'
 import { Logo } from './components/Logo'
 import { TrialBanner } from './components/TrialBanner'
 import { UnlockScreen } from './components/UnlockScreen'
@@ -50,7 +49,6 @@ type NavId = (typeof NAV)[number]['id']
 
 export default function App() {
   const { t } = useI18n()
-  const [dark, setDark] = useState(true)
   const [active, setActive] = useState<NavId>('dashboard')
   const [status, setStatus] = useState<VaultStatus | null>(null)
   const [info, setInfo] = useState<AppInfo | null>(null)
@@ -63,25 +61,6 @@ export default function App() {
   const [license, setLicense] = useState<LicenseStatus | null>(null)
 
   const entity = entities.find((e) => e.id === entityId) ?? entities[0] ?? null
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-  }, [dark])
-
-  // Stored theme applies before unlock too; browser dev and first run keep
-  // the dark default.
-  useEffect(() => {
-    void api
-      .getTheme()
-      .then((theme) => setDark(theme === 'dark'))
-      .catch(() => undefined)
-  }, [])
-
-  function toggleTheme() {
-    const next = !dark
-    setDark(next)
-    void api.setTheme(next ? 'dark' : 'light').catch(() => undefined)
-  }
 
   const openCreateBook = useCallback(() => {
     setActive('settings')
@@ -223,105 +202,108 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full min-h-0 bg-[var(--color-canvas)] text-[var(--color-fg)]">
-      <aside className="flex w-[var(--sidebar-w)] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex h-14 items-center gap-2.5 border-b border-[var(--color-border)] px-4">
-          <Logo className="size-8 shrink-0 rounded-lg shadow-sm shadow-[var(--color-accent)]/30" />
-          <div className="min-w-0 leading-tight">
-            <div className="truncate text-sm font-semibold tracking-tight">Oikonomia</div>
-            <div className="truncate text-[11px] text-[var(--color-muted)]">{t('app.localLedger')}</div>
-          </div>
+    <div className="relative flex h-full min-h-0 flex-col bg-[var(--color-canvas)] text-[var(--color-fg)]">
+      <Decor />
+
+      {/* Strip: brand cluster left, utilities right. Spans the full width, so
+          the chassis reads as one plate rather than a sidebar beside a page. */}
+      <header className="relative z-10 flex h-11 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-canvas)]/85 px-4 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Logo className="size-5 shrink-0" />
+          <span className="t-brand text-[var(--color-fg)]">Oikonomia</span>
+          <span className="h-3 w-px shrink-0 bg-[var(--color-border-strong)]" aria-hidden="true" />
+          <span className="t-caption truncate">{t('app.localLedger')}</span>
         </div>
 
-        <div className="border-b border-[var(--color-border)] px-3 py-3">
-          <div className="mb-1.5 px-1 text-[11px] font-medium tracking-[0.12em] text-[var(--color-muted)] uppercase">
-            {t('app.book')}
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="hidden w-56 sm:block">
+            <Select
+              value={entity?.id ?? ''}
+              onChange={(e) => setEntityId(e.target.value || null)}
+              aria-label={t('app.activeEntity')}
+            >
+              {entities.length === 0 ? <option value="">{t('app.noEntitiesYet')}</option> : null}
+              {entities.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name} · {e.base_currency}
+                </option>
+              ))}
+            </Select>
           </div>
-          <Select
-            value={entity?.id ?? ''}
-            onChange={(e) => setEntityId(e.target.value || null)}
-            aria-label={t('app.activeEntity')}
+          <Button
+            variant="secondary"
+            onClick={() => void onLock()}
+            disabled={locking}
+            aria-label={t('app.lockVault')}
           >
-            {entities.length === 0 ? <option value="">{t('app.noEntitiesYet')}</option> : null}
-            {entities.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name} · {e.base_currency}
-              </option>
-            ))}
-          </Select>
+            <Lock className="size-4" />
+            {locking ? t('app.locking') : t('app.lock')}
+          </Button>
         </div>
+      </header>
 
-        <nav className="flex flex-1 flex-col gap-0.5 p-2">
-          {NAV.map((item) => {
-            const isActive = active === item.id
-            const Icon = item.icon
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActive(item.id)}
-                className={cn(
-                  'flex h-10 items-center gap-2.5 rounded-xl px-3 text-sm font-medium transition',
-                  isActive
-                    ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-[var(--color-accent)]/20'
-                    : 'text-[var(--color-fg-secondary)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]',
-                )}
-              >
-                <Icon
+      <div className="relative z-10 flex min-h-0 flex-1">
+        {/* Index column: numbered rows, the whole row a hit target. The
+            numbers are decoration for the eye, not for the screen reader —
+            aria-hidden keeps each button's accessible name the bare label. */}
+        <aside className="flex w-[var(--sidebar-w)] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]/80">
+          <nav className="flex flex-1 flex-col px-3 py-3">
+            <div className="flex h-[22px] items-center justify-between border-b border-[var(--color-border-strong)]">
+              <span className="t-caption-head">{t('app.book')}</span>
+              <span className="t-tick">{String(NAV.length).padStart(2, '0')}</span>
+            </div>
+
+            {NAV.map((item, i) => {
+              const isActive = active === item.id
+              const Icon = item.icon
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActive(item.id)}
+                  aria-current={isActive}
                   className={cn(
-                    'size-[1.125rem] shrink-0',
-                    isActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted)]',
+                    'grid min-h-[34px] w-full grid-cols-[22px_18px_minmax(0,1fr)_auto] items-center gap-x-2.5 border-b border-[var(--color-hair)] text-left transition-colors last:border-b-0',
+                    isActive ? 'text-[var(--color-fg)]' : 'text-[var(--color-fg-secondary)] hover:text-[var(--color-fg)]',
                   )}
-                  strokeWidth={1.75}
-                />
-                <span className="truncate">{t(item.labelKey)}</span>
-              </button>
-            )
-          })}
-        </nav>
+                >
+                  <span className="t-tick" aria-hidden="true">
+                    {String(i + 1).padStart(2, '0')}
+                  </span>
+                  <Icon
+                    className={cn(
+                      'size-4 shrink-0',
+                      isActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-dim)]',
+                    )}
+                    strokeWidth={1.75}
+                  />
+                  <span className={cn('t-name truncate', isActive && 'text-[var(--color-fg)]')}>
+                    {t(item.labelKey)}
+                  </span>
+                  {isActive ? <span className="accent-bar" aria-hidden="true" /> : <span />}
+                </button>
+              )
+            })}
+          </nav>
+        </aside>
 
-        <div className="border-t border-[var(--color-border)] px-4 py-3 text-[11px] text-[var(--color-muted)]">
-          {info ? t('app.versionEncrypted', { version: info.version }) : 'Oikonomia'}
-        </div>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TrialBanner license={license} />
-        <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 px-6 backdrop-blur">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-[var(--color-fg)]">
-              {entity ? entity.name : t('app.noBookSelected')}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TrialBanner license={license} />
+          <header className="flex h-12 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] px-6">
+            <div className="flex min-w-0 items-baseline gap-3">
+              <span className="t-value truncate text-[var(--color-fg)]">
+                {entity ? entity.name : t('app.noBookSelected')}
+              </span>
+              <span className="t-caption truncate">
+                {entity
+                  ? t('app.entityChart', {
+                      currency: entity.base_currency,
+                      chart: t(`chart.${entity.chart_template}`),
+                    })
+                  : t('app.createEntityInSettings')}
+              </span>
             </div>
-            <div className="truncate text-xs text-[var(--color-muted)]">
-              {entity
-                ? t('app.entityChart', {
-                    currency: entity.base_currency,
-                    chart: t(`chart.${entity.chart_template}`),
-                  })
-                : t('app.createEntityInSettings')}
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="secondary"
-              size="icon"
-              onClick={toggleTheme}
-              aria-label={dark ? t('app.switchToLight') : t('app.switchToDark')}
-              title={dark ? t('app.lightMode') : t('app.darkMode')}
-            >
-              {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => void onLock()}
-              disabled={locking}
-              aria-label={t('app.lockVault')}
-            >
-              <Lock className="size-4" />
-              {locking ? t('app.locking') : t('app.lock')}
-            </Button>
-          </div>
-        </header>
+          </header>
 
         <main key={active} className="flex-1 overflow-auto">
           <div className="mx-auto max-w-6xl px-6 py-8">
@@ -389,7 +371,20 @@ export default function App() {
             ) : null}
           </div>
         </main>
+        </div>
       </div>
+
+      {/* Footer: livery mark left, build right, with the suite's 4 px hazard
+          square. Series 01 / 01 — Oikonomia is its own one-product series. */}
+      <footer className="relative z-10 flex h-11 shrink-0 items-center justify-between gap-4 border-t border-[var(--color-border)] bg-[var(--color-canvas)]/85 px-4 backdrop-blur">
+        <span className="t-tick">SERIES 01 / 01</span>
+        <div className="flex items-center gap-2.5">
+          <span className="t-tick">
+            {info ? t('app.versionEncrypted', { version: info.version }) : 'OIKONOMIA'}
+          </span>
+          <span className="size-1 bg-[var(--color-hazard)]" aria-hidden="true" />
+        </div>
+      </footer>
     </div>
   )
 }

@@ -1,5 +1,9 @@
 import { LineCapStyle, PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { PDFFont, PDFPage } from 'pdf-lib'
+// The export keeps Inter even though the screen chassis wears Barlow: this
+// is a document font, picked for glyph coverage (the `el` locale needs
+// Greek), and the bundled Barlow faces are Latin-subset woff2, which pdf-lib
+// cannot embed. The PDF's palette follows Livery; its typeface does not.
 import interRegularUrl from '../assets/fonts/Inter-Regular.ttf?url'
 import interSemiBoldUrl from '../assets/fonts/Inter-SemiBold.ttf?url'
 import type { ReportLine } from './api'
@@ -11,13 +15,13 @@ import { getLocale, t, type Locale } from './i18n'
 export const A4_WIDTH = 595.28
 export const A4_HEIGHT = 841.89
 
-const CANVAS = '#0a0e0b'
-const SURFACE = '#101511'
-const SURFACE_2 = '#151b16'
-const ACCENT = '#35b06b'
-const FG = '#f4f6f4'
-const MUTED = '#8f9a93'
-const EMPTY_RING = '#2a332e'
+const CANVAS = '#0b0c0f'
+const SURFACE = '#0e1014'
+const SURFACE_2 = '#12151b'
+const ACCENT = '#2ee6a6'
+const FG = '#e7ebf1'
+const MUTED = '#848b98'
+const EMPTY_RING = '#2a2f3a'
 
 const MARGIN = 44
 const LOGO = 28
@@ -521,7 +525,7 @@ function paintPdfPage(
 
   if (empty) {
     roundedRect(page, MARGIN, cardTop, cardW, cardH, 14, CANVAS, {
-      color: '#3a433c',
+      color: '#2a2f3a',
       width: 1,
       dash: [5, 5],
     })
@@ -611,7 +615,7 @@ function paintPdfPage(
     y: 52,
     width: cardW,
     height: 1,
-    color: hexRgb('#232c26'),
+    color: hexRgb('#1c2027'),
   })
   drawBrandMark(page, MARGIN, A4_HEIGHT - 38, 12)
   drawText(page, fonts.regular, labels.footerPrivacy, MARGIN + 18, A4_HEIGHT - 30, 9, MUTED)

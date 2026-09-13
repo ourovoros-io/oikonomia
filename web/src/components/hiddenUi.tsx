@@ -7,7 +7,7 @@ export function HiddenBadge({ className = '' }: { className?: string }) {
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center rounded-full bg-[var(--color-surface-elevated)] px-1.5 py-px text-[10px] font-medium leading-4 text-[var(--color-muted)]',
+        'inline-flex shrink-0 items-center bg-[var(--color-surface-elevated)] px-1.5 py-px text-[10px] font-medium leading-4 text-[var(--color-muted)]',
         className,
       )}
     >
