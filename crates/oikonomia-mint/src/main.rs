@@ -2,6 +2,8 @@
 //! operator's machine; this binary is never shipped, never in CI.
 
 use ed25519_dalek::{Signer, SigningKey};
+use getrandom::SysRng;
+use getrandom::rand_core::UnwrapErr;
 use oikonomia_core::license::{LicenseVerifier, install_license, signed_payload};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,7 +14,7 @@ use zeroize::Zeroizing;
 
 /// Random 32-byte Ed25519 seed as lowercase hex, zeroized on drop.
 fn generate_secret_key_hex() -> Zeroizing<String> {
-    let key = SigningKey::generate(&mut rand::rngs::OsRng);
+    let key = SigningKey::generate(&mut UnwrapErr(SysRng));
     Zeroizing::new(hex_encode(key.as_bytes()))
 }
 

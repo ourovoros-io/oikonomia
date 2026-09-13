@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rand::RngCore;
+use rand::Rng;
 use rusqlite::{Connection, OpenFlags};
 
 use super::crypto::{self, VaultKey};
@@ -102,7 +102,7 @@ impl Vault {
         validate_password(password)?;
 
         let mut salt = [0u8; SALT_LEN];
-        rand::thread_rng().fill_bytes(&mut salt);
+        rand::rng().fill_bytes(&mut salt);
 
         let header = VaultHeader::new_with_salt(&salt);
         let key = crypto::derive_key(password, &header)?;
@@ -226,7 +226,7 @@ impl Vault {
 
         let result = (|| -> Result<VaultHeader> {
             let mut salt = [0u8; SALT_LEN];
-            rand::thread_rng().fill_bytes(&mut salt);
+            rand::rng().fill_bytes(&mut salt);
             let new_header = VaultHeader::new_with_salt(&salt);
             let new_key = crypto::derive_key(new, &new_header)?;
 

@@ -14,10 +14,10 @@ publish = false
 [dependencies]
 oikonomia-core = { workspace = true }
 # rand_core is not on by default at the workspace level (the core crate's
-# workspace_pins_ed25519_dalek_v2 test text-parses a plain-string entry); add
+# workspace_pins_ed25519_dalek_v3 test text-parses a plain-string entry); add
 # it here so SigningKey::generate is available for offline keygen.
 ed25519-dalek = { workspace = true, features = ["rand_core"] }
-rand = { workspace = true }
+getrandom = { workspace = true }
 serde_json = { workspace = true }
 time = { workspace = true }
 zeroize = { workspace = true }

@@ -592,7 +592,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
-    use rand::RngCore;
+    use rand::Rng;
     use serde_json::json;
     use tempfile::tempdir;
 
@@ -603,7 +603,7 @@ mod tests {
 
     fn ephemeral() -> Ephemeral {
         let mut seed = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut seed);
+        rand::rng().fill_bytes(&mut seed);
         let signing = SigningKey::from_bytes(&seed);
         let verifier = LicenseVerifier::from_public_key_bytes(&signing.verifying_key().to_bytes())
             .expect("ephemeral verifying key");
@@ -669,7 +669,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_pins_ed25519_dalek_v2() {
+    fn workspace_pins_ed25519_dalek_v3() {
         let manifest = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../Cargo.toml"));
         let after = manifest.split("ed25519-dalek = ").nth(1);
         assert!(
@@ -683,8 +683,8 @@ mod tests {
             .next()
             .unwrap_or("");
         assert!(
-            version.starts_with("2."),
-            "ed25519-dalek must be 2.x (RUSTSEC-2022-0093), got {version:?}"
+            version.starts_with("3."),
+            "ed25519-dalek must be 3.x (1.x is RUSTSEC-2022-0093), got {version:?}"
         );
     }
 
