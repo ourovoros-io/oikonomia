@@ -5,9 +5,20 @@ import { useMotionAllowed } from '../lib/motion'
  * that keeps text sitting directly on the aurora legible, and the Greek
  * wordmark. Purely decorative, so it is hidden from assistive technology, and
  * it holds still whenever useMotionAllowed says nobody should pay for motion.
+ *
+ * `paused`, when true, holds it still regardless of focus: App mounts a
+ * single Aurora above every status branch, and passes this while the vault
+ * is locked so it does not keep animating unseen behind the opaque
+ * UnlockScreen.
  */
-export function Aurora({ watermark = true }: { watermark?: boolean }) {
-  const moving = useMotionAllowed()
+export function Aurora({
+  watermark = true,
+  paused = false,
+}: {
+  watermark?: boolean
+  paused?: boolean
+}) {
+  const moving = useMotionAllowed() && !paused
 
   return (
     <div className="aurora" data-moving={moving} aria-hidden="true">

@@ -256,6 +256,27 @@ describe('App shell', () => {
     )
   })
 
+  test('mounts exactly one aurora, above the shell, in the unlocked state', async () => {
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
+    })
+
+    expect(document.querySelectorAll('.aurora')).toHaveLength(1)
+  })
+
+  test('mounts exactly one aurora, held still, while the vault is locked', async () => {
+    vi.mocked(vaultStatus).mockReset().mockResolvedValue('locked')
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Welcome back' })).toBeTruthy()
+    })
+
+    const auroras = document.querySelectorAll('.aurora')
+    expect(auroras).toHaveLength(1)
+    expect(auroras[0]).toHaveAttribute('data-moving', 'false')
+  })
+
   test('gives each book its own categorical colour', async () => {
     vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
     render(<App />)

@@ -34,6 +34,17 @@ describe('Aurora', () => {
     expect(container.firstElementChild).toHaveAttribute('data-moving', 'false')
   })
 
+  test('holds still while paused, even with focus', () => {
+    // App mounts one Aurora above every status branch and passes paused
+    // while the vault is locked, so it never animates unseen behind the
+    // opaque UnlockScreen.
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+
+    const { container } = render(<Aurora paused />)
+
+    expect(container.firstElementChild).toHaveAttribute('data-moving', 'false')
+  })
+
   test('shows the Greek wordmark unless asked not to', () => {
     const { container, rerender } = render(<Aurora />)
     expect(container).toHaveTextContent('ΟΙΚΟΝΟΜΙΑ')
