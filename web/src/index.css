@@ -1,12 +1,12 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
+@import "./fonts.css";
 
 @theme {
-  /* One typeface, no exceptions: Inter Variable is bundled locally
-     (no network) and covers numerals via font-variant-numeric. */
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  /* Barlow and IBM Plex Mono carry no Greek glyphs; the next family in each
+     stack does (see fonts.css), so the el locale never drops to a system face. */
+  --font-sans: "Barlow", "Sofia Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --font-display: "Sofia Sans", "Arial Black", "Helvetica Neue", sans-serif;
 
   /* Dark theme (default): green-tinted neutrals around a dollar-green accent. */
   --color-canvas: #0a0e0b;
