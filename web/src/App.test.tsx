@@ -245,12 +245,29 @@ describe('App shell', () => {
     vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
     render(<App />)
 
-    const household = await screen.findByRole('button', { name: /Household/ })
+    const household = await screen.findByRole('button', { name: 'Household, EUR' })
     expect(household.getAttribute('aria-pressed')).toBe('false')
 
     await userEvent.click(household)
 
     expect(household.getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: /Personal/ }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('button', { name: 'Personal, EUR' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
+  })
+
+  test('gives each book its own categorical colour', async () => {
+    vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
+    render(<App />)
+
+    const personal = await screen.findByRole('button', { name: 'Personal, EUR' })
+    const household = await screen.findByRole('button', { name: 'Household, EUR' })
+
+    expect(personal.querySelector('span[aria-hidden]')?.getAttribute('style')).toContain(
+      'var(--viz-1)',
+    )
+    expect(household.querySelector('span[aria-hidden]')?.getAttribute('style')).toContain(
+      'var(--viz-2)',
+    )
   })
 })

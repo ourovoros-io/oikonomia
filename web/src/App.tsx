@@ -47,8 +47,14 @@ const NAV = [
 
 type NavId = (typeof NAV)[number]['id']
 
-/** Identity dots for books in the sidebar, assigned in order: not money, not status. */
-const BOOK_DOTS = ['#2ee6a6', '#7a8cff', '#37d5ff', '#ffb02e', '#ff4fa3'] as const
+/**
+ * A book's identity colour: the validated categorical palette in order, never
+ * cycled, so no two of the first eight books share a colour; any further books
+ * fold into the neutral slot, as the charts do.
+ */
+function bookDotColour(index: number): string {
+  return index < 8 ? `var(--viz-${index + 1})` : 'var(--viz-other)'
+}
 
 export default function App() {
   const { t } = useI18n()
@@ -268,7 +274,7 @@ export default function App() {
             <ul className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
               {entities.map((book, index) => {
                 const selected = book.id === entity?.id
-                const dot = BOOK_DOTS[index % BOOK_DOTS.length]
+                const dot = bookDotColour(index)
 
                 return (
                   <li key={book.id}>
@@ -288,10 +294,20 @@ export default function App() {
                         className="size-2 shrink-0 rounded-full"
                         style={{ background: dot, boxShadow: `0 0 10px ${dot}` }}
                       />
-                      <span className="min-w-0 flex-1 truncate">{book.name}</span>
-                      <span className="font-mono text-[10.5px] text-[var(--color-muted)]">
+                      {/* The name and currency are two adjacent inline spans with no
+                          intervening whitespace text node, so a screen reader's
+                          accessible-name computation runs them together with no
+                          separator ("HouseholdEUR"); a visually-hidden span holding
+                          the whole "name, currency" string is the one reliable fix,
+                          so the two visible spans are hidden from the same
+                          computation and never counted twice. */}
+                      <span aria-hidden className="min-w-0 flex-1 truncate">
+                        {book.name}
+                      </span>
+                      <span aria-hidden className="font-mono text-[10.5px] text-[var(--color-muted)]">
                         {book.base_currency}
                       </span>
+                      <span className="sr-only">{`${book.name}, ${book.base_currency}`}</span>
                     </button>
                   </li>
                 )
