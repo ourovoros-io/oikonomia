@@ -1,4 +1,5 @@
 import { useId, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertTriangle, CircleCheck } from 'lucide-react'
 import { Button } from './ui'
 import { useDialogFocus } from './useDialogFocus'
@@ -63,7 +64,12 @@ export function ConfirmDialog({
         ? 'bg-[var(--color-success-soft)] text-[var(--color-success)]'
         : 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
 
-  return (
+  // backdrop-filter makes an element the containing block for position:fixed
+  // descendants in WebKit, so a ConfirmDialog opened inside another dialog
+  // (e.g. EntryDetailModal's delete confirm, inside Modal) would otherwise be
+  // sized to and clipped by the outer glass surface. Porting to
+  // document.body sidesteps that.
+  return createPortal(
     <div
       className="glass-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
@@ -108,6 +114,7 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

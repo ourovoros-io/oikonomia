@@ -1,4 +1,5 @@
 import { useId, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { Button } from './ui'
 import { cn } from '../lib/cn'
@@ -32,7 +33,11 @@ export function Modal({
 
   if (!open) return null
 
-  return (
+  // backdrop-filter makes an element the containing block for position:fixed
+  // descendants in WebKit, so a Modal rendered inside another glass surface
+  // (a pane, or another dialog) would otherwise be sized to and clipped by
+  // it instead of the viewport. Porting to document.body sidesteps that.
+  return createPortal(
     <div
       className="glass-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
@@ -72,6 +77,7 @@ export function Modal({
 
         <div className="overflow-y-auto p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
