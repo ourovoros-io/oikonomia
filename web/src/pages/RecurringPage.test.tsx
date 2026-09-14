@@ -162,9 +162,8 @@ describe('RecurringPage list affordances', () => {
 
     const postButtons = screen.getAllByRole('button', { name: 'Post' })
     expect(postButtons).toHaveLength(2)
-    expect(postButtons[0].className).toMatch(/bg-\[var\(--color-accent\)\]/)
-    expect(postButtons[1].className).toMatch(/hover:bg-\[var\(--color-surface-elevated\)\]/)
-    expect(postButtons[1].className).not.toMatch(/bg-\[var\(--color-accent\)\]/)
+    expect(postButtons[0].getAttribute('data-variant')).toBe('primary')
+    expect(postButtons[1].getAttribute('data-variant')).toBe('ghost')
   })
 
   test('income amount uses a green + prefix', async () => {

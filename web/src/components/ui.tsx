@@ -238,6 +238,7 @@ export function Button({
         className,
       )}
       disabled={disabled || busy}
+      data-variant={variant}
       {...props}
     >
       {busy ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : null}

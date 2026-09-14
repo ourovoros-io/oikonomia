@@ -65,4 +65,14 @@ describe('Button', () => {
 
     expect(screen.getByRole('button', { name: 'Save entry' })).toBeDisabled()
   })
+
+  test('exposes its variant through data-variant attribute', () => {
+    render(<Button variant="ghost">Post</Button>)
+    expect(screen.getByRole('button', { name: 'Post' })).toHaveAttribute('data-variant', 'ghost')
+  })
+
+  test('defaults to primary variant through data-variant attribute', () => {
+    render(<Button>Save entry</Button>)
+    expect(screen.getByRole('button', { name: 'Save entry' })).toHaveAttribute('data-variant', 'primary')
+  })
 })
