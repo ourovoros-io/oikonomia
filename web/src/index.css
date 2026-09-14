@@ -208,6 +208,122 @@
   }
 }
 
+@layer components {
+  .aurora {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background: var(--color-canvas);
+  }
+
+  /* One blur over all five blobs; each blob only ever animates transform, so
+     the drift stays on the compositor. */
+  .aurora-blobs {
+    position: absolute;
+    inset: -80px;
+    filter: blur(70px) saturate(1.35);
+  }
+
+  .aurora-blobs i {
+    position: absolute;
+    border-radius: 50%;
+    mix-blend-mode: screen;
+    will-change: transform;
+  }
+
+  .aurora-blobs i:nth-child(1) {
+    left: 14%;
+    top: 5%;
+    width: 48%;
+    height: 52%;
+    background: radial-gradient(closest-side, rgba(46, 230, 166, 0.55), transparent);
+    animation: aurora-drift-a 22s ease-in-out infinite alternate;
+  }
+
+  .aurora-blobs i:nth-child(2) {
+    left: 48%;
+    top: -5%;
+    width: 55%;
+    height: 57%;
+    background: radial-gradient(closest-side, rgba(55, 213, 255, 0.42), transparent);
+    animation: aurora-drift-b 26s ease-in-out infinite alternate;
+  }
+
+  .aurora-blobs i:nth-child(3) {
+    left: 69%;
+    top: 45%;
+    width: 44%;
+    height: 57%;
+    background: radial-gradient(closest-side, rgba(122, 140, 255, 0.5), transparent);
+    animation: aurora-drift-a 30s ease-in-out infinite alternate-reverse;
+  }
+
+  .aurora-blobs i:nth-child(4) {
+    left: 23%;
+    top: 70%;
+    width: 48%;
+    height: 48%;
+    background: radial-gradient(closest-side, rgba(255, 79, 163, 0.34), transparent);
+    animation: aurora-drift-b 24s ease-in-out infinite alternate-reverse;
+  }
+
+  .aurora-blobs i:nth-child(5) {
+    left: -3%;
+    top: 45%;
+    width: 33%;
+    height: 52%;
+    background: radial-gradient(closest-side, rgba(255, 176, 46, 0.22), transparent);
+    animation: aurora-drift-a 28s ease-in-out infinite alternate;
+  }
+
+  .aurora[data-moving="false"] .aurora-blobs i {
+    animation-play-state: paused;
+  }
+
+  /* Page titles and descriptions sit directly on the aurora with no pane to
+     darken it. The brightest blob is top-left, so the veil is strongest there. */
+  .aurora-veil {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      180deg,
+      rgba(5, 6, 10, var(--aurora-veil-top)) 0%,
+      rgba(5, 6, 10, var(--aurora-veil-mid)) 28%,
+      rgba(5, 6, 10, 0) 55%
+    );
+  }
+
+  .aurora-watermark {
+    position: absolute;
+    left: 18%;
+    bottom: -7%;
+    white-space: nowrap;
+    font: 900 clamp(140px, 18vw, 260px) / 1 var(--font-display);
+    color: rgba(255, 255, 255, 0.025);
+    -webkit-text-stroke: 1px rgba(255, 255, 255, 0.07);
+  }
+}
+
+@keyframes aurora-drift-a {
+  to {
+    transform: translate(90px, 40px) scale(1.12);
+  }
+}
+
+@keyframes aurora-drift-b {
+  to {
+    transform: translate(-80px, 50px) scale(0.92);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-blobs i {
+    animation: none;
+  }
+}
+
 /* Quick Add: Perplexity-like appear toward tray + horizontal step rolls. */
 @keyframes qa-appear {
   from {
