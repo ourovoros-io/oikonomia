@@ -126,6 +126,13 @@ describe('UnlockScreen submit', () => {
   })
 })
 
+describe('UnlockScreen field adornment', () => {
+  test('the password field opts out of the field-box padding reset for its leading icon', () => {
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    expect(screen.getByLabelText('Password')).toHaveAttribute('data-adorned')
+  })
+})
+
 describe('UnlockScreen aria wiring', () => {
   test('an incorrect password marks the password field invalid and describes it', async () => {
     vi.mocked(vaultUnlock).mockRejectedValue({ code: 'invalid_password', message: '' })

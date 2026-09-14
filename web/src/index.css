@@ -574,13 +574,19 @@
     0 0 0 4px rgba(255, 130, 149, 0.14);
 }
 
-/* Inside the box the control is bare. Only the left padding goes: Select and
-   DateInput keep right padding for their chevron and calendar button. */
+/* Inside the box the control is bare. */
 .field-box:has(.ui-control) .ui-control {
   height: 24px;
-  padding-left: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+}
+
+/* The left padding goes too, except for a control carrying data-adorned: a
+   leading icon (e.g. UnlockScreen's password KeyRound) needs the caller's own
+   left padding kept, or the icon sits over the typed text. Select and
+   DateInput keep right padding for their chevron and calendar button either way. */
+.field-box:has(.ui-control) .ui-control:not([data-adorned]) {
+  padding-left: 0;
 }

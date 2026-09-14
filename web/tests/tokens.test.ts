@@ -104,4 +104,18 @@ describe('Aurora glass tokens', () => {
     expect(ruleBody).toContain('inset 0 0 0 1px var(--color-danger)')
     expect(ruleBody).not.toContain('rgba(255, 77, 103')
   })
+
+  test('the left-padding reset opts out for adorned controls', () => {
+    // An icon-adorned control (e.g. UnlockScreen's password field) keeps its
+    // own left padding so the icon does not sit over the typed text; every
+    // other field-box reset (height, border, radius, background, shadow)
+    // still applies to it.
+    const resetRule = css.match(/\.field-box:has\(\.ui-control\)\s*\.ui-control:not\(\[data-adorned\]\)\s*\{([^}]+)\}/)
+    expect(resetRule, 'adorned-aware padding reset exists').not.toBeNull()
+    expect(resetRule?.[1] ?? '').toContain('padding-left: 0')
+
+    const sharedRule = css.match(/\.field-box:has\(\.ui-control\)\s*\.ui-control\s*\{([^}]+)\}/)
+    expect(sharedRule, 'shared control reset exists').not.toBeNull()
+    expect(sharedRule?.[1] ?? '').not.toContain('padding-left')
+  })
 })

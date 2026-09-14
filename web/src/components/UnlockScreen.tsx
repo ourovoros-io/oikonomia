@@ -223,6 +223,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
                       setPasswordInvalid(false)
                     }}
                     className="pl-10"
+                    data-adorned
                     required
                     autoFocus
                     aria-invalid={passwordInvalid || undefined}
