@@ -240,4 +240,17 @@ describe('App shell', () => {
 
     expect(screen.queryByRole('button', { name: /light mode|dark mode/i })).toBeNull()
   })
+
+  test('switches books from the sidebar list', async () => {
+    vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
+    render(<App />)
+
+    const household = await screen.findByRole('button', { name: /Household/ })
+    expect(household.getAttribute('aria-pressed')).toBe('false')
+
+    await userEvent.click(household)
+
+    expect(household.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: /Personal/ }).getAttribute('aria-pressed')).toBe('false')
+  })
 })

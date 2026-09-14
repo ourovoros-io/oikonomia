@@ -8,10 +8,11 @@ import {
   Settings,
   Wallet,
 } from 'lucide-react'
+import { Aurora } from './components/Aurora'
 import { Logo } from './components/Logo'
 import { TrialBanner } from './components/TrialBanner'
 import { UnlockScreen } from './components/UnlockScreen'
-import { Button, Select } from './components/ui'
+import { Button } from './components/ui'
 import { cn } from './lib/cn'
 import { listen } from '@tauri-apps/api/event'
 import {
@@ -45,6 +46,9 @@ const NAV = [
 ] as const
 
 type NavId = (typeof NAV)[number]['id']
+
+/** Identity dots for books in the sidebar, assigned in order: not money, not status. */
+const BOOK_DOTS = ['#2ee6a6', '#7a8cff', '#37d5ff', '#ffb02e', '#ff4fa3'] as const
 
 export default function App() {
   const { t } = useI18n()
@@ -181,74 +185,66 @@ export default function App() {
 
   if (status === null) {
     return (
-      <div className="flex h-full items-center justify-center bg-[var(--color-canvas)] text-sm text-[var(--color-muted)]">
-        {t('common.loading')}
+      <div className="relative flex h-full items-center justify-center text-sm text-[var(--color-muted)]">
+        <Aurora watermark={false} />
+        <span className="relative z-10">{t('common.loading')}</span>
       </div>
     )
   }
 
   if (status === 'uninitialized' || status === 'locked') {
     return (
-      <UnlockScreen
-        status={status}
-        supportEmail={info?.support_email}
-        onUnlocked={(next) => {
-          setStatus(next)
-          void refresh()
-        }}
-      />
+      <div className="relative h-full">
+        <Aurora />
+        <div className="relative z-10 h-full">
+          <UnlockScreen
+            status={status}
+            supportEmail={info?.support_email}
+            onUnlocked={(next) => {
+              setStatus(next)
+              void refresh()
+            }}
+          />
+        </div>
+      </div>
     )
   }
 
   return (
-    <div className="flex h-full min-h-0 bg-[var(--color-canvas)] text-[var(--color-fg)]">
-      <aside className="flex w-[var(--sidebar-w)] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex h-14 items-center gap-2.5 border-b border-[var(--color-border)] px-4">
-          <Logo className="size-8 shrink-0 rounded-lg shadow-sm shadow-[var(--color-accent)]/30" />
+    <div className="relative flex h-full min-h-0 text-[var(--color-fg)]">
+      <Aurora />
+
+      <aside className="glass-pane relative z-10 my-3 ml-3 flex w-[var(--sidebar-w)] shrink-0 flex-col gap-5 rounded-[22px] px-3 py-4">
+        <div className="flex items-center gap-2.5 px-1.5">
+          <Logo className="size-8 shrink-0" />
           <div className="min-w-0 leading-tight">
-            <div className="truncate text-sm font-semibold tracking-tight">Oikonomia</div>
-            <div className="truncate text-[11px] text-[var(--color-muted)]">{t('app.localLedger')}</div>
+            <div className="truncate text-[15px] font-semibold tracking-tight">Oikonomia</div>
+            <div className="truncate text-xs text-[var(--color-muted)]">{t('app.localLedger')}</div>
           </div>
         </div>
 
-        <div className="border-b border-[var(--color-border)] px-3 py-3">
-          <div className="mb-1.5 px-1 text-[11px] font-medium tracking-[0.12em] text-[var(--color-muted)] uppercase">
-            {t('app.book')}
-          </div>
-          <Select
-            value={entity?.id ?? ''}
-            onChange={(e) => setEntityId(e.target.value || null)}
-            aria-label={t('app.activeEntity')}
-          >
-            {entities.length === 0 ? <option value="">{t('app.noEntitiesYet')}</option> : null}
-            {entities.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name} · {e.base_currency}
-              </option>
-            ))}
-          </Select>
-        </div>
-
-        <nav className="flex flex-1 flex-col gap-0.5 p-2">
+        <nav className="flex flex-col gap-0.5">
           {NAV.map((item) => {
             const isActive = active === item.id
             const Icon = item.icon
+
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => setActive(item.id)}
+                aria-current={isActive ? 'page' : undefined}
                 className={cn(
                   'flex h-10 items-center gap-2.5 rounded-xl px-3 text-sm font-medium transition',
                   isActive
-                    ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-[var(--color-accent)]/20'
-                    : 'text-[var(--color-fg-secondary)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]',
+                    ? 'bg-[linear-gradient(90deg,rgba(46,230,166,0.2),rgba(55,213,255,0.08))] text-[var(--color-fg)] shadow-[inset_0_0_0_1px_rgba(46,230,166,0.35),0_0_24px_rgba(46,230,166,0.12)]'
+                    : 'text-[var(--color-fg-secondary)] hover:bg-white/[0.05] hover:text-[var(--color-fg)]',
                 )}
               >
                 <Icon
                   className={cn(
                     'size-[1.125rem] shrink-0',
-                    isActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted)]',
+                    isActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-dim)]',
                   )}
                   strokeWidth={1.75}
                 />
@@ -258,44 +254,88 @@ export default function App() {
           })}
         </nav>
 
-        <div className="border-t border-[var(--color-border)] px-4 py-3 text-[11px] text-[var(--color-muted)]">
+        <section className="flex min-h-0 flex-1 flex-col gap-2" aria-labelledby="sidebar-books">
+          <h2
+            id="sidebar-books"
+            className="px-1.5 font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase"
+          >
+            {t('app.book')}
+          </h2>
+
+          {entities.length === 0 ? (
+            <p className="px-1.5 text-sm text-[var(--color-muted)]">{t('app.noEntitiesYet')}</p>
+          ) : (
+            <ul className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
+              {entities.map((book, index) => {
+                const selected = book.id === entity?.id
+                const dot = BOOK_DOTS[index % BOOK_DOTS.length]
+
+                return (
+                  <li key={book.id}>
+                    <button
+                      type="button"
+                      onClick={() => setEntityId(book.id)}
+                      aria-pressed={selected}
+                      className={cn(
+                        'flex h-9 w-full items-center gap-2.5 rounded-lg px-1.5 text-left text-sm transition',
+                        selected
+                          ? 'bg-white/[0.06] text-[var(--color-fg)]'
+                          : 'text-[var(--color-fg-secondary)] hover:text-[var(--color-fg)]',
+                      )}
+                    >
+                      <span
+                        aria-hidden
+                        className="size-2 shrink-0 rounded-full"
+                        style={{ background: dot, boxShadow: `0 0 10px ${dot}` }}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{book.name}</span>
+                      <span className="font-mono text-[10.5px] text-[var(--color-muted)]">
+                        {book.base_currency}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
+
+        <div className="px-1.5 font-mono text-[10.5px] tracking-[0.08em] text-[var(--color-muted)]">
           {info ? t('app.versionEncrypted', { version: info.version }) : 'Oikonomia'}
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         <TrialBanner license={license} />
-        <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 px-6 backdrop-blur">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-[var(--color-fg)]">
+        <header className="flex h-16 shrink-0 items-center justify-between gap-4 px-7">
+          <div className="flex min-w-0 items-baseline gap-2.5">
+            <span className="truncate text-xl font-semibold tracking-tight">
               {entity ? entity.name : t('app.noBookSelected')}
-            </div>
-            <div className="truncate text-xs text-[var(--color-muted)]">
+            </span>
+            <span className="truncate text-sm text-[var(--color-fg-secondary)]">
               {entity
                 ? t('app.entityChart', {
                     currency: entity.base_currency,
                     chart: t(`chart.${entity.chart_template}`),
                   })
                 : t('app.createEntityInSettings')}
-            </div>
+            </span>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => void onLock()}
-              disabled={locking}
-              aria-label={t('app.lockVault')}
-            >
-              <Lock className="size-4" />
-              {locking ? t('app.locking') : t('app.lock')}
-            </Button>
-          </div>
+          <Button
+            variant="secondary"
+            onClick={() => void onLock()}
+            disabled={locking}
+            aria-label={t('app.lockVault')}
+          >
+            <Lock className="size-4" />
+            {locking ? t('app.locking') : t('app.lock')}
+          </Button>
         </header>
 
         <main key={active} className="flex-1 overflow-auto">
-          <div className="mx-auto max-w-6xl px-6 py-8">
+          <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
             {error ? (
-              <div className="mb-5 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger)]">
+              <div className="mb-5 rounded-[14px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,77,103,0.35)]">
                 {error}
               </div>
             ) : null}
