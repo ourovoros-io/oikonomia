@@ -61,4 +61,17 @@ describe('bundled typefaces', () => {
   test('nothing is fetched from a font service at runtime', () => {
     expect(indexCss + fontsCss()).not.toMatch(/fonts\.(googleapis|gstatic)\.com|@fontsource/)
   })
+
+  test('every shipped face is really WOFF2, not a mislabelled WOFF 1.0 file', () => {
+    // fonts.css declares format("woff2") for every face; a file that opens with
+    // the WOFF 1.0 signature ("wOFF") instead of the WOFF2 one ("wOF2") would
+    // fail to load and silently drop that face's script to a system font.
+    const files = [...fontsCss().matchAll(/url\("\/fonts\/([^"]+)"\)/g)].map((m) => m[1])
+
+    expect(files.length).toBeGreaterThan(0)
+    for (const file of files) {
+      const magic = readFileSync(new URL(file, fontsDir)).subarray(0, 4).toString('ascii')
+      expect(magic, file).toBe('wOF2')
+    }
+  })
 })

@@ -16,10 +16,16 @@ import sys
 import urllib.request
 from pathlib import Path
 
-# The CSS API answers a Safari user agent with woff2 sources.
+# The CSS API picks a format per family from the user agent, and that choice
+# is not consistent across families: a Safari 17 UA got real woff2 for Barlow,
+# IBM Plex Mono and Sofia Sans but WOFF 1.0 for JetBrains Mono (checked
+# 2026-09-14). A current desktop Chrome UA gets woff2 for all four families
+# the design uses, with the same weights and unicode ranges either UA returns
+# for the other three, so this fetches as Chrome and validates the result
+# below rather than trusting the API to honour one UA consistently.
 USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/17.0 Safari/605.1.15"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
 
 WEB_DIR = Path(__file__).resolve().parent.parent
@@ -35,6 +41,11 @@ FAMILIES = {
 }
 
 FACE_PATTERN = re.compile(r"/\*\s*([a-z-]+)\s*\*/\s*@font-face\s*\{([^}]*)\}")
+
+# The four bytes every real WOFF2 file opens with (the "wOF2" signature). A UA
+# that reports "format('woff2')" but ships a WOFF 1.0 body is caught here
+# rather than at load time in the app, where it would silently fall back.
+WOFF2_MAGIC = b"wOF2"
 
 
 def fetch(url: str) -> bytes:
@@ -61,6 +72,10 @@ def faces_for(family: str, query: str, subsets: set[str]) -> list[dict]:
             continue
 
         url = required(r"url\((https://[^)]+)\)", body, "src url")
+        declared_format = required(r"format\(['\"]([^'\"]+)['\"]\)", body, "src format")
+        if declared_format != "woff2":
+            sys.exit(f"{family} ({subset}): Google declared format {declared_format!r}, not woff2")
+
         face = by_url.setdefault(
             url,
             {
@@ -112,7 +127,14 @@ def main() -> None:
 
     for family, (query, subsets, ofl_dir) in FAMILIES.items():
         for face in faces_for(family, query, subsets):
-            (FONTS_DIR / file_name(face)).write_bytes(fetch(face["url"]))
+            data = fetch(face["url"])
+            if data[:4] != WOFF2_MAGIC:
+                sys.exit(
+                    f"{family} ({face['subset']}): downloaded bytes are not WOFF2, "
+                    f"got magic {data[:4]!r} from {face['url']}"
+                )
+
+            (FONTS_DIR / file_name(face)).write_bytes(data)
             blocks.append(font_face_css(face))
             print(f"public/fonts/{file_name(face)}")
 
