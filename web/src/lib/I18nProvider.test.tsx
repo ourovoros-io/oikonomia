@@ -148,4 +148,25 @@ describe('I18nProvider', () => {
       expect(getLocale()).toBe('fr')
     })
   })
+
+  test('keeps document.documentElement.lang equal to the active locale', async () => {
+    // CSS uppercase (font-variant-caps / text-transform) keeps a locale's own
+    // tonos marks only when lang matches; a stale static lang="en" uppercases
+    // Greek text as if it were English, dropping the tonos.
+    vi.mocked(api.getLocale).mockResolvedValue('el')
+    vi.mocked(api.setLocale).mockResolvedValue(undefined)
+    render(
+      <I18nProvider>
+        <Probe />
+      </I18nProvider>,
+    )
+    await waitFor(() => {
+      expect(document.documentElement.lang).toBe('el')
+    })
+
+    setLocale('fr')
+    await waitFor(() => {
+      expect(document.documentElement.lang).toBe('fr')
+    })
+  })
 })

@@ -439,22 +439,27 @@ export function RecurringPage({ entity, onBack }: Props) {
             </Select>
           </Field>
           {cadence === 'monthly' ? (
-            <Field label={t('recurring.form.dayOfMonth')}>
-              <Select
-                value={dayOfMonth}
-                onChange={(e) => setDayOfMonth(e.target.value)}
-                aria-label={t('recurring.form.dayOfMonth')}
-              >
-                {Array.from({ length: 31 }, (_, i) => String(i + 1)).map((day) => (
-                  <option key={day} value={day}>
-                    {day}
-                  </option>
-                ))}
-              </Select>
-              <p className="mt-1.5 text-xs text-[var(--color-muted)]">
+            <>
+              <Field label={t('recurring.form.dayOfMonth')}>
+                <Select
+                  value={dayOfMonth}
+                  onChange={(e) => setDayOfMonth(e.target.value)}
+                  aria-label={t('recurring.form.dayOfMonth')}
+                >
+                  {Array.from({ length: 31 }, (_, i) => String(i + 1)).map((day) => (
+                    <option key={day} value={day}>
+                      {day}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {/* col-span-2: this used to sit inside the Field's own grid
+                  cell; as a sibling now, without the span it would take the
+                  next column instead of running under it. */}
+              <p className="-mt-2 text-xs text-[var(--color-muted)] sm:col-span-2">
                 {t('recurring.form.dayOfMonthHint')}
               </p>
-            </Field>
+            </>
           ) : null}
           {kind === 'transfer' ? (
             <>

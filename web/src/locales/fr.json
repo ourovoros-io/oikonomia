@@ -20,7 +20,6 @@
     },
     "book": {
       "label": "Livre",
-      "aria": "Entité active",
       "emptyOption": "Aucune entité pour l'instant"
     },
     "sidebar": {

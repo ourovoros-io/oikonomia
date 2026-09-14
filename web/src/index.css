@@ -73,8 +73,9 @@
   --aurora-veil-mid: 0.28;
 }
 
-/* Categorical chart palette (dark-surface steps; validated with the dataviz
-   six-checks script against #101511). Slot order is the CVD-safety mechanism —
+/* Categorical chart palette (dark-surface steps; re-validated with the
+   dataviz six-checks script against the glass surface #11141b: all six
+   checks pass, worst adjacent CVD dE 8.4). Slot order is the CVD-safety mechanism —
    assign in order, never cycled; fold extra series into --viz-other. */
 :root {
   --viz-1: #3987e5;
@@ -579,6 +580,17 @@
   box-shadow:
     inset 0 0 0 1px var(--color-danger),
     0 0 0 4px rgba(255, 130, 149, 0.14);
+}
+
+/* The plain invalid rule above and the plain :focus-within rule share the
+   same specificity, so source order alone decides which one a focused
+   invalid field gets — and drops the other. This rule keeps both: the
+   invalid ring stays, and the focus glow is added on top of it. */
+.field-box:has(.ui-control[aria-invalid="true"]):focus-within {
+  box-shadow:
+    inset 0 0 0 1px var(--color-danger),
+    0 0 0 4px rgba(255, 130, 149, 0.14),
+    0 0 24px rgba(55, 213, 255, 0.18);
 }
 
 /* Inside the box the control is bare. */

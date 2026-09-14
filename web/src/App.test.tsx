@@ -232,6 +232,17 @@ describe('App trial banner survives Settings visits', () => {
 })
 
 describe('App shell', () => {
+  test('a backend failure renders through the shared ErrorBanner (role=alert)', async () => {
+    // The app-level error box used to be hand-copied markup with no
+    // role/aria-live and a stale hex edge; it now reuses ErrorBanner like
+    // every other error surface in the app.
+    vi.mocked(api.entityList).mockReset().mockRejectedValue(new Error('backend down'))
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('backend down')
+    })
+  })
+
   test('is dark-only: offers no light or dark mode switch', async () => {
     render(<App />)
     await waitFor(() => {
@@ -245,15 +256,18 @@ describe('App shell', () => {
     vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
     render(<App />)
 
+    // The books list is a single choice, not a set of toggles, so the
+    // selected book is marked with aria-current, not aria-pressed.
     const household = await screen.findByRole('button', { name: 'Household, EUR' })
-    expect(household.getAttribute('aria-pressed')).toBe('false')
+    expect(household.getAttribute('aria-current')).toBeNull()
+    expect(household).toHaveAttribute('title', 'Household, EUR')
 
     await userEvent.click(household)
 
-    expect(household.getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: 'Personal, EUR' }).getAttribute('aria-pressed')).toBe(
-      'false',
-    )
+    expect(household.getAttribute('aria-current')).toBe('true')
+    expect(
+      screen.getByRole('button', { name: 'Personal, EUR' }).getAttribute('aria-current'),
+    ).toBeNull()
   })
 
   test('mounts exactly one aurora, above the shell, in the unlocked state', async () => {

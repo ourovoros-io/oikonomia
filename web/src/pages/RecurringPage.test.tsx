@@ -227,6 +227,21 @@ describe('RecurringPage new template modal', () => {
     })
   })
 
+  test('the day-of-month hint sits outside the field box, not inside it', async () => {
+    // A Field renders as one glass field box containing only its label and
+    // control; a helper paragraph inside it would sit inside that box too.
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await waitFor(() => {
+      expect(screen.getByLabelText('Day of month')).toBeTruthy()
+    })
+
+    const hint = screen.getByText('Used when Cadence is Monthly.')
+    const fieldBox = screen.getByLabelText('Day of month').closest('.field-box')
+    expect(fieldBox).not.toBeNull()
+    expect(fieldBox?.contains(hint)).toBe(false)
+  })
+
   test('Weekly hides day of month and sends null', async () => {
     await renderPage()
     await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])

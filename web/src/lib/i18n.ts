@@ -43,7 +43,6 @@ const KEY_ALIASES: Record<string, string> = {
   'common.loading': 'app.loading',
   'app.localLedger': 'app.brand.tagline',
   'app.book': 'app.book.label',
-  'app.activeEntity': 'app.book.aria',
   'app.noEntitiesYet': 'app.book.emptyOption',
   'app.versionEncrypted': 'app.sidebar.versionEncrypted',
   'app.noBookSelected': 'app.header.noBook',

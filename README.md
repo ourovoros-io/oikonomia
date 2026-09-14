@@ -36,7 +36,7 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 - Offline licensing: 30-day trial, offline `.lic` file import in Settings, buy link; EULA viewable in-app from Settings
 - Localized error messages
 - Global trial banner (last 7 days of trial, or after expiry) with a buy-license link
-- Dark / light theme; locale money formatting
+- Dark-only "Aurora glass" UI; locale money formatting
 - UI language: English, Ελληνικά, Français, and Deutsch; switch in Settings; persists across relaunch
 
 ## Support

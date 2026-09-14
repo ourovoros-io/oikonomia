@@ -23,6 +23,23 @@ function rgb(hex: string): [number, number, number] {
   return [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16)) as [number, number, number]
 }
 
+/** Parses `rgb(r, g, b)` / `rgba(r, g, b, a)`; a missing alpha means opaque. */
+function rgba(value: string): [number, number, number, number] {
+  const match = /rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)/.exec(value)
+  expect(match, `${value} parses as rgb()/rgba()`).not.toBeNull()
+  const [, r, g, b, a] = match ?? []
+  return [Number(r), Number(g), Number(b), a === undefined ? 1 : Number(a)]
+}
+
+/** Paints a translucent foreground over an opaque background, channel by channel. */
+function compositeOver(
+  fg: [number, number, number, number],
+  bg: [number, number, number],
+): [number, number, number] {
+  const [r, g, b, a] = fg
+  return [a * r + (1 - a) * bg[0], a * g + (1 - a) * bg[1], a * b + (1 - a) * bg[2]]
+}
+
 function luminance([r, g, b]: [number, number, number]): number {
   const linear = (channel: number) => {
     const c = channel / 255
@@ -68,6 +85,15 @@ describe('Aurora glass tokens', () => {
     for (const name of textTokens) {
       expect(contrast(rgb(token(name)), BRIGHTEST_GLASS), name).toBeGreaterThanOrEqual(4.5)
     }
+
+    // --color-danger-text sits on the danger-soft plate (error banners), not
+    // bare glass, so its background is that plate composited over the
+    // brightest measured glass, not the glass itself.
+    const plate = compositeOver(rgba(token('--color-danger-soft')), BRIGHTEST_GLASS)
+    expect(
+      contrast(rgb(token('--color-danger-text')), plate),
+      '--color-danger-text over the danger-soft plate',
+    ).toBeGreaterThanOrEqual(4.5)
   })
 
   test('the dim tier is for icons: it clears 3:1 and nothing more is promised', () => {
@@ -117,6 +143,22 @@ describe('Aurora glass tokens', () => {
     const sharedRule = css.match(/\.field-box:has\(\.ui-control\)\s*\.ui-control\s*\{([^}]+)\}/)
     expect(sharedRule, 'shared control reset exists').not.toBeNull()
     expect(sharedRule?.[1] ?? '').not.toContain('padding-left')
+  })
+
+  test('a focused invalid field keeps both the invalid ring and the focus glow', () => {
+    // The plain invalid rule and the plain focus-within rule have equal
+    // specificity, so whichever comes later in the stylesheet always wins;
+    // a focused invalid field needs a rule combining both, not one replacing
+    // the other.
+    const rule = css.match(
+      /\.field-box:has\(\.ui-control\[aria-invalid="true"\]\):focus-within\s*\{([^}]+)\}/,
+    )
+    expect(rule, 'focused-invalid combined rule exists').not.toBeNull()
+
+    const body = rule?.[1] ?? ''
+    expect(body).toContain('inset 0 0 0 1px var(--color-danger)')
+    expect(body).toContain('0 0 0 4px rgba(255, 130, 149, 0.14)')
+    expect(body).toContain('0 0 24px rgba(55, 213, 255, 0.18)')
   })
 
   test('focus rings draw inset inside glass panes and dialogs, which clip overflow', () => {

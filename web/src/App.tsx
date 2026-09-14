@@ -12,7 +12,7 @@ import { Aurora } from './components/Aurora'
 import { Logo } from './components/Logo'
 import { TrialBanner } from './components/TrialBanner'
 import { UnlockScreen } from './components/UnlockScreen'
-import { Button } from './components/ui'
+import { Button, ErrorBanner } from './components/ui'
 import { cn } from './lib/cn'
 import { listen } from '@tauri-apps/api/event'
 import {
@@ -266,7 +266,8 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setEntityId(book.id)}
-                        aria-pressed={selected}
+                        aria-current={selected ? 'true' : undefined}
+                        title={`${book.name}, ${book.base_currency}`}
                         className={cn(
                           'flex h-9 w-full items-center gap-2.5 rounded-lg px-1.5 text-left text-sm transition',
                           selected
@@ -335,11 +336,7 @@ export default function App() {
 
           <main key={active} className="flex-1 overflow-auto">
             <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
-              {error ? (
-                <div className="mb-5 rounded-[14px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,77,103,0.35)]">
-                  {error}
-                </div>
-              ) : null}
+              <ErrorBanner message={error} className="mb-5" />
 
               {active === 'dashboard' ? (
                 <DashboardPage
