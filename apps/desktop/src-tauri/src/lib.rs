@@ -42,10 +42,11 @@ pub fn run() {
             let watchdog = app_state.watchdog_handles();
 
             // Native window appearance (scrollbars, controls, title bar) must
-            // match the stored theme, not the OS preference.
+            // match the app, not the OS preference. The UI is dark-only, so a
+            // user who once picked the retired light theme still gets dark
+            // native chrome instead of a light title bar around a dark window.
             let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
-            app.handle()
-                .set_theme(Some(commands::native_theme(prefs.theme)));
+            app.handle().set_theme(Some(tauri::Theme::Dark));
 
             tray::init(app, prefs.locale)?;
 
@@ -161,8 +162,6 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::dashboard_summary_cmd,
         commands::settings_get_lock_timeout,
         commands::settings_set_lock_timeout,
-        commands::settings_get_theme,
-        commands::settings_set_theme,
         commands::settings_get_locale,
         commands::settings_set_locale,
         commands::settings_get_ui_prefs,

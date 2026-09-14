@@ -35,7 +35,7 @@ use oikonomia_core::license::{
     require_writes_allowed_with,
 };
 use oikonomia_core::prefs::{
-    LastRoleAccounts, Locale, Theme, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
+    LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
 };
 use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
 use serde::Serialize;
@@ -1421,31 +1421,6 @@ pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) ->
     Ok(())
 }
 
-/// Get the UI theme. Plaintext preference: readable before unlock so the
-/// unlock screen already renders in the user's theme.
-#[tauri::command]
-pub fn settings_get_theme(state: State<'_, AppState>) -> Theme {
-    load_ui_prefs(state.data_dir()).theme
-}
-
-/// Persist the UI theme and sync the native window appearance. Without the
-/// sync, `WKWebView` keeps drawing scrollbars and native controls in the OS
-/// appearance rather than the app's theme.
-#[tauri::command]
-pub fn settings_set_theme(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    theme: Theme,
-) -> CommandResult<()> {
-    let prefs_guard = state.lock_prefs();
-    let mut prefs = load_ui_prefs(state.data_dir());
-    prefs.theme = theme;
-    save_ui_prefs(state.data_dir(), &prefs)?;
-    drop(prefs_guard);
-    app.set_theme(Some(native_theme(theme)));
-    Ok(())
-}
-
 /// Get the native UI locale. Plaintext preference: readable before unlock so
 /// tray chrome and dialogs match the user's language before a password.
 #[tauri::command]
@@ -1470,7 +1445,7 @@ pub fn settings_set_locale(
     Ok(())
 }
 
-/// Full plaintext UI prefs (theme, locale, tray last-used). Safe before unlock.
+/// Full plaintext UI prefs (locale, tray last-used). Safe before unlock.
 #[tauri::command]
 pub fn settings_get_ui_prefs(state: State<'_, AppState>) -> UiPrefs {
     load_ui_prefs(state.data_dir())
@@ -1502,14 +1477,6 @@ pub fn open_main_window(app: tauri::AppHandle) {
 #[tauri::command]
 pub fn quick_add_hide(app: tauri::AppHandle) {
     crate::tray::hide_quick_add(&app);
-}
-
-/// Map the stored theme onto Tauri's native window theme.
-pub fn native_theme(theme: Theme) -> tauri::Theme {
-    match theme {
-        Theme::Dark => tauri::Theme::Dark,
-        Theme::Light => tauri::Theme::Light,
-    }
 }
 
 // --- Documents / bill scan (bundled offline OCR) ---------------------------
