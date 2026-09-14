@@ -8,32 +8,69 @@
   --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
   --font-display: "Sofia Sans", "Arial Black", "Helvetica Neue", sans-serif;
 
-  /* Dark theme (default): green-tinted neutrals around a dollar-green accent. */
-  --color-canvas: #0a0e0b;
-  --color-surface: #101511;
-  --color-surface-2: #151b16;
-  --color-surface-elevated: #1b231d;
-  --color-border: #232c26;
-  --color-border-strong: #344038;
-  --color-muted: #8f9a93;
-  --color-fg: #f4f6f4;
-  --color-fg-secondary: #c5cdc7;
-  --color-accent: #35b06b;
-  --color-accent-hover: #4fc981;
-  --color-accent-soft: rgba(53, 176, 107, 0.16);
-  --color-accent-muted: #1c4a32;
-  --color-danger: #f43f5e;
-  --color-danger-soft: rgba(244, 63, 94, 0.13);
-  --color-success: #2dd4bf;
-  --color-success-soft: rgba(45, 212, 191, 0.13);
-  --color-warning: #fbbf24;
-  --color-warning-soft: rgba(251, 191, 36, 0.13);
-  --color-info: #38bdf8;
-  --color-info-soft: rgba(56, 189, 248, 0.13);
+  /* Surfaces. Glass primitives paint --glass-fill; these solid steps stay for
+     popovers and page-local panels that have no backdrop to blur. */
+  --color-canvas: #05060a;
+  --color-surface: #10131a;
+  --color-surface-2: #161a22;
+  --color-surface-elevated: #1c212b;
+  --color-control: rgba(255, 255, 255, 0.045);
+  --color-border: rgba(255, 255, 255, 0.09);
+  --color-border-strong: rgba(255, 255, 255, 0.16);
 
-  --radius-control: 0.5rem;
+  /* Ink, measured over the brightest backdrop a pane can sit on (see
+     web/tests/tokens.test.ts). dim is for icons and inactive controls only. */
+  --color-fg: #e7ebf1;
+  --color-fg-secondary: #aeb5bf;
+  --color-muted: #a3aab5;
+  --color-dim: #848b98;
+
+  /* Brand light: chrome only — primary buttons, active navigation, logo,
+     focus. Never money. */
+  --color-accent: #2ee6a6;
+  --color-accent-b: #37d5ff;
+  --color-accent-c: #7a8cff;
+  --color-accent-hover: #5aefbc;
+  --color-accent-soft: rgba(46, 230, 166, 0.14);
+  --color-accent-muted: #10382d;
+  --color-on-accent: #06110d;
+
+  /* Ledger: anything that is money. The pair is validated; the text tints are
+     what amounts are set in. */
+  --color-money-in: #1ba39a;
+  --color-money-in-text: #6fd9c4;
+  --color-money-in-soft: rgba(27, 163, 154, 0.14);
+  --color-money-out: #e8603f;
+  --color-money-out-text: #ff9b7e;
+  --color-money-out-soft: rgba(232, 96, 63, 0.13);
+
+  /* Status. Always shipped with an icon and a label, so coral money-out is
+     never read as an error. */
+  --color-danger: #ff8295;
+  --color-danger-text: #ffd3da;
+  --color-danger-soft: rgba(255, 77, 103, 0.12);
+  --color-danger-fill-a: #d7304c;
+  --color-danger-fill-b: #b8327a;
+  --color-success: #2ee6a6;
+  --color-success-soft: rgba(46, 230, 166, 0.13);
+  --color-warning: #e2f23a;
+  --color-warning-soft: rgba(226, 242, 58, 0.12);
+  --color-info: #37d5ff;
+  --color-info-soft: rgba(55, 213, 255, 0.13);
+
+  --radius-control: 12px;
   --control-h: 2.5rem;
-  --sidebar-w: 15.5rem;
+  --sidebar-w: 13.75rem;
+}
+
+/* Glass and aurora knobs. The fill and the veil were measured for contrast;
+   read the spec's "Measured, not assumed" note before changing either. */
+:root {
+  --glass-fill: rgba(16, 18, 24, 0.5);
+  --glass-edge: rgba(255, 255, 255, 0.09);
+  --glass-highlight: rgba(255, 255, 255, 0.08);
+  --aurora-veil-top: 0.5;
+  --aurora-veil-mid: 0.28;
 }
 
 /* Categorical chart palette (dark-surface steps; validated with the dataviz
@@ -58,6 +95,13 @@
   html {
     color-scheme: dark;
     scrollbar-color: var(--color-border-strong) transparent;
+  }
+
+  /* One focus ring for everything interactive: the brand cyan, never removed
+     without a replacement (controls draw their own glow). */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-b);
+    outline-offset: 2px;
   }
 
   html,
@@ -111,6 +155,56 @@
   html.quick-add body {
     /* Kill the full-app canvas fill so corners stay see-through. */
     background: transparent !important;
+  }
+}
+
+@layer components {
+  /* Every panel. The fill is measured: text on it keeps 4.5:1 wherever the
+     aurora drifts. */
+  .glass-pane {
+    background: var(--glass-fill);
+    -webkit-backdrop-filter: blur(28px) saturate(170%);
+    backdrop-filter: blur(28px) saturate(170%);
+    border: 1px solid var(--glass-edge);
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      0 24px 60px rgba(0, 0, 0, 0.35);
+  }
+
+  /* Dialogs float above a scrim, so they sit on a darker backdrop than panes
+     and can afford a stronger, lifted edge. */
+  .glass-dialog {
+    background: rgba(20, 22, 30, 0.66);
+    -webkit-backdrop-filter: blur(32px) saturate(170%);
+    backdrop-filter: blur(32px) saturate(170%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      0 0 0 1px rgba(255, 255, 255, 0.1),
+      0 40px 120px rgba(0, 0, 0, 0.6),
+      0 0 80px rgba(55, 213, 255, 0.08);
+  }
+
+  /* Behind a dialog: the page stays visible, softly, so nobody loses their place. */
+  .glass-scrim {
+    background: rgba(4, 5, 8, 0.42);
+    -webkit-backdrop-filter: blur(10px) saturate(120%);
+    backdrop-filter: blur(10px) saturate(120%);
+  }
+}
+
+/* Where WebKit reports Reduce Transparency, glass turns solid. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-pane,
+  .glass-dialog {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--color-surface);
+  }
+
+  .glass-scrim {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgba(4, 5, 8, 0.78);
   }
 }
 
