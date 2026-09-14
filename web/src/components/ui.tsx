@@ -387,7 +387,7 @@ export function ErrorBanner({
       role="alert"
       aria-live="assertive"
       className={cn(
-        'flex items-start gap-2 rounded-[14px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,77,103,0.35)]',
+        'flex items-start gap-2 rounded-[14px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,130,149,0.4)]',
         className,
       )}
     >

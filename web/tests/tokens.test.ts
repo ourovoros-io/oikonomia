@@ -95,4 +95,13 @@ describe('Aurora glass tokens', () => {
   test('the stylesheet is dark-only', () => {
     expect(css).not.toMatch(/prefers-color-scheme|html:not\(\.dark\)|@custom-variant dark/)
   })
+
+  test('the invalid field ring uses the text-safe danger colour', () => {
+    const invalidRule = css.match(/\.field-box:has\(\.ui-control\[aria-invalid="true"\]\)\s*\{([^}]+)\}/)
+    expect(invalidRule, 'invalid field rule exists').not.toBeNull()
+
+    const ruleBody = invalidRule?.[1] ?? ''
+    expect(ruleBody).toContain('inset 0 0 0 1px var(--color-danger)')
+    expect(ruleBody).not.toContain('rgba(255, 77, 103')
+  })
 })
