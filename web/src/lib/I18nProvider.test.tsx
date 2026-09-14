@@ -71,7 +71,6 @@ describe('I18nProvider', () => {
     localStorage.setItem(LOCALE_STORAGE_KEY, 'en')
     vi.mocked(api.getLocale).mockRejectedValue(new Error('no getLocale'))
     vi.mocked(api.getUiPrefs).mockResolvedValue({
-      theme: 'dark',
       last_entity_id: null,
       last_accounts_by_entity_kind: {},
       locale: 'el',
@@ -122,7 +121,6 @@ describe('I18nProvider', () => {
     localStorage.setItem(LOCALE_STORAGE_KEY, 'en')
     vi.mocked(api.getLocale).mockRejectedValue(new Error('no getLocale'))
     vi.mocked(api.getUiPrefs).mockResolvedValue({
-      theme: 'dark',
       last_entity_id: null,
       last_accounts_by_entity_kind: {},
       locale: 'de',
