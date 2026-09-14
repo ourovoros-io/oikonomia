@@ -46,7 +46,6 @@ function Shell({
 export default function QuickAddApp() {
   const { t } = useI18n()
   const [status, setStatus] = useState<VaultStatus | null>(null)
-  const [dark, setDark] = useState(true)
   const [phase, setPhase] = useState<'form' | 'success'>('form')
   const [successLabel, setSuccessLabel] = useState('')
   const [formEpoch, setFormEpoch] = useState(0)
@@ -54,17 +53,6 @@ export default function QuickAddApp() {
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** Debounced hide so native <select> menus do not dismiss the panel. */
   const blurHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    void api
-      .getTheme()
-      .then((t) => setDark(t === 'dark'))
-      .catch(() => undefined)
-  }, [])
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-  }, [dark])
 
   useEffect(() => {
     void vaultStatus()

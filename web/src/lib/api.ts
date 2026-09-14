@@ -163,9 +163,6 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
   }
 }
 
-/** UI color theme, persisted outside the encrypted vault. */
-export type Theme = 'dark' | 'light'
-
 /** UI language, persisted on UiPrefs (plaintext, readable before unlock). */
 export type Locale = 'en' | 'el' | 'fr' | 'de'
 
@@ -178,9 +175,8 @@ export type LastRoleAccounts = {
   to_account_id: string | null
 }
 
-/** Full plaintext UI prefs (theme + tray last-used + locale). Safe before unlock. */
+/** Full plaintext UI prefs (tray last-used + locale). Safe before unlock. */
 export type UiPrefs = {
-  theme: Theme
   last_entity_id: string | null
   last_accounts_by_entity_kind: Record<string, LastRoleAccounts>
   /** Absent on older prefs files; treat as `en`. */
@@ -395,13 +391,10 @@ export const api = {
   eulaText: () => (isTauri() ? call<string>('eula_text') : Promise.resolve('')),
   /** Opens the mail client on the support mailbox. Rust builds the mailto; nothing is passed in. */
   openSupportEmail: () => call<void>('open_support_email'),
-  /** Theme is a plaintext pref (Rust side): readable before unlock. */
-  getTheme: () => call<Theme>('settings_get_theme'),
-  setTheme: (theme: Theme) => call<void>('settings_set_theme', { theme }),
-  /** Locale is a plaintext pref (Rust side): readable before unlock. Same shape as theme. */
+  /** Locale is a plaintext pref (Rust side): readable before unlock. */
   getLocale: () => call<Locale>('settings_get_locale'),
   setLocale: (locale: Locale) => call<void>('settings_set_locale', { locale }),
-  /** Full plaintext UI prefs (theme + tray last-used + locale). Safe before unlock. */
+  /** Full plaintext UI prefs (tray last-used + locale). Safe before unlock. */
   getUiPrefs: () => call<UiPrefs>('settings_get_ui_prefs'),
   /** Remember last entity + role accounts after a successful tray post. */
   rememberQuickAdd: (entityId: string, kind: string, accounts: LastRoleAccounts) =>

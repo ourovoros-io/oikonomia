@@ -33,8 +33,6 @@ vi.mock('./lib/tauri', () => ({
 
 vi.mock('./lib/api', () => ({
   api: {
-    getTheme: vi.fn(async () => 'dark'),
-    setTheme: vi.fn(),
     entityList: vi.fn(),
     getLockTimeout: vi.fn(async () => 900),
     setLockTimeout: vi.fn(),
@@ -230,5 +228,16 @@ describe('App trial banner survives Settings visits', () => {
     // Settings' own licenseStatus() call has now rejected (second mocked
     // call). The banner must still show App's originally fetched status.
     expect(screen.getByRole('status')).toHaveTextContent('3 days left in your trial.')
+  })
+})
+
+describe('App shell', () => {
+  test('is dark-only: offers no light or dark mode switch', async () => {
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
+    })
+
+    expect(screen.queryByRole('button', { name: /light mode|dark mode/i })).toBeNull()
   })
 })

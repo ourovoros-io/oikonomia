@@ -13,8 +13,6 @@ if (!rootEl) {
 }
 const root: HTMLElement = rootEl
 
-document.documentElement.classList.add('dark')
-
 async function mount() {
   let isQuickAdd = false
   if (isTauri()) {

@@ -4,10 +4,8 @@ import {
   FolderOpen,
   LayoutDashboard,
   Lock,
-  Moon,
   Receipt,
   Settings,
-  Sun,
   Wallet,
 } from 'lucide-react'
 import { Logo } from './components/Logo'
@@ -50,7 +48,6 @@ type NavId = (typeof NAV)[number]['id']
 
 export default function App() {
   const { t } = useI18n()
-  const [dark, setDark] = useState(true)
   const [active, setActive] = useState<NavId>('dashboard')
   const [status, setStatus] = useState<VaultStatus | null>(null)
   const [info, setInfo] = useState<AppInfo | null>(null)
@@ -63,25 +60,6 @@ export default function App() {
   const [license, setLicense] = useState<LicenseStatus | null>(null)
 
   const entity = entities.find((e) => e.id === entityId) ?? entities[0] ?? null
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-  }, [dark])
-
-  // Stored theme applies before unlock too; browser dev and first run keep
-  // the dark default.
-  useEffect(() => {
-    void api
-      .getTheme()
-      .then((theme) => setDark(theme === 'dark'))
-      .catch(() => undefined)
-  }, [])
-
-  function toggleTheme() {
-    const next = !dark
-    setDark(next)
-    void api.setTheme(next ? 'dark' : 'light').catch(() => undefined)
-  }
 
   const openCreateBook = useCallback(() => {
     setActive('settings')
@@ -302,15 +280,6 @@ export default function App() {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="secondary"
-              size="icon"
-              onClick={toggleTheme}
-              aria-label={dark ? t('app.switchToLight') : t('app.switchToDark')}
-              title={dark ? t('app.lightMode') : t('app.darkMode')}
-            >
-              {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-            </Button>
             <Button
               variant="secondary"
               onClick={() => void onLock()}

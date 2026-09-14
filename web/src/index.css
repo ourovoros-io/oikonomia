@@ -1,8 +1,6 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
 
-@custom-variant dark (&:where(.dark, .dark *));
-
 @theme {
   /* One typeface, no exceptions: Inter Variable is bundled locally
      (no network) and covers numerals via font-variant-numeric. */
@@ -53,55 +51,13 @@
   --viz-other: #4a554c;
 }
 
-/* Light theme overrides via html:not(.dark) — deeper hues for contrast
-   on white, same green family. */
-html:not(.dark) {
-  /* Light-surface chart steps (validated against #ffffff). */
-  --viz-1: #2a78d6;
-  --viz-2: #eb6834;
-  --viz-3: #1baf7a;
-  --viz-4: #eda100;
-  --viz-5: #e87ba4;
-  --viz-6: #008300;
-  --viz-7: #4a3aa7;
-  --viz-8: #e34948;
-  --viz-other: #b9c4bb;
-
-  --color-canvas: #f6f9f6;
-  --color-surface: #ffffff;
-  --color-surface-2: #eff4ef;
-  --color-surface-elevated: #e7eee8;
-  --color-border: #e2e9e3;
-  --color-border-strong: #cfdad2;
-  --color-muted: #68766c;
-  --color-fg: #131b15;
-  --color-fg-secondary: #384740;
-  --color-accent: #178a4c;
-  --color-accent-hover: #116e3c;
-  --color-accent-soft: rgba(23, 138, 76, 0.1);
-  --color-accent-muted: #dcf3e6;
-  --color-danger: #e11d48;
-  --color-danger-soft: rgba(225, 29, 72, 0.08);
-  --color-success: #0d9488;
-  --color-success-soft: rgba(13, 148, 136, 0.1);
-  --color-warning: #d97706;
-  --color-warning-soft: rgba(217, 119, 6, 0.1);
-  --color-info: #0284c7;
-  --color-info-soft: rgba(2, 132, 199, 0.1);
-}
-
 @layer base {
-  /* Native form controls must follow the app's theme class, not the OS
-     preference. Scrollbars additionally get explicit palette colors:
-     WKWebView styles inner scrollers from the window appearance, so
-     color-scheme alone leaves a light scrollbar on a dark window (the
-     Rust side also syncs the native window theme via set_theme). */
+  /* Dark-only. Scrollbars get explicit colours because WKWebView styles
+     inner scrollers from the window appearance; the Rust side forces a dark
+     native window at startup to match. */
   html {
-    color-scheme: light;
-    scrollbar-color: var(--color-border-strong) transparent;
-  }
-  html.dark {
     color-scheme: dark;
+    scrollbar-color: var(--color-border-strong) transparent;
   }
 
   html,
