@@ -34,7 +34,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+      className="glass-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -44,14 +44,14 @@ export function Modal({
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          'flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl outline-none',
+          'glass-dialog flex max-h-[88vh] w-full flex-col overflow-hidden rounded-[26px] outline-none',
           maxWidth,
         )}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-6 py-4">
           <div className="min-w-0">
-            <h2 id={titleId} className="text-base font-semibold text-[var(--color-fg)]">
+            <h2 id={titleId} className="text-lg font-semibold text-[var(--color-fg)]">
               {title}
             </h2>
             {description ? (

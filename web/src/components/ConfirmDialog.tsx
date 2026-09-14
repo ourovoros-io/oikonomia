@@ -65,7 +65,7 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+      className="glass-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -74,12 +74,12 @@ export function ConfirmDialog({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-2xl outline-none"
+        className="glass-dialog w-full max-w-md rounded-[26px] p-6 outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex gap-3">
           <span
-            className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${iconWrap}`}
+            className={`flex size-10 shrink-0 items-center justify-center rounded-[12px] ${iconWrap}`}
           >
             {resolvedTone === 'success' ? (
               <CircleCheck className="size-5" strokeWidth={1.75} />

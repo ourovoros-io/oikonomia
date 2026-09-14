@@ -171,7 +171,7 @@ export function DateInput({
       </Button>
 
       {open && !disabled ? (
-        <div className="absolute top-full left-0 z-30 mt-2 w-64 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-2xl">
+        <div className="glass-dialog absolute top-full left-0 z-30 mt-2 w-64 rounded-[16px] p-3">
           <div className="mb-2 flex items-center justify-between">
             <Button
               type="button"
