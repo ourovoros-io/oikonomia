@@ -1080,9 +1080,9 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
                     className={cn(
                       'shrink-0 text-sm font-semibold tabular-nums',
                       kindLabel === 'expense'
-                        ? 'text-[var(--color-danger)]'
+                        ? 'text-[var(--color-money-out-text)]'
                         : kindLabel === 'income'
-                          ? 'text-[var(--color-success)]'
+                          ? 'text-[var(--color-money-in-text)]'
                           : 'text-[var(--color-fg)]',
                     )}
                   >

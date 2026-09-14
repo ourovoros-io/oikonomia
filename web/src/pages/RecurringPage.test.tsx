@@ -166,10 +166,10 @@ describe('RecurringPage list affordances', () => {
     expect(postButtons[1].getAttribute('data-variant')).toBe('ghost')
   })
 
-  test('income amount uses a green + prefix', async () => {
+  test('income amount uses the Ledger in tint and a + prefix', async () => {
     await renderPage()
     const payrollAmount = screen.getByText(/^\+/)
-    expect(payrollAmount.className).toMatch(/--color-success/)
+    expect(payrollAmount.className).toMatch(/--color-money-in-text/)
     expect(payrollAmount.textContent).toMatch(/\+/)
   })
 })

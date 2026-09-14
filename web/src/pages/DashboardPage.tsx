@@ -200,7 +200,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
               title={money(net, true)}
               className={cn(
                 'mt-3 truncate text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl',
-                net < 0 ? 'text-[var(--color-danger)]' : 'text-[var(--color-fg)]',
+                net < 0 ? 'text-[var(--color-money-out-text)]' : 'text-[var(--color-fg)]',
               )}
             >
               {loading && !data ? '—' : money(net, true)}
@@ -317,9 +317,9 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
                   className={cn(
                     'shrink-0 text-sm font-semibold tabular-nums',
                     row.signedMinor < 0
-                      ? 'text-[var(--color-danger)]'
+                      ? 'text-[var(--color-money-out-text)]'
                       : row.signedMinor > 0 && row.kind === 'income'
-                        ? 'text-[var(--color-success)]'
+                        ? 'text-[var(--color-money-in-text)]'
                         : 'text-[var(--color-fg)]',
                   )}
                 >

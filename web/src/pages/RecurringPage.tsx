@@ -640,7 +640,7 @@ export function RecurringPage({ entity, onBack }: Props) {
                   <div
                     className={cn(
                       'shrink-0 text-sm font-semibold tabular-nums',
-                      income ? 'text-[var(--color-success)]' : 'text-[var(--color-fg)]',
+                      income ? 'text-[var(--color-money-in-text)]' : 'text-[var(--color-fg)]',
                     )}
                   >
                     {formatMoney(row.amount_minor, ccy, undefined, { signed: income })}
