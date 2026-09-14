@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 
-import { ErrorBanner } from './ui'
+import { Button, ErrorBanner, Field, Input, Select } from './ui'
 
 afterEach(() => {
   cleanup()
@@ -26,5 +26,43 @@ describe('ErrorBanner', () => {
   test('accepts an id so callers can wire aria-describedby to it', () => {
     render(<ErrorBanner id="form-error" message="Bad value." />)
     expect(screen.getByRole('alert')).toHaveAttribute('id', 'form-error')
+  })
+})
+
+describe('Field', () => {
+  test('still labels the control it wraps', () => {
+    render(
+      <Field label="Amount">
+        <Input defaultValue="25,50" />
+      </Field>,
+    )
+
+    expect(screen.getByLabelText('Amount')).toHaveValue('25,50')
+  })
+
+  test('carries the hooks the glass field box is styled by', () => {
+    render(
+      <Field label="Account">
+        <Select defaultValue="bank" aria-label="Account">
+          <option value="bank">Bank</option>
+        </Select>
+      </Field>,
+    )
+
+    // index.css draws one glass box for .field-box:has(.ui-control) and strips
+    // the control's own box. Renaming either class silently breaks every form.
+    // (Selects are found by aria-label, as in the app: option text would leak
+    // into a wrapping label's text.)
+    const control = screen.getByRole('combobox', { name: 'Account' })
+    expect(control).toHaveClass('ui-control')
+    expect(control.closest('label')).toHaveClass('field-box')
+  })
+})
+
+describe('Button', () => {
+  test('a busy button keeps its name and cannot be pressed twice', () => {
+    render(<Button busy>Save entry</Button>)
+
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeDisabled()
   })
 })
