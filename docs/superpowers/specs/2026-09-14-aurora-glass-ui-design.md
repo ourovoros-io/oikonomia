@@ -67,7 +67,8 @@ refined with the user.
 |---|---|---|
 | ground | `#05060A` | window, behind the aurora |
 | aurora | five radial blobs: emerald, cyan, indigo, magenta, amber; `blur(70px) saturate(1.35)` | ambient colour |
-| pane | `rgba(16,18,24,0.42)`, `backdrop-filter: blur(28px) saturate(170%)`, 1px `rgba(255,255,255,0.09)` edge, inset top highlight | every panel |
+| pane | `rgba(16,18,24,0.50)`, `backdrop-filter: blur(28px) saturate(170%)`, 1px `rgba(255,255,255,0.09)` edge, inset top highlight | every panel |
+| veil | a top-down darkening over the aurora, starting at 0.5 opacity | keeps text that sits directly on the aurora legible |
 | scrim | `rgba(4,5,8,0.42)` + `blur(10px)` | behind dialogs |
 | watermark | "ΟΙΚΟΝΟΜΙΑ", Sofia Sans 900, 232px, 1px outline at 7% white | decorative, behind panes |
 
@@ -79,18 +80,27 @@ fully rounded.
 | Token | Value | Use |
 |---|---|---|
 | ink | `#E7EBF1` | primary text, values |
-| ink-mid | `#9CA3AE` | secondary text |
-| ink-soft | `#848B98` | hints, captions |
-| ink-dim | `#5C6472` | inactive, icons, placeholders |
+| ink-mid | `#AEB5BF` | secondary text |
+| ink-soft | `#A3AAB5` | hints, captions, placeholders |
+| ink-dim | `#848B98` | icons and inactive controls only, never text |
 | money-in / text | `#1BA39A` / `#6FD9C4` | Ledger in; text tint for legibility |
 | money-out / text | `#E8603F` / `#FF9B7E` | Ledger out |
 | hazard | `#E2F23A` | attention: unpaid bill, warnings |
-| danger | `#FF4D67` | destructive actions, errors |
+| danger | `#FF8295` text and icons; `#D7304C -> #B8327A` destructive button fill (white text) | destructive actions, errors |
 
 Status colours always ship with an icon and a label, so coral money-out is
-never read as an error. Ledger text tints must measure at least 4.5:1 against
-the pane in its brightest aurora position (verified in implementation, see
-Accessibility).
+never read as an error.
+
+**Measured, not assumed (2026-09-14).** Text was checked against the
+99th-percentile brightest backdrop pixel under any pane, across five points
+in the aurora's drift. At the mocked pane fill of 0.42 the old secondary greys
+failed (ink-mid 4.0:1, ink-soft 3.0:1), so the fill rises to 0.50 and the greys
+lighten. Worst case at 0.50: ink 9.6, ink-mid 5.6, ink-soft 4.9, money-in text
+6.8, money-out text 5.6; ink-dim is 3.3:1, which is why it never carries text.
+The mocked destructive button (white on `#FF4D67`, 3.2:1) also failed, hence
+the deeper fill. Text directly on the aurora gets no help from a pane; there
+the veil must be at least 0.38 at the brightest point, and phase 1 measures it
+on the running app before merging.
 
 Gradient stops for the light: in `#27BF93 -> #1BA39A -> #1E8DB0`, out
 `#F07A45 -> #E8603F -> #D64A5A`.
