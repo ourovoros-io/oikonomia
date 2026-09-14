@@ -118,4 +118,15 @@ describe('Aurora glass tokens', () => {
     expect(sharedRule, 'shared control reset exists').not.toBeNull()
     expect(sharedRule?.[1] ?? '').not.toContain('padding-left')
   })
+
+  test('focus rings draw inset inside glass panes and dialogs, which clip overflow', () => {
+    // The global :focus-visible ring sits 2px outside an element; a pane with
+    // overflow-hidden (CollapsibleSection's header button, Panel) or
+    // overflow-y-auto (the books ul) cuts that ring off entirely.
+    const rule = css.match(
+      /\.glass-pane :focus-visible,\s*\.glass-dialog :focus-visible\s*\{([^}]+)\}/,
+    )
+    expect(rule, 'inset focus-ring rule exists').not.toBeNull()
+    expect(rule?.[1] ?? '').toContain('outline-offset: -2px')
+  })
 })

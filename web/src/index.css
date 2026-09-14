@@ -190,6 +190,13 @@
     -webkit-backdrop-filter: blur(10px) saturate(120%);
     backdrop-filter: blur(10px) saturate(120%);
   }
+
+  /* Panes clip overflow, so a ring drawn outside an edge-to-edge control
+     disappears. Inside glass, focus rings are drawn inset. */
+  .glass-pane :focus-visible,
+  .glass-dialog :focus-visible {
+    outline-offset: -2px;
+  }
 }
 
 /* Where WebKit reports Reduce Transparency, glass turns solid. */
