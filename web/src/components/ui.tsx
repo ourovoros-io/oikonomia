@@ -25,7 +25,7 @@ export function IconBadge({
   className = '',
 }: {
   children: ReactNode
-  tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted'
+  tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted' | 'money-in' | 'money-out'
   size?: 'xs' | 'sm' | 'md'
   className?: string
 }) {
@@ -36,6 +36,11 @@ export function IconBadge({
     warning: 'bg-[var(--color-warning-soft)] text-[var(--color-warning)]',
     info: 'bg-[var(--color-info-soft)] text-[var(--color-info)]',
     muted: 'bg-white/[0.06] text-[var(--color-dim)]',
+    // Money identity: never status. Used for income/money-in and
+    // expense-or-bill/money-out icons across Dashboard, Transactions,
+    // Recurring and Accounts.
+    'money-in': 'bg-[var(--color-money-in-soft)] text-[var(--color-money-in-text)]',
+    'money-out': 'bg-[var(--color-money-out-soft)] text-[var(--color-money-out-text)]',
   }
   const sizes = {
     xs: 'size-6',
@@ -484,7 +489,9 @@ export function MetricCard({
   icon?: ReactNode
   accent?: 'success' | 'danger' | 'accent'
 }) {
-  const tone = accent === 'success' ? 'success' : accent === 'danger' ? 'danger' : 'accent'
+  // success/danger here always mean money in/out (income/expense tiles), so
+  // the icon wears the Ledger tone, never the status colour.
+  const tone = accent === 'success' ? 'money-in' : accent === 'danger' ? 'money-out' : 'accent'
 
   return (
     <div className="glass-pane rounded-[20px] p-5">

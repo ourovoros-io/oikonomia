@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 
-import { Button, ErrorBanner, Field, Input, Select } from './ui'
+import { Button, ErrorBanner, Field, IconBadge, Input, MetricCard, Select } from './ui'
 
 afterEach(() => {
   cleanup()
@@ -56,6 +56,34 @@ describe('Field', () => {
     const control = screen.getByRole('combobox', { name: 'Account' })
     expect(control).toHaveClass('ui-control')
     expect(control.closest('label')).toHaveClass('field-box')
+  })
+})
+
+describe('IconBadge', () => {
+  test('money-in and money-out tones wear the Ledger colours, never status', () => {
+    const { rerender } = render(<IconBadge tone="money-in">in</IconBadge>)
+    expect(screen.getByText('in')).toHaveClass('bg-[var(--color-money-in-soft)]')
+    expect(screen.getByText('in')).toHaveClass('text-[var(--color-money-in-text)]')
+
+    rerender(<IconBadge tone="money-out">out</IconBadge>)
+    expect(screen.getByText('out')).toHaveClass('bg-[var(--color-money-out-soft)]')
+    expect(screen.getByText('out')).toHaveClass('text-[var(--color-money-out-text)]')
+  })
+})
+
+describe('MetricCard', () => {
+  test('success/danger accent icons wear the Ledger money tones, not status colours', () => {
+    // Money identity always uses the Ledger; status colours (success/danger)
+    // are for confirmations and errors, never for money in/out.
+    const { rerender } = render(
+      <MetricCard label="Income" value="100" icon={<span data-testid="icon" />} accent="success" />,
+    )
+    expect(screen.getByTestId('icon').parentElement).toHaveClass('bg-[var(--color-money-in-soft)]')
+
+    rerender(
+      <MetricCard label="Expenses" value="50" icon={<span data-testid="icon" />} accent="danger" />,
+    )
+    expect(screen.getByTestId('icon').parentElement).toHaveClass('bg-[var(--color-money-out-soft)]')
   })
 })
 

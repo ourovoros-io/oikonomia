@@ -65,14 +65,18 @@ export function kindLabelKey(kind: RecurringKind): `tx.form.kind.${RecurringKind
   return `tx.form.kind.${kind}`
 }
 
-/** List/sheet kind tiles follow Transactions: income green, spend red, transfer muted. */
-export function kindBadgeTone(kind: RecurringKind): 'success' | 'danger' | 'muted' {
+/**
+ * List/sheet kind tiles follow Transactions: money identity uses the Ledger,
+ * never status, so income wears money-in and expense/bill wear money-out;
+ * transfer stays neutral.
+ */
+export function kindBadgeTone(kind: RecurringKind): 'money-in' | 'money-out' | 'muted' {
   switch (kind) {
     case 'income':
-      return 'success'
+      return 'money-in'
     case 'expense':
     case 'bill':
-      return 'danger'
+      return 'money-out'
     case 'transfer':
       return 'muted'
   }

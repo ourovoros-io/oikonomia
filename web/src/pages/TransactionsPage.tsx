@@ -1036,7 +1036,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
                     ? amountMinor
                     : amountMinor
               const tone =
-                kindLabel === 'income' ? 'success' : kindLabel === 'expense' ? 'danger' : 'muted'
+                kindLabel === 'income' ? 'money-in' : kindLabel === 'expense' ? 'money-out' : 'muted'
 
               return (
                 <li

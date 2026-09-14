@@ -289,9 +289,9 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
                 <IconBadge
                   tone={
                     row.kind === 'income'
-                      ? 'success'
+                      ? 'money-in'
                       : row.kind === 'expense'
-                        ? 'danger'
+                        ? 'money-out'
                         : 'muted'
                   }
                 >
