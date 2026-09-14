@@ -86,7 +86,8 @@ fully rounded.
 | money-in / text | `#1BA39A` / `#6FD9C4` | Ledger in; text tint for legibility |
 | money-out / text | `#E8603F` / `#FF9B7E` | Ledger out |
 | hazard | `#E2F23A` | attention: unpaid bill, warnings |
-| danger | `#FF8295` text and icons; `#D7304C -> #B8327A` destructive button fill (white text) | destructive actions, errors |
+| danger / danger-text | `#FF8295` / `#FFD3DA`; `#D7304C -> #B8327A` destructive button fill (white text) | `#FF8295` is text and icons directly on glass; `#FFD3DA` (`--color-danger-text`) is text on the danger-soft plate (error banners) — the plate is not bare glass, so it needs its own lighter tint to hold 4.5:1 |
+| success | the brand light's emerald, `#2EE6A6` | confirmations only (a saved template, a completed action) — **never** money; money identity (amounts, icons, badges) always uses the Ledger, so a success confirmation and money coming in are never drawn in the same colour |
 
 Status colours always ship with an icon and a label, so coral money-out is
 never read as an error.
@@ -128,7 +129,9 @@ props; their treatment changes. Page code mostly does not.
 
 New components:
 
-- `Aurora` — the ambient layer, mounted once under the app root.
+- `Aurora` — the ambient layer, mounted once under the app root. It holds
+  still while the vault is locked, until phase 4 makes the unlock screen a
+  glass card over it.
 - `CashFlowLight` — the light (see Rendering).
 - `Arc` — the 270° meter.
 
@@ -147,7 +150,11 @@ New components:
   account filter is set, its caption says so.
 - **Dialogs.** Glass over the blurred page. The chosen entry type colours the
   type selector (Expense and Bill in the out gradient, Income in the in
-  gradient, Transfer neutral).
+  gradient, Transfer neutral). Dialogs render through a portal to
+  `document.body`: `backdrop-filter` makes an element the containing block
+  for `position: fixed` descendants in WebKit, so a dialog opened inside
+  another dialog (or any other glass surface) would otherwise be sized to
+  and clipped by it instead of the viewport.
 - **Unlock.** A glass card over the aurora.
 - **Quick add (tray).** The transparent tray window becomes glass. CSS
   `backdrop-filter` cannot blur the desktop behind a transparent OS window, so
@@ -227,9 +234,12 @@ A `None` renders as an empty arc with an em dash, never as 0%.
 - **Arc.** SVG: a track, a gradient stroke with a blurred bloom copy, and a
   pointer dot. Exposed as a meter with its value and label.
 - **Glass performance.** `backdrop-filter` over an animated layer is the most
-  expensive part of the design. It is measured on the bundled `.app` (never
-  the bare binary, which renders blank), idle and while scrolling a long
-  ledger, before the dashboard phase merges. Where WebKit supports
+  expensive part of the design. Glass over the drifting aurora ships to every
+  page in phase 1 (foundation), not only the dashboard, so its measurement
+  belongs to phase 1's running-app review, not "before the dashboard phase
+  merges": on the bundled `.app` (never the bare binary, which renders
+  blank), unlocked Dashboard idle and while scrolling a long Transactions
+  list, including the `com.apple.WebKit.GPU` process. Where WebKit supports
   `prefers-reduced-transparency`, panes fall back to solid.
 
 ## Accessibility
