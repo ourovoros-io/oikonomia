@@ -538,7 +538,7 @@
       "body": "Recettes moins dépenses {period}. Déposez des factures dans Mouvements pour le lecteur OCR hors ligne, ou saisissez les écritures à la main.",
       "ocr": "Lecteur de factures hors ligne",
       "entryCount": "{n} écritures {period}",
-      "kept": "{percent} % de tout ce qui est entré, conservé."
+      "kept": "Vous avez conservé {percent} % de tout ce qui est entré."
     },
     "pill": {
       "in": "Entrées",
@@ -561,7 +561,7 @@
           "year": "Par rapport à l’année dernière"
         }
       },
-      "top": { "label": "Première dépense", "none": "Aucune dépense pour l’instant" }
+      "top": { "label": "Dépense principale", "none": "Aucune dépense pour l’instant" }
     },
     "flow": {
       "income": "Recettes",

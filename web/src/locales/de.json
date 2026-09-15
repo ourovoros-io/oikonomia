@@ -538,11 +538,11 @@
       "body": "Einnahmen minus Ausgaben in diesem {period}. Legen Sie Rechnungen unter Buchungen ab für Offline-OCR, oder buchen Sie von Hand.",
       "ocr": "Offline-Rechnungsleser",
       "entryCount": "{n} Buchungen in diesem {period}",
-      "kept": "{percent} % von allem, was hereinkam, behalten."
+      "kept": "Sie haben {percent} % von allem behalten, was hereinkam."
     },
     "pill": {
-      "in": "Ein",
-      "out": "Aus",
+      "in": "Eingänge",
+      "out": "Ausgänge",
       "assets": "Vermögen"
     },
     "light": {
@@ -552,7 +552,7 @@
     "arc": {
       "noValue": "Noch kein Wert",
       "savings": { "label": "Sparquote", "hint": "Netto ÷ Einnahmen" },
-      "spend": { "label": "Ausgabenquote", "hint": "Aus ÷ Ein" },
+      "spend": { "label": "Ausgabenquote", "hint": "Ausgänge ÷ Eingänge" },
       "previous": {
         "label": "Netto ggü. Vorperiode",
         "hint": {
