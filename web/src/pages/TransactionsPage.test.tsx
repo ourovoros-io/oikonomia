@@ -733,6 +733,26 @@ describe('TransactionsPage Quick add intent', () => {
     expect(await screen.findByRole('heading', { name: 'New entry' })).toBeTruthy()
     expect(handled).toHaveBeenCalledTimes(1)
   })
+
+  test('opens New entry from the Recurring sub-view too', async () => {
+    const handled = vi.fn()
+    const { rerender } = render(
+      <TransactionsPage entity={entity} newEntryIntent={0} onNewEntryIntentHandled={handled} />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Import CSV' })).toBeTruthy()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Recurring' }))
+    await waitFor(() => {
+      expect(screen.getByText('No recurring templates yet')).toBeTruthy()
+    })
+
+    rerender(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={handled} />)
+
+    expect(await screen.findByRole('heading', { name: 'New entry' })).toBeTruthy()
+    expect(handled).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('TransactionsPage summary', () => {

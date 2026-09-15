@@ -462,6 +462,7 @@ export function TransactionsPage({
   // intent, so a later remount does not reopen the dialog.
   useEffect(() => {
     if (!entity || !newEntryIntent) return
+    setSubview('journal')
     openNewEntry()
     onNewEntryIntentHandled?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
