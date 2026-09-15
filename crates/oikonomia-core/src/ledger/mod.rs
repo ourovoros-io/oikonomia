@@ -37,7 +37,8 @@ pub use recurring::{
     update_recurring_template,
 };
 pub use reports::{
-    BalanceSheet, BalanceSheetSection, DashboardSummary, PnL, ReportLine, TrialBalance,
-    balance_sheet, dashboard_summary, profit_and_loss, profit_and_loss_export, trial_balance,
+    BalanceSheet, BalanceSheetSection, DashboardSummary, PnL, ReportLine, TopExpense, TrialBalance,
+    balance_sheet, dashboard_summary, previous_window, profit_and_loss, profit_and_loss_export,
+    trial_balance,
 };
 pub use settings::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs, set_lock_timeout_secs};
