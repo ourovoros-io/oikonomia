@@ -146,4 +146,80 @@ describe('lightGeometry', () => {
     expect(b.inEdge.every((p) => p.y <= b.zeroY + 1e-9)).toBe(true)
     expect(b.outEdge.every((p) => p.y >= b.zeroY - 1e-9)).toBe(true)
   })
+
+  test('samples in O(1) yet matches a cumulativeAt reference across ~40 mixed buckets', () => {
+    const n = 40
+    let cumIn = 0
+    let cumOut = 0
+    const buckets = Array.from({ length: n }, (_, i) => {
+      // Mixed signs: some buckets are net refunds/corrections.
+      const income = (i % 5) * 37 - 60
+      const expenses = (i % 7) * 29 - 40
+      cumIn += income
+      cumOut += expenses
+      return bucket(i + 1, income, expenses, cumIn, cumOut)
+    })
+    const mixed = seriesOf(buckets)
+    const wideLayout = { width: 500, height: 240, samples: 97 }
+
+    const reference = referenceLightGeometry(mixed, wideLayout)
+    const g = lightGeometry(mixed, wideLayout)
+
+    expect(g.zeroY).toBeCloseTo(reference.zeroY)
+    g.inEdge.forEach((p, i) => {
+      expect(p.x).toBeCloseTo(reference.inEdge[i]?.x ?? NaN)
+      expect(p.y).toBeCloseTo(reference.inEdge[i]?.y ?? NaN)
+    })
+    g.outEdge.forEach((p, i) => {
+      expect(p.x).toBeCloseTo(reference.outEdge[i]?.x ?? NaN)
+      expect(p.y).toBeCloseTo(reference.outEdge[i]?.y ?? NaN)
+    })
+  })
 })
+
+/**
+ * A reference geometry built the slow way — walking every bucket for every
+ * sample via `cumulativeAt` — so the fast O(1) sampler in `lightGeometry` can
+ * be checked against it without duplicating its own math.
+ */
+function referenceLightGeometry(
+  series: CashFlowSeries,
+  { width, height, samples }: { width: number; height: number; samples: number },
+) {
+  const top = height * 0.16
+  const plot = Math.max(0, height - top - 4)
+  const buckets = series.buckets
+  const maxIn = buckets.reduce((peak, b) => Math.max(peak, b.cumulative_income_minor), 0)
+  const maxOut = buckets.reduce((peak, b) => Math.max(peak, b.cumulative_expenses_minor), 0)
+  const split = zeroSplit(maxIn, maxOut)
+  const zeroY = top + plot * split
+  const inScale = maxIn > 0 ? (plot * split) / maxIn : Number.POSITIVE_INFINITY
+  const outScale = maxOut > 0 ? (plot * (1 - split)) / maxOut : Number.POSITIVE_INFINITY
+  const scale = Math.min(inScale, outScale)
+  const pixelsPerMinor = Number.isFinite(scale) ? scale : 0
+  const count = Math.max(2, Math.round(samples))
+  const n = buckets.length
+
+  const edge = (amounts: number[], direction: -1 | 1) => {
+    const points: { x: number; y: number }[] = []
+    for (let i = 0; i < count; i += 1) {
+      const t = i / (count - 1)
+      const value = n === 0 ? 0 : Math.max(0, cumulativeAt(amounts, t * n))
+      const lift = value * pixelsPerMinor
+      points.push({ x: t * width, y: zeroY + direction * lift })
+    }
+    return points
+  }
+
+  return {
+    zeroY,
+    inEdge: edge(
+      buckets.map((b) => b.income_minor),
+      -1,
+    ),
+    outEdge: edge(
+      buckets.map((b) => b.expenses_minor),
+      1,
+    ),
+  }
+}

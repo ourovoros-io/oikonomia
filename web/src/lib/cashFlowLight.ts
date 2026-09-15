@@ -87,11 +87,30 @@ export function lightGeometry(
   const n = buckets.length
   const wobbleCap = Math.min(2.4, height / 70)
 
-  const edge = (amounts: number[], direction: -1 | 1, phase: number): LightPoint[] => {
+  /**
+   * The running total at bucket-space `u`, in O(1): the series already
+   * carries each bucket's cumulative total, so a sample needs only its own
+   * bucket's amount eased across its width, added to the previous bucket's
+   * cumulative total — never a walk over every bucket.
+   */
+  const sampleAt = (amount: readonly number[], cumulative: readonly number[], u: number): number => {
+    if (n === 0) return 0
+    const k = Math.min(n - 1, Math.floor(u))
+    const frac = u - k
+    const before = k > 0 ? (cumulative[k - 1] ?? 0) : 0
+    return Math.max(0, before + (amount[k] ?? 0) * ease(frac))
+  }
+
+  const edge = (
+    amount: readonly number[],
+    cumulative: readonly number[],
+    direction: -1 | 1,
+    phase: number,
+  ): LightPoint[] => {
     const points: LightPoint[] = []
     for (let i = 0; i < count; i += 1) {
       const t = i / (count - 1)
-      const value = n === 0 ? 0 : Math.max(0, cumulativeAt(amounts, t * n))
+      const value = sampleAt(amount, cumulative, t * n)
       const lift = value * pixelsPerMinor
       // The wobble is at most a fifth of a thin band, so it never crosses the line.
       const wobble =
@@ -105,11 +124,13 @@ export function lightGeometry(
     zeroY,
     inEdge: edge(
       buckets.map((b) => b.income_minor),
+      buckets.map((b) => b.cumulative_income_minor),
       -1,
       0,
     ),
     outEdge: edge(
       buckets.map((b) => b.expenses_minor),
+      buckets.map((b) => b.cumulative_expenses_minor),
       1,
       2.1,
     ),

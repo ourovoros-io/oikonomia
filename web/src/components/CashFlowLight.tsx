@@ -7,6 +7,7 @@ import {
   ledgerColourAt,
   lightGeometry,
   type LedgerStops,
+  type LightGeometry,
   type LightPoint,
 } from '../lib/cashFlowLight'
 import { cn } from '../lib/cn'
@@ -87,13 +88,10 @@ function ridge(ctx: CanvasRenderingContext2D, edge: LightPoint[], width: number,
 function paint(
   canvas: HTMLCanvasElement,
   layer: Layer,
-  series: CashFlowSeries | null,
-  time: number,
-  breathe: number,
+  geometry: LightGeometry,
+  width: number,
+  height: number,
 ) {
-  const width = canvas.clientWidth
-  const height = canvas.clientHeight
-  if (width === 0 || height === 0) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
@@ -107,7 +105,7 @@ function paint(
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, width, height)
 
-  const { zeroY, inEdge, outEdge } = lightGeometry(series, { width, height, time, breathe })
+  const { zeroY, inEdge, outEdge } = geometry
 
   if (layer === 'glow') {
     fillBand(ctx, inEdge, zeroY, width, LEDGER_IN_STOPS, 0.8)
@@ -167,9 +165,19 @@ export function CashFlowLight({
 
   useEffect(() => {
     const root = rootRef.current
+    // Both canvases share one size; the sharp canvas is the size reference so
+    // the geometry — the expensive part — is computed once per draw, not once
+    // per layer.
     const draw = (time: number, breathe: number) => {
-      if (glowRef.current) paint(glowRef.current, 'glow', series, time, breathe)
-      if (sharpRef.current) paint(sharpRef.current, 'sharp', series, time, breathe)
+      const sharp = sharpRef.current
+      if (!sharp) return
+      const width = sharp.clientWidth
+      const height = sharp.clientHeight
+      if (width === 0 || height === 0) return
+      const geometry = lightGeometry(series, { width, height, time, breathe })
+      const glow = glowRef.current
+      if (glow) paint(glow, 'glow', geometry, width, height)
+      paint(sharp, 'sharp', geometry, width, height)
     }
 
     if (!breathing || typeof requestAnimationFrame !== 'function') {
@@ -189,7 +197,9 @@ export function CashFlowLight({
       last = now
       draw(now / 1000, 1)
     }
-    draw(0, 1)
+    // Seed with the real clock, not 0: the first tick's `now / 1000` would
+    // otherwise be a large jump from a standing start, jolting the wobble.
+    draw(performance.now() / 1000, 1)
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
   }, [series, breathing])
