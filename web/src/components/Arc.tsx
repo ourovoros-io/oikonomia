@@ -89,7 +89,7 @@ export function ArcTile({
       aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={fraction === null ? undefined : Math.round(fraction * 100)}
+      aria-valuenow={fraction === null ? 0 : Math.round(fraction * 100)}
       aria-valuetext={value === null ? noValueLabel : `${value}%`}
       aria-describedby={hint ? hintId : undefined}
       className="glass-pane grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3.5 rounded-[20px] px-4.5 py-4"
@@ -116,6 +116,7 @@ export function ArcTile({
         {hint ? (
           <div
             id={hintId}
+            aria-hidden="true"
             title={hint}
             className="mt-0.5 line-clamp-2 text-[12.5px] text-[var(--color-muted)]"
           >

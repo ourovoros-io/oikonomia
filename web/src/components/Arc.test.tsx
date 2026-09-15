@@ -26,7 +26,7 @@ describe('ArcTile', () => {
     render(<ArcTile label="Net vs last period" bps={null} tone="in" locale="en" noValueLabel="No value yet" />)
 
     const meter = screen.getByRole('meter', { name: 'Net vs last period' })
-    expect(meter).not.toHaveAttribute('aria-valuenow')
+    expect(meter).toHaveAttribute('aria-valuenow', '0')
     expect(meter).toHaveAttribute('aria-valuetext', 'No value yet')
     expect(meter).toHaveTextContent('—')
     expect(meter).not.toHaveTextContent('0')
