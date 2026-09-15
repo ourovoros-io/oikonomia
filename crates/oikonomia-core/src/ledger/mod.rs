@@ -2,6 +2,7 @@
 
 mod accounts;
 mod balance;
+mod cash_flow;
 mod entities;
 mod journals;
 mod recurring;
@@ -13,6 +14,10 @@ pub use accounts::{
     update_account,
 };
 pub use balance::{account_balance, account_balance_as_of, normal_balance};
+pub use cash_flow::{
+    CashFlowBucket, CashFlowGranularity, CashFlowSeries, DAILY_BUCKET_MAX_DAYS, activity_window,
+    cash_flow_series,
+};
 pub use entities::{
     CreateEntity, archive_entity, count_entities, create_entity, create_entity_allowed,
     delete_entity, get_entity, list_entities, update_entity,
