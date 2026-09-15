@@ -44,6 +44,20 @@
   --color-money-out-text: #ff9b7e;
   --color-money-out-soft: rgba(232, 96, 63, 0.13);
 
+  /* The light's gradient stops (spec: Rendering), shared with the canvas in
+     src/lib/cashFlowLight.ts. Selected entry types wear them too. */
+  --color-money-in-a: #27bf93;
+  --color-money-in-b: #1ba39a;
+  --color-money-in-c: #1e8db0;
+  --color-money-out-a: #f07a45;
+  --color-money-out-b: #e8603f;
+  --color-money-out-c: #d64a5a;
+  /* Dark labels on those gradients: at least 4.5:1 at every stop. */
+  --color-on-money-in: #06110d;
+  --color-on-money-out: #1a0906;
+  /* The quiet plate under a neutral pill (balances, transfers). */
+  --color-plate-neutral: rgba(255, 255, 255, 0.07);
+
   /* Status. Always shipped with an icon and a label, so coral money-out is
      never read as an error. */
   --color-danger: #ff8295;
@@ -198,6 +212,25 @@
     filter: blur(14px) saturate(1.3);
     opacity: 0.9;
     mix-blend-mode: screen;
+  }
+
+  /* The net figure: money drawn as light. It starts on the Ledger text tint
+     and ends on a light stop; every stop holds 3:1 on the brightest glass,
+     the threshold for the figure's large text. */
+  .net-figure-in {
+    background-image: linear-gradient(90deg, #6fd9c4, #27bf93 55%, #1ba39a);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 26px rgba(55, 213, 255, 0.28));
+  }
+
+  .net-figure-out {
+    background-image: linear-gradient(90deg, #ff9b7e, #f07a45 55%, #e8603f);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 26px rgba(232, 96, 63, 0.24));
   }
 
   /* Panes clip overflow, so a ring drawn outside an edge-to-edge control

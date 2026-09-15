@@ -62,6 +62,73 @@ export function IconBadge({
   )
 }
 
+/**
+ * A labelled money figure on a tinted plate: IN and OUT in the Ledger tints,
+ * neutral for balances. The label tier is measured to hold 4.5:1 on every
+ * plate (tokens.test.ts).
+ */
+export function MoneyPill({
+  tone,
+  label,
+  value,
+  size = 'md',
+}: {
+  tone: 'in' | 'out' | 'neutral'
+  label: string
+  value: string
+  size?: 'sm' | 'md'
+}) {
+  const tones = {
+    in: 'bg-[var(--color-money-in-soft)] text-[var(--color-money-in-text)] shadow-[inset_0_0_0_1px_rgba(27,163,154,0.4)]',
+    out: 'bg-[var(--color-money-out-soft)] text-[var(--color-money-out-text)] shadow-[inset_0_0_0_1px_rgba(232,96,63,0.4)]',
+    neutral:
+      'bg-[var(--color-plate-neutral)] text-[var(--color-fg)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]',
+  }
+
+  return (
+    <span
+      data-money-pill={tone}
+      className={cn(
+        'inline-flex items-center gap-2.5 rounded-full font-semibold whitespace-nowrap tabular-nums',
+        size === 'sm' ? 'px-2.5 py-1.5 text-xs' : 'px-3.5 py-2 text-sm',
+        tones[tone],
+      )}
+    >
+      <span className="font-mono text-[10px] font-medium tracking-[0.14em] text-[var(--color-fg-secondary)] uppercase">
+        {label}
+      </span>{' '}
+      {value}
+    </span>
+  )
+}
+
+/** A signed amount on a tinted plate, for list rows. */
+export function AmountPill({
+  tone,
+  children,
+}: {
+  tone: 'in' | 'out' | 'neutral'
+  children: ReactNode
+}) {
+  const tones = {
+    in: 'bg-[var(--color-money-in-soft)] text-[var(--color-money-in-text)]',
+    out: 'bg-[var(--color-money-out-soft)] text-[var(--color-money-out-text)]',
+    neutral: 'bg-[var(--color-plate-neutral)] text-[var(--color-fg)]',
+  }
+
+  return (
+    <span
+      data-amount={tone}
+      className={cn(
+        'inline-flex shrink-0 items-center rounded-full px-3 py-1.5 text-sm font-semibold whitespace-nowrap tabular-nums',
+        tones[tone],
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
 /** The glass panel every block of content sits on. */
 export function Card({
   children,
@@ -531,9 +598,20 @@ export function Segmented<T extends string>({
 }: {
   value: T
   onChange: (v: T) => void
-  options: Array<{ id: T; label: string; icon?: ReactNode }>
+  /**
+   * `tone` colours an option while it is chosen: an entry type that is money
+   * in or out wears that Ledger gradient; untoned options take the neutral plate.
+   */
+  options: Array<{ id: T; label: string; icon?: ReactNode; tone?: 'money-in' | 'money-out' }>
   className?: string
 }) {
+  const toned = {
+    'money-in':
+      'bg-[linear-gradient(90deg,var(--color-money-in-a),var(--color-money-in-b)_55%,var(--color-money-in-c))] font-semibold text-[var(--color-on-money-in)] shadow-[0_6px_22px_rgba(27,163,154,0.35)]',
+    'money-out':
+      'bg-[linear-gradient(90deg,var(--color-money-out-a),var(--color-money-out-b)_55%,var(--color-money-out-c))] font-semibold text-[var(--color-on-money-out)] shadow-[0_6px_22px_rgba(232,96,63,0.35)]',
+  }
+
   return (
     <div
       className={cn(
@@ -549,11 +627,14 @@ export function Segmented<T extends string>({
             key={opt.id}
             type="button"
             aria-pressed={active}
+            data-tone={active ? (opt.tone ?? 'neutral') : undefined}
             onClick={() => onChange(opt.id)}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition',
               active
-                ? 'bg-white/10 text-[var(--color-fg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                ? opt.tone
+                  ? toned[opt.tone]
+                  : 'bg-white/10 text-[var(--color-fg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
                 : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]',
             )}
           >
