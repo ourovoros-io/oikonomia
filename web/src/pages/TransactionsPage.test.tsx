@@ -60,6 +60,7 @@ vi.mock('../lib/api', async (importOriginal) => {
 })
 
 import { api } from '../lib/api'
+import { commandErrorMessage } from '../lib/commandError'
 import { resetI18nForTests } from '../lib/i18n'
 import { formatMoney } from '../lib/money'
 import { TransactionsPage } from './TransactionsPage'
@@ -795,6 +796,12 @@ describe('TransactionsPage summary', () => {
   })
 
   test('an inverted date range draws nothing and says why', async () => {
+    vi.mocked(api.cashFlowSeries).mockImplementation(async (_entityId, from, to) => {
+      if (from && to) {
+        throw { code: 'validation', message: 'from date must be on or before to' }
+      }
+      return series
+    })
     await renderReady()
 
     await userEvent.type(screen.getByLabelText('Filter from date'), '31/08/2026')
@@ -803,7 +810,26 @@ describe('TransactionsPage summary', () => {
     await userEvent.tab()
 
     expect(await screen.findByText('The From date must be on or before the To date.')).toBeInTheDocument()
-    expect(api.cashFlowSeries).not.toHaveBeenCalledWith('e1', '2026-08-31', '2026-08-01')
+    const alert = screen.queryByRole('alert')
+    expect(alert?.textContent ?? '').not.toContain('from date must be on or before to')
+  })
+
+  test('a failing summary never stops the list from refreshing', async () => {
+    vi.mocked(api.cashFlowSeries).mockRejectedValue({ code: 'io', message: 'disk' })
+    vi.mocked(api.entryList).mockResolvedValue([postedEntry, incomeEntry])
+    await renderReady()
+
+    await waitFor(() => {
+      expect(screen.getByText('Alpha supermarket')).toBeTruthy()
+      expect(screen.getByText('CLIENT INVOICE')).toBeTruthy()
+    })
+
+    const heading = await screen.findByRole('heading', { name: 'In view' })
+    const pane = heading.closest('section')
+    await waitFor(() => {
+      expect(pane?.querySelector('[data-net]')).toHaveTextContent('—')
+    })
+    expect(pane).toHaveTextContent(commandErrorMessage({ code: 'io', message: 'disk' }))
   })
 })
 

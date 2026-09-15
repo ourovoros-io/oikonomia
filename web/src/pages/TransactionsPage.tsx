@@ -154,10 +154,12 @@ export function TransactionsPage({
     income_account_id: string | null
   } | null>(null)
   const [series, setSeries] = useState<CashFlowSeries | null>(null)
+  const [seriesError, setSeriesError] = useState<CommandError | null>(null)
   const summaryHeadingId = useId()
   const prevEntityId = useRef<string | null>(null)
   const busyRef = useRef(false)
   const csvBusyRef = useRef(false)
+  const seriesRequestRef = useRef(0)
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
@@ -197,8 +199,6 @@ export function TransactionsPage({
     debouncedSearch.trim() || fromDate || toDate || accountFilter,
   )
 
-  /** From after To: there is no window to draw, so the summary says so instead. */
-  const invalidRange = Boolean(fromDate && toDate && fromDate > toDate)
   /** The summary follows dates only; these filters narrow the list, not it. */
   const filtersNarrowList = Boolean(debouncedSearch.trim() || accountFilter)
 
@@ -248,10 +248,32 @@ export function TransactionsPage({
     }
   }
 
+  /**
+   * The summary is decorative next to the ledger list: it must never hold up
+   * a reload, and a stale in-flight request must never clobber a fresher one.
+   * Rust alone decides whether the from/to window is valid.
+   */
+  function loadSeries() {
+    if (!entity) return
+    const requestId = seriesRequestRef.current + 1
+    seriesRequestRef.current = requestId
+    api.cashFlowSeries(entity.id, fromDate || null, toDate || null).then(
+      (flow) => {
+        if (seriesRequestRef.current !== requestId) return
+        setSeries(flow)
+        setSeriesError(null)
+      },
+      (err) => {
+        if (seriesRequestRef.current !== requestId) return
+        setSeries(null)
+        setSeriesError(err as CommandError)
+      },
+    )
+  }
+
   async function reload() {
     if (!entity) return
-    const rangeInverted = Boolean(fromDate && toDate && fromDate > toDate)
-    const [e, a, d, flow] = await Promise.all([
+    const [e, a, d] = await Promise.all([
       api.entryList(entity.id, {
         search: debouncedSearch.trim() || undefined,
         from: fromDate || undefined,
@@ -260,13 +282,11 @@ export function TransactionsPage({
       }),
       api.accountList(entity.id),
       api.documentList(entity.id),
-      // The summary follows the date filter only; Rust resolves an open bound.
-      rangeInverted ? Promise.resolve(null) : api.cashFlowSeries(entity.id, fromDate || null, toDate || null),
     ])
     setEntries(e)
     setAccounts(a)
     setDocs(d)
-    setSeries(flow)
+    loadSeries()
     if (!categoryId && !walletId) {
       applyKindDefaults(kind, a)
     }
@@ -751,8 +771,10 @@ export function TransactionsPage({
               >
                 {series ? formatMoney(series.net_minor, ccy, undefined, { signed: true }) : '—'}
               </p>
-              {invalidRange ? (
+              {seriesError?.code === 'validation' ? (
                 <p className="mt-1.5 text-xs text-[var(--color-danger)]">{t('tx.summary.invalidRange')}</p>
+              ) : seriesError ? (
+                <p className="mt-1.5 text-xs text-[var(--color-danger)]">{commandErrorMessage(seriesError)}</p>
               ) : filtersNarrowList ? (
                 <p className="mt-1.5 text-xs text-[var(--color-muted)]">{t('tx.summary.wholeBook')}</p>
               ) : null}
