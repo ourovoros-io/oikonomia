@@ -384,16 +384,19 @@ export function RecurringPage({ entity, onBack }: Props) {
                 id: 'expense',
                 label: t('tx.form.kind.expense'),
                 icon: <KindTile kind="expense" size="xs" />,
+                tone: 'money-out',
               },
               {
                 id: 'income',
                 label: t('tx.form.kind.income'),
                 icon: <KindTile kind="income" size="xs" />,
+                tone: 'money-in',
               },
               {
                 id: 'bill',
                 label: t('tx.form.kind.bill'),
                 icon: <KindTile kind="bill" size="xs" />,
+                tone: 'money-out',
               },
               {
                 id: 'transfer',

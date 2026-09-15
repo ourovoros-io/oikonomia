@@ -786,3 +786,22 @@ describe('TransactionsPage summary', () => {
     expect(api.cashFlowSeries).not.toHaveBeenCalledWith('e1', '2026-08-31', '2026-08-01')
   })
 })
+
+describe('TransactionsPage New entry type colours', () => {
+  test('the chosen type wears its Ledger gradient; Transfer stays neutral', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await screen.findByRole('heading', { name: 'New entry' })
+
+    expect(screen.getByRole('button', { name: 'Expense' })).toHaveAttribute('data-tone', 'money-out')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Income' }))
+    expect(screen.getByRole('button', { name: 'Income' })).toHaveAttribute('data-tone', 'money-in')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    expect(screen.getByRole('button', { name: 'Bill' })).toHaveAttribute('data-tone', 'money-out')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+    expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('data-tone', 'neutral')
+  })
+})

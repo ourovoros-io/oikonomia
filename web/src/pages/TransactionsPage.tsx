@@ -847,16 +847,19 @@ export function TransactionsPage({
                 id: 'expense',
                 label: t('kind.expense'),
                 icon: <ArrowUpRight className="size-3.5" />,
+                tone: 'money-out',
               },
               {
                 id: 'income',
                 label: t('kind.income'),
                 icon: <ArrowDownLeft className="size-3.5" />,
+                tone: 'money-in',
               },
               {
                 id: 'bill',
                 label: t('kind.bill'),
                 icon: <FileText className="size-3.5" />,
+                tone: 'money-out',
               },
               {
                 id: 'transfer',

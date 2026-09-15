@@ -310,3 +310,19 @@ describe('RecurringPage i18n', () => {
     expect(screen.getAllByRole('button', { name: 'Νέο πρότυπο' }).length).toBeGreaterThan(0)
   })
 })
+
+describe('RecurringPage template type colours', () => {
+  test('the chosen type wears its Ledger gradient; Transfer stays neutral', async () => {
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await screen.findByRole('heading', { name: 'New template' })
+
+    expect(screen.getByRole('button', { name: 'Expense' })).toHaveAttribute('data-tone', 'money-out')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Income' }))
+    expect(screen.getByRole('button', { name: 'Income' })).toHaveAttribute('data-tone', 'money-in')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+    expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('data-tone', 'neutral')
+  })
+})
