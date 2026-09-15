@@ -16,6 +16,7 @@ import {
   isoDate,
   todayISO,
   type Account,
+  type CashFlowSeries,
   type CsvImportPreview,
   type CsvColumnMapping,
   type DocumentMeta,
@@ -28,6 +29,7 @@ import {
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
+import { CashFlowLight } from '../components/CashFlowLight'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CsvMappingModal } from '../components/CsvMappingModal'
 import { CsvPreviewModal } from '../components/CsvPreviewModal'
@@ -37,16 +39,18 @@ import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { EntryDetailModal } from '../components/EntryDetailModal'
 import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
+import { TopBar } from '../components/TopBar'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
 import { lastAccountsMapKey } from '../lib/simpleEntry'
 import {
+  AmountPill,
   Button,
   EmptyState,
   ErrorBanner,
   Field,
   IconBadge,
   Input,
-  PageHeader,
+  MoneyPill,
   Panel,
   Segmented,
   Select,
@@ -149,6 +153,8 @@ export function TransactionsPage({
     expense_account_id: string | null
     income_account_id: string | null
   } | null>(null)
+  const [series, setSeries] = useState<CashFlowSeries | null>(null)
+  const summaryHeadingId = useId()
   const prevEntityId = useRef<string | null>(null)
   const busyRef = useRef(false)
   const csvBusyRef = useRef(false)
@@ -190,6 +196,11 @@ export function TransactionsPage({
   const filtersActive = Boolean(
     debouncedSearch.trim() || fromDate || toDate || accountFilter,
   )
+
+  /** From after To: there is no window to draw, so the summary says so instead. */
+  const invalidRange = Boolean(fromDate && toDate && fromDate > toDate)
+  /** The summary follows dates only; these filters narrow the list, not it. */
+  const filtersNarrowList = Boolean(debouncedSearch.trim() || accountFilter)
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
@@ -239,7 +250,8 @@ export function TransactionsPage({
 
   async function reload() {
     if (!entity) return
-    const [e, a, d] = await Promise.all([
+    const rangeInverted = Boolean(fromDate && toDate && fromDate > toDate)
+    const [e, a, d, flow] = await Promise.all([
       api.entryList(entity.id, {
         search: debouncedSearch.trim() || undefined,
         from: fromDate || undefined,
@@ -248,10 +260,13 @@ export function TransactionsPage({
       }),
       api.accountList(entity.id),
       api.documentList(entity.id),
+      // The summary follows the date filter only; Rust resolves an open bound.
+      rangeInverted ? Promise.resolve(null) : api.cashFlowSeries(entity.id, fromDate || null, toDate || null),
     ])
     setEntries(e)
     setAccounts(a)
     setDocs(d)
+    setSeries(flow)
     if (!categoryId && !walletId) {
       applyKindDefaults(kind, a)
     }
@@ -589,7 +604,12 @@ export function TransactionsPage({
   const ccy = entity.base_currency
 
   if (subview === 'recurring') {
-    return <RecurringPage entity={entity} onBack={() => setSubview('journal')} />
+    return (
+      <>
+        <TopBar title={t('tx.title')} subtitle={`${entity.name} · ${ccy}`} />
+        <RecurringPage entity={entity} onBack={() => setSubview('journal')} />
+      </>
+    )
   }
 
   const csvActions = (
@@ -617,12 +637,18 @@ export function TransactionsPage({
       >
         {t('tx.csv.export')}
       </Button>
-      <Button size="sm" onClick={openNewEntry}>
-        <Plus className="size-3" />
-        {t('tx.newEntry')}
-      </Button>
     </>
   )
+
+  const newEntryButton = (
+    <Button onClick={openNewEntry}>
+      <Plus className="size-4" />
+      {t('tx.newEntry')}
+    </Button>
+  )
+
+  const netTone = !series || series.net_minor === 0 ? 'zero' : series.net_minor > 0 ? 'in' : 'out'
+  const range = series ? `${formatDate(series.from)} – ${formatDate(series.to)}` : null
 
   /**
    * Map a posted entry's lines back onto the simple form and open it for
@@ -667,13 +693,8 @@ export function TransactionsPage({
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={t('tx.eyebrow')}
-        title={t('tx.title')}
-        description={t('tx.description')}
-        meta={t('tx.meta')}
-      />
+    <div className="space-y-3.5">
+      <TopBar title={t('tx.title')} subtitle={`${entity.name} · ${ccy}`} actions={newEntryButton} />
 
       <ErrorBanner id={errorBannerId} message={error} />
 
@@ -710,34 +731,95 @@ export function TransactionsPage({
         onConfirm={() => void confirmVoid()}
       />
 
-      <DocumentDropZone
-        entityId={entity.id}
-        onSuggestion={(s, source) => {
-          setError(null)
-          applySuggestion(s, source)
-          if (s.source === 'none' && !s.amount_minor) {
-            setError(s.notes || t('tx.couldNotReadDoc'))
-          }
-        }}
-        onError={(msg) => setError(msg)}
-      />
+      <div className="grid gap-3.5 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
+        <section aria-labelledby={summaryHeadingId} className="glass-pane relative overflow-hidden rounded-[22px]">
+          <div className="flex flex-wrap items-start justify-between gap-3.5 px-5.5 pt-4.5">
+            <div className="min-w-0">
+              <h2
+                id={summaryHeadingId}
+                className="font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase"
+              >
+                {range ? t('tx.summary.inView', { range }) : t('tx.summary.inViewEmpty')}
+              </h2>
+              <p
+                data-net={netTone}
+                className={cn(
+                  'mt-2 truncate text-[2.125rem] leading-none font-semibold tracking-[-0.01em] tabular-nums',
+                  netTone === 'in' ? 'net-figure-in' : netTone === 'out' ? 'net-figure-out' : 'text-[var(--color-fg)]',
+                )}
+              >
+                {series ? formatMoney(series.net_minor, ccy, undefined, { signed: true }) : '—'}
+              </p>
+              {invalidRange ? (
+                <p className="mt-1.5 text-xs text-[var(--color-danger)]">{t('tx.summary.invalidRange')}</p>
+              ) : filtersNarrowList ? (
+                <p className="mt-1.5 text-xs text-[var(--color-muted)]">{t('tx.summary.wholeBook')}</p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <MoneyPill
+                tone="in"
+                label={t('dashboard.pill.in')}
+                value={series ? formatMoney(series.total_income_minor, ccy) : '—'}
+              />
+              <MoneyPill
+                tone="out"
+                label={t('dashboard.pill.out')}
+                value={series ? formatMoney(series.total_expenses_minor, ccy) : '—'}
+              />
+            </div>
+          </div>
+          <CashFlowLight
+            series={series}
+            className="-mt-1 h-[76px]"
+            label={
+              series && range
+                ? t('dashboard.light.label', {
+                    income: formatMoney(series.total_income_minor, ccy),
+                    expenses: formatMoney(series.total_expenses_minor, ccy),
+                    net: formatMoney(series.net_minor, ccy, undefined, { signed: true }),
+                    range,
+                  })
+                : t('dashboard.light.empty')
+            }
+          />
+        </section>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label={t('tx.search')} className="min-w-[220px] flex-1">
+        <section className="glass-pane rounded-[22px] p-2.5">
+          <DocumentDropZone
+            entityId={entity.id}
+            onSuggestion={(s, source) => {
+              setError(null)
+              applySuggestion(s, source)
+              if (s.source === 'none' && !s.amount_minor) {
+                setError(s.notes || t('tx.couldNotReadDoc'))
+              }
+            }}
+            onError={(msg) => setError(msg)}
+          />
+        </section>
+      </div>
+
+      <div className="glass-pane grid gap-2 rounded-[18px] p-2 md:grid-cols-[minmax(0,1fr)_9.5rem_9.5rem_12rem]">
+        <Field label={t('tx.search')}>
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('tx.searchPlaceholder')}
           />
         </Field>
-        <Field label={t('tx.from')} className="w-44">
+        <Field label={t('tx.from')}>
           <DateInput value={fromDate} onChange={setFromDate} aria-label={t('tx.filterFrom')} />
         </Field>
-        <Field label={t('tx.to')} className="w-44">
+        <Field label={t('tx.to')}>
           <DateInput value={toDate} onChange={setToDate} aria-label={t('tx.filterTo')} />
         </Field>
-        <Field label={t('tx.account')} className="w-56">
-          <Select value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}>
+        <Field label={t('tx.account')}>
+          <Select
+            value={accountFilter}
+            onChange={(e) => setAccountFilter(e.target.value)}
+            aria-label={t('tx.account')}
+          >
             <option value="">{t('tx.allAccounts')}</option>
             {accounts
               .filter((a) => a.is_active)
@@ -1062,7 +1144,7 @@ export function TransactionsPage({
                 <li
                   key={view.entry.id}
                   onClick={() => setDetailId(view.entry.id)}
-                  className="flex cursor-pointer items-center gap-4 px-5 py-3.5 transition hover:bg-[var(--color-surface-2)]/50"
+                  className="group flex cursor-pointer items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.05] focus-within:bg-white/[0.05]"
                 >
                   <IconBadge tone={tone}>
                     {kindLabel === 'income' ? (
@@ -1096,24 +1178,15 @@ export function TransactionsPage({
                       aria-label={t('tx.hasDocument')}
                     />
                   ) : null}
-                  <div
-                    className={cn(
-                      'shrink-0 text-sm font-semibold tabular-nums',
-                      kindLabel === 'expense'
-                        ? 'text-[var(--color-money-out-text)]'
-                        : kindLabel === 'income'
-                          ? 'text-[var(--color-money-in-text)]'
-                          : 'text-[var(--color-fg)]',
-                    )}
-                  >
+                  <AmountPill tone={kindLabel === 'income' ? 'in' : kindLabel === 'expense' ? 'out' : 'neutral'}>
                     {formatMoney(signed, ccy, undefined, {
                       signed: kindLabel === 'expense' || kindLabel === 'income',
                     })}
-                  </div>
+                  </AmountPill>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8 shrink-0"
+                    className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
                     onClick={(e) => {
                       e.stopPropagation()
                       setVoidId(view.entry.id)

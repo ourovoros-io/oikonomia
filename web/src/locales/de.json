@@ -869,6 +869,12 @@
       "toAria": "Filtern bis Datum",
       "allAccounts": "Alle Konten"
     },
+    "summary": {
+      "inView": "Angezeigt · {range}",
+      "inViewEmpty": "Angezeigt",
+      "wholeBook": "Konto- und Suchfilter ändern diese Übersicht nicht.",
+      "invalidRange": "Das Von-Datum muss vor oder auf dem Bis-Datum liegen."
+    },
     "form": {
       "titleNew": "Neue Buchung",
       "titleEdit": "Buchung bearbeiten",

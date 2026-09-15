@@ -869,6 +869,12 @@
       "toAria": "Filtrer jusqu’à la date",
       "allAccounts": "Tous les comptes"
     },
+    "summary": {
+      "inView": "Affiché · {range}",
+      "inViewEmpty": "Affiché",
+      "wholeBook": "Les filtres de compte et de recherche ne modifient pas ce résumé.",
+      "invalidRange": "La date Du doit être antérieure ou égale à la date Au."
+    },
     "form": {
       "titleNew": "Nouvelle écriture",
       "titleEdit": "Modifier l’écriture",
