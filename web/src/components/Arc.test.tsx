@@ -47,4 +47,13 @@ describe('ArcTile', () => {
 
     expect(screen.getByRole('meter', { name: 'Spend ratio' })).toHaveAttribute('aria-valuenow', '100')
   })
+
+  test('a long label and hint stay reachable through title when clamped to two lines', () => {
+    const label = 'Ποσοστό αποταμίευσης, πόσο κρατήσατε από όσα μπήκαν'
+    const hint = 'Καθαρό έναντι του προηγούμενου μήνα, σε ποσοστό επί των εσόδων'
+    render(<ArcTile label={label} hint={hint} bps={4200} tone="in" locale="en" noValueLabel="No value yet" />)
+
+    expect(screen.getByTitle(label)).toBeTruthy()
+    expect(screen.getByTitle(hint)).toBeTruthy()
+  })
 })

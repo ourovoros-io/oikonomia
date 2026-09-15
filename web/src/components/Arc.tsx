@@ -106,11 +106,19 @@ export function ArcTile({
             </>
           )}
         </div>
-        <div aria-hidden="true" className="mt-1.5 truncate text-sm font-medium text-[var(--color-fg)]">
+        <div
+          aria-hidden="true"
+          title={label}
+          className="mt-1.5 line-clamp-2 text-sm leading-tight font-medium text-[var(--color-fg)]"
+        >
           {label}
         </div>
         {hint ? (
-          <div id={hintId} className="mt-0.5 truncate text-[12.5px] text-[var(--color-muted)]">
+          <div
+            id={hintId}
+            title={hint}
+            className="mt-0.5 line-clamp-2 text-[12.5px] text-[var(--color-muted)]"
+          >
             {hint}
           </div>
         ) : null}
