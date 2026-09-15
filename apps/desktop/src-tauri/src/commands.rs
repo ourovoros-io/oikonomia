@@ -18,17 +18,18 @@ use oikonomia_core::domain::{
 };
 use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::{
-    BalanceSheet, CreateAccount, CreateEntity, CreateRecurringTemplate, DEFAULT_LOCK_TIMEOUT_SECS,
-    DashboardSummary, EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView,
-    RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
-    UpdateRecurringTemplate, VoidResult, account_balance, account_register, archive_account,
-    archive_entity, balance_sheet, create_account, create_entity_allowed,
-    create_recurring_template, dashboard_summary, delete_entity, delete_recurring_template,
-    get_entity, get_entry, get_lock_timeout_secs, get_recurring_template, list_accounts,
-    list_entities, list_entries, list_recurring_templates, post_entry, post_recurring_template,
-    post_simple_entry, profit_and_loss, profit_and_loss_export, replace_simple_entry,
-    set_account_opening_balance, set_entry_hidden, set_lock_timeout_secs, trial_balance,
-    update_account, update_entity, update_recurring_template, void_entry,
+    BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplate,
+    DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary, EntryFilter, PnL, PostJournal, PostSimpleEntry,
+    PostedEntryView, RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance,
+    UpdateAccount, UpdateRecurringTemplate, VoidResult, account_balance, account_register,
+    activity_window, archive_account, archive_entity, balance_sheet, cash_flow_series,
+    create_account, create_entity_allowed, create_recurring_template, dashboard_summary,
+    delete_entity, delete_recurring_template, get_entity, get_entry, get_lock_timeout_secs,
+    get_recurring_template, list_accounts, list_entities, list_entries, list_recurring_templates,
+    post_entry, post_recurring_template, post_simple_entry, profit_and_loss,
+    profit_and_loss_export, replace_simple_entry, set_account_opening_balance, set_entry_hidden,
+    set_lock_timeout_secs, trial_balance, update_account, update_entity, update_recurring_template,
+    void_entry,
 };
 use oikonomia_core::license::{
     LicenseStatus, LicenseVerifier, install_license, license_status_with, record_trial_start_with,
@@ -37,6 +38,7 @@ use oikonomia_core::license::{
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
 };
+use oikonomia_core::util::{format_date, utc_today};
 use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -1393,6 +1395,25 @@ pub async fn dashboard_summary_cmd(
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         dashboard_summary(conn, entity_id, &from, &to, &assets_as_of)
+    })
+    .await
+}
+
+/// Income and expenses per day or month for the cash-flow light. An empty
+/// bound resolves to the book's first or last active entry (Transactions with
+/// no date filter); both bounds set is the dashboard's period.
+#[tauri::command]
+pub async fn cash_flow_series_cmd(
+    state: State<'_, AppState>,
+    entity_id: EntityId,
+    from: Option<String>,
+    to: Option<String>,
+) -> CommandResult<CashFlowSeries> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        let (start, end) =
+            activity_window(conn, entity_id, from.as_deref(), to.as_deref(), utc_today())?;
+        cash_flow_series(conn, entity_id, &format_date(start), &format_date(end))
     })
     .await
 }

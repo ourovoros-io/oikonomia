@@ -78,6 +78,10 @@ describe('DashboardPage activity row colours', () => {
     expenses: 4250,
     net_income: 115750,
     recent_entry_count: 2,
+    savings_rate_bps: null,
+    spend_ratio_bps: null,
+    top_expense: null,
+    net_vs_previous_bps: null,
   }
 
   const entries: PostedEntryView[] = [
