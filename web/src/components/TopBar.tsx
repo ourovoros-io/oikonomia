@@ -1,4 +1,4 @@
-import { useContext, useEffect, type ReactNode } from 'react'
+import { useContext, useLayoutEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 import { TopBarContext } from '../lib/topBar'
@@ -19,7 +19,9 @@ export function TopBar({
   const slots = useContext(TopBarContext)
   const claimTitle = slots?.claimTitle
 
-  useEffect(() => claimTitle?.(), [claimTitle])
+  // Claim before paint: a passive effect would let the fallback book title
+  // show beside this page's own title for a frame on every mount/navigation.
+  useLayoutEffect(() => claimTitle?.(), [claimTitle])
 
   const heading = (
     <>
