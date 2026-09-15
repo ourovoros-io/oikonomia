@@ -192,6 +192,14 @@
     backdrop-filter: blur(10px) saturate(120%);
   }
 
+  /* The light's glow layer: fills only, blurred into a halo behind the sharp
+     layer. Screen blending keeps it light, never muddy, over the glass. */
+  .cash-flow-glow {
+    filter: blur(14px) saturate(1.3);
+    opacity: 0.9;
+    mix-blend-mode: screen;
+  }
+
   /* Panes clip overflow, so a ring drawn outside an edge-to-edge control
      disappears. Inside glass, focus rings are drawn inset. */
   .glass-pane :focus-visible,
