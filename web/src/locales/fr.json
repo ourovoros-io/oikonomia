@@ -23,7 +23,8 @@
       "emptyOption": "Aucune entité pour l'instant"
     },
     "sidebar": {
-      "versionEncrypted": "v{version} · chiffré"
+      "versionEncrypted": "v{version} · chiffré",
+      "quickAdd": "Ajout rapide"
     },
     "header": {
       "noBook": "Aucun livre sélectionné",

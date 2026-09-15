@@ -59,7 +59,13 @@ import { formatMoney as fmtMoney } from '../lib/money'
 import { useI18n } from '../lib/I18nProvider'
 import { RecurringPage } from './RecurringPage'
 
-type Props = { entity: Entity | null; onCreateBook?: () => void }
+type Props = {
+  entity: Entity | null
+  onCreateBook?: () => void
+  /** Bumped by the sidebar's Quick add: open New entry once, then report it handled. */
+  newEntryIntent?: number
+  onNewEntryIntentHandled?: () => void
+}
 
 /** High-level entry kinds so users don't think in debit/credit. */
 type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
@@ -94,7 +100,12 @@ function inferKind(
   return 'other'
 }
 
-export function TransactionsPage({ entity, onCreateBook }: Props) {
+export function TransactionsPage({
+  entity,
+  onCreateBook,
+  newEntryIntent,
+  onNewEntryIntentHandled,
+}: Props) {
   const { t } = useI18n()
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -431,6 +442,15 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
     void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id, debouncedSearch, fromDate, toDate, accountFilter])
+
+  // The sidebar's Quick add lands here. Reporting it handled lets App reset the
+  // intent, so a later remount does not reopen the dialog.
+  useEffect(() => {
+    if (!entity || !newEntryIntent) return
+    openNewEntry()
+    onNewEntryIntentHandled?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newEntryIntent, entity?.id])
 
   function setKindAndDefaults(next: EntryKind) {
     setKind(next)

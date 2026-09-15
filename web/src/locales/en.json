@@ -55,6 +55,7 @@
   "app.entityChart": "{currency} · {chart} chart",
   "app.lockVault": "Lock vault",
   "app.lock": "Lock",
+  "app.sidebar.quickAdd": "Quick add",
   "app.locking": "Locking…",
   "app.versionEncrypted": "v{version} · encrypted",
   "app.failedBackend": "Failed to talk to the app backend",

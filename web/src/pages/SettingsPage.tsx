@@ -823,7 +823,7 @@ export function SettingsPage({
               : t('settings.entities.nBooks', { count: entities.length })
         }
         icon={<Building2 className="size-4" />}
-        tone="success"
+        tone="accent"
         flush
       >
         {entities.length === 0 ? (

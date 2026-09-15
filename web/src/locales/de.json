@@ -23,7 +23,8 @@
       "emptyOption": "Noch keine Bücher"
     },
     "sidebar": {
-      "versionEncrypted": "v{version} · verschlüsselt"
+      "versionEncrypted": "v{version} · verschlüsselt",
+      "quickAdd": "Schnell erfassen"
     },
     "header": {
       "noBook": "Kein Buch ausgewählt",

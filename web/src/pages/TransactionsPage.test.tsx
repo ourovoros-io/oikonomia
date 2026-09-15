@@ -700,3 +700,13 @@ describe('TransactionsPage empty-state CTA', () => {
     expect(screen.queryByRole('button', { name: 'Create a book' })).toBeNull()
   })
 })
+
+describe('TransactionsPage Quick add intent', () => {
+  test('opens New entry once and reports the intent handled', async () => {
+    const handled = vi.fn()
+    render(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={handled} />)
+
+    expect(await screen.findByRole('heading', { name: 'New entry' })).toBeTruthy()
+    expect(handled).toHaveBeenCalledTimes(1)
+  })
+})

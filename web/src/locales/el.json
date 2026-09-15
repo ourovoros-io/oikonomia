@@ -23,7 +23,8 @@
       "emptyOption": "Δεν υπάρχουν οντότητες ακόμη"
     },
     "sidebar": {
-      "versionEncrypted": "v{version} · κρυπτογραφημένο"
+      "versionEncrypted": "v{version} · κρυπτογραφημένο",
+      "quickAdd": "Γρήγορη καταχώριση"
     },
     "header": {
       "noBook": "Δεν έχει επιλεγεί βιβλίο",

@@ -224,7 +224,8 @@ export function CollapsibleSection({
   title: string
   description?: string
   icon?: ReactNode
-  tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted'
+  /** Chrome tones only: success means a confirmation, never a section. */
+  tone?: 'accent' | 'danger' | 'warning' | 'info' | 'muted'
   defaultOpen?: boolean
   /** Body without padding, for lists that manage their own edges. */
   flush?: boolean
