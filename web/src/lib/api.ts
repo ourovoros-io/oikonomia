@@ -660,3 +660,15 @@ export function yearStartISO(): string {
 export function yearEndISO(): string {
   return `${new Date().getFullYear()}-12-31`
 }
+
+/** First day of the calendar quarter containing `now`. */
+export function quarterStartISO(now: Date = new Date()): string {
+  const firstMonth = Math.floor(now.getMonth() / 3) * 3
+  return `${now.getFullYear()}-${String(firstMonth + 1).padStart(2, '0')}-01`
+}
+
+/** Last day of the calendar quarter containing `now`. */
+export function quarterEndISO(now: Date = new Date()): string {
+  const last = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3 + 3, 0)
+  return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`
+}

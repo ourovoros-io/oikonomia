@@ -522,9 +522,12 @@
     "period": {
       "month": "Monat",
       "year": "Jahr",
+      "quarter": "Quartal",
+      "quarterTitle": "Q{quarter} {year}",
       "word": {
         "month": "Monat",
-        "year": "Jahr"
+        "year": "Jahr",
+        "quarter": "Quartal"
       }
     },
     "meta": {
@@ -534,7 +537,31 @@
       "netLabel": "Saldo in diesem {period}",
       "body": "Einnahmen minus Ausgaben in diesem {period}. Legen Sie Rechnungen unter Buchungen ab für Offline-OCR, oder buchen Sie von Hand.",
       "ocr": "Offline-Rechnungsleser",
-      "entryCount": "{n} Buchungen in diesem {period}"
+      "entryCount": "{n} Buchungen in diesem {period}",
+      "kept": "{percent} % von allem, was hereinkam, behalten."
+    },
+    "pill": {
+      "in": "Ein",
+      "out": "Aus",
+      "assets": "Vermögen"
+    },
+    "light": {
+      "label": "Eingänge {income}, Ausgänge {expenses}, netto {net}, {range}.",
+      "empty": "Noch kein Geldfluss zum Anzeigen."
+    },
+    "arc": {
+      "noValue": "Noch kein Wert",
+      "savings": { "label": "Sparquote", "hint": "Netto ÷ Einnahmen" },
+      "spend": { "label": "Ausgabenquote", "hint": "Aus ÷ Ein" },
+      "previous": {
+        "label": "Netto ggü. Vorperiode",
+        "hint": {
+          "month": "Gegenüber dem Vormonat",
+          "quarter": "Gegenüber dem Vorquartal",
+          "year": "Gegenüber dem Vorjahr"
+        }
+      },
+      "top": { "label": "Größte Ausgabe", "none": "Noch keine Ausgaben" }
     },
     "flow": {
       "income": "Einnahmen",

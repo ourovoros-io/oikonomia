@@ -648,50 +648,6 @@ export function Segmented<T extends string>({
   )
 }
 
-/** Horizontal ratio bar used in flow summaries. */
-export function FlowBar({
-  label,
-  value,
-  ratio,
-  tone,
-}: {
-  label: string
-  value: string
-  ratio: number
-  tone: 'success' | 'danger' | 'accent'
-}) {
-  const pct = Math.round(Math.min(1, Math.max(0, ratio)) * 100)
-
-  // Every caller uses success and danger for money in and out, so the bars
-  // wear the Ledger gradients rather than the status colours.
-  const bar =
-    tone === 'success'
-      ? 'bg-[linear-gradient(90deg,#27bf93,var(--color-money-in))]'
-      : tone === 'danger'
-        ? 'bg-[linear-gradient(90deg,#f07a45,var(--color-money-out))]'
-        : 'bg-[linear-gradient(90deg,var(--color-accent),var(--color-accent-b))]'
-
-  return (
-    <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
-        <span className="shrink-0 text-[var(--color-muted)]">{label}</span>
-        <span
-          title={value}
-          className="min-w-0 truncate font-semibold tabular-nums text-[var(--color-fg)]"
-        >
-          {value}
-        </span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
-        <div
-          className={cn('h-full rounded-full transition-all duration-500', bar)}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  )
-}
-
 /** List row with a hover surface that also shows for keyboard focus inside it. */
 export function ListRow({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
