@@ -225,4 +225,23 @@ describe('Aurora glass tokens', () => {
     expect(contrast(rgb(token('--color-money-out-text')), outPlate), 'out value').toBeGreaterThanOrEqual(4.5)
     expect(contrast(rgb(token('--color-fg')), neutralPlate), 'neutral value').toBeGreaterThanOrEqual(4.5)
   })
+
+  test('the net figure glows in its own Ledger colour, never the brand light', () => {
+    for (const [name, expectedRgb] of [
+      ['net-figure-in', [27, 163, 154]],
+      ['net-figure-out', [232, 96, 63]],
+    ] as const) {
+      const rule = css.match(new RegExp(`\\.${name}\\s*\\{([^}]+)\\}`))
+      expect(rule, `${name} rule exists`).not.toBeNull()
+
+      const body = rule?.[1] ?? ''
+      const shadowMatch = /drop-shadow\(\s*[^)]*\s*rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*[\d.]+\s*\)/.exec(
+        body,
+      )
+      expect(shadowMatch, `${name} has drop-shadow rgba`).not.toBeNull()
+
+      const [, r, g, b] = shadowMatch ?? []
+      expect([Number(r), Number(g), Number(b)], `${name} glow color`).toEqual(expectedRgb)
+    }
+  })
 })
