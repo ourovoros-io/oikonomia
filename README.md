@@ -48,7 +48,7 @@ attach a vault or backup file to a report.
 
 ## Prerequisites
 
-- Rust stable (1.88+)
+- Rust stable (1.94+)
 - Node 22+
 - [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode CLT on macOS)
 
