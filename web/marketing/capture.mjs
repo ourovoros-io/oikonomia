@@ -21,6 +21,45 @@ if (!values.out) {
 }
 const outDir = path.resolve(values.out)
 
+/**
+ * Waits for the page's DOM to stop mutating instead of guessing a fixed
+ * delay: React's post-click render plus its data-fetch waterfall keep
+ * mutating the tree (attributes, text, children) until every read lands, so
+ * "no mutation for `quietMs`" is a real readiness signal. None of the four
+ * captured screens ever render `.animate-spin`, so that was never a signal
+ * at all -- a slower render would still screenshot on schedule, half-drawn,
+ * with exit 0. Resolves `true` once settled, `false` if `timeoutMs` passes
+ * without a quiet window, so a stuck render fails the capture loudly instead
+ * of shipping a broken shot.
+ */
+async function waitForDomSettled(page, { quietMs = 500, timeoutMs = 10_000 } = {}) {
+  return page.evaluate(
+    ({ quietMs, timeoutMs }) =>
+      new Promise((resolve) => {
+        let quietTimer
+        const finish = (settled) => {
+          observer.disconnect()
+          clearTimeout(quietTimer)
+          clearTimeout(hardTimer)
+          resolve(settled)
+        }
+        const observer = new MutationObserver(() => {
+          clearTimeout(quietTimer)
+          quietTimer = setTimeout(() => finish(true), quietMs)
+        })
+        observer.observe(document.body, {
+          subtree: true,
+          childList: true,
+          characterData: true,
+          attributes: true,
+        })
+        quietTimer = setTimeout(() => finish(true), quietMs)
+        const hardTimer = setTimeout(() => finish(false), timeoutMs)
+      }),
+    { quietMs, timeoutMs },
+  )
+}
+
 const server = await createServer({
   root: path.resolve(import.meta.dirname, '..'),
   server: { port: 5174, strictPort: false },
@@ -53,9 +92,16 @@ try {
 
     for (const { name, nav } of PAGES) {
       await page.locator('nav button').nth(nav).click()
-      await page.waitForFunction(() => !document.querySelector('.animate-spin'))
+      const settled = await waitForDomSettled(page)
+      if (!settled) {
+        failures.push(`${lang}: ${name}: DOM never settled within 10s -- a render may still be in flight`)
+      }
       await page.evaluate(() => document.fonts.ready)
-      await page.waitForTimeout(400)
+      // No fixed post-settle wait: the context's reducedMotion: 'reduce'
+      // trips the app's own `prefers-reduced-motion` CSS, which turns off
+      // every one-shot/looping animation (pulse bars, aurora drift, donut
+      // sweep, logo draw-in) outright, so there is nothing left to finish
+      // drawing once the DOM and fonts are settled.
 
       const file = path.join(outDir, lang, `${name}.png`)
       await mkdir(path.dirname(file), { recursive: true })
