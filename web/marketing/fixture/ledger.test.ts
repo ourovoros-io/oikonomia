@@ -32,7 +32,7 @@ describe('demo ledger', () => {
     expect(el.accounts.map((a) => a.code)).toEqual(en.accounts.map((a) => a.code))
     expect(el.accounts.find((a) => a.code === '5020')?.name).toBe('Ενοίκιο εργαστηρίου')
     expect(en.accounts.find((a) => a.code === '5020')?.name).toBe('Studio rent')
-    expect(el.entity.name).toBe('Εργαστήριο Κέραμος')
+    expect(el.entity.name).toBe('Εργαστήριο Νεφελόρα')
   })
 
   test('lines only reference known accounts', () => {

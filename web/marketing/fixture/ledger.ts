@@ -175,7 +175,14 @@ const PATTERNS: Pattern[] = [
     kind: 'expense',
     account: '5000',
     wallet: '1020',
-    amount: (m) => 8450 + m * 500,
+    // Day 28 always falls after DEMO_TODAY in September, so it never lands
+    // in the frozen partial month -- it only ever weighs on August, the
+    // dashboard's "previous period". Left at its original size, that made
+    // August's full month edge out September's truncated one on the
+    // dashboard's net-vs-previous figure. Raised here (base only, growth
+    // rate unchanged) so the comparison reads as the clear improvement it
+    // should be, without touching any amount September's own totals use.
+    amount: (m) => 32450 + m * 500,
     description: { en: 'Kiln shelves and cones', el: 'Ράφια κλιβάνου και κώνοι' },
   },
 ]
@@ -226,7 +233,7 @@ function unixSeconds(date: string): string {
 export function buildLedger(lang: DemoLang): DemoLedger {
   const entity: Entity = {
     id: ENTITY_ID,
-    name: lang === 'el' ? 'Εργαστήριο Κέραμος' : 'Keramos Studio',
+    name: lang === 'el' ? 'Εργαστήριο Νεφελόρα' : 'Nefelora Studio',
     base_currency: 'EUR',
     fiscal_year_start_month: 1,
     chart_template: 'company',
