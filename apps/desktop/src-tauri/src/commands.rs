@@ -32,8 +32,8 @@ use oikonomia_core::ledger::{
     void_entry,
 };
 use oikonomia_core::license::{
-    LicenseStatus, LicenseVerifier, install_license, license_status_with, record_trial_start_with,
-    require_writes_allowed_with,
+    LicenseStatus, LicenseVerifier, TrialStampStore, install_license, license_status_with,
+    record_trial_start_with, require_writes_allowed_with,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
@@ -140,18 +140,44 @@ pub async fn vault_unlock(
 /// Keychain), so deleting the app-data directory alone cannot reset the
 /// trial.
 fn stamp_trial_start(state: &AppState) -> CommandResult<()> {
+    stamp_trial_start_with(state, crate::trial_store::default_trial_store())
+}
+
+/// [`stamp_trial_start`] against an explicit secondary store.
+///
+/// Tests pass their own store: the default one on macOS is the developer's
+/// real login Keychain, whose older trial date would otherwise win and make
+/// a fresh test trial read as expired.
+fn stamp_trial_start_with(state: &AppState, store: &dyn TrialStampStore) -> CommandResult<()> {
     let _guard = state.lock_prefs();
-    record_trial_start_with(state.data_dir(), crate::trial_store::default_trial_store())?;
+    record_trial_start_with(state.data_dir(), store)?;
     Ok(())
 }
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::{require_granted_path, stamp_trial_start};
+    use std::cell::RefCell;
+
+    use super::{require_granted_path, stamp_trial_start_with};
     use crate::state::AppState;
-    use oikonomia_core::license::{LicenseState, LicenseVerifier, license_status};
+    use oikonomia_core::license::{
+        LicenseState, LicenseVerifier, NoTrialStampStore, TrialStampStore, license_status,
+    };
     use oikonomia_core::prefs::load_ui_prefs;
+
+    /// A secondary trial store that lives in memory, standing in for the Keychain.
+    struct MemoryTrialStore(RefCell<Option<String>>);
+
+    impl TrialStampStore for MemoryTrialStore {
+        fn read_stamp(&self) -> Option<String> {
+            self.0.borrow().clone()
+        }
+
+        fn write_stamp(&self, rfc3339: &str) {
+            *self.0.borrow_mut() = Some(rfc3339.to_owned());
+        }
+    }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -195,7 +221,7 @@ mod tests {
                 .init("correct horse battery staple")
                 .expect("vault init");
         }
-        stamp_trial_start(&state).expect("stamp");
+        stamp_trial_start_with(&state, &NoTrialStampStore).expect("stamp");
         assert!(
             load_ui_prefs(state.data_dir()).trial_started_at.is_some(),
             "vault_init helper must stamp trial_started_at"
@@ -203,6 +229,26 @@ mod tests {
         let verifier = LicenseVerifier::production().expect("production verifier");
         let status = license_status(state.data_dir(), &verifier).expect("status");
         assert_eq!(status.state, LicenseState::Trial);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_older_secondary_stamp_wins_over_a_fresh_one() {
+        let dir = temp_dir("vault-init-old-trial");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        let old = "2020-01-01T00:00:00Z";
+        let store = MemoryTrialStore(RefCell::new(Some(old.to_owned())));
+
+        stamp_trial_start_with(&state, &store).expect("stamp");
+
+        assert_eq!(
+            load_ui_prefs(state.data_dir()).trial_started_at.as_deref(),
+            Some(old),
+            "deleting app data must not restart a trial the secondary store remembers"
+        );
+        let verifier = LicenseVerifier::production().expect("production verifier");
+        let status = license_status(state.data_dir(), &verifier).expect("status");
+        assert_eq!(status.state, LicenseState::Expired);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
