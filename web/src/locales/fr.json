@@ -20,7 +20,6 @@
     },
     "book": {
       "label": "Livre",
-      "aria": "Entité active",
       "emptyOption": "Aucune entité pour l'instant"
     },
     "sidebar": {
@@ -30,12 +29,6 @@
       "noBook": "Aucun livre sélectionné",
       "chartMeta": "{currency} · plan comptable {template}",
       "createHint": "Créez une entité dans Paramètres"
-    },
-    "theme": {
-      "ariaToLight": "Passer en mode clair",
-      "ariaToDark": "Passer en mode sombre",
-      "titleLight": "Mode clair",
-      "titleDark": "Mode sombre"
     },
     "lock": {
       "aria": "Verrouiller le coffre",

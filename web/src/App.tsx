@@ -4,16 +4,15 @@ import {
   FolderOpen,
   LayoutDashboard,
   Lock,
-  Moon,
   Receipt,
   Settings,
-  Sun,
   Wallet,
 } from 'lucide-react'
+import { Aurora } from './components/Aurora'
 import { Logo } from './components/Logo'
 import { TrialBanner } from './components/TrialBanner'
 import { UnlockScreen } from './components/UnlockScreen'
-import { Button, Select } from './components/ui'
+import { Button, ErrorBanner } from './components/ui'
 import { cn } from './lib/cn'
 import { listen } from '@tauri-apps/api/event'
 import {
@@ -48,9 +47,17 @@ const NAV = [
 
 type NavId = (typeof NAV)[number]['id']
 
+/**
+ * A book's identity colour: the validated categorical palette in order, never
+ * cycled, so no two of the first eight books share a colour; any further books
+ * fold into the neutral slot, as the charts do.
+ */
+function bookDotColour(index: number): string {
+  return index < 8 ? `var(--viz-${index + 1})` : 'var(--viz-other)'
+}
+
 export default function App() {
   const { t } = useI18n()
-  const [dark, setDark] = useState(true)
   const [active, setActive] = useState<NavId>('dashboard')
   const [status, setStatus] = useState<VaultStatus | null>(null)
   const [info, setInfo] = useState<AppInfo | null>(null)
@@ -63,25 +70,6 @@ export default function App() {
   const [license, setLicense] = useState<LicenseStatus | null>(null)
 
   const entity = entities.find((e) => e.id === entityId) ?? entities[0] ?? null
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', dark)
-  }, [dark])
-
-  // Stored theme applies before unlock too; browser dev and first run keep
-  // the dark default.
-  useEffect(() => {
-    void api
-      .getTheme()
-      .then((theme) => setDark(theme === 'dark'))
-      .catch(() => undefined)
-  }, [])
-
-  function toggleTheme() {
-    const next = !dark
-    setDark(next)
-    void api.setTheme(next ? 'dark' : 'light').catch(() => undefined)
-  }
 
   const openCreateBook = useCallback(() => {
     setActive('settings')
@@ -201,16 +189,12 @@ export default function App() {
     }
   }
 
-  if (status === null) {
-    return (
-      <div className="flex h-full items-center justify-center bg-[var(--color-canvas)] text-sm text-[var(--color-muted)]">
+  const content =
+    status === null ? (
+      <div className="flex h-full items-center justify-center text-sm text-[var(--color-muted)]">
         {t('common.loading')}
       </div>
-    )
-  }
-
-  if (status === 'uninitialized' || status === 'locked') {
-    return (
+    ) : status === 'uninitialized' || status === 'locked' ? (
       <UnlockScreen
         status={status}
         supportEmail={info?.support_email}
@@ -219,98 +203,126 @@ export default function App() {
           void refresh()
         }}
       />
-    )
-  }
-
-  return (
-    <div className="flex h-full min-h-0 bg-[var(--color-canvas)] text-[var(--color-fg)]">
-      <aside className="flex w-[var(--sidebar-w)] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="flex h-14 items-center gap-2.5 border-b border-[var(--color-border)] px-4">
-          <Logo className="size-8 shrink-0 rounded-lg shadow-sm shadow-[var(--color-accent)]/30" />
-          <div className="min-w-0 leading-tight">
-            <div className="truncate text-sm font-semibold tracking-tight">Oikonomia</div>
-            <div className="truncate text-[11px] text-[var(--color-muted)]">{t('app.localLedger')}</div>
+    ) : (
+      <div className="flex h-full min-h-0 text-[var(--color-fg)]">
+        <aside className="glass-pane my-3 ml-3 flex w-[var(--sidebar-w)] shrink-0 flex-col gap-5 rounded-[22px] px-3 py-4">
+          <div className="flex items-center gap-2.5 px-1.5">
+            <Logo className="size-8 shrink-0" />
+            <div className="min-w-0 leading-tight">
+              <div className="truncate text-[15px] font-semibold tracking-tight">Oikonomia</div>
+              <div className="truncate text-xs text-[var(--color-muted)]">{t('app.localLedger')}</div>
+            </div>
           </div>
-        </div>
 
-        <div className="border-b border-[var(--color-border)] px-3 py-3">
-          <div className="mb-1.5 px-1 text-[11px] font-medium tracking-[0.12em] text-[var(--color-muted)] uppercase">
-            {t('app.book')}
-          </div>
-          <Select
-            value={entity?.id ?? ''}
-            onChange={(e) => setEntityId(e.target.value || null)}
-            aria-label={t('app.activeEntity')}
-          >
-            {entities.length === 0 ? <option value="">{t('app.noEntitiesYet')}</option> : null}
-            {entities.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name} · {e.base_currency}
-              </option>
-            ))}
-          </Select>
-        </div>
+          <nav className="flex flex-col gap-0.5">
+            {NAV.map((item) => {
+              const isActive = active === item.id
+              const Icon = item.icon
 
-        <nav className="flex flex-1 flex-col gap-0.5 p-2">
-          {NAV.map((item) => {
-            const isActive = active === item.id
-            const Icon = item.icon
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setActive(item.id)}
-                className={cn(
-                  'flex h-10 items-center gap-2.5 rounded-xl px-3 text-sm font-medium transition',
-                  isActive
-                    ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-[var(--color-accent)]/20'
-                    : 'text-[var(--color-fg-secondary)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]',
-                )}
-              >
-                <Icon
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActive(item.id)}
+                  aria-current={isActive ? 'page' : undefined}
                   className={cn(
-                    'size-[1.125rem] shrink-0',
-                    isActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-muted)]',
+                    'flex h-10 items-center gap-2.5 rounded-xl px-3 text-sm font-medium transition',
+                    isActive
+                      ? 'bg-[linear-gradient(90deg,rgba(46,230,166,0.2),rgba(55,213,255,0.08))] text-[var(--color-fg)] shadow-[inset_0_0_0_1px_rgba(46,230,166,0.35),0_0_24px_rgba(46,230,166,0.12)]'
+                      : 'text-[var(--color-fg-secondary)] hover:bg-white/[0.05] hover:text-[var(--color-fg)]',
                   )}
-                  strokeWidth={1.75}
-                />
-                <span className="truncate">{t(item.labelKey)}</span>
-              </button>
-            )
-          })}
-        </nav>
+                >
+                  <Icon
+                    className={cn(
+                      'size-[1.125rem] shrink-0',
+                      isActive ? 'text-[var(--color-accent)]' : 'text-[var(--color-dim)]',
+                    )}
+                    strokeWidth={1.75}
+                  />
+                  <span className="truncate">{t(item.labelKey)}</span>
+                </button>
+              )
+            })}
+          </nav>
 
-        <div className="border-t border-[var(--color-border)] px-4 py-3 text-[11px] text-[var(--color-muted)]">
-          {info ? t('app.versionEncrypted', { version: info.version }) : 'Oikonomia'}
-        </div>
-      </aside>
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TrialBanner license={license} />
-        <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-[var(--color-border)] bg-[var(--color-surface)]/90 px-6 backdrop-blur">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-[var(--color-fg)]">
-              {entity ? entity.name : t('app.noBookSelected')}
-            </div>
-            <div className="truncate text-xs text-[var(--color-muted)]">
-              {entity
-                ? t('app.entityChart', {
-                    currency: entity.base_currency,
-                    chart: t(`chart.${entity.chart_template}`),
-                  })
-                : t('app.createEntityInSettings')}
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="secondary"
-              size="icon"
-              onClick={toggleTheme}
-              aria-label={dark ? t('app.switchToLight') : t('app.switchToDark')}
-              title={dark ? t('app.lightMode') : t('app.darkMode')}
+          <section className="flex min-h-0 flex-1 flex-col gap-2" aria-labelledby="sidebar-books">
+            <h2
+              id="sidebar-books"
+              className="px-1.5 font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase"
             >
-              {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-            </Button>
+              {t('app.book')}
+            </h2>
+
+            {entities.length === 0 ? (
+              <p className="px-1.5 text-sm text-[var(--color-muted)]">{t('app.noEntitiesYet')}</p>
+            ) : (
+              <ul className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
+                {entities.map((book, index) => {
+                  const selected = book.id === entity?.id
+                  const dot = bookDotColour(index)
+
+                  return (
+                    <li key={book.id}>
+                      <button
+                        type="button"
+                        onClick={() => setEntityId(book.id)}
+                        aria-current={selected ? 'true' : undefined}
+                        title={`${book.name}, ${book.base_currency}`}
+                        className={cn(
+                          'flex h-9 w-full items-center gap-2.5 rounded-lg px-1.5 text-left text-sm transition',
+                          selected
+                            ? 'bg-white/[0.06] text-[var(--color-fg)]'
+                            : 'text-[var(--color-fg-secondary)] hover:text-[var(--color-fg)]',
+                        )}
+                      >
+                        <span
+                          aria-hidden
+                          className="size-2 shrink-0 rounded-full"
+                          style={{ background: dot, boxShadow: `0 0 10px ${dot}` }}
+                        />
+                        {/* The name and currency are two adjacent inline spans with no
+                            intervening whitespace text node, so a screen reader's
+                            accessible-name computation runs them together with no
+                            separator ("HouseholdEUR"); a visually-hidden span holding
+                            the whole "name, currency" string is the one reliable fix,
+                            so the two visible spans are hidden from the same
+                            computation and never counted twice. */}
+                        <span aria-hidden className="min-w-0 flex-1 truncate">
+                          {book.name}
+                        </span>
+                        <span aria-hidden className="font-mono text-[10.5px] text-[var(--color-muted)]">
+                          {book.base_currency}
+                        </span>
+                        <span className="sr-only">{`${book.name}, ${book.base_currency}`}</span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </section>
+
+          <div className="px-1.5 font-mono text-[10.5px] tracking-[0.08em] text-[var(--color-muted)]">
+            {info ? t('app.versionEncrypted', { version: info.version }) : 'Oikonomia'}
+          </div>
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TrialBanner license={license} />
+          <header className="flex h-16 shrink-0 items-center justify-between gap-4 px-7">
+            <div className="flex min-w-0 items-baseline gap-2.5">
+              <span className="truncate text-xl font-semibold tracking-tight">
+                {entity ? entity.name : t('app.noBookSelected')}
+              </span>
+              <span className="truncate text-sm text-[var(--color-fg-secondary)]">
+                {entity
+                  ? t('app.entityChart', {
+                      currency: entity.base_currency,
+                      chart: t(`chart.${entity.chart_template}`),
+                    })
+                  : t('app.createEntityInSettings')}
+              </span>
+            </div>
             <Button
               variant="secondary"
               onClick={() => void onLock()}
@@ -320,76 +332,82 @@ export default function App() {
               <Lock className="size-4" />
               {locking ? t('app.locking') : t('app.lock')}
             </Button>
-          </div>
-        </header>
+          </header>
 
-        <main key={active} className="flex-1 overflow-auto">
-          <div className="mx-auto max-w-6xl px-6 py-8">
-            {error ? (
-              <div className="mb-5 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger)]">
-                {error}
-              </div>
-            ) : null}
+          <main key={active} className="flex-1 overflow-auto">
+            <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
+              <ErrorBanner message={error} className="mb-5" />
 
-            {active === 'dashboard' ? (
-              <DashboardPage
-                key={entity?.id ?? 'none'}
-                entity={entity}
-                onCreateBook={openCreateBook}
-              />
-            ) : null}
-            {active === 'transactions' ? (
-              <TransactionsPage
-                key={entity?.id ?? 'none'}
-                entity={entity}
-                onCreateBook={openCreateBook}
-              />
-            ) : null}
-            {active === 'documents' ? (
-              <DocumentsPage
-                key={entity?.id ?? 'none'}
-                entity={entity}
-                onCreateBook={openCreateBook}
-              />
-            ) : null}
-            {active === 'accounts' ? (
-              <AccountsPage
-                key={entity?.id ?? 'none'}
-                entity={entity}
-                onCreateBook={openCreateBook}
-              />
-            ) : null}
-            {active === 'reports' ? (
-              <ReportsPage
-                key={entity?.id ?? 'none'}
-                entity={entity}
-                onCreateBook={openCreateBook}
-              />
-            ) : null}
-            {active === 'settings' ? (
-              <SettingsPage
-                entities={entities}
-                appInfo={info}
-                createBookIntent={createBookIntent}
-                onCreateBookIntentHandled={onCreateBookIntentHandled}
-                onLockTimeoutChange={setLockTimeoutSecs}
-                onLicenseChanged={setLicense}
-                onEntitiesChange={async () => {
-                  try {
-                    await loadEntities()
-                  } catch (err) {
-                    setError(commandErrorMessage(err as CommandError))
-                  }
-                }}
-                onSelectEntity={(id) => {
-                  setEntityId(id)
-                  setActive('dashboard')
-                }}
-              />
-            ) : null}
-          </div>
-        </main>
+              {active === 'dashboard' ? (
+                <DashboardPage
+                  key={entity?.id ?? 'none'}
+                  entity={entity}
+                  onCreateBook={openCreateBook}
+                />
+              ) : null}
+              {active === 'transactions' ? (
+                <TransactionsPage
+                  key={entity?.id ?? 'none'}
+                  entity={entity}
+                  onCreateBook={openCreateBook}
+                />
+              ) : null}
+              {active === 'documents' ? (
+                <DocumentsPage
+                  key={entity?.id ?? 'none'}
+                  entity={entity}
+                  onCreateBook={openCreateBook}
+                />
+              ) : null}
+              {active === 'accounts' ? (
+                <AccountsPage
+                  key={entity?.id ?? 'none'}
+                  entity={entity}
+                  onCreateBook={openCreateBook}
+                />
+              ) : null}
+              {active === 'reports' ? (
+                <ReportsPage
+                  key={entity?.id ?? 'none'}
+                  entity={entity}
+                  onCreateBook={openCreateBook}
+                />
+              ) : null}
+              {active === 'settings' ? (
+                <SettingsPage
+                  entities={entities}
+                  appInfo={info}
+                  createBookIntent={createBookIntent}
+                  onCreateBookIntentHandled={onCreateBookIntentHandled}
+                  onLockTimeoutChange={setLockTimeoutSecs}
+                  onLicenseChanged={setLicense}
+                  onEntitiesChange={async () => {
+                    try {
+                      await loadEntities()
+                    } catch (err) {
+                      setError(commandErrorMessage(err as CommandError))
+                    }
+                  }}
+                  onSelectEntity={(id) => {
+                    setEntityId(id)
+                    setActive('dashboard')
+                  }}
+                />
+              ) : null}
+            </div>
+          </main>
+        </div>
       </div>
+    )
+
+  return (
+    <div className="relative h-full">
+      {/* Mounted once, above every status branch, so a status change never
+          remounts it (and restarts its drift). Until phase 4 makes the
+          unlock screen a glass card over it, it is hidden there and paused
+          so it does not spend GPU time animating unseen. */}
+      <Aurora watermark={status === 'unlocked'} paused={status !== 'unlocked'} />
+      <div className="relative z-10 h-full">{content}</div>
     </div>
   )
 }

@@ -33,8 +33,6 @@ vi.mock('./lib/tauri', () => ({
 
 vi.mock('./lib/api', () => ({
   api: {
-    getTheme: vi.fn(async () => 'dark'),
-    setTheme: vi.fn(),
     entityList: vi.fn(),
     getLockTimeout: vi.fn(async () => 900),
     setLockTimeout: vi.fn(),
@@ -230,5 +228,81 @@ describe('App trial banner survives Settings visits', () => {
     // Settings' own licenseStatus() call has now rejected (second mocked
     // call). The banner must still show App's originally fetched status.
     expect(screen.getByRole('status')).toHaveTextContent('3 days left in your trial.')
+  })
+})
+
+describe('App shell', () => {
+  test('a backend failure renders through the shared ErrorBanner (role=alert)', async () => {
+    // The app-level error box used to be hand-copied markup with no
+    // role/aria-live and a stale hex edge; it now reuses ErrorBanner like
+    // every other error surface in the app.
+    vi.mocked(api.entityList).mockReset().mockRejectedValue(new Error('backend down'))
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('backend down')
+    })
+  })
+
+  test('is dark-only: offers no light or dark mode switch', async () => {
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
+    })
+
+    expect(screen.queryByRole('button', { name: /light mode|dark mode/i })).toBeNull()
+  })
+
+  test('switches books from the sidebar list', async () => {
+    vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
+    render(<App />)
+
+    // The books list is a single choice, not a set of toggles, so the
+    // selected book is marked with aria-current, not aria-pressed.
+    const household = await screen.findByRole('button', { name: 'Household, EUR' })
+    expect(household.getAttribute('aria-current')).toBeNull()
+    expect(household).toHaveAttribute('title', 'Household, EUR')
+
+    await userEvent.click(household)
+
+    expect(household.getAttribute('aria-current')).toBe('true')
+    expect(
+      screen.getByRole('button', { name: 'Personal, EUR' }).getAttribute('aria-current'),
+    ).toBeNull()
+  })
+
+  test('mounts exactly one aurora, above the shell, in the unlocked state', async () => {
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
+    })
+
+    expect(document.querySelectorAll('.aurora')).toHaveLength(1)
+  })
+
+  test('mounts exactly one aurora, held still, while the vault is locked', async () => {
+    vi.mocked(vaultStatus).mockReset().mockResolvedValue('locked')
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Welcome back' })).toBeTruthy()
+    })
+
+    const auroras = document.querySelectorAll('.aurora')
+    expect(auroras).toHaveLength(1)
+    expect(auroras[0]).toHaveAttribute('data-moving', 'false')
+  })
+
+  test('gives each book its own categorical colour', async () => {
+    vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
+    render(<App />)
+
+    const personal = await screen.findByRole('button', { name: 'Personal, EUR' })
+    const household = await screen.findByRole('button', { name: 'Household, EUR' })
+
+    expect(personal.querySelector('span[aria-hidden]')?.getAttribute('style')).toContain(
+      'var(--viz-1)',
+    )
+    expect(household.querySelector('span[aria-hidden]')?.getAttribute('style')).toContain(
+      'var(--viz-2)',
+    )
   })
 })

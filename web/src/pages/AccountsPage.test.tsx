@@ -44,6 +44,60 @@ describe('AccountsPage empty-state CTA', () => {
   })
 })
 
+describe('AccountsPage account type colours', () => {
+  const entity: Entity = {
+    id: 'e1',
+    name: 'Personal',
+    base_currency: 'EUR',
+    fiscal_year_start_month: 1,
+    chart_template: 'personal',
+  }
+
+  function account(over: Partial<Account> & Pick<Account, 'id' | 'name' | 'account_type'>): Account {
+    return {
+      entity_id: 'e1',
+      code: '1000',
+      parent_id: null,
+      is_active: true,
+      is_system: false,
+      sort_order: 0,
+      ...over,
+    }
+  }
+
+  function badgeClass(name: string): string {
+    return screen.getByText(name).closest('li')?.firstElementChild?.className ?? ''
+  }
+
+  test('income and expense wear the Ledger money tones, never status colours', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([
+      account({ id: 'inc', name: 'Salary', account_type: 'income' }),
+      account({ id: 'exp', name: 'Groceries', account_type: 'expense' }),
+    ])
+    render(<AccountsPage entity={entity} />)
+    await waitFor(() => expect(screen.getByText('Salary')).toBeTruthy())
+
+    expect(badgeClass('Salary')).toContain('bg-[var(--color-money-in-soft)]')
+    expect(badgeClass('Groceries')).toContain('bg-[var(--color-money-out-soft)]')
+  })
+
+  test('asset, liability and equity never wear success, danger or warning, and stay distinguishable', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([
+      account({ id: 'ast', name: 'Checking', account_type: 'asset' }),
+      account({ id: 'lia', name: 'Credit Card', account_type: 'liability' }),
+      account({ id: 'eq', name: 'Owner Equity', account_type: 'equity' }),
+    ])
+    render(<AccountsPage entity={entity} />)
+    await waitFor(() => expect(screen.getByText('Checking')).toBeTruthy())
+
+    const classes = ['Checking', 'Credit Card', 'Owner Equity'].map(badgeClass)
+    for (const cls of classes) {
+      expect(cls).not.toMatch(/--color-success|--color-danger|--color-warning/)
+    }
+    expect(new Set(classes).size).toBe(3)
+  })
+})
+
 describe('AccountsPage register drill-in', () => {
   const entity: Entity = {
     id: 'e1',

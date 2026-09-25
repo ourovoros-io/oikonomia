@@ -88,10 +88,10 @@ describe('billStatusForKind', () => {
 })
 
 describe('kindBadgeTone', () => {
-  test('maps journal kinds onto IconBadge tones', () => {
-    expect(kindBadgeTone('income')).toBe('success')
-    expect(kindBadgeTone('expense')).toBe('danger')
-    expect(kindBadgeTone('bill')).toBe('danger')
+  test('maps journal kinds onto IconBadge tones from the Ledger, never status', () => {
+    expect(kindBadgeTone('income')).toBe('money-in')
+    expect(kindBadgeTone('expense')).toBe('money-out')
+    expect(kindBadgeTone('bill')).toBe('money-out')
     expect(kindBadgeTone('transfer')).toBe('muted')
   })
 })

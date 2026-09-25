@@ -67,10 +67,18 @@ function typeMeta(t: AccountType) {
   return TYPES.find((x) => x.id === t) ?? TYPES[0]
 }
 
-function typeTone(t: AccountType): 'accent' | 'success' | 'danger' | 'muted' {
-  if (t === 'income') return 'success'
-  if (t === 'expense') return 'danger'
+/**
+ * Money identity uses the Ledger, never status: income/expense wear
+ * money-in/money-out. The balance-sheet types (asset, liability, equity)
+ * are not money moving in or out, so none of them may wear success, danger
+ * or warning; they instead each get their own non-status tone so they stay
+ * distinguishable from one another.
+ */
+function typeTone(t: AccountType): 'accent' | 'info' | 'muted' | 'money-in' | 'money-out' {
+  if (t === 'income') return 'money-in'
+  if (t === 'expense') return 'money-out'
   if (t === 'asset') return 'accent'
+  if (t === 'liability') return 'info'
   return 'muted'
 }
 

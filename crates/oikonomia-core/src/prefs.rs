@@ -1,8 +1,11 @@
 //! Non-secret UI preferences stored as plaintext JSON in the data directory.
 //!
-//! Kept outside the encrypted vault on purpose: the unlock screen must render
-//! with the user's theme before any password has been entered. Nothing stored
-//! here is sensitive.
+//! Kept outside the encrypted vault on purpose: the tray menu and window
+//! chrome must be built in the user's locale before any password has been
+//! entered. Nothing stored here is sensitive.
+//!
+//! There is no theme preference: the app is dark-only, so a `"theme"` key in
+//! a file written by an older build is ignored on load.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -11,17 +14,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-
-/// UI color theme.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Theme {
-    /// Dark theme (the default).
-    #[default]
-    Dark,
-    /// Light theme.
-    Light,
-}
 
 /// Native UI locale (tray, dialogs). Webview i18n is separate.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,8 +48,6 @@ pub struct LastRoleAccounts {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct UiPrefs {
-    /// Color theme.
-    pub theme: Theme,
     /// Native locale for tray menu, window titles, and file-dialog filters.
     pub locale: Locale,
     /// Last entity used in the tray quick-add panel.
@@ -131,20 +121,6 @@ mod tests {
     }
 
     #[test]
-    fn theme_round_trips() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
-
-        let prefs = UiPrefs {
-            theme: Theme::Light,
-            ..UiPrefs::default()
-        };
-        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
-        assert_eq!(load_ui_prefs(dir.path()), prefs);
-    }
-
-    #[test]
     fn corrupt_file_yields_defaults() {
         let Ok(dir) = tempdir() else {
             return;
@@ -162,13 +138,7 @@ mod tests {
 
         let json = r#"{ "theme": "light", "future_field": 42 }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
-        assert_eq!(
-            load_ui_prefs(dir.path()),
-            UiPrefs {
-                theme: Theme::Light,
-                ..UiPrefs::default()
-            }
-        );
+        assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
     }
 
     #[test]
@@ -190,7 +160,6 @@ mod tests {
         );
 
         let prefs = UiPrefs {
-            theme: Theme::Dark,
             locale: Locale::En,
             last_entity_id: Some("ent-1".into()),
             last_accounts_by_entity_kind: last_accounts,
@@ -209,7 +178,6 @@ mod tests {
         let json = r#"{ "theme": "light" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let prefs = load_ui_prefs(dir.path());
-        assert_eq!(prefs.theme, Theme::Light);
         assert_eq!(prefs.locale, Locale::En);
         assert_eq!(prefs.last_entity_id, None);
         assert!(prefs.last_accounts_by_entity_kind.is_empty());
@@ -287,7 +255,6 @@ mod tests {
         let json = r#"{ "theme": "light" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let prefs = load_ui_prefs(dir.path());
-        assert_eq!(prefs.theme, Theme::Light);
         assert_eq!(prefs.locale, Locale::En);
     }
 
@@ -302,7 +269,26 @@ mod tests {
         assert_eq!(
             load_ui_prefs(dir.path()),
             UiPrefs {
-                theme: Theme::Light,
+                locale: Locale::El,
+                ..UiPrefs::default()
+            }
+        );
+    }
+
+    #[test]
+    fn retired_theme_key_still_loads() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        // Builds before the dark-only redesign wrote a "theme" key. It must
+        // load as an ignored field, never make the file read as corrupt.
+        let json = r#"{ "theme": "light", "locale": "el" }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        assert_eq!(
+            load_ui_prefs(dir.path()),
+            UiPrefs {
                 locale: Locale::El,
                 ..UiPrefs::default()
             }

@@ -173,6 +173,37 @@ const postedEntry: PostedEntryView = {
   is_voided: false,
 }
 
+const incomeEntry: PostedEntryView = {
+  entry: {
+    id: 'j2',
+    entity_id: 'e1',
+    entry_date: '2026-08-11',
+    description: 'CLIENT INVOICE',
+    reference: null,
+    status: 'posted',
+    hidden: false,
+  },
+  lines: [
+    {
+      id: 'l3',
+      entry_id: 'j2',
+      account_id: 'w1',
+      debit: { amount_minor: 120000 },
+      credit: { amount_minor: 0 },
+      memo: null,
+    },
+    {
+      id: 'l4',
+      entry_id: 'j2',
+      account_id: 'inc1',
+      debit: { amount_minor: 0 },
+      credit: { amount_minor: 120000 },
+      memo: null,
+    },
+  ],
+  is_voided: false,
+}
+
 function documentSuggestion(over: Partial<DocumentSuggestion> = {}): DocumentSuggestion {
   return {
     source: 'heuristic',
@@ -225,6 +256,22 @@ async function renderReady() {
     expect(screen.getByRole('button', { name: 'Import CSV' })).toBeTruthy()
   })
 }
+
+describe('TransactionsPage entry kind colours', () => {
+  test('income and expense rows wear the Ledger money tones, never status colours', async () => {
+    vi.mocked(api.entryList).mockReset().mockResolvedValue([postedEntry, incomeEntry])
+    await renderReady()
+    await waitFor(() => {
+      expect(screen.getByText('CLIENT INVOICE')).toBeTruthy()
+    })
+
+    const expenseBadge = screen.getByText('Alpha supermarket').closest('li')?.firstElementChild
+    expect(expenseBadge?.className).toContain('bg-[var(--color-money-out-soft)]')
+
+    const incomeBadge = screen.getByText('CLIENT INVOICE').closest('li')?.firstElementChild
+    expect(incomeBadge?.className).toContain('bg-[var(--color-money-in-soft)]')
+  })
+})
 
 describe('TransactionsPage CSV toolbar', () => {
   test('toolbar shows Recurring left of Import CSV, Export CSV, New Entry', async () => {

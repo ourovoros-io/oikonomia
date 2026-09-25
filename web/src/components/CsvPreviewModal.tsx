@@ -223,7 +223,7 @@ export function CsvPreviewModal({
                   <td
                     className={cn(
                       'px-3 py-2.5 text-right font-medium tabular-nums',
-                      income ? 'text-[var(--color-success)]' : 'text-[var(--color-fg)]',
+                      income ? 'text-[var(--color-money-in-text)]' : 'text-[var(--color-fg)]',
                     )}
                   >
                     {amountMinor == null
@@ -236,7 +236,7 @@ export function CsvPreviewModal({
                         className={cn(
                           'inline-flex rounded-full px-2 py-0.5 text-xs font-medium',
                           income
-                            ? 'bg-[var(--color-success-soft)] text-[var(--color-success)]'
+                            ? 'bg-[var(--color-money-in-soft)] text-[var(--color-money-in-text)]'
                             : 'bg-[var(--color-surface-elevated)] text-[var(--color-fg-secondary)]',
                         )}
                       >

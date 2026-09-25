@@ -35,6 +35,14 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => subscribeLocale(() => setLocaleState(getLocale())), [])
 
+  // CSS uppercase (small-caps labels, eyebrows) keeps a locale's own
+  // combining marks only when lang matches the text's language; a stale
+  // static lang="en" uppercases Greek as if it were English and drops the
+  // tonos (e.g. ΗΜΕΡΟΛΌΓΙΟ loses its accent).
+  useEffect(() => {
+    document.documentElement.lang = locale
+  }, [locale])
+
   useEffect(() => {
     setLocalePersist((next) => api.setLocale(next).catch(() => undefined))
     return () => setLocalePersist(null)

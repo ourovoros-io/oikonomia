@@ -9,12 +9,15 @@ import type {
 
 import { cn } from '../lib/cn'
 
+/**
+ * The shared control look. `ui-control` is a styling hook, not decoration:
+ * index.css turns a Field around a control into one glass field box and strips
+ * the control's own box, so every text-like control must keep the class.
+ */
 const controlBase =
-  'h-10 w-full rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] px-3 text-sm text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent)] focus:ring-2 focus:ring-[var(--color-accent)]/25 disabled:opacity-50'
+  'ui-control h-10 w-full rounded-[var(--radius-control)] border border-[var(--color-border)] bg-[var(--color-control)] px-3 text-sm text-[var(--color-fg)] outline-none transition placeholder:text-[var(--color-muted)] focus:border-[var(--color-accent-b)] focus:ring-4 focus:ring-[var(--color-accent-b)]/15 aria-[invalid=true]:border-[var(--color-danger)] disabled:opacity-50'
 
-const surfaceShadow = 'shadow-[0_1px_0_rgba(255,255,255,0.03)]'
-
-/** Soft colored icon chip used across metric cards and activity rows. */
+/** Tinted icon chip used across metric cards and activity rows. */
 export function IconBadge({
   children,
   tone = 'accent',
@@ -22,7 +25,7 @@ export function IconBadge({
   className = '',
 }: {
   children: ReactNode
-  tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted'
+  tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted' | 'money-in' | 'money-out'
   size?: 'xs' | 'sm' | 'md'
   className?: string
 }) {
@@ -32,17 +35,23 @@ export function IconBadge({
     danger: 'bg-[var(--color-danger-soft)] text-[var(--color-danger)]',
     warning: 'bg-[var(--color-warning-soft)] text-[var(--color-warning)]',
     info: 'bg-[var(--color-info-soft)] text-[var(--color-info)]',
-    muted: 'bg-[var(--color-surface-elevated)] text-[var(--color-muted)]',
+    muted: 'bg-white/[0.06] text-[var(--color-dim)]',
+    // Money identity: never status. Used for income/money-in and
+    // expense-or-bill/money-out icons across Dashboard, Transactions,
+    // Recurring and Accounts.
+    'money-in': 'bg-[var(--color-money-in-soft)] text-[var(--color-money-in-text)]',
+    'money-out': 'bg-[var(--color-money-out-soft)] text-[var(--color-money-out-text)]',
   }
   const sizes = {
     xs: 'size-6',
     sm: 'size-8',
     md: 'size-9',
   }
+
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-lg',
+        'inline-flex shrink-0 items-center justify-center rounded-[11px]',
         tones[tone],
         sizes[size],
         className,
@@ -53,7 +62,7 @@ export function IconBadge({
   )
 }
 
-/** Primary surface: rounded-2xl panel matching the dashboard language. */
+/** The glass panel every block of content sits on. */
 export function Card({
   children,
   className = '',
@@ -69,58 +78,31 @@ export function Card({
     md: 'p-5',
     lg: 'p-6 sm:p-8',
   }[padding]
-  return (
-    <div
-      className={cn(
-        'rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]',
-        surfaceShadow,
-        pad,
-        className,
-      )}
-    >
-      {children}
-    </div>
-  )
+
+  return <div className={cn('glass-pane rounded-[22px]', pad, className)}>{children}</div>
 }
 
 /**
- * Hero surface with soft radial washes (dashboard net panel).
- * Use for key numbers or primary callouts.
+ * The glass pane for a page's key figure. It carries no colour wash of its
+ * own: the aurora shows through, and text keeps its measured contrast.
+ * `accent` is still accepted so existing callers compile unchanged.
  */
 export function Hero({
   children,
   className = '',
-  accent = 'accent',
 }: {
   children: ReactNode
   className?: string
   accent?: 'accent' | 'success' | 'neutral'
 }) {
-  const wash =
-    accent === 'success'
-      ? 'radial-gradient(1000px 360px at 12% -10%, rgba(45,212,191,0.18), transparent 55%), radial-gradient(700px 280px at 90% 0%, rgba(53,176,107,0.12), transparent 50%)'
-      : accent === 'neutral'
-        ? 'radial-gradient(1000px 360px at 10% -10%, rgba(53,176,107,0.16), transparent 55%)'
-        : 'radial-gradient(1200px 400px at 10% -10%, rgba(53,176,107,0.3), transparent 55%), radial-gradient(800px 300px at 90% 0%, rgba(56,189,248,0.12), transparent 50%), radial-gradient(600px 260px at 55% 110%, rgba(45,212,191,0.1), transparent 55%)'
-
   return (
-    <div
-      className={cn(
-        'relative overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]',
-        className,
-      )}
-    >
-      <div
-        className="pointer-events-none absolute inset-0 opacity-90"
-        style={{ background: wash }}
-        aria-hidden
-      />
+    <div className={cn('glass-pane relative overflow-hidden rounded-[24px]', className)}>
       <div className="relative">{children}</div>
     </div>
   )
 }
 
-/** Section panel with title bar — activity lists, report blocks, etc. */
+/** Glass panel with a title bar — activity lists, report blocks, etc. */
 export function Panel({
   title,
   description,
@@ -140,22 +122,18 @@ export function Panel({
   className?: string
 }) {
   return (
-    <div
-      className={cn(
-        'overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]',
-        surfaceShadow,
-        className,
-      )}
-    >
+    <div className={cn('glass-pane overflow-hidden rounded-[22px]', className)}>
       <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
-          {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
-          {whisper ? <p className="text-[11px] text-[var(--color-muted)]">{whisper}</p> : null}
+          <h3 className="text-[15px] font-semibold text-[var(--color-fg)]">{title}</h3>
+          {description ? (
+            <p className="text-[13px] text-[var(--color-muted)]">{description}</p>
+          ) : null}
+          {whisper ? <p className="text-xs text-[var(--color-muted)]">{whisper}</p> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {actions}
-          {icon ? <span className="text-[var(--color-muted)]">{icon}</span> : null}
+          {icon ? <span className="text-[var(--color-dim)]">{icon}</span> : null}
         </div>
       </div>
       {children}
@@ -164,8 +142,8 @@ export function Panel({
 }
 
 /**
- * Collapsible section: header row always visible with a chevron at the end,
- * body rendered only while expanded. Collapsed by default.
+ * Collapsible glass section: the header row is always visible with a chevron
+ * at the end; the body renders only while expanded. Collapsed by default.
  */
 export function CollapsibleSection({
   title,
@@ -188,17 +166,12 @@ export function CollapsibleSection({
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <div
-      className={cn(
-        'overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]',
-        surfaceShadow,
-      )}
-    >
+    <div className="glass-pane overflow-hidden rounded-[22px]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-[var(--color-surface-2)]/60"
+        className="flex w-full items-center gap-3 px-5 py-4 text-left transition hover:bg-white/[0.04]"
       >
         {icon ? (
           <IconBadge tone={tone} size="sm">
@@ -206,12 +179,14 @@ export function CollapsibleSection({
           </IconBadge>
         ) : null}
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-[var(--color-fg)]">{title}</h3>
-          {description ? <p className="text-xs text-[var(--color-muted)]">{description}</p> : null}
+          <h3 className="text-[15px] font-semibold text-[var(--color-fg)]">{title}</h3>
+          {description ? (
+            <p className="text-[13px] text-[var(--color-muted)]">{description}</p>
+          ) : null}
         </div>
         <ChevronDown
           className={cn(
-            'size-4 shrink-0 text-[var(--color-muted)] transition-transform duration-200',
+            'size-4 shrink-0 text-[var(--color-dim)] transition-transform duration-200',
             open && 'rotate-180',
           )}
         />
@@ -241,29 +216,34 @@ export function Button({
   busy?: boolean
 }) {
   const styles = {
-    primary: 'bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] shadow-sm',
+    // Dark ink on the brand light: 11.9:1.
+    primary:
+      'bg-[linear-gradient(90deg,var(--color-accent),var(--color-accent-b))] font-semibold text-[var(--color-on-accent)] shadow-[0_8px_26px_rgba(46,230,166,0.28),inset_0_1px_0_rgba(255,255,255,0.35)] hover:brightness-110',
     secondary:
-      'border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] text-[var(--color-fg-secondary)] hover:border-[var(--color-accent)] hover:text-[var(--color-fg)]',
+      'bg-white/[0.06] text-[var(--color-fg)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.1),inset_0_1px_0_rgba(255,255,255,0.08)] hover:bg-white/[0.1]',
+    // White on the deepened fill: 4.75:1 at its lightest stop. Hover glows
+    // instead of brightening, which would drop the label below 4.5:1.
     danger:
-      'border border-transparent bg-[var(--color-danger-soft)] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/20',
-    ghost:
-      'text-[var(--color-muted)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]',
+      'bg-[linear-gradient(90deg,var(--color-danger-fill-a),var(--color-danger-fill-b))] font-semibold text-white shadow-[0_8px_26px_rgba(215,48,76,0.3),inset_0_1px_0_rgba(255,255,255,0.25)] hover:shadow-[0_10px_34px_rgba(215,48,76,0.5),inset_0_1px_0_rgba(255,255,255,0.25)]',
+    ghost: 'text-[var(--color-muted)] hover:bg-white/[0.06] hover:text-[var(--color-fg)]',
   }
   const sizes = {
-    sm: 'h-8 gap-1.5 px-2.5 text-xs',
-    md: 'h-10 gap-2 px-3.5 text-sm',
+    sm: 'h-8 gap-1.5 px-3 text-xs',
+    md: 'h-10 gap-2 px-4 text-sm',
     icon: 'h-10 w-10 shrink-0 justify-center p-0',
   }
+
   return (
     <button
       type="button"
       className={cn(
-        'inline-flex items-center justify-center rounded-[var(--radius-control)] font-medium transition disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex items-center justify-center rounded-[var(--radius-control)] font-medium transition disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:brightness-100',
         styles[variant],
         sizes[size],
         className,
       )}
       disabled={disabled || busy}
+      data-variant={variant}
       {...props}
     >
       {busy ? <Loader2 className="size-3.5 shrink-0 animate-spin" /> : null}
@@ -287,7 +267,7 @@ export function Select({
         {children}
       </select>
       <ChevronDown
-        className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-[var(--color-muted)]"
+        className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-[var(--color-dim)]"
         strokeWidth={1.75}
         aria-hidden
       />
@@ -297,12 +277,13 @@ export function Select({
 
 export function Label({ children }: { children: ReactNode }) {
   return (
-    <span className="mb-1.5 block text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+    <span className="mb-1 block font-mono text-[9.5px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
       {children}
     </span>
   )
 }
 
+/** A labelled control. Around a `ui-control` it renders as one glass field box. */
 export function Field({
   label,
   children,
@@ -313,7 +294,7 @@ export function Field({
   className?: string
 }) {
   return (
-    <label className={cn('block min-w-0', className)}>
+    <label className={cn('field-box block min-w-0', className)}>
       <Label>{label}</Label>
       {children}
     </label>
@@ -321,8 +302,8 @@ export function Field({
 }
 
 /**
- * Page chrome matching the dashboard: uppercase eyebrow, large title,
- * muted description, optional actions / meta.
+ * Page chrome: a mono eyebrow or breadcrumb, a large title, a description and
+ * optional actions or meta. It sits directly on the aurora, under the veil.
  */
 export function PageHeader({
   eyebrow,
@@ -341,12 +322,13 @@ export function PageHeader({
   meta?: ReactNode
 }) {
   const hasLead = Boolean(eyebrow || (breadcrumb && breadcrumb.length > 0))
+
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
         {breadcrumb && breadcrumb.length > 0 ? (
           <nav
-            className="flex flex-wrap items-center gap-1.5 text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase"
+            className="flex flex-wrap items-center gap-1.5 font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase"
             aria-label={breadcrumb.map((c) => c.label).join(' / ')}
           >
             {breadcrumb.map((crumb, i) => (
@@ -367,20 +349,20 @@ export function PageHeader({
             ))}
           </nav>
         ) : eyebrow ? (
-          <p className="text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+          <p className="font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase">
             {eyebrow}
           </p>
         ) : null}
         <h2
           className={cn(
             'leading-tight font-semibold tracking-tight text-[var(--color-fg)]',
-            hasLead ? 'mt-1 text-[1.75rem]' : 'text-[1.5rem]',
+            hasLead ? 'mt-1.5 text-[1.875rem]' : 'text-[1.625rem]',
           )}
         >
           {title}
         </h2>
         {description ? (
-          <p className="mt-1 text-sm text-[var(--color-muted)]">{description}</p>
+          <p className="mt-1 text-sm text-[var(--color-fg-secondary)]">{description}</p>
         ) : null}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -403,17 +385,20 @@ export function ErrorBanner({
   id?: string
 }) {
   if (!message && !title) return null
+
   return (
     <div
       id={id}
       role="alert"
       aria-live="assertive"
       className={cn(
-        'flex items-start gap-2 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger)]',
+        'flex items-start gap-2 rounded-[14px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,130,149,0.4)]',
         className,
       )}
     >
-      {title ? <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden /> : null}
+      {title ? (
+        <CircleAlert className="mt-0.5 size-4 shrink-0 text-[var(--color-danger)]" aria-hidden />
+      ) : null}
       <div className="min-w-0 flex-1">
         {title ? <p className="font-semibold">{title}</p> : null}
         {message ? <p className={title ? 'mt-0.5' : undefined}>{message}</p> : null}
@@ -434,9 +419,9 @@ export function EmptyState({
   action?: ReactNode
 }) {
   return (
-    <div className="flex flex-col items-center rounded-2xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)]/50 px-6 py-16 text-center">
+    <div className="glass-pane flex flex-col items-center rounded-[22px] px-6 py-16 text-center">
       {icon ? (
-        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center rounded-xl bg-[var(--color-surface-elevated)] text-[var(--color-muted)]">
+        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center rounded-[15px] bg-[var(--color-info-soft)] text-[var(--color-info)] shadow-[inset_0_0_0_1px_rgba(55,213,255,0.25),0_0_26px_rgba(55,213,255,0.15)]">
           {icon}
         </div>
       ) : null}
@@ -466,18 +451,18 @@ export function ChoiceCard({
       type="button"
       onClick={onClick}
       className={cn(
-        'flex h-full min-h-[5.5rem] w-full flex-col items-start gap-2 rounded-2xl border p-4 text-left transition',
+        'flex h-full min-h-[5.5rem] w-full flex-col items-start gap-2 rounded-[16px] p-4 text-left transition',
         selected
-          ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)] ring-1 ring-[var(--color-accent)]/40'
-          : 'border-[var(--color-border-strong)] bg-[var(--color-surface-2)] hover:border-[var(--color-muted)]',
+          ? 'bg-[var(--color-accent-soft)] shadow-[inset_0_0_0_1px_rgba(46,230,166,0.45),0_0_24px_rgba(46,230,166,0.12)]'
+          : 'bg-white/[0.04] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)] hover:bg-white/[0.07]',
       )}
     >
       <span
         className={cn(
-          'flex size-8 items-center justify-center rounded-lg',
+          'flex size-8 items-center justify-center rounded-[10px]',
           selected
-            ? 'bg-[var(--color-accent)] text-white'
-            : 'bg-[var(--color-surface-elevated)] text-[var(--color-muted)]',
+            ? 'bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-b))] text-[var(--color-on-accent)]'
+            : 'bg-white/[0.06] text-[var(--color-dim)]',
         )}
       >
         {icon}
@@ -504,20 +489,18 @@ export function MetricCard({
   icon?: ReactNode
   accent?: 'success' | 'danger' | 'accent'
 }) {
-  const tone = accent === 'success' ? 'success' : accent === 'danger' ? 'danger' : 'accent'
+  // success/danger here always mean money in/out (income/expense tiles), so
+  // the icon wears the Ledger tone, never the status colour.
+  const tone = accent === 'success' ? 'money-in' : accent === 'danger' ? 'money-out' : 'accent'
+
   return (
-    <div
-      className={cn(
-        'rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5',
-        surfaceShadow,
-      )}
-    >
+    <div className="glass-pane rounded-[20px] p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+          <div className="font-mono text-[10.5px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
             {label}
           </div>
-          {hint ? <div className="mt-0.5 text-xs text-[var(--color-muted)]">{hint}</div> : null}
+          {hint ? <div className="mt-1 text-xs text-[var(--color-muted)]">{hint}</div> : null}
         </div>
         {icon ? (
           <IconBadge tone={tone} size="sm">
@@ -528,8 +511,10 @@ export function MetricCard({
       <div
         title={value}
         className={cn(
-          'mt-5 truncate text-2xl font-semibold tracking-tight tabular-nums',
-          accent === 'danger' ? 'text-[var(--color-danger)]' : 'text-[var(--color-fg)]',
+          'mt-5 truncate text-[26px] font-semibold tracking-tight tabular-nums',
+          // "danger" marks money going out (the Expenses tile): it is set in the
+          // Ledger out tint, never in the error colour.
+          accent === 'danger' ? 'text-[var(--color-money-out-text)]' : 'text-[var(--color-fg)]',
         )}
       >
         {value}
@@ -552,12 +537,13 @@ export function Segmented<T extends string>({
   return (
     <div
       className={cn(
-        'inline-flex h-10 items-stretch rounded-[var(--radius-control)] border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-0.5',
+        'inline-flex h-10 items-stretch gap-0.5 rounded-full bg-white/[0.04] p-1 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]',
         className,
       )}
     >
       {options.map((opt) => {
         const active = value === opt.id
+
         return (
           <button
             key={opt.id}
@@ -565,9 +551,9 @@ export function Segmented<T extends string>({
             aria-pressed={active}
             onClick={() => onChange(opt.id)}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-[calc(var(--radius-control)-2px)] px-3 text-sm font-medium transition',
+              'inline-flex items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition',
               active
-                ? 'bg-[var(--color-surface)] text-[var(--color-fg)] shadow-sm'
+                ? 'bg-white/10 text-[var(--color-fg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
                 : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]',
             )}
           >
@@ -593,12 +579,16 @@ export function FlowBar({
   tone: 'success' | 'danger' | 'accent'
 }) {
   const pct = Math.round(Math.min(1, Math.max(0, ratio)) * 100)
+
+  // Every caller uses success and danger for money in and out, so the bars
+  // wear the Ledger gradients rather than the status colours.
   const bar =
     tone === 'success'
-      ? 'bg-[var(--color-success)]'
+      ? 'bg-[linear-gradient(90deg,#27bf93,var(--color-money-in))]'
       : tone === 'danger'
-        ? 'bg-[var(--color-danger)]'
-        : 'bg-[var(--color-accent)]'
+        ? 'bg-[linear-gradient(90deg,#f07a45,var(--color-money-out))]'
+        : 'bg-[linear-gradient(90deg,var(--color-accent),var(--color-accent-b))]'
+
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
@@ -610,9 +600,9 @@ export function FlowBar({
           {value}
         </span>
       </div>
-      <div className="h-2 overflow-hidden rounded bg-[var(--color-surface-elevated)]">
+      <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
         <div
-          className={cn('h-full rounded transition-all duration-500', bar)}
+          className={cn('h-full rounded-full transition-all duration-500', bar)}
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -620,12 +610,12 @@ export function FlowBar({
   )
 }
 
-/** List row for activity / entity rows with hover. */
+/** List row with a hover surface that also shows for keyboard focus inside it. */
 export function ListRow({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <li
       className={cn(
-        'flex items-center gap-4 px-5 py-3.5 transition hover:bg-[var(--color-surface-2)]/50',
+        'flex items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.04] focus-within:bg-white/[0.04]',
         className,
       )}
     >

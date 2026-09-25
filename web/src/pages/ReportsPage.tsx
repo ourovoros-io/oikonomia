@@ -337,9 +337,9 @@ function TotalRow({
           'shrink-0 text-sm tabular-nums',
           grand ? 'font-semibold' : 'font-medium',
           tone === 'danger'
-            ? 'text-[var(--color-danger)]'
+            ? 'text-[var(--color-money-out-text)]'
             : tone === 'success'
-              ? 'text-[var(--color-success)]'
+              ? 'text-[var(--color-money-in-text)]'
               : 'text-[var(--color-fg)]',
         )}
       >

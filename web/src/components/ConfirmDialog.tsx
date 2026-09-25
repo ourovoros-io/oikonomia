@@ -1,4 +1,5 @@
 import { useId, useRef, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { AlertTriangle, CircleCheck } from 'lucide-react'
 import { Button } from './ui'
 import { useDialogFocus } from './useDialogFocus'
@@ -63,9 +64,14 @@ export function ConfirmDialog({
         ? 'bg-[var(--color-success-soft)] text-[var(--color-success)]'
         : 'bg-[var(--color-accent-soft)] text-[var(--color-accent)]'
 
-  return (
+  // backdrop-filter makes an element the containing block for position:fixed
+  // descendants in WebKit, so a ConfirmDialog opened inside another dialog
+  // (e.g. EntryDetailModal's delete confirm, inside Modal) would otherwise be
+  // sized to and clipped by the outer glass surface. Porting to
+  // document.body sidesteps that.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4"
+      className="glass-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -74,12 +80,12 @@ export function ConfirmDialog({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-2xl outline-none"
+        className="glass-dialog w-full max-w-md rounded-[26px] p-6 outline-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex gap-3">
           <span
-            className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${iconWrap}`}
+            className={`flex size-10 shrink-0 items-center justify-center rounded-[12px] ${iconWrap}`}
           >
             {resolvedTone === 'success' ? (
               <CircleCheck className="size-5" strokeWidth={1.75} />
@@ -108,6 +114,7 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

@@ -162,15 +162,14 @@ describe('RecurringPage list affordances', () => {
 
     const postButtons = screen.getAllByRole('button', { name: 'Post' })
     expect(postButtons).toHaveLength(2)
-    expect(postButtons[0].className).toMatch(/bg-\[var\(--color-accent\)\]/)
-    expect(postButtons[1].className).toMatch(/hover:bg-\[var\(--color-surface-elevated\)\]/)
-    expect(postButtons[1].className).not.toMatch(/bg-\[var\(--color-accent\)\]/)
+    expect(postButtons[0].getAttribute('data-variant')).toBe('primary')
+    expect(postButtons[1].getAttribute('data-variant')).toBe('ghost')
   })
 
-  test('income amount uses a green + prefix', async () => {
+  test('income amount uses the Ledger in tint and a + prefix', async () => {
     await renderPage()
     const payrollAmount = screen.getByText(/^\+/)
-    expect(payrollAmount.className).toMatch(/--color-success/)
+    expect(payrollAmount.className).toMatch(/--color-money-in-text/)
     expect(payrollAmount.textContent).toMatch(/\+/)
   })
 })
@@ -226,6 +225,21 @@ describe('RecurringPage new template modal', () => {
       from_account_id: null,
       to_account_id: null,
     })
+  })
+
+  test('the day-of-month hint sits outside the field box, not inside it', async () => {
+    // A Field renders as one glass field box containing only its label and
+    // control; a helper paragraph inside it would sit inside that box too.
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await waitFor(() => {
+      expect(screen.getByLabelText('Day of month')).toBeTruthy()
+    })
+
+    const hint = screen.getByText('Used when Cadence is Monthly.')
+    const fieldBox = screen.getByLabelText('Day of month').closest('.field-box')
+    expect(fieldBox).not.toBeNull()
+    expect(fieldBox?.contains(hint)).toBe(false)
   })
 
   test('Weekly hides day of month and sends null', async () => {

@@ -75,7 +75,6 @@ const posted: PostedEntryView = {
 }
 
 const prefs: UiPrefs = {
-  theme: 'dark',
   last_entity_id: 'e1',
   last_accounts_by_entity_kind: {},
 }

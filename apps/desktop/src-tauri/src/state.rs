@@ -83,7 +83,7 @@ impl AppState {
         Arc::clone(&self.update)
     }
 
-    /// Hold across a prefs load-mutate-save so theme and tray last-used cannot clobber.
+    /// Hold across a prefs load-mutate-save so locale and tray last-used cannot clobber.
     pub fn lock_prefs(&self) -> std::sync::MutexGuard<'_, ()> {
         match self.prefs_lock.lock() {
             Ok(guard) => guard,

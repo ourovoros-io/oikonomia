@@ -1,45 +1,81 @@
 @import "tailwindcss";
-@import "@fontsource-variable/inter";
-
-@custom-variant dark (&:where(.dark, .dark *));
+@import "./fonts.css";
 
 @theme {
-  /* One typeface, no exceptions: Inter Variable is bundled locally
-     (no network) and covers numerals via font-variant-numeric. */
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  /* Barlow and IBM Plex Mono carry no Greek glyphs; the next family in each
+     stack does (see fonts.css), so the el locale never drops to a system face. */
+  --font-sans: "Barlow", "Sofia Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --font-display: "Sofia Sans", "Arial Black", "Helvetica Neue", sans-serif;
 
-  /* Dark theme (default): green-tinted neutrals around a dollar-green accent. */
-  --color-canvas: #0a0e0b;
-  --color-surface: #101511;
-  --color-surface-2: #151b16;
-  --color-surface-elevated: #1b231d;
-  --color-border: #232c26;
-  --color-border-strong: #344038;
-  --color-muted: #8f9a93;
-  --color-fg: #f4f6f4;
-  --color-fg-secondary: #c5cdc7;
-  --color-accent: #35b06b;
-  --color-accent-hover: #4fc981;
-  --color-accent-soft: rgba(53, 176, 107, 0.16);
-  --color-accent-muted: #1c4a32;
-  --color-danger: #f43f5e;
-  --color-danger-soft: rgba(244, 63, 94, 0.13);
-  --color-success: #2dd4bf;
-  --color-success-soft: rgba(45, 212, 191, 0.13);
-  --color-warning: #fbbf24;
-  --color-warning-soft: rgba(251, 191, 36, 0.13);
-  --color-info: #38bdf8;
-  --color-info-soft: rgba(56, 189, 248, 0.13);
+  /* Surfaces. Glass primitives paint --glass-fill; these solid steps stay for
+     popovers and page-local panels that have no backdrop to blur. */
+  --color-canvas: #05060a;
+  --color-surface: #10131a;
+  --color-surface-2: #161a22;
+  --color-surface-elevated: #1c212b;
+  --color-control: rgba(255, 255, 255, 0.045);
+  --color-border: rgba(255, 255, 255, 0.09);
+  --color-border-strong: rgba(255, 255, 255, 0.16);
 
-  --radius-control: 0.5rem;
+  /* Ink, measured over the brightest backdrop a pane can sit on (see
+     web/tests/tokens.test.ts). dim is for icons and inactive controls only. */
+  --color-fg: #e7ebf1;
+  --color-fg-secondary: #aeb5bf;
+  --color-muted: #a3aab5;
+  --color-dim: #848b98;
+
+  /* Brand light: chrome only — primary buttons, active navigation, logo,
+     focus. Never money. */
+  --color-accent: #2ee6a6;
+  --color-accent-b: #37d5ff;
+  --color-accent-c: #7a8cff;
+  --color-accent-hover: #5aefbc;
+  --color-accent-soft: rgba(46, 230, 166, 0.14);
+  --color-accent-muted: #10382d;
+  --color-on-accent: #06110d;
+
+  /* Ledger: anything that is money. The pair is validated; the text tints are
+     what amounts are set in. */
+  --color-money-in: #1ba39a;
+  --color-money-in-text: #6fd9c4;
+  --color-money-in-soft: rgba(27, 163, 154, 0.14);
+  --color-money-out: #e8603f;
+  --color-money-out-text: #ff9b7e;
+  --color-money-out-soft: rgba(232, 96, 63, 0.13);
+
+  /* Status. Always shipped with an icon and a label, so coral money-out is
+     never read as an error. */
+  --color-danger: #ff8295;
+  --color-danger-text: #ffd3da;
+  --color-danger-soft: rgba(255, 77, 103, 0.12);
+  --color-danger-fill-a: #d7304c;
+  --color-danger-fill-b: #b8327a;
+  --color-success: #2ee6a6;
+  --color-success-soft: rgba(46, 230, 166, 0.13);
+  --color-warning: #e2f23a;
+  --color-warning-soft: rgba(226, 242, 58, 0.12);
+  --color-info: #37d5ff;
+  --color-info-soft: rgba(55, 213, 255, 0.13);
+
+  --radius-control: 12px;
   --control-h: 2.5rem;
-  --sidebar-w: 15.5rem;
+  --sidebar-w: 13.75rem;
 }
 
-/* Categorical chart palette (dark-surface steps; validated with the dataviz
-   six-checks script against #101511). Slot order is the CVD-safety mechanism —
+/* Glass and aurora knobs. The fill and the veil were measured for contrast;
+   read the spec's "Measured, not assumed" note before changing either. */
+:root {
+  --glass-fill: rgba(16, 18, 24, 0.5);
+  --glass-edge: rgba(255, 255, 255, 0.09);
+  --glass-highlight: rgba(255, 255, 255, 0.08);
+  --aurora-veil-top: 0.5;
+  --aurora-veil-mid: 0.28;
+}
+
+/* Categorical chart palette (dark-surface steps; re-validated with the
+   dataviz six-checks script against the glass surface #11141b: all six
+   checks pass, worst adjacent CVD dE 8.4). Slot order is the CVD-safety mechanism —
    assign in order, never cycled; fold extra series into --viz-other. */
 :root {
   --viz-1: #3987e5;
@@ -53,55 +89,20 @@
   --viz-other: #4a554c;
 }
 
-/* Light theme overrides via html:not(.dark) — deeper hues for contrast
-   on white, same green family. */
-html:not(.dark) {
-  /* Light-surface chart steps (validated against #ffffff). */
-  --viz-1: #2a78d6;
-  --viz-2: #eb6834;
-  --viz-3: #1baf7a;
-  --viz-4: #eda100;
-  --viz-5: #e87ba4;
-  --viz-6: #008300;
-  --viz-7: #4a3aa7;
-  --viz-8: #e34948;
-  --viz-other: #b9c4bb;
-
-  --color-canvas: #f6f9f6;
-  --color-surface: #ffffff;
-  --color-surface-2: #eff4ef;
-  --color-surface-elevated: #e7eee8;
-  --color-border: #e2e9e3;
-  --color-border-strong: #cfdad2;
-  --color-muted: #68766c;
-  --color-fg: #131b15;
-  --color-fg-secondary: #384740;
-  --color-accent: #178a4c;
-  --color-accent-hover: #116e3c;
-  --color-accent-soft: rgba(23, 138, 76, 0.1);
-  --color-accent-muted: #dcf3e6;
-  --color-danger: #e11d48;
-  --color-danger-soft: rgba(225, 29, 72, 0.08);
-  --color-success: #0d9488;
-  --color-success-soft: rgba(13, 148, 136, 0.1);
-  --color-warning: #d97706;
-  --color-warning-soft: rgba(217, 119, 6, 0.1);
-  --color-info: #0284c7;
-  --color-info-soft: rgba(2, 132, 199, 0.1);
-}
-
 @layer base {
-  /* Native form controls must follow the app's theme class, not the OS
-     preference. Scrollbars additionally get explicit palette colors:
-     WKWebView styles inner scrollers from the window appearance, so
-     color-scheme alone leaves a light scrollbar on a dark window (the
-     Rust side also syncs the native window theme via set_theme). */
+  /* Dark-only. Scrollbars get explicit colours because WKWebView styles
+     inner scrollers from the window appearance; the Rust side forces a dark
+     native window at startup to match. */
   html {
-    color-scheme: light;
+    color-scheme: dark;
     scrollbar-color: var(--color-border-strong) transparent;
   }
-  html.dark {
-    color-scheme: dark;
+
+  /* One focus ring for everything interactive: the brand cyan, never removed
+     without a replacement (controls draw their own glow). */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-b);
+    outline-offset: 2px;
   }
 
   html,
@@ -155,6 +156,179 @@ html:not(.dark) {
   html.quick-add body {
     /* Kill the full-app canvas fill so corners stay see-through. */
     background: transparent !important;
+  }
+}
+
+@layer components {
+  /* Every panel. The fill is measured: text on it keeps 4.5:1 wherever the
+     aurora drifts. */
+  .glass-pane {
+    background: var(--glass-fill);
+    -webkit-backdrop-filter: blur(28px) saturate(170%);
+    backdrop-filter: blur(28px) saturate(170%);
+    border: 1px solid var(--glass-edge);
+    box-shadow:
+      inset 0 1px 0 var(--glass-highlight),
+      0 24px 60px rgba(0, 0, 0, 0.35);
+  }
+
+  /* Dialogs float above a scrim, so they sit on a darker backdrop than panes
+     and can afford a stronger, lifted edge. */
+  .glass-dialog {
+    background: rgba(20, 22, 30, 0.66);
+    -webkit-backdrop-filter: blur(32px) saturate(170%);
+    backdrop-filter: blur(32px) saturate(170%);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.12),
+      0 0 0 1px rgba(255, 255, 255, 0.1),
+      0 40px 120px rgba(0, 0, 0, 0.6),
+      0 0 80px rgba(55, 213, 255, 0.08);
+  }
+
+  /* Behind a dialog: the page stays visible, softly, so nobody loses their place. */
+  .glass-scrim {
+    background: rgba(4, 5, 8, 0.42);
+    -webkit-backdrop-filter: blur(10px) saturate(120%);
+    backdrop-filter: blur(10px) saturate(120%);
+  }
+
+  /* Panes clip overflow, so a ring drawn outside an edge-to-edge control
+     disappears. Inside glass, focus rings are drawn inset. */
+  .glass-pane :focus-visible,
+  .glass-dialog :focus-visible {
+    outline-offset: -2px;
+  }
+}
+
+/* Where WebKit reports Reduce Transparency, glass turns solid. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass-pane,
+  .glass-dialog {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--color-surface);
+  }
+
+  .glass-scrim {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgba(4, 5, 8, 0.78);
+  }
+}
+
+@layer components {
+  .aurora {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background: var(--color-canvas);
+  }
+
+  /* One blur over all five blobs; each blob only ever animates transform, so
+     the drift stays on the compositor. */
+  .aurora-blobs {
+    position: absolute;
+    inset: -80px;
+    filter: blur(70px) saturate(1.35);
+  }
+
+  .aurora-blobs i {
+    position: absolute;
+    border-radius: 50%;
+    mix-blend-mode: screen;
+    will-change: transform;
+  }
+
+  .aurora-blobs i:nth-child(1) {
+    left: 14%;
+    top: 5%;
+    width: 48%;
+    height: 52%;
+    background: radial-gradient(closest-side, rgba(46, 230, 166, 0.55), transparent);
+    animation: aurora-drift-a 22s ease-in-out infinite alternate;
+  }
+
+  .aurora-blobs i:nth-child(2) {
+    left: 48%;
+    top: -5%;
+    width: 55%;
+    height: 57%;
+    background: radial-gradient(closest-side, rgba(55, 213, 255, 0.42), transparent);
+    animation: aurora-drift-b 26s ease-in-out infinite alternate;
+  }
+
+  .aurora-blobs i:nth-child(3) {
+    left: 69%;
+    top: 45%;
+    width: 44%;
+    height: 57%;
+    background: radial-gradient(closest-side, rgba(122, 140, 255, 0.5), transparent);
+    animation: aurora-drift-a 30s ease-in-out infinite alternate-reverse;
+  }
+
+  .aurora-blobs i:nth-child(4) {
+    left: 23%;
+    top: 70%;
+    width: 48%;
+    height: 48%;
+    background: radial-gradient(closest-side, rgba(255, 79, 163, 0.34), transparent);
+    animation: aurora-drift-b 24s ease-in-out infinite alternate-reverse;
+  }
+
+  .aurora-blobs i:nth-child(5) {
+    left: -3%;
+    top: 45%;
+    width: 33%;
+    height: 52%;
+    background: radial-gradient(closest-side, rgba(255, 176, 46, 0.22), transparent);
+    animation: aurora-drift-a 28s ease-in-out infinite alternate;
+  }
+
+  .aurora[data-moving="false"] .aurora-blobs i {
+    animation-play-state: paused;
+  }
+
+  /* Page titles and descriptions sit directly on the aurora with no pane to
+     darken it. The brightest blob is top-left, so the veil is strongest there. */
+  .aurora-veil {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      180deg,
+      rgba(5, 6, 10, var(--aurora-veil-top)) 0%,
+      rgba(5, 6, 10, var(--aurora-veil-mid)) 28%,
+      rgba(5, 6, 10, 0) 55%
+    );
+  }
+
+  .aurora-watermark {
+    position: absolute;
+    left: 18%;
+    bottom: -7%;
+    white-space: nowrap;
+    font: 900 clamp(140px, 18vw, 260px) / 1 var(--font-display);
+    color: rgba(255, 255, 255, 0.025);
+    -webkit-text-stroke: 1px rgba(255, 255, 255, 0.07);
+  }
+}
+
+@keyframes aurora-drift-a {
+  to {
+    transform: translate(90px, 40px) scale(1.12);
+  }
+}
+
+@keyframes aurora-drift-b {
+  to {
+    transform: translate(-80px, 50px) scale(0.92);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-blobs i {
+    animation: none;
   }
 }
 
@@ -372,4 +546,66 @@ html:not(.dark) {
   .oik-empty-body {
     animation: none;
   }
+}
+
+/* A Field around a control becomes one glass field box, label inside and above
+   the value. Unlayered on purpose: these rules must beat the control's own
+   Tailwind utilities, which live in a cascade layer. Every rule requires :has(),
+   so an engine without it falls back to the control's own box. */
+.field-box:has(.ui-control) {
+  display: block;
+  padding: 8px 12px 7px;
+  border-radius: var(--radius-control);
+  background: var(--color-control);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+  transition:
+    box-shadow 150ms ease,
+    background-color 150ms ease;
+}
+
+.field-box:has(.ui-control) > span:first-child {
+  margin-bottom: 2px;
+}
+
+.field-box:has(.ui-control):focus-within {
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow:
+    inset 0 0 0 1px rgba(55, 213, 255, 0.7),
+    0 0 0 4px rgba(55, 213, 255, 0.14),
+    0 0 24px rgba(55, 213, 255, 0.18);
+}
+
+/* The ring is the invalid state's indicator, so it uses the text-safe danger colour: 4.85:1 over the brightest glass. */
+.field-box:has(.ui-control[aria-invalid="true"]) {
+  box-shadow:
+    inset 0 0 0 1px var(--color-danger),
+    0 0 0 4px rgba(255, 130, 149, 0.14);
+}
+
+/* The plain invalid rule above and the plain :focus-within rule share the
+   same specificity, so source order alone decides which one a focused
+   invalid field gets — and drops the other. This rule keeps both: the
+   invalid ring stays, and the focus glow is added on top of it. */
+.field-box:has(.ui-control[aria-invalid="true"]):focus-within {
+  box-shadow:
+    inset 0 0 0 1px var(--color-danger),
+    0 0 0 4px rgba(255, 130, 149, 0.14),
+    0 0 24px rgba(55, 213, 255, 0.18);
+}
+
+/* Inside the box the control is bare. */
+.field-box:has(.ui-control) .ui-control {
+  height: 24px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+/* The left padding goes too, except for a control carrying data-adorned: a
+   leading icon (e.g. UnlockScreen's password KeyRound) needs the caller's own
+   left padding kept, or the icon sits over the typed text. Select and
+   DateInput keep right padding for their chevron and calendar button either way. */
+.field-box:has(.ui-control) .ui-control:not([data-adorned]) {
+  padding-left: 0;
 }
