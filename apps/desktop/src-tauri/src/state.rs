@@ -429,8 +429,16 @@ fn run_auto_lock_loop(
 /// Resolve OCR model directory for dev and packaged builds.
 #[must_use]
 pub fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
-    // 1) Tauri resource dir (packaged): …/resources/ocr
+    // 1) Tauri resource dir (packaged). The bundle keeps the `resources/ocr/*`
+    //    path from tauri.conf.json, so on macOS the models sit in
+    //    Contents/Resources/resources/ocr. Without this the lookup fell through
+    //    to the compile-time dev path below, which exists only on the machine
+    //    that built the app.
     if let Some(dir) = resource_dir {
+        let bundled = dir.join("resources").join("ocr");
+        if bundled.join("text-detection.rten").is_file() {
+            return bundled;
+        }
         let candidate = dir.join("ocr");
         if candidate.join("text-detection.rten").is_file() {
             return candidate;
@@ -464,8 +472,8 @@ pub fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{
-        AUTO_LOCK_POLL_INTERVAL, AppState, WatchdogGate, lock_vault, run_auto_lock_loop,
-        should_auto_lock, should_emit_vault_locked,
+        AUTO_LOCK_POLL_INTERVAL, AppState, WatchdogGate, lock_vault, resolve_ocr_model_dir,
+        run_auto_lock_loop, should_auto_lock, should_emit_vault_locked,
     };
     use oikonomia_core::vault::VaultStatus;
     use std::fs;
@@ -477,6 +485,25 @@ mod tests {
     const TEST_PASSWORD: &str = "correct horse battery staple";
     /// Longer than [`AUTO_LOCK_POLL_INTERVAL`] so a still-polling thread would tick.
     const PAST_POLL: Duration = Duration::from_millis(5_500);
+
+    #[test]
+    fn packaged_ocr_models_resolve_from_the_bundle_resources() {
+        // tauri.conf.json bundles `resources/ocr/*`, which keeps that relative
+        // path: on macOS the models land in Contents/Resources/resources/ocr.
+        let resource_dir = std::env::temp_dir().join(format!(
+            "oiko-ocr-bundle-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        let models = resource_dir.join("resources").join("ocr");
+        fs::create_dir_all(&models).expect("models dir");
+        fs::write(models.join("text-detection.rten"), b"model").expect("write model");
+
+        assert_eq!(resolve_ocr_model_dir(Some(resource_dir.clone())), models);
+        let _ = fs::remove_dir_all(&resource_dir);
+    }
 
     #[test]
     fn granted_paths_match_after_canonicalization() {

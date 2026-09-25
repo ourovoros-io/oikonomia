@@ -29,7 +29,7 @@ vi.mock('../lib/expensePdf', async (importOriginal) => {
   }
 })
 
-import { api, todayISO, yearStartISO } from '../lib/api'
+import { api, monthEndISO, monthStartISO, todayISO } from '../lib/api'
 import { buildExpensePdfBytes, suggestedExpensePdfName } from '../lib/expensePdf'
 import { resetI18nForTests, setLocale } from '../lib/i18n'
 import { ReportsPage } from './ReportsPage'
@@ -151,7 +151,7 @@ describe('ReportsPage Export PDF', () => {
       to: '2026-08-31',
       expenses: [expense({ code: '6100', name: 'Rent', balance_minor: 850_00 })],
     })
-    expect(api.reportPnlExport).toHaveBeenCalledWith('e1', yearStartISO(), todayISO())
+    expect(api.reportPnlExport).toHaveBeenCalledWith('e1', monthStartISO(), monthEndISO())
     expect(api.reportExportPdf).toHaveBeenCalledWith({
       bytesBase64: expect.any(String),
       suggestedName: suggestedExpensePdfName('2026-08-01', '2026-08-31'),
@@ -197,7 +197,7 @@ describe('ReportsPage Export PDF', () => {
     })
     await userEvent.click(screen.getByRole('button', { name: 'Export PDF' }))
     await waitFor(() => {
-      expect(api.reportPnlExport).toHaveBeenCalledWith('e1', yearStartISO(), todayISO())
+      expect(api.reportPnlExport).toHaveBeenCalledWith('e1', monthStartISO(), monthEndISO())
     })
     expect(buildExpensePdfBytes).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -234,11 +234,20 @@ describe('ReportsPage Export PDF', () => {
 })
 
 describe('ReportsPage historical dates', () => {
+  test('opens on the current month, the same window as the dashboard', async () => {
+    render(<ReportsPage entity={entity} />)
+
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', monthStartISO(), monthEndISO())
+    })
+    expect(api.reportPnl).not.toHaveBeenCalledWith('e1', expect.stringMatching(/-01-01$/), expect.anything())
+  })
+
   test('changing From refetches P&L for the new window', async () => {
     const user = userEvent.setup()
     render(<ReportsPage entity={entity} />)
     await waitFor(() => {
-      expect(api.reportPnl).toHaveBeenCalledWith('e1', yearStartISO(), todayISO())
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', monthStartISO(), monthEndISO())
     })
 
     const from = screen.getByLabelText('Report from date')
@@ -247,7 +256,7 @@ describe('ReportsPage historical dates', () => {
     await user.tab()
 
     await waitFor(() => {
-      expect(api.reportPnl).toHaveBeenCalledWith('e1', '2025-03-01', todayISO())
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', '2025-03-01', monthEndISO())
     })
   })
 
@@ -255,8 +264,8 @@ describe('ReportsPage historical dates', () => {
     vi.mocked(api.reportPnl)
       .mockResolvedValueOnce(
         pnl({
-          from: yearStartISO(),
-          to: todayISO(),
+          from: monthStartISO(),
+          to: monthEndISO(),
           expenses: [expense({ code: '6100', name: 'Rent', balance_minor: 850_00 })],
         }),
       )
@@ -282,15 +291,15 @@ describe('ReportsPage historical dates', () => {
     vi.mocked(api.reportPnl)
       .mockResolvedValueOnce(
         pnl({
-          from: yearStartISO(),
-          to: todayISO(),
+          from: monthStartISO(),
+          to: monthEndISO(),
           expenses: [expense({ code: '6100', name: 'Rent', balance_minor: 850_00 })],
         }),
       )
       .mockResolvedValueOnce(
         pnl({
           from: '2025-01-01',
-          to: todayISO(),
+          to: monthEndISO(),
           expenses: [expense({ code: '5100', name: 'Groceries', balance_minor: 40_00 })],
           total_expenses: 40_00,
           net_income: -40_00,
@@ -339,7 +348,7 @@ describe('ReportsPage historical dates', () => {
       second.resolve(
         pnl({
           from: '2025-01-01',
-          to: todayISO(),
+          to: monthEndISO(),
           expenses: [expense({ code: '5100', name: 'Groceries', balance_minor: 40_00 })],
           total_expenses: 40_00,
           net_income: -40_00,
@@ -382,7 +391,7 @@ describe('ReportsPage historical dates', () => {
     const user = userEvent.setup()
     render(<ReportsPage entity={entity} />)
     await waitFor(() => {
-      expect(api.reportPnl).toHaveBeenCalledWith('e1', yearStartISO(), todayISO())
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', monthStartISO(), monthEndISO())
     })
 
     const to = screen.getByLabelText('Report to date')
@@ -391,7 +400,7 @@ describe('ReportsPage historical dates', () => {
     await user.tab()
 
     await waitFor(() => {
-      expect(api.reportPnl).toHaveBeenCalledWith('e1', yearStartISO(), '2025-06-30')
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', monthStartISO(), '2025-06-30')
     })
   })
 
@@ -442,8 +451,8 @@ describe('ReportsPage statements', () => {
   test('empty P&L period shows the empty-line copy', async () => {
     vi.mocked(api.reportPnl).mockResolvedValue(
       pnl({
-        from: yearStartISO(),
-        to: todayISO(),
+        from: monthStartISO(),
+        to: monthEndISO(),
         income: [],
         expenses: [],
         total_income: 0,

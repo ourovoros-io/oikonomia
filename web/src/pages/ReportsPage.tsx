@@ -4,8 +4,9 @@ import {
   api,
   formatDate,
   formatMoney,
+  monthEndISO,
+  monthStartISO,
   todayISO,
-  yearStartISO,
   type BalanceSheet,
   type Entity,
   type PnL,
@@ -61,8 +62,9 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [tab, setTab] = useState<Tab>('pnl')
   const [asOf, setAsOf] = useState(todayISO())
-  const [from, setFrom] = useState(yearStartISO())
-  const [to, setTo] = useState(todayISO())
+  // The P&L opens on the current month, the same window as the dashboard's Month.
+  const [from, setFrom] = useState(monthStartISO())
+  const [to, setTo] = useState(monthEndISO())
   const [error, setError] = useState<string | null>(null)
   const [tb, setTb] = useState<TrialBalance | null>(null)
   const [pnl, setPnl] = useState<PnL | null>(null)
@@ -199,36 +201,42 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
       />
 
       <Card>
-        <div className="flex flex-wrap items-center gap-3">
-          {tab === 'pnl' ? (
-            <>
-              <Field label={t('rpt.from')} className="w-44">
-                <DateInput value={from} onChange={setFrom} required aria-label={t('rpt.fromDate')} />
+        {/* Dates on the left, actions on the right edge of the card. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {tab === 'pnl' ? (
+              <>
+                <Field label={t('rpt.from')} className="w-40">
+                  <DateInput value={from} onChange={setFrom} required aria-label={t('rpt.fromDate')} />
+                </Field>
+                <Field label={t('rpt.to')} className="w-40">
+                  <DateInput value={to} onChange={setTo} required aria-label={t('rpt.toDate')} />
+                </Field>
+              </>
+            ) : (
+              <Field label={t('rpt.asOf')} className="w-40">
+                <DateInput value={asOf} onChange={setAsOf} required aria-label={t('rpt.asOfDate')} />
               </Field>
-              <Field label={t('rpt.to')} className="w-44">
-                <DateInput value={to} onChange={setTo} required aria-label={t('rpt.toDate')} />
-              </Field>
-            </>
-          ) : (
-            <Field label={t('rpt.asOf')} className="w-44">
-              <DateInput value={asOf} onChange={setAsOf} required aria-label={t('rpt.asOfDate')} />
-            </Field>
-          )}
-          <Button variant="secondary" onClick={run} disabled={pdfBusy}>
-            <RefreshCw className="size-4" />
-            {t('rpt.refresh')}
-          </Button>
-          {tab === 'pnl' ? (
-            <Button
-              variant="secondary"
-              busy={pdfBusy}
-              disabled={pdfBusy}
-              onClick={() => void onExportPdf()}
-            >
-              <FileText className="size-4" />
-              {pdfBusy ? t('reports.pdf.busy') : t('reports.exportPdf')}
+            )}
+          </div>
+          {/* Equal columns: both buttons take the wider one's width in every language. */}
+          <div className="ml-auto grid auto-cols-fr grid-flow-col gap-3">
+            <Button variant="secondary" onClick={run} disabled={pdfBusy}>
+              <RefreshCw className="size-4" />
+              {t('rpt.refresh')}
             </Button>
-          ) : null}
+            {tab === 'pnl' ? (
+              <Button
+                variant="secondary"
+                busy={pdfBusy}
+                disabled={pdfBusy}
+                onClick={() => void onExportPdf()}
+              >
+                {pdfBusy ? null : <FileText className="size-4" />}
+                {pdfBusy ? t('reports.pdf.busy') : t('reports.exportPdf')}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </Card>
 
