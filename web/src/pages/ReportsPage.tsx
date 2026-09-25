@@ -4,8 +4,9 @@ import {
   api,
   formatDate,
   formatMoney,
+  monthEndISO,
+  monthStartISO,
   todayISO,
-  yearStartISO,
   type BalanceSheet,
   type Entity,
   type PnL,
@@ -61,8 +62,9 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [tab, setTab] = useState<Tab>('pnl')
   const [asOf, setAsOf] = useState(todayISO())
-  const [from, setFrom] = useState(yearStartISO())
-  const [to, setTo] = useState(todayISO())
+  // The P&L opens on the current month, the same window as the dashboard's Month.
+  const [from, setFrom] = useState(monthStartISO())
+  const [to, setTo] = useState(monthEndISO())
   const [error, setError] = useState<string | null>(null)
   const [tb, setTb] = useState<TrialBalance | null>(null)
   const [pnl, setPnl] = useState<PnL | null>(null)
