@@ -6,6 +6,12 @@ Real screenshots of this app for the marketing site (`oikonomia-website`).
 from a fictional demo ledger (`fixture/`). It is a dev-only entry and is never
 part of the desktop build.
 
+One-time setup, installs the Chromium build Playwright drives:
+
+    npx playwright install chromium
+
+Then, whenever a capture is needed:
+
     npm run capture:marketing -- --out ../../oikonomia-website/public/app
 
 Writes `{en,el}/{dashboard,transactions,documents,reports}.png`: 1440x900 at
