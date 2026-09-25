@@ -35,8 +35,8 @@ export function TopBar({
   if (!slots) {
     return (
       <div className="mb-1 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex min-w-0 items-baseline gap-2.5">{heading}</div>
-        {actions ? <div className="flex flex-wrap items-center gap-2.5">{actions}</div> : null}
+        <div className="flex min-w-0 items-baseline gap-3">{heading}</div>
+        {actions ? <div className="flex flex-wrap items-center gap-3">{actions}</div> : null}
       </div>
     )
   }

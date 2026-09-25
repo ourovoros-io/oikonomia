@@ -21,13 +21,13 @@ import {
 import { beginExclusive } from '../lib/guards'
 import { DateInput } from '../components/DateInput'
 import { ExpenseDonut } from '../components/ExpenseDonut'
+import { TopBar } from '../components/TopBar'
 import {
   Button,
   Card,
   EmptyState,
   ErrorBanner,
   Field,
-  PageHeader,
   Panel,
   Segmented,
 } from '../components/ui'
@@ -177,12 +177,10 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
   const ccy = entity.base_currency
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={t('rpt.eyebrow')}
+    <div className="space-y-4">
+      <TopBar
         title={t('rpt.title')}
-        description={t('rpt.description')}
-        meta={entity.name}
+        subtitle={`${entity.name} · ${ccy}`}
         actions={
           <Segmented<Tab>
             value={tab}
@@ -201,7 +199,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
       />
 
       <Card>
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {tab === 'pnl' ? (
             <>
               <Field label={t('rpt.from')} className="w-44">
@@ -265,10 +263,10 @@ function Statement({
   return (
     <Card padding="lg" className="mx-auto w-full max-w-2xl">
       <div className="mb-6 border-b border-[var(--color-border)] pb-4 text-center">
-        <p className="text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+        <p className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
           {entityName}
         </p>
-        <h3 className="mt-1 text-lg font-semibold tracking-tight text-[var(--color-fg)]">
+        <h3 className="mt-1 text-xl font-semibold tracking-tight text-[var(--color-fg)]">
           {title}
         </h3>
         <p className="mt-0.5 text-xs text-[var(--color-muted)]">
@@ -282,7 +280,7 @@ function Statement({
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="mt-6 mb-1 text-[11px] font-semibold tracking-[0.12em] text-[var(--color-muted)] uppercase first:mt-0">
+    <div className="mt-6 mb-1 font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase first:mt-0">
       {children}
     </div>
   )
@@ -291,8 +289,10 @@ function SectionLabel({ children }: { children: ReactNode }) {
 function LineRow({ line, ccy }: { line: ReportLine; ccy: string }) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-1.5">
-      <div className="flex min-w-0 items-baseline gap-2.5">
-        <span className="shrink-0 text-xs tabular-nums text-[var(--color-muted)]">{line.code}</span>
+      <div className="flex min-w-0 items-baseline gap-3">
+        {/* Fixed code column: a line without a code (current year earnings)
+            still starts its name where the others do. */}
+        <span className="w-10 shrink-0 text-xs tabular-nums text-[var(--color-muted)]">{line.code}</span>
         <span className="truncate text-sm text-[var(--color-fg-secondary)]">{line.name}</span>
       </div>
       <span className="shrink-0 text-sm tabular-nums text-[var(--color-fg)]">
@@ -354,7 +354,7 @@ function TotalRow({
 function PnlView({ pnl, entityName, ccy }: { pnl: PnL; entityName: string; ccy: string }) {
   const net = pnl.net_income
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Statement
         entityName={entityName}
         title={t('rpt.profitLoss')}
@@ -457,13 +457,13 @@ function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: stri
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-[var(--color-border)]">
-              <th className="py-2 pr-4 text-left text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+              <th className="py-2 pr-4 text-left font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
                 {t('rpt.account')}
               </th>
-              <th className="w-32 py-2 pl-4 text-right text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+              <th className="w-32 py-2 pl-4 text-right font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
                 {t('rpt.debit')}
               </th>
-              <th className="w-32 py-2 pl-4 text-right text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+              <th className="w-32 py-2 pl-4 text-right font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
                 {t('rpt.credit')}
               </th>
             </tr>
@@ -471,16 +471,16 @@ function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: stri
           <tbody>
             {tb.lines.map((l) => (
               <tr key={l.code + l.name} className="border-b border-[var(--color-border)]/60">
-                <td className="py-2 pr-4">
-                  <span className="mr-2.5 text-xs tabular-nums text-[var(--color-muted)]">
+                <td className="py-1.5 pr-4">
+                  <span className="mr-3 inline-block w-10 text-xs tabular-nums text-[var(--color-muted)]">
                     {l.code}
                   </span>
                   <span className="text-[var(--color-fg-secondary)]">{l.name}</span>
                 </td>
-                <td className="py-2 pl-4 text-right tabular-nums text-[var(--color-fg)]">
+                <td className="py-1.5 pl-4 text-right tabular-nums text-[var(--color-fg)]">
                   {l.debit_minor ? formatMoney(l.debit_minor, ccy) : '—'}
                 </td>
-                <td className="py-2 pl-4 text-right tabular-nums text-[var(--color-fg)]">
+                <td className="py-1.5 pl-4 text-right tabular-nums text-[var(--color-fg)]">
                   {l.credit_minor ? formatMoney(l.credit_minor, ccy) : '—'}
                 </td>
               </tr>

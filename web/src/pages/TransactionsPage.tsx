@@ -626,10 +626,7 @@ export function TransactionsPage({
 
   if (subview === 'recurring') {
     return (
-      <>
-        <TopBar title={t('tx.title')} subtitle={`${entity.name} · ${ccy}`} />
-        <RecurringPage entity={entity} onBack={() => setSubview('journal')} />
-      </>
+      <RecurringPage entity={entity} onBack={() => setSubview('journal')} />
     )
   }
 
@@ -714,7 +711,7 @@ export function TransactionsPage({
   }
 
   return (
-    <div className="space-y-3.5">
+    <div className="space-y-4">
       <TopBar title={t('tx.title')} subtitle={`${entity.name} · ${ccy}`} actions={newEntryButton} />
 
       <ErrorBanner id={errorBannerId} message={error} />
@@ -752,20 +749,23 @@ export function TransactionsPage({
         onConfirm={() => void confirmVoid()}
       />
 
-      <div className="grid gap-3.5 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
-        <section aria-labelledby={summaryHeadingId} className="glass-pane relative overflow-hidden rounded-[22px]">
-          <div className="flex flex-wrap items-start justify-between gap-3.5 px-5.5 pt-4.5">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
+        <section
+          aria-labelledby={summaryHeadingId}
+          className="glass-pane relative flex flex-col overflow-hidden rounded-[20px]"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-4 px-5 pt-5">
             <div className="min-w-0">
               <h2
                 id={summaryHeadingId}
-                className="font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase"
+                className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase"
               >
                 {range ? t('tx.summary.inView', { range }) : t('tx.summary.inViewEmpty')}
               </h2>
               <p
                 data-net={netTone}
                 className={cn(
-                  'mt-2 truncate text-[2.125rem] leading-none font-semibold tracking-[-0.01em] tabular-nums',
+                  'mt-2 truncate text-[2rem] leading-none font-semibold tracking-[-0.01em] tabular-nums',
                   netTone === 'in' ? 'net-figure-in' : netTone === 'out' ? 'net-figure-out' : 'text-[var(--color-fg)]',
                 )}
               >
@@ -795,7 +795,8 @@ export function TransactionsPage({
           <CashFlowPulse
             series={series}
             formatAmount={(minor) => formatMoney(minor, ccy)}
-            className="mt-3 h-[72px]"
+            // Grows with the drop zone beside it, so the pane has no empty band.
+            className="mx-5 mt-3 mb-5 min-h-[72px] flex-1"
             label={
               series && range
                 ? t('dashboard.light.label', {
@@ -809,7 +810,7 @@ export function TransactionsPage({
           />
         </section>
 
-        <section className="glass-pane rounded-[22px] p-2.5">
+        <section className="glass-pane rounded-[20px] p-2">
           <DocumentDropZone
             entityId={entity.id}
             onSuggestion={(s, source) => {
@@ -824,7 +825,7 @@ export function TransactionsPage({
         </section>
       </div>
 
-      <div className="glass-pane grid gap-2 rounded-[18px] p-2 md:grid-cols-[minmax(0,1fr)_9.5rem_9.5rem_12rem]">
+      <div className="glass-pane grid gap-2 rounded-[20px] p-2 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_9.5rem_9.5rem_12rem]">
         <Field label={t('tx.search')}>
           <Input
             value={search}
@@ -1171,7 +1172,7 @@ export function TransactionsPage({
                 <li
                   key={view.entry.id}
                   onClick={() => setDetailId(view.entry.id)}
-                  className="group flex cursor-pointer items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.05] focus-within:bg-white/[0.05]"
+                  className="group flex cursor-pointer items-center gap-4 px-5 py-3 transition hover:bg-white/[0.05] focus-within:bg-white/[0.05]"
                 >
                   <IconBadge tone={tone}>
                     {kindLabel === 'income' ? (
@@ -1191,7 +1192,7 @@ export function TransactionsPage({
                       </span>
                       {view.entry.hidden ? <HiddenBadge /> : null}
                     </div>
-                    <div className="truncate text-xs text-[var(--color-muted)]">
+                    <div className="truncate text-xs text-[var(--color-muted)] tabular-nums">
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       <span>{t(`kind.${kindLabel}`)}</span>
@@ -1199,30 +1200,36 @@ export function TransactionsPage({
                       {parts}
                     </div>
                   </button>
-                  {(docsByEntry.get(view.entry.id)?.length ?? 0) > 0 ? (
-                    <Paperclip
-                      className="size-3.5 shrink-0 text-[var(--color-muted)]"
-                      aria-label={t('tx.hasDocument')}
-                    />
-                  ) : null}
-                  <AmountPill tone={kindLabel === 'income' ? 'in' : kindLabel === 'expense' ? 'out' : 'neutral'}>
-                    {formatMoney(signed, ccy, undefined, {
-                      signed: kindLabel === 'expense' || kindLabel === 'income',
-                    })}
-                  </AmountPill>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setVoidId(view.entry.id)
-                    }}
-                    aria-label={t('tx.deleteEntry')}
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
+                  {/* Fixed slots: the paperclip keeps one column whatever the
+                      amount's width, and amounts right-align in their own. */}
+                  <span className="flex size-4 shrink-0 items-center justify-center">
+                    {(docsByEntry.get(view.entry.id)?.length ?? 0) > 0 ? (
+                      <Paperclip className="size-4 text-[var(--color-muted)]" aria-label={t('tx.hasDocument')} />
+                    ) : null}
+                  </span>
+                  {/* Amount and its delete slot sit as one group, 8px apart. */}
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span className="flex min-w-32 justify-end">
+                      <AmountPill tone={kindLabel === 'income' ? 'in' : kindLabel === 'expense' ? 'out' : 'neutral'}>
+                        {formatMoney(signed, ccy, undefined, {
+                          signed: kindLabel === 'expense' || kindLabel === 'income',
+                        })}
+                      </AmountPill>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="iconSm"
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setVoidId(view.entry.id)
+                      }}
+                      aria-label={t('tx.deleteEntry')}
+                      title={t('common.delete')}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </span>
                 </li>
               )
             })}

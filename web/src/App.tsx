@@ -345,9 +345,10 @@ export default function App() {
           <div className="flex min-w-0 flex-1 flex-col">
             <TrialBanner license={license} />
             <header className="flex h-16 shrink-0 items-center justify-between gap-4 px-7">
-              <div className="flex min-w-0 items-baseline gap-2.5">
-                {/* A page rendering <TopBar> fills this slot and claims the title. */}
-                <div ref={setTitleSlot} className="flex min-w-0 items-baseline gap-2.5" />
+              <div className="flex min-w-0 items-baseline gap-3">
+                {/* A page rendering <TopBar> fills this slot and claims the title.
+                    Hidden while empty, or its flex gap would shift the fallback title. */}
+                <div ref={setTitleSlot} className="flex min-w-0 items-baseline gap-3 empty:hidden" />
                 {titleClaims === 0 ? (
                   <>
                     <span className="truncate text-xl font-semibold tracking-tight">
@@ -364,8 +365,8 @@ export default function App() {
                   </>
                 ) : null}
               </div>
-              <div className="flex shrink-0 items-center gap-2.5">
-                <div ref={setActionsSlot} className="flex items-center gap-2.5" />
+              <div className="flex shrink-0 items-center gap-3">
+                <div ref={setActionsSlot} className="flex items-center gap-3 empty:hidden" />
                 <button
                   type="button"
                   onClick={() => void onLock()}

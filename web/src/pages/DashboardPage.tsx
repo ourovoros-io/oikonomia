@@ -188,7 +188,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
   const noValue = t('dashboard.arc.noValue')
 
   return (
-    <div className="space-y-3.5">
+    <div className="space-y-4">
       <TopBar
         title={entity.name}
         subtitle={`${periodTitle} · ${ccy}`}
@@ -210,14 +210,14 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
       <Hero>
         <div className="flex flex-wrap items-start justify-between gap-6 px-7 pt-6">
           <div className="min-w-0">
-            <p className="font-mono text-[11px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase">
+            <p className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
               {t('dash.netThis', { period: periodWord })}
             </p>
             <p
               data-net={netTone}
               title={money(net, true)}
               className={cn(
-                'mt-2.5 truncate text-[clamp(2.75rem,5.2vw,4.125rem)] leading-none font-semibold tracking-[-0.02em] tabular-nums',
+                'mt-3 truncate text-[clamp(2.75rem,5.2vw,4rem)] leading-none font-semibold tracking-[-0.02em] tabular-nums',
                 netTone === 'in'
                   ? 'net-figure-in'
                   : netTone === 'out'
@@ -228,7 +228,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
               {pending ? '—' : money(net, true)}
             </p>
             {savings !== null && savings > 0 ? (
-              <p className="mt-2.5 text-[15px] text-[var(--color-fg-secondary)]">
+              <p className="mt-3 text-sm text-[var(--color-fg-secondary)]">
                 {t('dashboard.hero.kept', { percent: formatPercentFromBps(savings, locale) })}
               </p>
             ) : null}
@@ -242,7 +242,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
         <CashFlowPulse
           series={series}
           formatAmount={(minor) => money(minor)}
-          className="mx-5 mt-4 h-[132px]"
+          className="mx-7 mt-4 mb-6 h-[132px]"
           label={
             data
               ? t('dashboard.light.label', {
@@ -256,7 +256,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
         />
       </Hero>
 
-      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <ArcTile
           label={t('dashboard.arc.savings.label')}
           hint={t('dashboard.arc.savings.hint')}
@@ -325,7 +325,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
                   <div className="truncate text-sm font-medium text-[var(--color-fg)]">
                     {row.description}
                   </div>
-                  <div className="text-xs text-[var(--color-muted)]">
+                  <div className="text-xs text-[var(--color-muted)] tabular-nums">
                     {row.date}
                     <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                     <span>{t(`kind.${row.kind}`)}</span>

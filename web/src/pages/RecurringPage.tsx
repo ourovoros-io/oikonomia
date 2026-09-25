@@ -34,6 +34,7 @@ import {
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DateInput } from '../components/DateInput'
 import { Modal } from '../components/Modal'
+import { TopBar } from '../components/TopBar'
 import {
   Button,
   EmptyState,
@@ -41,7 +42,6 @@ import {
   Field,
   IconBadge,
   Input,
-  PageHeader,
   Panel,
   Segmented,
   Select,
@@ -111,7 +111,7 @@ function Pill({
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center rounded-full px-1.5 py-px text-[10px] font-medium leading-4',
+        'inline-flex h-5 shrink-0 items-center rounded-full px-2 text-[11px] font-medium',
         tone === 'warning'
           ? 'bg-[var(--color-warning-soft)] text-[var(--color-warning)]'
           : 'bg-[var(--color-surface-elevated)] text-[var(--color-muted)]',
@@ -340,8 +340,8 @@ export function RecurringPage({ entity, onBack }: Props) {
   }
 
   const newButton = (
-    <Button size="sm" onClick={openNew}>
-      <Plus className="size-3" />
+    <Button onClick={openNew}>
+      <Plus className="size-4" />
       {t('recurring.new')}
     </Button>
   )
@@ -352,15 +352,18 @@ export function RecurringPage({ entity, onBack }: Props) {
       : `${t('recurring.templatesCount', { n: templates.length })} · ${t('recurring.dueCount', { n: dueCount })} · ${ccy}`
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        breadcrumb={[
-          { label: t('tx.title'), onClick: onBack },
-          { label: t('recurring.title') },
-        ]}
+    <div className="space-y-4">
+      <TopBar
         title={t('recurring.title')}
-        description={t('recurring.subtitle')}
-        actions={newButton}
+        subtitle={t('recurring.subtitle')}
+        actions={
+          <>
+            <Button variant="secondary" onClick={onBack}>
+              {t('recurring.backToEntries')}
+            </Button>
+            {newButton}
+          </>
+        }
       />
 
       <ErrorBanner message={error} />
@@ -372,7 +375,7 @@ export function RecurringPage({ entity, onBack }: Props) {
         onClose={closeForm}
       >
         <div className="mb-5">
-          <p className="mb-1.5 text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+          <p className="mb-1.5 font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
             {t('recurring.form.kind')}
           </p>
           <Segmented<RecurringKind>
@@ -602,11 +605,6 @@ export function RecurringPage({ entity, onBack }: Props) {
         title={t('recurring.templates')}
         description={listMeta}
         whisper={templates.length > 0 ? t('recurring.whisper') : undefined}
-        actions={
-          <Button variant="secondary" size="sm" onClick={onBack}>
-            {t('recurring.backToEntries')}
-          </Button>
-        }
       >
         {templates.length === 0 ? (
           <div className="p-5">
@@ -622,7 +620,7 @@ export function RecurringPage({ entity, onBack }: Props) {
             {templates.map((row) => {
               const income = row.kind === 'income'
               return (
-                <li key={row.id} className="flex items-center gap-4 px-5 py-3.5">
+                <li key={row.id} className="flex items-center gap-4 px-5 py-3">
                   <KindTile kind={row.kind} />
                   <div className="min-w-0 flex-1">
                     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -662,8 +660,7 @@ export function RecurringPage({ entity, onBack }: Props) {
                   </Button>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0"
+                    size="iconSm"
                     onClick={() => openEdit(row)}
                     aria-label={t('recurring.form.titleEdit')}
                     title={t('recurring.form.titleEdit')}

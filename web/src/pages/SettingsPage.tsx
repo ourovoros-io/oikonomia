@@ -39,6 +39,7 @@ import {
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
+import { TopBar } from '../components/TopBar'
 import {
   Button,
   ChoiceCard,
@@ -47,7 +48,6 @@ import {
   Field,
   IconBadge,
   Input,
-  PageHeader,
   Select,
 } from '../components/ui'
 import {
@@ -128,7 +128,7 @@ function LanguagePill({
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      className="grid w-fit grid-flow-col auto-cols-fr rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-[3px]"
+      className="grid h-10 w-fit grid-flow-col auto-cols-fr gap-0.5 rounded-full bg-white/[0.04] p-1 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.08)]"
     >
       {LOCALES.map((id) => {
         const active = value === id
@@ -140,10 +140,11 @@ function LanguagePill({
             aria-checked={active}
             onClick={() => onChange(id)}
             className={cn(
-              'inline-flex h-[26px] w-full items-center justify-center rounded-full px-3 text-sm font-medium transition',
+              // Same look as the shared Segmented control.
+              'inline-flex h-8 w-full items-center justify-center rounded-full px-3 text-[13px] font-medium transition',
               active
-                ? 'bg-[#f4f6f4] text-[#131b15] shadow-sm'
-                : 'text-[var(--color-muted)]',
+                ? 'bg-white/10 text-[var(--color-fg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]',
             )}
           >
             {t(`settings.language.option.${id}`)}
@@ -484,13 +485,8 @@ export function SettingsPage({
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={t('settings.eyebrow')}
-        title={t('settings.title')}
-        description={t('settings.description')}
-        meta={t('settings.meta')}
-      />
+    <div className="space-y-4">
+      <TopBar title={t('settings.title')} subtitle={t('settings.description')} />
 
       <ErrorBanner id={errorBannerId} message={error} />
       {notice ? (
@@ -588,10 +584,10 @@ export function SettingsPage({
               </Button>
             ) : null}
           </div>
-          <ErrorBanner message={licenseError} className="" />
+          <ErrorBanner message={licenseError} />
           <button
             type="button"
-            className="text-xs text-[var(--color-muted)] underline-offset-2 hover:text-[var(--color-fg)] hover:underline"
+            className="inline-flex h-8 items-center text-xs text-[var(--color-muted)] underline-offset-2 hover:text-[var(--color-fg)] hover:underline"
             onClick={() => setEulaOpen(true)}
           >
             {t('settings.license.viewEula')}
@@ -767,7 +763,7 @@ export function SettingsPage({
           </div>
 
           <div>
-            <span className="mb-1.5 block text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+            <span className="mb-1.5 block font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
               {t('settings.newEntity.chartTemplate')}
             </span>
             <div className="grid gap-3 sm:grid-cols-3">
@@ -835,9 +831,10 @@ export function SettingsPage({
             {entities.map((e) => (
               <li
                 key={e.id}
-                className="flex items-center gap-4 px-5 py-3.5 transition hover:bg-[var(--color-surface-2)]/50"
+                className="flex items-center gap-3 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50"
               >
-                <IconBadge tone="accent">
+                {/* Same tile and gap as the section header, so names start under its title. */}
+                <IconBadge tone="accent" size="sm">
                   <Building2 className="size-4" />
                 </IconBadge>
                 <div className="min-w-0 flex-1">
@@ -856,8 +853,7 @@ export function SettingsPage({
                   </Button>
                   <Button
                     variant="danger"
-                    size="icon"
-                    className="h-8 w-8"
+                    size="iconSm"
                     onClick={() => setPendingDelete({ id: e.id, name: e.name })}
                     aria-label={t('settings.entities.deleteAria', { name: e.name })}
                     title={t('common.delete')}
@@ -869,7 +865,7 @@ export function SettingsPage({
             ))}
           </ul>
         )}
-        <div className="flex flex-wrap items-center gap-3 border-t border-[var(--color-border)] px-5 py-3.5">
+        <div className="flex flex-wrap items-center gap-3 border-t border-[var(--color-border)] px-5 py-3">
           {addAnotherBook ? null : (
             <p className="text-xs leading-snug text-[var(--color-muted)]">
               {t('license.entityLimitHint')}

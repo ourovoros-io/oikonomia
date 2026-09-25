@@ -26,6 +26,7 @@ import { parseMajorToMinor } from '../lib/money'
 import { DateInput } from '../components/DateInput'
 import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
+import { TopBar } from '../components/TopBar'
 import {
   Button,
   Card,
@@ -35,7 +36,6 @@ import {
   IconBadge,
   Input,
   MetricCard,
-  PageHeader,
   Panel,
   Select,
 } from '../components/ui'
@@ -236,10 +236,10 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
 
   if (registerAccount) {
     return (
-      <div className="space-y-6">
-        <PageHeader
-          eyebrow={t('acct.eyebrow')}
+      <div className="space-y-4">
+        <TopBar
           title={t('accounts.register.title', { name: registerAccount.name })}
+          subtitle={`${entity.name} · ${entity.base_currency}`}
           actions={
             <Button variant="secondary" onClick={() => setRegisterAccount(null)}>
               {t('accounts.register.back')}
@@ -275,7 +275,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                 <tbody className="divide-y divide-[var(--color-border)]">
                   {registerLines.map((line) => (
                     <tr key={line.entry_id} className={cn(line.hidden && 'opacity-50')}>
-                      <td className="px-5 py-3 whitespace-nowrap text-xs text-[var(--color-muted)]">
+                      <td className="px-5 py-3 whitespace-nowrap text-xs text-[var(--color-muted)] tabular-nums">
                         {formatDate(line.entry_date)}
                       </td>
                       <td className="px-5 py-3">
@@ -303,12 +303,10 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={t('acct.eyebrow')}
+    <div className="space-y-4">
+      <TopBar
         title={t('acct.title')}
-        description={t('acct.description', { name: entity.name })}
-        meta={t('acct.meta', { count: counts.total })}
+        subtitle={`${entity.name} · ${entity.base_currency}`}
         actions={
           <Button onClick={() => setShowForm((v) => !v)}>
             <Plus className="size-4" />
@@ -319,7 +317,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
 
       <ErrorBanner message={error} />
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           label={t('acct.activeAccounts')}
           hint={t('acct.inThisBook')}
@@ -349,10 +347,10 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       </div>
 
       {showForm ? (
-        <Card padding="lg">
+        <Card>
           <div className="mb-5">
-            <h3 className="text-sm font-semibold text-[var(--color-fg)]">{t('acct.newAccount')}</h3>
-            <p className="text-xs text-[var(--color-muted)]">{t('acct.newAccountHint')}</p>
+            <h3 className="text-base leading-6 font-semibold text-[var(--color-fg)]">{t('acct.newAccount')}</h3>
+            <p className="text-[13px] leading-5 text-[var(--color-muted)]">{t('acct.newAccountHint')}</p>
           </div>
           <form onSubmit={onCreate} className="grid gap-4 sm:grid-cols-3">
             <Field label={t('acct.code')}>
@@ -471,7 +469,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                 <li
                   key={a.id}
                   className={cn(
-                    'flex items-center gap-4 px-5 py-3.5 transition hover:bg-[var(--color-surface-2)]/50',
+                    'flex items-center gap-4 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50',
                     !a.is_active && 'opacity-45',
                   )}
                 >
@@ -480,7 +478,8 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                   </IconBadge>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="text-sm font-medium tabular-nums text-[var(--color-fg)]">
+                      {/* A fixed code column, so names line up whatever the code's length. */}
+                      <span className="inline-block min-w-10 text-sm font-medium tabular-nums text-[var(--color-fg)]">
                         {a.code}
                       </span>
                       <span className="text-sm text-[var(--color-fg)]">{a.name}</span>
@@ -496,8 +495,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                   </div>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0"
+                    size="iconSm"
                     onClick={() => openRegister(a)}
                     aria-label={t('accounts.register.title', { name: a.name })}
                     title={t('accounts.register.title', { name: a.name })}
@@ -508,20 +506,21 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                   (a.account_type === 'asset' || a.account_type === 'liability') ? (
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
+                      size="iconSm"
                       onClick={() => openBalance(a)}
                       aria-label={t('acct.setBalanceAria', { name: a.name })}
                       title={t('acct.setBalance')}
                     >
                       <Coins className="size-4" />
                     </Button>
-                  ) : null}
+                  ) : (
+                    // Keeps the action icons in columns when a row has fewer of them.
+                    <span aria-hidden className="size-8 shrink-0" />
+                  )}
                   {a.is_active && !a.is_system ? (
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
+                      size="iconSm"
                       onClick={() => void onArchive(a.id)}
                       aria-label={t('acct.deactivateAria')}
                       title={t('acct.deactivate')}
@@ -529,7 +528,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                       <CircleOff className="size-4" />
                     </Button>
                   ) : (
-                    <span className="inline-block h-8 w-8 shrink-0" />
+                    <span aria-hidden className="size-8 shrink-0" />
                   )}
                 </li>
               )
