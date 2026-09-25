@@ -1,0 +1,11 @@
+/* Captures keep only the app's panes and text; the marketing site supplies
+   its own aurora behind them, so the backdrop must be fully transparent. */
+html.marketing-capture,
+html.marketing-capture body,
+html.marketing-capture #root {
+  background: transparent !important;
+}
+
+html.marketing-capture .aurora {
+  display: none !important;
+}
