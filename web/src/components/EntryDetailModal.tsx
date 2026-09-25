@@ -151,7 +151,7 @@ export function EntryDetailModal({
         <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-[var(--color-surface-2)] text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+              <tr className="bg-[var(--color-surface-2)] font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
                 <th className="px-4 py-2.5 text-left">{t('entry.account')}</th>
                 <th className="px-4 py-2.5 text-right">{t('entry.debit')}</th>
                 <th className="px-4 py-2.5 text-right">{t('entry.credit')}</th>
@@ -192,7 +192,7 @@ export function EntryDetailModal({
 
         <div>
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+            <span className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
               {t('entry.attachments')}
             </span>
             <Button
@@ -236,8 +236,7 @@ export function EntryDetailModal({
                   </div>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
+                    size="iconSm"
                     onClick={() => onView(doc.id)}
                     aria-label={t('docs.viewAria')}
                     title={t('docs.view')}
@@ -246,8 +245,7 @@ export function EntryDetailModal({
                   </Button>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
+                    size="iconSm"
                     busy={busyId === doc.id}
                     disabled={anyBusy}
                     onClick={() => void onExport(doc.id)}
@@ -258,8 +256,7 @@ export function EntryDetailModal({
                   </Button>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
+                    size="iconSm"
                     disabled={anyBusy}
                     onClick={() => setDeleteId(doc.id)}
                     aria-label={t('docs.deleteAria')}

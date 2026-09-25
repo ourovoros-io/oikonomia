@@ -51,7 +51,7 @@ export function IconBadge({
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-[11px]',
+        'inline-flex shrink-0 items-center justify-center rounded-[12px]',
         tones[tone],
         sizes[size],
         className,
@@ -89,12 +89,12 @@ export function MoneyPill({
     <span
       data-money-pill={tone}
       className={cn(
-        'inline-flex items-center gap-2.5 rounded-full font-semibold whitespace-nowrap tabular-nums',
-        size === 'sm' ? 'px-2.5 py-1.5 text-xs' : 'px-3.5 py-2 text-sm',
+        'inline-flex items-center gap-2 rounded-full font-semibold whitespace-nowrap tabular-nums',
+        size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-8 px-3 text-sm',
         tones[tone],
       )}
     >
-      <span className="font-mono text-[10px] font-medium tracking-[0.14em] text-[var(--color-fg-secondary)] uppercase">
+      <span className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-fg-secondary)] uppercase">
         {label}
       </span>{' '}
       {value}
@@ -120,7 +120,7 @@ export function AmountPill({
     <span
       data-amount={tone}
       className={cn(
-        'inline-flex shrink-0 items-center rounded-full px-3 py-1.5 text-sm font-semibold whitespace-nowrap tabular-nums',
+        'inline-flex h-8 shrink-0 items-center rounded-full px-3 text-sm font-semibold whitespace-nowrap tabular-nums',
         tones[tone],
       )}
     >
@@ -143,10 +143,10 @@ export function Card({
     none: '',
     sm: 'p-4',
     md: 'p-5',
-    lg: 'p-6 sm:p-8',
+    lg: 'p-6',
   }[padding]
 
-  return <div className={cn('glass-pane rounded-[22px]', pad, className)}>{children}</div>
+  return <div className={cn('glass-pane rounded-[20px]', pad, className)}>{children}</div>
 }
 
 /**
@@ -189,14 +189,14 @@ export function Panel({
   className?: string
 }) {
   return (
-    <div className={cn('glass-pane overflow-hidden rounded-[22px]', className)}>
+    <div className={cn('glass-pane overflow-hidden rounded-[20px]', className)}>
       <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
         <div className="min-w-0">
-          <h3 className="text-[15px] font-semibold text-[var(--color-fg)]">{title}</h3>
+          <h3 className="text-base leading-6 font-semibold text-[var(--color-fg)]">{title}</h3>
           {description ? (
-            <p className="text-[13px] text-[var(--color-muted)]">{description}</p>
+            <p className="text-[13px] leading-5 text-[var(--color-muted)]">{description}</p>
           ) : null}
-          {whisper ? <p className="text-xs text-[var(--color-muted)]">{whisper}</p> : null}
+          {whisper ? <p className="text-xs leading-4 text-[var(--color-muted)]">{whisper}</p> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {actions}
@@ -234,7 +234,7 @@ export function CollapsibleSection({
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <div className="glass-pane overflow-hidden rounded-[22px]">
+    <div className="glass-pane overflow-hidden rounded-[20px]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -247,9 +247,9 @@ export function CollapsibleSection({
           </IconBadge>
         ) : null}
         <div className="min-w-0 flex-1">
-          <h3 className="text-[15px] font-semibold text-[var(--color-fg)]">{title}</h3>
+          <h3 className="text-base leading-6 font-semibold text-[var(--color-fg)]">{title}</h3>
           {description ? (
-            <p className="text-[13px] text-[var(--color-muted)]">{description}</p>
+            <p className="text-[13px] leading-5 text-[var(--color-muted)]">{description}</p>
           ) : null}
         </div>
         <ChevronDown
@@ -261,7 +261,7 @@ export function CollapsibleSection({
       </button>
 
       {open ? (
-        <div className={cn('border-t border-[var(--color-border)]', !flush && 'p-5 sm:p-6')}>
+        <div className={cn('border-t border-[var(--color-border)]', !flush && 'p-5')}>
           {children}
         </div>
       ) : null}
@@ -279,7 +279,8 @@ export function Button({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost'
-  size?: 'sm' | 'md' | 'icon'
+  /** `icon` is a 40px square beside default controls; `iconSm` a 32px one for rows and dialog chrome. */
+  size?: 'sm' | 'md' | 'lg' | 'icon' | 'iconSm'
   /** Shows a spinner and disables the button while a slow action runs. */
   busy?: boolean
 }) {
@@ -298,7 +299,10 @@ export function Button({
   const sizes = {
     sm: 'h-8 gap-1.5 px-3 text-xs',
     md: 'h-10 gap-2 px-4 text-sm',
+    // Auth screens only: the one primary action on the page.
+    lg: 'h-12 gap-2 px-5 text-sm',
     icon: 'h-10 w-10 shrink-0 justify-center p-0',
+    iconSm: 'h-8 w-8 shrink-0 justify-center p-0',
   }
 
   return (
@@ -335,7 +339,7 @@ export function Select({
         {children}
       </select>
       <ChevronDown
-        className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-[var(--color-dim)]"
+        className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-[var(--color-dim)]"
         strokeWidth={1.75}
         aria-hidden
       />
@@ -345,7 +349,7 @@ export function Select({
 
 export function Label({ children }: { children: ReactNode }) {
   return (
-    <span className="mb-1 block font-mono text-[9.5px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+    <span className="mb-1 block font-mono text-[11px] leading-[14px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
       {children}
     </span>
   )
@@ -460,7 +464,7 @@ export function ErrorBanner({
       role="alert"
       aria-live="assertive"
       className={cn(
-        'flex items-start gap-2 rounded-[14px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,130,149,0.4)]',
+        'flex items-start gap-2 rounded-[12px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,130,149,0.4)]',
         className,
       )}
     >
@@ -487,9 +491,9 @@ export function EmptyState({
   action?: ReactNode
 }) {
   return (
-    <div className="glass-pane flex flex-col items-center rounded-[22px] px-6 py-16 text-center">
+    <div className="glass-pane flex flex-col items-center rounded-[20px] px-6 py-16 text-center">
       {icon ? (
-        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center rounded-[15px] bg-[var(--color-info-soft)] text-[var(--color-info)] shadow-[inset_0_0_0_1px_rgba(55,213,255,0.25),0_0_26px_rgba(55,213,255,0.15)]">
+        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center rounded-[16px] bg-[var(--color-info-soft)] text-[var(--color-info)] shadow-[inset_0_0_0_1px_rgba(55,213,255,0.25),0_0_26px_rgba(55,213,255,0.15)]">
           {icon}
         </div>
       ) : null}
@@ -527,7 +531,7 @@ export function ChoiceCard({
     >
       <span
         className={cn(
-          'flex size-8 items-center justify-center rounded-[10px]',
+          'flex size-8 items-center justify-center rounded-[12px]',
           selected
             ? 'bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-b))] text-[var(--color-on-accent)]'
             : 'bg-white/[0.06] text-[var(--color-dim)]',
@@ -565,7 +569,7 @@ export function MetricCard({
     <div className="glass-pane rounded-[20px] p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-mono text-[10.5px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+          <div className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
             {label}
           </div>
           {hint ? <div className="mt-1 text-xs text-[var(--color-muted)]">{hint}</div> : null}
@@ -579,7 +583,7 @@ export function MetricCard({
       <div
         title={value}
         className={cn(
-          'mt-5 truncate text-[26px] font-semibold tracking-tight tabular-nums',
+          'mt-5 truncate text-2xl font-semibold tracking-tight tabular-nums',
           // "danger" marks money going out (the Expenses tile): it is set in the
           // Ledger out tint, never in the error colour.
           accent === 'danger' ? 'text-[var(--color-money-out-text)]' : 'text-[var(--color-fg)]',
@@ -653,7 +657,7 @@ export function ListRow({ children, className = '' }: { children: ReactNode; cla
   return (
     <li
       className={cn(
-        'flex items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.04] focus-within:bg-white/[0.04]',
+        'flex items-center gap-4 px-5 py-3 transition hover:bg-white/[0.04] focus-within:bg-white/[0.04]',
         className,
       )}
     >

@@ -171,7 +171,8 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative h-full min-h-[7.5rem] overflow-hidden rounded-[15px] border-[1.5px] border-dashed px-4.5 py-4 text-left transition',
+        // 8px pane padding + 1.5px border + 10.5px puts content 20px in, like the panes beside it.
+        'relative h-full min-h-[7.5rem] overflow-hidden rounded-[12px] border-[1.5px] border-dashed p-[10.5px] text-left transition',
         dragOver
           ? 'border-[var(--color-accent-b)] bg-[var(--color-info-soft)]'
           : 'border-[rgba(55,213,255,0.32)]',
@@ -196,20 +197,20 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
           e.target.value = ''
         }}
       />
-      <div className="pointer-events-none relative grid grid-cols-[46px_minmax(0,1fr)] items-center gap-3.5">
-        <span className="flex size-[46px] items-center justify-center rounded-[14px] bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-b))] text-[var(--color-on-accent)] shadow-[0_0_24px_rgba(55,213,255,0.35)]">
+      <div className="pointer-events-none relative grid grid-cols-[48px_minmax(0,1fr)] items-center gap-4">
+        <span className="flex size-12 items-center justify-center rounded-[12px] bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-b))] text-[var(--color-on-accent)] shadow-[0_0_24px_rgba(55,213,255,0.35)]">
           {busy ? <Loader2 className="size-5 animate-spin" /> : <FileUp className="size-5" strokeWidth={1.75} />}
         </span>
         <div className="min-w-0">
-          <p className="text-[15px] leading-snug font-semibold text-[var(--color-fg)]">
+          <p className="text-base leading-snug font-semibold text-[var(--color-fg)]">
             {busy ? t('drop.analyzing') : t('drop.title')}
           </p>
-          <p className="mt-1 text-[12.5px] leading-snug text-[var(--color-muted)]">{t('drop.body')}</p>
+          <p className="mt-1 text-[13px] leading-snug text-[var(--color-muted)]">{t('drop.body')}</p>
         </div>
       </div>
       {status ? (
-        <p className="pointer-events-none relative mt-3 flex items-start gap-1.5 text-[11px] leading-snug text-[var(--color-muted)]">
-          <Sparkles className="mt-0.5 size-3 shrink-0 text-[var(--color-accent)]" />
+        <p className="pointer-events-none relative mt-3 flex items-start gap-1.5 text-xs leading-snug text-[var(--color-muted)]">
+          <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[var(--color-accent)]" />
           {status.hint}
         </p>
       ) : null}

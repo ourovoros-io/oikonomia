@@ -201,7 +201,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
 
           <form
             className={cn(
-              'rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl',
+              'glass-pane rounded-[24px] p-6',
               shaking && 'oik-shake',
             )}
             onSubmit={onSubmit}
@@ -213,7 +213,8 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
             <div className="space-y-4">
               <Field label={t('unlock.password')}>
                 <div className="relative">
-                  <KeyRound className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
+                  {/* The icon starts on the label's edge; the text follows one gap later. */}
+                  <KeyRound className="pointer-events-none absolute top-1/2 left-0 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
                   <Input
                     type="password"
                     autoComplete={isSetup ? 'new-password' : 'current-password'}
@@ -222,7 +223,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
                       setPassword(e.target.value)
                       setPasswordInvalid(false)
                     }}
-                    className="pl-10"
+                    className="pl-6"
                     data-adorned
                     required
                     autoFocus
@@ -234,24 +235,29 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
 
               {isSetup ? (
                 <Field label={t('unlock.confirmPassword')}>
-                  <Input
-                    type="password"
-                    autoComplete="new-password"
-                    value={confirm}
-                    onChange={(e) => {
-                      setConfirm(e.target.value)
-                      setPasswordInvalid(false)
-                    }}
-                    required
-                    aria-invalid={passwordInvalid || undefined}
-                    aria-describedby={passwordInvalid ? errorId : undefined}
-                  />
+                  <div className="relative">
+                    <KeyRound className="pointer-events-none absolute top-1/2 left-0 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
+                    <Input
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirm}
+                      onChange={(e) => {
+                        setConfirm(e.target.value)
+                        setPasswordInvalid(false)
+                      }}
+                      className="pl-6"
+                      data-adorned
+                      required
+                      aria-invalid={passwordInvalid || undefined}
+                      aria-describedby={passwordInvalid ? errorId : undefined}
+                    />
+                  </div>
                 </Field>
               ) : null}
 
               <ErrorBanner id={errorId} message={error} className="text-center" />
 
-              <Button type="submit" busy={busy || unlocking} className="w-full">
+              <Button type="submit" size="lg" busy={busy || unlocking} className="w-full">
                 {busy || unlocking
                   ? t('common.working')
                   : isSetup
@@ -342,51 +348,40 @@ function UnlockUpdateDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="w-full max-w-md rounded-[1rem] border border-[var(--color-border)] bg-[var(--color-surface)] p-6 outline-none"
+        className="glass-dialog w-full max-w-md rounded-[24px] p-6 outline-none"
       >
         <h2
           id={titleId}
-          className="text-base leading-6 text-[var(--color-fg)]"
-          style={{ fontWeight: 560 }}
+          className="text-xl leading-7 font-semibold text-[var(--color-fg)]"
         >
           {copy.title}
         </h2>
-        <p className="mt-2 text-sm leading-5 font-normal text-[var(--color-muted)]">{copy.body}</p>
+        <p className="mt-1 text-sm leading-5 font-normal text-[var(--color-muted)]">{copy.body}</p>
         {state.kind === 'available' ? (
-          <p className="mt-4 text-[13px] leading-5 font-normal text-[#8f9a93]">
+          <p className="mt-4 text-[13px] leading-5 font-normal text-[var(--color-muted)]">
             {t('unlock.update.available.honesty')}
           </p>
         ) : null}
         {state.kind === 'installing' ? (
           <div
-            className="mt-6 h-1 overflow-hidden rounded-[2px] bg-[#232c26]"
+            className="mt-6 h-1 overflow-hidden rounded-full bg-white/10"
             role="progressbar"
             aria-label={copy.title}
           >
-            <div className="h-full w-[30%] rounded-[2px] bg-[var(--color-accent)]" />
+            <div className="h-full w-[30%] rounded-full bg-[var(--color-accent)]" />
           </div>
         ) : null}
         {copy.actions.length > 0 ? (
           <div className="mt-6 flex justify-end gap-2">
             {copy.actions.map((action) =>
               action.kind === 'primary' ? (
-                <button
-                  key={action.label}
-                  type="button"
-                  className="h-10 rounded-lg bg-[#35b06b] px-4 text-sm font-medium text-[#0a0e0b] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"
-                  onClick={onInstall}
-                >
+                <Button key={action.label} onClick={onInstall}>
                   {action.label}
-                </button>
+                </Button>
               ) : (
-                <button
-                  key={action.label}
-                  type="button"
-                  className="h-10 rounded-lg border border-[#344038] bg-[var(--color-surface-2)] px-4 text-sm font-medium text-[var(--color-fg-secondary)] outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"
-                  onClick={onDismiss}
-                >
+                <Button key={action.label} variant="secondary" onClick={onDismiss}>
                   {action.label}
-                </button>
+                </Button>
               ),
             )}
           </div>

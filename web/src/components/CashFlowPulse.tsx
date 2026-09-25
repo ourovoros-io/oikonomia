@@ -279,14 +279,14 @@ export function CashFlowPulse({
         role="status"
         aria-live="polite"
         className={cn(
-          'pointer-events-none absolute top-1/2 left-0 z-10 min-w-36 -translate-y-1/2 rounded-[10px] border border-[var(--color-border-strong)] bg-[rgba(28,33,43,0.92)] px-2.5 py-2 text-[12.5px] tabular-nums shadow-[0_10px_30px_rgba(0,0,0,0.4)] transition-opacity duration-100',
+          'pointer-events-none absolute top-1/2 left-0 z-10 min-w-36 -translate-y-1/2 rounded-[12px] border border-[var(--color-border-strong)] bg-[rgba(28,33,43,0.92)] px-3 py-2 text-xs tabular-nums shadow-[0_10px_30px_rgba(0,0,0,0.4)] transition-opacity duration-100',
           activeBucket ? 'opacity-100' : 'opacity-0',
         )}
         style={{ left: tooltipLeft }}
       >
         {activeBucket ? (
           <>
-            <p className="mb-1 font-mono text-[10.5px] tracking-[0.08em] text-[var(--color-muted)] uppercase">
+            <p className="mb-1 font-mono text-[11px] tracking-[0.08em] text-[var(--color-muted)] uppercase">
               {dateFormat.format(bucketDate(activeBucket.start))}
             </p>
             <p className="flex justify-between gap-4">

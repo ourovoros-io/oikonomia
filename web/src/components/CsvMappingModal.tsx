@@ -47,7 +47,7 @@ function HeaderSelect({
   const { t } = useI18n()
   return (
     <div className="flex items-center gap-3">
-      <span className="w-28 shrink-0 text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+      <span className="w-28 shrink-0 font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
         {label}
       </span>
       <Select
@@ -73,7 +73,7 @@ function PlaceholderRow({ label, target }: { label: string; target: string }) {
   const { t } = useI18n()
   return (
     <div className="flex items-center gap-3">
-      <span className="w-28 shrink-0 text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+      <span className="w-28 shrink-0 font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
         {label}
       </span>
       <Input

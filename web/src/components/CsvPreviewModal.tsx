@@ -175,7 +175,7 @@ export function CsvPreviewModal({
       <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
         <table className="w-full min-w-[40rem] text-left text-sm">
           <thead>
-            <tr className="border-b border-[var(--color-border)] text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+            <tr className="border-b border-[var(--color-border)] font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
               <th className="w-10 px-3 py-2.5">
                 <input
                   type="checkbox"

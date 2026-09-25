@@ -80,10 +80,10 @@ export function ConfirmDialog({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="glass-dialog w-full max-w-md rounded-[26px] p-6 outline-none"
+        className="glass-dialog w-full max-w-md rounded-[24px] p-6 outline-none"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex gap-3">
+        <div className="flex gap-4">
           <span
             className={`flex size-10 shrink-0 items-center justify-center rounded-[12px] ${iconWrap}`}
           >
@@ -94,14 +94,14 @@ export function ConfirmDialog({
             )}
           </span>
           <div className="min-w-0">
-            <h2 id={titleId} className="text-base font-semibold text-[var(--color-fg)]">
+            <h2 id={titleId} className="text-xl leading-7 font-semibold text-[var(--color-fg)]">
               {title}
             </h2>
-            <p className="mt-1.5 text-sm leading-relaxed text-[var(--color-muted)]">{body}</p>
+            <p className="mt-1 text-sm leading-relaxed text-[var(--color-muted)]">{body}</p>
           </div>
         </div>
         {children ? <div className="mt-4">{children}</div> : null}
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-6 flex justify-end gap-2">
           <Button variant="secondary" onClick={onCancel} disabled={busy}>
             {resolvedCancel}
           </Button>

@@ -100,11 +100,12 @@ export function ArcTile({
       aria-valuenow={fraction === null ? 0 : Math.round(fraction * 100)}
       aria-valuetext={value === null ? noValueLabel : `${value}%`}
       aria-describedby={hint ? hintId : undefined}
-      className="glass-pane grid grid-cols-[76px_minmax(0,1fr)] items-center gap-3.5 rounded-[20px] px-4.5 py-4"
+      // Top-aligned, so the four figures share one baseline even when a label wraps.
+      className="glass-pane grid grid-cols-[76px_minmax(0,1fr)] items-start gap-4 rounded-[20px] p-5"
     >
       <Arc fraction={fraction} tone={tone} />
       <div className="min-w-0">
-        <div aria-hidden="true" className="text-[26px] leading-none font-semibold tabular-nums text-[var(--color-fg)]">
+        <div aria-hidden="true" className="text-2xl leading-none font-semibold tabular-nums text-[var(--color-fg)]">
           {value === null ? (
             '—'
           ) : (
@@ -117,7 +118,7 @@ export function ArcTile({
         <div
           aria-hidden="true"
           title={label}
-          className="mt-1.5 line-clamp-2 text-sm leading-tight font-medium text-[var(--color-fg)]"
+          className="mt-2 line-clamp-2 text-sm leading-tight font-medium text-[var(--color-fg)]"
         >
           {label}
         </div>
@@ -126,7 +127,7 @@ export function ArcTile({
             id={hintId}
             aria-hidden="true"
             title={hint}
-            className="mt-0.5 line-clamp-2 text-[12.5px] text-[var(--color-muted)]"
+            className="mt-1 line-clamp-2 text-xs text-[var(--color-muted)]"
           >
             {hint}
           </div>

@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { formatMoney, type ReportLine } from '../lib/api'
+import { formatPercentFromBps } from '../lib/arc'
 import { buildSlices, vizVar } from '../lib/expenseSlices'
+import { localeForCurrency } from '../lib/money'
 import { cn } from '../lib/cn'
 import { t } from '../lib/i18n'
 import { useI18n } from '../lib/I18nProvider'
@@ -16,6 +18,8 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string 
   useI18n()
   const [hover, setHover] = useState<number | null>(null)
   const { slices, total } = buildSlices(lines)
+  // Percentages use the money's locale, so "29,5 %" sits beside "720,00 €".
+  const percent = (share: number) => `${formatPercentFromBps(Math.round(share * 10_000), localeForCurrency(ccy))}%`
 
   if (slices.length === 0) {
     return (
@@ -64,15 +68,15 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string 
           </g>
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-9 text-center">
-          <span className="w-full truncate text-[11px] font-medium tracking-wide text-[var(--color-muted)] uppercase">
+          <span className="w-full truncate font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
             {active ? active.name : t('reports.pdf.totalExpenses')}
           </span>
-          <span className="mt-1 w-full truncate text-lg font-semibold tabular-nums text-[var(--color-fg)]">
+          <span className="mt-1 w-full truncate text-xl font-semibold tabular-nums text-[var(--color-fg)]">
             {formatMoney(active ? active.amount : total, ccy)}
           </span>
           {active ? (
             <span className="text-xs tabular-nums text-[var(--color-muted)]">
-              {(active.share * 100).toFixed(1)}%
+              {percent(active.share)}
             </span>
           ) : null}
         </div>
@@ -100,7 +104,7 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string 
               {formatMoney(slice.amount, ccy)}
             </span>
             <span className="w-12 shrink-0 text-right text-xs tabular-nums text-[var(--color-muted)]">
-              {(slice.share * 100).toFixed(1)}%
+              {percent(slice.share)}
             </span>
           </li>
         ))}
