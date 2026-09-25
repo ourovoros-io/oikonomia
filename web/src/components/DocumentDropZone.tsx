@@ -171,20 +171,18 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       }}
       onDrop={onHtmlDrop}
       className={cn(
-        'relative overflow-hidden rounded-2xl border border-dashed px-4 py-10 text-center transition',
+        // 8px pane padding + 1.5px border + 10.5px puts content 20px in, like the panes beside it.
+        'relative h-full min-h-[7.5rem] overflow-hidden rounded-[12px] border-[1.5px] border-dashed p-[10.5px] text-left transition',
         dragOver
-          ? 'border-[var(--color-accent)] bg-[var(--color-accent-soft)]'
-          : 'border-[var(--color-border-strong)] bg-[var(--color-surface)]',
-        disabled || busy ? 'opacity-60' : 'hover:border-[var(--color-muted)]',
+          ? 'border-[var(--color-accent-b)] bg-[var(--color-info-soft)]'
+          : 'border-[rgba(55,213,255,0.32)]',
+        disabled || busy ? 'opacity-60' : 'hover:border-[rgba(55,213,255,0.55)]',
       )}
     >
       {!dragOver ? (
         <div
-          className="pointer-events-none absolute inset-0 opacity-80"
-          style={{
-            background:
-              'radial-gradient(900px 280px at 50% -20%, rgba(53,176,107,0.18), transparent 55%)',
-          }}
+          className="pointer-events-none absolute inset-0"
+          style={{ background: 'radial-gradient(260px 120px at 50% 0%, rgba(55,213,255,0.08), transparent 70%)' }}
           aria-hidden
         />
       ) : null}
@@ -199,32 +197,26 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
           e.target.value = ''
         }}
       />
-      <div className="relative">
-        <span className="pointer-events-none mb-3 inline-flex size-12 items-center justify-center rounded-xl bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-          {busy ? (
-            <Loader2 className="size-5 animate-spin" />
-          ) : (
-            <FileUp className="size-5" strokeWidth={1.75} />
-          )}
+      <div className="pointer-events-none relative grid grid-cols-[48px_minmax(0,1fr)] items-center gap-4">
+        <span className="flex size-12 items-center justify-center rounded-[12px] bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-b))] text-[var(--color-on-accent)] shadow-[0_0_24px_rgba(55,213,255,0.35)]">
+          {busy ? <Loader2 className="size-5 animate-spin" /> : <FileUp className="size-5" strokeWidth={1.75} />}
         </span>
-        <p className="pointer-events-none text-sm font-semibold text-[var(--color-fg)]">
-          {busy ? t('drop.analyzing') : t('drop.title')}
-        </p>
-        <p className="pointer-events-none mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-[var(--color-muted)]">
-          {t('drop.body')}
-        </p>
-        {status ? (
-          <p className="pointer-events-none mx-auto mt-4 inline-flex max-w-lg items-start gap-1.5 text-left text-[11px] leading-snug text-[var(--color-muted)]">
-            <Sparkles className="mt-0.5 size-3 shrink-0 text-[var(--color-accent)]" />
-            {status.hint}
+        <div className="min-w-0">
+          <p className="text-base leading-snug font-semibold text-[var(--color-fg)]">
+            {busy ? t('drop.analyzing') : t('drop.title')}
           </p>
-        ) : null}
-        {localError ? (
-          <p className="pointer-events-none mx-auto mt-3 max-w-lg text-xs text-[var(--color-danger)]">
-            {localError}
-          </p>
-        ) : null}
+          <p className="mt-1 text-[13px] leading-snug text-[var(--color-muted)]">{t('drop.body')}</p>
+        </div>
       </div>
+      {status ? (
+        <p className="pointer-events-none relative mt-3 flex items-start gap-1.5 text-xs leading-snug text-[var(--color-muted)]">
+          <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[var(--color-accent)]" />
+          {status.hint}
+        </p>
+      ) : null}
+      {localError ? (
+        <p className="pointer-events-none relative mt-2 text-xs text-[var(--color-danger)]">{localError}</p>
+      ) : null}
     </div>
   )
 }

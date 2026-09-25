@@ -51,10 +51,77 @@ export function IconBadge({
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-[11px]',
+        'inline-flex shrink-0 items-center justify-center rounded-[12px]',
         tones[tone],
         sizes[size],
         className,
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+/**
+ * A labelled money figure on a tinted plate: IN and OUT in the Ledger tints,
+ * neutral for balances. The label tier is measured to hold 4.5:1 on every
+ * plate (tokens.test.ts).
+ */
+export function MoneyPill({
+  tone,
+  label,
+  value,
+  size = 'md',
+}: {
+  tone: 'in' | 'out' | 'neutral'
+  label: string
+  value: string
+  size?: 'sm' | 'md'
+}) {
+  const tones = {
+    in: 'bg-[var(--color-money-in-soft)] text-[var(--color-money-in-text)] shadow-[inset_0_0_0_1px_rgba(27,163,154,0.4)]',
+    out: 'bg-[var(--color-money-out-soft)] text-[var(--color-money-out-text)] shadow-[inset_0_0_0_1px_rgba(232,96,63,0.4)]',
+    neutral:
+      'bg-[var(--color-plate-neutral)] text-[var(--color-fg)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]',
+  }
+
+  return (
+    <span
+      data-money-pill={tone}
+      className={cn(
+        'inline-flex items-center gap-2 rounded-full font-semibold whitespace-nowrap tabular-nums',
+        size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-8 px-3 text-sm',
+        tones[tone],
+      )}
+    >
+      <span className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-fg-secondary)] uppercase">
+        {label}
+      </span>{' '}
+      {value}
+    </span>
+  )
+}
+
+/** A signed amount on a tinted plate, for list rows. */
+export function AmountPill({
+  tone,
+  children,
+}: {
+  tone: 'in' | 'out' | 'neutral'
+  children: ReactNode
+}) {
+  const tones = {
+    in: 'bg-[var(--color-money-in-soft)] text-[var(--color-money-in-text)]',
+    out: 'bg-[var(--color-money-out-soft)] text-[var(--color-money-out-text)]',
+    neutral: 'bg-[var(--color-plate-neutral)] text-[var(--color-fg)]',
+  }
+
+  return (
+    <span
+      data-amount={tone}
+      className={cn(
+        'inline-flex h-8 shrink-0 items-center rounded-full px-3 text-sm font-semibold whitespace-nowrap tabular-nums',
+        tones[tone],
       )}
     >
       {children}
@@ -76,10 +143,10 @@ export function Card({
     none: '',
     sm: 'p-4',
     md: 'p-5',
-    lg: 'p-6 sm:p-8',
+    lg: 'p-6',
   }[padding]
 
-  return <div className={cn('glass-pane rounded-[22px]', pad, className)}>{children}</div>
+  return <div className={cn('glass-pane rounded-[20px]', pad, className)}>{children}</div>
 }
 
 /**
@@ -122,14 +189,14 @@ export function Panel({
   className?: string
 }) {
   return (
-    <div className={cn('glass-pane overflow-hidden rounded-[22px]', className)}>
+    <div className={cn('glass-pane overflow-hidden rounded-[20px]', className)}>
       <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
         <div className="min-w-0">
-          <h3 className="text-[15px] font-semibold text-[var(--color-fg)]">{title}</h3>
+          <h3 className="text-base leading-6 font-semibold text-[var(--color-fg)]">{title}</h3>
           {description ? (
-            <p className="text-[13px] text-[var(--color-muted)]">{description}</p>
+            <p className="text-[13px] leading-5 text-[var(--color-muted)]">{description}</p>
           ) : null}
-          {whisper ? <p className="text-xs text-[var(--color-muted)]">{whisper}</p> : null}
+          {whisper ? <p className="text-xs leading-4 text-[var(--color-muted)]">{whisper}</p> : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {actions}
@@ -157,7 +224,8 @@ export function CollapsibleSection({
   title: string
   description?: string
   icon?: ReactNode
-  tone?: 'accent' | 'success' | 'danger' | 'warning' | 'info' | 'muted'
+  /** Chrome tones only: success means a confirmation, never a section. */
+  tone?: 'accent' | 'danger' | 'warning' | 'info' | 'muted'
   defaultOpen?: boolean
   /** Body without padding, for lists that manage their own edges. */
   flush?: boolean
@@ -166,7 +234,7 @@ export function CollapsibleSection({
   const [open, setOpen] = useState(defaultOpen)
 
   return (
-    <div className="glass-pane overflow-hidden rounded-[22px]">
+    <div className="glass-pane overflow-hidden rounded-[20px]">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -179,9 +247,9 @@ export function CollapsibleSection({
           </IconBadge>
         ) : null}
         <div className="min-w-0 flex-1">
-          <h3 className="text-[15px] font-semibold text-[var(--color-fg)]">{title}</h3>
+          <h3 className="text-base leading-6 font-semibold text-[var(--color-fg)]">{title}</h3>
           {description ? (
-            <p className="text-[13px] text-[var(--color-muted)]">{description}</p>
+            <p className="text-[13px] leading-5 text-[var(--color-muted)]">{description}</p>
           ) : null}
         </div>
         <ChevronDown
@@ -193,7 +261,7 @@ export function CollapsibleSection({
       </button>
 
       {open ? (
-        <div className={cn('border-t border-[var(--color-border)]', !flush && 'p-5 sm:p-6')}>
+        <div className={cn('border-t border-[var(--color-border)]', !flush && 'p-5')}>
           {children}
         </div>
       ) : null}
@@ -211,7 +279,8 @@ export function Button({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost'
-  size?: 'sm' | 'md' | 'icon'
+  /** `icon` is a 40px square beside default controls; `iconSm` a 32px one for rows and dialog chrome. */
+  size?: 'sm' | 'md' | 'lg' | 'icon' | 'iconSm'
   /** Shows a spinner and disables the button while a slow action runs. */
   busy?: boolean
 }) {
@@ -230,7 +299,10 @@ export function Button({
   const sizes = {
     sm: 'h-8 gap-1.5 px-3 text-xs',
     md: 'h-10 gap-2 px-4 text-sm',
+    // Auth screens only: the one primary action on the page.
+    lg: 'h-12 gap-2 px-5 text-sm',
     icon: 'h-10 w-10 shrink-0 justify-center p-0',
+    iconSm: 'h-8 w-8 shrink-0 justify-center p-0',
   }
 
   return (
@@ -267,7 +339,7 @@ export function Select({
         {children}
       </select>
       <ChevronDown
-        className="pointer-events-none absolute top-1/2 right-2.5 size-4 -translate-y-1/2 text-[var(--color-dim)]"
+        className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-[var(--color-dim)]"
         strokeWidth={1.75}
         aria-hidden
       />
@@ -277,7 +349,7 @@ export function Select({
 
 export function Label({ children }: { children: ReactNode }) {
   return (
-    <span className="mb-1 block font-mono text-[9.5px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+    <span className="mb-1 block font-mono text-[11px] leading-[14px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
       {children}
     </span>
   )
@@ -301,78 +373,6 @@ export function Field({
   )
 }
 
-/**
- * Page chrome: a mono eyebrow or breadcrumb, a large title, a description and
- * optional actions or meta. It sits directly on the aurora, under the veil.
- */
-export function PageHeader({
-  eyebrow,
-  breadcrumb,
-  title,
-  description,
-  actions,
-  meta,
-}: {
-  eyebrow?: string
-  /** Sub-view trail (Transactions / Recurring). Last crumb is the current page. */
-  breadcrumb?: Array<{ label: string; onClick?: () => void }>
-  title: string
-  description?: string
-  actions?: ReactNode
-  meta?: ReactNode
-}) {
-  const hasLead = Boolean(eyebrow || (breadcrumb && breadcrumb.length > 0))
-
-  return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-      <div className="min-w-0">
-        {breadcrumb && breadcrumb.length > 0 ? (
-          <nav
-            className="flex flex-wrap items-center gap-1.5 font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase"
-            aria-label={breadcrumb.map((c) => c.label).join(' / ')}
-          >
-            {breadcrumb.map((crumb, i) => (
-              <span key={`${crumb.label}-${i}`} className="inline-flex items-center gap-1.5">
-                {i > 0 ? <span aria-hidden>/</span> : null}
-                {crumb.onClick ? (
-                  <button
-                    type="button"
-                    onClick={crumb.onClick}
-                    className="hover:text-[var(--color-fg)]"
-                  >
-                    {crumb.label}
-                  </button>
-                ) : (
-                  <span className="text-[var(--color-fg-secondary)]">{crumb.label}</span>
-                )}
-              </span>
-            ))}
-          </nav>
-        ) : eyebrow ? (
-          <p className="font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase">
-            {eyebrow}
-          </p>
-        ) : null}
-        <h2
-          className={cn(
-            'leading-tight font-semibold tracking-tight text-[var(--color-fg)]',
-            hasLead ? 'mt-1.5 text-[1.875rem]' : 'text-[1.625rem]',
-          )}
-        >
-          {title}
-        </h2>
-        {description ? (
-          <p className="mt-1 text-sm text-[var(--color-fg-secondary)]">{description}</p>
-        ) : null}
-      </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        {meta ? <div className="text-xs text-[var(--color-muted)]">{meta}</div> : null}
-        {actions}
-      </div>
-    </div>
-  )
-}
-
 export function ErrorBanner({
   message,
   title,
@@ -392,7 +392,7 @@ export function ErrorBanner({
       role="alert"
       aria-live="assertive"
       className={cn(
-        'flex items-start gap-2 rounded-[14px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,130,149,0.4)]',
+        'flex items-start gap-2 rounded-[12px] bg-[var(--color-danger-soft)] px-4 py-3 text-sm text-[var(--color-danger-text)] shadow-[inset_0_0_0_1px_rgba(255,130,149,0.4)]',
         className,
       )}
     >
@@ -419,9 +419,9 @@ export function EmptyState({
   action?: ReactNode
 }) {
   return (
-    <div className="glass-pane flex flex-col items-center rounded-[22px] px-6 py-16 text-center">
+    <div className="glass-pane flex flex-col items-center rounded-[20px] px-6 py-16 text-center">
       {icon ? (
-        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center rounded-[15px] bg-[var(--color-info-soft)] text-[var(--color-info)] shadow-[inset_0_0_0_1px_rgba(55,213,255,0.25),0_0_26px_rgba(55,213,255,0.15)]">
+        <div className="oik-empty-icon mb-4 flex size-12 items-center justify-center rounded-[16px] bg-[var(--color-info-soft)] text-[var(--color-info)] shadow-[inset_0_0_0_1px_rgba(55,213,255,0.25),0_0_26px_rgba(55,213,255,0.15)]">
           {icon}
         </div>
       ) : null}
@@ -459,7 +459,7 @@ export function ChoiceCard({
     >
       <span
         className={cn(
-          'flex size-8 items-center justify-center rounded-[10px]',
+          'flex size-8 items-center justify-center rounded-[12px]',
           selected
             ? 'bg-[linear-gradient(135deg,var(--color-accent),var(--color-accent-b))] text-[var(--color-on-accent)]'
             : 'bg-white/[0.06] text-[var(--color-dim)]',
@@ -497,7 +497,7 @@ export function MetricCard({
     <div className="glass-pane rounded-[20px] p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="font-mono text-[10.5px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+          <div className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
             {label}
           </div>
           {hint ? <div className="mt-1 text-xs text-[var(--color-muted)]">{hint}</div> : null}
@@ -511,7 +511,7 @@ export function MetricCard({
       <div
         title={value}
         className={cn(
-          'mt-5 truncate text-[26px] font-semibold tracking-tight tabular-nums',
+          'mt-5 truncate text-2xl font-semibold tracking-tight tabular-nums',
           // "danger" marks money going out (the Expenses tile): it is set in the
           // Ledger out tint, never in the error colour.
           accent === 'danger' ? 'text-[var(--color-money-out-text)]' : 'text-[var(--color-fg)]',
@@ -531,9 +531,20 @@ export function Segmented<T extends string>({
 }: {
   value: T
   onChange: (v: T) => void
-  options: Array<{ id: T; label: string; icon?: ReactNode }>
+  /**
+   * `tone` colours an option while it is chosen: an entry type that is money
+   * in or out wears that Ledger gradient; untoned options take the neutral plate.
+   */
+  options: Array<{ id: T; label: string; icon?: ReactNode; tone?: 'money-in' | 'money-out' }>
   className?: string
 }) {
+  const toned = {
+    'money-in':
+      'bg-[linear-gradient(90deg,var(--color-money-in-a),var(--color-money-in-b)_55%,var(--color-money-in-c))] font-semibold text-[var(--color-on-money-in)] shadow-[0_6px_22px_rgba(27,163,154,0.35)]',
+    'money-out':
+      'bg-[linear-gradient(90deg,var(--color-money-out-a),var(--color-money-out-b)_55%,var(--color-money-out-c))] font-semibold text-[var(--color-on-money-out)] shadow-[0_6px_22px_rgba(232,96,63,0.35)]',
+  }
+
   return (
     <div
       className={cn(
@@ -549,11 +560,14 @@ export function Segmented<T extends string>({
             key={opt.id}
             type="button"
             aria-pressed={active}
+            data-tone={active ? (opt.tone ?? 'neutral') : undefined}
             onClick={() => onChange(opt.id)}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition',
               active
-                ? 'bg-white/10 text-[var(--color-fg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
+                ? opt.tone
+                  ? toned[opt.tone]
+                  : 'bg-white/10 text-[var(--color-fg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
                 : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]',
             )}
           >
@@ -566,56 +580,12 @@ export function Segmented<T extends string>({
   )
 }
 
-/** Horizontal ratio bar used in flow summaries. */
-export function FlowBar({
-  label,
-  value,
-  ratio,
-  tone,
-}: {
-  label: string
-  value: string
-  ratio: number
-  tone: 'success' | 'danger' | 'accent'
-}) {
-  const pct = Math.round(Math.min(1, Math.max(0, ratio)) * 100)
-
-  // Every caller uses success and danger for money in and out, so the bars
-  // wear the Ledger gradients rather than the status colours.
-  const bar =
-    tone === 'success'
-      ? 'bg-[linear-gradient(90deg,#27bf93,var(--color-money-in))]'
-      : tone === 'danger'
-        ? 'bg-[linear-gradient(90deg,#f07a45,var(--color-money-out))]'
-        : 'bg-[linear-gradient(90deg,var(--color-accent),var(--color-accent-b))]'
-
-  return (
-    <div>
-      <div className="mb-1.5 flex items-baseline justify-between gap-3 text-sm">
-        <span className="shrink-0 text-[var(--color-muted)]">{label}</span>
-        <span
-          title={value}
-          className="min-w-0 truncate font-semibold tabular-nums text-[var(--color-fg)]"
-        >
-          {value}
-        </span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
-        <div
-          className={cn('h-full rounded-full transition-all duration-500', bar)}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  )
-}
-
 /** List row with a hover surface that also shows for keyboard focus inside it. */
 export function ListRow({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <li
       className={cn(
-        'flex items-center gap-4 px-5 py-3.5 transition hover:bg-white/[0.04] focus-within:bg-white/[0.04]',
+        'flex items-center gap-4 px-5 py-3 transition hover:bg-white/[0.04] focus-within:bg-white/[0.04]',
         className,
       )}
     >

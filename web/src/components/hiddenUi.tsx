@@ -7,7 +7,7 @@ export function HiddenBadge({ className = '' }: { className?: string }) {
   return (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center rounded-full bg-[var(--color-surface-elevated)] px-1.5 py-px text-[10px] font-medium leading-4 text-[var(--color-muted)]',
+        'inline-flex h-5 shrink-0 items-center rounded-full bg-[var(--color-surface-elevated)] px-2 text-[11px] font-medium text-[var(--color-muted)]',
         className,
       )}
     >
@@ -53,7 +53,7 @@ export function HideFromExportControl({
       {compact ? (
         <span className="flex min-w-0 items-baseline gap-1.5">
           <span className="text-[11px] leading-none text-[var(--color-fg)]">{label}</span>
-          <span className="truncate text-[9px] leading-none text-[var(--color-muted)]">{hint}</span>
+          <span className="truncate text-[11px] leading-none text-[var(--color-muted)]">{hint}</span>
         </span>
       ) : (
         <span className="min-w-0">

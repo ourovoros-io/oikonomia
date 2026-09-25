@@ -23,7 +23,8 @@
       "emptyOption": "Noch keine Bücher"
     },
     "sidebar": {
-      "versionEncrypted": "v{version} · verschlüsselt"
+      "versionEncrypted": "v{version} · verschlüsselt",
+      "quickAdd": "Schnell erfassen"
     },
     "header": {
       "noBook": "Kein Buch ausgewählt",
@@ -521,9 +522,12 @@
     "period": {
       "month": "Monat",
       "year": "Jahr",
+      "quarter": "Quartal",
+      "quarterTitle": "Q{quarter} {year}",
       "word": {
         "month": "Monat",
-        "year": "Jahr"
+        "year": "Jahr",
+        "quarter": "Quartal"
       }
     },
     "meta": {
@@ -533,7 +537,31 @@
       "netLabel": "Saldo in diesem {period}",
       "body": "Einnahmen minus Ausgaben in diesem {period}. Legen Sie Rechnungen unter Buchungen ab für Offline-OCR, oder buchen Sie von Hand.",
       "ocr": "Offline-Rechnungsleser",
-      "entryCount": "{n} Buchungen in diesem {period}"
+      "entryCount": "{n} Buchungen in diesem {period}",
+      "kept": "Sie haben {percent} % von allem behalten, was hereinkam."
+    },
+    "pill": {
+      "in": "Eingänge",
+      "out": "Ausgänge",
+      "assets": "Vermögen"
+    },
+    "light": {
+      "label": "Eingänge {income}, Ausgänge {expenses}, netto {net}, {range}.",
+      "empty": "Noch kein Geldfluss zum Anzeigen."
+    },
+    "arc": {
+      "noValue": "Noch kein Wert",
+      "savings": { "label": "Sparquote", "hint": "Netto ÷ Einnahmen" },
+      "spend": { "label": "Ausgabenquote", "hint": "Ausgänge ÷ Eingänge" },
+      "previous": {
+        "label": "Netto ggü. Vorperiode",
+        "hint": {
+          "month": "Gegenüber dem Vormonat",
+          "quarter": "Gegenüber dem Vorquartal",
+          "year": "Gegenüber dem Vorjahr"
+        }
+      },
+      "top": { "label": "Größte Ausgabe", "none": "Noch keine Ausgaben" }
     },
     "flow": {
       "income": "Einnahmen",
@@ -840,6 +868,12 @@
       "fromAria": "Filtern ab Datum",
       "toAria": "Filtern bis Datum",
       "allAccounts": "Alle Konten"
+    },
+    "summary": {
+      "inView": "Angezeigt · {range}",
+      "inViewEmpty": "Angezeigt",
+      "wholeBook": "Konto- und Suchfilter ändern diese Übersicht nicht.",
+      "invalidRange": "Das Von-Datum muss vor oder auf dem Bis-Datum liegen."
     },
     "form": {
       "titleNew": "Neue Buchung",

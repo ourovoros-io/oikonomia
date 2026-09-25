@@ -224,7 +224,7 @@ export default function QuickAddApp() {
           </p>
           <Button
             size="sm"
-            className="h-7 shrink-0 rounded-full px-2.5 text-[10px]"
+            className="h-7 shrink-0 rounded-full px-2.5 text-[11px]"
             onClick={() => void api.openMainWindow()}
           >
             {t('common.open')}

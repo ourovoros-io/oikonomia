@@ -120,9 +120,9 @@ async function renderPage(onBack = vi.fn()) {
 }
 
 describe('RecurringPage empty state', () => {
-  test('renders breadcrumb, empty copy, local-only meta, and New template', async () => {
+  test('renders the page title, empty copy, local-only meta, and New template', async () => {
     await renderPage()
-    expect(screen.getByRole('navigation', { name: 'Transactions / Recurring' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 1, name: 'Recurring' })).toBeTruthy()
     expect(screen.getAllByRole('heading', { name: 'Recurring' }).length).toBeGreaterThan(0)
     expect(screen.getByRole('heading', { name: 'Templates' })).toBeTruthy()
     expect(screen.getByText('A lightweight recipe — not a second ledger.')).toBeTruthy()
@@ -304,9 +304,25 @@ describe('RecurringPage i18n', () => {
   test('EL empty chrome uses Writer keys', async () => {
     setLocale('el')
     await renderPage()
-    expect(screen.getByRole('navigation', { name: 'Κινήσεις / Επαναλαμβανόμενα' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 1, name: 'Επαναλαμβανόμενα' })).toBeTruthy()
     expect(screen.getByText('Δεν υπάρχουν επαναλαμβανόμενα πρότυπα ακόμη')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Επιστροφή στις καταχωρίσεις' })).toBeTruthy()
     expect(screen.getAllByRole('button', { name: 'Νέο πρότυπο' }).length).toBeGreaterThan(0)
+  })
+})
+
+describe('RecurringPage template type colours', () => {
+  test('the chosen type wears its Ledger gradient; Transfer stays neutral', async () => {
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await screen.findByRole('heading', { name: 'New template' })
+
+    expect(screen.getByRole('button', { name: 'Expense' })).toHaveAttribute('data-tone', 'money-out')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Income' }))
+    expect(screen.getByRole('button', { name: 'Income' })).toHaveAttribute('data-tone', 'money-in')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+    expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('data-tone', 'neutral')
   })
 })

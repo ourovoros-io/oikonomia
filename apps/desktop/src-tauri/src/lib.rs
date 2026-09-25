@@ -160,6 +160,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::report_balance_sheet,
         commands::report_export_pdf,
         commands::dashboard_summary_cmd,
+        commands::cash_flow_series_cmd,
         commands::settings_get_lock_timeout,
         commands::settings_set_lock_timeout,
         commands::settings_get_locale,

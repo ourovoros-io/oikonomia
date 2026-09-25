@@ -117,6 +117,31 @@ pub struct DashboardSummary {
     pub net_income: i64,
     /// Posted, non-voided entries in the period.
     pub recent_entry_count: usize,
+    /// Net income as a share of income, in basis points; `None` when income is
+    /// zero or less.
+    pub savings_rate_bps: Option<i64>,
+    /// Expenses as a share of income, in basis points; `None` when income is
+    /// zero or less.
+    pub spend_ratio_bps: Option<i64>,
+    /// The Expense account with the most spending in the window; `None` when
+    /// there are no expenses.
+    pub top_expense: Option<TopExpense>,
+    /// Change in net income against [`previous_window`], in basis points of the
+    /// previous net's size; `None` when the previous net is zero.
+    pub net_vs_previous_bps: Option<i64>,
+}
+
+/// The Expense account with the most spending in a dashboard window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TopExpense {
+    /// Account code.
+    pub code: String,
+    /// Account name.
+    pub name: String,
+    /// Spending on the account in the window.
+    pub amount_minor: i64,
+    /// `amount_minor` as a share of the window's expenses, in basis points.
+    pub share_bps: i64,
 }
 
 /// Trial balance as of `as_of` (`YYYY-MM-DD`).
@@ -315,7 +340,9 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
 
 /// Dashboard summary: income/expenses/count over `[from, to]` (typically the
 /// full calendar month, so future-dated bills inside the month are counted),
-/// with assets reported as of `assets_as_of` (typically today).
+/// with assets reported as of `assets_as_of` (typically today). It also
+/// carries the arc metrics (savings rate, spend ratio, top expense, and net
+/// against [`previous_window`]) in basis points, so the UI never divides.
 ///
 /// # Errors
 ///
@@ -360,15 +387,129 @@ pub fn dashboard_summary(
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
+    let net_income = income.saturating_sub(expenses);
+    let net_vs_previous_bps = match previous_window(from_d, to_d) {
+        Some((previous_from, previous_to)) => {
+            let previous_net = sum_types_in_range(
+                conn,
+                entity_id,
+                &[AccountType::Income],
+                previous_from,
+                previous_to,
+            )?
+            .saturating_sub(sum_types_in_range(
+                conn,
+                entity_id,
+                &[AccountType::Expense],
+                previous_from,
+                previous_to,
+            )?);
+            ratio_bps(
+                net_income.saturating_sub(previous_net),
+                previous_net.saturating_abs(),
+            )
+        }
+        None => None,
+    };
+    let (savings_rate_bps, spend_ratio_bps) = if income > 0 {
+        (ratio_bps(net_income, income), ratio_bps(expenses, income))
+    } else {
+        (None, None)
+    };
+
     Ok(DashboardSummary {
         entity_id,
         base_currency: entity.base_currency,
         cash_like_assets,
         income,
         expenses,
-        net_income: income.saturating_sub(expenses),
+        net_income,
         recent_entry_count: usize::try_from(count).unwrap_or(0),
+        savings_rate_bps,
+        spend_ratio_bps,
+        top_expense: top_expense(conn, entity_id, from_d, to_d, expenses)?,
+        net_vs_previous_bps,
     })
+}
+
+/// The window a dashboard compares `[from, to]` against: the one just before it.
+///
+/// A window of whole calendar months (from the first of a month to the last
+/// day of a month) steps back by the same number of calendar months, so a
+/// month compares with the month before, a quarter with the quarter before and
+/// a year with the year before. Any other window steps back by the same number
+/// of days. `None` only at the edge of the calendar.
+#[must_use]
+pub fn previous_window(from: Date, to: Date) -> Option<(Date, Date)> {
+    let previous_to = from.previous_day()?;
+    let whole_months = from.day() == 1 && to.next_day().is_none_or(|next| next.day() == 1);
+    if whole_months {
+        let months = month_index(to) - month_index(from) + 1;
+        return Some((
+            date_from_month_index(month_index(from) - months)?,
+            previous_to,
+        ));
+    }
+    let length = to.to_julian_day() - from.to_julian_day();
+    let previous_from = Date::from_julian_day(previous_to.to_julian_day() - length).ok()?;
+    Some((previous_from, previous_to))
+}
+
+fn month_index(date: Date) -> i64 {
+    i64::from(date.year()) * 12 + i64::from(u8::from(date.month())) - 1
+}
+
+fn date_from_month_index(index: i64) -> Option<Date> {
+    let year = i32::try_from(index.div_euclid(12)).ok()?;
+    let month = u8::try_from(index.rem_euclid(12) + 1).ok()?;
+    Date::from_calendar_date(year, time::Month::try_from(month).ok()?, 1).ok()
+}
+
+/// The Expense account with the largest positive spend in the window; on a tie
+/// the first in chart order wins.
+fn top_expense(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: Date,
+    to: Date,
+    expenses: i64,
+) -> Result<Option<TopExpense>> {
+    if expenses <= 0 {
+        return Ok(None);
+    }
+    let lines = period_lines(conn, entity_id, AccountType::Expense, from, to, false)?;
+    let mut top: Option<&ReportLine> = None;
+    for line in &lines {
+        if line.balance_minor > 0 && top.is_none_or(|lead| line.balance_minor > lead.balance_minor)
+        {
+            top = Some(line);
+        }
+    }
+    Ok(top.and_then(|line| {
+        Some(TopExpense {
+            code: line.code.clone(),
+            name: line.name.clone(),
+            amount_minor: line.balance_minor,
+            share_bps: ratio_bps(line.balance_minor, expenses)?,
+        })
+    }))
+}
+
+/// `numerator / denominator` in basis points, rounded half away from zero;
+/// `None` when the denominator is zero or the result does not fit in `i64`.
+fn ratio_bps(numerator: i64, denominator: i64) -> Option<i64> {
+    if denominator == 0 {
+        return None;
+    }
+    let scaled = i128::from(numerator) * 10_000;
+    let divisor = i128::from(denominator);
+    let magnitude = (scaled.abs() + divisor.abs() / 2) / divisor.abs();
+    let signed = if (scaled < 0) == (divisor < 0) {
+        magnitude
+    } else {
+        -magnitude
+    };
+    i64::try_from(signed).ok()
 }
 
 /// Per-account debit/credit sums over posted, non-voided entries in a window.
@@ -580,4 +721,36 @@ fn map_report_line(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReportLine> {
         credit_minor: credits,
         balance_minor: normal_balance(account_type, debits, credits),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ratio_bps_rounds_half_away_from_zero() {
+        assert_eq!(ratio_bps(1, 3), Some(3_333));
+        assert_eq!(ratio_bps(2, 3), Some(6_667));
+        assert_eq!(ratio_bps(1, 2), Some(5_000));
+        assert_eq!(
+            ratio_bps(1, 20_000),
+            Some(1),
+            "half a basis point rounds up"
+        );
+        assert_eq!(
+            ratio_bps(-1, 20_000),
+            Some(-1),
+            "and away from zero when negative"
+        );
+        assert_eq!(ratio_bps(-1, 3), Some(-3_333));
+        assert_eq!(ratio_bps(1, -3), Some(-3_333));
+        assert_eq!(ratio_bps(-2, -3), Some(6_667));
+        assert_eq!(ratio_bps(0, 7), Some(0));
+    }
+
+    #[test]
+    fn ratio_bps_refuses_what_it_cannot_express() {
+        assert_eq!(ratio_bps(5, 0), None, "no denominator");
+        assert_eq!(ratio_bps(i64::MAX, 1), None, "does not fit in i64");
+    }
 }

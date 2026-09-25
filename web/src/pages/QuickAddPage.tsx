@@ -78,7 +78,7 @@ const pillTrack =
 const pillField =
   'flex h-7 min-w-0 flex-1 items-center gap-1 rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-surface-2)] px-1.5'
 const pillChipQuiet =
-  'inline-flex h-6 shrink-0 items-center rounded-full border border-[var(--color-border-strong)]/70 px-1.5 text-[9px] font-medium tracking-wide text-[var(--color-muted)]'
+  'inline-flex h-6 shrink-0 items-center rounded-full border border-[var(--color-border-strong)]/70 px-1.5 text-[11px] font-medium tracking-wide text-[var(--color-muted)]'
 const nextCta =
   'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-accent)] text-[#04140b] shadow-sm transition hover:bg-[var(--color-accent-hover)] disabled:opacity-50'
 const saveCta =
@@ -718,7 +718,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         </p>
         <Button
           size="sm"
-          className="h-7 shrink-0 rounded-full px-2.5 text-[10px]"
+          className="h-7 shrink-0 rounded-full px-2.5 text-[11px]"
           onClick={() => void api.openMainWindow()}
         >
           {t('common.open')}
@@ -757,7 +757,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     onClick={() => void selectEntity(e.id)}
                     title={e.name}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[10px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -771,7 +771,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 <label className="relative flex h-full min-w-0 flex-1 items-center">
                   <span className="sr-only">{t('quickAdd.moreBooks')}</span>
                   <select
-                    className="ui-select h-full w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-0.5 text-[10px] leading-none text-[var(--color-muted)] outline-none"
+                    className="ui-select h-full w-full min-w-0 cursor-pointer rounded-full border-0 bg-transparent px-0.5 text-[11px] leading-none text-[var(--color-muted)] outline-none"
                     value={
                       entityId && entities.slice(3).some((e) => e.id === entityId) ? entityId : ''
                     }
@@ -809,7 +809,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                     title={t(opt.titleKey)}
                     onClick={() => selectKind(opt.id)}
                     className={cn(
-                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[10px] font-medium leading-none transition disabled:opacity-50',
+                      'flex h-full min-w-0 flex-1 items-center justify-center truncate rounded-full px-0.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
                       active
                         ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                         : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -957,7 +957,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                         disabled={formDisabled}
                         onClick={() => setBillStatus(opt.id)}
                         className={cn(
-                          'flex h-full items-center rounded-full px-1.5 text-[9px] font-medium leading-none transition disabled:opacity-50',
+                          'flex h-full items-center rounded-full px-1.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
                           active
                             ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
                             : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
@@ -981,11 +981,11 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 aria-label={t('quickAdd.memo')}
               />
               {pendingDoc ? (
-                <span className="max-w-[3.75rem] shrink-0 truncate text-[9px] leading-none text-[var(--color-muted)]">
+                <span className="max-w-[3.75rem] shrink-0 truncate text-[11px] leading-none text-[var(--color-muted)]">
                   {pendingDocLabel(pendingDoc)}
                 </span>
               ) : (
-                <span className="shrink-0 text-[9px] leading-none text-[var(--color-muted)]/75">
+                <span className="shrink-0 text-[11px] leading-none text-[var(--color-muted)]/75">
                   {t('quickAdd.drop')}
                 </span>
               )}
@@ -1051,7 +1051,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         onClick={goBack}
         disabled={!showBack}
         className={cn(
-          'inline-flex h-7 w-4 shrink-0 items-center justify-center rounded-full text-[14px] leading-none transition',
+          'inline-flex h-7 w-6 shrink-0 items-center justify-center rounded-full text-[14px] leading-none transition',
           showBack
             ? 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-fg)]'
             : 'pointer-events-none text-transparent',
@@ -1088,7 +1088,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
       {error ? (
         <p
-          className="pointer-events-none absolute inset-x-6 bottom-1 truncate text-center text-[10px] leading-none text-[var(--color-danger)]"
+          className="pointer-events-none absolute inset-x-6 bottom-1 truncate text-center text-[11px] leading-none text-[var(--color-danger)]"
           role="alert"
         >
           {error}
@@ -1116,7 +1116,7 @@ function AccountSelect({
 }) {
   return (
     <label className={cn(pillField, 'cursor-pointer')}>
-      <span className="shrink-0 text-[9px] font-medium leading-none text-[var(--color-muted)]">
+      <span className="shrink-0 text-[11px] font-medium leading-none text-[var(--color-muted)]">
         {prefix}
       </span>
       <select

@@ -98,6 +98,15 @@ export type BalanceSheet = {
   total_liabilities_equity: number
 }
 
+/** The Expense account with the most spending in a dashboard window. */
+export type TopExpense = {
+  code: string
+  name: string
+  amount_minor: number
+  /** Share of the window's expenses, in basis points. */
+  share_bps: number
+}
+
 export type DashboardSummary = {
   entity_id: string
   base_currency: string
@@ -106,6 +115,37 @@ export type DashboardSummary = {
   expenses: number
   net_income: number
   recent_entry_count: number
+  /** Net as a share of income, in basis points; null when income is zero or less. */
+  savings_rate_bps: number | null
+  /** Expenses as a share of income, in basis points; null when income is zero or less. */
+  spend_ratio_bps: number | null
+  /** Largest Expense account in the window; null when there are no expenses. */
+  top_expense: TopExpense | null
+  /** Net against the previous period, in basis points of its size; null when that net is zero. */
+  net_vs_previous_bps: number | null
+}
+
+export type CashFlowGranularity = 'day' | 'month'
+
+export type CashFlowBucket = {
+  start: string
+  end: string
+  income_minor: number
+  expenses_minor: number
+  cumulative_income_minor: number
+  cumulative_expenses_minor: number
+}
+
+/** Income and expenses per day or month, computed in Rust on the dashboard's basis. */
+export type CashFlowSeries = {
+  entity_id: string
+  from: string
+  to: string
+  granularity: CashFlowGranularity
+  total_income_minor: number
+  total_expenses_minor: number
+  net_minor: number
+  buckets: CashFlowBucket[]
 }
 
 export type CreateJournalLine = {
@@ -360,6 +400,12 @@ export const api = {
     }),
   dashboardSummary: (entityId: string, from: string, to: string, assetsAsOf: string) =>
     call<DashboardSummary>('dashboard_summary_cmd', { entityId, from, to, assetsAsOf }),
+  /**
+   * The cash-flow light's data. A null bound lets Rust resolve it to the
+   * book's first or last active entry.
+   */
+  cashFlowSeries: (entityId: string, from: string | null, to: string | null) =>
+    call<CashFlowSeries>('cash_flow_series_cmd', { entityId, from, to }),
 
   /** Signed normal balance of one account as of an ISO date. */
   accountBalance: (accountId: string, asOf: string) =>
@@ -613,4 +659,16 @@ export function yearStartISO(): string {
 
 export function yearEndISO(): string {
   return `${new Date().getFullYear()}-12-31`
+}
+
+/** First day of the calendar quarter containing `now`. */
+export function quarterStartISO(now: Date = new Date()): string {
+  const firstMonth = Math.floor(now.getMonth() / 3) * 3
+  return `${now.getFullYear()}-${String(firstMonth + 1).padStart(2, '0')}-01`
+}
+
+/** Last day of the calendar quarter containing `now`. */
+export function quarterEndISO(now: Date = new Date()): string {
+  const last = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3 + 3, 0)
+  return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`
 }

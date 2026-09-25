@@ -44,6 +44,20 @@
   --color-money-out-text: #ff9b7e;
   --color-money-out-soft: rgba(232, 96, 63, 0.13);
 
+  /* The light's gradient stops (spec: Rendering), shared with the canvas in
+     src/lib/ledgerColours.ts. Selected entry types wear them too. */
+  --color-money-in-a: #27bf93;
+  --color-money-in-b: #1ba39a;
+  --color-money-in-c: #1e8db0;
+  --color-money-out-a: #f07a45;
+  --color-money-out-b: #e8603f;
+  --color-money-out-c: #d64a5a;
+  /* Dark labels on those gradients: at least 4.5:1 at every stop. */
+  --color-on-money-in: #06110d;
+  --color-on-money-out: #1a0906;
+  /* The quiet plate under a neutral pill (balances, transfers). */
+  --color-plate-neutral: rgba(255, 255, 255, 0.07);
+
   /* Status. Always shipped with an icon and a label, so coral money-out is
      never read as an error. */
   --color-danger: #ff8295;
@@ -192,6 +206,40 @@
     backdrop-filter: blur(10px) saturate(120%);
   }
 
+  /* Pulse bars grow out of the zero line once, when the chart first paints:
+     in from its foot, out from its head. */
+  .pulse-bar {
+    transform-box: fill-box;
+    animation: pulse-grow 480ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  .pulse-bar-in {
+    transform-origin: bottom;
+  }
+
+  .pulse-bar-out {
+    transform-origin: top;
+  }
+
+  /* The net figure: money drawn as light. It starts on the Ledger text tint
+     and ends on a light stop; every stop holds 3:1 on the brightest glass,
+     the threshold for the figure's large text. */
+  .net-figure-in {
+    background-image: linear-gradient(90deg, #6fd9c4, #27bf93 55%, #1ba39a);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 26px rgba(27, 163, 154, 0.3));
+  }
+
+  .net-figure-out {
+    background-image: linear-gradient(90deg, #ff9b7e, #f07a45 55%, #e8603f);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 0 26px rgba(232, 96, 63, 0.24));
+  }
+
   /* Panes clip overflow, so a ring drawn outside an edge-to-edge control
      disappears. Inside glass, focus rings are drawn inset. */
   .glass-pane :focus-visible,
@@ -302,16 +350,6 @@
       rgba(5, 6, 10, 0) 55%
     );
   }
-
-  .aurora-watermark {
-    position: absolute;
-    left: 18%;
-    bottom: -7%;
-    white-space: nowrap;
-    font: 900 clamp(140px, 18vw, 260px) / 1 var(--font-display);
-    color: rgba(255, 255, 255, 0.025);
-    -webkit-text-stroke: 1px rgba(255, 255, 255, 0.07);
-  }
 }
 
 @keyframes aurora-drift-a {
@@ -326,8 +364,15 @@
   }
 }
 
+@keyframes pulse-grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .aurora-blobs i {
+  .aurora-blobs i,
+  .pulse-bar {
     animation: none;
   }
 }
@@ -554,7 +599,7 @@
    so an engine without it falls back to the control's own box. */
 .field-box:has(.ui-control) {
   display: block;
-  padding: 8px 12px 7px;
+  padding: 8px 12px;
   border-radius: var(--radius-control);
   background: var(--color-control);
   box-shadow: inset 0 0 0 1px var(--color-border);
@@ -565,6 +610,7 @@
 
 .field-box:has(.ui-control) > span:first-child {
   margin-bottom: 2px;
+  line-height: 14px;
 }
 
 .field-box:has(.ui-control):focus-within {

@@ -3,8 +3,10 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
+import { useState } from 'react'
+import userEvent from '@testing-library/user-event'
 
-import { Button, ErrorBanner, Field, IconBadge, Input, MetricCard, Select } from './ui'
+import { AmountPill, Button, ErrorBanner, Field, IconBadge, Input, MetricCard, MoneyPill, Segmented, Select } from './ui'
 
 afterEach(() => {
   cleanup()
@@ -102,5 +104,51 @@ describe('Button', () => {
   test('defaults to primary variant through data-variant attribute', () => {
     render(<Button>Save entry</Button>)
     expect(screen.getByRole('button', { name: 'Save entry' })).toHaveAttribute('data-variant', 'primary')
+  })
+})
+
+describe('MoneyPill and AmountPill', () => {
+  test('a money pill carries its Ledger role as data and reads label then value', () => {
+    render(<MoneyPill tone="in" label="In" value="74.500,00 €" />)
+
+    const pill = document.querySelector('[data-money-pill="in"]')
+    expect(pill).not.toBeNull()
+    expect(pill).toHaveTextContent('In 74.500,00 €')
+  })
+
+  test('an amount pill marks its direction', () => {
+    render(<AmountPill tone="out">-985,00 €</AmountPill>)
+
+    expect(screen.getByText('-985,00 €')).toHaveAttribute('data-amount', 'out')
+  })
+})
+
+describe('Segmented', () => {
+  test('the chosen option wears its Ledger tone; untoned options stay neutral', async () => {
+    function Harness() {
+      const [value, setValue] = useState<'expense' | 'income' | 'transfer'>('expense')
+      return (
+        <Segmented
+          value={value}
+          onChange={setValue}
+          options={[
+            { id: 'expense', label: 'Expense', tone: 'money-out' },
+            { id: 'income', label: 'Income', tone: 'money-in' },
+            { id: 'transfer', label: 'Transfer' },
+          ]}
+        />
+      )
+    }
+    render(<Harness />)
+
+    expect(screen.getByRole('button', { name: 'Expense' })).toHaveAttribute('data-tone', 'money-out')
+    expect(screen.getByRole('button', { name: 'Income' })).not.toHaveAttribute('data-tone')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Income' }))
+    expect(screen.getByRole('button', { name: 'Income' })).toHaveAttribute('data-tone', 'money-in')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+    expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('data-tone', 'neutral')
+    expect(screen.getByRole('button', { name: 'Expense' })).not.toHaveAttribute('data-tone')
   })
 })

@@ -8,9 +8,9 @@
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, ReportLine, balance_sheet, create_entity,
-    dashboard_summary, list_accounts, post_entry, profit_and_loss, set_account_opening_balance,
-    set_entry_hidden, trial_balance, void_entry,
+    CreateEntity, CreateJournalLine, PostJournal, ReportLine, balance_sheet, cash_flow_series,
+    create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
+    set_account_opening_balance, set_entry_hidden, trial_balance, void_entry,
 };
 use oikonomia_core::vault::Vault;
 use rand::rngs::StdRng;
@@ -54,6 +54,22 @@ fn account_id(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
 
 fn line<'a>(lines: &'a [ReportLine], code: &str) -> &'a ReportLine {
     lines.iter().find(|l| l.code == code).expect(code)
+}
+
+/// The light and the dashboard must never disagree, whatever the ledger holds.
+fn assert_series_matches_dashboard(conn: &Connection, entity_id: EntityId, from: &str, to: &str) {
+    let series = cash_flow_series(conn, entity_id, from, to).expect("series");
+    let dash = dashboard_summary(conn, entity_id, from, to, to).expect("dash");
+    let last = series.buckets.last().expect("bucket");
+    assert_eq!(
+        last.cumulative_income_minor, dash.income,
+        "series income {from}..{to}"
+    );
+    assert_eq!(
+        last.cumulative_expenses_minor, dash.expenses,
+        "series expenses {from}..{to}"
+    );
+    assert_eq!(series.net_minor, dash.net_income, "series net {from}..{to}");
 }
 
 fn post_expense(
@@ -508,6 +524,15 @@ fn randomized_entries_keep_reports_consistent() {
             "BS as of {as_of} must balance"
         );
     }
+
+    for (from, to) in [
+        ("2026-01-01", "2026-12-31"),
+        ("2026-03-01", "2026-03-31"),
+        ("2026-04-01", "2026-06-30"),
+        ("2026-02-10", "2026-11-20"),
+    ] {
+        assert_series_matches_dashboard(conn, entity_id, from, to);
+    }
 }
 
 #[test]
@@ -928,5 +953,66 @@ fn randomized_multi_year_entries_keep_tb_bs_and_ytd_pnl_aligned() {
             pnl.net_income, bs_ni,
             "YTD P&L must equal BS NI as of {as_of}"
         );
+    }
+
+    for (from, to) in [
+        ("2025-01-01", "2027-12-31"),
+        ("2026-07-01", "2026-09-30"),
+        ("2025-11-15", "2026-02-14"),
+    ] {
+        assert_series_matches_dashboard(conn, entity_id, from, to);
+    }
+}
+
+#[test]
+fn randomized_ledgers_with_voids_keep_the_series_equal_to_the_dashboard() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    let accounts = list_accounts(conn, entity_id).expect("accounts");
+
+    let mut rng = StdRng::seed_from_u64(0x0915_2026);
+    for index in 0..60 {
+        let debit_idx = rng.random_range(0..accounts.len());
+        let credit_idx = (debit_idx + rng.random_range(1..accounts.len())) % accounts.len();
+        let minor = rng.random_range(1..=100_000);
+        let month = rng.random_range(1..=12);
+        let day = rng.random_range(1..=28);
+
+        let view = post_entry(
+            conn,
+            &PostJournal {
+                entity_id,
+                entry_date: format!("2026-{month:02}-{day:02}"),
+                description: "random".into(),
+                reference: None,
+                lines: vec![
+                    CreateJournalLine {
+                        account_id: accounts[debit_idx].id,
+                        debit_minor: minor,
+                        credit_minor: 0,
+                        memo: None,
+                    },
+                    CreateJournalLine {
+                        account_id: accounts[credit_idx].id,
+                        debit_minor: 0,
+                        credit_minor: minor,
+                        memo: None,
+                    },
+                ],
+            },
+        )
+        .expect("post random");
+        if index % 5 == 0 {
+            void_entry(conn, view.entry.id).expect("void random");
+        }
+    }
+
+    for (from, to) in [
+        ("2026-01-01", "2026-12-31"),
+        ("2026-05-01", "2026-05-31"),
+        ("2026-10-01", "2026-12-31"),
+    ] {
+        assert_series_matches_dashboard(conn, entity_id, from, to);
     }
 }

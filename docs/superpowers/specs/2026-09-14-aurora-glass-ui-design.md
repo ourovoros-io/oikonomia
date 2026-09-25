@@ -312,3 +312,49 @@ The user approved every recommendation below.
    - Counts beside navigation items: deferred.
    - The "Matched" document chip: dropped; the dialog shows only what
      document analysis actually returns.
+
+## Resolved in the phase 2-3 plan (2026-09-15)
+
+Plan: `docs/superpowers/plans/2026-09-15-aurora-glass-light.md`. These refine the sections above; where they differ, these win.
+
+1. **D1 Previous window.**
+   - A window of whole calendar months steps back by the same number of calendar months: September against August, a quarter against the one before, a year against the year before.
+   - Any other window steps back by the same number of days.
+   - "Equally long" measured in days would have compared September with 2-31 August.
+2. **D2 The series carries its totals.** `CashFlowSeries` includes `total_income_minor`, `total_expenses_minor` and `net_minor`, so Transactions shows a net without subtracting in the UI.
+3. **D3 Open date filters resolve in Rust.**
+   - `activity_window` turns an empty bound into the book's first or last active entry date.
+   - With no entries, the open side falls back to the other bound, or to today.
+   - `cash_flow_series_cmd` takes `from` and `to` as optional.
+4. **D4 The net figure's gradient.**
+   - In: `#6FD9C4 -> #27BF93 -> #1BA39A`. Out: `#FF9B7E -> #F07A45 -> #E8603F`.
+   - Every stop holds 3:1 on the brightest glass, which is enough because the figure is always large text.
+   - The light itself keeps the Rendering stops.
+5. **D5 Pill labels use ink-mid** (`#AEB5BF`, 4.54:1 or better on every plate). Ink-soft is 4.04:1 on the money-in plate.
+6. **D6 The top bar belongs to the page.**
+   - Pages put their title and actions in the header through `TopBar`.
+   - Pages that do not keep the book name and chart.
+   - Lock becomes a round glass icon button.
+7. **D7 Total assets moves into the hero** as a neutral ASSETS pill under IN and OUT.
+8. **D8 The dashboard drops:**
+   - the explanatory paragraph;
+   - the offline-reader caption;
+   - the income and expense bars;
+   - the "Encrypted vault · local only" line;
+   - the Overview eyebrow and the second copy of the book name;
+   - the four metric cards.
+
+   The entries count moves into Recent activity's description.
+9. **D9 Transactions.**
+   - New Entry moves to the top bar.
+   - The eyebrow, description and meta line go.
+   - The summary follows the date filter only, and says so when account or search filters narrow the list.
+10. **D10 The light's zero line moves.** It sits where both peaks fit (30-80% of the plot height), on one shared scale. The mockup's fixed 74% only fit a month where income was well above expenses.
+11. **D11 Retired components.** `FlowBar` is deleted, since the light replaces its only use. `MetricCard` stays for Accounts until phase 4.
+12. **D12 Quarter bounds are computed in the web**, like month and year: calendar presentation, not accounting.
+13. **D13 Quick add** is a full-width primary button in the sidebar, without the `⌘K` hint while the shortcut is deferred.
+14. **D14 One PR for phases 2 and 3**, stacked on PR #60, at the user's request. The user reviews the running app after it.
+15. **D15 Status tones.**
+    - `CollapsibleSection` no longer accepts the success tone; Settings' Books section uses accent.
+    - Asset badges keep accent: success and accent share the brand emerald by definition, and a badge is identity, not a confirmation.
+16. **Entry type selectors** wear the light's gradient stops with dark labels (`#06110D` on in, `#1A0906` on out), 4.59:1 or better at every stop.

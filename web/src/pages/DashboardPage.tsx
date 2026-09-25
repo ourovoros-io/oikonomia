@@ -1,16 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  ArrowDownLeft,
-  ArrowUpRight,
-  Calendar,
-  CalendarRange,
-  Landmark,
-  Receipt,
-  Scale,
-  Sparkles,
-  TrendingUp,
-  Wallet,
-} from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, Landmark, Receipt } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -18,23 +7,30 @@ import {
   localeForCurrency,
   monthEndISO,
   monthStartISO,
+  quarterEndISO,
+  quarterStartISO,
   todayISO,
   yearEndISO,
   yearStartISO,
   type Account,
+  type CashFlowSeries,
   type DashboardSummary,
   type Entity,
   type PostedEntryView,
 } from '../lib/api'
+import { formatPercentFromBps } from '../lib/arc'
+import { ArcTile } from '../components/Arc'
+import { CashFlowPulse } from '../components/CashFlowPulse'
+import { TopBar } from '../components/TopBar'
 import {
+  AmountPill,
   Button,
   EmptyState,
   ErrorBanner,
-  FlowBar,
   Hero,
   IconBadge,
   ListRow,
-  MetricCard,
+  MoneyPill,
   Panel,
   Segmented,
 } from '../components/ui'
@@ -44,7 +40,7 @@ import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
 
-type Period = 'month' | 'year'
+type Period = 'month' | 'quarter' | 'year'
 
 type ActivityRow = {
   id: string
@@ -78,26 +74,48 @@ function inferActivity(view: PostedEntryView, accounts: Account[]): ActivityRow 
   }
 }
 
+/**
+ * The full calendar period containing today, so entries dated ahead (scanned
+ * bills carry their due date) count toward it immediately.
+ */
+function periodBounds(period: Period): { from: string; to: string } {
+  if (period === 'month') return { from: monthStartISO(), to: monthEndISO() }
+  if (period === 'quarter') return { from: quarterStartISO(), to: quarterEndISO() }
+  return { from: yearStartISO(), to: yearEndISO() }
+}
+
 export function DashboardPage({ entity, onCreateBook }: Props) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const [data, setData] = useState<DashboardSummary | null>(null)
+  const [series, setSeries] = useState<CashFlowSeries | null>(null)
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [period, setPeriod] = useState<Period>('month')
 
-  // Full calendar month or year, so entries dated ahead (common for scanned
-  // bills carrying their due date) count toward the period immediately.
-  // Assets stay "as of today".
-  const from = period === 'month' ? monthStartISO() : yearStartISO()
-  const to = period === 'month' ? monthEndISO() : yearEndISO()
+  const { from, to } = periodBounds(period)
   const assetsAsOf = todayISO()
-  const periodLabel = period === 'month' ? t('dash.period.month') : t('dash.period.year')
+  const periodWord = t(`dashboard.period.word.${period}`)
+
+  const periodTitle = useMemo(() => {
+    const start = new Date(`${from}T12:00:00`)
+    if (period === 'month') {
+      return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(start)
+    }
+    if (period === 'quarter') {
+      return t('dashboard.period.quarterTitle', {
+        quarter: Math.floor(start.getMonth() / 3) + 1,
+        year: start.getFullYear(),
+      })
+    }
+    return String(start.getFullYear())
+  }, [from, period, locale, t])
 
   useEffect(() => {
     if (!entity) {
       setData(null)
+      setSeries(null)
       setEntries([])
       setAccounts([])
       return
@@ -106,13 +124,15 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
     setLoading(true)
     void (async () => {
       try {
-        const [summary, list, accts] = await Promise.all([
+        const [summary, flow, list, accts] = await Promise.all([
           api.dashboardSummary(entity.id, from, to, assetsAsOf),
+          api.cashFlowSeries(entity.id, from, to),
           api.entryList(entity.id, { from, to }),
           api.accountList(entity.id),
         ])
         if (!cancelled) {
           setData(summary)
+          setSeries(flow)
           setEntries(list)
           setAccounts(accts)
           setError(null)
@@ -126,6 +146,8 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
     return () => {
       cancelled = true
     }
+    // assetsAsOf follows the same clock as from/to; refetching on it alone adds nothing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity, from, to])
 
   const activity = useMemo(() => {
@@ -154,133 +176,133 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
   const loc = localeForCurrency(ccy)
   const money = (n: number, signed = false) => formatMoney(n, ccy, loc, { signed })
 
+  const pending = loading && !data
   const income = data?.income ?? 0
   const expenses = data?.expenses ?? 0
   const net = data?.net_income ?? 0
   const assets = data?.cash_like_assets ?? 0
-  const maxFlow = Math.max(income, expenses, 1)
+  const savings = data?.savings_rate_bps ?? null
+  const previous = data?.net_vs_previous_bps ?? null
+  const top = data?.top_expense ?? null
+  const netTone = pending || net === 0 ? 'zero' : net > 0 ? 'in' : 'out'
+  const noValue = t('dashboard.arc.noValue')
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
-            {t('dash.overview')}
-          </p>
-          <h2 className="mt-1 text-[1.75rem] leading-tight font-semibold tracking-tight text-[var(--color-fg)]">
-            {entity.name}
-          </h2>
-          <p className="mt-1 text-sm text-[var(--color-muted)]">
-            {formatDate(from)} → {formatDate(to)} · {ccy}
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
+    <div className="space-y-4">
+      <TopBar
+        title={entity.name}
+        subtitle={`${periodTitle} · ${ccy}`}
+        actions={
           <Segmented<Period>
             value={period}
             onChange={setPeriod}
             options={[
-              { id: 'month', label: t('dash.month'), icon: <Calendar className="size-3.5" /> },
-              { id: 'year', label: t('dash.year'), icon: <CalendarRange className="size-3.5" /> },
+              { id: 'month', label: t('dashboard.period.month') },
+              { id: 'quarter', label: t('dashboard.period.quarter') },
+              { id: 'year', label: t('dashboard.period.year') },
             ]}
           />
-          <div className="text-xs text-[var(--color-muted)]">{t('dash.encryptedVault')}</div>
-        </div>
-      </div>
+        }
+      />
 
       <ErrorBanner message={error} />
 
       <Hero>
-        <div className="grid gap-8 p-6 sm:grid-cols-[1.2fr_1fr] sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-6 px-7 pt-6">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
-              <TrendingUp className="size-4 text-[var(--color-accent)]" />
-              {t('dash.netThis', { period: periodLabel })}
-            </div>
-            <div
+            <p className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+              {t('dash.netThis', { period: periodWord })}
+            </p>
+            <p
+              data-net={netTone}
               title={money(net, true)}
               className={cn(
-                'mt-3 truncate text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl',
-                net < 0 ? 'text-[var(--color-money-out-text)]' : 'text-[var(--color-fg)]',
+                'mt-3 truncate text-[clamp(2.75rem,5.2vw,4rem)] leading-none font-semibold tracking-[-0.02em] tabular-nums',
+                netTone === 'in'
+                  ? 'net-figure-in'
+                  : netTone === 'out'
+                    ? 'net-figure-out'
+                    : 'text-[var(--color-fg)]',
               )}
             >
-              {loading && !data ? '—' : money(net, true)}
-            </div>
-            <p className="mt-3 max-w-md text-sm leading-relaxed text-[var(--color-muted)]">
-              {t('dash.netBody', { period: periodLabel })}
+              {pending ? '—' : money(net, true)}
             </p>
-            <div className="mt-6 flex flex-wrap items-center gap-4 text-xs text-[var(--color-muted)]">
-              <span className="inline-flex items-center gap-1.5">
-                <Sparkles className="size-3.5 text-[var(--color-accent)]" />
-                {t('dash.offlineReader')}
-              </span>
-              <span className="inline-flex items-center gap-1.5">
-                <Receipt className="size-3.5" />
-                {t('dash.entriesThis', {
-                  count: data?.recent_entry_count ?? 0,
-                  period: periodLabel,
-                })}
-              </span>
-            </div>
+            {savings !== null && savings > 0 ? (
+              <p className="mt-3 text-sm text-[var(--color-fg-secondary)]">
+                {t('dashboard.hero.kept', { percent: formatPercentFromBps(savings, locale) })}
+              </p>
+            ) : null}
           </div>
-
-          <div className="flex min-w-0 flex-col justify-center gap-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)]/70 p-5 backdrop-blur">
-            <FlowBar
-              label={t('dash.income')}
-              value={money(income)}
-              ratio={income / maxFlow}
-              tone="success"
-            />
-            <FlowBar
-              label={t('dash.expenses')}
-              value={money(expenses)}
-              ratio={expenses / maxFlow}
-              tone="danger"
-            />
-            <div className="border-t border-[var(--color-border)] pt-4 text-xs text-[var(--color-muted)]">
-              {t('dash.cashInVsOut')}
-            </div>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <MoneyPill tone="in" label={t('dashboard.pill.in')} value={pending ? '—' : money(income)} />
+            <MoneyPill tone="out" label={t('dashboard.pill.out')} value={pending ? '—' : money(expenses)} />
+            <MoneyPill tone="neutral" label={t('dashboard.pill.assets')} value={pending ? '—' : money(assets)} />
           </div>
         </div>
+        <CashFlowPulse
+          series={series}
+          formatAmount={(minor) => money(minor)}
+          className="mx-7 mt-4 mb-6 h-[132px]"
+          label={
+            data
+              ? t('dashboard.light.label', {
+                  income: money(income),
+                  expenses: money(expenses),
+                  net: money(net, true),
+                  range: periodTitle,
+                })
+              : t('dashboard.light.empty')
+          }
+        />
       </Hero>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          label={t('dash.totalAssets')}
-          hint={t('dash.asOfToday')}
-          value={loading && !data ? '—' : money(assets)}
-          icon={<Wallet className="size-4" />}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <ArcTile
+          label={t('dashboard.arc.savings.label')}
+          hint={t('dashboard.arc.savings.hint')}
+          bps={savings}
+          tone="in"
+          locale={locale}
+          noValueLabel={noValue}
         />
-        <MetricCard
-          label={t('dash.income')}
-          hint={period === 'month' ? t('dash.thisMonth') : t('dash.thisYear')}
-          value={loading && !data ? '—' : money(income)}
-          icon={<ArrowDownLeft className="size-4" />}
-          accent="success"
+        <ArcTile
+          label={t('dashboard.arc.spend.label')}
+          hint={t('dashboard.arc.spend.hint')}
+          bps={data?.spend_ratio_bps ?? null}
+          tone="out"
+          locale={locale}
+          noValueLabel={noValue}
         />
-        <MetricCard
-          label={t('dash.expenses')}
-          hint={period === 'month' ? t('dash.thisMonth') : t('dash.thisYear')}
-          value={loading && !data ? '—' : money(expenses)}
-          icon={<ArrowUpRight className="size-4" />}
-          accent="danger"
+        <ArcTile
+          label={t('dashboard.arc.previous.label')}
+          hint={t(`dashboard.arc.previous.hint.${period}`)}
+          bps={previous}
+          signed
+          tone={previous !== null && previous < 0 ? 'out' : 'in'}
+          locale={locale}
+          noValueLabel={noValue}
         />
-        <MetricCard
-          label={t('dash.netResult')}
-          hint={t('dash.netHint')}
-          value={loading && !data ? '—' : money(net, true)}
-          icon={<Scale className="size-4" />}
-          accent={net < 0 ? 'danger' : 'success'}
+        <ArcTile
+          label={t('dashboard.arc.top.label')}
+          hint={top ? top.name : t('dashboard.arc.top.none')}
+          bps={top ? top.share_bps : null}
+          tone="out"
+          locale={locale}
+          noValueLabel={noValue}
         />
       </div>
 
       <Panel
         title={t('dash.recentActivity')}
-        description={t('dash.recentDesc', { period: periodLabel })}
+        description={t('dash.entriesThis', {
+          count: data?.recent_entry_count ?? 0,
+          period: periodWord,
+        })}
         icon={<Receipt className="size-4" />}
       >
         {activity.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[var(--color-muted)]">
-            {loading ? t('common.loading') : t('dash.noEntries', { period: periodLabel })}
+            {loading ? t('common.loading') : t('dash.noEntries', { period: periodWord })}
           </div>
         ) : (
           <ul className="divide-y divide-[var(--color-border)]">
@@ -288,11 +310,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
               <ListRow key={row.id}>
                 <IconBadge
                   tone={
-                    row.kind === 'income'
-                      ? 'money-in'
-                      : row.kind === 'expense'
-                        ? 'money-out'
-                        : 'muted'
+                    row.kind === 'income' ? 'money-in' : row.kind === 'expense' ? 'money-out' : 'muted'
                   }
                 >
                   {row.kind === 'income' ? (
@@ -307,24 +325,17 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
                   <div className="truncate text-sm font-medium text-[var(--color-fg)]">
                     {row.description}
                   </div>
-                  <div className="text-xs text-[var(--color-muted)]">
+                  <div className="text-xs text-[var(--color-muted)] tabular-nums">
                     {row.date}
                     <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                     <span>{t(`kind.${row.kind}`)}</span>
                   </div>
                 </div>
-                <div
-                  className={cn(
-                    'shrink-0 text-sm font-semibold tabular-nums',
-                    row.signedMinor < 0
-                      ? 'text-[var(--color-money-out-text)]'
-                      : row.signedMinor > 0 && row.kind === 'income'
-                        ? 'text-[var(--color-money-in-text)]'
-                        : 'text-[var(--color-fg)]',
-                  )}
+                <AmountPill
+                  tone={row.kind === 'income' ? 'in' : row.kind === 'expense' ? 'out' : 'neutral'}
                 >
                   {money(row.signedMinor, row.kind === 'income' || row.kind === 'expense')}
-                </div>
+                </AmountPill>
               </ListRow>
             ))}
           </ul>

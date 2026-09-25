@@ -156,8 +156,8 @@ export function DateInput({
       <Button
         type="button"
         variant="ghost"
-        size="icon"
-        className="absolute top-1/2 right-1 h-8 w-8 -translate-y-1/2"
+        size="iconSm"
+        className="absolute top-1/2 right-1 -translate-y-1/2"
         onClick={() => {
           if (disabled) return
           setOpen((v) => !v)
@@ -176,8 +176,7 @@ export function DateInput({
             <Button
               type="button"
               variant="ghost"
-              size="icon"
-              className="h-7 w-7"
+              size="iconSm"
               onClick={() => shiftMonth(-1)}
               aria-label={t('date.prevMonth')}
             >
@@ -189,8 +188,7 @@ export function DateInput({
             <Button
               type="button"
               variant="ghost"
-              size="icon"
-              className="h-7 w-7"
+              size="iconSm"
               onClick={() => shiftMonth(1)}
               aria-label={t('date.nextMonth')}
             >
@@ -200,7 +198,7 @@ export function DateInput({
 
           <div className="grid grid-cols-7 gap-0.5 text-center">
             {WEEKDAY_KEYS.map((key) => (
-              <span key={key} className="py-1 text-[10px] font-medium text-[var(--color-muted)]">
+              <span key={key} className="py-1 text-[11px] font-medium text-[var(--color-muted)]">
                 {t(key)}
               </span>
             ))}

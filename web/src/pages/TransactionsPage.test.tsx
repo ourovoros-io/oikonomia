@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type {
   Account,
+  CashFlowSeries,
   CsvImportPreview,
   DocumentSuggestion,
   Entity,
@@ -31,6 +32,11 @@ vi.mock('../components/DocumentDropZone', () => ({
   },
 }))
 
+// jsdom has no 2D canvas; the light's painting is tested on its own.
+vi.mock('../components/CashFlowPulse', () => ({
+  CashFlowPulse: ({ label }: { label: string }) => <div role="img" aria-label={label} />,
+}))
+
 vi.mock('../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/api')>()
   return {
@@ -48,12 +54,15 @@ vi.mock('../lib/api', async (importOriginal) => {
       recurringList: vi.fn(),
       recurringCreate: vi.fn(),
       recurringPost: vi.fn(),
+      cashFlowSeries: vi.fn(),
     },
   }
 })
 
 import { api } from '../lib/api'
+import { commandErrorMessage } from '../lib/commandError'
 import { resetI18nForTests } from '../lib/i18n'
+import { formatMoney } from '../lib/money'
 import { TransactionsPage } from './TransactionsPage'
 
 const entity: Entity = {
@@ -63,6 +72,20 @@ const entity: Entity = {
   fiscal_year_start_month: 1,
   chart_template: 'personal',
 }
+
+const series: CashFlowSeries = {
+  entity_id: 'e1',
+  from: '2026-08-01',
+  to: '2026-08-31',
+  granularity: 'day',
+  total_income_minor: 120000,
+  total_expenses_minor: 4250,
+  net_minor: 115750,
+  buckets: [],
+}
+
+/** Rendered money carries a no-break space; text matchers see a plain one. */
+const plain = (text: string) => text.replace(/\s/g, ' ')
 
 function account(over: Partial<Account> & Pick<Account, 'id' | 'name' | 'account_type'>): Account {
   return {
@@ -248,6 +271,7 @@ beforeEach(() => {
   vi.mocked(api.recurringList).mockReset().mockResolvedValue([])
   vi.mocked(api.recurringCreate).mockReset()
   vi.mocked(api.recurringPost).mockReset()
+  vi.mocked(api.cashFlowSeries).mockReset().mockResolvedValue(series)
 })
 
 async function renderReady() {
@@ -274,17 +298,18 @@ describe('TransactionsPage entry kind colours', () => {
 })
 
 describe('TransactionsPage CSV toolbar', () => {
-  test('toolbar shows Recurring left of Import CSV, Export CSV, New Entry', async () => {
+  test('the list header carries Recurring, Import CSV and Export CSV; New Entry sits in the top bar', async () => {
     await renderReady()
     const names = screen.getAllByRole('button').map((el) => el.textContent?.replace(/\s+/g, ' ').trim())
+    const newEntry = names.indexOf('New Entry')
     const recurring = names.indexOf('Recurring')
     const importCsv = names.indexOf('Import CSV')
     const exportCsv = names.indexOf('Export CSV')
-    const newEntry = names.indexOf('New Entry')
-    expect(recurring).toBeGreaterThanOrEqual(0)
+    expect(newEntry).toBeGreaterThanOrEqual(0)
+    expect(recurring).toBeGreaterThan(newEntry)
     expect(importCsv).toBeGreaterThan(recurring)
     expect(exportCsv).toBeGreaterThan(importCsv)
-    expect(newEntry).toBeGreaterThan(exportCsv)
+    expect(names.filter((name) => name === 'New Entry')).toHaveLength(1)
   })
 
   test('Recurring opens the empty templates sub-view', async () => {
@@ -698,5 +723,131 @@ describe('TransactionsPage empty-state CTA', () => {
   test('renders without a CTA when onCreateBook is not supplied', () => {
     render(<TransactionsPage entity={null} />)
     expect(screen.queryByRole('button', { name: 'Create a book' })).toBeNull()
+  })
+})
+
+describe('TransactionsPage Quick add intent', () => {
+  test('opens New entry once and reports the intent handled', async () => {
+    const handled = vi.fn()
+    render(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={handled} />)
+
+    expect(await screen.findByRole('heading', { name: 'New entry' })).toBeTruthy()
+    expect(handled).toHaveBeenCalledTimes(1)
+  })
+
+  test('opens New entry from the Recurring sub-view too', async () => {
+    const handled = vi.fn()
+    const { rerender } = render(
+      <TransactionsPage entity={entity} newEntryIntent={0} onNewEntryIntentHandled={handled} />,
+    )
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Import CSV' })).toBeTruthy()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Recurring' }))
+    await waitFor(() => {
+      expect(screen.getByText('No recurring templates yet')).toBeTruthy()
+    })
+
+    rerender(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={handled} />)
+
+    expect(await screen.findByRole('heading', { name: 'New entry' })).toBeTruthy()
+    expect(handled).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('TransactionsPage summary', () => {
+  test('shows the Rust totals for the whole book when no dates are set', async () => {
+    await renderReady()
+
+    await waitFor(() => {
+      expect(api.cashFlowSeries).toHaveBeenCalledWith('e1', null, null)
+    })
+    const heading = await screen.findByRole('heading', { name: 'In view · 01/08/2026 – 31/08/2026' })
+    const pane = heading.closest('section')
+    expect(pane?.querySelector('[data-net]')).toHaveAttribute('data-net', 'in')
+    expect(pane?.querySelector('[data-net]')).toHaveTextContent(plain(formatMoney(115750, 'EUR', undefined, { signed: true })))
+    expect(pane?.querySelector('[data-money-pill="in"]')).toHaveTextContent(plain(`In ${formatMoney(120000, 'EUR')}`))
+    expect(pane?.querySelector('[data-money-pill="out"]')).toHaveTextContent(plain(`Out ${formatMoney(4250, 'EUR')}`))
+  })
+
+  test('a date filter narrows the summary', async () => {
+    await renderReady()
+
+    await userEvent.type(screen.getByLabelText('Filter from date'), '01/08/2026')
+    await userEvent.tab()
+
+    await waitFor(() => {
+      expect(api.cashFlowSeries).toHaveBeenLastCalledWith('e1', '2026-08-01', null)
+    })
+  })
+
+  test('the account filter leaves the summary whole, and says so', async () => {
+    await renderReady()
+    const select = screen.getByRole('combobox', { name: 'Account' }) as HTMLSelectElement
+
+    await userEvent.selectOptions(select, select.options[1]?.value ?? '')
+
+    await waitFor(() => {
+      expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ accountId: select.options[1]?.value }))
+    })
+    expect(api.cashFlowSeries).toHaveBeenLastCalledWith('e1', null, null)
+    expect(screen.getByText("The account and search filters don't change this summary.")).toBeInTheDocument()
+  })
+
+  test('an inverted date range draws nothing and says why', async () => {
+    vi.mocked(api.cashFlowSeries).mockImplementation(async (_entityId, from, to) => {
+      if (from && to) {
+        throw { code: 'validation', message: 'from date must be on or before to' }
+      }
+      return series
+    })
+    await renderReady()
+
+    await userEvent.type(screen.getByLabelText('Filter from date'), '31/08/2026')
+    await userEvent.tab()
+    await userEvent.type(screen.getByLabelText('Filter to date'), '01/08/2026')
+    await userEvent.tab()
+
+    expect(await screen.findByText('The From date must be on or before the To date.')).toBeInTheDocument()
+    const alert = screen.queryByRole('alert')
+    expect(alert?.textContent ?? '').not.toContain('from date must be on or before to')
+  })
+
+  test('a failing summary never stops the list from refreshing', async () => {
+    vi.mocked(api.cashFlowSeries).mockRejectedValue({ code: 'io', message: 'disk' })
+    vi.mocked(api.entryList).mockResolvedValue([postedEntry, incomeEntry])
+    await renderReady()
+
+    await waitFor(() => {
+      expect(screen.getByText('Alpha supermarket')).toBeTruthy()
+      expect(screen.getByText('CLIENT INVOICE')).toBeTruthy()
+    })
+
+    const heading = await screen.findByRole('heading', { name: 'In view' })
+    const pane = heading.closest('section')
+    await waitFor(() => {
+      expect(pane?.querySelector('[data-net]')).toHaveTextContent('—')
+    })
+    expect(pane).toHaveTextContent(commandErrorMessage({ code: 'io', message: 'disk' }))
+  })
+})
+
+describe('TransactionsPage New entry type colours', () => {
+  test('the chosen type wears its Ledger gradient; Transfer stays neutral', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await screen.findByRole('heading', { name: 'New entry' })
+
+    expect(screen.getByRole('button', { name: 'Expense' })).toHaveAttribute('data-tone', 'money-out')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Income' }))
+    expect(screen.getByRole('button', { name: 'Income' })).toHaveAttribute('data-tone', 'money-in')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    expect(screen.getByRole('button', { name: 'Bill' })).toHaveAttribute('data-tone', 'money-out')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+    expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('data-tone', 'neutral')
   })
 })

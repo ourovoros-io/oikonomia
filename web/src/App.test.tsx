@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Entity } from './lib/api'
@@ -45,20 +45,26 @@ vi.mock('./lib/api', () => ({
   },
 }))
 
-vi.mock('./pages/DashboardPage', () => ({
-  DashboardPage: ({ onCreateBook }: { onCreateBook?: () => void }) => (
-    <div>
-      Dashboard stub
-      {onCreateBook ? (
-        <button type="button" onClick={onCreateBook}>
-          Create a book
-        </button>
-      ) : null}
-    </div>
-  ),
-}))
+vi.mock('./pages/DashboardPage', async () => {
+  const { TopBar } = await import('./components/TopBar')
+  return {
+    DashboardPage: ({ onCreateBook }: { onCreateBook?: () => void }) => (
+      <div>
+        <TopBar title="Dashboard stub title" actions={<button type="button">Stub period</button>} />
+        Dashboard stub
+        {onCreateBook ? (
+          <button type="button" onClick={onCreateBook}>
+            Create a book
+          </button>
+        ) : null}
+      </div>
+    ),
+  }
+})
 vi.mock('./pages/TransactionsPage', () => ({
-  TransactionsPage: () => null,
+  TransactionsPage: ({ newEntryIntent }: { newEntryIntent?: number }) => (
+    <div>{`Transactions stub, new entry intent ${newEntryIntent ?? 0}`}</div>
+  ),
 }))
 vi.mock('./pages/DocumentsPage', () => ({
   DocumentsPage: () => null,
@@ -90,6 +96,7 @@ afterEach(() => {
   cleanup()
   resetI18nForTests()
   vaultLockedHandlers.length = 0
+  vi.restoreAllMocks()
 })
 
 beforeEach(() => {
@@ -270,16 +277,22 @@ describe('App shell', () => {
     ).toBeNull()
   })
 
-  test('mounts exactly one aurora, above the shell, in the unlocked state', async () => {
+  test('mounts exactly one aurora, above the shell, moving in a focused unlocked window', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     render(<App />)
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
     })
 
-    expect(document.querySelectorAll('.aurora')).toHaveLength(1)
+    const auroras = document.querySelectorAll('.aurora')
+    expect(auroras).toHaveLength(1)
+    expect(auroras[0]).toHaveAttribute('data-moving', 'true')
   })
 
   test('mounts exactly one aurora, held still, while the vault is locked', async () => {
+    // jsdom reports no focus, which would hold the aurora still on its own;
+    // give the window focus so only the locked state can be what pauses it.
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     vi.mocked(vaultStatus).mockReset().mockResolvedValue('locked')
     render(<App />)
     await waitFor(() => {
@@ -298,11 +311,50 @@ describe('App shell', () => {
     const personal = await screen.findByRole('button', { name: 'Personal, EUR' })
     const household = await screen.findByRole('button', { name: 'Household, EUR' })
 
-    expect(personal.querySelector('span[aria-hidden]')?.getAttribute('style')).toContain(
+    expect(personal.querySelector('span[style]')?.getAttribute('style')).toContain(
       'var(--viz-1)',
     )
-    expect(household.querySelector('span[aria-hidden]')?.getAttribute('style')).toContain(
+    expect(household.querySelector('span[style]')?.getAttribute('style')).toContain(
       'var(--viz-2)',
     )
+  })
+})
+
+describe('App top bar and Quick add', () => {
+  test('a page that owns the top bar replaces the book title with its own', async () => {
+    render(<App />)
+    const banner = await screen.findByRole('banner')
+
+    expect(await within(banner).findByRole('heading', { name: 'Dashboard stub title' })).toBeTruthy()
+    expect(within(banner).getByRole('button', { name: 'Stub period' })).toBeTruthy()
+    expect(within(banner).queryByText('Personal')).toBeNull()
+  })
+
+  test('a page that does not own it keeps the book title', async () => {
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Accounts' }))
+
+    const banner = screen.getByRole('banner')
+    expect(await within(banner).findByText('Personal')).toBeTruthy()
+    expect(within(banner).queryByRole('heading', { name: 'Dashboard stub title' })).toBeNull()
+  })
+
+  test('Quick add opens New entry on Transactions', async () => {
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Quick add' })).toBeEnabled()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Quick add' }))
+
+    expect(await screen.findByText('Transactions stub, new entry intent 1')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Transactions' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  test('Quick add waits for a book to add to', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([])
+    render(<App />)
+
+    expect(await screen.findByRole('button', { name: 'Quick add' })).toBeDisabled()
   })
 })

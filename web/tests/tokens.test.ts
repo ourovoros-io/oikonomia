@@ -171,4 +171,77 @@ describe('Aurora glass tokens', () => {
     expect(rule, 'inset focus-ring rule exists').not.toBeNull()
     expect(rule?.[1] ?? '').toContain('outline-offset: -2px')
   })
+
+  test('the light stops are the spec gradient, shared with the canvas', () => {
+    // web/src/lib/ledgerColours.ts paints with these same six values; its own
+    // test pins them there.
+    expect(['--color-money-in-a', '--color-money-in-b', '--color-money-in-c'].map((n) => token(n))).toEqual([
+      '#27bf93',
+      '#1ba39a',
+      '#1e8db0',
+    ])
+    expect(['--color-money-out-a', '--color-money-out-b', '--color-money-out-c'].map((n) => token(n))).toEqual([
+      '#f07a45',
+      '#e8603f',
+      '#d64a5a',
+    ])
+  })
+
+  test('the label on a chosen entry type clears 4.5:1 across its whole gradient', () => {
+    const onIn = rgb(token('--color-on-money-in'))
+    const onOut = rgb(token('--color-on-money-out'))
+
+    for (const stop of ['--color-money-in-a', '--color-money-in-b', '--color-money-in-c']) {
+      expect(contrast(onIn, rgb(token(stop))), stop).toBeGreaterThanOrEqual(4.5)
+    }
+    for (const stop of ['--color-money-out-a', '--color-money-out-b', '--color-money-out-c']) {
+      expect(contrast(onOut, rgb(token(stop))), stop).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  test('every stop of the net figure clears 3:1, the large-text threshold', () => {
+    for (const name of ['net-figure-in', 'net-figure-out']) {
+      const rule = css.match(new RegExp(`\\.${name}\\s*\\{([^}]+)\\}`))
+      expect(rule, `${name} rule exists`).not.toBeNull()
+
+      const stops = (rule?.[1] ?? '').match(/#[0-9a-f]{6}/gi) ?? []
+      expect(stops.length, `${name} has gradient stops`).toBeGreaterThanOrEqual(2)
+      for (const stop of stops) {
+        expect(contrast(rgb(stop.toLowerCase()), BRIGHTEST_GLASS), `${name} ${stop}`).toBeGreaterThanOrEqual(3)
+      }
+    }
+  })
+
+  test('money pills keep label and value legible on their plates', () => {
+    const inPlate = compositeOver(rgba(token('--color-money-in-soft')), BRIGHTEST_GLASS)
+    const outPlate = compositeOver(rgba(token('--color-money-out-soft')), BRIGHTEST_GLASS)
+    const neutralPlate = compositeOver(rgba(token('--color-plate-neutral')), BRIGHTEST_GLASS)
+    const label = rgb(token('--color-fg-secondary'))
+
+    expect(contrast(label, inPlate), 'label on in').toBeGreaterThanOrEqual(4.5)
+    expect(contrast(label, outPlate), 'label on out').toBeGreaterThanOrEqual(4.5)
+    expect(contrast(label, neutralPlate), 'label on neutral').toBeGreaterThanOrEqual(4.5)
+    expect(contrast(rgb(token('--color-money-in-text')), inPlate), 'in value').toBeGreaterThanOrEqual(4.5)
+    expect(contrast(rgb(token('--color-money-out-text')), outPlate), 'out value').toBeGreaterThanOrEqual(4.5)
+    expect(contrast(rgb(token('--color-fg')), neutralPlate), 'neutral value').toBeGreaterThanOrEqual(4.5)
+  })
+
+  test('the net figure glows in its own Ledger colour, never the brand light', () => {
+    for (const [name, expectedRgb] of [
+      ['net-figure-in', [27, 163, 154]],
+      ['net-figure-out', [232, 96, 63]],
+    ] as const) {
+      const rule = css.match(new RegExp(`\\.${name}\\s*\\{([^}]+)\\}`))
+      expect(rule, `${name} rule exists`).not.toBeNull()
+
+      const body = rule?.[1] ?? ''
+      const shadowMatch = /drop-shadow\(\s*[^)]*\s*rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*[\d.]+\s*\)/.exec(
+        body,
+      )
+      expect(shadowMatch, `${name} has drop-shadow rgba`).not.toBeNull()
+
+      const [, r, g, b] = shadowMatch ?? []
+      expect([Number(r), Number(g), Number(b)], `${name} glow color`).toEqual(expectedRgb)
+    }
+  })
 })

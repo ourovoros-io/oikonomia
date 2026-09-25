@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Download, Eye, FolderOpen, Trash2 } from 'lucide-react'
+import { Download, Eye, FileImage, FileText, FolderOpen, Trash2 } from 'lucide-react'
 import { api, type DocumentMeta, type Entity } from '../lib/api'
 import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { formatBytes } from '../lib/files'
-import { Button, EmptyState, ErrorBanner, PageHeader, Panel } from '../components/ui'
+import { TopBar } from '../components/TopBar'
+import { Button, EmptyState, ErrorBanner, IconBadge, Panel } from '../components/ui'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
@@ -93,13 +94,8 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={t('docs.eyebrow')}
-        title={t('docs.title')}
-        description={t('docs.description')}
-        meta={t('docs.meta')}
-      />
+    <div className="space-y-4">
+      <TopBar title={t('docs.title')} subtitle={`${entity.name} · ${entity.base_currency}`} />
 
       <ErrorBanner message={error} />
 
@@ -136,14 +132,25 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
         >
           <ul className="divide-y divide-[var(--color-border)]">
             {docs.map((doc) => (
-              <li key={doc.id} className="flex items-center gap-4 px-5 py-3.5">
+              <li key={doc.id} className="flex items-center gap-4 px-5 py-3">
+                <IconBadge tone="info">
+                  {doc.mime_type.startsWith('image/') ? (
+                    <FileImage className="size-4" strokeWidth={1.75} />
+                  ) : (
+                    <FileText className="size-4" strokeWidth={1.75} />
+                  )}
+                </IconBadge>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-[var(--color-fg)]">
                     {doc.filename}
                   </div>
-                  <div className="truncate text-xs text-[var(--color-muted)]">
-                    {formatCreatedAt(doc.created_at)}
-                    <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
+                  <div className="truncate text-xs text-[var(--color-muted)] tabular-nums">
+                    {formatCreatedAt(doc.created_at) ? (
+                      <>
+                        {formatCreatedAt(doc.created_at)}
+                        <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
+                      </>
+                    ) : null}
                     {formatBytes(doc.size_bytes)}
                     <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                     {doc.mime_type}
@@ -156,8 +163,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
 
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
+                  size="iconSm"
                   onClick={() => setViewerDocId(doc.id)}
                   aria-label={t('docs.viewAria')}
                   title={t('docs.view')}
@@ -166,8 +172,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
                 </Button>
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
+                  size="iconSm"
                   disabled={anyBusy}
                   busy={busyId === doc.id}
                   onClick={() => void onExport(doc.id)}
@@ -178,8 +183,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
                 </Button>
                 <Button
                   variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
+                  size="iconSm"
                   disabled={anyBusy}
                   onClick={() => setDeleteId(doc.id)}
                   aria-label={t('docs.deleteAria')}

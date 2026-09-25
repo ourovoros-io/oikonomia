@@ -45,11 +45,8 @@ describe('Aurora', () => {
     expect(container.firstElementChild).toHaveAttribute('data-moving', 'false')
   })
 
-  test('shows the Greek wordmark unless asked not to', () => {
-    const { container, rerender } = render(<Aurora />)
-    expect(container).toHaveTextContent('ΟΙΚΟΝΟΜΙΑ')
-
-    rerender(<Aurora watermark={false} />)
+  test('does not paint the giant wordmark', () => {
+    const { container } = render(<Aurora />)
     expect(container).not.toHaveTextContent('ΟΙΚΟΝΟΜΙΑ')
   })
 })

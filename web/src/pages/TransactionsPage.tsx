@@ -16,6 +16,7 @@ import {
   isoDate,
   todayISO,
   type Account,
+  type CashFlowSeries,
   type CsvImportPreview,
   type CsvColumnMapping,
   type DocumentMeta,
@@ -28,6 +29,7 @@ import {
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
+import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CsvMappingModal } from '../components/CsvMappingModal'
 import { CsvPreviewModal } from '../components/CsvPreviewModal'
@@ -37,16 +39,18 @@ import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { EntryDetailModal } from '../components/EntryDetailModal'
 import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
+import { TopBar } from '../components/TopBar'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
 import { lastAccountsMapKey } from '../lib/simpleEntry'
 import {
+  AmountPill,
   Button,
   EmptyState,
   ErrorBanner,
   Field,
   IconBadge,
   Input,
-  PageHeader,
+  MoneyPill,
   Panel,
   Segmented,
   Select,
@@ -59,7 +63,13 @@ import { formatMoney as fmtMoney } from '../lib/money'
 import { useI18n } from '../lib/I18nProvider'
 import { RecurringPage } from './RecurringPage'
 
-type Props = { entity: Entity | null; onCreateBook?: () => void }
+type Props = {
+  entity: Entity | null
+  onCreateBook?: () => void
+  /** Bumped by the sidebar's Quick add: open New entry once, then report it handled. */
+  newEntryIntent?: number
+  onNewEntryIntentHandled?: () => void
+}
 
 /** High-level entry kinds so users don't think in debit/credit. */
 type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
@@ -94,7 +104,12 @@ function inferKind(
   return 'other'
 }
 
-export function TransactionsPage({ entity, onCreateBook }: Props) {
+export function TransactionsPage({
+  entity,
+  onCreateBook,
+  newEntryIntent,
+  onNewEntryIntentHandled,
+}: Props) {
   const { t } = useI18n()
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -138,9 +153,13 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
     expense_account_id: string | null
     income_account_id: string | null
   } | null>(null)
+  const [series, setSeries] = useState<CashFlowSeries | null>(null)
+  const [seriesError, setSeriesError] = useState<CommandError | null>(null)
+  const summaryHeadingId = useId()
   const prevEntityId = useRef<string | null>(null)
   const busyRef = useRef(false)
   const csvBusyRef = useRef(false)
+  const seriesRequestRef = useRef(0)
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
@@ -179,6 +198,9 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
   const filtersActive = Boolean(
     debouncedSearch.trim() || fromDate || toDate || accountFilter,
   )
+
+  /** The summary follows dates only; these filters narrow the list, not it. */
+  const filtersNarrowList = Boolean(debouncedSearch.trim() || accountFilter)
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
@@ -226,6 +248,29 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
     }
   }
 
+  /**
+   * The summary is decorative next to the ledger list: it must never hold up
+   * a reload, and a stale in-flight request must never clobber a fresher one.
+   * Rust alone decides whether the from/to window is valid.
+   */
+  function loadSeries() {
+    if (!entity) return
+    const requestId = seriesRequestRef.current + 1
+    seriesRequestRef.current = requestId
+    api.cashFlowSeries(entity.id, fromDate || null, toDate || null).then(
+      (flow) => {
+        if (seriesRequestRef.current !== requestId) return
+        setSeries(flow)
+        setSeriesError(null)
+      },
+      (err) => {
+        if (seriesRequestRef.current !== requestId) return
+        setSeries(null)
+        setSeriesError(err as CommandError)
+      },
+    )
+  }
+
   async function reload() {
     if (!entity) return
     const [e, a, d] = await Promise.all([
@@ -241,6 +286,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
     setEntries(e)
     setAccounts(a)
     setDocs(d)
+    loadSeries()
     if (!categoryId && !walletId) {
       applyKindDefaults(kind, a)
     }
@@ -432,6 +478,16 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id, debouncedSearch, fromDate, toDate, accountFilter])
 
+  // The sidebar's Quick add lands here. Reporting it handled lets App reset the
+  // intent, so a later remount does not reopen the dialog.
+  useEffect(() => {
+    if (!entity || !newEntryIntent) return
+    setSubview('journal')
+    openNewEntry()
+    onNewEntryIntentHandled?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newEntryIntent, entity?.id])
+
   function setKindAndDefaults(next: EntryKind) {
     setKind(next)
     applyKindDefaults(next, accounts)
@@ -569,7 +625,9 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
   const ccy = entity.base_currency
 
   if (subview === 'recurring') {
-    return <RecurringPage entity={entity} onBack={() => setSubview('journal')} />
+    return (
+      <RecurringPage entity={entity} onBack={() => setSubview('journal')} />
+    )
   }
 
   const csvActions = (
@@ -597,12 +655,18 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
       >
         {t('tx.csv.export')}
       </Button>
-      <Button size="sm" onClick={openNewEntry}>
-        <Plus className="size-3" />
-        {t('tx.newEntry')}
-      </Button>
     </>
   )
+
+  const newEntryButton = (
+    <Button onClick={openNewEntry}>
+      <Plus className="size-4" />
+      {t('tx.newEntry')}
+    </Button>
+  )
+
+  const netTone = !series || series.net_minor === 0 ? 'zero' : series.net_minor > 0 ? 'in' : 'out'
+  const range = series ? `${formatDate(series.from)} – ${formatDate(series.to)}` : null
 
   /**
    * Map a posted entry's lines back onto the simple form and open it for
@@ -647,13 +711,8 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow={t('tx.eyebrow')}
-        title={t('tx.title')}
-        description={t('tx.description')}
-        meta={t('tx.meta')}
-      />
+    <div className="space-y-4">
+      <TopBar title={t('tx.title')} subtitle={`${entity.name} · ${ccy}`} actions={newEntryButton} />
 
       <ErrorBanner id={errorBannerId} message={error} />
 
@@ -690,34 +749,102 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
         onConfirm={() => void confirmVoid()}
       />
 
-      <DocumentDropZone
-        entityId={entity.id}
-        onSuggestion={(s, source) => {
-          setError(null)
-          applySuggestion(s, source)
-          if (s.source === 'none' && !s.amount_minor) {
-            setError(s.notes || t('tx.couldNotReadDoc'))
-          }
-        }}
-        onError={(msg) => setError(msg)}
-      />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
+        <section
+          aria-labelledby={summaryHeadingId}
+          className="glass-pane relative flex flex-col overflow-hidden rounded-[20px]"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-4 px-5 pt-5">
+            <div className="min-w-0">
+              <h2
+                id={summaryHeadingId}
+                className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase"
+              >
+                {range ? t('tx.summary.inView', { range }) : t('tx.summary.inViewEmpty')}
+              </h2>
+              <p
+                data-net={netTone}
+                className={cn(
+                  'mt-2 truncate text-[2rem] leading-none font-semibold tracking-[-0.01em] tabular-nums',
+                  netTone === 'in' ? 'net-figure-in' : netTone === 'out' ? 'net-figure-out' : 'text-[var(--color-fg)]',
+                )}
+              >
+                {series ? formatMoney(series.net_minor, ccy, undefined, { signed: true }) : '—'}
+              </p>
+              {seriesError?.code === 'validation' ? (
+                <p className="mt-1.5 text-xs text-[var(--color-danger)]">{t('tx.summary.invalidRange')}</p>
+              ) : seriesError ? (
+                <p className="mt-1.5 text-xs text-[var(--color-danger)]">{commandErrorMessage(seriesError)}</p>
+              ) : filtersNarrowList ? (
+                <p className="mt-1.5 text-xs text-[var(--color-muted)]">{t('tx.summary.wholeBook')}</p>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <MoneyPill
+                tone="in"
+                label={t('dashboard.pill.in')}
+                value={series ? formatMoney(series.total_income_minor, ccy) : '—'}
+              />
+              <MoneyPill
+                tone="out"
+                label={t('dashboard.pill.out')}
+                value={series ? formatMoney(series.total_expenses_minor, ccy) : '—'}
+              />
+            </div>
+          </div>
+          <CashFlowPulse
+            series={series}
+            formatAmount={(minor) => formatMoney(minor, ccy)}
+            // Grows with the drop zone beside it, so the pane has no empty band.
+            className="mx-5 mt-3 mb-5 min-h-[72px] flex-1"
+            label={
+              series && range
+                ? t('dashboard.light.label', {
+                    income: formatMoney(series.total_income_minor, ccy),
+                    expenses: formatMoney(series.total_expenses_minor, ccy),
+                    net: formatMoney(series.net_minor, ccy, undefined, { signed: true }),
+                    range,
+                  })
+                : t('dashboard.light.empty')
+            }
+          />
+        </section>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label={t('tx.search')} className="min-w-[220px] flex-1">
+        <section className="glass-pane rounded-[20px] p-2">
+          <DocumentDropZone
+            entityId={entity.id}
+            onSuggestion={(s, source) => {
+              setError(null)
+              applySuggestion(s, source)
+              if (s.source === 'none' && !s.amount_minor) {
+                setError(s.notes || t('tx.couldNotReadDoc'))
+              }
+            }}
+            onError={(msg) => setError(msg)}
+          />
+        </section>
+      </div>
+
+      <div className="glass-pane grid gap-2 rounded-[20px] p-2 md:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_9.5rem_9.5rem_12rem]">
+        <Field label={t('tx.search')}>
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('tx.searchPlaceholder')}
           />
         </Field>
-        <Field label={t('tx.from')} className="w-44">
+        <Field label={t('tx.from')}>
           <DateInput value={fromDate} onChange={setFromDate} aria-label={t('tx.filterFrom')} />
         </Field>
-        <Field label={t('tx.to')} className="w-44">
+        <Field label={t('tx.to')}>
           <DateInput value={toDate} onChange={setToDate} aria-label={t('tx.filterTo')} />
         </Field>
-        <Field label={t('tx.account')} className="w-56">
-          <Select value={accountFilter} onChange={(e) => setAccountFilter(e.target.value)}>
+        <Field label={t('tx.account')}>
+          <Select
+            value={accountFilter}
+            onChange={(e) => setAccountFilter(e.target.value)}
+            aria-label={t('tx.account')}
+          >
             <option value="">{t('tx.allAccounts')}</option>
             {accounts
               .filter((a) => a.is_active)
@@ -745,16 +872,19 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
                 id: 'expense',
                 label: t('kind.expense'),
                 icon: <ArrowUpRight className="size-3.5" />,
+                tone: 'money-out',
               },
               {
                 id: 'income',
                 label: t('kind.income'),
                 icon: <ArrowDownLeft className="size-3.5" />,
+                tone: 'money-in',
               },
               {
                 id: 'bill',
                 label: t('kind.bill'),
                 icon: <FileText className="size-3.5" />,
+                tone: 'money-out',
               },
               {
                 id: 'transfer',
@@ -1042,7 +1172,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
                 <li
                   key={view.entry.id}
                   onClick={() => setDetailId(view.entry.id)}
-                  className="flex cursor-pointer items-center gap-4 px-5 py-3.5 transition hover:bg-[var(--color-surface-2)]/50"
+                  className="group flex cursor-pointer items-center gap-4 px-5 py-3 transition hover:bg-white/[0.05] focus-within:bg-white/[0.05]"
                 >
                   <IconBadge tone={tone}>
                     {kindLabel === 'income' ? (
@@ -1062,7 +1192,7 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
                       </span>
                       {view.entry.hidden ? <HiddenBadge /> : null}
                     </div>
-                    <div className="truncate text-xs text-[var(--color-muted)]">
+                    <div className="truncate text-xs text-[var(--color-muted)] tabular-nums">
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       <span>{t(`kind.${kindLabel}`)}</span>
@@ -1070,39 +1200,36 @@ export function TransactionsPage({ entity, onCreateBook }: Props) {
                       {parts}
                     </div>
                   </button>
-                  {(docsByEntry.get(view.entry.id)?.length ?? 0) > 0 ? (
-                    <Paperclip
-                      className="size-3.5 shrink-0 text-[var(--color-muted)]"
-                      aria-label={t('tx.hasDocument')}
-                    />
-                  ) : null}
-                  <div
-                    className={cn(
-                      'shrink-0 text-sm font-semibold tabular-nums',
-                      kindLabel === 'expense'
-                        ? 'text-[var(--color-money-out-text)]'
-                        : kindLabel === 'income'
-                          ? 'text-[var(--color-money-in-text)]'
-                          : 'text-[var(--color-fg)]',
-                    )}
-                  >
-                    {formatMoney(signed, ccy, undefined, {
-                      signed: kindLabel === 'expense' || kindLabel === 'income',
-                    })}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 shrink-0"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setVoidId(view.entry.id)
-                    }}
-                    aria-label={t('tx.deleteEntry')}
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
+                  {/* Fixed slots: the paperclip keeps one column whatever the
+                      amount's width, and amounts right-align in their own. */}
+                  <span className="flex size-4 shrink-0 items-center justify-center">
+                    {(docsByEntry.get(view.entry.id)?.length ?? 0) > 0 ? (
+                      <Paperclip className="size-4 text-[var(--color-muted)]" aria-label={t('tx.hasDocument')} />
+                    ) : null}
+                  </span>
+                  {/* Amount and its delete slot sit as one group, 8px apart. */}
+                  <span className="flex shrink-0 items-center gap-2">
+                    <span className="flex min-w-32 justify-end">
+                      <AmountPill tone={kindLabel === 'income' ? 'in' : kindLabel === 'expense' ? 'out' : 'neutral'}>
+                        {formatMoney(signed, ccy, undefined, {
+                          signed: kindLabel === 'expense' || kindLabel === 'income',
+                        })}
+                      </AmountPill>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="iconSm"
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setVoidId(view.entry.id)
+                      }}
+                      aria-label={t('tx.deleteEntry')}
+                      title={t('common.delete')}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </span>
                 </li>
               )
             })}

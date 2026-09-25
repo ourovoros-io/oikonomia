@@ -23,7 +23,8 @@
       "emptyOption": "Aucune entité pour l'instant"
     },
     "sidebar": {
-      "versionEncrypted": "v{version} · chiffré"
+      "versionEncrypted": "v{version} · chiffré",
+      "quickAdd": "Ajout rapide"
     },
     "header": {
       "noBook": "Aucun livre sélectionné",
@@ -521,9 +522,12 @@
     "period": {
       "month": "Mois",
       "year": "Année",
+      "quarter": "Trimestre",
+      "quarterTitle": "T{quarter} {year}",
       "word": {
         "month": "de ce mois",
-        "year": "de cette année"
+        "year": "de cette année",
+        "quarter": "de ce trimestre"
       }
     },
     "meta": {
@@ -533,7 +537,31 @@
       "netLabel": "Résultat net {period}",
       "body": "Recettes moins dépenses {period}. Déposez des factures dans Mouvements pour le lecteur OCR hors ligne, ou saisissez les écritures à la main.",
       "ocr": "Lecteur de factures hors ligne",
-      "entryCount": "{n} écritures {period}"
+      "entryCount": "{n} écritures {period}",
+      "kept": "Vous avez conservé {percent} % de tout ce qui est entré."
+    },
+    "pill": {
+      "in": "Entrées",
+      "out": "Sorties",
+      "assets": "Actifs"
+    },
+    "light": {
+      "label": "Entrées {income}, sorties {expenses}, net {net}, {range}.",
+      "empty": "Aucun flux de trésorerie à afficher pour l’instant."
+    },
+    "arc": {
+      "noValue": "Pas encore de valeur",
+      "savings": { "label": "Taux d’épargne", "hint": "Net ÷ revenus" },
+      "spend": { "label": "Taux de dépense", "hint": "Sorties ÷ entrées" },
+      "previous": {
+        "label": "Net vs période précédente",
+        "hint": {
+          "month": "Par rapport au mois dernier",
+          "quarter": "Par rapport au trimestre précédent",
+          "year": "Par rapport à l’année dernière"
+        }
+      },
+      "top": { "label": "Dépense principale", "none": "Aucune dépense pour l’instant" }
     },
     "flow": {
       "income": "Recettes",
@@ -840,6 +868,12 @@
       "fromAria": "Filtrer à partir de la date",
       "toAria": "Filtrer jusqu’à la date",
       "allAccounts": "Tous les comptes"
+    },
+    "summary": {
+      "inView": "Affiché · {range}",
+      "inViewEmpty": "Affiché",
+      "wholeBook": "Les filtres de compte et de recherche ne modifient pas ce résumé.",
+      "invalidRange": "La date Du doit être antérieure ou égale à la date Au."
     },
     "form": {
       "titleNew": "Nouvelle écriture",

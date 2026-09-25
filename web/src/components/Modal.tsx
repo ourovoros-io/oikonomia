@@ -49,24 +49,25 @@ export function Modal({
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          'glass-dialog flex max-h-[88vh] w-full flex-col overflow-hidden rounded-[26px] outline-none',
+          'glass-dialog flex max-h-[88vh] w-full flex-col overflow-hidden rounded-[24px] outline-none',
           maxWidth,
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-6 py-4">
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--color-border)] px-6 py-5">
           <div className="min-w-0">
-            <h2 id={titleId} className="text-lg font-semibold text-[var(--color-fg)]">
+            <h2 id={titleId} className="text-xl leading-7 font-semibold text-[var(--color-fg)]">
               {title}
             </h2>
             {description ? (
-              <p className="mt-0.5 text-xs text-[var(--color-muted)]">{description}</p>
+              <p className="mt-1 text-[13px] leading-5 text-[var(--color-muted)]">{description}</p>
             ) : null}
           </div>
           <Button
             variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
+            size="iconSm"
+            // Centres the 32px button on the 28px title line.
+            className="-mt-0.5"
             onClick={onClose}
             aria-label={t('common.close')}
             title={t('common.close')}

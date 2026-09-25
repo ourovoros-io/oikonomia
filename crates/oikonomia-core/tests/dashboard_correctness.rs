@@ -7,8 +7,9 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId}
 use oikonomia_core::ledger::SimpleEntryKind::{Bill, Expense, Income, Transfer};
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity,
-    dashboard_summary, list_accounts, list_entries, post_simple_entry, void_entry,
+    dashboard_summary, list_accounts, list_entries, post_simple_entry, previous_window, void_entry,
 };
+use oikonomia_core::util::{format_date, parse_date};
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -157,4 +158,188 @@ fn dashboard_numbers_hand_checked() {
         "windowed dashboard list ({visible}) hides entries that Transactions shows ({visible_all})"
     );
     assert_eq!(visible, 6);
+}
+
+fn probe_book(conn: &Connection, name: &str) -> EntityId {
+    create_entity(
+        conn,
+        &CreateEntity {
+            name: name.into(),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Personal,
+            fiscal_year_start_month: Some(1),
+        },
+    )
+    .expect("entity")
+    .id
+}
+
+fn income_on(conn: &Connection, e: EntityId, date: &str, minor: i64) {
+    let mut entry = base(e, Income, date, minor);
+    entry.category_account_id = Some(account(conn, e, "4000"));
+    entry.wallet_account_id = Some(account(conn, e, "1010"));
+    post(conn, &entry);
+}
+
+fn expense_on(conn: &Connection, e: EntityId, date: &str, minor: i64) {
+    let mut entry = base(e, Expense, date, minor);
+    entry.category_account_id = Some(account(conn, e, "5100"));
+    entry.wallet_account_id = Some(account(conn, e, "1010"));
+    post(conn, &entry);
+}
+
+#[test]
+fn arc_metrics_hand_checked() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let e = probe_book(conn, "Probe");
+    seed_august_ledger(conn, e);
+
+    let s = dashboard_summary(conn, e, "2026-08-01", "2026-08-31", "2026-08-10").expect("summary");
+
+    assert_eq!(
+        s.savings_rate_bps,
+        Some(8_525),
+        "85 247 / 100 000 = 85.247 %"
+    );
+    assert_eq!(
+        s.spend_ratio_bps,
+        Some(1_475),
+        "14 753 / 100 000 = 14.753 %"
+    );
+    let top = s.top_expense.expect("an expense account leads");
+    assert_eq!(
+        (
+            top.code.as_str(),
+            top.name.as_str(),
+            top.amount_minor,
+            top.share_bps
+        ),
+        ("5300", "Utilities", 7_253, 4_916),
+        "the unpaid bill leads: 7 253 / 14 753 = 49.16 %"
+    );
+    assert_eq!(
+        s.net_vs_previous_bps, None,
+        "July is empty, so there is nothing to compare with"
+    );
+}
+
+#[test]
+fn net_vs_previous_compares_with_the_previous_calendar_month() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+
+    let grew = probe_book(conn, "Grew");
+    income_on(conn, grew, "2026-07-10", 50_000);
+    income_on(conn, grew, "2026-08-10", 60_000);
+
+    let shrank = probe_book(conn, "Shrank");
+    income_on(conn, shrank, "2026-07-10", 50_000);
+    income_on(conn, shrank, "2026-08-10", 40_000);
+
+    let recovered = probe_book(conn, "Recovered");
+    expense_on(conn, recovered, "2026-07-10", 10_000);
+    income_on(conn, recovered, "2026-08-10", 5_000);
+
+    let change = |entity: EntityId| {
+        dashboard_summary(conn, entity, "2026-08-01", "2026-08-31", "2026-08-31")
+            .expect("summary")
+            .net_vs_previous_bps
+    };
+    assert_eq!(change(grew), Some(2_000));
+    assert_eq!(change(shrank), Some(-2_000));
+    assert_eq!(
+        change(recovered),
+        Some(15_000),
+        "from -10 000 to +5 000 is a rise of 150 % of the previous net's size"
+    );
+}
+
+#[test]
+fn arc_metrics_are_empty_when_there_is_nothing_to_divide_by() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let summary = |entity: EntityId| {
+        dashboard_summary(conn, entity, "2026-08-01", "2026-08-31", "2026-08-31").expect("summary")
+    };
+
+    let empty = summary(probe_book(conn, "Empty"));
+    assert_eq!(
+        (
+            empty.savings_rate_bps,
+            empty.spend_ratio_bps,
+            empty.net_vs_previous_bps
+        ),
+        (None, None, None)
+    );
+    assert!(empty.top_expense.is_none());
+
+    let spender = probe_book(conn, "Spender");
+    expense_on(conn, spender, "2026-08-05", 2_500);
+    let spent = summary(spender);
+    assert_eq!(
+        (spent.savings_rate_bps, spent.spend_ratio_bps),
+        (None, None),
+        "no income to divide by"
+    );
+    assert_eq!(spent.top_expense.expect("top").share_bps, 10_000);
+
+    let earner = probe_book(conn, "Earner");
+    income_on(conn, earner, "2026-08-03", 1_000);
+    let earned = summary(earner);
+    assert_eq!(
+        (earned.savings_rate_bps, earned.spend_ratio_bps),
+        (Some(10_000), Some(0))
+    );
+    assert!(earned.top_expense.is_none(), "no expenses, no top spend");
+}
+
+#[test]
+fn previous_window_steps_back_by_calendar_months_or_by_days() {
+    let window = |from: &str, to: &str| {
+        previous_window(parse_date(from).expect("from"), parse_date(to).expect("to"))
+            .map(|(start, end)| (format_date(start), format_date(end)))
+    };
+    let expect = |from: &str, to: &str| Some((from.to_owned(), to.to_owned()));
+
+    assert_eq!(
+        window("2026-09-01", "2026-09-30"),
+        expect("2026-08-01", "2026-08-31"),
+        "a month"
+    );
+    assert_eq!(
+        window("2026-07-01", "2026-09-30"),
+        expect("2026-04-01", "2026-06-30"),
+        "a quarter"
+    );
+    assert_eq!(
+        window("2026-01-01", "2026-12-31"),
+        expect("2025-01-01", "2025-12-31"),
+        "a year"
+    );
+    assert_eq!(
+        window("2026-01-01", "2026-01-31"),
+        expect("2025-12-01", "2025-12-31"),
+        "across new year"
+    );
+    assert_eq!(
+        window("2028-03-01", "2028-03-31"),
+        expect("2028-02-01", "2028-02-29"),
+        "into a leap February"
+    );
+    assert_eq!(
+        window("2026-08-05", "2026-08-14"),
+        expect("2026-07-26", "2026-08-04"),
+        "ten days"
+    );
+    assert_eq!(
+        window("2026-08-10", "2026-08-10"),
+        expect("2026-08-09", "2026-08-09"),
+        "one day"
+    );
+    assert_eq!(
+        window("2026-03-01", "2026-04-15"),
+        expect("2026-01-14", "2026-02-28"),
+        "not whole months"
+    );
 }
