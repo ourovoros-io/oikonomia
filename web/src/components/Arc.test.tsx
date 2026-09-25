@@ -22,6 +22,15 @@ describe('ArcTile', () => {
     expect(meter.querySelector('svg')).toHaveAttribute('data-arc-tone', 'in')
   })
 
+  test('the bloom paints in a fixed region, so a short arc keeps a round halo', () => {
+    render(<ArcTile label="Savings rate" bps={500} tone="in" locale="en" noValueLabel="No value yet" />)
+
+    const filter = screen.getByRole('meter').querySelector('filter')
+    expect(filter).toHaveAttribute('filterUnits', 'userSpaceOnUse')
+    expect(filter).toHaveAttribute('x', '-20')
+    expect(filter).toHaveAttribute('width', '110')
+  })
+
   test('a missing value is an empty arc with an em dash, never 0%', () => {
     render(<ArcTile label="Net vs last period" bps={null} tone="in" locale="en" noValueLabel="No value yet" />)
 

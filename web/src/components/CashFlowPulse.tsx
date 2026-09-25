@@ -22,6 +22,8 @@ const LABEL_INSET = 16
 const PLAIN_INSET = 4
 
 const TOOLTIP_OFFSET = 14
+/** Three blur deviations, so the glow fades out before its region ends. */
+const GLOW_MARGIN = 10
 
 type Size = { width: number; height: number }
 
@@ -180,7 +182,17 @@ export function CashFlowPulse({
                 <stop offset="0.5" stopColor={LEDGER_OUT_STOPS[1]} />
                 <stop offset="1" stopColor={LEDGER_OUT_STOPS[2]} />
               </linearGradient>
-              <filter id={`pulse-glow-${id}`} x="-100%" y="-20%" width="300%" height="140%">
+              {/* Sized to the chart, not to the bars: a month of tiny bars has a
+                  box only a few pixels tall, and a region taken from it would
+                  cut the glow off square. */}
+              <filter
+                id={`pulse-glow-${id}`}
+                filterUnits="userSpaceOnUse"
+                x={-GLOW_MARGIN}
+                y={-GLOW_MARGIN}
+                width={width + 2 * GLOW_MARGIN}
+                height={height + 2 * GLOW_MARGIN}
+              >
                 <feGaussianBlur stdDeviation="3" />
               </filter>
             </defs>

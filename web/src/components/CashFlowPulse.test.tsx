@@ -90,6 +90,15 @@ describe('CashFlowPulse', () => {
     expect(image).toHaveTextContent('€1.20')
   })
 
+  test('sizes the glow region to the chart, never to the bars', () => {
+    render(<CashFlowPulse series={series} label="pulse" formatAmount={formatAmount} />)
+
+    const filter = screen.getByRole('img').querySelector('filter')
+    expect(filter).toHaveAttribute('filterUnits', 'userSpaceOnUse')
+    expect(filter).toHaveAttribute('width', '328')
+    expect(filter).toHaveAttribute('height', '152')
+  })
+
   test('leaves the peak labels out of a short strip', () => {
     height = 72
     render(<CashFlowPulse series={series} label="pulse" formatAmount={formatAmount} />)

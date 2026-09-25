@@ -10,6 +10,14 @@ const CENTRE = 35
 const RADIUS = 26
 
 /**
+ * The bloom's paint region, in viewBox units: the whole 70-unit box plus
+ * three blur deviations on every side. A percentage region would be taken
+ * from the blurred shape's own box, which for a short arc is a sliver a few
+ * units wide, and the halo would be cut off into a visible rectangle.
+ */
+const BLOOM_REGION = { x: -20, y: -20, width: 110, height: 110 }
+
+/**
  * The 270-degree meter: a quiet track, a Ledger gradient stroke over a blurred
  * bloom copy of itself, and a lit pointer dot at the value.
  */
@@ -35,7 +43,7 @@ export function Arc({ fraction, tone, className = '' }: { fraction: number | nul
           <stop offset="0.55" stopColor={stops[1]} />
           <stop offset="1" stopColor={stops[2]} />
         </linearGradient>
-        <filter id={`arc-bloom-${id}`} x="-50%" y="-50%" width="200%" height="200%">
+        <filter id={`arc-bloom-${id}`} filterUnits="userSpaceOnUse" {...BLOOM_REGION}>
           <feGaussianBlur stdDeviation="4.5" />
         </filter>
       </defs>
