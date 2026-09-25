@@ -235,11 +235,11 @@ export default function App() {
     ) : (
       <TopBarContext.Provider value={topBar}>
         <div className="flex h-full min-h-0 text-[var(--color-fg)]">
-          <aside className="glass-pane my-3 ml-3 flex w-[var(--sidebar-w)] shrink-0 flex-col gap-5 rounded-[22px] px-3 py-4">
-            <div className="flex items-center gap-2.5 px-1.5">
+          <aside className="glass-pane my-3 ml-3 flex w-[var(--sidebar-w)] shrink-0 flex-col gap-5 rounded-[20px] px-3 py-4">
+            <div className="flex items-center gap-3 px-3">
               <Logo className="size-8 shrink-0" />
               <div className="min-w-0 leading-tight">
-                <div className="truncate text-[15px] font-semibold tracking-tight">Oikonomia</div>
+                <div className="truncate text-base font-semibold tracking-tight">Oikonomia</div>
                 <div className="truncate text-xs text-[var(--color-muted)]">{t('app.localLedger')}</div>
               </div>
             </div>
@@ -256,7 +256,7 @@ export default function App() {
                     onClick={() => setActive(item.id)}
                     aria-current={isActive ? 'page' : undefined}
                     className={cn(
-                      'flex h-10 items-center gap-2.5 rounded-xl px-3 text-sm font-medium transition',
+                      'flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium transition',
                       isActive
                         ? 'bg-[linear-gradient(90deg,rgba(46,230,166,0.2),rgba(55,213,255,0.08))] text-[var(--color-fg)] shadow-[inset_0_0_0_1px_rgba(46,230,166,0.35),0_0_24px_rgba(46,230,166,0.12)]'
                         : 'text-[var(--color-fg-secondary)] hover:bg-white/[0.05] hover:text-[var(--color-fg)]',
@@ -278,13 +278,13 @@ export default function App() {
             <section className="flex min-h-0 flex-1 flex-col gap-2" aria-labelledby="sidebar-books">
               <h2
                 id="sidebar-books"
-                className="px-1.5 font-mono text-[10.5px] font-medium tracking-[0.16em] text-[var(--color-muted)] uppercase"
+                className="px-3 font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase"
               >
                 {t('app.book')}
               </h2>
 
               {entities.length === 0 ? (
-                <p className="px-1.5 text-sm text-[var(--color-muted)]">{t('app.noEntitiesYet')}</p>
+                <p className="px-3 text-sm text-[var(--color-muted)]">{t('app.noEntitiesYet')}</p>
               ) : (
                 <ul className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
                   {entities.map((book, index) => {
@@ -299,17 +299,20 @@ export default function App() {
                           aria-current={selected ? 'true' : undefined}
                           title={`${book.name}, ${book.base_currency}`}
                           className={cn(
-                            'flex h-9 w-full items-center gap-2.5 rounded-lg px-1.5 text-left text-sm transition',
+                            'flex h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm transition',
                             selected
                               ? 'bg-white/[0.06] text-[var(--color-fg)]'
                               : 'text-[var(--color-fg-secondary)] hover:text-[var(--color-fg)]',
                           )}
                         >
-                          <span
-                            aria-hidden
-                            className="size-2 shrink-0 rounded-full"
-                            style={{ background: dot, boxShadow: `0 0 10px ${dot}` }}
-                          />
+                          {/* The dot sits in a nav-icon-sized slot so book names start
+                              on the same column as the nav labels above. */}
+                          <span aria-hidden className="flex size-[1.125rem] shrink-0 items-center justify-center">
+                            <span
+                              className="size-2 rounded-full"
+                              style={{ background: dot, boxShadow: `0 0 10px ${dot}` }}
+                            />
+                          </span>
                           {/* The name and currency are two adjacent inline spans with no
                               intervening whitespace text node, so a screen reader's
                               accessible-name computation runs them together with no
@@ -320,7 +323,7 @@ export default function App() {
                           <span aria-hidden className="min-w-0 flex-1 truncate">
                             {book.name}
                           </span>
-                          <span aria-hidden className="font-mono text-[10.5px] text-[var(--color-muted)]">
+                          <span aria-hidden className="font-mono text-[11px] text-[var(--color-muted)]">
                             {book.base_currency}
                           </span>
                           <span className="sr-only">{`${book.name}, ${book.base_currency}`}</span>
@@ -337,7 +340,7 @@ export default function App() {
               {t('app.sidebar.quickAdd')}
             </Button>
 
-            <div className="px-1.5 font-mono text-[10.5px] tracking-[0.08em] text-[var(--color-muted)]">
+            <div className="px-3 font-mono text-[11px] tracking-[0.08em] text-[var(--color-muted)]">
               {info ? t('app.versionEncrypted', { version: info.version }) : 'Oikonomia'}
             </div>
           </aside>

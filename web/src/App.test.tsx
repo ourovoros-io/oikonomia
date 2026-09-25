@@ -311,10 +311,10 @@ describe('App shell', () => {
     const personal = await screen.findByRole('button', { name: 'Personal, EUR' })
     const household = await screen.findByRole('button', { name: 'Household, EUR' })
 
-    expect(personal.querySelector('span[aria-hidden]')?.getAttribute('style')).toContain(
+    expect(personal.querySelector('span[style]')?.getAttribute('style')).toContain(
       'var(--viz-1)',
     )
-    expect(household.querySelector('span[aria-hidden]')?.getAttribute('style')).toContain(
+    expect(household.querySelector('span[style]')?.getAttribute('style')).toContain(
       'var(--viz-2)',
     )
   })
