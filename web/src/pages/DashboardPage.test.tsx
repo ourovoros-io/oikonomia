@@ -20,8 +20,8 @@ vi.mock('../lib/api', async (importOriginal) => {
 })
 
 // jsdom has no 2D canvas; the light's painting is tested on its own.
-vi.mock('../components/CashFlowLight', () => ({
-  CashFlowLight: ({ label }: { label: string }) => <div role="img" aria-label={label} />,
+vi.mock('../components/CashFlowPulse', () => ({
+  CashFlowPulse: ({ label }: { label: string }) => <div role="img" aria-label={label} />,
 }))
 
 import type { Account, CashFlowSeries, DashboardSummary, Entity, PostedEntryView } from '../lib/api'

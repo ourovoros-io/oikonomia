@@ -20,7 +20,7 @@ import {
 } from '../lib/api'
 import { formatPercentFromBps } from '../lib/arc'
 import { ArcTile } from '../components/Arc'
-import { CashFlowLight } from '../components/CashFlowLight'
+import { CashFlowPulse } from '../components/CashFlowPulse'
 import { TopBar } from '../components/TopBar'
 import {
   AmountPill,
@@ -239,9 +239,10 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
             <MoneyPill tone="neutral" label={t('dashboard.pill.assets')} value={pending ? '—' : money(assets)} />
           </div>
         </div>
-        <CashFlowLight
+        <CashFlowPulse
           series={series}
-          className="-mt-6 h-[170px]"
+          formatAmount={(minor) => money(minor)}
+          className="mx-5 mt-4 h-[132px]"
           label={
             data
               ? t('dashboard.light.label', {

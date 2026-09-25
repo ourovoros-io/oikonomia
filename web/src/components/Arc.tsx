@@ -1,7 +1,7 @@
 import { useId } from 'react'
 
 import { ARC_START_DEG, ARC_SWEEP_DEG, arcEndDeg, arcFraction, arcPath, arcPoint, formatPercentFromBps } from '../lib/arc'
-import { LEDGER_IN_STOPS, LEDGER_OUT_STOPS } from '../lib/cashFlowLight'
+import { LEDGER_IN_STOPS, LEDGER_OUT_STOPS } from '../lib/ledgerColours'
 import { cn } from '../lib/cn'
 
 export type ArcTone = 'in' | 'out'

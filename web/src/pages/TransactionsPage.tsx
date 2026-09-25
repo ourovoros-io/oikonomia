@@ -29,7 +29,7 @@ import {
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
-import { CashFlowLight } from '../components/CashFlowLight'
+import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CsvMappingModal } from '../components/CsvMappingModal'
 import { CsvPreviewModal } from '../components/CsvPreviewModal'
@@ -792,9 +792,10 @@ export function TransactionsPage({
               />
             </div>
           </div>
-          <CashFlowLight
+          <CashFlowPulse
             series={series}
-            className="-mt-1 h-[76px]"
+            formatAmount={(minor) => formatMoney(minor, ccy)}
+            className="mt-3 h-[72px]"
             label={
               series && range
                 ? t('dashboard.light.label', {

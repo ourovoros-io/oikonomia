@@ -173,7 +173,7 @@ describe('Aurora glass tokens', () => {
   })
 
   test('the light stops are the spec gradient, shared with the canvas', () => {
-    // web/src/lib/cashFlowLight.ts paints with these same six values; its own
+    // web/src/lib/ledgerColours.ts paints with these same six values; its own
     // test pins them there.
     expect(['--color-money-in-a', '--color-money-in-b', '--color-money-in-c'].map((n) => token(n))).toEqual([
       '#27bf93',
