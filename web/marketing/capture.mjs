@@ -1,5 +1,6 @@
 // Captures the real app UI for the marketing site. See marketing/README.md.
-import { mkdir, stat } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import { chromium } from 'playwright'
@@ -60,6 +61,24 @@ async function waitForDomSettled(page, { quietMs = 500, timeoutMs = 10_000 } = {
   )
 }
 
+/**
+ * Returns the index, among `nav button`, of the button currently marked
+ * `aria-current="page"` (or -1 if none is). Compared against the index the
+ * capture just clicked, so a reordered sidebar can't silently save a
+ * screenshot of the wrong screen under the right filename.
+ */
+async function activeNavIndex(page) {
+  return page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('nav button'))
+    return buttons.findIndex((b) => b.getAttribute('aria-current') === 'page')
+  })
+}
+
+// PNGs land here first, and only move to --out once every shot in the run
+// has succeeded, so a failed run never leaves a stale or half-updated set
+// of images at the real destination.
+const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'oik-marketing-capture-'))
+
 const server = await createServer({
   root: path.resolve(import.meta.dirname, '..'),
   server: { port: 5174, strictPort: false },
@@ -96,6 +115,15 @@ try {
       if (!settled) {
         failures.push(`${lang}: ${name}: DOM never settled within 10s -- a render may still be in flight`)
       }
+
+      const active = await activeNavIndex(page)
+      if (active !== nav) {
+        failures.push(
+          `${lang}: ${name}: clicked nav button ${nav} but button ${active} is aria-current -- ` +
+            'the sidebar order and the capture list have drifted apart',
+        )
+      }
+
       await page.evaluate(() => document.fonts.ready)
       // No fixed post-settle wait: the context's reducedMotion: 'reduce'
       // trips the app's own `prefers-reduced-motion` CSS, which turns off
@@ -103,9 +131,9 @@ try {
       // sweep, logo draw-in) outright, so there is nothing left to finish
       // drawing once the DOM and fonts are settled.
 
-      const file = path.join(outDir, lang, `${name}.png`)
+      const file = path.join(tmpDir, lang, `${name}.png`)
       await mkdir(path.dirname(file), { recursive: true })
-      await page.screenshot({ path: file, omitBackground: true })
+      await page.screenshot({ path: file, omitBackground: true, animations: 'disabled' })
       await stat(file)
       console.log(`captured ${path.relative(process.cwd(), file)}`)
     }
@@ -117,6 +145,15 @@ try {
 } finally {
   await browser.close()
   await server.close()
+}
+
+try {
+  if (failures.length === 0) {
+    await mkdir(outDir, { recursive: true })
+    await cp(tmpDir, outDir, { recursive: true })
+  }
+} finally {
+  await rm(tmpDir, { recursive: true, force: true })
 }
 
 if (failures.length > 0) {
