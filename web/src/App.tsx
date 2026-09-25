@@ -462,7 +462,7 @@ export default function App() {
           remounts it (and restarts its drift). Until phase 4 makes the
           unlock screen a glass card over it, it is hidden there and paused
           so it does not spend GPU time animating unseen. */}
-      <Aurora watermark={status === 'unlocked'} paused={status !== 'unlocked'} />
+      <Aurora paused={status !== 'unlocked'} />
       <div className="relative z-10 h-full">{content}</div>
     </div>
   )
