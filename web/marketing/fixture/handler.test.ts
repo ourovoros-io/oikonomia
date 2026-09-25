@@ -32,4 +32,27 @@ describe('marketing IPC handler', () => {
     expect(() => h('entry_void', { id: 'x' })).toThrow('marketing fixture has no answer for entry_void')
     expect(log).toHaveBeenCalledWith('[marketing] missing command', 'entry_void')
   })
+
+  test('a renamed required arg logs and throws, so the capture fails loudly', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const h = createHandler('en')
+
+    expect(() =>
+      h('dashboard_summary_cmd', {
+        entityId: 'demo-entity',
+        from: '2026-09-01',
+        to: '2026-09-30',
+        assets_as_of: '2026-09-24',
+      }),
+    ).toThrow('marketing fixture: dashboard_summary_cmd missing arg assetsAsOf')
+    expect(log).toHaveBeenCalledWith('[marketing] missing arg', 'dashboard_summary_cmd', 'assetsAsOf')
+  })
+
+  test('a non-string optional arg logs and throws, so the capture fails loudly', () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const h = createHandler('en')
+
+    expect(() => h('entry_list', { accountId: 42 })).toThrow('marketing fixture: entry_list missing arg accountId')
+    expect(log).toHaveBeenCalledWith('[marketing] missing arg', 'entry_list', 'accountId')
+  })
 })

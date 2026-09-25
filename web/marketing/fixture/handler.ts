@@ -14,12 +14,12 @@ import {
 
 type Args = Record<string, unknown>
 
-const str = (a: Args, k: string) => a[k] as string
-const opt = (a: Args, k: string) => (a[k] ?? null) as string | null
-
 /**
- * Answers every read the four captured screens make. Writes and native
- * dialogs are deliberately absent: a capture that reaches one is wrong.
+ * Answers every read the four captured screens make, plus the two no-op
+ * writes -- `vault_touch` and `settings_set_locale` -- the app itself calls
+ * on load. Anything beyond those reads and no-op writes, a real write or a
+ * native dialog, is deliberately unanswered: a capture that reaches one is
+ * wrong.
  */
 export function createHandler(lang: DemoLang) {
   const l = buildLedger(lang)
@@ -27,6 +27,25 @@ export function createHandler(lang: DemoLang) {
   const license: LicenseStatus = { state: 'licensed', licensed_until: '2027-09-24' }
   const prefs: UiPrefs = { last_entity_id: l.entity.id, last_accounts_by_entity_kind: {}, locale: lang }
   const analyzer: AnalyzerStatus = { ocr_available: true, offline: true, hint: '' }
+
+  // Set to the command currently being answered so str/opt can name it in a
+  // failure, without every call site having to repeat the command string.
+  let currentCmd = ''
+
+  const missingArg = (k: string): never => {
+    console.error('[marketing] missing arg', currentCmd, k)
+    throw new Error(`marketing fixture: ${currentCmd} missing arg ${k}`)
+  }
+
+  const str = (a: Args, k: string): string => {
+    const v = a[k]
+    return typeof v === 'string' ? v : missingArg(k)
+  }
+
+  const opt = (a: Args, k: string): string | null => {
+    const v = a[k] ?? null
+    return v === null || typeof v === 'string' ? v : missingArg(k)
+  }
 
   const answers: Record<string, (a: Args) => unknown> = {
     vault_status: () => 'unlocked',
@@ -64,6 +83,7 @@ export function createHandler(lang: DemoLang) {
       throw new Error(`marketing fixture has no answer for ${cmd}`)
     }
 
+    currentCmd = cmd
     return answer(args)
   }
 }
