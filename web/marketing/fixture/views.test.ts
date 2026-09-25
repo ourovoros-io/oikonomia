@@ -2,11 +2,13 @@ import { describe, expect, test } from 'vitest'
 import { buildLedger } from './ledger'
 import {
   accountBalance,
+  accountRegister,
   balanceSheet,
   cashFlowSeries,
   dashboardSummary,
   entryList,
   pnl,
+  previousWindow,
   trialBalance,
 } from './views'
 
@@ -72,5 +74,26 @@ describe('derived views agree with each other', () => {
     expect(rows.length).toBeGreaterThan(0)
     expect(rows.every((r) => r.entry.description.toLowerCase().includes('market'))).toBe(true)
     expect(rows[0].entry.entry_date >= rows.at(-1)!.entry.entry_date).toBe(true)
+  })
+
+  test('previous window for whole calendar month uses month boundaries', () => {
+    const prev = previousWindow('2026-09-01', '2026-09-30')
+
+    expect(prev.from).toBe('2026-08-01')
+    expect(prev.to).toBe('2026-08-31')
+  })
+
+  test('account register seeds with prior balance when from is set', () => {
+    const priorBalance = accountBalance(l, 'acc-1020', '2026-08-31')
+    const register = accountRegister(l, 'acc-1020', '2026-09-01', '2026-09-30')
+
+    expect(register.length).toBeGreaterThan(0)
+
+    // First line's balance should equal prior balance plus the first line's signed movement
+    const first = register[0]!
+    const movement = first.debit_minor - first.credit_minor
+    const expectedBalance = priorBalance + movement
+
+    expect(first.balance_minor).toBe(expectedBalance)
   })
 })

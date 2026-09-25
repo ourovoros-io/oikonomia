@@ -152,7 +152,15 @@ export function accountRegister(
   if (!account) return []
 
   const sign = normalSign(account.account_type)
+
+  // Seed running balance with the account's balance from all entries strictly before 'from'.
   let running = 0
+  if (from !== null) {
+    const priorDate = new Date(`${from}T12:00:00`)
+    priorDate.setDate(priorDate.getDate() - 1)
+    const priorDateStr = iso(priorDate)
+    running = accountBalance(l, accountId, priorDateStr)
+  }
 
   return linesFor(l, { from, to })
     .filter((x) => x.line.account_id === accountId)
@@ -172,11 +180,32 @@ export function accountRegister(
     })
 }
 
-function previousWindow(from: string, to: string): { from: string; to: string } {
-  const start = new Date(`${from}T12:00:00`)
-  const end = new Date(`${to}T12:00:00`)
-  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1
-  const prevEnd = new Date(start.getTime() - 86_400_000)
+export function previousWindow(from: string, to: string): { from: string; to: string } {
+  const fromDate = new Date(`${from}T12:00:00`)
+  const toDate = new Date(`${to}T12:00:00`)
+
+  const prevEnd = new Date(fromDate.getTime() - 86_400_000)
+
+  // Check if this is a whole calendar month: from is 1st of month and to is last day of that month.
+  // (i.e., next day after 'to' is the 1st of the next month)
+  const nextDay = new Date(toDate.getTime() + 86_400_000)
+  const isWholeMonth = fromDate.getDate() === 1 && nextDay.getDate() === 1
+
+  if (isWholeMonth) {
+    // Count how many months span from 'from' to 'to'.
+    const fromMonthIndex = fromDate.getFullYear() * 12 + fromDate.getMonth()
+    const toMonthIndex = toDate.getFullYear() * 12 + toDate.getMonth()
+    const months = toMonthIndex - fromMonthIndex + 1
+
+    // Go back that many months from 'from' to get the start of the prior window.
+    const prevStart = new Date(fromDate)
+    prevStart.setMonth(prevStart.getMonth() - months)
+
+    return { from: iso(prevStart), to: iso(prevEnd) }
+  }
+
+  // Otherwise, step back by the same number of days.
+  const days = Math.round((toDate.getTime() - fromDate.getTime()) / 86_400_000) + 1
   const prevStart = new Date(prevEnd.getTime() - (days - 1) * 86_400_000)
 
   return { from: iso(prevStart), to: iso(prevEnd) }
