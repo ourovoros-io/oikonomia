@@ -1,0 +1,31 @@
+/* Captures keep only the app's panes and text; the marketing site supplies
+   its own aurora behind them, so the backdrop must be fully transparent. */
+html.marketing-capture,
+html.marketing-capture body,
+html.marketing-capture #root {
+  background: transparent !important;
+}
+
+html.marketing-capture .aurora {
+  display: none !important;
+}
+
+/* Chromium's backdrop-filter samples the fully transparent canvas left by
+   omitBackground screenshots and paints a grey-white haze through every
+   glass pane (worst on Reports, whose Statement card leaves wide empty
+   margins for the blur to sample). Reuse the app's own existing
+   prefers-reduced-transparency fallback -- solid surface colour, no blur --
+   so captures render exactly like the accessibility-mode screens already
+   shipped and tested, not a one-off marketing-only look. */
+html.marketing-capture .glass-pane,
+html.marketing-capture .glass-dialog {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--color-surface) !important;
+}
+
+html.marketing-capture .glass-scrim {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: rgba(4, 5, 8, 0.78) !important;
+}
