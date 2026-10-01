@@ -94,46 +94,42 @@ fn bundle_identity_belongs_to_ourovoros() {
     );
 }
 
-/// URL globs the webview may hand to the opener plugin.
-fn opener_allow_globs() -> Vec<String> {
+#[test]
+fn webview_has_no_opener_permission() {
+    // Nothing in the UI opens a URL any more. The support mailto is built
+    // and opened from Rust (`open_support_email`), whose plugin API is not
+    // capability-scoped, so the webview needs no opener grant at all.
     let capabilities: serde_json::Value =
         serde_json::from_str(include_str!("../capabilities/default.json"))
             .expect("capabilities json");
-    let entries: Vec<&serde_json::Value> = capabilities["permissions"]
+
+    let opener: Vec<String> = capabilities["permissions"]
         .as_array()
         .expect("permissions array")
         .iter()
-        .filter(|p| p["identifier"] == "opener:allow-open-url")
+        .filter_map(|permission| {
+            let identifier = permission
+                .as_str()
+                .or_else(|| permission["identifier"].as_str())?;
+            identifier
+                .starts_with("opener:")
+                .then(|| identifier.to_owned())
+        })
         .collect();
-    assert_eq!(entries.len(), 1, "exactly one opener permission");
 
-    entries[0]["allow"]
-        .as_array()
-        .expect("allow list")
-        .iter()
-        .map(|entry| entry["url"].as_str().expect("url glob").to_owned())
-        .collect()
+    assert!(opener.is_empty(), "webview opener permissions: {opener:?}");
 }
 
 #[test]
-fn opener_capability_is_scoped_to_the_buy_page_only() {
-    assert_eq!(opener_allow_globs(), ["https://ourovoros.io/oikonomia*"]);
-}
+fn no_licensing_commands_are_registered() {
+    let registrations = include_str!("lib.rs");
 
-#[test]
-fn support_mail_is_opened_from_rust_not_through_a_webview_glob() {
-    // A `mailto:<address>*` glob cannot be anchored on the mailbox, so it
-    // would also admit extra recipients or a look-alike domain. The
-    // `open_support_email` command builds the URL in Rust instead; this pins
-    // that no such glob creeps back into the webview scope.
-    let mailto_globs: Vec<String> = opener_allow_globs()
-        .into_iter()
-        .filter(|glob| glob.starts_with("mailto:"))
-        .collect();
-    assert!(
-        mailto_globs.is_empty(),
-        "webview mailto globs: {mailto_globs:?}"
-    );
+    for command in ["license_status", "license_install", "eula_text"] {
+        assert!(
+            !registrations.contains(command),
+            "{command} is still registered"
+        );
+    }
 }
 
 #[test]

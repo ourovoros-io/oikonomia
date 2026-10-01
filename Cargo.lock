@@ -3127,7 +3127,6 @@ dependencies = [
  "macos-dock-icon",
  "oikonomia-core",
  "oikonomia-update",
- "security-framework",
  "serde",
  "serde_json",
  "tauri",

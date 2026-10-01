@@ -111,7 +111,6 @@ fn install_available_update(
 mod tests {
     use super::install_available_update;
     use crate::update_key::UPDATER_PUBLIC_KEY;
-    use oikonomia_core::license::PRODUCTION_PUBLIC_KEY_HEX;
     use oikonomia_update::{
         ArtifactInstaller, ClientConfig, UpdateError, UpdateMachine, UpdateStatus,
         default_updater_cache_dir, parse_public_key,
@@ -132,9 +131,8 @@ mod tests {
     }
 
     #[test]
-    fn baked_key_is_nonempty_minisign_and_not_the_license_key() {
+    fn baked_key_is_a_nonempty_minisign_key() {
         assert!(UPDATER_PUBLIC_KEY.len() > 32);
-        assert_ne!(UPDATER_PUBLIC_KEY, PRODUCTION_PUBLIC_KEY_HEX);
         parse_public_key(UPDATER_PUBLIC_KEY).expect("ops minisign public key must decode");
     }
 

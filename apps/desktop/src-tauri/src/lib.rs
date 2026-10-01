@@ -13,7 +13,6 @@ mod error;
 mod nav_guard;
 mod state;
 mod tray;
-mod trial_store;
 mod update;
 mod update_exec;
 mod update_key;
@@ -99,7 +98,7 @@ fn with_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<t
                 )
                 .build(),
         )
-        // URL opening is capability-scoped to the buy page only.
+        // Used from Rust only (open_support_email); the webview holds no opener permission.
         .plugin(tauri_plugin_opener::init())
         // Registered only. Install execs the wrapper-verified path; no check API.
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -112,8 +111,6 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::vault_touch,
         commands::vault_init,
         commands::vault_unlock,
-        commands::license_status,
-        commands::license_install,
         update::update_check,
         update::update_install,
         commands::vault_lock,
@@ -123,7 +120,6 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::vault_pick_backup,
         commands::app_info,
         commands::open_support_email,
-        commands::eula_text,
         commands::entity_list,
         commands::entity_create,
         commands::entity_update,

@@ -23,17 +23,13 @@ use oikonomia_core::ledger::{
     PostedEntryView, RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance,
     UpdateAccount, UpdateRecurringTemplate, VoidResult, account_balance, account_register,
     activity_window, archive_account, archive_entity, balance_sheet, cash_flow_series,
-    create_account, create_entity_allowed, create_recurring_template, dashboard_summary,
-    delete_entity, delete_recurring_template, get_entity, get_entry, get_lock_timeout_secs,
+    create_account, create_entity, create_recurring_template, dashboard_summary, delete_entity,
+    delete_recurring_template, get_entity, get_entry, get_lock_timeout_secs,
     get_recurring_template, list_accounts, list_entities, list_entries, list_recurring_templates,
     post_entry, post_recurring_template, post_simple_entry, profit_and_loss,
     profit_and_loss_export, replace_simple_entry, set_account_opening_balance, set_entry_hidden,
     set_lock_timeout_secs, trial_balance, update_account, update_entity, update_recurring_template,
     void_entry,
-};
-use oikonomia_core::license::{
-    LicenseStatus, LicenseVerifier, TrialStampStore, install_license, license_status_with,
-    record_trial_start_with, require_writes_allowed_with,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
@@ -46,8 +42,8 @@ use std::sync::Mutex;
 use tauri::{Emitter, State};
 use zeroize::Zeroizing;
 
-/// Where customers send questions, bug reports, and license problems. Every
-/// support pointer the app shows derives from this one address.
+/// Where users send questions and bug reports. Every support pointer the app
+/// shows derives from this one address.
 pub(crate) const SUPPORT_EMAIL: &str = "info@ourovoros.io";
 
 /// Static app metadata for the about screen / diagnostics.
@@ -101,7 +97,6 @@ pub async fn vault_init(
     })
     .await?;
     state.sync_watchdog_gate(status);
-    stamp_trial_start(&state)?;
     Ok(status)
 }
 
@@ -130,54 +125,14 @@ pub async fn vault_unlock(
 
     state.set_lock_timeout_cache(secs);
     state.sync_watchdog_gate(status);
-    stamp_trial_start(&state)?;
     Ok(status)
-}
-
-/// Stamp `trial_started_at` once after a successful vault init or unlock.
-///
-/// Also mirrors the stamp to the platform's secondary store (the macOS
-/// Keychain), so deleting the app-data directory alone cannot reset the
-/// trial.
-fn stamp_trial_start(state: &AppState) -> CommandResult<()> {
-    stamp_trial_start_with(state, crate::trial_store::default_trial_store())
-}
-
-/// [`stamp_trial_start`] against an explicit secondary store.
-///
-/// Tests pass their own store: the default one on macOS is the developer's
-/// real login Keychain, whose older trial date would otherwise win and make
-/// a fresh test trial read as expired.
-fn stamp_trial_start_with(state: &AppState, store: &dyn TrialStampStore) -> CommandResult<()> {
-    let _guard = state.lock_prefs();
-    record_trial_start_with(state.data_dir(), store)?;
-    Ok(())
 }
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use std::cell::RefCell;
-
-    use super::{require_granted_path, stamp_trial_start_with};
+    use super::require_granted_path;
     use crate::state::AppState;
-    use oikonomia_core::license::{
-        LicenseState, LicenseVerifier, NoTrialStampStore, TrialStampStore, license_status,
-    };
-    use oikonomia_core::prefs::load_ui_prefs;
-
-    /// A secondary trial store that lives in memory, standing in for the Keychain.
-    struct MemoryTrialStore(RefCell<Option<String>>);
-
-    impl TrialStampStore for MemoryTrialStore {
-        fn read_stamp(&self) -> Option<String> {
-            self.0.borrow().clone()
-        }
-
-        fn write_stamp(&self, rfc3339: &str) {
-            *self.0.borrow_mut() = Some(rfc3339.to_owned());
-        }
-    }
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -209,48 +164,6 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
-
-    #[test]
-    fn vault_init_stamps_trial_without_unlock() {
-        let dir = temp_dir("vault-init-trial");
-        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
-        {
-            let vault = state.vault();
-            let mut guard = crate::state::lock_vault(&vault);
-            guard
-                .init("correct horse battery staple")
-                .expect("vault init");
-        }
-        stamp_trial_start_with(&state, &NoTrialStampStore).expect("stamp");
-        assert!(
-            load_ui_prefs(state.data_dir()).trial_started_at.is_some(),
-            "vault_init helper must stamp trial_started_at"
-        );
-        let verifier = LicenseVerifier::production().expect("production verifier");
-        let status = license_status(state.data_dir(), &verifier).expect("status");
-        assert_eq!(status.state, LicenseState::Trial);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn an_older_secondary_stamp_wins_over_a_fresh_one() {
-        let dir = temp_dir("vault-init-old-trial");
-        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
-        let old = "2020-01-01T00:00:00Z";
-        let store = MemoryTrialStore(RefCell::new(Some(old.to_owned())));
-
-        stamp_trial_start_with(&state, &store).expect("stamp");
-
-        assert_eq!(
-            load_ui_prefs(state.data_dir()).trial_started_at.as_deref(),
-            Some(old),
-            "deleting app data must not restart a trial the secondary store remembers"
-        );
-        let verifier = LicenseVerifier::production().expect("production verifier");
-        let status = license_status(state.data_dir(), &verifier).expect("status");
-        assert_eq!(status.state, LicenseState::Expired);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 }
 
 /// Change the master password (requires the current password). Both
@@ -261,7 +174,6 @@ pub async fn vault_change_password(
     old: Zeroizing<String>,
     new: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
-    require_writes(&state)?;
     let vault = state.vault();
     state.touch();
 
@@ -394,97 +306,6 @@ pub async fn vault_pick_backup(
         return Ok(None);
     };
     Ok(Some(path.display().to_string()))
-}
-
-/// Where a customer buys a license. The page carries the Paddle checkout;
-/// the app itself never talks to it - the browser does.
-pub(crate) const BUY_URL: &str = "https://ourovoros.io/oikonomia";
-
-/// `license_status` IPC payload: core status plus the buy link.
-#[derive(Debug, Clone, serde::Serialize)]
-pub(crate) struct LicenseStatusPayload {
-    #[serde(flatten)]
-    pub(crate) status: LicenseStatus,
-    pub(crate) buy_url: String,
-}
-
-/// Offline license / trial status. Never contacts the network.
-#[tauri::command]
-pub fn license_status(state: State<'_, AppState>) -> CommandResult<LicenseStatusPayload> {
-    let verifier = LicenseVerifier::production()?;
-    let status = license_status_with(
-        state.data_dir(),
-        &verifier,
-        crate::trial_store::default_trial_store(),
-    )?;
-    Ok(LicenseStatusPayload {
-        status,
-        buy_url: BUY_URL.to_owned(),
-    })
-}
-
-/// Native Open for a `.lic` file; verify, then atomically copy as `license.lic`.
-///
-/// Returns the new status, or `None` if the user cancelled. The stored file is
-/// the signed original, not an unsigned cache.
-#[tauri::command]
-pub async fn license_install(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> CommandResult<Option<LicenseStatusPayload>> {
-    let filter_label = crate::tray::license_filter_label(load_ui_prefs(state.data_dir()).locale);
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
-        let app = app.clone();
-        move || {
-            use tauri_plugin_dialog::DialogExt;
-            Ok(app
-                .dialog()
-                .file()
-                .add_filter(filter_label, &["lic"])
-                .blocking_pick_file())
-        }
-    }))
-    .await?;
-
-    let Some(file_path) = picked else {
-        return Ok(None);
-    };
-    let path = file_path.into_path().map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("invalid license location: {e}"),
-    })?;
-
-    let verifier = LicenseVerifier::production()?;
-    install_license(state.data_dir(), &path, &verifier)?;
-    let status = license_status_with(
-        state.data_dir(),
-        &verifier,
-        crate::trial_store::default_trial_store(),
-    )?;
-    Ok(Some(LicenseStatusPayload {
-        status,
-        buy_url: BUY_URL.to_owned(),
-    }))
-}
-
-#[cfg(test)]
-mod license_payload_tests {
-    use super::{BUY_URL, LicenseStatusPayload};
-
-    #[test]
-    fn license_status_payload_carries_the_buy_url() {
-        let payload = LicenseStatusPayload {
-            status: oikonomia_core::license::LicenseStatus {
-                state: oikonomia_core::license::LicenseState::None,
-                days_remaining: None,
-                licensed_until: None,
-            },
-            buy_url: BUY_URL.to_owned(),
-        };
-        let json = serde_json::to_value(&payload).expect("serialize");
-        assert_eq!(json["state"], "none");
-        assert_eq!(json["buy_url"], "https://ourovoros.io/oikonomia");
-    }
 }
 
 /// Native Open dialog for a `.oikonomia-backup` file. `None` if cancelled.
@@ -657,11 +478,9 @@ pub async fn entity_create(
     state: State<'_, AppState>,
     input: CreateEntity,
 ) -> CommandResult<Entity> {
-    let data_dir = state.data_dir().to_path_buf();
-    with_vault_write_blocking(&state, move |vault| {
-        let verifier = LicenseVerifier::production()?;
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
-        create_entity_allowed(&data_dir, &verifier, conn, &input)
+        create_entity(conn, &input)
     })
     .await
 }
@@ -673,7 +492,7 @@ pub async fn entity_update(
     id: EntityId,
     name: String,
 ) -> CommandResult<Entity> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         update_entity(conn, id, &name)
     })
@@ -683,7 +502,7 @@ pub async fn entity_update(
 /// Archive entity (soft-hide).
 #[tauri::command]
 pub async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         archive_entity(conn, id)
     })
@@ -693,7 +512,7 @@ pub async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> Command
 /// Permanently delete an entity and all of its books data.
 #[tauri::command]
 pub async fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         delete_entity(conn, id)
     })
@@ -721,7 +540,7 @@ pub async fn account_create(
     state: State<'_, AppState>,
     input: CreateAccount,
 ) -> CommandResult<Account> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         create_account(conn, &input)
     })
@@ -734,7 +553,7 @@ pub async fn account_update(
     state: State<'_, AppState>,
     input: UpdateAccount,
 ) -> CommandResult<Account> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         update_account(conn, &input)
     })
@@ -744,7 +563,7 @@ pub async fn account_update(
 /// Archive (deactivate) account.
 #[tauri::command]
 pub async fn account_archive(state: State<'_, AppState>, id: AccountId) -> CommandResult<()> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         archive_account(conn, id)
     })
@@ -789,7 +608,7 @@ pub async fn account_set_opening_balance(
     target_minor: i64,
     as_of: String,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         set_account_opening_balance(conn, account_id, target_minor, &as_of)
     })
@@ -840,7 +659,7 @@ pub async fn entry_post(
     state: State<'_, AppState>,
     input: PostJournal,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         post_entry(conn, &input)
     })
@@ -853,7 +672,7 @@ pub async fn entry_post_simple(
     state: State<'_, AppState>,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         post_simple_entry(conn, &input)
     })
@@ -887,7 +706,7 @@ pub async fn entry_post_simple_with_document(
             message: format!("invalid file data: {e}"),
         })?;
 
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         let (view, _meta) = post_simple_entry_with_document(
             conn,
@@ -912,7 +731,6 @@ pub async fn entry_post_simple_with_document_path(
     path: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
-    require_writes(&state)?;
     let path = require_granted_path(&state, &path)?;
 
     let vault = state.vault();
@@ -961,7 +779,7 @@ pub async fn entry_replace_simple(
     original_id: JournalEntryId,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         replace_simple_entry(conn, original_id, &input)
     })
@@ -975,7 +793,7 @@ pub async fn entry_set_hidden(
     id: JournalEntryId,
     hidden: bool,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         set_entry_hidden(conn, id, hidden)
     })
@@ -988,7 +806,7 @@ pub async fn entry_void(
     state: State<'_, AppState>,
     id: JournalEntryId,
 ) -> CommandResult<VoidResult> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         void_entry(conn, id)
     })
@@ -1029,7 +847,7 @@ pub async fn recurring_create(
     state: State<'_, AppState>,
     input: CreateRecurringTemplate,
 ) -> CommandResult<RecurringTemplateView> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         create_recurring_template(conn, &input)
     })
@@ -1042,7 +860,7 @@ pub async fn recurring_update(
     state: State<'_, AppState>,
     input: UpdateRecurringTemplate,
 ) -> CommandResult<RecurringTemplateView> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         update_recurring_template(conn, &input)
     })
@@ -1055,7 +873,7 @@ pub async fn recurring_delete(
     state: State<'_, AppState>,
     id: RecurringTemplateId,
 ) -> CommandResult<()> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         delete_recurring_template(conn, id)
     })
@@ -1074,7 +892,7 @@ pub async fn recurring_post(
     entry_date: Option<String>,
     amount_minor: Option<i64>,
 ) -> CommandResult<RecurringPostResult> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         post_recurring_template(conn, id, entry_date.as_deref(), amount_minor)
     })
@@ -1126,7 +944,7 @@ pub async fn csv_import_post(
     state: State<'_, AppState>,
     input: CsvImportPostInput,
 ) -> CommandResult<CsvImportPostResult> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         post_import_rows(conn, &input.rows, input.include_duplicates)
     })
@@ -1479,7 +1297,7 @@ pub async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandRes
 /// Set auto-lock timeout seconds.
 #[tauri::command]
 pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         set_lock_timeout_secs(conn, secs)
     })
@@ -1630,16 +1448,6 @@ pub async fn document_analyze_path(
     .await
 }
 
-fn require_writes(state: &AppState) -> CommandResult<()> {
-    let verifier = LicenseVerifier::production()?;
-    require_writes_allowed_with(
-        state.data_dir(),
-        &verifier,
-        crate::trial_store::default_trial_store(),
-    )
-    .map_err(CommandError::from)
-}
-
 /// Accept a webview-supplied path only if the user handed it to the app
 /// through a native drop or dialog ([`AppState::grant_paths`]).
 fn require_granted_path(state: &AppState, path: &str) -> CommandResult<PathBuf> {
@@ -1652,17 +1460,6 @@ fn require_granted_path(state: &AppState, path: &str) -> CommandResult<PathBuf> 
             message: "file path was not chosen through the app".into(),
         })
     }
-}
-
-/// Same as [`with_vault_blocking`], but refuse the call when the trial/license
-/// is expired (`license_expired`).
-async fn with_vault_write_blocking<T, F>(state: &State<'_, AppState>, f: F) -> CommandResult<T>
-where
-    T: Send + 'static,
-    F: FnOnce(&mut Vault) -> Result<T, CoreError> + Send + 'static,
-{
-    require_writes(state)?;
-    with_vault_blocking(state, f).await
 }
 
 /// Run vault work on the blocking pool: no command ever waits for the vault
@@ -1777,7 +1574,7 @@ pub async fn document_delete(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<()> {
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         delete_document(conn, document_id)
     })
@@ -1812,7 +1609,7 @@ pub async fn document_attach(
             message: format!("invalid file data: {e}"),
         })?;
 
-    with_vault_write_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         attach_document(conn, entity_id, entry_id, &filename, &mime_type, &data)
     })
@@ -1860,29 +1657,4 @@ pub async fn document_export(
     })?;
 
     Ok(Some(path.display().to_string()))
-}
-
-// --- Legal -------------------------------------------------------------
-
-/// The bundled end-user license agreement (EULA.md at the repo root).
-pub(crate) fn eula_text_content() -> &'static str {
-    include_str!("../../../../EULA.md")
-}
-
-/// Return the EULA for the Settings "About" section.
-#[tauri::command]
-pub fn eula_text() -> String {
-    eula_text_content().to_owned()
-}
-
-#[cfg(test)]
-mod eula_tests {
-    use super::eula_text_content;
-
-    #[test]
-    fn eula_text_is_bundled_and_nonempty() {
-        let text = eula_text_content();
-        assert!(text.contains("Ourovoros.io"));
-        assert!(text.len() > 1000, "EULA suspiciously short");
-    }
 }

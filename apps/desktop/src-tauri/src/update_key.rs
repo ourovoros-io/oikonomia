@@ -2,8 +2,7 @@
 //!
 //! This is the Ops-sent production public half. Do not invent a replacement
 //! and do not treat it as a throwaway fixture. The private key never enters
-//! this repository, CI logs, the vault, or `.lic` files. This is not
-//! [`oikonomia_core::license::PRODUCTION_PUBLIC_KEY_HEX`].
+//! this repository, CI logs, the vault, or `.lic` files.
 //!
 //! An empty value fails compile so a future blank-out is a CI fail.
 

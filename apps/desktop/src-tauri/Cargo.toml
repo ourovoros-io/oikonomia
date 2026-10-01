@@ -37,11 +37,5 @@ tauri-plugin-opener = "2"
 log = "0.4"
 thiserror = { workspace = true }
 
-# Second, best-effort trial-stamp location: the login Keychain survives
-# deleting the app-data directory. macOS-only; other desktop targets fall
-# back to `oikonomia_core::license::NoTrialStampStore`.
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3"
-
 [lints]
 workspace = true
