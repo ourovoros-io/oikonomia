@@ -116,11 +116,11 @@ Licence metadata:
   and drops the proprietary-licence comment. `publish = false` stays.
 - `web/package.json`: add `"license": "GPL-3.0-or-later"`.
 - `tauri.conf.json`: `licenseFile` points at `LICENSE`.
-- `deny.toml`: remove `[licenses.private]`, add `GPL-3.0-or-later` to the
-  allow list for the workspace crates, and confirm `cargo deny check licenses`
-  passes. Every licence already on the allow list is GPL-3.0 compatible;
-  the check is re-verified against the actual graph, including vendored
-  OpenSSL (Apache-2.0) under SQLCipher.
+- `deny.toml`: keep `[licenses.private] ignore = true`. The workspace crates
+  are `publish = false`, so cargo-deny skips them, and the dependency allow
+  list stays free of GPL: no copyleft dependency can enter unnoticed. Every
+  licence already on the allow list is GPL-3.0 compatible. Confirm
+  `cargo deny check` passes.
 
 Documentation:
 
@@ -141,11 +141,13 @@ Documentation:
 
 Capability scope:
 
-- The opener permission is scoped to `https://ourovoros.io/oikonomia*`, the
-  former buy page. Re-scope it to the repository URL
-  `https://github.com/ourovoros-io/oikonomia*`. `open_support_email` keeps
-  building the mailto in Rust. The existing test that forbids mailto globs
-  and extra URL globs is updated to the new single glob.
+- The webview's opener permission is scoped to
+  `https://ourovoros.io/oikonomia*`, the former buy page. Once the buy link
+  is gone nothing in the UI opens a URL, so the permission is removed
+  entirely (in PR 1, with the code that used it) rather than re-pointed.
+  `open_support_email` keeps building and opening the mailto in Rust, which
+  needs no webview permission. A test asserts the webview holds no opener
+  permission.
 
 Pre-publication audit:
 
@@ -177,8 +179,8 @@ table serialized; it needs no unlocked vault.
 
 UI:
 
-- Settings gets a "Support Oikonomia" section in the position the License
-  section held. One row per address: coin, network, the "also accepts" note,
+- Settings gets a "Donate" section in the position the License section held
+  (Settings already has a "Support" section for the support email). One row per address: coin, network, the "also accepts" note,
   the address in the mono font, and a copy button.
 - The copy button writes to the clipboard and shows a short confirmation.
   No URL is opened and no network request is made.
