@@ -1,14 +1,16 @@
 # Oikonomia — agent / contributor notes
 
 Local-only personal + company finance app: **double-entry** multi-entity ledger,
-**Tauri 2** + **React** UI (Stripe-inspired, dark mode), **SQLCipher** vault,
+**Tauri 2** + **React** UI (dark Aurora glass), **SQLCipher** vault,
 master-password unlock.
 
 ## Layout
 
 | Path | Role |
 |------|------|
-| `crates/oikonomia-core` | Domain, money, validation, (later) vault/repo/reports |
+| `crates/oikonomia-core` | Domain, vault, ledger, reports |
+| `crates/oikonomia-update` | Signed update check, the only network path |
+| `crates/macos-dock-icon` | macOS Dock icon for `cargo tauri dev` |
 | `apps/desktop/src-tauri` | Tauri shell + IPC commands |
 | `web` | React + Vite + Tailwind frontend |
 | `docs/` | Design specs and plans |
@@ -21,7 +23,7 @@ cargo test -p oikonomia-core
 
 # Format + lint (workspace)
 cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Frontend
 cd web && npm install && npm run dev

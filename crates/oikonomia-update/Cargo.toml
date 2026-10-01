@@ -4,11 +4,9 @@ version.workspace = true
 edition.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "Signed update-check wrapper for the Oikonomia desktop shell (no vault I/O)"
-# Never published to crates.io; deny.toml's [licenses.private] relies on this
-# field (a proprietary license-file, not an SPDX id, so cargo-deny cannot
-# classify it).
+# Distributed as an application, not as a crates.io library.
 publish = false
 
 [dependencies]

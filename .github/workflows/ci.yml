@@ -19,8 +19,8 @@ jobs:
           persist-credentials: false
 
       # Fail-closed machine gate: the updater public key must be baked before
-      # CI can go green. Empty/whitespace is not a skip. This is not the
-      # license signing key and is not a private key.
+      # CI can go green. Empty/whitespace is not a skip. This is not a private
+      # key.
       - name: Require baked updater public key (fail-closed)
         run: |
           python3 - <<'PY'

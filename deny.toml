@@ -47,9 +47,9 @@ allow = [
 ]
 
 [licenses.private]
-# Task 2 stripped the `license` key from every workspace crate ahead of
-# Phase 2's license-file; all four are `publish = false` and never ship to
-# crates.io, so they carry no SPDX classification for cargo-deny to check.
+# Workspace crates are GPL-3.0-or-later and `publish = false`. Ignoring them
+# here keeps GPL out of the dependency allow list above: every dependency
+# must stay permissive or MPL-2.0, all of which are GPL-3.0 compatible.
 ignore = true
 
 [bans]

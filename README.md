@@ -9,14 +9,15 @@
 around the oikos: two columns (double-entry) flank a keyhole doorway (the
 vault), with a euro at the door.</em></p>
 
-Local-only personal and company finance: **double-entry** multi-entity books,
-**encrypted at rest**, with a Stripe-inspired desktop UI (dark mode first).
+Free and open-source, local-only personal and company finance: **double-entry**
+multi-entity books, **encrypted at rest**, with a dark "Aurora glass" desktop UI.
+No account, no cloud, no telemetry.
 
 Stack: **Rust** (`oikonomia-core`) + **Tauri 2** + **React / Vite / Tailwind**.
 
 Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowers/specs/2026-08-10-oikonomia-design.md)
 
-## v1 features
+## Features
 
 - Encrypted vault (Argon2id → SQLCipher); init / unlock / lock; change master password
 - Encrypted vault backup/restore (one `.oikonomia-backup` file: `vault.db` + header, already SQLCipher); Settings + login restore; no second password; pick-then-confirm then unlock with master password
@@ -33,18 +34,17 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 - Dashboard (MTD income/expense, assets); every empty page offers a first-run "create a book" CTA
 - Tray quick-add window: left-click the tray to post a simple entry or drop a document without opening the full app
 - Signed, click-driven update check on the unlock screen (minisign-verified, talks only to github.com)
-- Offline licensing: 30-day trial, offline `.lic` file import in Settings, buy link; EULA viewable in-app from Settings
 - Localized error messages
-- Global trial banner (last 7 days of trial, or after expiry) with a buy-license link
 - Dark-only "Aurora glass" UI; locale money formatting
 - UI language: English, Ελληνικά, Français, and Deutsch; switch in Settings; persists across relaunch
 
 ## Support
 
-Questions, bug reports, license problems, and security reports all go to
+Questions and bug reports go to
 **info@ourovoros.io**. The app shows the same address under Settings → Support,
 with a one-click email whose subject already carries the app version. Never
 attach a vault or backup file to a report.
+Security reports: see [SECURITY.md](SECURITY.md).
 
 ## Prerequisites
 
@@ -97,7 +97,7 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
   talks only to GitHub's release hosts (the public
   `ourovoros-io/oikonomia-releases` repo) and verifies a minisign signature
   over both the update manifest and the downloaded artifact before anything is
-  installed. The vault, ledger, and license paths (`oikonomia-core`) contain
+  installed. The vault and ledger paths (`oikonomia-core`) contain
   no network code at all —
   `scripts/assert-core-offline.sh` and `cargo deny check` enforce this in CI.
 - Every webview is pinned to the app's own origin (`nav_guard`), and the CSP
@@ -111,7 +111,20 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 
 **Protects against:** stolen disk / backup of app data, casual browsing of the vault file.  
 **Does not protect against:** malware while unlocked, keyloggers, memory forensics while the app is open.  
-**Update channel:** a compromised GitHub account cannot ship a malicious update (artifacts are minisign-verified against the baked key), but a compromised signing key can — the key ceremony in docs/release.md keeps it offline.
+**Update channel:** a compromised GitHub account cannot ship a malicious update (artifacts are minisign-verified against the baked key), but a compromised signing key can — the signing key is generated offline and stored only in the protected `release` environment (see docs/release.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Business rules live in Rust
+(`oikonomia-core`); the React UI only renders.
+
+## License
+
+Oikonomia is free software, released under the
+[GNU General Public License v3.0 or later](LICENSE).
+Copyright (c) 2026 Ourovoros.io.
+
+Bundled fonts are under the SIL Open Font License; see `web/public/fonts`.
 
 ## Layout
 
@@ -119,12 +132,11 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 |------|------|
 | `crates/oikonomia-core` | Domain, vault, ledger, reports |
 | `crates/oikonomia-update` | Signed update check (network isolated from core) |
-| `crates/oikonomia-mint` | Offline license minting (operator-only binary, never shipped) |
 | `crates/macos-dock-icon` | Sets the macOS Dock icon for `cargo tauri dev` |
 | `apps/desktop/src-tauri` | Tauri shell + IPC |
 | `web` | React UI |
 
 ## Out of v1 (backlog)
 
-Attachments, budgets, invoicing, multi-currency, recovery key, Windows/Linux
-go-live, webhook fulfillment, App Sandbox.
+Budgets, invoicing, multi-currency, recovery key, Windows/Linux
+go-live, App Sandbox.
