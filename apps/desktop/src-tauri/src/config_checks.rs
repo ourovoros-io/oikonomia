@@ -146,3 +146,19 @@ fn versions_are_in_sync_everywhere() {
         "web/package.json vs workspace"
     );
 }
+
+#[test]
+fn bundle_ships_the_gpl_licence_text() {
+    assert_eq!(config()["bundle"]["licenseFile"], "../../../LICENSE");
+
+    let licence = include_str!("../../../../LICENSE");
+    assert!(
+        licence
+            .trim_start()
+            .starts_with("GNU GENERAL PUBLIC LICENSE"),
+        "LICENSE is not the GPL text"
+    );
+    assert!(licence.contains("Version 3, 29 June 2007"));
+
+    assert_eq!(env!("CARGO_PKG_LICENSE"), "GPL-3.0-or-later");
+}

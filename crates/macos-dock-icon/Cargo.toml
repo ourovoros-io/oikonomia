@@ -5,10 +5,8 @@ description = "Runtime Dock icon for unbundled (dev-mode) macOS binaries"
 edition.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-license-file.workspace = true
-# Never published to crates.io; deny.toml's [licenses.private] relies on this
-# field (a proprietary license-file, not an SPDX id, so cargo-deny cannot
-# classify it).
+license.workspace = true
+# Distributed as an application, not as a crates.io library.
 publish = false
 
 # This crate deliberately does NOT inherit the workspace lints: the workspace
