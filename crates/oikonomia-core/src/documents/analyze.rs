@@ -560,8 +560,14 @@ mod tests {
 
     #[test]
     fn extract_pdf_jpeg_images_ignores_non_pdf() {
-        assert!(extract_pdf_jpeg_images(b"not a pdf").is_empty());
-        assert!(extract_pdf_jpeg_images(b"%PDF-1.4\ntrailer\n%%EOF").is_empty());
+        assert_eq!(
+            extract_pdf_jpeg_images(b"not a pdf"),
+            [] as [std::vec::Vec<u8>; 0]
+        );
+        assert_eq!(
+            extract_pdf_jpeg_images(b"%PDF-1.4\ntrailer\n%%EOF"),
+            [] as [std::vec::Vec<u8>; 0]
+        );
     }
 
     #[test]

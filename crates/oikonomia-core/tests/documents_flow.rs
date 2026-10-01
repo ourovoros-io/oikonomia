@@ -129,7 +129,10 @@ fn delete_entity_with_linked_document() {
     .expect("save document");
 
     delete_entity(conn, entity_id).expect("delete entity with linked document");
-    assert!(list_entities(conn).expect("list").is_empty());
+    assert_eq!(
+        list_entities(conn).expect("list"),
+        [] as [oikonomia_core::domain::Entity; 0]
+    );
 }
 
 #[test]

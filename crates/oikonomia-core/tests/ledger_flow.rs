@@ -36,7 +36,7 @@ fn personal_books_expense_and_reports() {
     };
 
     let accounts = list_accounts(conn, entity.id).unwrap_or_default();
-    assert!(!accounts.is_empty());
+    assert_ne!(accounts, [] as [oikonomia_core::domain::Account; 0]);
 
     let Some(checking) = accounts.iter().find(|a| a.code == "1010") else {
         return;
@@ -112,7 +112,10 @@ fn personal_books_expense_and_reports() {
     assert!(dup.is_err());
 
     assert!(delete_entity(conn, entity.id).is_ok());
-    assert!(list_entities(conn).unwrap_or_default().is_empty());
+    assert_eq!(
+        list_entities(conn).unwrap_or_default(),
+        [] as [oikonomia_core::domain::Entity; 0]
+    );
 }
 
 #[test]
