@@ -228,7 +228,7 @@ export function SettingsPage({
     onCreateBookIntentHandled?.()
   }, [createBookIntent, onCreateBookIntentHandled])
 
-  function commandErrorMessage(err: unknown, fallback = ''): string | null {
+  function commandErrorMessage(err: unknown, fallback = ''): string {
     const cmd = err as CommandError
     return cmd.message || fallback
   }
@@ -249,8 +249,7 @@ export function SettingsPage({
       setShowCreate(false)
       onSelectEntity(entity.id)
     } catch (err) {
-      const message = commandErrorMessage(err)
-      if (message !== null) setPageError(message)
+      setPageError(commandErrorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -265,8 +264,7 @@ export function SettingsPage({
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
-      const message = commandErrorMessage(err, t('settings.deleteFailed'))
-      if (message !== null) setPageError(message)
+      setPageError(commandErrorMessage(err, t('settings.deleteFailed')))
     } finally {
       setDeleteBusy(false)
     }
@@ -285,8 +283,7 @@ export function SettingsPage({
       setLockMins(mins)
       onLockTimeoutChange?.(secs)
     } catch (err) {
-      const message = commandErrorMessage(err)
-      if (message !== null) setPageError(message)
+      setPageError(commandErrorMessage(err))
     } finally {
       setLockBusy(false)
     }

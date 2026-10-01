@@ -85,10 +85,76 @@ describe('SettingsPage', () => {
         onSelectEntity={() => {}}
       />,
     )
+    expect(screen.queryByRole('button', { name: /new entity/i })).not.toBeInTheDocument()
+
     await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+
     const newEntity = await screen.findByRole('button', { name: /new entity/i })
     expect(newEntity).toBeEnabled()
-    expect(screen.queryByText(/keep more than one book/i)).toBeNull()
+    expect(newEntity).not.toHaveAttribute('title')
+  })
+
+  test('creating an entity sends the form payload and selects the new book', async () => {
+    vi.mocked(api.entityCreate).mockResolvedValue({
+      id: 'e2',
+      name: 'Work',
+      base_currency: 'EUR',
+      fiscal_year_start_month: 1,
+      chart_template: 'personal',
+    })
+    const onEntitiesChange = vi.fn(noopAsync)
+    const onSelectEntity = vi.fn()
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={onEntitiesChange}
+        onSelectEntity={onSelectEntity}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Work')
+    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+
+    await waitFor(() => {
+      expect(onSelectEntity).toHaveBeenCalledWith('e2')
+    })
+    expect(api.entityCreate).toHaveBeenCalledTimes(1)
+    expect(api.entityCreate).toHaveBeenCalledWith({
+      name: 'Work',
+      base_currency: 'EUR',
+      chart_template: 'personal',
+      fiscal_year_start_month: 1,
+    })
+    expect(onEntitiesChange).toHaveBeenCalledTimes(1)
+    expect(onSelectEntity).toHaveBeenCalledTimes(1)
+  })
+
+  test('a failed entity create shows the error and does not select a book', async () => {
+    vi.mocked(api.entityCreate).mockRejectedValue({
+      code: 'validation',
+      message: 'entity name already exists',
+    })
+    const onEntitiesChange = vi.fn(noopAsync)
+    const onSelectEntity = vi.fn()
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={onEntitiesChange}
+        onSelectEntity={onSelectEntity}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Personal')
+    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+
+    expect(await screen.findByText('entity name already exists')).toBeInTheDocument()
+    expect(api.entityCreate).toHaveBeenCalledTimes(1)
+    expect(onEntitiesChange).not.toHaveBeenCalled()
+    expect(onSelectEntity).not.toHaveBeenCalled()
   })
 
   const appInfo = { name: 'Oikonomia', version: '0.1.0-dev', support_email: 'info@ourovoros.io' }
