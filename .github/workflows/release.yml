@@ -8,7 +8,7 @@
 # GitHub → Settings → Environments, add required reviewers, then add
 # secrets after Apple Developer + Windows cloud-HSM accounts exist.
 # The updater minisign private key (TAURI_SIGNING_PRIVATE_KEY) also lives
-# there. It is not the license signing key.
+# there.
 #
 # ---------------------------------------------------------------------------
 # Environment `release` secret *names* (values go in the GitHub UI only)
@@ -49,7 +49,7 @@
 # Linux — no paid signing account; unsigned .deb + .AppImage.
 # In-app updater feed is AppImage only; .deb is attached for manual download.
 #
-# Tauri updater (minisign) — NOT the license signing key. Different keypair.
+# Tauri updater (minisign).
 # Official Tauri v2 env names:
 # https://v2.tauri.app/plugin/updater/
 #
@@ -60,15 +60,12 @@
 # NEVER store in GitHub (repo, Actions secrets, or this Environment)
 # ---------------------------------------------------------------------------
 #
-#   - license signing private key (mint on a host you control only)
-#   - Paddle API keys / webhook secrets
-#   - any buyer PII
 #   - a raw Authenticode .pfx of the Windows code-signing private key
 #
 # The updater minisign private key lives on Environment `release` only
 # (TAURI_SIGNING_PRIVATE_KEY, optional TAURI_SIGNING_PRIVATE_KEY_PASSWORD).
-# It is not the license signing private key. GitHub Releases is the v1
-# updater CDN; the public key baked into the app is the trust root.
+# GitHub Releases is the v1 updater
+# CDN; the public key baked into the app is the trust root.
 # Jobs fail closed if TAURI_SIGNING_PRIVATE_KEY is empty (never echo it).
 
 name: Release
@@ -140,7 +137,7 @@ jobs:
             echo "::error::Missing required release environment secret: TAURI_SIGNING_PRIVATE_KEY"
             echo "Refusing to publish updater JSON without a signing key."
             echo "Add TAURI_SIGNING_PRIVATE_KEY (optional TAURI_SIGNING_PRIVATE_KEY_PASSWORD) to Environment 'release'."
-            echo "This is the updater minisign key, not the license signing key."
+            echo "This is the updater minisign key."
             exit 1
           fi
 
@@ -251,7 +248,7 @@ jobs:
             Write-Host '::error::Missing required release environment secret: TAURI_SIGNING_PRIVATE_KEY'
             Write-Host 'Refusing to publish updater JSON without a signing key.'
             Write-Host "Add TAURI_SIGNING_PRIVATE_KEY (optional TAURI_SIGNING_PRIVATE_KEY_PASSWORD) to Environment 'release'."
-            Write-Host 'This is the updater minisign key, not the license signing key.'
+            Write-Host 'This is the updater minisign key.'
             exit 1
           }
 
@@ -328,7 +325,7 @@ jobs:
             echo "::error::Missing required release environment secret: TAURI_SIGNING_PRIVATE_KEY"
             echo "Refusing to publish updater JSON without a signing key."
             echo "Add TAURI_SIGNING_PRIVATE_KEY (optional TAURI_SIGNING_PRIVATE_KEY_PASSWORD) to Environment 'release'."
-            echo "This is the updater minisign key, not the license signing key."
+            echo "This is the updater minisign key."
             exit 1
           fi
 

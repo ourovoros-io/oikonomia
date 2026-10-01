@@ -1,3 +1,8 @@
+> **Superseded (2026-10-01).** Oikonomia is no longer sold. The commerce,
+> licensing, and EULA parts of this document were removed by
+> `docs/superpowers/specs/2026-10-01-open-source-donations-design.md`.
+> The release lane, updater, and code signing described here still apply.
+
 # Go-to-market readiness — design
 
 Date: 2026-09-01
