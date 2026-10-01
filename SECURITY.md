@@ -5,7 +5,7 @@
 Email **info@ourovoros.io**. Please do not open a public issue for a
 vulnerability. Never attach a vault or backup file to a report.
 
-Include the app version (Settings, or the unlock screen), your operating
+Include the app version (shown under Settings, Support), your operating
 system, and steps to reproduce. You will get an acknowledgement, and a fix or
 a decision is published in the release notes.
 

@@ -35,7 +35,8 @@ message.
   click-driven update check in `oikonomia-update`.
 - The vault is encrypted at rest. No plaintext database on disk.
 - No new dependency without a reason a small local implementation cannot meet.
-  New dependencies must be permissively licensed; `cargo deny check` enforces it.
+  New dependencies must be permissively licensed or MPL-2.0; `cargo deny check`
+  enforces it.
 
 `AGENTS.md` lists the full set of invariants.
 

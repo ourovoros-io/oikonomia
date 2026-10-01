@@ -1,4 +1,4 @@
-# Promote a draft release from this private repo to the public releases repo.
+# Promote a draft release from this repo to the public releases repo.
 #
 # Manual, reviewed, fail-closed. Steps: download the draft's artifacts,
 # assemble latest.json ourselves (sha256 + per-artifact minisign sigs),
