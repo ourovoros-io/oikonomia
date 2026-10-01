@@ -1,8 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { LicenseStatus } from './license'
 import { isTauri, type CommandError } from './tauri'
-
-export type { LicenseState, LicenseStatus } from './license'
 
 export type ChartTemplate = 'personal' | 'company' | 'blank'
 export type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense'
@@ -423,18 +420,6 @@ export const api = {
 
   getLockTimeout: () => call<number>('settings_get_lock_timeout'),
   setLockTimeout: (secs: number) => call<void>('settings_set_lock_timeout', { secs }),
-  /** Trial / signed-license state. Readable while unlocked. */
-  licenseStatus: () => call<LicenseStatus>('license_status'),
-  /**
-   * Native Open for a `.lic` file. `null` = cancelled.
-   * Returns the same status object as {@link api.licenseStatus} after install.
-   */
-  licenseInstall: () => call<LicenseStatus | null>('license_install'),
-  /**
-   * Bundled EULA text for the Settings license viewer. Empty (not an
-   * error) outside the desktop app, since it is purely informational chrome.
-   */
-  eulaText: () => (isTauri() ? call<string>('eula_text') : Promise.resolve('')),
   /** Opens the mail client on the support mailbox. Rust builds the mailto; nothing is passed in. */
   openSupportEmail: () => call<void>('open_support_email'),
   /** Locale is a plaintext pref (Rust side): readable before unlock. */

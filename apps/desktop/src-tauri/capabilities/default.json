@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal local-only capabilities for Oikonomia v1 (no network). File I/O stays in Rust: native dialogs pick a path, and the vault lives in the app data dir. No fs plugin is exposed to the webview.",
+  "description": "Minimal local-only capabilities for Oikonomia (no network). File I/O stays in Rust: native dialogs pick a path, and the vault lives in the app data dir. No fs or opener permission is exposed to the webview.",
   "windows": ["main", "quick-add"],
   "permissions": [
     "core:default",
@@ -14,10 +14,6 @@
     "core:window:allow-set-position",
     "core:window:allow-outer-position",
     "core:window:allow-outer-size",
-    "core:window:allow-is-visible",
-    {
-      "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://ourovoros.io/oikonomia*" }]
-    }
+    "core:window:allow-is-visible"
   ]
 }

@@ -1,6 +1,6 @@
 //! Signed in-app update check for the Oikonomia desktop shell.
 //!
-//! HTTP lives here, not in `oikonomia-core` and not in `license.rs`.
+//! HTTP lives here, not in `oikonomia-core`.
 //! The webview cannot pass a feed URL, endpoint, or public key.
 
 #![forbid(unsafe_code)]

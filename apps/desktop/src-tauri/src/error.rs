@@ -34,9 +34,6 @@ impl From<CoreError> for CommandError {
             CoreError::NotFound(_) => "not_found",
             CoreError::Analysis(_) => "analysis",
             CoreError::CsvParse(_) => "csv_parse",
-            CoreError::LicenseInvalid => "license_invalid",
-            CoreError::LicenseExpired => "license_expired",
-            CoreError::LicenseEntityLimit => "license_entity_limit",
             _ => "unknown",
         };
 
@@ -91,9 +88,6 @@ mod tests {
             CoreError::NotFound("x".into()),
             CoreError::Analysis("x".into()),
             CoreError::CsvParse("x".into()),
-            CoreError::LicenseInvalid,
-            CoreError::LicenseExpired,
-            CoreError::LicenseEntityLimit,
         ];
         for sample in samples {
             let code = super::CommandError::from(sample).code;

@@ -9,7 +9,6 @@ describe('marketing IPC handler', () => {
 
     expect(h('vault_status')).toBe('unlocked')
     expect(h('settings_get_locale')).toBe('el')
-    expect(h('license_status')).toEqual({ state: 'licensed', licensed_until: '2027-09-24' })
   })
 
   test('answers dashboard reads with consistent data', () => {

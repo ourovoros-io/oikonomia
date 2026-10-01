@@ -39,9 +39,6 @@ vi.mock('./lib/api', () => ({
     getLocale: vi.fn(),
     setLocale: vi.fn(),
     getUiPrefs: vi.fn(),
-    licenseStatus: vi.fn(async () => ({ state: 'trial', days_remaining: 12 })),
-    licenseInstall: vi.fn(),
-    eulaText: vi.fn(async () => ''),
   },
 }))
 
@@ -209,32 +206,6 @@ describe('App create-book intent', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
     })
-  })
-})
-
-describe('App trial banner survives Settings visits', () => {
-  test('navigating to Settings does not blank an already-visible trial banner', async () => {
-    // App's own fetch (on unlock) resolves with an expiring trial. Settings'
-    // own fetch (on mount, when the user navigates there) then fails — this
-    // must not blank the banner App already has.
-    vi.mocked(api.licenseStatus).mockReset()
-    vi.mocked(api.licenseStatus).mockResolvedValueOnce({ state: 'trial', days_remaining: 3 })
-    vi.mocked(api.licenseStatus).mockRejectedValueOnce(new Error('network'))
-
-    render(<App />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent('3 days left in your trial.')
-    })
-
-    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
-    })
-
-    // Settings' own licenseStatus() call has now rejected (second mocked
-    // call). The banner must still show App's originally fetched status.
-    expect(screen.getByRole('status')).toHaveTextContent('3 days left in your trial.')
   })
 })
 

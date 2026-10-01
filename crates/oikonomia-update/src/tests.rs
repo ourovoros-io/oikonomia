@@ -215,7 +215,7 @@ fn offline_dns_check_is_failed_no_file_no_exec() {
     let mut machine = UpdateMachine::new();
     let status = machine.check(&config);
     assert_eq!(status, UpdateStatus::Failed);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
     assert_eq!(installer.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -243,7 +243,7 @@ fn timeout_check_is_failed_no_file_no_exec() {
     let mut machine = UpdateMachine::new();
     let status = machine.check(&config);
     assert_eq!(status, UpdateStatus::Failed);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -278,7 +278,7 @@ fn same_version_is_up_to_date_no_download() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::UpToDate);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn http_204_is_up_to_date_no_download() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::UpToDate);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -339,7 +339,7 @@ fn signed_update_is_available_without_install() {
         }
     );
     assert_eq!(installer.calls.load(Ordering::SeqCst), 0);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -373,7 +373,7 @@ fn missing_manifest_sig_is_failed() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -403,7 +403,7 @@ fn bad_manifest_sig_is_failed() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -424,7 +424,7 @@ fn truncated_json_after_valid_sig_is_failed() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -452,7 +452,7 @@ fn host_not_allow_listed_is_failed_no_file() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -480,7 +480,7 @@ fn file_url_artifact_is_failed() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -521,7 +521,7 @@ fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
     let status = machine.install(&config, &installer).expect("legal");
     assert_eq!(status, UpdateStatus::Failed);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -563,7 +563,7 @@ fn artifact_sig_mismatch_deletes_partial_and_does_not_exec() {
     let status = machine.install(&config, &installer).expect("legal");
     assert_eq!(status, UpdateStatus::Failed);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -709,7 +709,7 @@ fn successful_install_calls_exec_once() {
         "exec path must be the wrapper-verified cache file, got {}",
         exec_path.display()
     );
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -745,13 +745,13 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
     let offer = machine.require_available().expect("offer").clone();
     let err = download_and_verify(&config, &offer).expect_err("hash");
     assert_eq!(err.code(), "update_artifact_integrity");
-    assert!(leftover_files(&cache).is_empty());
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 
 #[test]
-fn license_hex_is_not_a_minisign_public_key() {
-    const LICENSE_HEX: &str = "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
-    let err = parse_public_key(LICENSE_HEX).expect_err("license hex");
+fn raw_ed25519_hex_is_not_a_minisign_public_key() {
+    const RAW_KEY_HEX: &str = "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
+    let err = parse_public_key(RAW_KEY_HEX).expect_err("raw hex key");
     assert_eq!(err.code(), "update_missing_public_key");
 }
 

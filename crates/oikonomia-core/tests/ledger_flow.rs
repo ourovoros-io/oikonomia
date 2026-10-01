@@ -2,8 +2,9 @@
 
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, balance_sheet, create_entity, delete_entity,
-    list_accounts, list_entities, post_entry, profit_and_loss, trial_balance, void_entry,
+    CreateEntity, CreateJournalLine, PostJournal, balance_sheet, count_entities, create_entity,
+    delete_entity, list_accounts, list_entities, post_entry, profit_and_loss, trial_balance,
+    void_entry,
 };
 use oikonomia_core::vault::Vault;
 use tempfile::tempdir;
@@ -35,7 +36,7 @@ fn personal_books_expense_and_reports() {
     };
 
     let accounts = list_accounts(conn, entity.id).unwrap_or_default();
-    assert!(!accounts.is_empty());
+    assert_ne!(accounts, [] as [oikonomia_core::domain::Account; 0]);
 
     let Some(checking) = accounts.iter().find(|a| a.code == "1010") else {
         return;
@@ -111,5 +112,34 @@ fn personal_books_expense_and_reports() {
     assert!(dup.is_err());
 
     assert!(delete_entity(conn, entity.id).is_ok());
-    assert!(list_entities(conn).unwrap_or_default().is_empty());
+    assert_eq!(
+        list_entities(conn).unwrap_or_default(),
+        [] as [oikonomia_core::domain::Entity; 0]
+    );
+}
+
+#[test]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+fn a_vault_holds_any_number_of_entities() {
+    let dir = tempdir().expect("temp dir");
+    let mut vault = Vault::open_path(dir.path()).expect("open vault");
+    vault
+        .init("correct horse battery staple")
+        .expect("init vault");
+    let conn = vault.connection().expect("connection");
+
+    for name in ["Personal", "Company", "Side project"] {
+        let created = create_entity(
+            conn,
+            &CreateEntity {
+                name: name.into(),
+                base_currency: "EUR".into(),
+                chart_template: ChartTemplate::Personal,
+                fiscal_year_start_month: None,
+            },
+        );
+        assert!(created.is_ok(), "creating {name} failed: {created:?}");
+    }
+
+    assert_eq!(count_entities(conn).ok(), Some(3));
 }

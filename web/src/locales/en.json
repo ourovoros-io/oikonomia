@@ -13,9 +13,7 @@
   "common.system": "system",
   "common.active": "Active",
   "common.inactive": "Inactive",
-
   "empty.createBook": "Create a book",
-
   "kind.expense": "Expense",
   "kind.income": "Income",
   "kind.bill": "Bill",
@@ -29,24 +27,20 @@
   "kind.billShort": "Bill",
   "kind.transferShort": "Transfer",
   "kind.other": "other",
-
   "accountType.asset": "Asset",
   "accountType.liability": "Liability",
   "accountType.equity": "Equity",
   "accountType.income": "Income",
   "accountType.expense": "Expense",
-
   "chart.personal": "Personal",
   "chart.company": "Company",
   "chart.blank": "Blank",
-
   "nav.dashboard": "Dashboard",
   "nav.transactions": "Transactions",
   "nav.documents": "Documents",
   "nav.accounts": "Accounts",
   "nav.reports": "Reports",
   "nav.settings": "Settings",
-
   "app.localLedger": "Local ledger",
   "app.book": "Book",
   "app.noEntitiesYet": "No entities yet",
@@ -60,7 +54,6 @@
   "app.versionEncrypted": "v{version} · encrypted",
   "app.failedBackend": "Failed to talk to the app backend",
   "app.failedLock": "Failed to lock",
-
   "unlock.titleCreate": "Create your vault",
   "unlock.titleWelcome": "Welcome back",
   "unlock.bodyCreate": "Choose a password. It is never stored. If you lose it, the books cannot be recovered.",
@@ -92,7 +85,6 @@
   "unlock.update.installing.body": "Oikonomia will restart when this finishes.",
   "unlock.update.cancel": "Cancel",
   "unlock.update.close": "Close",
-
   "settings.eyebrow": "Workspace",
   "settings.title": "Settings",
   "settings.description": "Books, security, and preferences",
@@ -103,31 +95,11 @@
   "settings.language.option.el": "Ελληνικά",
   "settings.language.option.fr": "Français",
   "settings.language.option.de": "Deutsch",
-  "settings.license.title": "License",
-  "settings.license.description": "Import a signed license file. Buy one at ourovoros.io/oikonomia. Nothing is sent from this computer.",
-  "settings.license.import": "Import license",
-  "settings.license.buy": "Buy a license",
-  "settings.license.licensedUntil": "Licensed until {date}",
-  "settings.license.replace": "Import another file",
-  "settings.license.banner.expired": "License ended. Backup, restore, and CSV export still work.",
-  "settings.license.error.invalid": "That file is not a valid Oikonomia license.",
-  "settings.license.error.signature": "This license file is not signed correctly.",
-  "settings.license.error.wrongProduct": "This license is for a different product.",
-  "settings.license.error.unreadable": "Could not read the license file.",
-  "settings.license.error.generic": "Could not import the license.",
-  "settings.license.viewEula": "License agreement",
-  "settings.license.eulaTitle": "License agreement",
   "settings.support.title": "Support",
-  "settings.support.description": "Questions, bug reports, and license problems: {email}",
+  "settings.support.description": "Questions and bug reports: {email}",
   "settings.support.body": "Write to {email} with the app version ({version}) and what you were doing when the problem appeared. Never attach your vault or backup file.",
   "settings.support.contact": "Email support",
   "settings.support.openFailed": "Could not open your mail app. Write to {email} instead.",
-  "settings.trial.banner.active": "{n} days left in your trial",
-  "settings.trial.banner.expired": "Trial ended. You can still back up, restore, and export CSV.",
-  "license.entityLimit": "A license is required to add another book.",
-  "license.entityLimitHint": "Import a signed license to keep more than one book in this vault.",
-  "trial.banner.expiring": "{n} days left in your trial.",
-  "trial.banner.expired": "Trial ended. Your books stay readable; buy a license to keep writing.",
   "settings.deleteEntityTitle": "Delete entity?",
   "settings.deleteEntityBody": "“{name}” and all of its accounts and transactions will be permanently removed. This cannot be undone.",
   "settings.deleteFailed": "Failed to delete entity",
@@ -190,7 +162,6 @@
   "settings.template.personal.description": "Cash, cards, salary, living costs",
   "settings.template.company.description": "AR/AP, sales, payroll, opex",
   "settings.template.blank.description": "Start with an empty chart",
-
   "currency.EUR": "Euro",
   "currency.USD": "US Dollar",
   "currency.GBP": "British Pound",
@@ -209,7 +180,6 @@
   "currency.INR": "Indian Rupee",
   "currency.CNY": "Chinese Yuan",
   "currency.BRL": "Brazilian Real",
-
   "quickAdd.loading": "Loading",
   "quickAdd.createBookFirst": "Create a book first",
   "quickAdd.analyzing": "Analyzing…",
@@ -247,7 +217,6 @@
   "quickAdd.pickPayable": "Pick payable",
   "quickAdd.pickDifferentAccounts": "Pick different accounts",
   "quickAdd.hidden.label": "Hidden",
-
   "tx.eyebrow": "Ledger",
   "tx.title": "Transactions",
   "tx.description": "Record money in, money out, bills, and transfers.",
@@ -323,7 +292,6 @@
   "tx.list.meta.counts": "{posted} posted · {hidden} hidden",
   "tx.export.whisper": "Export omits hidden rows.",
   "tx.export.empty.hidden": "Nothing to export. Every line is hidden.",
-
   "tx.csv.import": "Import CSV",
   "tx.csv.export": "Export CSV",
   "tx.csv.exportTitle": "Unencrypted accountant CSV",
@@ -368,7 +336,6 @@
   "tx.csv.kind.transfer": "Transfer",
   "tx.csv.duplicate": "Likely duplicate",
   "tx.csv.postSelected": "Post {n} selected",
-
   "tx.recurring": "Recurring",
   "recurring.title": "Recurring",
   "recurring.templates": "Templates",
@@ -414,7 +381,6 @@
   "recurring.form.cadenceMonthly": "Monthly",
   "recurring.form.cadenceWeekly": "Weekly",
   "recurring.form.cadenceYearly": "Yearly",
-
   "dash.createTitle": "Create a book to begin",
   "dash.createBody": "Add a personal or company entity under Settings. Each entity has its own chart of accounts and reports.",
   "dash.overview": "Overview",
@@ -459,7 +425,6 @@
   "dashboard.arc.previous.hint.year": "Against last year",
   "dashboard.arc.top.label": "Top spend",
   "dashboard.arc.top.none": "No expenses yet",
-
   "acct.noBookTitle": "No book selected",
   "acct.noBookBody": "Create or select a book first.",
   "acct.eyebrow": "Chart",
@@ -504,7 +469,6 @@
   "accounts.register.back": "All accounts",
   "accounts.register.balance": "Balance",
   "accounts.register.empty": "No posted entries for this account yet.",
-
   "rpt.noBookTitle": "No book selected",
   "rpt.noBookBody": "Create or select a book first.",
   "rpt.eyebrow": "Statements",
@@ -545,7 +509,6 @@
   "rpt.section.assets": "assets",
   "rpt.section.liabilities": "liabilities",
   "rpt.section.equity": "equity",
-
   "reports.exportPdf": "Export PDF",
   "reports.pdf.title": "Monthly expenses",
   "reports.pdf.meta": "Expense categories · amounts in {currency} · Hidden entries omitted",
@@ -558,7 +521,6 @@
   "reports.pdf.other": "Other ({n} categories)",
   "reports.pdf.busy": "Exporting…",
   "reports.pdf.error": "Could not export the PDF.",
-
   "docs.noBookTitle": "No book selected",
   "docs.noBookBody": "Create or select a book first.",
   "docs.eyebrow": "Vault",
@@ -579,7 +541,6 @@
   "docs.saveCopy": "Save a copy",
   "docs.saveCopyAria": "Save a copy",
   "docs.deleteAria": "Delete document",
-
   "entry.ref": " · Ref {reference}",
   "entry.deleteDocTitle": "Delete document?",
   "entry.deleteDocBody": "This permanently deletes the file from your vault. It cannot be undone. The entry itself stays.",
@@ -596,14 +557,12 @@
   "entry.attachFailed": "Could not attach file",
   "entry.deleteFailed": "Could not delete document",
   "entry.exportFailed": "Could not save a copy",
-
   "viewer.document": "Document",
   "viewer.openFailed": "Could not open document",
   "viewer.exportFailed": "Could not save a copy",
   "viewer.noPreview": "No in-app preview for {mime} — use Save a copy to open it elsewhere.",
   "viewer.saving": "Saving…",
   "viewer.saveCopy": "Save a copy",
-
   "drop.fileTooLarge": "File too large (max 8 MB)",
   "drop.analyzeFailed": "Could not analyze document",
   "drop.noPath": "No file path received from drop — try clicking to choose a file.",
@@ -612,11 +571,9 @@
   "drop.title": "Drop a bill, invoice, receipt, or bank statement here",
   "drop.body": "PDF (invoices, bills, bank statements), photos of receipts (PNG/JPEG/WebP), or text. Fully offline — nothing leaves this device. Click to choose a file.",
   "drop.statusUnavailable": "Built-in analyzer status unavailable.",
-
   "donut.other": "Other ({count} categories)",
   "donut.noExpenses": "No expenses in this period.",
   "donut.totalExpenses": "Total expenses",
-
   "date.placeholder": "dd/mm/yyyy",
   "date.openCalendar": "Open calendar",
   "date.calendar": "Calendar",
@@ -641,7 +598,6 @@
   "date.month.10": "October",
   "date.month.11": "November",
   "date.month.12": "December",
-
   "error.vaultUninitialized": "The vault has not been set up yet.",
   "error.vaultLocked": "The vault is locked.",
   "error.invalidPassword": "That password is incorrect.",
@@ -660,8 +616,5 @@
   "error.notFound": "That item could not be found.",
   "error.analysis": "Document analysis failed.",
   "error.csvParse": "That CSV file could not be read.",
-  "error.licenseInvalid": "That license is not valid.",
-  "error.licenseExpired": "Your license has expired.",
-  "error.licenseEntityLimit": "Unlicensed books are limited to one entity.",
   "error.unknown": "Something went wrong."
 }

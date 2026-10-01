@@ -85,16 +85,4 @@ pub enum Error {
     /// Bank CSV or journal CSV could not be parsed.
     #[error("{0}")]
     CsvParse(String),
-
-    /// License file is missing, unreadable, or fails verification.
-    #[error("license is invalid")]
-    LicenseInvalid,
-
-    /// License or trial has expired; mutating writes are blocked.
-    #[error("license has expired")]
-    LicenseExpired,
-
-    /// Unlicensed vault already has its one allowed entity.
-    #[error("unlicensed vaults may have only one entity")]
-    LicenseEntityLimit,
 }

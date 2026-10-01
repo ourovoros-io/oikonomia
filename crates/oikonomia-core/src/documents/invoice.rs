@@ -1867,8 +1867,8 @@ mod jumbled_extract {
     #[test]
     fn clock_tokens_are_not_money() {
         assert!(!money_amounts_on_line("Ημερομηνία Αξίας 28/8/2026 7:00 μ.μ.").contains(&700));
-        assert!(money_amounts_on_line("7:00").is_empty());
-        assert!(money_amounts_on_line("19:30").is_empty());
+        assert_eq!(money_amounts_on_line("7:00"), [] as [i64; 0]);
+        assert_eq!(money_amounts_on_line("19:30"), [] as [i64; 0]);
     }
 
     #[test]

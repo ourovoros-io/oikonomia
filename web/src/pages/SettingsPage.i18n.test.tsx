@@ -18,9 +18,6 @@ vi.mock('../lib/api', () => ({
     getLocale: vi.fn(async () => 'en'),
     setLocale: vi.fn(async () => undefined),
     getUiPrefs: vi.fn(async () => ({ locale: 'en' })),
-    licenseStatus: vi.fn(async () => ({ state: 'trial', days_remaining: 12 })),
-    licenseInstall: vi.fn(),
-    eulaText: vi.fn(async () => ''),
   },
 }))
 
@@ -53,7 +50,6 @@ describe('SettingsPage i18n', () => {
     expect(screen.getByRole('heading', { name: 'Ρυθμίσεις' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Γλώσσα' })).toBeTruthy()
     expect(screen.getByText('Μενού, ετικέτες και Γρήγορη καταχώριση.')).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Άδεια' })).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: /γλώσσα/i }))
     expect(screen.getByRole('radio', { name: 'English' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'Ελληνικά' })).toBeTruthy()

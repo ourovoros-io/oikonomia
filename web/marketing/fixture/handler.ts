@@ -1,5 +1,4 @@
 import type { AnalyzerStatus, UiPrefs } from '../../src/lib/api'
-import type { LicenseStatus } from '../../src/lib/license'
 import { buildLedger, type DemoLang } from './ledger'
 import {
   accountBalance,
@@ -24,7 +23,6 @@ type Args = Record<string, unknown>
 export function createHandler(lang: DemoLang) {
   const l = buildLedger(lang)
 
-  const license: LicenseStatus = { state: 'licensed', licensed_until: '2027-09-24' }
   const prefs: UiPrefs = { last_entity_id: l.entity.id, last_accounts_by_entity_kind: {}, locale: lang }
   const analyzer: AnalyzerStatus = { ocr_available: true, offline: true, hint: '' }
 
@@ -52,8 +50,6 @@ export function createHandler(lang: DemoLang) {
     vault_touch: () => null,
     app_info: () => ({ name: 'Oikonomia', version: '1.0.0', support_email: 'support@example.com' }),
     update_check: () => ({ kind: 'up_to_date' }),
-    eula_text: () => '',
-    license_status: () => license,
     settings_get_locale: () => lang,
     settings_set_locale: () => null,
     settings_get_ui_prefs: () => prefs,

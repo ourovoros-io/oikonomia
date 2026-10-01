@@ -17,8 +17,5 @@
   "not_found",
   "analysis",
   "csv_parse",
-  "license_invalid",
-  "license_expired",
-  "license_entity_limit",
   "unknown"
 ]

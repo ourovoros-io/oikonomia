@@ -6,7 +6,6 @@ import {
   Clock,
   Download,
   FileQuestion,
-  Key,
   KeyRound,
   Languages,
   LifeBuoy,
@@ -17,17 +16,7 @@ import {
   Upload,
   User,
 } from 'lucide-react'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { api, type ChartTemplate, type Entity } from '../lib/api'
-import {
-  canAddAnotherBook,
-  formatLicensedUntil,
-  isLicenseExpiredCode,
-  licenseErrorMessage,
-  licenseExpiredBanner,
-  licenseImportError,
-  type LicenseStatus,
-} from '../lib/license'
 import {
   vaultBackup,
   vaultChangePassword,
@@ -75,8 +64,6 @@ type Props = {
   createBookIntent?: number
   /** Called once the current createBookIntent has been consumed (form opened, scrolled to). */
   onCreateBookIntentHandled?: () => void
-  /** Mirrors this page's license status up to App, so TrialBanner reflects an install/expiry without waiting for a relock or reload. */
-  onLicenseChanged?: (status: LicenseStatus | null) => void
   /** Build identity from Rust `app_info`; the support address rides on it. Null until App has fetched it. */
   appInfo?: AppInfo | null
 }
@@ -170,7 +157,6 @@ export function SettingsPage({
   onLockTimeoutChange,
   createBookIntent,
   onCreateBookIntentHandled,
-  onLicenseChanged,
   appInfo = null,
 }: Props) {
   const { t, locale, setLocale } = useI18n()
@@ -210,11 +196,6 @@ export function SettingsPage({
   const [restoreBusy, setRestoreBusy] = useState(false)
   const [restorePath, setRestorePath] = useState<string | undefined>(undefined)
   const [restorePicking, setRestorePicking] = useState(false)
-  const [license, setLicense] = useState<LicenseStatus | null>(null)
-  const [licenseError, setLicenseError] = useState<string | null>(null)
-  const [licenseBusy, setLicenseBusy] = useState(false)
-  const [eulaText, setEulaText] = useState('')
-  const [eulaOpen, setEulaOpen] = useState(false)
   const newEntityAnchorRef = useRef<HTMLDivElement>(null)
 
   const backupAvailability = vaultBackupAvailability({
@@ -232,29 +213,6 @@ export function SettingsPage({
       .catch(() => {
         /* ignore */
       })
-    void api
-      .licenseStatus()
-      .then((status) => {
-        setLicense(status)
-        onLicenseChanged?.(status)
-      })
-      .catch(() => {
-        /* ignore — Rust command lands on the same PR */
-      })
-    void api
-      .eulaText()
-      .then(setEulaText)
-      .catch(() => {
-        /* ignore — the viewer link simply stays inert */
-      })
-    // onLicenseChanged is intentionally excluded: this effect only fetches
-    // once on mount. Forwarding it here would mean a fresh SettingsPage
-    // mount (main's key={active} remounts Settings on every nav) reports
-    // its still-unresolved null state upward before the fetch above
-    // settles, blanking App's already-fetched TrialBanner license. Every
-    // real license change is forwarded imperatively at its write site
-    // instead — see onImportLicense and applyExpiredFromWrite below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // App bumps createBookIntent from the five empty-state CTAs. Pop the
@@ -270,34 +228,13 @@ export function SettingsPage({
     onCreateBookIntentHandled?.()
   }, [createBookIntent, onCreateBookIntentHandled])
 
-  function applyExpiredFromWrite(): void {
-    const next: LicenseStatus = {
-      state: 'expired',
-      days_remaining: license?.days_remaining,
-      licensed_until: license?.licensed_until,
-    }
-    setLicense(next)
-    onLicenseChanged?.(next)
-    setLicenseError(null)
-    setPageError(null)
-  }
-
-  function commandErrorMessage(err: unknown, fallback = ''): string | null {
+  function commandErrorMessage(err: unknown, fallback = ''): string {
     const cmd = err as CommandError
-    if (isLicenseExpiredCode(cmd.code)) {
-      applyExpiredFromWrite()
-      return null
-    }
-    const licenseCopy = licenseErrorMessage(cmd.code)
-    if (licenseCopy !== undefined) return licenseCopy
     return cmd.message || fallback
   }
 
-  const addAnotherBook = canAddAnotherBook(license, entities.length)
-
   async function onCreate(ev: FormEvent) {
     ev.preventDefault()
-    if (!canAddAnotherBook(license, entities.length)) return
     setBusy(true)
     setPageError(null)
     try {
@@ -312,8 +249,7 @@ export function SettingsPage({
       setShowCreate(false)
       onSelectEntity(entity.id)
     } catch (err) {
-      const message = commandErrorMessage(err)
-      if (message !== null) setPageError(message)
+      setPageError(commandErrorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -328,8 +264,7 @@ export function SettingsPage({
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
-      const message = commandErrorMessage(err, t('settings.deleteFailed'))
-      if (message !== null) setPageError(message)
+      setPageError(commandErrorMessage(err, t('settings.deleteFailed')))
     } finally {
       setDeleteBusy(false)
     }
@@ -348,8 +283,7 @@ export function SettingsPage({
       setLockMins(mins)
       onLockTimeoutChange?.(secs)
     } catch (err) {
-      const message = commandErrorMessage(err)
-      if (message !== null) setPageError(message)
+      setPageError(commandErrorMessage(err))
     } finally {
       setLockBusy(false)
     }
@@ -375,15 +309,6 @@ export function SettingsPage({
       setNotice(t('settings.passwordChanged'))
     } catch (err) {
       const cmd = err as CommandError
-      if (isLicenseExpiredCode(cmd.code)) {
-        applyExpiredFromWrite()
-        return
-      }
-      const licenseCopy = licenseErrorMessage(cmd.code)
-      if (licenseCopy !== undefined) {
-        setPageError(licenseCopy)
-        return
-      }
       setPageError(
         cmd.code === 'invalid_password'
           ? t('settings.currentPasswordIncorrect')
@@ -403,32 +328,6 @@ export function SettingsPage({
       // No associated mail client, or the OS refused. The address is on
       // screen already, so the fallback copy just points at it.
       setPageError(t('settings.support.openFailed', { email: appInfo.support_email }))
-    }
-  }
-
-  async function onImportLicense() {
-    setLicenseBusy(true)
-    setLicenseError(null)
-    try {
-      const next = await api.licenseInstall()
-      if (next === null) return
-      setLicense(next)
-      onLicenseChanged?.(next)
-    } catch (err) {
-      const cmd = err as CommandError
-      if (isLicenseExpiredCode(cmd.code)) {
-        const next: LicenseStatus = {
-          state: 'expired',
-          days_remaining: license?.days_remaining,
-          licensed_until: license?.licensed_until,
-        }
-        setLicense(next)
-        onLicenseChanged?.(next)
-        return
-      }
-      setLicenseError(licenseImportError(cmd))
-    } finally {
-      setLicenseBusy(false)
     }
   }
 
@@ -537,62 +436,6 @@ export function SettingsPage({
           onChange={setLocale}
           ariaLabel={t('settings.language.title')}
         />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={t('settings.license.title')}
-        description={t('settings.license.description')}
-        icon={<Key className="size-4" />}
-        defaultOpen
-      >
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-3">
-            {license?.state === 'trial' && license.days_remaining != null ? (
-              <div className="inline-flex items-center rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-sm font-medium text-[var(--color-accent)]">
-                {t('settings.trial.banner.active', { n: license.days_remaining })}
-              </div>
-            ) : null}
-            {license?.state === 'licensed' && license.licensed_until ? (
-              <div className="inline-flex items-center rounded-full bg-[var(--color-surface-elevated)] px-3 py-1 text-sm font-medium text-[var(--color-fg-secondary)]">
-                {t('settings.license.licensedUntil', {
-                  date: formatLicensedUntil(license.licensed_until, locale),
-                })}
-              </div>
-            ) : null}
-            {license?.state === 'expired' ? (
-              <div className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-3 py-1 text-sm font-medium text-[var(--color-warning)]">
-                {licenseExpiredBanner(license)}
-              </div>
-            ) : null}
-            <Button
-              variant="secondary"
-              busy={licenseBusy}
-              onClick={() => void onImportLicense()}
-            >
-              <Upload className="size-3.5" />
-              {license?.state === 'licensed'
-                ? t('settings.license.replace')
-                : t('settings.license.import')}
-            </Button>
-            {license && license.state !== 'licensed' && license.buy_url ? (
-              <Button
-                onClick={() => {
-                  void openUrl(license.buy_url ?? '')
-                }}
-              >
-                {t('settings.license.buy')}
-              </Button>
-            ) : null}
-          </div>
-          <ErrorBanner message={licenseError} />
-          <button
-            type="button"
-            className="inline-flex h-8 items-center text-xs text-[var(--color-muted)] underline-offset-2 hover:text-[var(--color-fg)] hover:underline"
-            onClick={() => setEulaOpen(true)}
-          >
-            {t('settings.license.viewEula')}
-          </button>
-        </div>
       </CollapsibleSection>
 
       {appInfo ? (
@@ -799,16 +642,6 @@ export function SettingsPage({
         </form>
       </Modal>
 
-      <Modal
-        open={eulaOpen}
-        title={t('settings.license.eulaTitle')}
-        onClose={() => setEulaOpen(false)}
-      >
-        <pre className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-[var(--color-fg-secondary)]">
-          {eulaText}
-        </pre>
-      </Modal>
-
       <CollapsibleSection
         title={t('settings.entities.title')}
         description={
@@ -866,17 +699,7 @@ export function SettingsPage({
           </ul>
         )}
         <div className="flex flex-wrap items-center gap-3 border-t border-[var(--color-border)] px-5 py-3">
-          {addAnotherBook ? null : (
-            <p className="text-xs leading-snug text-[var(--color-muted)]">
-              {t('license.entityLimitHint')}
-            </p>
-          )}
-          <Button
-            size="sm"
-            className="ml-auto"
-            disabled={!addAnotherBook}
-            onClick={() => setShowCreate(true)}
-          >
+          <Button size="sm" className="ml-auto" onClick={() => setShowCreate(true)}>
             <Plus className="size-3.5" />
             {t('settings.entities.new')}
           </Button>
