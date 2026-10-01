@@ -8,7 +8,7 @@ master-password unlock.
 
 | Path | Role |
 |------|------|
-| `crates/oikonomia-core` | Domain, money, validation, (later) vault/repo/reports |
+| `crates/oikonomia-core` | Domain, vault, ledger, reports |
 | `crates/oikonomia-update` | Signed update check, the only network path |
 | `crates/macos-dock-icon` | macOS Dock icon for `cargo tauri dev` |
 | `apps/desktop/src-tauri` | Tauri shell + IPC commands |
@@ -23,7 +23,7 @@ cargo test -p oikonomia-core
 
 # Format + lint (workspace)
 cargo fmt --all
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Frontend
 cd web && npm install && npm run dev

@@ -64,8 +64,8 @@
 #
 # The updater minisign private key lives on Environment `release` only
 # (TAURI_SIGNING_PRIVATE_KEY, optional TAURI_SIGNING_PRIVATE_KEY_PASSWORD).
-# GitHub Releases is the v1 updater
-# CDN; the public key baked into the app is the trust root.
+# GitHub Releases is the v1 updater CDN; the public key baked into the app
+# is the trust root.
 # Jobs fail closed if TAURI_SIGNING_PRIVATE_KEY is empty (never echo it).
 
 name: Release

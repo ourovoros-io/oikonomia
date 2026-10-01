@@ -111,7 +111,7 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 
 **Protects against:** stolen disk / backup of app data, casual browsing of the vault file.  
 **Does not protect against:** malware while unlocked, keyloggers, memory forensics while the app is open.  
-**Update channel:** a compromised GitHub account cannot ship a malicious update (artifacts are minisign-verified against the baked key), but a compromised signing key can — the key ceremony in docs/release.md keeps it offline.
+**Update channel:** a compromised GitHub account cannot ship a malicious update (artifacts are minisign-verified against the baked key), but a compromised signing key can — the signing key is generated offline and stored only in the protected `release` environment (see docs/release.md).
 
 ## Contributing
 
@@ -138,5 +138,5 @@ Bundled fonts are under the SIL Open Font License; see `web/public/fonts`.
 
 ## Out of v1 (backlog)
 
-Attachments, budgets, invoicing, multi-currency, recovery key, Windows/Linux
+Budgets, invoicing, multi-currency, recovery key, Windows/Linux
 go-live, App Sandbox.

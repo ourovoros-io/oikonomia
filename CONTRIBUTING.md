@@ -10,7 +10,7 @@ app. Changes are judged first on whether they keep those three properties.
 
 ```bash
 cargo tauri dev          # run the desktop app
-make check               # the full gate CI runs
+make check               # local quality gate (fmt, clippy, deny, tests, web build)
 ```
 
 ## Before you open a pull request
@@ -39,10 +39,10 @@ message.
 
 `AGENTS.md` lists the full set of invariants.
 
-## Licence
+## License
 
 By contributing you agree that your contribution is licensed under
-GPL-3.0-or-later, the same licence as the project.
+GPL-3.0-or-later, the same license as the project.
 
 ## Security issues
 
