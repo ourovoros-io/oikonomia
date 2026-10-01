@@ -616,8 +616,5 @@
   "error.notFound": "That item could not be found.",
   "error.analysis": "Document analysis failed.",
   "error.csvParse": "That CSV file could not be read.",
-  "error.licenseInvalid": "That license is not valid.",
-  "error.licenseExpired": "Your license has expired.",
-  "error.licenseEntityLimit": "Unlicensed books are limited to one entity.",
   "error.unknown": "Something went wrong."
 }

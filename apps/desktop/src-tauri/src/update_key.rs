@@ -2,7 +2,7 @@
 //!
 //! This is the Ops-sent production public half. Do not invent a replacement
 //! and do not treat it as a throwaway fixture. The private key never enters
-//! this repository, CI logs, the vault, or `.lic` files.
+//! this repository, CI logs, or the vault.
 //!
 //! An empty value fails compile so a future blank-out is a CI fail.
 

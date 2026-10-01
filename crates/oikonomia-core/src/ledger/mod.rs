@@ -19,8 +19,8 @@ pub use cash_flow::{
     cash_flow_series,
 };
 pub use entities::{
-    CreateEntity, archive_entity, count_entities, create_entity, create_entity_allowed,
-    delete_entity, get_entity, list_entities, update_entity,
+    CreateEntity, archive_entity, count_entities, create_entity, delete_entity, get_entity,
+    list_entities, update_entity,
 };
 pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{

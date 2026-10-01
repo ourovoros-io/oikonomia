@@ -1082,9 +1082,6 @@
     "notFound": "Dieses Element wurde nicht gefunden.",
     "analysis": "Die Dokumentanalyse ist fehlgeschlagen.",
     "csvParse": "Diese CSV-Datei konnte nicht gelesen werden.",
-    "licenseInvalid": "Diese Lizenz ist ungültig.",
-    "licenseExpired": "Ihre Lizenz ist abgelaufen.",
-    "licenseEntityLimit": "Ohne Lizenz ist nur ein Buch erlaubt.",
     "unknown": "Etwas ist schiefgelaufen."
   },
   "analyze": {

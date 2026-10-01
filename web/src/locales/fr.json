@@ -1082,9 +1082,6 @@
     "notFound": "Cet élément est introuvable.",
     "analysis": "L’analyse du document a échoué.",
     "csvParse": "Ce fichier CSV n’a pas pu être lu.",
-    "licenseInvalid": "Cette licence n’est pas valide.",
-    "licenseExpired": "Votre licence a expiré.",
-    "licenseEntityLimit": "Sans licence, un seul livre est autorisé.",
     "unknown": "Une erreur est survenue."
   },
   "analyze": {

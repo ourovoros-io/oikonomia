@@ -21,9 +21,6 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   not_found: 'error.notFound',
   analysis: 'error.analysis',
   csv_parse: 'error.csvParse',
-  license_invalid: 'error.licenseInvalid',
-  license_expired: 'error.licenseExpired',
-  license_entity_limit: 'error.licenseEntityLimit',
   unknown: 'error.unknown',
 }
 

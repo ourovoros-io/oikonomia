@@ -23,6 +23,6 @@ pub enum UpdateStatus {
         /// Release notes, HTML-stripped and escaped. Plain text only.
         notes: String,
     },
-    /// Check or install failed. Unlock, export, and license import stay usable.
+    /// Check or install failed. Unlock and export stay usable.
     Failed,
 }

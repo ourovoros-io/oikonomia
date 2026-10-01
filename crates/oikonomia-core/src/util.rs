@@ -84,8 +84,8 @@ pub mod serde_date {
 
 /// Calendar date of the current UTC instant.
 ///
-/// Same clock as license expiry (`OffsetDateTime::now_utc().date()`). Recurring
-/// due flags use this so `next_date <= today` is consistent across the crate.
+/// Recurring due flags use this so `next_date <= today` is consistent across
+/// the crate.
 #[must_use]
 pub fn utc_today() -> Date {
     time::OffsetDateTime::now_utc().date()

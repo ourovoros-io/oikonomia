@@ -749,9 +749,9 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
 }
 
 #[test]
-fn license_hex_is_not_a_minisign_public_key() {
-    const LICENSE_HEX: &str = "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
-    let err = parse_public_key(LICENSE_HEX).expect_err("license hex");
+fn raw_ed25519_hex_is_not_a_minisign_public_key() {
+    const RAW_KEY_HEX: &str = "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
+    let err = parse_public_key(RAW_KEY_HEX).expect_err("raw hex key");
     assert_eq!(err.code(), "update_missing_public_key");
 }
 

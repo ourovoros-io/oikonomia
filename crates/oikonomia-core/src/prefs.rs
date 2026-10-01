@@ -54,9 +54,6 @@ pub struct UiPrefs {
     pub last_entity_id: Option<String>,
     /// Map key: `"{entity_id}:{kind}"` (kind = expense|income|bill|transfer).
     pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
-    /// RFC3339 timestamp of the first successful vault unlock. Set once;
-    /// never reset. Missing on older files until that first unlock.
-    pub trial_started_at: Option<String>,
 }
 
 /// Build the map key for last-used accounts.
@@ -163,7 +160,6 @@ mod tests {
             locale: Locale::En,
             last_entity_id: Some("ent-1".into()),
             last_accounts_by_entity_kind: last_accounts,
-            trial_started_at: None,
         };
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
         assert_eq!(load_ui_prefs(dir.path()), prefs);
@@ -181,19 +177,25 @@ mod tests {
         assert_eq!(prefs.locale, Locale::En);
         assert_eq!(prefs.last_entity_id, None);
         assert!(prefs.last_accounts_by_entity_kind.is_empty());
-        assert_eq!(prefs.trial_started_at, None);
     }
 
     #[test]
-    fn missing_trial_started_at_defaults_to_none() {
+    fn prefs_file_from_the_paid_build_still_loads() {
         let Ok(dir) = tempdir() else {
             return;
         };
 
-        let json = r#"{ "theme": "light" }"#;
+        // Written by builds that had a trial; the key is now unknown.
+        let json = r#"{
+            "locale": "de",
+            "last_entity_id": "ent-1",
+            "trial_started_at": "2026-09-01T10:00:00Z"
+        }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
         let prefs = load_ui_prefs(dir.path());
-        assert_eq!(prefs.trial_started_at, None);
+        assert_eq!(prefs.locale, Locale::De);
+        assert_eq!(prefs.last_entity_id.as_deref(), Some("ent-1"));
     }
 
     #[test]
