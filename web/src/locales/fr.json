@@ -228,38 +228,12 @@
         "de": "Deutsch"
       }
     },
-    "license": {
-      "title": "Licence",
-      "description": "Importez un fichier de licence signé. Achetez-en une sur ourovoros.io/oikonomia. Rien n'est envoyé depuis cet ordinateur.",
-      "import": "Importer la licence",
-      "buy": "Acheter une licence",
-      "licensedUntil": "Licence jusqu'au {date}",
-      "replace": "Importer un autre fichier",
-      "viewEula": "Contrat de licence",
-      "eulaTitle": "Contrat de licence",
-      "banner": {
-        "expired": "La licence a pris fin. La sauvegarde, la restauration et l'export CSV fonctionnent toujours."
-      },
-      "error": {
-        "invalid": "Ce fichier n'est pas une licence Oikonomia valide.",
-        "signature": "Ce fichier de licence n'est pas signé correctement.",
-        "wrongProduct": "Cette licence concerne un autre produit.",
-        "unreadable": "Impossible de lire le fichier de licence.",
-        "generic": "Impossible d'importer la licence."
-      }
-    },
     "support": {
       "title": "Assistance",
-      "description": "Questions, rapports de bogue et problèmes de licence : {email}",
+      "description": "Questions et rapports de bogue : {email}",
       "body": "Écrivez à {email} en indiquant la version de l'application ({version}) et ce que vous faisiez quand le problème est apparu. Ne joignez jamais votre coffre ni votre fichier de sauvegarde.",
       "contact": "Écrire à l'assistance",
       "openFailed": "Impossible d'ouvrir votre application de messagerie. Écrivez à {email}."
-    },
-    "trial": {
-      "banner": {
-        "active": "Il vous reste {n} jours d'essai",
-        "expired": "La période d'essai est terminée. Vous pouvez encore sauvegarder, restaurer et exporter en CSV."
-      }
     },
     "lock": {
       "title": "Verrouillage automatique",
@@ -372,16 +346,6 @@
       "cancel": "Annuler",
       "submit": "Créer l'entité",
       "busy": "Création…"
-    }
-  },
-  "license": {
-    "entityLimit": "Une licence est requise pour ajouter un autre livre.",
-    "entityLimitHint": "Importez une licence signée pour conserver plus d'un livre dans ce coffre."
-  },
-  "trial": {
-    "banner": {
-      "expiring": "Il vous reste {n} jours d'essai.",
-      "expired": "Période d'essai terminée. Vos livres restent consultables ; achetez une licence pour continuer à écrire."
     }
   },
   "tray": {

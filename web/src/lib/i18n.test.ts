@@ -49,7 +49,7 @@ describe('Writer fr and de catalogs', () => {
     'nav.dashboard',
     'unlock.titleWelcome',
     'drop.title',
-    'settings.license.title',
+    'settings.title',
     'settings.language.title',
   ] as const
 
@@ -123,35 +123,6 @@ describe('Writer el catalog', () => {
     expect(flat['settings.language.option.el']).toBe('Ελληνικά')
     expect(flat['settings.language.option.fr']).toBe('Français')
     expect(flat['settings.language.option.de']).toBe('Deutsch')
-    expect(flat['settings.license.title']).toBe('Άδεια')
-    expect(flat['settings.license.description']).toBe(
-      'Εισαγάγετε ένα υπογεγραμμένο αρχείο άδειας. Αγοράστε μία στο ourovoros.io/oikonomia. Τίποτα δεν αποστέλλεται από αυτόν τον υπολογιστή.',
-    )
-    expect(flat['settings.license.import']).toBe('Εισαγωγή άδειας')
-    expect(flat['settings.license.licensedUntil']).toBe('Άδεια έως {date}')
-    expect(flat['settings.license.replace']).toBe('Εισαγωγή άλλου αρχείου')
-    expect(flat['settings.license.banner.expired']).toBe(
-      'Η άδεια έληξε. Το αντίγραφο θυρίδας, η επαναφορά και η εξαγωγή CSV εξακολουθούν να λειτουργούν.',
-    )
-    expect(flat['settings.license.error.invalid']).toBe(
-      'Αυτό το αρχείο δεν είναι έγκυρη άδεια Oikonomia.',
-    )
-    expect(flat['settings.license.error.signature']).toBe(
-      'Αυτό το αρχείο άδειας δεν είναι σωστά υπογεγραμμένο.',
-    )
-    expect(flat['settings.license.error.wrongProduct']).toBe(
-      'Αυτή η άδεια αφορά διαφορετικό προϊόν.',
-    )
-    expect(flat['settings.license.error.unreadable']).toBe(
-      'Δεν ήταν δυνατή η ανάγνωση του αρχείου άδειας.',
-    )
-    expect(flat['settings.license.error.generic']).toBe('Δεν ολοκληρώθηκε η εισαγωγή της άδειας.')
-    expect(flat['settings.trial.banner.active']).toBe(
-      'Απομένουν {n} ημέρες στη δοκιμαστική σας περίοδο',
-    )
-    expect(flat['settings.trial.banner.expired']).toBe(
-      'Η δοκιμαστική περίοδος έληξε. Μπορείτε ακόμη να δημιουργήσετε αντίγραφο της θυρίδας, να κάνετε επαναφορά και να εξαγάγετε CSV.',
-    )
     expect(flat['error.core']).toBeUndefined()
     expect(flat['tx.csv.import']).toBe('Εισαγωγή CSV')
     expect(flat['tx.csv.kind.expense']).toBe('Έξοδα')
@@ -176,15 +147,6 @@ describe('Writer el catalog', () => {
     expect(t('quickAdd.createBookFirst')).toBe('Δημιουργήστε πρώτα βιβλίο')
     expect(t('settings.language.title')).toBe('Γλώσσα')
     expect(t('settings.language.description')).toBe('Μενού, ετικέτες και Γρήγορη καταχώριση.')
-    expect(t('settings.license.title')).toBe('Άδεια')
-    expect(t('settings.license.import')).toBe('Εισαγωγή άδειας')
-    expect(t('settings.trial.banner.active', { n: 12 })).toBe(
-      'Απομένουν 12 ημέρες στη δοκιμαστική σας περίοδο',
-    )
-    expect(t('license.entityLimit')).toBe('Απαιτείται άδεια για την προσθήκη άλλου βιβλίου.')
-    expect(t('license.entityLimitHint')).toBe(
-      'Εισαγάγετε μια υπογεγραμμένη άδεια για περισσότερα από ένα βιβλία σε αυτή τη θυρίδα.',
-    )
     expect(t('tx.title')).toBe('Κινήσεις')
     expect(t('dash.overview')).toBe('Επισκόπηση')
     expect(t('acct.addAccount')).toBe('Προσθήκη λογαριασμού')
@@ -368,56 +330,6 @@ describe('Writer monthly-expense PDF catalog', () => {
     expect(elFlat['reports.pdf.error']).toBe('Δεν ολοκληρώθηκε η εξαγωγή PDF.')
     expect(enFlat['reports.pdf.export']).toBeUndefined()
     expect(elFlat['reports.pdf.export']).toBeUndefined()
-  })
-})
-
-describe('Writer license catalog', () => {
-  const licenseKeys = [
-    'settings.license.title',
-    'settings.license.description',
-    'settings.license.import',
-    'settings.license.buy',
-    'settings.license.licensedUntil',
-    'settings.license.replace',
-    'settings.license.banner.expired',
-    'settings.license.error.invalid',
-    'settings.license.error.signature',
-    'settings.license.error.wrongProduct',
-    'settings.license.error.unreadable',
-    'settings.license.error.generic',
-    'settings.trial.banner.active',
-    'settings.trial.banner.expired',
-    'license.entityLimit',
-    'license.entityLimitHint',
-  ] as const
-
-  test('EL keys exist in both en and el catalogs', () => {
-    const enFlat = flattenMessages(en)
-    const elFlat = flattenMessages(el)
-    for (const key of licenseKeys) {
-      expect(enFlat[key]).toBeTruthy()
-      expect(elFlat[key]).toBeTruthy()
-    }
-    expect(enFlat['settings.license.title']).toBe('License')
-    expect(elFlat['settings.license.title']).toBe('Άδεια')
-    expect(enFlat['settings.license.buy']).toBe('Buy a license')
-    expect(elFlat['settings.license.buy']).toBe('Αγορά άδειας')
-    expect(enFlat['settings.license.error.generic']).toBe('Could not import the license.')
-    expect(elFlat['settings.license.error.generic']).toBe(
-      'Δεν ολοκληρώθηκε η εισαγωγή της άδειας.',
-    )
-    expect(enFlat['license.entityLimit']).toBe(
-      'A license is required to add another book.',
-    )
-    expect(elFlat['license.entityLimit']).toBe(
-      'Απαιτείται άδεια για την προσθήκη άλλου βιβλίου.',
-    )
-    expect(enFlat['license.entityLimitHint']).toBe(
-      'Import a signed license to keep more than one book in this vault.',
-    )
-    expect(elFlat['license.entityLimitHint']).toBe(
-      'Εισαγάγετε μια υπογεγραμμένη άδεια για περισσότερα από ένα βιβλία σε αυτή τη θυρίδα.',
-    )
   })
 })
 
