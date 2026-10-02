@@ -418,6 +418,7 @@ export function TransactionsPage({
     if (!entity) {
       setEntries([])
       setAccounts([])
+      setDefaults(null)
       setDocs([])
       prevEntityId.current = null
       return

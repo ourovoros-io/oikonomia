@@ -44,8 +44,33 @@ pub struct DefaultAccounts {
 /// active account of the role's type, by sort order, is used. That covers a
 /// blank book, a seeded account the user deactivated, and one whose code the
 /// user changed.
+///
+/// # Known limitation
+///
+/// The schema has no account subtype, so the by-type fallback cannot tell a
+/// cash account from any other asset. For a wallet role (payment, deposit,
+/// transfer) in a blank or heavily edited book it may select a non-cash asset
+/// such as Investments. The accounts remembered from the last entry correct
+/// that after the first one.
 #[must_use]
 pub fn default_account_for_role(
+    template: ChartTemplate,
+    accounts: &[Account],
+    role: AccountRole,
+) -> Option<AccountId> {
+    seeded_account_for_role(template, accounts, role)
+        .or_else(|| first_of_type(accounts, role_account_type(role)).map(|account| account.id))
+}
+
+/// The seeded account for a role, by identity only.
+///
+/// This is the first account, in the template's order, that carries one of the
+/// role's template codes, is active and has the role's type. Unlike
+/// [`default_account_for_role`] there is no by-type fallback, so `None` means
+/// the account the template intends for the role is missing, deactivated or
+/// re-coded. A blank template seeds nothing, so it always gives `None`.
+#[must_use]
+pub fn seeded_account_for_role(
     template: ChartTemplate,
     accounts: &[Account],
     role: AccountRole,
@@ -53,14 +78,24 @@ pub fn default_account_for_role(
     let account_type = role_account_type(role);
 
     account_by_codes(accounts, account_type, default_role_codes(template, role))
-        .or_else(|| first_of_type(accounts, account_type))
         .map(|account| account.id)
 }
 
 /// Default account for every role.
+///
+/// A transfer never defaults to the same account on both sides: when the
+/// destination would equal the source, it is the first other active asset by
+/// sort order, or `None` if there is none.
 #[must_use]
 pub fn default_accounts(template: ChartTemplate, accounts: &[Account]) -> DefaultAccounts {
     let pick = |role| default_account_for_role(template, accounts, role);
+    let transfer_source = pick(AccountRole::TransferSource);
+    let mut transfer_destination = pick(AccountRole::TransferDestination);
+
+    if transfer_destination.is_some() && transfer_destination == transfer_source {
+        transfer_destination = first_of_type_except(accounts, AccountType::Asset, transfer_source)
+            .map(|account| account.id);
+    }
 
     DefaultAccounts {
         category: pick(AccountRole::Category),
@@ -69,8 +104,8 @@ pub fn default_accounts(template: ChartTemplate, accounts: &[Account]) -> Defaul
         income: pick(AccountRole::Income),
         bill_category: pick(AccountRole::BillCategory),
         bills_payable: pick(AccountRole::BillsPayable),
-        transfer_source: pick(AccountRole::TransferSource),
-        transfer_destination: pick(AccountRole::TransferDestination),
+        transfer_source,
+        transfer_destination,
     }
 }
 
@@ -105,9 +140,23 @@ pub(crate) fn account_by_codes<'a>(
 
 /// First active account of `account_type` by sort order, then code.
 pub(crate) fn first_of_type(accounts: &[Account], account_type: AccountType) -> Option<&Account> {
+    first_of_type_except(accounts, account_type, None)
+}
+
+/// First active account of `account_type` by sort order, then code, leaving
+/// out the account with the `excluded` id.
+fn first_of_type_except(
+    accounts: &[Account],
+    account_type: AccountType,
+    excluded: Option<AccountId>,
+) -> Option<&Account> {
     accounts
         .iter()
-        .filter(|account| account.is_active && account.account_type == account_type)
+        .filter(|account| {
+            account.is_active
+                && account.account_type == account_type
+                && Some(account.id) != excluded
+        })
         .min_by(|left, right| {
             left.sort_order
                 .cmp(&right.sort_order)
@@ -326,6 +375,95 @@ mod tests {
                 &accounts,
                 AccountRole::BillsPayable
             ),
+            None,
+        );
+    }
+
+    /// Rewrites every account's code to a user's own, so the book is blank.
+    fn make_blank(accounts: &mut [Account]) {
+        for account in accounts {
+            account.code = format!("U-{}", account.code);
+        }
+    }
+
+    fn transfer_codes(
+        template: ChartTemplate,
+        accounts: &[Account],
+    ) -> (Option<String>, Option<String>) {
+        let defaults = default_accounts(template, accounts);
+
+        (
+            code_of_for_tests(accounts, defaults.transfer_source),
+            code_of_for_tests(accounts, defaults.transfer_destination),
+        )
+    }
+
+    #[test]
+    fn a_transfer_never_defaults_to_the_same_account_on_both_sides() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Company, true);
+        deactivate(&mut accounts, "1010");
+
+        // Cash is now both the source and the template's destination, so the
+        // destination is the first other asset by sort order.
+        assert_eq!(
+            transfer_codes(ChartTemplate::Company, &accounts),
+            (Some("1000".to_owned()), Some("1100".to_owned())),
+        );
+    }
+
+    #[test]
+    fn a_blank_book_with_two_assets_transfers_between_them() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, true);
+        accounts.retain(|account| matches!(account.code.as_str(), "1000" | "1010"));
+        make_blank(&mut accounts);
+
+        assert_eq!(
+            transfer_codes(ChartTemplate::Blank, &accounts),
+            (Some("U-1000".to_owned()), Some("U-1010".to_owned())),
+        );
+    }
+
+    #[test]
+    fn a_blank_book_with_one_asset_has_no_transfer_destination() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, true);
+        accounts.retain(|account| account.code == "1000");
+        make_blank(&mut accounts);
+
+        assert_eq!(
+            transfer_codes(ChartTemplate::Blank, &accounts),
+            (Some("U-1000".to_owned()), None),
+        );
+    }
+
+    #[test]
+    fn the_seeded_account_for_a_role_has_no_by_type_fallback() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, true);
+
+        assert_eq!(
+            code_of_for_tests(
+                &accounts,
+                seeded_account_for_role(
+                    ChartTemplate::Personal,
+                    &accounts,
+                    AccountRole::BillsPayable
+                ),
+            )
+            .as_deref(),
+            Some("2050"),
+        );
+
+        deactivate(&mut accounts, "2050");
+        assert_eq!(
+            seeded_account_for_role(
+                ChartTemplate::Personal,
+                &accounts,
+                AccountRole::BillsPayable
+            ),
+            None,
+            "a liability still exists, but it is not the seeded one",
+        );
+        assert_eq!(
+            seeded_account_for_role(ChartTemplate::Blank, &accounts, AccountRole::BillsPayable),
             None,
         );
     }

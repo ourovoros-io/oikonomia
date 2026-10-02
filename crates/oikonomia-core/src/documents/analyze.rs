@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::invoice::read_invoice_text;
 use super::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use super::store::{match_expense_account, match_income_account};
-use crate::default_accounts::default_account_for_role;
+use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
 use crate::domain::{Account, AccountId, ChartTemplate};
 use crate::error::{AccountRole, Result};
 use crate::ui_text::{UiText, UiTextCode};
@@ -238,7 +238,15 @@ fn finalize_suggestion(
             default_account_for_role(template, accounts, AccountRole::BillsPayable);
     }
 
-    if s.kind == EntryKindSuggestion::Bill && s.bill_unpaid && s.payable_account_id.is_none() {
+    // A seeded book has a real payable account. When identity cannot find it
+    // (deactivated or re-coded), any liability suggested above is only a
+    // stand-in, and the user must still be told to add a payable account. A
+    // blank book seeds none, so there a liability is the legitimate answer.
+    let payable_is_missing = s.payable_account_id.is_none()
+        || (template != ChartTemplate::Blank
+            && seeded_account_for_role(template, accounts, AccountRole::BillsPayable).is_none());
+
+    if s.kind == EntryKindSuggestion::Bill && s.bill_unpaid && payable_is_missing {
         s.notes.push(UiText::new(UiTextCode::AddPayableAccount));
     }
 }
@@ -587,6 +595,7 @@ mod tests {
     use super::super::invoice::parse_invoice_text;
     use super::*;
     use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
+    use crate::domain::AccountType;
 
     #[test]
     fn extract_pdf_jpeg_images_ignores_non_pdf() {
@@ -809,6 +818,99 @@ mod tests {
         assert_eq!(
             code_of_for_tests(&accounts, suggestion.wallet_account_id).as_deref(),
             Some("1010"),
+        );
+    }
+
+    const UNPAID_BILL: &str = "Invoice\nTOTAL 45,90 EUR\nAmount due\nThank you";
+
+    fn analyze_unpaid_bill(
+        template: ChartTemplate,
+        accounts: &[Account],
+    ) -> Option<DocumentSuggestion> {
+        analyze_document_bytes(
+            "bill.txt",
+            "text/plain",
+            UNPAID_BILL.as_bytes(),
+            template,
+            accounts,
+            "EUR",
+            None,
+        )
+        .ok()
+    }
+
+    fn deactivate_code(accounts: &mut [Account], code: &str) {
+        for account in accounts {
+            if account.code == code {
+                account.is_active = false;
+            }
+        }
+    }
+
+    #[test]
+    fn a_seeded_book_without_its_payable_still_suggests_a_liability_and_asks_for_one() {
+        let cases = [
+            (ChartTemplate::Personal, "2050", "2000"),
+            (ChartTemplate::Company, "2000", "2100"),
+        ];
+
+        for (template, payable_code, fallback_code) in cases {
+            let mut accounts = seeded_chart_for_tests(template, true);
+            deactivate_code(&mut accounts, payable_code);
+
+            let suggestion = analyze_unpaid_bill(template, &accounts);
+            assert!(suggestion.is_some(), "{template:?}: analysis must succeed");
+            let Some(suggestion) = suggestion else { return };
+
+            assert_eq!(
+                code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
+                Some(fallback_code),
+                "{template:?}: the by-type stand-in stays so the form is usable",
+            );
+            assert!(
+                codes_of(&suggestion.notes).contains(&UiTextCode::AddPayableAccount),
+                "{template:?}: {:?}",
+                suggestion.notes
+            );
+        }
+    }
+
+    #[test]
+    fn a_blank_book_with_a_liability_suggests_it_without_a_note() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, true);
+        accounts.retain(|account| {
+            account.account_type != AccountType::Liability || account.code == "2100"
+        });
+
+        let suggestion = analyze_unpaid_bill(ChartTemplate::Blank, &accounts);
+        assert!(suggestion.is_some(), "analysis must succeed");
+        let Some(suggestion) = suggestion else { return };
+
+        assert_eq!(
+            code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
+            Some("2100"),
+        );
+        assert!(
+            !codes_of(&suggestion.notes).contains(&UiTextCode::AddPayableAccount),
+            "{:?}",
+            suggestion.notes
+        );
+    }
+
+    #[test]
+    fn a_blank_book_without_a_liability_asks_for_a_payable_and_suggests_none() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, true);
+        accounts.retain(|account| account.account_type != AccountType::Liability);
+
+        let suggestion = analyze_unpaid_bill(ChartTemplate::Blank, &accounts);
+        assert!(suggestion.is_some(), "analysis must succeed");
+        let Some(suggestion) = suggestion else { return };
+
+        assert_eq!(suggestion.payable_account_id, None);
+        assert!(
+            codes_of(&suggestion.notes).contains(&UiTextCode::AddPayableAccount),
+            "{:?}",
+            suggestion.notes
         );
     }
 

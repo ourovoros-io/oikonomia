@@ -713,6 +713,94 @@ mod tests {
         );
     }
 
+    /// One hint per expense topic, each naming no other topic's word, with the
+    /// code the personal chart gives it. Software has no personal account, so
+    /// it takes the catch-all.
+    const PERSONAL_EXPENSE_PINS: &[(&str, &str)] = &[
+        ("electric", "5300"),
+        ("invoice", "5350"),
+        ("rent", "5000"),
+        ("netflix", "5500"),
+        ("grocery", "5100"),
+        ("parking", "5200"),
+        ("github", "5900"),
+        ("clinic", "5400"),
+        ("vat", "5700"),
+        ("something unrecognised", "5900"),
+    ];
+
+    /// The same for the company chart. Only software, tax and the catch-all
+    /// have a company account; every other topic falls to the catch-all.
+    const COMPANY_EXPENSE_PINS: &[(&str, &str)] = &[
+        ("electric", "5900"),
+        ("invoice", "5900"),
+        ("rent", "5900"),
+        ("netflix", "5900"),
+        ("grocery", "5900"),
+        ("parking", "5900"),
+        ("github", "5300"),
+        ("clinic", "5900"),
+        ("vat", "5700"),
+        ("something unrecognised", "5900"),
+    ];
+
+    const PERSONAL_INCOME_PINS: &[(&str, &str)] = &[
+        ("consulting", "4900"),
+        ("freelance", "4100"),
+        ("payroll", "4000"),
+        ("something unrecognised", "4900"),
+    ];
+
+    const COMPANY_INCOME_PINS: &[(&str, &str)] = &[
+        ("consulting", "4000"),
+        ("freelance", "4900"),
+        ("payroll", "4900"),
+        ("something unrecognised", "4900"),
+    ];
+
+    fn assert_pins(
+        template: ChartTemplate,
+        expense_pins: &[(&str, &str)],
+        income_pins: &[(&str, &str)],
+    ) {
+        for rename in [false, true] {
+            let accounts = seeded_chart_for_tests(template, rename);
+
+            for (hints, code) in expense_pins {
+                assert_eq!(
+                    expense_code(template, &accounts, hints).as_deref(),
+                    Some(*code),
+                    "{template:?} expense for {hints:?} (renamed: {rename})",
+                );
+            }
+            for (hints, code) in income_pins {
+                assert_eq!(
+                    income_code(template, &accounts, hints).as_deref(),
+                    Some(*code),
+                    "{template:?} income for {hints:?} (renamed: {rename})",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_topic_on_the_personal_chart_is_pinned_by_code() {
+        assert_pins(
+            ChartTemplate::Personal,
+            PERSONAL_EXPENSE_PINS,
+            PERSONAL_INCOME_PINS,
+        );
+    }
+
+    #[test]
+    fn every_topic_on_the_company_chart_is_pinned_by_code() {
+        assert_pins(
+            ChartTemplate::Company,
+            COMPANY_EXPENSE_PINS,
+            COMPANY_INCOME_PINS,
+        );
+    }
+
     #[test]
     fn renamed_charts_match_the_same_accounts_as_english_ones() {
         for template in [ChartTemplate::Personal, ChartTemplate::Company] {
@@ -752,6 +840,16 @@ mod tests {
         );
     }
 
+    /// Code of the active account of `account_type` with the lowest sort
+    /// order, then code: what a book with no seeded codes must suggest.
+    fn first_code_of_type(accounts: &[Account], account_type: AccountType) -> Option<String> {
+        accounts
+            .iter()
+            .filter(|account| account.is_active && account.account_type == account_type)
+            .min_by_key(|account| (account.sort_order, account.code.clone()))
+            .map(|account| account.code.clone())
+    }
+
     #[test]
     fn a_blank_book_suggests_the_first_account_of_the_type_whatever_it_is_called() {
         let template = ChartTemplate::Blank;
@@ -762,13 +860,17 @@ mod tests {
             account.code = format!("U{index:03}");
         }
 
+        let expected_expense = first_code_of_type(&accounts, AccountType::Expense);
+        let expected_income = first_code_of_type(&accounts, AccountType::Income);
+        assert!(expected_expense.is_some() && expected_income.is_some());
+
         assert_eq!(
-            expense_code(template, &accounts, "dei electricity").as_deref(),
-            Some("U013")
+            expense_code(template, &accounts, "dei electricity"),
+            expected_expense
         );
         assert_eq!(
-            income_code(template, &accounts, "monthly salary").as_deref(),
-            Some("U009")
+            income_code(template, &accounts, "monthly salary"),
+            expected_income
         );
     }
 

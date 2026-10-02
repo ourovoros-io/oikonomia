@@ -366,6 +366,30 @@ mod tests {
     }
 
     #[test]
+    fn the_category_and_bill_category_roles_pin_their_fallback_order() {
+        // Personal category: Food, Utilities, Bills & services, Other.
+        assert_eq!(
+            default_role_codes(ChartTemplate::Personal, AccountRole::Category),
+            &["5100", "5300", "5350", "5900"],
+        );
+        // Personal bill category: Utilities, Bills & services, Housing,
+        // Subscriptions.
+        assert_eq!(
+            default_role_codes(ChartTemplate::Personal, AccountRole::BillCategory),
+            &["5300", "5350", "5000", "5500"],
+        );
+        // The company chart has a single choice for each.
+        assert_eq!(
+            default_role_codes(ChartTemplate::Company, AccountRole::Category),
+            &["5900"],
+        );
+        assert_eq!(
+            default_role_codes(ChartTemplate::Company, AccountRole::BillCategory),
+            &["5200"],
+        );
+    }
+
+    #[test]
     fn a_blank_template_names_no_codes() {
         for role in AccountRole::ALL {
             assert_eq!(

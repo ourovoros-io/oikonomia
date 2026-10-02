@@ -140,7 +140,9 @@ fn a_blank_book_defaults_to_the_users_own_accounts_by_type() {
         Some("E1"),
         Some("L1"),
         Some("A1"),
-        Some("A1"),
+        // The only asset is already the source, so a transfer has no
+        // destination to offer.
+        None,
     ];
     let actual = default_codes(conn, entity_id);
 

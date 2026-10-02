@@ -312,6 +312,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         if (ents.length === 0) {
           setEntityId(null)
           setAccounts([])
+          setDefaults(null)
           return
         }
         const preferred =

@@ -278,6 +278,41 @@ describe('RecurringPage new template modal', () => {
   })
 })
 
+describe('RecurringPage default accounts', () => {
+  test('the form preselects the accounts account_defaults returned', async () => {
+    // Neither default is the first account of its type: only Rust's answer
+    // can pick them.
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'exp2', name: 'Λογαριασμός 5300', account_type: 'expense', code: '5300' }),
+      account({ id: 'w2', name: 'Λογαριασμός 1010', account_type: 'asset', code: '1010' }),
+    ])
+    vi.mocked(api.accountDefaults).mockResolvedValue({
+      ...DEFAULTS,
+      bill_category: 'exp2',
+      payment: 'w2',
+      transfer_source: 'w2',
+      transfer_destination: 'w1',
+    })
+
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Category')).toHaveValue('exp2')
+    })
+    expect(screen.getByLabelText('From account')).toHaveValue('w2')
+    expect(api.accountDefaults).toHaveBeenCalledWith('e1')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('To')).toHaveValue('w1')
+    })
+    expect(screen.getByLabelText('From account')).toHaveValue('w2')
+  })
+})
+
 describe('RecurringPage post confirm', () => {
   beforeEach(() => {
     vi.mocked(api.recurringList).mockResolvedValue([rent])

@@ -757,10 +757,24 @@ describe('TransactionsPage default accounts', () => {
     await screen.findByRole('heading', { name: 'New entry' })
 
     await waitFor(() => {
-      const values = screen.getAllByRole('combobox').map((el) => (el as HTMLSelectElement).value)
-      expect(values).toContain('exp2')
+      expect(screen.getByLabelText('Category (what for)')).toHaveValue('exp2')
     })
     expect(api.accountDefaults).toHaveBeenCalledWith('e1')
+  })
+
+  test('the loaded ledger and defaults are dropped when the book goes away', async () => {
+    const { rerender } = render(
+      <TransactionsPage entity={entity} newEntryIntent={0} onNewEntryIntentHandled={vi.fn()} />,
+    )
+    await waitFor(() => {
+      expect(api.accountDefaults).toHaveBeenCalledTimes(1)
+    })
+
+    rerender(<TransactionsPage entity={null} newEntryIntent={0} onNewEntryIntentHandled={vi.fn()} />)
+
+    // No book, so nothing is fetched again and nothing from the old one stays.
+    expect(api.accountDefaults).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Meals & dining')).toBeNull()
   })
 })
 
