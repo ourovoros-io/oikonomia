@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 vi.mock('./api', () => ({
   api: {
     getLocale: vi.fn(),
+    resolveLocale: vi.fn(),
     setLocale: vi.fn(),
     getUiPrefs: vi.fn(),
   },
@@ -33,14 +34,15 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.mocked(api.getLocale).mockReset()
+  vi.mocked(api.resolveLocale).mockReset().mockRejectedValue(new Error('no tauri'))
   vi.mocked(api.setLocale).mockReset()
   vi.mocked(api.getUiPrefs).mockReset()
 })
 
 describe('I18nProvider', () => {
-  test('hydrates locale from settings_get_locale (prefs win over cache)', async () => {
+  test('hydrates locale from settings_resolve_locale (prefs win over cache)', async () => {
     localStorage.setItem(LOCALE_STORAGE_KEY, 'en')
-    vi.mocked(api.getLocale).mockResolvedValue('el')
+    vi.mocked(api.resolveLocale).mockResolvedValue('el')
     render(
       <I18nProvider>
         <Probe />
@@ -86,7 +88,7 @@ describe('I18nProvider', () => {
   })
 
   test('setLocale writes settings_set_locale and mirrors oikonomia.locale', async () => {
-    vi.mocked(api.getLocale).mockResolvedValue('en')
+    vi.mocked(api.resolveLocale).mockResolvedValue('en')
     vi.mocked(api.setLocale).mockResolvedValue(undefined)
     render(
       <I18nProvider>
@@ -94,7 +96,7 @@ describe('I18nProvider', () => {
       </I18nProvider>,
     )
     await waitFor(() => {
-      expect(api.getLocale).toHaveBeenCalled()
+      expect(api.resolveLocale).toHaveBeenCalled()
     })
     setLocale('el')
     await waitFor(() => {
@@ -103,9 +105,9 @@ describe('I18nProvider', () => {
     })
   })
 
-  test('last-used fr persists on hydrate from getLocale', async () => {
+  test('last-used fr persists on hydrate from resolveLocale', async () => {
     localStorage.setItem(LOCALE_STORAGE_KEY, 'en')
-    vi.mocked(api.getLocale).mockResolvedValue('fr')
+    vi.mocked(api.resolveLocale).mockResolvedValue('fr')
     render(
       <I18nProvider>
         <Probe />
@@ -153,7 +155,7 @@ describe('I18nProvider', () => {
     // CSS uppercase (font-variant-caps / text-transform) keeps a locale's own
     // tonos marks only when lang matches; a stale static lang="en" uppercases
     // Greek text as if it were English, dropping the tonos.
-    vi.mocked(api.getLocale).mockResolvedValue('el')
+    vi.mocked(api.resolveLocale).mockResolvedValue('el')
     vi.mocked(api.setLocale).mockResolvedValue(undefined)
     render(
       <I18nProvider>
@@ -176,7 +178,8 @@ describe('I18nProvider', () => {
       finishReRead = resolve
     })
 
-    vi.mocked(api.getLocale).mockResolvedValueOnce('en').mockReturnValueOnce(reRead)
+    vi.mocked(api.resolveLocale).mockResolvedValue('en')
+    vi.mocked(api.getLocale).mockReturnValueOnce(reRead)
     vi.mocked(api.setLocale).mockRejectedValueOnce(new Error('disk full'))
     vi.mocked(api.setLocale).mockResolvedValueOnce(undefined)
 
@@ -196,12 +199,12 @@ describe('I18nProvider', () => {
       </I18nProvider>,
     )
     await waitFor(() => {
-      expect(api.getLocale).toHaveBeenCalledTimes(1)
+      expect(api.resolveLocale).toHaveBeenCalledTimes(1)
     })
 
     setLocale('el')
     await waitFor(() => {
-      expect(api.getLocale).toHaveBeenCalledTimes(2)
+      expect(api.getLocale).toHaveBeenCalledTimes(1)
     })
 
     setLocale('fr')
@@ -215,5 +218,76 @@ describe('I18nProvider', () => {
     expect(getLocale()).toBe('fr')
     expect(screen.getByText('locale:fr')).toBeTruthy()
     expect(screen.getByText('failed:false')).toBeTruthy()
+  })
+
+  describe('first run', () => {
+    const languages = vi.spyOn(window.navigator, 'languages', 'get')
+    const language = vi.spyOn(window.navigator, 'language', 'get')
+
+    beforeEach(() => {
+      languages.mockReturnValue(['el-GR', 'en-US'])
+      language.mockReturnValue('el-GR')
+    })
+
+    afterEach(() => {
+      languages.mockReset()
+      language.mockReset()
+    })
+
+    test('reports the system languages and applies the language Rust returns', async () => {
+      vi.mocked(api.resolveLocale).mockResolvedValue('el')
+      render(
+        <I18nProvider>
+          <Probe />
+        </I18nProvider>,
+      )
+
+      await waitFor(() => {
+        expect(getLocale()).toBe('el')
+      })
+      expect(api.resolveLocale).toHaveBeenCalledWith(['el-GR', 'en-US'])
+      expect(localStorage.getItem(LOCALE_STORAGE_KEY)).toBe('el')
+    })
+
+    test('sends navigator.language when navigator.languages is empty', async () => {
+      languages.mockReturnValue([])
+      language.mockReturnValue('fr-FR')
+      vi.mocked(api.resolveLocale).mockResolvedValue('fr')
+      render(
+        <I18nProvider>
+          <Probe />
+        </I18nProvider>,
+      )
+
+      await waitFor(() => {
+        expect(api.resolveLocale).toHaveBeenCalledWith(['fr-FR'])
+      })
+    })
+
+    test('a change made before hydration resolves is not overwritten', async () => {
+      let finishResolve: (stored: string) => void = () => undefined
+      vi.mocked(api.resolveLocale).mockReturnValue(
+        new Promise<string>((resolve) => {
+          finishResolve = resolve
+        }),
+      )
+      vi.mocked(api.setLocale).mockResolvedValue(undefined)
+      render(
+        <I18nProvider>
+          <Probe />
+        </I18nProvider>,
+      )
+
+      setLocale('de')
+      await waitFor(() => {
+        expect(api.setLocale).toHaveBeenCalledWith('de')
+      })
+
+      finishResolve('el')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(getLocale()).toBe('de')
+      expect(screen.getByText('de')).toBeTruthy()
+    })
   })
 })

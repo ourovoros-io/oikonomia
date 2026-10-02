@@ -166,6 +166,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::settings_set_lock_timeout,
         commands::settings_get_locale,
         commands::settings_set_locale,
+        commands::settings_resolve_locale,
         commands::settings_get_ui_prefs,
         commands::settings_remember_quick_add,
         commands::open_main_window,

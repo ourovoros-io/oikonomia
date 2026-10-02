@@ -10,7 +10,6 @@ import {
 import { api } from './api'
 import {
   applyLocale,
-  applyLocaleFromPrefs,
   getLocale,
   parseLocale,
   readCachedLocale,
@@ -48,7 +47,56 @@ async function readStoredLocale(lastKnown: Locale): Promise<Locale> {
 }
 
 /**
- * Hydrates locale from UiPrefs (`settings_get_locale` / `settings_get_ui_prefs`).
+ * The system's preferred languages, most preferred first. Only reported to
+ * Rust, which decides whether and how to use them.
+ */
+function systemLanguages(): string[] {
+  const languages = navigator.languages ?? []
+  if (languages.length > 0) return [...languages]
+
+  return navigator.language ? [navigator.language] : []
+}
+
+type Hydrated = {
+  /** What the backend has stored; null when it could not be read. */
+  stored: Locale | null
+  /** What the interface shows. */
+  applied: Locale
+}
+
+/**
+ * Ask Rust for the language: `settings_resolve_locale` picks it from the
+ * system on a first run and otherwise returns the stored one. Falls back to
+ * the plain getter, then the prefs, then the optimistic cache, so a failing
+ * command (or no Tauri at all: browser preview, tests) never blocks the UI.
+ */
+async function hydrateLocale(): Promise<Hydrated> {
+  try {
+    const stored = parseLocale(await api.resolveLocale(systemLanguages()))
+    return { stored, applied: stored }
+  } catch {
+    // fall through to the older reads
+  }
+
+  try {
+    const stored = parseLocale(await api.getLocale())
+    return { stored, applied: stored }
+  } catch {
+    // fall through
+  }
+
+  try {
+    const prefs = await api.getUiPrefs()
+    const stored = parseLocale(prefs?.locale)
+    return { stored, applied: stored }
+  } catch {
+    return { stored: null, applied: readCachedLocale() ?? 'en' }
+  }
+}
+
+/**
+ * Hydrates locale from Rust (`settings_resolve_locale`, which also stores the
+ * system language on a first run) (`settings_get_locale` / `settings_get_ui_prefs`).
  * localStorage is an optimistic mirror only. The Settings language pill calls setLocale.
  */
 export function I18nProvider({ children }: { children: ReactNode }) {
@@ -106,25 +154,19 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false
 
-    void api
-      .getLocale()
-      .then((next) => {
-        if (cancelled) return
+    // A change the user makes while this is in flight owns the outcome: it
+    // is persisted after Rust has answered or is answered by it, and either
+    // way the late hydration result must not repaint the interface.
+    const startedAt = latestChange.current
+    const superseded = () => cancelled || latestChange.current !== startedAt
 
-        storedLocale.current = parseLocale(next)
-        applyLocale(storedLocale.current)
-      })
-      .catch(() => {
-        if (cancelled) return
-        void api
-          .getUiPrefs()
-          .then((prefs) => {
-            if (!cancelled) storedLocale.current = applyLocaleFromPrefs(prefs)
-          })
-          .catch(() => {
-            if (!cancelled) applyLocale(readCachedLocale() ?? 'en')
-          })
-      })
+    void hydrateLocale().then((hydrated) => {
+      if (superseded()) return
+
+      if (hydrated.stored) storedLocale.current = hydrated.stored
+      applyLocale(hydrated.applied)
+    })
+
     return () => {
       cancelled = true
     }

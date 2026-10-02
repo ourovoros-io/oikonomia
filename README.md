@@ -43,7 +43,7 @@ Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 - Tray quick-add window: left-click the tray to post a simple entry or drop a document without opening the full app
 - Signed, click-driven update check on the unlock screen (minisign-verified, talks only to GitHub's release hosts)
 - Dark-only "Aurora glass" UI; locale money formatting
-- UI language: English, Ελληνικά, Français, and Deutsch; switch in Settings; persists across relaunch; the interface, error messages, and the names seeded into new books follow the selected language
+- UI language: English, Ελληνικά, Français, and Deutsch; the first launch follows the system language, switchable on the first screen and in Settings; persists across relaunch; the interface, error messages, and the names seeded into new books follow the selected language
 
 ## Install
 

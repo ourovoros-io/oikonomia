@@ -16,7 +16,8 @@ type Args = Record<string, unknown>
 /**
  * Answers every read the four captured screens make, plus the two no-op
  * writes -- `vault_touch` and `settings_set_locale` -- the app itself calls
- * on load. Anything beyond those reads and no-op writes, a real write or a
+ * on load, and `settings_resolve_locale`, which returns the demo language
+ * the capture was asked for. Anything beyond those reads and no-op writes, a real write or a
  * native dialog, is deliberately unanswered: a capture that reaches one is
  * wrong.
  */
@@ -52,6 +53,7 @@ export function createHandler(lang: DemoLang) {
     donation_addresses: () => [],
     update_check: () => ({ kind: 'up_to_date' }),
     settings_get_locale: () => lang,
+    settings_resolve_locale: () => lang,
     settings_set_locale: () => null,
     settings_get_ui_prefs: () => prefs,
     settings_get_lock_timeout: () => 900,

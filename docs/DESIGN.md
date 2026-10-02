@@ -151,7 +151,13 @@ the trust root. See [`release.md`](release.md) for how releases are cut.
 - **i18n.** Four locales: English, Greek, French and German, in
   `web/src/locales`. `en.json` has flat keys; the others are nested.
   `lib/i18n.ts` flattens them and `I18nProvider` supplies `t()`. The chosen
-  language is stored in `ui-prefs.json`. Text that comes from Rust reaches the
+  language is stored in `ui-prefs.json`. On the first launch (no `locale` key
+  in that file) the webview reports `navigator.languages` to the
+  `settings_resolve_locale` command; Rust maps them to a supported language
+  (`Locale::from_system_languages`), stores it and returns it, and from then on
+  the system language is never read again, so a stored English stays English.
+  The unlock and create-vault screen shows the same language switch as
+  Settings, so the first book is seeded in the language the user sees. Text that comes from Rust reaches the
   screen in one of three ways, and the UI never renders raw backend text:
   - *Transient text* travels as a code plus named parameters, and the UI words
     it. This covers command errors (`CommandError` in the desktop crate's
@@ -169,7 +175,7 @@ the trust root. See [`release.md`](release.md) for how releases are cut.
     every key has a reader, exists in all four languages and has the same
     placeholders in each.
   - *Stored text* is written by the Rust core in the app's language when it is
-    created: the account names a chart template seeds, the descriptions
+    created, read from the stored preference (never from the webview): the account names a chart template seeds, the descriptions
     core generates for opening balances and voids, and the descriptions and
     merchants the document reader suggests. The wording is a table in
     `crates/oikonomia-core/src/text.rs`, keyed by language. It is not renamed
