@@ -13,7 +13,7 @@ master-password unlock.
 | `crates/macos-dock-icon` | macOS Dock icon for `cargo tauri dev` |
 | `apps/desktop/src-tauri` | Tauri shell + IPC commands |
 | `web` | React + Vite + Tailwind frontend |
-| `docs/` | Release runbook (`release.md`), brand assets, design specs and plans (`docs/superpowers`) |
+| `docs/` | Release runbook (`release.md`), brand assets, and the design overview (`DESIGN.md`) |
 
 ## Commands
 
@@ -65,7 +65,7 @@ Workspace Clippy: `unwrap_used = deny`, `panic = deny`, etc.
 
 ## Product decisions (locked)
 
-See `docs/superpowers/specs/2026-08-10-oikonomia-design.md`.
+See [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Schema
 

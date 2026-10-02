@@ -18,7 +18,7 @@ Status: 0.1.0 pre-release.
 
 Stack: **Rust** (`oikonomia-core`) + **Tauri 2** + **React / Vite / Tailwind**.
 
-Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowers/specs/2026-08-10-oikonomia-design.md)
+Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 
 ## Features
 
@@ -175,6 +175,7 @@ Bundled fonts are under the SIL Open Font License; see `web/public/fonts` and
 | `crates/macos-dock-icon` | Sets the macOS Dock icon for `cargo tauri dev` |
 | `apps/desktop/src-tauri` | Tauri shell + IPC |
 | `web` | React UI |
+| `docs` | Design overview (`DESIGN.md`), release runbook, brand assets |
 
 ## Not yet supported
 

@@ -1,0 +1,158 @@
+# Design overview
+
+A map of how Oikonomia is built, for someone about to change it. For build
+commands and the invariants a change must not break, read
+[`AGENTS.md`](../AGENTS.md); for the threat model, [`SECURITY.md`](../SECURITY.md).
+
+## What it is
+
+Oikonomia is a local-only desktop app for personal and company finance. It keeps
+double-entry books for several entities in one encrypted vault on the user's
+machine. It has no account system and no telemetry. The only network use is a
+signed update check that the user starts by clicking. It is a Tauri 2 shell
+around a Rust core, with a React interface in a webview.
+
+## Layout
+
+| Path | Owns |
+|------|------|
+| `crates/oikonomia-core` | Vault, schema and migrations, ledger, reports, CSV, documents and OCR, UI preferences. No network crates (`scripts/assert-core-offline.sh`). |
+| `crates/oikonomia-update` | The update client: signed feed, host allow-list, verified download. The only crate that talks to the network. |
+| `crates/macos-dock-icon` | Sets the Dock icon for `cargo tauri dev`. |
+| `apps/desktop/src-tauri` | The Tauri shell: IPC commands, app state, tray and quick-add window, idle auto-lock, capabilities, bundle config, OCR models. |
+| `web` | The React, Vite and Tailwind interface. |
+| `docs` | This overview, the release runbook, brand assets. |
+
+## Business logic lives in Rust
+
+The interface renders and collects input; it does not decide anything about the
+books. Validation, posting, voiding, balances, reports, CSV parsing, document
+analysis and the lock timeout are in `oikonomia-core` or the Rust shell. The
+simple entry form sends a kind (such as expense, income or transfer) and
+accounts, and `post_simple_entry` maps that to debit and credit lines. The
+webview reaches the database, the key and the file system only through the
+commands below. The exception is presentation: the expense PDF is laid out in
+TypeScript from report lines Rust returns (`web/src/lib/expensePdf.ts`).
+
+## The vault
+
+The vault is one SQLCipher database, `vault.db`, plus a small public header,
+`vault.header.json`, in the platform data directory.
+
+- **Key derivation.** The master password (at least 12 characters) goes through
+  Argon2id with a random 16-byte salt to produce a 32-byte key, which is handed
+  to SQLCipher as a raw key. The header records the KDF name, salt, cost
+  parameters and key length; it holds nothing secret. Parameters outside fixed
+  bounds are rejected as corrupt (`vault/crypto.rs`, `vault/header.rs`).
+- **At rest.** Neither the password nor the key is written to disk. The derived
+  key is a zeroizing buffer dropped once the database is open. SQLCipher memory
+  security is on, and WAL mode is used (SQLCipher encrypts it too). On Unix the
+  data directory is `0700` and vault files `0600`.
+- **Lock and unlock.** Locking closes the connection; unlocking derives the key,
+  opens the database and runs migrations. Idle auto-lock (default 15 minutes,
+  stored in the vault) is enforced by a Rust watchdog thread, not the webview.
+- **Changing the password** rekeys the database. The new header is staged first
+  and unlock falls back to it, so a crash mid-change leaves exactly one of the
+  two passwords working.
+- **Backup.** A `.oikonomia-backup` file is the 8-byte magic `OIKOBACK`, a
+  little-endian `u16` format version, then two length-prefixed members:
+  `vault.header.json` and `vault.db`, stored as on disk: ciphertext, with no
+  second layer or password. An open vault is snapshotted with `VACUUM INTO`
+  (`vault/backup.rs`).
+- **UI preferences** (language, last book and accounts used in quick-add) are
+  plain JSON in `ui-prefs.json` beside the vault, so the tray menu and unlock
+  screen can use the right language before a password is entered. Nothing
+  sensitive goes there (`prefs.rs`).
+
+## The ledger
+
+- **Money** is `i64` minor units, never floating point. Line amounts are
+  non-negative (`money.rs`). Each entity has one base currency.
+- **Entities** are separate books with a name, currency, fiscal-year start month
+  and a chart template (personal, company or blank).
+- **Accounts** belong to one entity and have a code, name and type: asset,
+  liability, equity, income or expense. Templates seed the chart (`coa.rs`);
+  system accounts such as Opening Balances cannot be deactivated.
+- **Journal entries** have a date, description, optional reference and two or
+  more lines. A line is a debit or a credit on one account, never both, never
+  neither. Posting requires total debits to equal total credits
+  (`domain/journal.rs`) inside one SQLite transaction; the schema also enforces
+  debit XOR credit per line.
+- **Corrections.** Posted entries are not edited in place. Voiding posts a
+  reverse entry and links the two so the pair drops out of the books. Editing is
+  `replace_simple_entry`: void the original, post the replacement and move any
+  attached documents, in one transaction. Hidden entries are left out of the
+  journal CSV export only.
+- **Reports** (trial balance, profit and loss, balance sheet, dashboard
+  summary, cash-flow series) are computed in SQL over posted entries only
+  (`crates/oikonomia-core/src/ledger`).
+- **Recurring templates** show what is due; the user posts each occurrence.
+- **Schema version** is stored in `vault_meta.schema_version`. `db::migrate`
+  runs on vault creation and on every unlock and applies each step above the
+  stored version in order up to `CURRENT_SCHEMA_VERSION` (`db/schema.rs`).
+  Migration tests are in `crates/oikonomia-core/tests/migration_v*.rs`.
+
+## Documents and OCR
+
+Receipts and invoices are attached to journal entries (a document cannot exist
+without one). Files are capped at 8 MiB and stored as blobs inside the encrypted
+database, so backups include them.
+Analysis runs offline: PDFs and text have their text extracted; images go
+through the `ocrs` engine using two `.rten` models that ship in the app bundle
+(`apps/desktop/src-tauri/resources/ocr`), and an invoice reader pulls totals and
+kind from the text. The result only pre-fills the entry form
+(`crates/oikonomia-core/src/documents`).
+
+## The IPC boundary
+
+The webview talks to Rust only through Tauri commands, registered in one list in
+`apps/desktop/src-tauri/src/lib.rs`; nothing outside it is reachable.
+
+- **Path grants.** A command that takes a file path accepts it only if the user
+  handed it over through a native drop or a native dialog. Those paths are
+  recorded in `AppState` and checked by `require_granted_path`. The webview
+  cannot name an arbitrary file.
+- **Capabilities.** `capabilities/default.json` gives the `main` and `quick-add`
+  windows core defaults and a short list of window and event permissions. No
+  file-system, shell or opener permission reaches the webview; the opener is used
+  from Rust only, for the support mail link.
+- **Content security.** The CSP in `tauri.conf.json` allows only the app's own
+  origin plus Tauri IPC for `connect-src`. A navigation guard
+  (`nav_guard.rs`) keeps every window on the app's own origin.
+
+## Updates and the network
+
+`oikonomia-core` has no network dependencies, and `deny.toml` bans every
+socket-capable crate except under `oikonomia-update` and the Tauri updater
+plugin, so the network is confined to the update path.
+
+When the user clicks to check, `oikonomia-update` fetches `latest.json` and its
+detached signature from the project's GitHub releases, verifies the signature
+with a minisign public key compiled into the app, and compares versions. Every
+URL, redirects included, must be HTTPS on an allow-listed GitHub host
+(`hosts.rs`). The webview cannot supply a feed URL or key. Installing downloads
+the artifact, verifies it against the signed manifest, runs it and restarts.
+Nothing checks for updates at startup. GitHub is only a host; the signing key is
+the trust root. See [`release.md`](release.md) for how releases are cut.
+
+## The interface
+
+`web/src` holds `App.tsx` (shell and sidebar), `pages/`, `components/` and
+`lib/`; `lib/tauri.ts` and `lib/api.ts` wrap the commands.
+
+- **Pages** are Dashboard, Transactions (with the Recurring view), Documents,
+  Accounts, Reports and Settings, plus the unlock screen and the separate
+  quick-add window (`QuickAddApp.tsx`). Each page renders `TopBar`.
+- **i18n.** Four locales: English, Greek, French and German, in
+  `web/src/locales`. `en.json` has flat keys; the others are nested.
+  `lib/i18n.ts` flattens them and `I18nProvider` supplies `t()`. The chosen
+  language is stored in `ui-prefs.json`. Some text comes from Rust in English
+  (seeded account names, OCR notes, some report rows and error messages) and is
+  shown as it is.
+- **Design language.** The interface is dark only and is called "Aurora glass":
+  an animated colored backdrop (`components/Aurora.tsx`) under translucent panes
+  with a hairline edge. Brand color marks chrome and never money; money in and
+  out have their own pair of colors. The design tokens are the `@theme` block
+  and the glass and aurora variables in `web/src/index.css`; fonts are bundled
+  (`web/src/fonts.css`, `web/public/fonts`). `web/tests/tokens.test.ts` checks
+  text contrast against the glass surface.
