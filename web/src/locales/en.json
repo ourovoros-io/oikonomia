@@ -564,6 +564,7 @@
   "analyze.invoice.notes.transferDetected": "Detected a bank transfer receipt (expense).",
   "analyze.invoice.notes.transferNoAmount": "Could not confidently detect the transfer amount — please enter the amount.",
   "analyze.invoice.notes.transferFee": "Transfer fee {fee} is shown on the receipt and is not the posted amount.",
+  "analyze.invoice.notes.transferFeeUnstated": "A transfer fee is shown on the receipt and is not the posted amount.",
   "reports.synthetic.retainedEarnings": "Retained Earnings (prior periods)",
   "reports.synthetic.netIncome": "Net Income (current period)",
   "donut.noExpenses": "No expenses in this period.",

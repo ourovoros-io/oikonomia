@@ -110,7 +110,8 @@ export function balanceSheet(l: DemoLedger, asOf: string): BalanceSheet {
   // Rust folds undistributed earnings into equity; mirror that so the sheet balances.
   equity.push({
     code: '3900',
-    name: l.lang === 'el' ? 'Αποτελέσματα χρήσης' : 'Current earnings',
+    // The English name Rust sends for this row; the app words it from `synthetic`.
+    name: 'Net Income (current period)',
     account_type: 'equity',
     debit_minor: 0,
     credit_minor: earnings,

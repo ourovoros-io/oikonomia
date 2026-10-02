@@ -60,6 +60,9 @@ pub enum UiTextCode {
     TransferNoAmount,
     /// The receipt shows a transfer fee. Parameters: `fee_minor`, `currency`.
     TransferFee,
+    /// The receipt shows a transfer fee that cannot be given as a figure,
+    /// because the book's currency does not use two decimals.
+    TransferFeeUnstated,
 }
 
 impl UiTextCode {
@@ -88,6 +91,7 @@ impl UiTextCode {
         Self::TransferDetected,
         Self::TransferNoAmount,
         Self::TransferFee,
+        Self::TransferFeeUnstated,
     ];
 }
 
@@ -196,6 +200,91 @@ mod tests {
                 .map(wire_spelling)
                 .collect::<Vec<_>>(),
         );
+    }
+
+    /// One value of every code. The `match` has no wildcard arm, so adding a
+    /// variant stops compiling here until it is handled.
+    ///
+    /// This guarantees a new variant is noticed. It does not prove the list
+    /// below is complete or in the right order, which the equality test checks
+    /// against `ALL`, and it cannot see `ALL` being edited on its own.
+    fn every_code() -> Vec<UiTextCode> {
+        let mut codes = Vec::new();
+
+        for code in [
+            UiTextCode::NoTextExtracted,
+            UiTextCode::AmountAssumesTwoDecimals,
+            UiTextCode::DatedFromDocument,
+            UiTextCode::AddPayableAccount,
+            UiTextCode::PdfOverBudget,
+            UiTextCode::ParsedFromDocumentText,
+            UiTextCode::OcrPathMissing,
+            UiTextCode::OcrModelsMissing,
+            UiTextCode::OcrRead,
+            UiTextCode::OcrLittleText,
+            UiTextCode::OcrFailed,
+            UiTextCode::OcrPdfImage,
+            UiTextCode::InvoiceParsed,
+            UiTextCode::InvoiceNoTotal,
+            UiTextCode::InvoiceIncome,
+            UiTextCode::InvoiceUtility,
+            UiTextCode::InvoiceUnpaid,
+            UiTextCode::InvoiceVatExempt,
+            UiTextCode::TransferDetected,
+            UiTextCode::TransferNoAmount,
+            UiTextCode::TransferFee,
+            UiTextCode::TransferFeeUnstated,
+        ] {
+            match code {
+                UiTextCode::NoTextExtracted
+                | UiTextCode::AmountAssumesTwoDecimals
+                | UiTextCode::DatedFromDocument
+                | UiTextCode::AddPayableAccount
+                | UiTextCode::PdfOverBudget
+                | UiTextCode::ParsedFromDocumentText
+                | UiTextCode::OcrPathMissing
+                | UiTextCode::OcrModelsMissing
+                | UiTextCode::OcrRead
+                | UiTextCode::OcrLittleText
+                | UiTextCode::OcrFailed
+                | UiTextCode::OcrPdfImage
+                | UiTextCode::InvoiceParsed
+                | UiTextCode::InvoiceNoTotal
+                | UiTextCode::InvoiceIncome
+                | UiTextCode::InvoiceUtility
+                | UiTextCode::InvoiceUnpaid
+                | UiTextCode::InvoiceVatExempt
+                | UiTextCode::TransferDetected
+                | UiTextCode::TransferNoAmount
+                | UiTextCode::TransferFee
+                | UiTextCode::TransferFeeUnstated => codes.push(code),
+            }
+        }
+
+        codes
+    }
+
+    #[test]
+    fn all_lists_exactly_the_variants_of_the_enum() {
+        assert_eq!(UiTextCode::ALL, every_code().as_slice());
+    }
+
+    /// Same guard for the synthetic report rows: no wildcard arm.
+    fn every_synthetic_line() -> Vec<SyntheticLine> {
+        let mut lines = Vec::new();
+
+        for line in [SyntheticLine::RetainedEarnings, SyntheticLine::NetIncome] {
+            match line {
+                SyntheticLine::RetainedEarnings | SyntheticLine::NetIncome => lines.push(line),
+            }
+        }
+
+        lines
+    }
+
+    #[test]
+    fn the_synthetic_line_list_covers_every_variant() {
+        assert_eq!(SyntheticLine::ALL, every_synthetic_line().as_slice());
     }
 
     #[test]

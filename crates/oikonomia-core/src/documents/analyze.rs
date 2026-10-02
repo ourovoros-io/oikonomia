@@ -9,7 +9,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::invoice::parse_invoice_text;
+use super::invoice::read_invoice_text;
 use super::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use super::store::{match_expense_account, match_income_account};
 use crate::default_accounts::default_account_for_role;
@@ -145,7 +145,11 @@ pub fn analyze_document_bytes(
         if source == AnalyzeSource::None {
             source = AnalyzeSource::Heuristic;
         }
-        let mut s = parse_invoice_text(body);
+        let reading = read_invoice_text(body);
+        let mut s = reading.suggestion;
+        if let Some(fee_minor) = reading.transfer_fee_minor {
+            s.notes.push(transfer_fee_note(fee_minor, default_currency));
+        }
         if let Some(note) = source_note {
             s.notes.insert(0, note);
         }
@@ -168,21 +172,6 @@ pub fn analyze_document_bytes(
         );
     }
 
-    // A transfer fee is also read as cents, so for any other exponent it would
-    // be shown wrongly. Otherwise it needs the currency to be formatted as money.
-    if two_decimals {
-        for note in &mut suggestion.notes {
-            if note.code == UiTextCode::TransferFee {
-                note.params
-                    .insert("currency".to_owned(), default_currency.to_ascii_uppercase());
-            }
-        }
-    } else {
-        suggestion
-            .notes
-            .retain(|note| note.code != UiTextCode::TransferFee);
-    }
-
     // Document dates (issue or due date) often fall outside the current month;
     // say so, or the entry seems to vanish from the dashboard after posting.
     if let Some(date) = suggestion.entry_date.as_deref() {
@@ -191,6 +180,21 @@ pub fn analyze_document_bytes(
     }
 
     Ok(suggestion)
+}
+
+/// The note for a transfer fee the receipt shows.
+///
+/// The reader reads the fee as cents. In a 2-decimal book it is sent as a
+/// figure with the book's currency, which the UI formats. In any other book
+/// the figure would be wrong, so the note states the fee exists without one.
+fn transfer_fee_note(fee_minor: i64, currency: &str) -> UiText {
+    if currency_exponent(currency) == 2 {
+        UiText::new(UiTextCode::TransferFee)
+            .with_param("fee_minor", fee_minor.to_string())
+            .with_param("currency", currency.to_ascii_uppercase())
+    } else {
+        UiText::new(UiTextCode::TransferFeeUnstated)
+    }
 }
 
 /// ISO 4217 minor-unit exponent for the currencies the app offers.
@@ -808,11 +812,97 @@ mod tests {
         );
     }
 
+    /// A Greek bank transfer receipt with a 1,40 fee beside a 310,00 principal.
+    const TRANSFER_RECEIPT: &str =
+        include_str!("../../testdata/documents/synthetic/text/greek_bank_embasma.txt");
+
+    fn analyze_receipt_in(currency: &str) -> Vec<UiText> {
+        notes_of(analyze_document_bytes(
+            "embasma.txt",
+            "text/plain",
+            TRANSFER_RECEIPT.as_bytes(),
+            ChartTemplate::Blank,
+            &[],
+            currency,
+            None,
+        ))
+    }
+
+    #[test]
+    fn a_transfer_fee_in_a_two_decimal_book_carries_its_amount_and_the_book_currency() {
+        let notes = analyze_receipt_in("EUR");
+
+        assert!(
+            notes.contains(
+                &UiText::new(UiTextCode::TransferFee)
+                    .with_param("fee_minor", "140")
+                    .with_param("currency", "EUR")
+            ),
+            "{notes:?}"
+        );
+        assert!(
+            !codes_of(&notes).contains(&UiTextCode::TransferFeeUnstated),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn a_transfer_fee_in_a_book_without_two_decimals_is_mentioned_without_a_figure() {
+        let notes = analyze_receipt_in("JPY");
+
+        assert!(
+            notes.contains(&UiText::new(UiTextCode::TransferFeeUnstated)),
+            "{notes:?}"
+        );
+        assert!(
+            !codes_of(&notes).contains(&UiTextCode::TransferFee),
+            "a cents figure must not be shown for JPY: {notes:?}"
+        );
+    }
+
+    #[test]
+    fn the_fee_note_keeps_its_place_between_the_reader_notes_and_the_amount_warning() {
+        let notes = analyze_receipt_in("JPY");
+
+        assert_eq!(
+            codes_of(&notes),
+            [
+                UiTextCode::ParsedFromDocumentText,
+                UiTextCode::InvoiceParsed,
+                UiTextCode::TransferDetected,
+                UiTextCode::TransferFeeUnstated,
+                UiTextCode::AmountAssumesTwoDecimals,
+                UiTextCode::DatedFromDocument,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_receipt_without_a_fee_gets_no_fee_note() {
+        let notes = notes_of(analyze_document_bytes(
+            "bill.txt",
+            "text/plain",
+            b"Invoice\nTOTAL 45,90\nThank you",
+            ChartTemplate::Blank,
+            &[],
+            "JPY",
+            None,
+        ));
+        let codes = codes_of(&notes);
+
+        assert!(!codes.contains(&UiTextCode::TransferFee), "{codes:?}");
+        assert!(
+            !codes.contains(&UiTextCode::TransferFeeUnstated),
+            "{codes:?}"
+        );
+    }
+
     #[test]
     fn the_hint_says_whether_the_models_are_present() {
         assert_eq!(analyzer_status(None).hint, AnalyzerHint::ModelsMissing);
 
         let dir = tempfile::tempdir();
+        assert!(dir.is_ok(), "the temporary directory must be created");
         let Ok(dir) = dir else { return };
         assert_eq!(
             analyzer_status(Some(dir.path())).hint,
@@ -823,6 +913,28 @@ mod tests {
             assert!(std::fs::write(dir.path().join(file), b"x").is_ok());
         }
         assert_eq!(analyzer_status(Some(dir.path())).hint, AnalyzerHint::Ready);
+    }
+
+    /// One value of every hint. The `match` has no wildcard arm, so adding a
+    /// variant stops compiling here until it is handled.
+    ///
+    /// This guarantees a new variant is noticed. It does not prove the value
+    /// returned for it is the right one, and it cannot see `ALL` itself.
+    fn every_hint() -> Vec<AnalyzerHint> {
+        let mut hints = Vec::new();
+
+        for hint in [AnalyzerHint::Ready, AnalyzerHint::ModelsMissing] {
+            match hint {
+                AnalyzerHint::Ready | AnalyzerHint::ModelsMissing => hints.push(hint),
+            }
+        }
+
+        hints
+    }
+
+    #[test]
+    fn all_lists_every_hint_variant() {
+        assert_eq!(AnalyzerHint::ALL, every_hint().as_slice());
     }
 
     #[test]

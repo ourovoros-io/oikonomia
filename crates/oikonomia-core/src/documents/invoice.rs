@@ -8,13 +8,34 @@
 use super::analyze::{DocumentSuggestion, EntryKindSuggestion};
 use crate::ui_text::{UiText, UiTextCode};
 
+/// What the invoice reader found in a document.
+pub(crate) struct InvoiceReading {
+    /// The draft fields and the reader's own notes.
+    pub suggestion: DocumentSuggestion,
+    /// The fee a bank transfer receipt shows, in 2-decimal minor units (cents).
+    ///
+    /// It is data, not a note: the note needs the book's currency, which the
+    /// reader does not know, so the analyzer builds it in one place.
+    pub transfer_fee_minor: Option<i64>,
+}
+
 /// Parse extracted document text into a draft suggestion.
 ///
 /// Bank transfer receipts stay [`EntryKindSuggestion::Expense`]. The
 /// posted amount is the capital debit (`Ποσό Χρέωσης Κεφαλαίου` / `Ποσό:`),
 /// not the fee and not a `hh:mm` time.
+///
+/// The returned notes never mention a transfer fee, even when the receipt
+/// shows one: that note needs the book's currency, so
+/// [`analyze_document_bytes`](super::analyze_document_bytes) adds it. Callers
+/// that need the fee use `read_invoice_text`.
 #[must_use]
 pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
+    read_invoice_text(text).suggestion
+}
+
+/// Parse extracted document text, keeping the detected transfer fee as data.
+pub(crate) fn read_invoice_text(text: &str) -> InvoiceReading {
     let normalized = normalize(text);
     let lower_full = normalized.to_lowercase();
     if is_bank_transfer_receipt(&fold_greek(&lower_full)) {
@@ -35,7 +56,7 @@ pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
 
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
-    DocumentSuggestion {
+    let suggestion = DocumentSuggestion {
         source: super::analyze::AnalyzeSource::Heuristic,
         model: Some("invoice-parser-v1".into()),
         kind,
@@ -50,6 +71,11 @@ pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
         payable_account_id: None,
         confidence,
         notes: build_notes(amount_minor, kind, bill_unpaid, &lower_full),
+    };
+
+    InvoiceReading {
+        suggestion,
+        transfer_fee_minor: None,
     }
 }
 
@@ -257,7 +283,7 @@ fn is_bank_transfer_receipt(folded: &str) -> bool {
 }
 
 /// Expense fill for a Greek bank `έμβασμα` / other-bank transfer receipt.
-fn parse_bank_transfer(text: &str) -> DocumentSuggestion {
+fn parse_bank_transfer(text: &str) -> InvoiceReading {
     let amount_minor = find_transfer_principal(text);
     let entry_date = find_transfer_date(text);
     let reference = find_transfer_reference(text);
@@ -270,7 +296,7 @@ fn parse_bank_transfer(text: &str) -> DocumentSuggestion {
     let kind = EntryKindSuggestion::Expense;
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
-    DocumentSuggestion {
+    let suggestion = DocumentSuggestion {
         source: super::analyze::AnalyzeSource::Heuristic,
         model: Some("invoice-parser-v1".into()),
         kind,
@@ -284,7 +310,12 @@ fn parse_bank_transfer(text: &str) -> DocumentSuggestion {
         wallet_account_id: None,
         payable_account_id: None,
         confidence,
-        notes: build_transfer_notes(amount_minor, fee_minor),
+        notes: build_transfer_notes(amount_minor),
+    };
+
+    InvoiceReading {
+        suggestion,
+        transfer_fee_minor: fee_minor,
     }
 }
 
@@ -498,7 +529,7 @@ fn first_date_on_line(line: &str) -> Option<String> {
     None
 }
 
-fn build_transfer_notes(amount: Option<i64>, fee_minor: Option<i64>) -> Vec<UiText> {
+fn build_transfer_notes(amount: Option<i64>) -> Vec<UiText> {
     let mut notes = vec![
         UiText::new(UiTextCode::InvoiceParsed),
         UiText::new(UiTextCode::TransferDetected),
@@ -506,11 +537,6 @@ fn build_transfer_notes(amount: Option<i64>, fee_minor: Option<i64>) -> Vec<UiTe
 
     if amount.is_none() {
         notes.push(UiText::new(UiTextCode::TransferNoAmount));
-    }
-
-    if let Some(fee) = fee_minor {
-        // The currency is the book's, so the caller adds it. The UI formats the money.
-        notes.push(UiText::new(UiTextCode::TransferFee).with_param("fee_minor", fee.to_string()));
     }
 
     notes
@@ -1733,9 +1759,13 @@ mod tests {
             [
                 UiText::new(UiTextCode::InvoiceParsed),
                 UiText::new(UiTextCode::TransferDetected),
-                UiText::new(UiTextCode::TransferFee).with_param("fee_minor", "140"),
             ],
-            "notes should mention the fee only, as integer minor units"
+            "the fee note needs the book currency, so the analyzer adds it"
+        );
+        assert_eq!(
+            read_invoice_text(&text).transfer_fee_minor,
+            Some(140),
+            "the fee is returned as integer minor units"
         );
         assert_ne!(suggestion.amount_minor, Some(140));
         assert_ne!(suggestion.amount_minor, Some(700));

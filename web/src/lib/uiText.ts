@@ -1,4 +1,4 @@
-import { t, getLocale, type Locale } from './i18n'
+import { t } from './i18n'
 import { formatDate, formatMoney } from './money'
 
 /**
@@ -36,6 +36,7 @@ export const NOTE_CODE_KEYS: Record<string, string> = {
   transfer_detected: 'analyze.invoice.notes.transferDetected',
   transfer_no_amount: 'analyze.invoice.notes.transferNoAmount',
   transfer_fee: 'analyze.invoice.notes.transferFee',
+  transfer_fee_unstated: 'analyze.invoice.notes.transferFeeUnstated',
 }
 
 /** Analyzer status hint code -> catalog key. */
@@ -61,24 +62,23 @@ const MONEY_PARAMS: Record<string, { placeholder: string; minor: string; currenc
 /** Rust sends ISO dates; the copy shows the date the way the rest of the app does. */
 const DATE_PARAMS: ReadonlySet<string> = new Set(['date'])
 
-/** A BCP 47 tag for number formatting in each interface language. */
-const NUMBER_LOCALES: Record<Locale, string> = {
-  en: 'en-US',
-  el: 'el-GR',
-  fr: 'fr-FR',
-  de: 'de-DE',
-}
-
 function keyFor(map: Record<string, string>, code: string): string | undefined {
   return Object.hasOwn(map, code) ? map[code] : undefined
 }
 
+/** A whole number of minor units, as Rust sends it. Nothing else may become a number. */
+const INTEGER_TEXT = /^-?\d+$/
+
+/** Any `{name}` still in the copy once the values are filled in. */
+const LEFTOVER_PLACEHOLDER = /\{\w+\}/
+
 /**
  * The text for a note in the current language, or an empty string when the
  * code is unknown or its values are unusable. A code is never shown: an
- * unknown one is a version mismatch, so it is logged and skipped.
+ * unknown one is a version mismatch, so it is logged and skipped. Copy with a
+ * value still missing is skipped too, never shown with a raw `{name}` in it.
  */
-export function renderUiText(text: UiText, locale: Locale = getLocale()): string {
+export function renderUiText(text: UiText): string {
   const key = keyFor(NOTE_CODE_KEYS, text.code)
 
   if (key === undefined) {
@@ -95,26 +95,35 @@ export function renderUiText(text: UiText, locale: Locale = getLocale()): string
   const spec = Object.hasOwn(MONEY_PARAMS, text.code) ? MONEY_PARAMS[text.code] : undefined
 
   if (spec !== undefined) {
-    const minor = Number(text.params?.[spec.minor])
+    const rawMinor = text.params?.[spec.minor]
     const currency = text.params?.[spec.currency]
 
-    if (!Number.isFinite(minor) || !currency) {
+    if (rawMinor === undefined || !INTEGER_TEXT.test(rawMinor) || !currency) {
       console.warn(`UI text "${text.code}" is missing its money values`)
       return ''
     }
 
-    vars[spec.placeholder] = formatMoney(minor, currency, NUMBER_LOCALES[locale])
+    // The same call as the suggested amount beside the fee in the same banner,
+    // so the two always look alike.
+    vars[spec.placeholder] = formatMoney(Number(rawMinor), currency)
   }
 
   const copy = t(key, vars)
 
-  return copy === key ? '' : copy
+  if (copy === key) return ''
+
+  if (LEFTOVER_PLACEHOLDER.test(copy)) {
+    console.warn(`UI text "${text.code}" is missing a value for its copy`)
+    return ''
+  }
+
+  return copy
 }
 
 /** All notes in the current language, in order, joined by a space; unknown codes are skipped. */
-export function renderUiTexts(notes: readonly UiText[], locale: Locale = getLocale()): string {
+export function renderUiTexts(notes: readonly UiText[]): string {
   return notes
-    .map((note) => renderUiText(note, locale))
+    .map((note) => renderUiText(note))
     .filter((sentence) => sentence !== '')
     .join(' ')
 }

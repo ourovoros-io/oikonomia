@@ -20,7 +20,8 @@
     "invoice_vat_exempt",
     "transfer_detected",
     "transfer_no_amount",
-    "transfer_fee"
+    "transfer_fee",
+    "transfer_fee_unstated"
   ],
   "hints": ["ready", "models_missing"],
   "syntheticLines": ["retained_earnings", "net_income"]

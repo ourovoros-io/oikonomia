@@ -72,6 +72,7 @@ describe('copy for every code', () => {
     setLocale('en')
 
     expect(placeholders(t(NOTE_CODE_KEYS.transfer_fee))).toEqual(['fee'])
+    expect(placeholders(t(NOTE_CODE_KEYS.transfer_fee_unstated))).toEqual([])
     expect(placeholders(t(NOTE_CODE_KEYS.dated_from_document))).toEqual(['date'])
     expect(placeholders(t(NOTE_CODE_KEYS.amount_assumes_two_decimals))).toEqual(['currency'])
   })
@@ -81,18 +82,61 @@ describe('renderUiText', () => {
   const fee = { code: 'transfer_fee', params: { fee_minor: '140', currency: 'EUR' } }
 
   test.each([
-    ['en', 'en-US', 'Transfer fee '],
-    ['el', 'el-GR', 'Η προμήθεια εμβάσματος '],
-    ['fr', 'fr-FR', 'Les frais de virement de '],
-    ['de', 'de-DE', 'Die Überweisungsgebühr '],
-  ] as const)('%s formats the fee as money in that language', (locale, tag, start) => {
+    ['en', 'Transfer fee '],
+    ['el', 'Η προμήθεια εμβάσματος '],
+    ['fr', 'Les frais de virement de '],
+    ['de', 'Die Überweisungsgebühr von '],
+  ] as const)('%s words the fee in that language', (locale, start) => {
     setLocale(locale)
 
     const text = renderUiText(fee)
 
     expect(text.startsWith(start)).toBe(true)
-    expect(text).toContain(formatMoney(140, 'EUR', tag))
     expect(text).not.toContain('{')
+  })
+
+  test.each(LOCALES)(
+    '%s shows the fee the way the amount beside it is shown, whatever the language',
+    (locale) => {
+      setLocale(locale)
+
+      // The suggested amount in the same banner is formatMoney(minor, currency).
+      expect(renderUiText(fee)).toContain(formatMoney(140, 'EUR'))
+    },
+  )
+
+  test('a EUR fee reads the same number in every language', () => {
+    const shown = LOCALES.map((locale) => {
+      setLocale(locale)
+      return renderUiText(fee).match(/1,40\s€/u)?.[0]
+    })
+
+    expect(shown).toEqual(Array(LOCALES.length).fill(formatMoney(140, 'EUR')))
+  })
+
+  test('the fee that is not a figure has plain copy in every language', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale)
+
+      const text = renderUiText({ code: 'transfer_fee_unstated' })
+
+      expect(text).not.toBe('')
+      expect(text).not.toContain('{')
+    }
+  })
+
+  test.each([
+    ['en', 'A transfer fee is shown on the receipt and is not the posted amount.'],
+    [
+      'el',
+      'Στην απόδειξη αναγράφεται προμήθεια εμβάσματος, η οποία δεν είναι το ποσό που καταχωρίζεται.',
+    ],
+    ['fr', 'Des frais de virement figurent sur le reçu et ne sont pas le montant enregistré.'],
+    ['de', 'Auf dem Beleg steht eine Überweisungsgebühr; sie ist nicht der gebuchte Betrag.'],
+  ] as const)('%s copy for the fee without a figure', (locale, copy) => {
+    setLocale(locale)
+
+    expect(renderUiText({ code: 'transfer_fee_unstated' })).toBe(copy)
   })
 
   test('the money follows the currency Rust names, not a number it formatted', () => {
@@ -140,6 +184,38 @@ describe('renderUiText', () => {
     expect(warn).toHaveBeenCalled()
   })
 
+  test.each([
+    ['empty', ''],
+    ['a decimal', '1.5'],
+    ['not a number', 'abc'],
+    ['padded', ' 140'],
+  ])('a fee that is %s renders nothing and warns, never zero', (_label, minor) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    expect(
+      renderUiText({ code: 'transfer_fee', params: { fee_minor: minor, currency: 'EUR' } }),
+    ).toBe('')
+    expect(warn).toHaveBeenCalled()
+  })
+
+  test('a negative whole number is still a number', () => {
+    setLocale('en')
+
+    expect(
+      renderUiText({ code: 'transfer_fee', params: { fee_minor: '-140', currency: 'EUR' } }),
+    ).toContain(formatMoney(-140, 'EUR'))
+  })
+
+  test('a note whose value is missing renders nothing and warns, for any value', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setLocale('en')
+
+    expect(renderUiText({ code: 'dated_from_document' })).toBe('')
+    expect(renderUiText({ code: 'dated_from_document', params: {} })).toBe('')
+    expect(renderUiText({ code: 'amount_assumes_two_decimals' })).toBe('')
+    expect(warn).toHaveBeenCalledTimes(3)
+  })
+
   test('notes are joined in order and unknown ones are skipped', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     setLocale('en')
@@ -149,6 +225,59 @@ describe('renderUiText', () => {
     ).toBe(
       'Read with built-in offline OCR. Review before saving. Parsed offline with the built-in invoice reader (no internet).',
     )
+  })
+})
+
+describe('copy polish', () => {
+  test.each([
+    ['el', 'ocr_failed', 'Η OCR απέτυχε. Μπορείτε ωστόσο να συμπληρώσετε τα πεδία.'],
+    ['fr', 'ocr_failed', 'L’OCR a échoué. Vous pouvez tout de même remplir les champs.'],
+    [
+      'de',
+      'ocr_failed',
+      'Die OCR ist fehlgeschlagen. Sie können die Felder trotzdem selbst ausfüllen.',
+    ],
+    ['de', 'invoice_unpaid', 'Als Kauf auf Rechnung / offener Betrag vermerkt.'],
+    ['el', 'invoice_unpaid', 'Σημειώθηκε ως αγορά επί πιστώσει / οφειλόμενο ποσό.'],
+    ['fr', 'invoice_unpaid', 'Marqué comme achat à crédit / montant dû.'],
+  ] as const)('%s %s', (locale, code, copy) => {
+    setLocale(locale)
+
+    expect(renderUiText({ code })).toBe(copy)
+  })
+
+  test.each([
+    [
+      'de',
+      'Die Überweisungsgebühr von 1,40\u00a0€ steht auf dem Beleg und ist nicht der gebuchte Betrag.',
+    ],
+    [
+      'el',
+      'Η προμήθεια εμβάσματος 1,40\u00a0€ αναγράφεται στην απόδειξη και δεν είναι το ποσό που καταχωρίζεται.',
+    ],
+  ] as const)('%s fee note', (locale, copy) => {
+    setLocale(locale)
+
+    expect(
+      renderUiText({ code: 'transfer_fee', params: { fee_minor: '140', currency: 'EUR' } }),
+    ).toBe(copy)
+  })
+
+  test.each([
+    [
+      'fr',
+      'La détection du montant suppose des devises à 2 décimales\u202f; saisissez le montant en JPY à la main.',
+    ],
+    [
+      'de',
+      'Die Betragserkennung geht von Währungen mit 2 Dezimalstellen aus; tragen Sie den Betrag in JPY selbst ein.',
+    ],
+  ] as const)('%s amount note', (locale, copy) => {
+    setLocale(locale)
+
+    expect(
+      renderUiText({ code: 'amount_assumes_two_decimals', params: { currency: 'JPY' } }),
+    ).toBe(copy)
   })
 })
 

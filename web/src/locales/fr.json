@@ -1020,7 +1020,7 @@
     },
     "notes": {
       "noText": "Impossible d’extraire le texte de ce fichier.",
-      "amountCurrency": "La détection du montant suppose des devises à 2 décimales ; saisissez le montant {currency} à la main.",
+      "amountCurrency": "La détection du montant suppose des devises à 2 décimales ; saisissez le montant en {currency} à la main.",
       "datedFromDoc": "L’écriture portera la date {date} (d’après le document) et comptera dans ce mois — changez la date si vous voulez une autre période.",
       "addPayable": "Ajoutez un compte de passif « Factures à payer » pour les factures non réglées.",
       "pdfBudget": "Le PDF dépasse la limite de pages ou de flux ; remplissez les champs à la main.",
@@ -1029,7 +1029,7 @@
       "ocrModelsMissing": "Les modèles OCR intégrés sont introuvables. Utilisez un PDF texte ou remplissez les champs à la main.",
       "ocrRead": "Lu avec l’OCR hors ligne intégré. Vérifiez avant d’enregistrer.",
       "ocrLittleText": "L’OCR a tourné mais a trouvé peu de texte — remplissez le formulaire à la main si besoin.",
-      "ocrError": "L’OCR a échoué. Vous pouvez remplir les champs.",
+      "ocrError": "L’OCR a échoué. Vous pouvez tout de même remplir les champs.",
       "ocrPdfImage": "Image PDF lue avec l’OCR intégré. Vérifiez avant d’enregistrer."
     },
     "invoice": {
@@ -1038,11 +1038,12 @@
         "noTotal": "Aucun total n’a été trouvé avec certitude — saisissez le montant.",
         "income": "Facture de vente / de prestation détectée (recette).",
         "utility": "Facture d’énergie / de charges détectée (dépense).",
-        "unpaid": "Marqué comme crédit / montant dû.",
+        "unpaid": "Marqué comme achat à crédit / montant dû.",
         "vatExempt": "La TVA apparaît nulle / exonérée.",
         "transferDetected": "Reçu de virement bancaire détecté (dépense).",
         "transferNoAmount": "Le montant du virement n’a pas été trouvé avec certitude — saisissez le montant.",
-        "transferFee": "Les frais de virement de {fee} figurent sur le reçu et ne sont pas le montant enregistré."
+        "transferFee": "Les frais de virement de {fee} figurent sur le reçu et ne sont pas le montant enregistré.",
+        "transferFeeUnstated": "Des frais de virement figurent sur le reçu et ne sont pas le montant enregistré."
       },
       "merchant": {
         "naturalGas": "Gaz naturel",

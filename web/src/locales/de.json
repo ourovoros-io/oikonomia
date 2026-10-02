@@ -1020,7 +1020,7 @@
     },
     "notes": {
       "noText": "Aus dieser Datei ließ sich kein Text lesen.",
-      "amountCurrency": "Die Betragserkennung geht von Währungen mit 2 Dezimalstellen aus; tragen Sie den Betrag {currency} selbst ein.",
+      "amountCurrency": "Die Betragserkennung geht von Währungen mit 2 Dezimalstellen aus; tragen Sie den Betrag in {currency} selbst ein.",
       "datedFromDoc": "Die Buchung erhält das Datum {date} (aus dem Dokument) und zählt in diesen Monat — ändern Sie das Datum, wenn Sie einen anderen Zeitraum möchten.",
       "addPayable": "Legen Sie unter Verbindlichkeiten ein Konto „Offene Rechnungen“ für unbezahlte Rechnungen an.",
       "pdfBudget": "Das PDF überschreitet das Seiten- oder Größenlimit; füllen Sie die Felder selbst aus.",
@@ -1029,7 +1029,7 @@
       "ocrModelsMissing": "Die mitgelieferten OCR-Modelle fehlen. Nutzen Sie ein Text-PDF oder füllen Sie die Felder selbst aus.",
       "ocrRead": "Mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern.",
       "ocrLittleText": "Die OCR ist durchgelaufen, hat aber wenig Text gefunden — füllen Sie das Formular bei Bedarf selbst aus.",
-      "ocrError": "Die OCR ist fehlgeschlagen. Sie können die Felder selbst ausfüllen.",
+      "ocrError": "Die OCR ist fehlgeschlagen. Sie können die Felder trotzdem selbst ausfüllen.",
       "ocrPdfImage": "Eingebettetes PDF-Bild mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern."
     },
     "invoice": {
@@ -1038,11 +1038,12 @@
         "noTotal": "Kein Gesamtbetrag sicher erkannt — tragen Sie den Betrag ein.",
         "income": "Verkaufs- oder Leistungsrechnung erkannt (Einnahme).",
         "utility": "Versorger- oder Stromrechnung erkannt (Ausgabe).",
-        "unpaid": "Als unbezahlt / offener Betrag vermerkt.",
+        "unpaid": "Als Kauf auf Rechnung / offener Betrag vermerkt.",
         "vatExempt": "Die MwSt. steht auf null / steuerfrei.",
         "transferDetected": "Überweisungsbeleg erkannt (Ausgabe).",
         "transferNoAmount": "Der überwiesene Betrag wurde nicht sicher erkannt — tragen Sie den Betrag ein.",
-        "transferFee": "Die Überweisungsgebühr {fee} steht auf dem Beleg und ist nicht der gebuchte Betrag."
+        "transferFee": "Die Überweisungsgebühr von {fee} steht auf dem Beleg und ist nicht der gebuchte Betrag.",
+        "transferFeeUnstated": "Auf dem Beleg steht eine Überweisungsgebühr; sie ist nicht der gebuchte Betrag."
       },
       "merchant": {
         "naturalGas": "Erdgas",

@@ -459,9 +459,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_role_list_covers_every_variant() {
-        let from_variants: BTreeSet<&str> = [
+    /// One value of every role. The `match` has no wildcard arm, so adding a
+    /// variant stops compiling here until it is handled.
+    ///
+    /// This guarantees a new variant is noticed. It does not prove the list is
+    /// complete or in the form's order; the test below compares it with `ALL`.
+    fn every_role() -> Vec<AccountRole> {
+        let mut roles = Vec::new();
+
+        for role in [
             AccountRole::Category,
             AccountRole::Payment,
             AccountRole::Deposit,
@@ -470,16 +476,25 @@ mod tests {
             AccountRole::BillsPayable,
             AccountRole::TransferSource,
             AccountRole::TransferDestination,
-        ]
-        .iter()
-        .map(|role| role.identifier())
-        .collect();
-        let listed: BTreeSet<&str> = AccountRole::ALL
-            .iter()
-            .map(|role| role.identifier())
-            .collect();
+        ] {
+            match role {
+                AccountRole::Category
+                | AccountRole::Payment
+                | AccountRole::Deposit
+                | AccountRole::Income
+                | AccountRole::BillCategory
+                | AccountRole::BillsPayable
+                | AccountRole::TransferSource
+                | AccountRole::TransferDestination => roles.push(role),
+            }
+        }
 
-        assert_eq!(from_variants, listed);
+        roles
+    }
+
+    #[test]
+    fn the_role_list_covers_every_variant() {
+        assert_eq!(AccountRole::ALL, every_role().as_slice());
     }
 
     #[test]
