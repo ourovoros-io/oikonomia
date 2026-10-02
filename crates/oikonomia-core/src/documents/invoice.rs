@@ -23,6 +23,14 @@ pub(crate) struct InvoiceReading {
     /// It is data, not a note: the note needs the book's currency, which the
     /// reader does not know, so the analyzer builds it in one place.
     pub transfer_fee_minor: Option<i64>,
+    /// The words the suggested category is chosen from: the merchant and
+    /// description, always worded in English.
+    ///
+    /// The suggestion's own merchant and description are written in the app's
+    /// language, and the category must not depend on that language, so the
+    /// category is matched against this text instead. Words taken from the
+    /// document itself are the same in it as in the suggestion.
+    pub category_hint: String,
 }
 
 /// Parse extracted document text into a draft suggestion.
@@ -41,7 +49,29 @@ pub fn parse_invoice_text(text: &str, locale: Locale) -> DocumentSuggestion {
 }
 
 /// Parse extracted document text, keeping the detected transfer fee as data.
+///
+/// The suggestion is worded in `locale`; the category hint never is.
 pub(crate) fn read_invoice_text(text: &str, locale: Locale) -> InvoiceReading {
+    let mut reading = read_fields(text, locale);
+
+    if locale != Locale::En {
+        reading.category_hint = read_fields(text, Locale::En).category_hint;
+    }
+
+    reading
+}
+
+/// The merchant and description of a suggestion, joined for keyword matching.
+fn category_hint_of(suggestion: &DocumentSuggestion) -> String {
+    format!(
+        "{} {}",
+        suggestion.merchant.as_deref().unwrap_or(""),
+        suggestion.description.as_deref().unwrap_or("")
+    )
+}
+
+/// Read every field, wording the generated text in `locale`.
+fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
     let normalized = normalize(text);
     let lower_full = normalized.to_lowercase();
     if is_bank_transfer_receipt(&fold_greek(&lower_full)) {
@@ -81,6 +111,7 @@ pub(crate) fn read_invoice_text(text: &str, locale: Locale) -> InvoiceReading {
     };
 
     InvoiceReading {
+        category_hint: category_hint_of(&suggestion),
         suggestion,
         transfer_fee_minor: None,
     }
@@ -318,6 +349,7 @@ fn parse_bank_transfer(text: &str, locale: Locale) -> InvoiceReading {
     };
 
     InvoiceReading {
+        category_hint: category_hint_of(&suggestion),
         suggestion,
         transfer_fee_minor: fee_minor,
     }
@@ -1938,6 +1970,28 @@ mod tests {
                 .is_some_and(|r| { r.contains("NGS") || r.contains("SYN") || r.starts_with("RF") }),
             "reference={:?}",
             s.reference
+        );
+    }
+
+    #[test]
+    fn the_category_hint_is_worded_in_english_whatever_the_language() {
+        let text = corpus_text("synthetic/text/dei_settlement.txt");
+        let english = read_invoice_text(&text, crate::prefs::Locale::En);
+
+        for locale in [
+            crate::prefs::Locale::El,
+            crate::prefs::Locale::Fr,
+            crate::prefs::Locale::De,
+        ] {
+            let reading = read_invoice_text(&text, locale);
+
+            assert_eq!(reading.category_hint, english.category_hint, "{locale:?}");
+        }
+
+        assert!(
+            english.category_hint.contains("Electricity bill"),
+            "{:?}",
+            english.category_hint
         );
     }
 }

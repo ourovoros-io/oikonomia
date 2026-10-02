@@ -162,11 +162,13 @@ pub fn analyze_document_bytes(
     let model_label = extracted.model_label;
     let source_note = extracted.source_note;
 
+    let mut category_hint = String::new();
     let mut suggestion = if let Some(ref body) = text {
         if source == AnalyzeSource::None {
             source = AnalyzeSource::Heuristic;
         }
         let reading = read_invoice_text(body, locale);
+        category_hint = reading.category_hint;
         let mut s = reading.suggestion;
         if let Some(fee_minor) = reading.transfer_fee_minor {
             s.notes.push(transfer_fee_note(fee_minor, default_currency));
@@ -180,7 +182,14 @@ pub fn analyze_document_bytes(
     };
 
     let model = model_label.or_else(|| suggestion.model.clone());
-    finalize_suggestion(&mut suggestion, template, accounts, source, model);
+    finalize_suggestion(
+        &mut suggestion,
+        template,
+        accounts,
+        &category_hint,
+        source,
+        model,
+    );
 
     // The invoice reader emits 2-exponent minor units (cents). For currencies
     // with a different exponent the value would be silently wrong, so drop it.
@@ -231,23 +240,18 @@ fn finalize_suggestion(
     s: &mut DocumentSuggestion,
     template: ChartTemplate,
     accounts: &[Account],
+    category_hint: &str,
     source: AnalyzeSource,
     model: Option<String>,
 ) {
     s.source = source;
     s.model = model;
 
-    let hint = format!(
-        "{} {}",
-        s.merchant.as_deref().unwrap_or(""),
-        s.description.as_deref().unwrap_or("")
-    );
-
     if s.category_account_id.is_none() {
         s.category_account_id = match s.kind {
-            EntryKindSuggestion::Income => match_income_account(template, accounts, &hint),
+            EntryKindSuggestion::Income => match_income_account(template, accounts, category_hint),
             EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
-                match_expense_account(template, accounts, &hint)
+                match_expense_account(template, accounts, category_hint)
             }
         };
     }

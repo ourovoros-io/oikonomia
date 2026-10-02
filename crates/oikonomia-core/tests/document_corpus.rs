@@ -504,3 +504,201 @@ fn jpeg_ocr_smoke() {
         }
     }
 }
+
+/// The accounts a suggestion points at, as chart codes, and the entry kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SuggestedCodes {
+    kind: EntryKindSuggestion,
+    category: Option<String>,
+    wallet: Option<String>,
+    payable: Option<String>,
+}
+
+const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
+
+const SEEDED_CHARTS: [ChartTemplate; 2] = [ChartTemplate::Personal, ChartTemplate::Company];
+
+/// Documents the corpus does not hold, each reaching generated wording the
+/// corpus documents do not: an unnamed gas supplier, an unnamed electricity
+/// supplier, an invoice known only by its number, and a bare invoice.
+const EXTRA_DOCUMENTS: [(&str, &str); 4] = [
+    (
+        "extra-unnamed-gas",
+        "Λογαριασμός\nΠρομήθεια φυσικού αερίου\nΣΥΝΟΛΟ 45,90 EUR\n12/03/2025",
+    ),
+    (
+        "extra-unnamed-electricity",
+        "Power Business\nΣΥΝΟΛΟ 120,00 EUR\n12/03/2025",
+    ),
+    (
+        "extra-invoice-number",
+        "Acme Software Ltd\nInvoice No: INV-2025-0042\nTOTAL 99,00 EUR\n2025-03-12",
+    ),
+    ("extra-bare-invoice", "Τιμολόγιο\nΣΥΝΟΛΟ 10,00 EUR"),
+];
+
+/// Every document the language-independence test runs: the corpus (text and
+/// PDF, not the JPEG that needs OCR models) plus the extra documents.
+fn language_test_documents() -> Vec<(String, String, Vec<u8>)> {
+    let root = corpus_root();
+    let mut documents = Vec::new();
+
+    for entry in &load_manifest().documents {
+        if entry.parser == "ocr_smoke" {
+            continue;
+        }
+
+        let path = root.join(&entry.path);
+        if !path.is_file() {
+            continue;
+        }
+
+        let mime = entry.mime.clone().unwrap_or_else(|| "text/plain".into());
+        documents.push((
+            entry.id.clone(),
+            mime,
+            fs::read(&path).expect("fixture bytes"),
+        ));
+    }
+
+    for (id, text) in EXTRA_DOCUMENTS {
+        documents.push((id.to_owned(), "text/plain".into(), text.as_bytes().to_vec()));
+    }
+
+    documents
+}
+
+/// The accounts of a freshly seeded book on `template`.
+fn seeded_accounts(template: ChartTemplate) -> Vec<oikonomia_core::domain::Account> {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let mut vault = oikonomia_core::vault::Vault::open_path(dir.path()).expect("open vault");
+    vault.init("correct horse battery staple").expect("init");
+
+    let conn = vault.connection().expect("connection");
+    let entity = oikonomia_core::ledger::create_entity(
+        conn,
+        &oikonomia_core::ledger::CreateEntity {
+            name: "Language".into(),
+            base_currency: "EUR".into(),
+            chart_template: template,
+            fiscal_year_start_month: Some(1),
+        },
+        Locale::En,
+    )
+    .expect("entity");
+
+    oikonomia_core::ledger::list_accounts(conn, entity.id).expect("accounts")
+}
+
+fn suggested_codes(
+    template: ChartTemplate,
+    accounts: &[oikonomia_core::domain::Account],
+    locale: Locale,
+    mime: &str,
+    bytes: &[u8],
+) -> SuggestedCodes {
+    let suggestion = analyze_document_bytes(
+        "document",
+        mime,
+        bytes,
+        &AnalyzeContext {
+            template,
+            accounts,
+            default_currency: "EUR",
+            locale,
+        },
+        None,
+    )
+    .expect("analyze");
+
+    let code_of = |id: Option<oikonomia_core::domain::AccountId>| -> Option<String> {
+        let id = id?;
+        accounts
+            .iter()
+            .find(|account| account.id == id)
+            .map(|account| account.code.clone())
+    };
+
+    SuggestedCodes {
+        kind: suggestion.kind,
+        category: code_of(suggestion.category_account_id),
+        wallet: code_of(suggestion.wallet_account_id),
+        payable: code_of(suggestion.payable_account_id),
+    }
+}
+
+#[test]
+fn suggested_accounts_are_the_same_in_every_language() {
+    let documents = language_test_documents();
+
+    for template in SEEDED_CHARTS {
+        let accounts = seeded_accounts(template);
+
+        for (id, mime, bytes) in &documents {
+            let english = suggested_codes(template, &accounts, Locale::En, mime, bytes);
+
+            for locale in LOCALES {
+                assert_eq!(
+                    suggested_codes(template, &accounts, locale, mime, bytes),
+                    english,
+                    "{id} on {template:?} in {locale:?} differs from English"
+                );
+            }
+        }
+    }
+}
+
+/// The suggested category code of each document in English, as the app chose
+/// it before text was localized: personal chart, then company chart. Pinned so
+/// a change to the matching that moves an English user's suggestion fails.
+const ENGLISH_CATEGORY_PINS: [(&str, &str, &str); 19] = [
+    ("greek-sales-invoice", "4900", "4000"),
+    ("dei-settlement", "5300", "5900"),
+    ("cosmote-pay-via", "5350", "5900"),
+    ("volton-myon-gas", "5300", "5900"),
+    ("nova-telecom", "5350", "5900"),
+    ("zenith-electricity", "5300", "5900"),
+    ("ngs-gas-bill", "5300", "5900"),
+    ("zenith-supplier-vs-grid", "5300", "5900"),
+    ("dei-electricity-current", "5300", "5900"),
+    ("volton-myon-gas-current", "5300", "5900"),
+    ("cosmote-telecom-current", "5350", "5900"),
+    ("eydap-water-current", "5300", "5900"),
+    ("greek-bank-embasma", "5900", "5900"),
+    ("dei-electricity-holdout", "5300", "5900"),
+    ("english-total-pdf", "5350", "5900"),
+    ("extra-unnamed-gas", "5300", "5900"),
+    ("extra-unnamed-electricity", "5300", "5900"),
+    ("extra-invoice-number", "5900", "5300"),
+    ("extra-bare-invoice", "5350", "5900"),
+];
+
+#[test]
+fn english_categories_are_the_ones_chosen_before_localization() {
+    let documents = language_test_documents();
+
+    assert_eq!(documents.len(), ENGLISH_CATEGORY_PINS.len());
+
+    let personal_accounts = seeded_accounts(ChartTemplate::Personal);
+    let company_accounts = seeded_accounts(ChartTemplate::Company);
+
+    for (id, personal, company) in ENGLISH_CATEGORY_PINS {
+        let (_, mime, bytes) = documents
+            .iter()
+            .find(|(document_id, _, _)| document_id == id)
+            .expect(id);
+
+        for (template, accounts, expected) in [
+            (ChartTemplate::Personal, &personal_accounts, personal),
+            (ChartTemplate::Company, &company_accounts, company),
+        ] {
+            let codes = suggested_codes(template, accounts, Locale::En, mime, bytes);
+
+            assert_eq!(
+                codes.category.as_deref(),
+                Some(expected),
+                "{id} on {template:?}"
+            );
+        }
+    }
+}
