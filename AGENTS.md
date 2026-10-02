@@ -13,7 +13,7 @@ master-password unlock.
 | `crates/macos-dock-icon` | macOS Dock icon for `cargo tauri dev` |
 | `apps/desktop/src-tauri` | Tauri shell + IPC commands |
 | `web` | React + Vite + Tailwind frontend |
-| `docs/` | Design specs and plans |
+| `docs/` | Release runbook (`release.md`), brand assets, design specs and plans (`docs/superpowers`) |
 
 ## Commands
 
@@ -29,8 +29,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cd web && npm install && npm run dev
 cd web && npm run build
 
-# Desktop (from apps/desktop/src-tauri or with path)
-cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
+# Desktop (from the repo root)
+cargo tauri dev
 ```
 
 ## Invariants (do not break)
@@ -55,11 +55,10 @@ cargo tauri dev --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 ## Style
 
-Follow global `~/.grok/rules/AGENTS.md` and the `rust-style` skill.
 `rustfmt.toml`: `use_small_heuristics = "Default"` (never `"Max"`).
 Workspace Clippy: `unwrap_used = deny`, `panic = deny`, etc.
 
-- Function names are full words. Cryptic abbreviations (`ta`, `row_err`, `sign_lic`)
+- Function names are full words. Cryptic abbreviations (`ta`, `row_err`, `chk_bal`)
   are not allowed. Prefer associated constructors (`TemplateAccount::new`) over
   2–3 letter helpers. Public and `pub(crate)` items have rustdoc. Comments
   explain intent and invariants, not the identifier.

@@ -1,4 +1,4 @@
-# Release desktop builds (skeleton — not go-live).
+# Release desktop builds.
 #
 # Trigger: version tags `v*` (e.g. v0.1.0). Optional workflow_dispatch with
 # dry_run still requires the GitHub Environment named `release` and never
@@ -44,7 +44,7 @@
 #     SM_API_KEY
 #     SM_CLIENT_CERT_FILE_B64   auth client cert (not the code-signing private key)
 #     SM_CLIENT_CERT_PASSWORD
-#     SM_KEYPAIR_ALIAS          KeyLocker keypair / cert alias used at go-live
+#     SM_KEYPAIR_ALIAS          KeyLocker keypair / cert alias used for signing
 #
 # Linux — no paid signing account; unsigned .deb + .AppImage.
 # In-app updater feed is AppImage only; .deb is attached for manual download.
@@ -64,7 +64,7 @@
 #
 # The updater minisign private key lives on Environment `release` only
 # (TAURI_SIGNING_PRIVATE_KEY, optional TAURI_SIGNING_PRIVATE_KEY_PASSWORD).
-# GitHub Releases is the v1 updater CDN; the public key baked into the app
+# GitHub Releases hosts the updater feed; the public key baked into the app
 # is the trust root.
 # Jobs fail closed if TAURI_SIGNING_PRIVATE_KEY is empty (never echo it).
 
@@ -171,13 +171,13 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2, 2026-09-02
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # Official Tauri v2 action. projectPath is the crate that owns tauri.conf.json.
       # beforeBuildCommand already runs `npm run build` in web/ (no web/dist placeholder).
       # Signing/notarization use the env vars below when secrets exist; this job
       # never reaches here if they are missing.
-      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1, 2026-09-02
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -193,7 +193,7 @@ jobs:
           projectPath: apps/desktop/src-tauri
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: ${{ env.RELEASE_TAG && format('Oikonomia {0}', env.RELEASE_TAG) || '' }}
-          releaseBody: GitHub Releases is the v1 updater CDN. Trust is the updater public key baked into the app. Linux in-app updates are AppImage only; .deb remains a manual download.
+          releaseBody: Draft build. Test it, then run the Promote workflow to publish.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
@@ -252,7 +252,7 @@ jobs:
             exit 1
           }
 
-      # Placeholder only. Live CodeSignTool / smctl is not invoked in this PR.
+      # Placeholder only. Live CodeSignTool / smctl is not invoked here.
       # signCommand is applied via a runner-local Tauri config overlay so
       # tauri.conf.json is unchanged. If this script is reached, it still
       # refuses so an unsigned .exe/.msi is never attached as signed.
@@ -280,9 +280,9 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2, 2026-09-02
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1, 2026-09-02
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ES_USERNAME: ${{ secrets.ES_USERNAME }}
@@ -300,7 +300,7 @@ jobs:
           projectPath: apps/desktop/src-tauri
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: ${{ env.RELEASE_TAG && format('Oikonomia {0}', env.RELEASE_TAG) || '' }}
-          releaseBody: GitHub Releases is the v1 updater CDN. Trust is the updater public key baked into the app. Linux in-app updates are AppImage only; .deb remains a manual download.
+          releaseBody: Draft build. Test it, then run the Promote workflow to publish.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true
@@ -364,11 +364,11 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2, 2026-09-02
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # --bundles deb,appimage attaches .deb for manual download. tauri-action
       # latest.json Linux target is AppImage only (no .deb updater URL).
-      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1, 2026-09-02
+      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -377,7 +377,7 @@ jobs:
           projectPath: apps/desktop/src-tauri
           tagName: ${{ env.RELEASE_TAG }}
           releaseName: ${{ env.RELEASE_TAG && format('Oikonomia {0}', env.RELEASE_TAG) || '' }}
-          releaseBody: GitHub Releases is the v1 updater CDN. Trust is the updater public key baked into the app. Linux in-app updates are AppImage only; .deb remains a manual download.
+          releaseBody: Draft build. Test it, then run the Promote workflow to publish.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true

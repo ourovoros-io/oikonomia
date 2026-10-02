@@ -1,8 +1,21 @@
 {
-  "name": "web",
+  "name": "oikonomia-web",
   "private": true,
   "version": "0.1.0",
+  "description": "React user interface for the Oikonomia desktop app. It holds no business logic; the Rust core does.",
   "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ourovoros-io/oikonomia.git",
+    "directory": "web"
+  },
+  "homepage": "https://github.com/ourovoros-io/oikonomia#readme",
+  "bugs": {
+    "url": "https://github.com/ourovoros-io/oikonomia/issues"
+  },
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
