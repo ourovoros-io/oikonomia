@@ -55,6 +55,17 @@ fn create_book(conn: &Connection, name: &str) -> Result<EntityId, Error> {
 
 /// Post one balanced entry with `description` on the personal chart.
 fn post(conn: &Connection, entity_id: EntityId, description: &str) {
+    post_with(conn, entity_id, description, None, None);
+}
+
+/// Post one balanced entry with a `reference` and a `memo` on its first line.
+fn post_with(
+    conn: &Connection,
+    entity_id: EntityId,
+    description: &str,
+    reference: Option<&str>,
+    memo: Option<&str>,
+) {
     let accounts = list_accounts(conn, entity_id).expect("accounts");
     let account = |code: &str| {
         accounts
@@ -70,13 +81,13 @@ fn post(conn: &Connection, entity_id: EntityId, description: &str) {
             entity_id,
             entry_date: "2026-02-01".into(),
             description: description.into(),
-            reference: None,
+            reference: reference.map(str::to_owned),
             lines: vec![
                 CreateJournalLine {
                     account_id: account("5100"),
                     debit_minor: 1_000,
                     credit_minor: 0,
-                    memo: None,
+                    memo: memo.map(str::to_owned),
                 },
                 CreateJournalLine {
                     account_id: account("1010"),
@@ -272,4 +283,106 @@ fn wildcards_and_ascii_names_behave_as_they_always_did() {
 
     assert_literal_wildcards(conn, entity_id);
     assert_ascii_behaviour(conn, entity_id);
+}
+
+#[test]
+fn an_all_capitals_greek_search_needs_no_accent() {
+    on_every_connection(|conn, entity_id| {
+        for term in ["ΛΟΓΑΡΙΑΣΜΟΣ", "λογαριασμος", "ΛΟΓΑΡΙΑΣΜΌΣ", "ρευματος"]
+        {
+            assert_eq!(
+                found(conn, entity_id, term),
+                vec!["Λογαριασμός ρεύματος"],
+                "{term:?}",
+            );
+        }
+
+        // French and German accents stay distinct.
+        assert_eq!(found(conn, entity_id, "epicerie"), Vec::<String>::new());
+        assert_eq!(found(conn, entity_id, "arztliche"), Vec::<String>::new());
+        assert_eq!(
+            found(conn, entity_id, "ÉPICERIE"),
+            vec!["Épicerie du marché"]
+        );
+    });
+}
+
+#[test]
+fn a_greek_name_that_differs_by_accent_and_case_is_a_duplicate() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+
+    create_book(conn, "Τρόφιμα").expect("first");
+
+    for clash in ["ΤΡΟΦΙΜΑ", "Τροφιμα", "τρόφιμα"] {
+        assert!(
+            matches!(
+                create_book(conn, clash),
+                Err(Error::Validation(ValidationError::NameTaken { .. }))
+            ),
+            "{clash:?}",
+        );
+    }
+
+    // French accents are still distinct names.
+    create_book(conn, "Epargne").expect("plain");
+    create_book(conn, "Épargne").expect("accented is a different name");
+}
+
+#[test]
+fn references_and_memos_are_searched_in_any_case() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = create_book(conn, "Books").expect("book");
+
+    // Each entry has a distinct description, so a hit names exactly one entry.
+    post_with(
+        conn,
+        entity_id,
+        "first",
+        Some("Τιμολόγιο ΑΒ-1"),
+        Some("Ενοίκιο Μαρτίου"),
+    );
+    post_with(
+        conn,
+        entity_id,
+        "second",
+        Some("Facture Été-2"),
+        Some("Épicerie du coin"),
+    );
+    post_with(
+        conn,
+        entity_id,
+        "third",
+        Some("Rechnung Über-3"),
+        Some("Ärztliche Kosten"),
+    );
+    post_with(
+        conn,
+        entity_id,
+        "fourth",
+        Some("plain ref"),
+        Some("plain memo"),
+    );
+
+    for (term, expected) in [
+        ("ΤΙΜΟΛΟΓΙΟ", "first"),
+        ("τιμολογιο αβ-1", "first"),
+        ("ΕΝΟΙΚΙΟ", "first"),
+        ("ενοικιο μαρτιου", "first"),
+        ("FACTURE ÉTÉ", "second"),
+        ("facture été-2", "second"),
+        ("ÉPICERIE DU COIN", "second"),
+        ("épicerie du coin", "second"),
+        ("RECHNUNG ÜBER", "third"),
+        ("ärztliche kosten", "third"),
+        ("ÄRZTLICHE KOSTEN", "third"),
+        ("PLAIN REF", "fourth"),
+    ] {
+        assert_eq!(found(conn, entity_id, term), vec![expected], "{term:?}");
+    }
+
+    // Accents other than Greek ones still count.
+    assert_eq!(found(conn, entity_id, "epicerie"), Vec::<String>::new());
+    assert_eq!(found(conn, entity_id, "facture ete"), Vec::<String>::new());
 }

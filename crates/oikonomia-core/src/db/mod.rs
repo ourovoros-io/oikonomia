@@ -3,5 +3,5 @@
 mod fold;
 mod schema;
 
-pub use fold::{FOLD_FUNCTION, fold_case, register_fold};
+pub use fold::{fold_case, register_fold};
 pub use schema::{CURRENT_SCHEMA_VERSION, migrate};
