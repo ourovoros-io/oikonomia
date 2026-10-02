@@ -244,6 +244,17 @@ describe('buildExpensePdfBytes in every language', () => {
 })
 
 describe('pdfExportErrorMessage', () => {
+  test('logs the raw cause of an export failure, which the sentence hides', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    pdfExportErrorMessage({ code: 'save_failed', message: 'ENOSPC /tmp/x.pdf' })
+    pdfExportErrorMessage({ code: 'io', message: 'EACCES /tmp/y.pdf' })
+
+    expect(warn).toHaveBeenCalledTimes(2)
+    expect(warn.mock.calls[0][0]).toContain('ENOSPC /tmp/x.pdf')
+    expect(warn.mock.calls[1][0]).toContain('EACCES /tmp/y.pdf')
+  })
+
   test('maps io by code only', () => {
     expect(pdfExportErrorMessage({ code: 'io', message: 'EACCES /tmp/x.pdf' })).toBe(
       'Could not export the PDF.',

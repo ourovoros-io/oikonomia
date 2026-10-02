@@ -1,5 +1,4 @@
-import type { CommandError } from './tauri'
-import { commandErrorMessage } from './commandError'
+import { asCommandError, commandErrorMessage } from './commandError'
 import { t } from './i18n'
 
 export type VaultBackupAvailability = 'ready' | 'empty' | 'missing'
@@ -72,10 +71,11 @@ export function restoreConfirm(kind: RestoreConfirmKind): {
 /**
  * Backup and restore failures. A code with its own copy shows that copy; the
  * generic ones (invalid file, missing file, io) get a sentence about backups
- * that says what was being attempted.
+ * that says what was being attempted. Takes `unknown` because a rejection can
+ * be anything, including nothing.
  */
-export function backupCommandError(err: CommandError): string {
-  switch (err.code) {
+export function backupCommandError(err: unknown): string {
+  switch (asCommandError(err).code) {
     case 'vault_uninitialized':
       return t('settings.vaultBackup.errUninitialized')
     case 'restore_would_overwrite':
@@ -85,7 +85,8 @@ export function backupCommandError(err: CommandError): string {
     case 'not_found':
       return t('settings.vaultBackup.errNotFound')
     case 'io':
-      return t('settings.vaultBackup.errIo')
+      // The shared rule keeps this sentence over the generic file one and logs the cause.
+      return commandErrorMessage(err, 'settings.vaultBackup.errIo')
     default:
       return commandErrorMessage(err, 'settings.vaultBackup.errDefault')
   }

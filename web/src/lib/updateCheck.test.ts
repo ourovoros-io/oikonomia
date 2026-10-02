@@ -3,7 +3,6 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import {
   isAvailableUpdate,
-  isMissingIpcCommand,
   parseUpdateCheckResult,
   readDevUnlockUpdatePreview,
   stubUpdateCheckResult,
@@ -77,20 +76,6 @@ describe('isAvailableUpdate', () => {
     expect(isAvailableUpdate({ kind: 'checking' })).toBe(false)
     expect(isAvailableUpdate({ kind: 'idle' })).toBe(false)
     expect(isAvailableUpdate({ kind: 'installing' })).toBe(false)
-  })
-})
-
-describe('isMissingIpcCommand', () => {
-  test('detects an unregistered Tauri command', () => {
-    expect(
-      isMissingIpcCommand(
-        { code: 'unknown', message: 'command update_check not found' },
-        'update_check',
-      ),
-    ).toBe(true)
-    expect(
-      isMissingIpcCommand({ code: 'io', message: 'disk full' }, 'update_check'),
-    ).toBe(false)
   })
 })
 

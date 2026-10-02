@@ -572,7 +572,7 @@
   },
   "files": {
     "error": {
-      "read": "Impossible de lire le fichier"
+      "read": "Impossible de lire le fichier."
     }
   },
   "accounts": {

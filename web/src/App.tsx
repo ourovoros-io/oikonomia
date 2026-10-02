@@ -429,7 +429,7 @@ export default function App() {
                       try {
                         await loadEntities()
                       } catch (err) {
-                        setError(commandErrorMessage(err))
+                        setError(commandErrorMessage(err, 'app.failedBackend'))
                       }
                     }}
                     onSelectEntity={(id) => {

@@ -1,8 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
-import { asCommandError } from './commandError'
+import { asCommandError, isMissingIpcCommand } from './commandError'
 import {
   isAvailableUpdate,
-  isMissingIpcCommand,
   parseUpdateCheckResult,
   readDevUnlockUpdatePreview,
   stubUpdateCheckResult,

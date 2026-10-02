@@ -1,8 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import codes from './errorCodes.json'
 import roles from './accountRoles.json'
-import { asCommandError, commandErrorMessage, ERROR_CODE_KEYS, fileReadError } from './commandError'
-import { flattenMessages, LOCALES, resetI18nForTests, setLocale } from './i18n'
+import {
+  asCommandError,
+  commandErrorMessage,
+  ERROR_CODE_KEYS,
+  fileReadError,
+  isMissingIpcCommand,
+  logCommandError,
+} from './commandError'
+import { flattenMessages, LOCALES, resetI18nForTests, setLocale, t } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
 import fr from '../locales/fr.json' with { type: 'json' }
@@ -123,10 +130,10 @@ describe('command error localization', () => {
   })
 
   it('localizes an error raised by the web layer itself', () => {
-    expect(commandErrorMessage(fileReadError())).toBe('Could not read the file')
+    expect(commandErrorMessage(fileReadError())).toBe('Could not read the file.')
 
     setLocale('el')
-    expect(commandErrorMessage(fileReadError())).toBe('Δεν ήταν δυνατή η ανάγνωση του αρχείου')
+    expect(commandErrorMessage(fileReadError())).toBe('Δεν ήταν δυνατή η ανάγνωση του αρχείου.')
   })
 
   it('names the missing account in every language, with the form\u2019s own label', () => {
@@ -206,5 +213,108 @@ describe('command error localization', () => {
         params: { role: 'mystery', code: '5100' },
       }),
     ).toBe('Account 5100 is the wrong type for this entry. Choose a different account.')
+  })
+
+  // The codes whose copy says little; a screen's own sentence says more.
+  const VAGUE_CODES = ['io', 'crypto', 'unknown', 'task_failed', 'validation_internal', 'analysis']
+
+  it('lets the screen sentence replace the copy of every vague code', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    for (const code of VAGUE_CODES) {
+      expect(commandErrorMessage({ code, message: 'raw' }, 'docs.deleteFailed'), code).toBe(
+        'Could not delete the document.',
+      )
+    }
+  })
+
+  it('keeps the copy of a vague code when the caller gave no screen sentence', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    for (const code of VAGUE_CODES) {
+      const shown = commandErrorMessage({ code, message: 'raw' })
+
+      expect(shown, code).toBe(t(ERROR_CODE_KEYS[code]))
+      expect(shown, code).not.toBe('Could not delete the document.')
+    }
+
+    expect(commandErrorMessage({ code: 'io', message: 'raw' })).toBe('A file operation failed.')
+  })
+
+  it('lets a specific code win over the screen sentence', () => {
+    expect(
+      commandErrorMessage({ code: 'name_taken', message: 'raw', params: { name: 'A' } }, 'docs.deleteFailed'),
+    ).toContain('already in use')
+  })
+
+  it('logs the raw error for a vague code and for an unknown code', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    commandErrorMessage({ code: 'io', message: 'EACCES: /Users/x/vault' }, 'docs.deleteFailed')
+    commandErrorMessage({ code: 'io', message: 'EACCES: /Users/x/vault' })
+    expect(warn).toHaveBeenCalledTimes(2)
+    expect(warn.mock.calls[0][0]).toContain('"io"')
+    expect(warn.mock.calls[0][0]).toContain('EACCES: /Users/x/vault')
+
+    warn.mockClear()
+    commandErrorMessage({ code: 'brand_new', message: 'sqlcipher: bad page', params: { a: 'b' } })
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toContain('"brand_new"')
+    expect(warn.mock.calls[0][0]).toContain('sqlcipher: bad page')
+    expect(warn.mock.calls[0][0]).toContain('"a":"b"')
+  })
+
+  it('does not log a user-correctable error', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    commandErrorMessage({ code: 'name_taken', message: 'raw', params: { name: 'A' } }, 'docs.deleteFailed')
+    commandErrorMessage({ code: 'invalid_password', message: 'raw' })
+
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('logCommandError logs whatever was thrown, once, without throwing', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    logCommandError({ code: 'save_failed', message: 'ENOSPC' })
+    logCommandError(undefined)
+
+    expect(warn).toHaveBeenCalledTimes(2)
+    expect(warn.mock.calls[0][0]).toContain('ENOSPC')
+  })
+
+  it('treats a code named like an Object.prototype member as unknown', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    for (const code of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(commandErrorMessage({ code, message: 'raw' }, 'docs.deleteFailed'), code).toBe(
+        'Could not delete the document.',
+      )
+      expect(commandErrorMessage({ code, message: 'raw' }), code).toBe('Something went wrong.')
+    }
+  })
+
+  it('treats a role named like an Object.prototype member as having no label', () => {
+    for (const role of ['constructor', '__proto__', 'toString']) {
+      const shown = commandErrorMessage({ code: 'account_required', message: 'm', params: { role } })
+
+      expect(shown, role).not.toContain(role)
+      expect(shown, role).not.toContain('{')
+    }
+  })
+
+  it('keeps the full stop on the file-read sentence in every language', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale)
+
+      expect(commandErrorMessage(fileReadError()), locale).toMatch(/\.$/)
+    }
+  })
+
+  it('detects an unregistered Tauri command', () => {
+    expect(isMissingIpcCommand({ code: 'unknown', message: 'command update_check not found' }, 'update_check')).toBe(
+      true,
+    )
+    expect(isMissingIpcCommand({ code: 'io', message: 'disk full' }, 'update_check')).toBe(false)
   })
 })

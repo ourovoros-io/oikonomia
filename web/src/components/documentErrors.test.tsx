@@ -102,7 +102,7 @@ describe('DocumentDropZone errors', () => {
     await dropFile(container)
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith('Could not read the file')
+      expect(onError).toHaveBeenCalledWith('Could not read the file.')
     })
     expect(api.documentAnalyze).not.toHaveBeenCalled()
     vi.unstubAllGlobals()

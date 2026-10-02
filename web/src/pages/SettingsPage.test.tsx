@@ -550,6 +550,21 @@ describe('SettingsPage section design', () => {
     expect(screen.queryByText(/sqlcipher/)).toBeNull()
   })
 
+  test('a password change rejected with undefined shows the screen fallback and does not throw', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultChangePassword).mockRejectedValue(undefined)
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /master password/i }))
+    await userEvent.type(await screen.findByLabelText('Current password'), 'oldpass')
+    await userEvent.type(screen.getByLabelText('New password'), 'newpass12345')
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'newpass12345')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    expect(await screen.findByText('Could not change the password.')).toBeInTheDocument()
+  })
+
   test('an incorrect current password marks that field invalid and describes it', async () => {
     vi.mocked(vaultChangePassword).mockRejectedValue({ code: 'invalid_password', message: '' })
     render(

@@ -524,4 +524,15 @@ describe('UnlockScreen check for update', () => {
     })
     expect(updateInstall).not.toHaveBeenCalled()
   })
+
+  test('a rejection of undefined shows the unlock fallback and does not throw', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultUnlock).mockRejectedValue(undefined)
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(screen.getByText('Could not unlock the vault.')).toBeTruthy()
+    })
+  })
 })

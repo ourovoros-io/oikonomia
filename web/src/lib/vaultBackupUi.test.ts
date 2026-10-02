@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   backupCommandError,
   canBackupVault,
@@ -10,6 +10,7 @@ import { resetI18nForTests, t } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   resetI18nForTests()
 })
 
@@ -88,6 +89,15 @@ describe('backupCommandError', () => {
     expect(backupCommandError({ code: 'io', message: 'I/O error: disk' })).toBe(
       'Could not read or write the backup file.',
     )
+  })
+
+  test('logs the raw cause of a file error, which the sentence hides', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    backupCommandError({ code: 'io', message: 'EACCES /Users/x/backup' })
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toContain('EACCES /Users/x/backup')
   })
 
   test('a code with its own copy shows that copy, with its parameters', () => {

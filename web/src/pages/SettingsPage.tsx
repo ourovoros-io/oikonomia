@@ -25,9 +25,8 @@ import {
   vaultPickBackup,
   vaultRestore,
   type AppInfo,
-  type CommandError,
 } from '../lib/tauri'
-import { commandErrorMessage } from '../lib/commandError'
+import { asCommandError, commandErrorMessage } from '../lib/commandError'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
@@ -314,7 +313,8 @@ export function SettingsPage({
       setConfirmPassword('')
       setNotice(t('settings.passwordChanged'))
     } catch (err) {
-      const cmd = err as CommandError
+      // A rejection can be anything, including nothing.
+      const cmd = asCommandError(err)
       setPageError(
         cmd.code === 'invalid_password'
           ? t('settings.currentPasswordIncorrect')
@@ -345,7 +345,7 @@ export function SettingsPage({
     try {
       await vaultBackup()
     } catch (err) {
-      setPageError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err))
     } finally {
       setBackupBusy(false)
     }
@@ -361,7 +361,7 @@ export function SettingsPage({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setPageError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err))
     } finally {
       setRestorePicking(false)
     }
@@ -381,7 +381,7 @@ export function SettingsPage({
       setRestoreOpen(false)
       setRestorePath(undefined)
     } catch (err) {
-      setPageError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {

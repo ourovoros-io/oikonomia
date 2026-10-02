@@ -34,6 +34,7 @@ vi.mock('./lib/tauri', () => ({
 vi.mock('./lib/api', () => ({
   api: {
     entityList: vi.fn(),
+    entityCreate: vi.fn(),
     getLockTimeout: vi.fn(async () => 900),
     donationAddresses: vi.fn(async () => []),
     setLockTimeout: vi.fn(),
@@ -231,6 +232,27 @@ describe('App shell', () => {
       .mockReset()
       .mockRejectedValue({ code: 'brand_new', message: 'sqlcipher: disk image is malformed' })
     render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Something went wrong while talking to the app. Restart Oikonomia and try again.',
+      )
+    })
+    expect(screen.queryByText(/sqlcipher/)).toBeNull()
+  })
+
+  test('a failed book refresh after creating a book shows the backend-failure sentence', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.entityCreate).mockReset().mockResolvedValue({ ...entity, id: 'e2', name: 'Work' })
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Work')
+
+    // Created fine, but reloading the list fails with a code the UI has no copy for.
+    vi.mocked(api.entityList).mockRejectedValue({ code: 'brand_new', message: 'sqlcipher: raw detail' })
+    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
         'Something went wrong while talking to the app. Restart Oikonomia and try again.',
