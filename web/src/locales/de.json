@@ -748,7 +748,7 @@
       "inView": "Angezeigt · {range}",
       "inViewEmpty": "Angezeigt",
       "wholeBook": "Konto- und Suchfilter ändern diese Übersicht nicht.",
-      "invalidRange": "Das Von-Datum muss vor oder auf dem Bis-Datum liegen."
+      "invalidRange": "Das Von-Datum darf nicht nach dem Bis-Datum liegen."
     },
     "form": {
       "titleNew": "Neue Buchung",
@@ -887,6 +887,8 @@
       "rowProblem": {
         "invalidDate": "„{value}“ ist kein gültiges Datum.",
         "invalidAmount": "„{value}“ ist kein gültiger Betrag.",
+        "missingDate": "Das Datum fehlt.",
+        "missingAmount": "Der Betrag fehlt.",
         "zeroAmount": "Der Betrag ist null.",
         "amountOverflow": "Der Betrag ist zu groß.",
         "unreadable": "Diese Zeile konnte nicht gelesen werden."
@@ -898,7 +900,7 @@
   "recurring": {
     "title": "Wiederkehrend",
     "templates": "Vorlagen",
-    "subtitle": "Ein schlankes Rezept — kein zweites Journal.",
+    "subtitle": "Eine schlanke Vorlage — kein zweites Journal.",
     "whisper": "nur lokal",
     "new": "Neue Vorlage",
     "backToEntries": "Zurück zu den Buchungen",

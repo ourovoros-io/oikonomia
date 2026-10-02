@@ -94,8 +94,6 @@ pub struct PnL {
 /// Balance sheet section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceSheetSection {
-    /// Section title.
-    pub title: String,
     /// Lines.
     pub lines: Vec<ReportLine>,
     /// Section total.
@@ -339,17 +337,14 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
         entity_id,
         as_of: as_of_d,
         assets: BalanceSheetSection {
-            title: "Assets".into(),
             total: total_assets,
             lines: assets_lines,
         },
         liabilities: BalanceSheetSection {
-            title: "Liabilities".into(),
             total: total_liab,
             lines: liab_lines,
         },
         equity: BalanceSheetSection {
-            title: "Equity".into(),
             total: total_equity,
             lines: equity_lines,
         },

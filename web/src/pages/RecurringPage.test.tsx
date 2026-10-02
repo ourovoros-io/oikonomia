@@ -138,7 +138,7 @@ describe('RecurringPage empty state', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Recurring' })).toBeTruthy()
     expect(screen.getAllByRole('heading', { name: 'Recurring' }).length).toBeGreaterThan(0)
     expect(screen.getByRole('heading', { name: 'Templates' })).toBeTruthy()
-    expect(screen.getByText('A lightweight recipe — not a second ledger.')).toBeTruthy()
+    expect(screen.getByText('A lightweight template — not a second ledger.')).toBeTruthy()
     expect(screen.getByText('No recurring templates yet')).toBeTruthy()
     expect(
       screen.getByText(
@@ -194,7 +194,7 @@ describe('RecurringPage new template modal', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'New template' })).toBeTruthy()
     })
-    expect(screen.getAllByText('A lightweight recipe — not a second ledger.').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('A lightweight template — not a second ledger.').length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: 'Expense' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Income' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Bill' })).toBeTruthy()

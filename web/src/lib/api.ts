@@ -103,7 +103,6 @@ export type PnL = {
 }
 
 export type BalanceSheetSection = {
-  title: string
   lines: ReportLine[]
   total: number
 }

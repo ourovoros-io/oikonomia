@@ -24,6 +24,8 @@
     "transfer_fee_unstated",
     "csv_invalid_date",
     "csv_invalid_amount",
+    "csv_missing_date",
+    "csv_missing_amount",
     "csv_zero_amount",
     "csv_amount_overflow",
     "csv_unreadable_row"

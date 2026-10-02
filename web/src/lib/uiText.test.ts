@@ -77,6 +77,8 @@ describe('copy for every code', () => {
     expect(placeholders(t(NOTE_CODE_KEYS.amount_assumes_two_decimals))).toEqual(['currency'])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_invalid_date))).toEqual(['value'])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_invalid_amount))).toEqual(['value'])
+    expect(placeholders(t(NOTE_CODE_KEYS.csv_missing_date))).toEqual([])
+    expect(placeholders(t(NOTE_CODE_KEYS.csv_missing_amount))).toEqual([])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_zero_amount))).toEqual([])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_amount_overflow))).toEqual([])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_unreadable_row))).toEqual([])
@@ -117,6 +119,21 @@ describe('renderUiText', () => {
     })
 
     expect(shown).toEqual(Array(LOCALES.length).fill(formatMoney(140, 'EUR')))
+  })
+
+  test.each([
+    ['en', 'csv_missing_date', 'The date is missing.'],
+    ['el', 'csv_missing_date', 'Λείπει η ημερομηνία.'],
+    ['fr', 'csv_missing_date', 'La date est manquante.'],
+    ['de', 'csv_missing_date', 'Das Datum fehlt.'],
+    ['en', 'csv_missing_amount', 'The amount is missing.'],
+    ['el', 'csv_missing_amount', 'Λείπει το ποσό.'],
+    ['fr', 'csv_missing_amount', 'Le montant est manquant.'],
+    ['de', 'csv_missing_amount', 'Der Betrag fehlt.'],
+  ] as const)('%s words %s as a sentence with no empty quotation marks', (locale, code, copy) => {
+    setLocale(locale)
+
+    expect(renderUiText({ code })).toBe(copy)
   })
 
   test('the fee that is not a figure has plain copy in every language', () => {

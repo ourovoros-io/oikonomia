@@ -43,11 +43,12 @@ pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
 ///
 /// # Errors
 ///
-/// [`CsvError::InvalidDate`] when the cell is empty or not a valid calendar date.
+/// [`CsvError::MissingDate`] when the cell is empty or only whitespace;
+/// [`CsvError::InvalidDate`] when it is not a valid calendar date.
 pub fn parse_csv_date(raw: &str) -> CsvResult<String> {
     let s = raw.trim();
     if s.is_empty() {
-        return Err(CsvError::InvalidDate(raw.to_owned()));
+        return Err(CsvError::MissingDate);
     }
 
     if let Some(parts) = split_three(s, '-')
@@ -399,6 +400,8 @@ fn row_problem(source_row: u32, err: &CsvError) -> UiText {
         CsvError::InvalidAmount(value) => {
             UiText::new(UiTextCode::CsvInvalidAmount).with_param("value", value.as_str())
         }
+        CsvError::MissingDate => UiText::new(UiTextCode::CsvMissingDate),
+        CsvError::MissingAmount => UiText::new(UiTextCode::CsvMissingAmount),
         CsvError::ZeroAmount => UiText::new(UiTextCode::CsvZeroAmount),
         CsvError::AmountOverflow => UiText::new(UiTextCode::CsvAmountOverflow),
         CsvError::Empty
@@ -421,7 +424,7 @@ fn parse_record_inner(
     exponent: u8,
 ) -> CsvResult<ParsedBankRow> {
     let Some(date_idx) = columns.date else {
-        return Err(CsvError::InvalidDate(String::new()));
+        return Err(CsvError::MissingDate);
     };
     let date_raw = record_cell(record, date_idx);
     let entry_date = parse_csv_date(date_raw)?;
@@ -472,7 +475,7 @@ fn signed_amount(record: &StringRecord, columns: ColumnMap, exponent: u8) -> Csv
     let debit = optional_signed(record, columns.debit, exponent)?;
     let credit = optional_signed(record, columns.credit, exponent)?;
     match (debit, credit) {
-        (None, None) => Err(CsvError::InvalidAmount(String::new())),
+        (None, None) => Err(CsvError::MissingAmount),
         (Some(d), None) => Ok(-d.abs()),
         (None, Some(c)) => Ok(c.abs()),
         (Some(d), Some(c)) => d
@@ -629,6 +632,46 @@ mod tests {
         assert_eq!(
             reason_of_only_row("Date,Description,Amount,Type\n2026-03-15,Y,5.00,sideways\n"),
             UiText::new(UiTextCode::CsvInvalidAmount).with_param("value", "sideways")
+        );
+    }
+
+    #[test]
+    fn an_empty_date_cell_is_reported_as_missing() {
+        assert_eq!(
+            reason_of_only_row("Date,Description,Amount\n,X,1.00\n"),
+            UiText::new(UiTextCode::CsvMissingDate)
+        );
+    }
+
+    #[test]
+    fn a_whitespace_only_date_cell_is_reported_as_missing() {
+        assert_eq!(
+            reason_of_only_row("Date,Description,Amount\n   ,X,1.00\n"),
+            UiText::new(UiTextCode::CsvMissingDate)
+        );
+    }
+
+    #[test]
+    fn an_empty_amount_cell_is_reported_as_missing() {
+        assert_eq!(
+            reason_of_only_row("Date,Description,Amount\n2026-03-15,Y,\n"),
+            UiText::new(UiTextCode::CsvMissingAmount)
+        );
+    }
+
+    #[test]
+    fn a_whitespace_only_amount_cell_is_reported_as_missing() {
+        assert_eq!(
+            reason_of_only_row("Date,Description,Amount\n2026-03-15,Y,   \n"),
+            UiText::new(UiTextCode::CsvMissingAmount)
+        );
+    }
+
+    #[test]
+    fn empty_debit_and_credit_cells_are_reported_as_a_missing_amount() {
+        assert_eq!(
+            reason_of_only_row("Date,Description,Debit,Credit\n2026-03-15,Y,,\n"),
+            UiText::new(UiTextCode::CsvMissingAmount)
         );
     }
 

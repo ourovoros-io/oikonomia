@@ -50,14 +50,6 @@ type AppliedQuery = {
   asOf: string
 }
 
-function sectionTitle(title: string): string {
-  const key = title.toLowerCase()
-  if (key === 'assets') return t('rpt.section.assets')
-  if (key === 'liabilities') return t('rpt.section.liabilities')
-  if (key === 'equity') return t('rpt.section.equity')
-  return title
-}
-
 export function ReportsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [tab, setTab] = useState<Tab>('pnl')
@@ -414,18 +406,22 @@ function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string;
       period={t('rpt.asOfPeriod', { date: formatDate(bs.as_of) })}
       ccy={ccy}
     >
-      {([bs.assets, bs.liabilities, bs.equity] as const).map((section) => (
-        <div key={section.title}>
-          <SectionLabel>{section.title}</SectionLabel>
+      {(
+        [
+          { key: 'assets', label: t('rpt.section.assets'), section: bs.assets },
+          { key: 'liabilities', label: t('rpt.section.liabilities'), section: bs.liabilities },
+          { key: 'equity', label: t('rpt.section.equity'), section: bs.equity },
+        ] as const
+      ).map(({ key, label, section }) => (
+        <div key={key}>
+          <SectionLabel>{label}</SectionLabel>
           {section.lines.length === 0 ? (
-            <EmptyLines>
-              {t('rpt.noSectionAccounts', { section: sectionTitle(section.title) })}
-            </EmptyLines>
+            <EmptyLines>{t('rpt.noSectionAccounts', { section: label })}</EmptyLines>
           ) : (
             section.lines.map((l) => <LineRow key={l.code + l.name} line={l} ccy={ccy} />)
           )}
           <TotalRow
-            label={t('rpt.totalSection', { section: sectionTitle(section.title) })}
+            label={t('rpt.totalSection', { section: label })}
             amount={section.total}
             ccy={ccy}
           />

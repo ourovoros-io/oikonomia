@@ -748,7 +748,7 @@
       "inView": "Affiché · {range}",
       "inViewEmpty": "Affiché",
       "wholeBook": "Les filtres de compte et de recherche ne modifient pas ce résumé.",
-      "invalidRange": "La date Du doit être antérieure ou égale à la date Au."
+      "invalidRange": "La date « Du » doit être antérieure ou égale à la date « Au »."
     },
     "form": {
       "titleNew": "Nouvelle écriture",
@@ -887,6 +887,8 @@
       "rowProblem": {
         "invalidDate": "« {value} » n’est pas une date valide.",
         "invalidAmount": "« {value} » n’est pas un montant valide.",
+        "missingDate": "La date est manquante.",
+        "missingAmount": "Le montant est manquant.",
         "zeroAmount": "Le montant est nul.",
         "amountOverflow": "Le montant est trop élevé.",
         "unreadable": "Cette ligne n’a pas pu être lue."
@@ -898,7 +900,7 @@
   "recurring": {
     "title": "Récurrents",
     "templates": "Modèles",
-    "subtitle": "Une petite recette — pas un second journal.",
+    "subtitle": "Un petit modèle — pas un second journal.",
     "whisper": "local seulement",
     "new": "Nouveau modèle",
     "backToEntries": "Retour aux écritures",

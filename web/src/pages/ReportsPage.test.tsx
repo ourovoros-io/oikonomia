@@ -84,9 +84,9 @@ beforeEach(() => {
   vi.mocked(api.reportBalanceSheet).mockReset().mockResolvedValue({
     entity_id: 'e1',
     as_of: '2026-08-23',
-    assets: { title: 'assets', lines: [], total: 0 },
-    liabilities: { title: 'liabilities', lines: [], total: 0 },
-    equity: { title: 'equity', lines: [], total: 0 },
+    assets: { lines: [], total: 0 },
+    liabilities: { lines: [], total: 0 },
+    equity: { lines: [], total: 0 },
     total_assets: 0,
     total_liabilities_equity: 0,
   })
@@ -484,13 +484,11 @@ describe('ReportsPage statements', () => {
       entity_id: 'e1',
       as_of: todayISO(),
       assets: {
-        title: 'Assets',
         lines: [expense({ code: '1010', name: 'Checking', balance_minor: 100_00 })],
         total: 100_00,
       },
-      liabilities: { title: 'Liabilities', lines: [], total: 0 },
+      liabilities: { lines: [], total: 0 },
       equity: {
-        title: 'Equity',
         lines: [expense({ code: 'NI', name: 'Net Income (current period)', balance_minor: 100_00 })],
         total: 100_00,
       },
@@ -512,9 +510,9 @@ describe('ReportsPage statements', () => {
     const sheet: BalanceSheet = {
       entity_id: 'e1',
       as_of: todayISO(),
-      assets: { title: 'Assets', lines: [], total: 50_00 },
-      liabilities: { title: 'Liabilities', lines: [], total: 0 },
-      equity: { title: 'Equity', lines: [], total: 20_00 },
+      assets: { lines: [], total: 50_00 },
+      liabilities: { lines: [], total: 0 },
+      equity: { lines: [], total: 20_00 },
       total_assets: 50_00,
       total_liabilities_equity: 20_00,
     }
@@ -525,6 +523,28 @@ describe('ReportsPage statements', () => {
     await waitFor(() => {
       expect(screen.getByText(/Out of balance by/)).toBeTruthy()
     })
+  })
+
+  test('balance sheet headings follow the app language, not backend text', async () => {
+    setLocale('el')
+    vi.mocked(api.reportBalanceSheet).mockResolvedValue({
+      entity_id: 'e1',
+      as_of: todayISO(),
+      assets: { lines: [], total: 0 },
+      liabilities: { lines: [], total: 0 },
+      equity: { lines: [], total: 0 },
+      total_assets: 0,
+      total_liabilities_equity: 0,
+    })
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Ισολογισμός' }))
+    await waitFor(() => {
+      expect(screen.getByText('Ενεργητικό')).toBeTruthy()
+    })
+    expect(screen.getByText('Παθητικό')).toBeTruthy()
+    expect(screen.getByText('Ίδια κεφάλαια')).toBeTruthy()
+    expect(screen.queryByText(/assets|liabilities|equity/i)).toBeNull()
   })
 
   test('trial balance paints debit and credit columns', async () => {
@@ -600,9 +620,9 @@ describe('ReportsPage synthetic rows', () => {
     vi.mocked(api.reportBalanceSheet).mockResolvedValue({
       entity_id: 'e1',
       as_of: todayISO(),
-      assets: { title: 'Assets', lines: [], total: 100_00 },
-      liabilities: { title: 'Liabilities', lines: [], total: 0 },
-      equity: { title: 'Equity', lines: [retained, netIncome], total: 100_00 },
+      assets: { lines: [], total: 100_00 },
+      liabilities: { lines: [], total: 0 },
+      equity: { lines: [retained, netIncome], total: 100_00 },
       total_assets: 100_00,
       total_liabilities_equity: 100_00,
     })

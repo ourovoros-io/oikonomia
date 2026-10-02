@@ -68,6 +68,10 @@ pub enum UiTextCode {
     CsvInvalidDate,
     /// A CSV row's amount is not an amount. Parameter: `value`, the cell as written.
     CsvInvalidAmount,
+    /// A CSV row's date cell is empty or only whitespace.
+    CsvMissingDate,
+    /// A CSV row's amount cell is empty or only whitespace.
+    CsvMissingAmount,
     /// A CSV row's amount is zero.
     CsvZeroAmount,
     /// A CSV row's amount is too large to hold.
@@ -105,6 +109,8 @@ impl UiTextCode {
         Self::TransferFeeUnstated,
         Self::CsvInvalidDate,
         Self::CsvInvalidAmount,
+        Self::CsvMissingDate,
+        Self::CsvMissingAmount,
         Self::CsvZeroAmount,
         Self::CsvAmountOverflow,
         Self::CsvUnreadableRow,
@@ -245,6 +251,8 @@ mod tests {
             UiTextCode::TransferFeeUnstated,
             UiTextCode::CsvInvalidDate,
             UiTextCode::CsvInvalidAmount,
+            UiTextCode::CsvMissingDate,
+            UiTextCode::CsvMissingAmount,
             UiTextCode::CsvZeroAmount,
             UiTextCode::CsvAmountOverflow,
             UiTextCode::CsvUnreadableRow,

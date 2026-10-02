@@ -88,6 +88,12 @@ pub enum CsvError {
     /// A cell is not a supported amount.
     #[error("invalid amount: {0}")]
     InvalidAmount(String),
+    /// The date cell is empty or only whitespace.
+    #[error("date is missing")]
+    MissingDate,
+    /// The amount cell is empty or only whitespace.
+    #[error("amount is missing")]
+    MissingAmount,
     /// Magnitude does not fit in `i64`.
     #[error("amount overflow")]
     AmountOverflow,

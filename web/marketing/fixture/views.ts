@@ -127,9 +127,9 @@ export function balanceSheet(l: DemoLedger, asOf: string): BalanceSheet {
   return {
     entity_id: l.entity.id,
     as_of: asOf,
-    assets: { title: 'Assets', lines: assets, total: total_assets },
-    liabilities: { title: 'Liabilities', lines: liabilities, total: total_liabilities },
-    equity: { title: 'Equity', lines: equity, total: total_equity },
+    assets: { lines: assets, total: total_assets },
+    liabilities: { lines: liabilities, total: total_liabilities },
+    equity: { lines: equity, total: total_equity },
     total_assets,
     total_liabilities_equity: total_liabilities + total_equity,
   }
