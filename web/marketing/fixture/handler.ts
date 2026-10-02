@@ -48,7 +48,7 @@ export function createHandler(lang: DemoLang) {
   const answers: Record<string, (a: Args) => unknown> = {
     vault_status: () => 'unlocked',
     vault_touch: () => null,
-    app_info: () => ({ name: 'Oikonomia', version: '1.0.0', support_email: 'support@example.com' }),
+    app_info: () => ({ name: 'Oikonomia', version: '0.1.0', support_email: 'info@ourovoros.io' }),
     donation_addresses: () => [],
     update_check: () => ({ kind: 'up_to_date' }),
     settings_get_locale: () => lang,

@@ -10,7 +10,7 @@
       "settings": "Paramètres"
     },
     "error": {
-      "backend": "Impossible de communiquer avec l'application",
+      "backend": "Impossible de communiquer avec l’application",
       "lock": "Impossible de verrouiller"
     },
     "loading": "Chargement…",
@@ -20,7 +20,7 @@
     },
     "book": {
       "label": "Livre",
-      "emptyOption": "Aucune entité pour l'instant"
+      "emptyOption": "Aucune entité pour l’instant"
     },
     "sidebar": {
       "versionEncrypted": "v{version} · chiffré",
@@ -54,7 +54,7 @@
       "unlock": "Bon retour"
     },
     "body": {
-      "setup": "Choisissez un mot de passe. Il n'est jamais enregistré. Si vous le perdez, les livres ne pourront pas être récupérés.",
+      "setup": "Choisissez un mot de passe. Il n’est jamais enregistré. Si vous le perdez, les livres ne pourront pas être récupérés.",
       "unlock": "Saisissez votre mot de passe pour déchiffrer les livres de cet appareil."
     },
     "field": {
@@ -69,24 +69,24 @@
     "restore": {
       "link": "Restaurer depuis une sauvegarde"
     },
-    "support": "Besoin d'aide ? Écrivez à {email}.",
+    "support": "Besoin d’aide ? Écrivez à {email}.",
     "update": {
       "button": "Rechercher une mise à jour",
       "dialogTitle": "Mise à jour",
       "checking": {
         "title": "Vérification",
-        "body": "Recherche d’une nouvelle application."
+        "body": "Recherche d’une version plus récente."
       },
       "upToDate": {
         "title": "Vous êtes à jour",
-        "body": "C’est le dernier Oikonomia."
+        "body": "Vous disposez de la dernière version d’Oikonomia."
       },
       "available": {
-        "title": "Une nouvelle application est prête",
+        "title": "Une mise à jour est disponible",
         "version": "Oikonomia {version}",
         "notesLabel": "Nouveautés",
         "size": "{size}",
-        "honesty": "C’est le seul contact avec Internet, et uniquement pour récupérer une nouvelle application.",
+        "honesty": "C’est la seule fois où Oikonomia se connecte à Internet, et uniquement pour télécharger une mise à jour.",
         "confirm": "Installer et redémarrer"
       },
       "failed": {
@@ -120,7 +120,7 @@
       "loading": "Chargement"
     },
     "empty": {
-      "body": "Créez d'abord un livre",
+      "body": "Créez d’abord un livre",
       "open": "Ouvrir"
     },
     "kind": {
@@ -145,7 +145,7 @@
       "moreOption": "Plus…"
     },
     "type": {
-      "aria": "Type d'écriture"
+      "aria": "Type d’écriture"
     },
     "amount": {
       "placeholder": "0.00",
@@ -197,7 +197,7 @@
       "busy": "Analyse…"
     },
     "error": {
-      "fileTooLarge": "Fichier trop volumineux (max. 8 MB)",
+      "fileTooLarge": "Fichier trop volumineux (max. 8 Mo)",
       "analyze": "Analyse impossible",
       "noPath": "Aucun chemin de fichier reçu",
       "invalidAmount": "Montant non valide",
@@ -220,7 +220,7 @@
     },
     "language": {
       "title": "Langue",
-      "description": "Menus, libellés et Saisie rapide.",
+      "description": "Menus, libellés et Saisie rapide. Les noms de comptes et certains messages restent en anglais.",
       "option": {
         "en": "English",
         "el": "Ελληνικά",
@@ -230,23 +230,23 @@
     },
     "support": {
       "title": "Assistance",
-      "description": "Questions et rapports de bogue : {email}",
-      "body": "Écrivez à {email} en indiquant la version de l'application ({version}) et ce que vous faisiez quand le problème est apparu. Ne joignez jamais votre coffre ni votre fichier de sauvegarde.",
-      "contact": "Écrire à l'assistance",
-      "openFailed": "Impossible d'ouvrir votre application de messagerie. Écrivez à {email}."
+      "description": "Questions et rapports de bogue : {email}",
+      "body": "Écrivez à {email} en indiquant la version de l’application ({version}) et ce que vous faisiez quand le problème est apparu. Ne joignez jamais votre coffre ni votre fichier de sauvegarde.",
+      "contact": "Écrire à l’assistance",
+      "openFailed": "Impossible d’ouvrir votre application de messagerie. Écrivez à {email}."
     },
     "donate": {
       "title": "Faire un don",
       "description": "Oikonomia est gratuit et open source. Les dons sont facultatifs.",
-      "warning": "Vérifiez la monnaie et le réseau avant l'envoi. Les transferts de cryptomonnaies sont irréversibles.",
+      "warning": "Vérifiez la monnaie et le réseau avant l’envoi. Les transferts de cryptomonnaies sont irréversibles.",
       "alsoAccepts": "Accepte aussi {tokens}",
-      "copy": "Copier l'adresse {coin}",
+      "copy": "Copier l’adresse {coin}",
       "copied": "Copié",
-      "copyFailed": "Copie impossible. Sélectionnez l'adresse et copiez-la manuellement."
+      "copyFailed": "Copie impossible. Sélectionnez l’adresse et copiez-la manuellement."
     },
     "lock": {
       "title": "Verrouillage automatique",
-      "description": "Verrouiller le coffre après une période d'inactivité",
+      "description": "Verrouiller le coffre après une période d’inactivité",
       "preset": {
         "5min": "5 min",
         "15min": "15 min",
@@ -254,7 +254,7 @@
         "1hour": "1 heure"
       },
       "error": {
-        "min": "Le délai de verrouillage doit être d'au moins 1 minute"
+        "min": "Le délai de verrouillage doit être d’au moins 1 minute"
       }
     },
     "password": {
@@ -277,7 +277,7 @@
     "backup": {
       "title": "Sauvegarde du coffre",
       "description": "Exporter le coffre chiffré en un seul fichier",
-      "body": "Les fichiers restent chiffrés. La sauvegarde regroupe l'en-tête du coffre et la base pour qu'ils restent liés. Le déverrouillage se fait toujours avec votre mot de passe principal.",
+      "body": "Les fichiers restent chiffrés. La sauvegarde regroupe l’en-tête du coffre et la base pour qu’ils restent liés. Le déverrouillage se fait toujours avec votre mot de passe principal.",
       "hint": "Enregistré sous oikonomia-backup-YYYY-MM-DD.oikonomia-backup",
       "action": {
         "backup": "Sauvegarder le coffre",
@@ -286,7 +286,7 @@
       "banner": {
         "empty": {
           "title": "Rien à sauvegarder",
-          "body": "Ce coffre n'est pas encore prêt. Créez d'abord un livre, ou restaurez une sauvegarde existante."
+          "body": "Ce coffre n’est pas encore prêt. Créez d’abord un livre, ou restaurez une sauvegarde existante."
         },
         "missing": {
           "title": "Aucun coffre sur cet ordinateur",
@@ -295,28 +295,28 @@
       },
       "restore": {
         "load": {
-          "title": "Charger la sauvegarde sur cet appareil ?",
+          "title": "Charger la sauvegarde sur cet appareil ?",
           "body": "Cela devient le coffre de cet ordinateur. Après le chargement, le coffre sera verrouillé — déverrouillez-le avec votre mot de passe principal actuel.",
           "confirm": "Charger la sauvegarde"
         },
         "replace": {
-          "title": "Remplacer le coffre local ?",
+          "title": "Remplacer le coffre local ?",
           "body": "Restaurer cette sauvegarde remplace le coffre de cet ordinateur. Le coffre actuel ne pourra pas être récupéré. Après la restauration, le coffre sera verrouillé — déverrouillez-le avec votre mot de passe principal.",
           "confirm": "Remplacer le coffre"
         }
       },
       "error": {
-        "uninitialized": "Rien à sauvegarder. Ce coffre n'est pas encore prêt.",
-        "invalid": "Ce fichier n'est pas une sauvegarde Oikonomia valide.",
+        "uninitialized": "Rien à sauvegarder. Ce coffre n’est pas encore prêt.",
+        "invalid": "Ce fichier n’est pas une sauvegarde Oikonomia valide.",
         "wouldOverwrite": "Un coffre existe déjà sur cet ordinateur. Confirmez le remplacement pour continuer.",
         "notFound": "Fichier de sauvegarde introuvable.",
-        "io": "Impossible de lire ou d'écrire le fichier de sauvegarde.",
+        "io": "Impossible de lire ou d’écrire le fichier de sauvegarde.",
         "generic": "Impossible de terminer la sauvegarde."
       }
     },
     "entities": {
       "title": "Entités",
-      "emptyCount": "Aucun livre pour l'instant",
+      "emptyCount": "Aucun livre pour l’instant",
       "countOne": "1 livre",
       "countMany": "{n} livres",
       "new": "Nouvelle entité",
@@ -325,15 +325,15 @@
       "deleteAria": "Supprimer {name}",
       "deleteTitle": "Supprimer",
       "deleteConfirm": {
-        "title": "Supprimer l'entité ?",
-        "body": "«{name}» et tous ses comptes et mouvements seront définitivement supprimés. Cette action est irréversible.",
+        "title": "Supprimer l’entité ?",
+        "body": "« {name} » et tous ses comptes et mouvements seront définitivement supprimés. Cette action est irréversible.",
         "confirm": "Supprimer"
       },
-      "deleteError": "Impossible de supprimer l'entité"
+      "deleteError": "Impossible de supprimer l’entité"
     },
     "entityCreate": {
       "title": "Nouvelle entité",
-      "description": "Des livres séparés pour le personnel et l'entreprise",
+      "description": "Des livres séparés pour le personnel et l’entreprise",
       "name": "Nom",
       "namePlaceholder": "Personnel",
       "currency": "Devise",
@@ -353,7 +353,7 @@
         }
       },
       "cancel": "Annuler",
-      "submit": "Créer l'entité",
+      "submit": "Créer l’entité",
       "busy": "Création…"
     }
   },
@@ -373,13 +373,13 @@
         "backup": "Sauvegarde Oikonomia"
       },
       "error": {
-        "invalidSave": "emplacement d'enregistrement non valide : {error}",
-        "invalidBackup": "emplacement de sauvegarde non valide : {error}",
-        "invalidFileData": "données de fichier non valides : {error}",
-        "readDropped": "impossible de lire le fichier déposé : {error}",
-        "readDroppedShort": "impossible de lire le fichier glissé : {error}",
-        "saveFile": "impossible d'enregistrer le fichier : {error}",
-        "bgTask": "échec de la tâche en arrière-plan : {error}"
+        "invalidSave": "emplacement d’enregistrement non valide : {error}",
+        "invalidBackup": "emplacement de sauvegarde non valide : {error}",
+        "invalidFileData": "données de fichier non valides : {error}",
+        "readDropped": "impossible de lire le fichier déposé : {error}",
+        "readDroppedShort": "impossible de lire le fichier glissé : {error}",
+        "saveFile": "impossible d’enregistrer le fichier : {error}",
+        "bgTask": "échec de la tâche en arrière-plan : {error}"
       }
     }
   },
@@ -489,7 +489,7 @@
   "dashboard": {
     "empty": {
       "title": "Créez un livre pour commencer",
-      "body": "Ajoutez une entité personnelle ou d'entreprise dans Paramètres. Chaque entité a son propre plan comptable et ses rapports."
+      "body": "Ajoutez une entité personnelle ou d’entreprise dans Paramètres. Chaque entité a son propre plan comptable et ses rapports."
     },
     "eyebrow": "Aperçu",
     "period": {
@@ -539,10 +539,10 @@
     "flow": {
       "income": "Recettes",
       "expenses": "Dépenses",
-      "footnote": "Entrées et sorties d'argent (activité de la période). L'actif ci-dessous indique les soldes à ce jour."
+      "footnote": "Entrées et sorties d’argent (activité de la période). L’actif ci-dessous indique les soldes à ce jour."
     },
     "metric": {
-      "assets": "Total de l'actif",
+      "assets": "Total de l’actif",
       "assetsHint": "À ce jour",
       "income": "Recettes",
       "expenses": "Dépenses",
@@ -570,10 +570,10 @@
   "common": {
     "emptyBook": {
       "title": "Aucun livre sélectionné",
-      "body": "Créez ou sélectionnez d'abord un livre."
+      "body": "Créez ou sélectionnez d’abord un livre."
     },
     "error": {
-      "fileTooLarge": "Fichier trop volumineux (max. 8 MB)"
+      "fileTooLarge": "Fichier trop volumineux (max. 8 Mo)"
     }
   },
   "documents": {
@@ -608,7 +608,7 @@
       "title": "Supprimer"
     },
     "deleteConfirm": {
-      "title": "Supprimer le document ?",
+      "title": "Supprimer le document ?",
       "body": {
         "list": "Cela retire définitivement le fichier de votre coffre. Irréversible. Les écritures du journal ne changent pas.",
         "detail": "Cela supprime définitivement le fichier de votre coffre. Irréversible. L’écriture, elle, reste."
@@ -621,7 +621,7 @@
     },
     "viewer": {
       "fallbackTitle": "Document",
-      "noPreview": "Pas d’aperçu dans l’application pour {mime} — utilisez « Enregistrer une copie » pour l’ouvrir ailleurs.",
+      "noPreview": "Pas d’aperçu dans l’application pour {mime} — utilisez « Enregistrer une copie » pour l’ouvrir ailleurs.",
       "openError": "Impossible d’ouvrir le document"
     },
     "detail": {
@@ -701,8 +701,8 @@
     "balance": {
       "title": "Fixer le solde — {name}",
       "titleFallback": "Fixer le solde",
-      "description": "Indiquez ce que le compte détient vraiment ; l’écart va sur Soldes d’ouverture",
-      "ledgerToday": "Solde du journal aujourd’hui :",
+      "description": "Indiquez ce que le compte détient vraiment ; l’écart va sur Soldes d’ouverture",
+      "ledgerToday": "Solde du journal aujourd’hui :",
       "actual": "Solde réel ({currency})",
       "placeholder": "2.500,00",
       "asOf": "Au",
@@ -776,7 +776,7 @@
       "error": "L’export PDF n’a pas abouti."
     },
     "statement": {
-      "amountsIn": "Tous les montants en {currency}"
+      "amountsIn": "{period} · Tous les montants en {currency}"
     },
     "pnl": {
       "title": "Compte de résultat",
@@ -891,7 +891,7 @@
       "payFrom": "Payer depuis",
       "payableAccount": "Compte Factures à payer",
       "noLiability": "Aucun compte de passif — ajoutez-en un",
-      "payableTip": "Astuce : dans Comptes, ajoutez un passif nommé « Factures à payer ». Les nouveaux livres Personnels l’ont déjà.",
+      "payableTip": "Astuce : dans Comptes, ajoutez un passif nommé « Factures à payer ». Les nouveaux livres Personnels l’ont déjà.",
       "from": "De",
       "to": "Vers",
       "cancel": "Annuler",
@@ -924,7 +924,7 @@
       }
     },
     "void": {
-      "title": "Supprimer l’écriture ?",
+      "title": "Supprimer l’écriture ?",
       "body": "L’écriture disparaît de votre liste. Une écriture inverse reste dans les livres pour le contrôle (vous ne la verrez pas ici).",
       "confirm": "Supprimer",
       "error": "Impossible de supprimer l’écriture",
@@ -1020,7 +1020,7 @@
     "due": "Dû",
     "post": "Comptabiliser",
     "postConfirm": {
-      "title": "Comptabiliser « {name} » ?",
+      "title": "Comptabiliser « {name} » ?",
       "body": "Une écriture sera passée d’après le modèle. Rien d’autre n’est programmé.",
       "confirm": "Comptabiliser",
       "cancel": "Annuler"
@@ -1048,8 +1048,8 @@
       "cadenceYearly": "Annuel"
     },
     "delete": {
-      "title": "Supprimer le modèle ?",
-      "body": "« {name} » sera retiré. Les écritures déjà passées ne changent pas.",
+      "title": "Supprimer le modèle ?",
+      "body": "« {name} » sera retiré. Les écritures déjà passées ne changent pas.",
       "confirm": "Supprimer"
     },
     "cadence": {
@@ -1087,7 +1087,7 @@
     "crypto": "Une opération de sécurité a échoué.",
     "vaultCorrupt": "Le fichier du coffre est corrompu.",
     "backupInvalid": "Ce fichier de sauvegarde n’est pas valide.",
-    "restoreWouldOverwrite": "Un coffre existe déjà ; la restauration l’écraserait.",
+    "restoreWouldOverwrite": "Un coffre existe déjà ; la restauration l’écraserait.",
     "notFound": "Cet élément est introuvable.",
     "analysis": "L’analyse du document a échoué.",
     "csvParse": "Ce fichier CSV n’a pas pu être lu.",
@@ -1100,16 +1100,16 @@
     },
     "notes": {
       "noText": "Impossible d’extraire le texte de ce fichier.",
-      "amountCurrency": "La détection du montant suppose des devises à 2 décimales ; saisissez le montant {currency} à la main.",
+      "amountCurrency": "La détection du montant suppose des devises à 2 décimales ; saisissez le montant {currency} à la main.",
       "datedFromDoc": "L’écriture portera la date {date} (d’après le document) et comptera dans ce mois — changez la date si vous voulez une autre période.",
-      "addPayable": "Ajoutez un compte de passif « Factures à payer » pour les factures non réglées.",
-      "pdfBudget": "Le PDF dépasse la limite de pages ou de flux ; remplissez les champs à la main.",
+      "addPayable": "Ajoutez un compte de passif « Factures à payer » pour les factures non réglées.",
+      "pdfBudget": "Le PDF dépasse la limite de pages ou de flux ; remplissez les champs à la main.",
       "parsedText": "Lu d’après le texte du document, sur cet appareil (sans réseau). Vérifiez avant d’enregistrer.",
       "ocrPathMissing": "Le chemin des modèles OCR n’est pas défini.",
       "ocrModelsMissing": "Les modèles OCR intégrés sont introuvables. Utilisez un PDF texte ou remplissez les champs à la main.",
       "ocrRead": "Lu avec l’OCR hors ligne intégré. Vérifiez avant d’enregistrer.",
       "ocrLittleText": "L’OCR a tourné mais a trouvé peu de texte — remplissez le formulaire à la main si besoin.",
-      "ocrError": "Erreur OCR : {error}. Vous pouvez remplir les champs.",
+      "ocrError": "Erreur OCR : {error}. Vous pouvez remplir les champs.",
       "ocrPdfImage": "Image PDF lue avec l’OCR intégré. Vérifiez avant d’enregistrer."
     },
     "invoice": {

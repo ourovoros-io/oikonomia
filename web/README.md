@@ -1,32 +1,22 @@
-# React + TypeScript + Vite
+# Oikonomia web UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The React UI that the Tauri shell renders inside the Oikonomia desktop app. It
+holds no business logic: money rules, ledger rules, and encryption live in the
+Rust core (`crates/oikonomia-core`) and reach the UI through Tauri commands.
 
-Currently, two official plugins are available:
+## Scripts
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Run these from this directory.
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install                  # or npm ci for a clean install
+npm run dev                  # Vite dev server (use `cargo tauri dev` from the repo root for the full app)
+npm run build                # type-check, then production build into dist/
+npm run lint                 # oxlint
+npm test                     # vitest
+npm run preview              # serve the production build locally
+npm run capture:marketing    # marketing screenshots (see marketing/README.md)
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) in the repository root for setup,
+the full quality gate, and the project rules.

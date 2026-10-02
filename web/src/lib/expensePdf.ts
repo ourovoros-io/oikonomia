@@ -1,3 +1,4 @@
+import fontkit from '@pdf-lib/fontkit'
 import { LineCapStyle, PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import type { PDFFont, PDFPage } from 'pdf-lib'
 import interRegularUrl from '../assets/fonts/Inter-Regular.ttf?url'
@@ -454,15 +455,22 @@ async function embedReportFonts(pdf: PDFDocument): Promise<{ regular: PDFFont; s
       loadFontBytes(interRegularUrl),
       loadFontBytes(interSemiBoldUrl),
     ])
-    if (regularBytes && semiboldBytes) {
-      return {
-        regular: await pdf.embedFont(regularBytes, { subset: true }),
-        semibold: await pdf.embedFont(semiboldBytes, { subset: true }),
-      }
+    if (!regularBytes || !semiboldBytes) {
+      throw new Error('the bundled Inter font files could not be loaded')
     }
-  } catch {
-    /* fall through to Helvetica — EN still paints; EL needs Inter */
+
+    // pdf-lib can only embed a custom TrueType font once fontkit is registered.
+    pdf.registerFontkit(fontkit)
+
+    return {
+      regular: await pdf.embedFont(regularBytes, { subset: true }),
+      semibold: await pdf.embedFont(semiboldBytes, { subset: true }),
+    }
+  } catch (cause) {
+    // Helvetica covers plain Latin-1 text only; Greek, other scripts and U+202F will fail.
+    console.warn('Could not embed the Inter font in the expense PDF; using Helvetica.', cause)
   }
+
   return {
     regular: await pdf.embedFont(StandardFonts.Helvetica),
     semibold: await pdf.embedFont(StandardFonts.HelveticaBold),

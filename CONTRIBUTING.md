@@ -5,13 +5,22 @@ app. Changes are judged first on whether they keep those three properties.
 
 ## Setup
 
-- Rust stable 1.94 or newer, Node 22 or newer
+- Rust stable (the workspace declares 1.94 as its minimum; CI tracks the latest stable)
+- Node 22.22.2 or newer on 22.x, 24.15 or newer, or 26 or newer
 - [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+- Tauri CLI: `cargo install tauri-cli --version "^2" --locked`
+- cargo-deny: `cargo install cargo-deny --locked`
+- Run `cd web && npm ci && npm run build` once (or `mkdir -p web/dist`) so the
+  Tauri shell crate compiles; workspace-wide `cargo` commands fail without
+  `web/dist`.
 
 ```bash
 cargo tauri dev          # run the desktop app
-make check               # local quality gate (fmt, clippy, deny, tests, web build)
+make check               # local gate: fmt check, clippy, deny, offline-core check, core tests, web tsc/test/build
 ```
+
+`make check` is not all of CI. CI also runs `cargo test --workspace`,
+`cargo build -p oikonomia`, `npm run lint`, and `cargo audit`.
 
 ## Before you open a pull request
 
@@ -23,7 +32,7 @@ cargo deny check
 cd web && npx tsc -b && npm run lint && npm test
 ```
 
-Behaviour changes need tests. Keep commits small and explain why in the
+Behavior changes need tests. Keep commits small and explain why in the
 message.
 
 ## Rules that are not negotiable

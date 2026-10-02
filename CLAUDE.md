@@ -1,4 +1,1 @@
-## RULES 
-
-MANDATORY
-All the buisness logic needs to live in Rust side.
+See [AGENTS.md](AGENTS.md).

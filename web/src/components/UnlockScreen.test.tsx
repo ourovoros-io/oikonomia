@@ -329,7 +329,7 @@ describe('UnlockScreen check for update', () => {
     const onUnlocked = vi.fn()
     render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
 
-    const check = screen.getByRole('button', { name: 'Check for update' })
+    const check = screen.getByRole('button', { name: 'Check for updates' })
     const restore = screen.getByRole('button', { name: 'Restore from backup' })
     expect(
       check.compareDocumentPosition(restore) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -353,10 +353,10 @@ describe('UnlockScreen check for update', () => {
 
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
     await userEvent.type(screen.getByLabelText('Password'), 'secret')
-    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
 
     expect(screen.getByRole('dialog', { name: 'Checking' })).toBeTruthy()
-    expect(screen.getByText('Looking for a new application.')).toBeTruthy()
+    expect(screen.getByText('Checking for a newer version.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
 
     const password = screen.getByLabelText('Password')
@@ -364,8 +364,8 @@ describe('UnlockScreen check for update', () => {
     expect(password).not.toBeDisabled()
     expect(unlock).not.toBeDisabled()
     expect(unlock).toHaveTextContent('Unlock')
-    expect(screen.getByRole('button', { name: 'Check for update' })).toHaveTextContent(
-      'Check for update',
+    expect(screen.getByRole('button', { name: 'Check for updates' })).toHaveTextContent(
+      'Check for updates',
     )
     expect(screen.queryByText('What’s new')).toBeNull()
   })
@@ -376,7 +376,7 @@ describe('UnlockScreen check for update', () => {
     const onUnlocked = vi.fn()
     render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     expect(screen.getByRole('dialog', { name: 'Checking' })).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -401,11 +401,11 @@ describe('UnlockScreen check for update', () => {
   test('stub upToDate shows Writer copy and Close', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'upToDate' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: 'You’re up to date' })).toBeTruthy()
     })
-    expect(screen.getByText('This is the latest Oikonomia.')).toBeTruthy()
+    expect(screen.getByText('You have the latest version of Oikonomia.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Install and restart' })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Close' }))
@@ -415,14 +415,14 @@ describe('UnlockScreen check for update', () => {
   test('available renders version + honesty, never notes or size, and install is the only invoke', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.1' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: 'A new application is ready' })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: 'An update is available' })).toBeTruthy()
     })
     expect(screen.getByText('Oikonomia 0.1.1')).toBeTruthy()
     expect(
       screen.getByText(
-        'This is the only internet contact, and only to fetch a new application.',
+        'This is the only time Oikonomia connects to the internet, and only to download an update.',
       ),
     ).toBeTruthy()
     expect(screen.queryByText('What’s new')).toBeNull()
@@ -447,7 +447,7 @@ describe('UnlockScreen check for update', () => {
     vi.mocked(updateInstall).mockResolvedValue({ kind: 'failed' })
     const onUnlocked = vi.fn()
     render(<UnlockScreen status="locked" onUnlocked={onUnlocked} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Install and restart' })).toBeTruthy()
     })
@@ -470,11 +470,11 @@ describe('UnlockScreen check for update', () => {
   test('failed is Close only — no retry, no Settings', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'failed' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
     })
-    expect(screen.getByText('You stay on this version.')).toBeTruthy()
+    expect(screen.getByText('Nothing was changed. You can try again later.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull()
@@ -485,14 +485,14 @@ describe('UnlockScreen check for update', () => {
   test('honesty is the Writer string, not a feed field', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '1.2.3' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     await waitFor(() => {
       expect(screen.getByText('Oikonomia 1.2.3')).toBeTruthy()
     })
     expect(screen.queryByText('FEED HONESTY')).toBeNull()
     expect(
       screen.getByText(
-        'This is the only internet contact, and only to fetch a new application.',
+        'This is the only time Oikonomia connects to the internet, and only to download an update.',
       ),
     ).toBeTruthy()
   })
@@ -501,7 +501,7 @@ describe('UnlockScreen check for update', () => {
     const pending = deferred<{ kind: 'upToDate' }>()
     vi.mocked(updateCheck).mockReturnValueOnce(pending.promise)
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Check for update' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     expect(screen.getByRole('dialog', { name: 'Checking' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Install and restart' })).toBeNull()
     expect(updateInstall).not.toHaveBeenCalled()

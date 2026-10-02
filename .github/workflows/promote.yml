@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Tag of the draft release to promote (e.g. v1.0.0)
+        description: Tag of the draft release to promote (e.g. v0.1.0)
         required: true
         type: string
       dry_run:
@@ -57,7 +57,7 @@ jobs:
         with:
           toolchain: stable
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2, 2026-09-02
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # gh resolves draft releases by tag when authenticated with repo access.
       # If this ever stops matching the draft, list releases via
@@ -83,7 +83,7 @@ jobs:
           gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" --dir artifacts
           ls -la artifacts
 
-      - name: Assemble latest.json (darwin only in v1)
+      - name: Assemble latest.json (darwin only)
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -135,8 +135,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Ship an explicit allow-list only. The draft may also carry Linux
-          # AppImage/.deb or Windows assets that never went through the
+          # Ship an explicit allow-list only. The draft also carries the Linux
+          # AppImage/.deb, which never went through the
           # smoke-tested darwin feed above; remove them so the published
           # release holds exactly what the feed names and nothing un-vetted.
           is_published_asset() {

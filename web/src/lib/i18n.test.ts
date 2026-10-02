@@ -146,7 +146,7 @@ describe('Writer el catalog', () => {
     expect(t('quickAdd.vaultLocked')).toBe('Η θυρίδα είναι κλειδωμένη')
     expect(t('quickAdd.createBookFirst')).toBe('Δημιουργήστε πρώτα βιβλίο')
     expect(t('settings.language.title')).toBe('Γλώσσα')
-    expect(t('settings.language.description')).toBe('Μενού, ετικέτες και Γρήγορη καταχώριση.')
+    expect(t('settings.language.description')).toBe('Μενού, ετικέτες και Γρήγορη καταχώριση. Τα ονόματα λογαριασμών και ορισμένα μηνύματα παραμένουν στα Αγγλικά.')
     expect(t('tx.title')).toBe('Κινήσεις')
     expect(t('dash.overview')).toBe('Επισκόπηση')
     expect(t('acct.addAccount')).toBe('Προσθήκη λογαριασμού')
@@ -368,7 +368,7 @@ describe('Writer unlock.update catalog', () => {
       }
     }
 
-    expect(catalogs.en['unlock.update.button']).toBe('Check for update')
+    expect(catalogs.en['unlock.update.button']).toBe('Check for updates')
     expect(catalogs.el['unlock.update.button']).toBe('Έλεγχος ενημέρωσης')
     expect(catalogs.fr['unlock.update.button']).toBe('Rechercher une mise à jour')
     expect(catalogs.de['unlock.update.button']).toBe('Nach Update suchen')
@@ -376,12 +376,14 @@ describe('Writer unlock.update catalog', () => {
     expect(catalogs.en['unlock.update.upToDate.title']).toBe('You’re up to date')
     expect(catalogs.en['unlock.update.failed.title']).toBe('Couldn’t check')
     expect(catalogs.fr['unlock.update.checking.body']).toBe(
-      'Recherche d’une nouvelle application.',
+      'Recherche d’une version plus récente.',
     )
-    expect(catalogs.fr['unlock.update.upToDate.body']).toBe('C’est le dernier Oikonomia.')
+    expect(catalogs.fr['unlock.update.upToDate.body']).toBe(
+      'Vous disposez de la dernière version d’Oikonomia.',
+    )
     expect(catalogs.fr['unlock.update.upToDate.title']).toBe('Vous êtes à jour')
     expect(catalogs.en['unlock.update.available.honesty']).toBe(
-      'This is the only internet contact, and only to fetch a new application.',
+      'This is the only time Oikonomia connects to the internet, and only to download an update.',
     )
     expect(catalogs.en['unlock.update.available.version']).toBe('Oikonomia {version}')
     expect(catalogs.el['unlock.update.available.version']).toContain('Oikonomia')

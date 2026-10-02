@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ReportLine } from './api'
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, PDFDict, PDFName } from 'pdf-lib'
 import {
   A4_HEIGHT,
   A4_WIDTH,
@@ -14,11 +15,43 @@ import {
   pdfExportErrorMessage,
   suggestedExpensePdfName,
 } from './expensePdf'
-import { resetI18nForTests, setLocale, t } from './i18n'
+import { LOCALES, resetI18nForTests, setLocale, t, type Locale } from './i18n'
+
+// The production code fetches the bundled fonts by URL, which does not resolve
+// in the node test environment. Serve the real .ttf files from disk instead so
+// the tests exercise the same embedding path as the app.
+const FONT_FILES: Record<string, string> = {
+  'Inter-Regular.ttf': 'Inter-Regular.ttf',
+  'Inter-SemiBold.ttf': 'Inter-SemiBold.ttf',
+}
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', async (url: string) => {
+    const name = Object.keys(FONT_FILES).find((file) => String(url).includes(file))
+    if (!name) return new Response(null, { status: 404 })
+    const bytes = await readFile(new URL(`../assets/fonts/${FONT_FILES[name]}`, import.meta.url))
+    return new Response(new Uint8Array(bytes))
+  })
+})
 
 afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   resetI18nForTests()
 })
+
+/** Base font names of every font object in a built PDF. */
+async function embeddedFontNames(bytes: Uint8Array): Promise<string[]> {
+  const doc = await PDFDocument.load(bytes)
+  const names: string[] = []
+  for (const [, object] of doc.context.enumerateIndirectObjects()) {
+    if (!(object instanceof PDFDict)) continue
+    if (object.get(PDFName.of('Type')) !== PDFName.of('Font')) continue
+    const base = object.get(PDFName.of('BaseFont'))
+    if (base instanceof PDFName) names.push(base.decodeText())
+  }
+  return names
+}
 
 function expense(
   over: Partial<ReportLine> & Pick<ReportLine, 'code' | 'name' | 'balance_minor'>,
@@ -147,6 +180,66 @@ describe('buildExpensePdfBytes', () => {
     const b64 = bytesToBase64(bytes)
     expect(b64.length).toBeGreaterThan(80)
     expect(Buffer.from(b64, 'base64').subarray(0, 5).toString()).toBe('%PDF-')
+  })
+})
+
+describe('buildExpensePdfBytes in every language', () => {
+  const names: Record<Locale, { entity: string; categories: [string, string] }> = {
+    en: { entity: 'Personal', categories: ['Rent', 'Groceries'] },
+    el: { entity: 'Προσωπικά', categories: ['Ενοίκιο', 'Τρόφιμα'] },
+    fr: { entity: 'Personnel', categories: ['Loyer', 'Épicerie'] },
+    de: { entity: 'Privat', categories: ['Miete', 'Lebensmittel'] },
+  }
+
+  test.each(LOCALES)('%s report builds and embeds Inter', async (locale) => {
+    setLocale(locale)
+    const { entity, categories } = names[locale]
+    const bytes = await buildExpensePdfBytes({
+      ...filled,
+      entityName: entity,
+      expenses: [
+        expense({ code: '6100', name: categories[0], balance_minor: 850_00 }),
+        expense({ code: '6200', name: categories[1], balance_minor: 420_00 }),
+      ],
+    })
+
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-')
+    expect(bytes.length).toBeGreaterThan(500)
+    const fonts = await embeddedFontNames(bytes)
+    expect(fonts.some((name) => name.includes('Inter-Regular'))).toBe(true)
+    expect(fonts.some((name) => name.includes('Inter-SemiBold'))).toBe(true)
+    expect(fonts.some((name) => name.includes('Helvetica'))).toBe(false)
+  })
+
+  test('Greek entity and category names build while the UI is English', async () => {
+    setLocale('en')
+    const bytes = await buildExpensePdfBytes({
+      ...filled,
+      entityName: 'Οικονομικά',
+      expenses: [
+        expense({ code: '6200', name: 'Τρόφιμα', balance_minor: 420_00 }),
+        expense({ code: '6100', name: 'Rent', balance_minor: 850_00 }),
+      ],
+    })
+
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-')
+  })
+
+  test('empty Greek report builds', async () => {
+    setLocale('el')
+    const bytes = await buildExpensePdfBytes({ ...filled, expenses: [] })
+
+    expect(new TextDecoder().decode(bytes.slice(0, 5))).toBe('%PDF-')
+  })
+
+  test('warns and keeps Helvetica when the font files cannot be loaded', async () => {
+    vi.stubGlobal('fetch', async () => new Response(new Uint8Array([1, 2, 3])))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const bytes = await buildExpensePdfBytes(filled)
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect((await embeddedFontNames(bytes)).some((name) => name.includes('Helvetica'))).toBe(true)
   })
 })
 
