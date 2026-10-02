@@ -13,6 +13,8 @@ use crate::ledger::{
 };
 use crate::util::{now_utc_string, parse_uuid};
 
+use self::Keyword::{Prefix, Unit, Word};
+
 /// Document primary key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -526,11 +528,25 @@ impl Keyword {
 /// Words in a document's text that point at a topic, in the order topics are tried.
 type TopicKeywords = [(DocumentTopic, &'static [Keyword])];
 
-use Keyword::{Prefix, Unit, Word};
-
-/// Expense topics in the order they are tried. Bills comes after the specific
-/// topics (a taxi receipt is Transport, a rent invoice is Housing): it is the
-/// topic for a bill or invoice that names nothing more specific.
+/// Expense topics in the order they are tried; the first topic whose keywords
+/// occur in the hint, and that the chart has an account for, wins.
+///
+/// The order is: Utilities, Transport, Housing, Subscription, Food, Software,
+/// Health, Bills, Tax. Three constraints fix it:
+///
+/// - Transport before Housing: a car rental, car hire or "rent a car" is
+///   travel, but it contains "rental" or "rent", which are Housing words.
+/// - Bills after every specific topic except Tax: Bills is the generic topic
+///   for a bill, invoice or receipt that names nothing more specific, so a
+///   "doctor bill", "clinic invoice", "taxi receipt" or "rent invoice" goes to
+///   the topic it is about.
+/// - Bills before Tax: "Tax invoice 42" and "VAT invoice" are ordinary
+///   invoices that mention tax, not tax payments.
+///
+/// A [`Keyword::Prefix`] is used for a stem that real names build on
+/// (Cloudflare, healthcare, Foodpanda, fuels); a plural made redundant by a
+/// prefix is not listed. Compounds that hide the stem mid-word (iCloud, efood,
+/// seafood, polyclinic, refuel) are listed as whole words.
 const EXPENSE_KEYWORDS: &TopicKeywords = &[
     (
         DocumentTopic::Utilities,
@@ -555,10 +571,30 @@ const EXPENSE_KEYWORDS: &TopicKeywords = &[
         ],
     ),
     (
+        DocumentTopic::Transport,
+        &[
+            Prefix("fuel"),
+            Word("refuel"),
+            Word("uber"),
+            // A word, not a prefix: "taxidermy" is not travel.
+            Word("taxi"),
+            Word("taxis"),
+            Word("taxibeat"),
+            Prefix("transport"),
+            Word("parking"),
+            Word("car rental"),
+            Word("car rentals"),
+            Word("car hire"),
+            Word("rent a car"),
+        ],
+    ),
+    (
         DocumentTopic::Housing,
         &[
             Word("rent"),
             Word("rents"),
+            Word("renting"),
+            Word("rented"),
             Word("rental"),
             Word("rentals"),
             Word("mortgage"),
@@ -579,8 +615,9 @@ const EXPENSE_KEYWORDS: &TopicKeywords = &[
     (
         DocumentTopic::Food,
         &[
-            Word("food"),
-            Word("foods"),
+            Prefix("food"),
+            Word("efood"),
+            Word("seafood"),
             Word("grocery"),
             Word("groceries"),
             Word("supermarket"),
@@ -590,37 +627,13 @@ const EXPENSE_KEYWORDS: &TopicKeywords = &[
         ],
     ),
     (
-        DocumentTopic::Transport,
-        &[
-            Word("fuel"),
-            Word("uber"),
-            Word("taxi"),
-            Word("taxis"),
-            Word("transport"),
-            Word("transports"),
-            Word("transportation"),
-            Word("parking"),
-        ],
-    ),
-    (
-        DocumentTopic::Bills,
-        &[
-            Word("bill"),
-            Word("bills"),
-            Word("invoice"),
-            Word("invoices"),
-            Word("receipt"),
-            Word("receipts"),
-        ],
-    ),
-    (
         DocumentTopic::Software,
         &[
             Word("software"),
             Word("github"),
             Word("aws"),
-            Word("cloud"),
-            Word("clouds"),
+            Prefix("cloud"),
+            Word("icloud"),
             Word("security"),
             Prefix("program"),
         ],
@@ -631,9 +644,24 @@ const EXPENSE_KEYWORDS: &TopicKeywords = &[
             Prefix("pharma"),
             Word("doctor"),
             Word("doctors"),
-            Word("health"),
-            Word("clinic"),
-            Word("clinics"),
+            Prefix("health"),
+            Prefix("clinic"),
+            Word("polyclinic"),
+        ],
+    ),
+    (
+        DocumentTopic::Bills,
+        &[
+            Word("bill"),
+            Word("bills"),
+            Word("billing"),
+            Word("billed"),
+            Word("invoice"),
+            Word("invoices"),
+            Word("invoiced"),
+            Word("invoicing"),
+            Word("receipt"),
+            Word("receipts"),
         ],
     ),
     (
@@ -1000,6 +1028,99 @@ mod tests {
                 expense_code(template, &accounts, hints).as_deref(),
                 Some("5600"),
                 "{hints:?}",
+            );
+        }
+    }
+
+    /// Merchant and title hints with the expense code each chart must give:
+    /// (hint, personal code, company code). Personal: Housing 5000, Food 5100,
+    /// Transport 5200, Utilities 5300, Bills 5350, Health 5400, Subscription
+    /// 5500, Tax 5700, Other 5900. Company: Rent 5200, Software 5300, Travel
+    /// 5600, Tax 5700, Other 5900.
+    const EXPENSE_HINT_CODES: &[(&str, &str, &str)] = &[
+        // Stems that real names build on.
+        ("Cloudflare", "5900", "5300"),
+        ("iCloud", "5900", "5300"),
+        ("Cloud storage", "5900", "5300"),
+        ("healthcare", "5400", "5900"),
+        ("clinical", "5400", "5900"),
+        ("clinics", "5400", "5900"),
+        ("polyclinic", "5400", "5900"),
+        ("Foodpanda", "5100", "5900"),
+        ("foods", "5100", "5900"),
+        ("efood", "5100", "5900"),
+        ("seafood", "5100", "5900"),
+        ("fuels", "5200", "5600"),
+        ("fueling", "5200", "5600"),
+        ("transporter", "5200", "5600"),
+        ("transportation", "5200", "5600"),
+        ("refuel", "5200", "5600"),
+        ("taxis", "5200", "5600"),
+        ("Taxibeat", "5200", "5600"),
+        ("billing", "5350", "5900"),
+        ("billed", "5350", "5900"),
+        ("invoiced", "5350", "5900"),
+        ("invoicing", "5350", "5900"),
+        ("renting", "5000", "5200"),
+        ("rented", "5000", "5200"),
+        // Car hire is travel, not rent.
+        ("car rental", "5200", "5600"),
+        ("car rentals", "5200", "5600"),
+        ("Car rental invoice", "5200", "5600"),
+        ("car hire", "5200", "5600"),
+        ("rent a car", "5200", "5600"),
+        ("Rent a Car — Invoice 7", "5200", "5600"),
+        ("rent", "5000", "5200"),
+        ("rental", "5000", "5200"),
+        ("apartment rent bill", "5000", "5200"),
+        ("Invoice 42 — Rent", "5000", "5200"),
+        // Bills is the generic topic: specific topics win over it...
+        ("pharmacy receipt", "5400", "5900"),
+        ("doctor bill", "5400", "5900"),
+        ("clinic invoice", "5400", "5900"),
+        // ...but it wins over Tax: these are ordinary invoices.
+        ("Tax invoice 42", "5350", "5700"),
+        ("VAT invoice", "5350", "5700"),
+        // Pinned to what they resolved to before the change.
+        ("Electricity bill", "5300", "5900"),
+        ("Gas bill", "5300", "5900"),
+        ("Water bill", "5300", "5900"),
+        ("Telecom bill", "5350", "5900"),
+        ("ACME — Invoice 42", "5350", "5900"),
+        ("Netflix — Invoice 42", "5500", "5900"),
+        ("Restaurant Plaka — Invoice 12", "5100", "5900"),
+        ("Taxi receipt", "5200", "5600"),
+        ("Fuel receipt", "5200", "5600"),
+        // Words that only contain a keyword name no topic.
+        ("syntax", "5900", "5900"),
+        ("taxidermy", "5900", "5900"),
+        ("waterfall", "5900", "5900"),
+        ("savings", "5900", "5900"),
+        ("Holdings", "5900", "5900"),
+        ("renovation", "5900", "5900"),
+        ("private", "5900", "5900"),
+        ("parent", "5900", "5900"),
+        ("current account", "5900", "5900"),
+        ("Laurent", "5900", "5900"),
+        ("Huber GmbH", "5900", "5900"),
+        ("laws", "5900", "5900"),
+    ];
+
+    #[test]
+    fn merchant_names_compounds_and_car_hire_resolve_on_both_charts() {
+        let personal = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        let company = seeded_chart_for_tests(ChartTemplate::Company, false);
+
+        for (hints, personal_code, company_code) in EXPENSE_HINT_CODES {
+            assert_eq!(
+                expense_code(ChartTemplate::Personal, &personal, hints).as_deref(),
+                Some(*personal_code),
+                "personal chart, {hints:?}",
+            );
+            assert_eq!(
+                expense_code(ChartTemplate::Company, &company, hints).as_deref(),
+                Some(*company_code),
+                "company chart, {hints:?}",
             );
         }
     }
