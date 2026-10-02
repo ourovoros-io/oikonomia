@@ -16,6 +16,7 @@ use super::store::{
 };
 use crate::domain::{Account, AccountId};
 use crate::error::Result;
+use crate::ui_text::{UiText, UiTextCode};
 
 /// Suggested high-level entry kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,8 +71,25 @@ pub struct DocumentSuggestion {
     pub payable_account_id: Option<AccountId>,
     /// 0.0–1.0 rough confidence.
     pub confidence: f32,
-    /// Human notes for the UI.
-    pub notes: String,
+    /// What the UI should tell the user about this analysis, one coded note
+    /// per sentence, in the order they are shown. The UI words them in the
+    /// current language; see [`UiTextCode`].
+    pub notes: Vec<UiText>,
+}
+
+/// What the analyzer status line says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyzerHint {
+    /// The bundled OCR models are present: images and PDFs can be read.
+    Ready,
+    /// The OCR models are missing: text PDFs still work, images do not.
+    ModelsMissing,
+}
+
+impl AnalyzerHint {
+    /// Every hint. A test checks this list against `web/src/lib/uiTextCodes.json`.
+    pub const ALL: &'static [Self] = &[Self::Ready, Self::ModelsMissing];
 }
 
 /// Status of the integrated analyzer.
@@ -81,8 +99,8 @@ pub struct AnalyzerStatus {
     pub ocr_available: bool,
     /// Always offline.
     pub offline: bool,
-    /// Short user-facing status.
-    pub hint: String,
+    /// Which status line the UI shows.
+    pub hint: AnalyzerHint,
 }
 
 /// Describe capability given model directory.
@@ -94,9 +112,9 @@ pub fn analyzer_status(model_dir: Option<&std::path::Path>) -> AnalyzerStatus {
         ocr_available: ok,
         offline: true,
         hint: if ok {
-            "Built-in offline invoice reader + OCR — nothing leaves this device.".into()
+            AnalyzerHint::Ready
         } else {
-            "OCR models missing from the app bundle. Text PDFs still use the offline invoice reader.".into()
+            AnalyzerHint::ModelsMissing
         },
     }
 }
@@ -121,23 +139,19 @@ pub fn analyze_document_bytes(
     let text = extracted.text;
     let mut source = extracted.source;
     let model_label = extracted.model_label;
-    let notes_prefix = extracted.notes_prefix;
+    let source_note = extracted.source_note;
 
     let mut suggestion = if let Some(ref body) = text {
         if source == AnalyzeSource::None {
             source = AnalyzeSource::Heuristic;
         }
         let mut s = parse_invoice_text(body);
-        if !notes_prefix.is_empty() {
-            s.notes = format!("{} {}", notes_prefix, s.notes);
+        if let Some(note) = source_note {
+            s.notes.insert(0, note);
         }
         s
     } else {
-        empty_suggestion(if notes_prefix.is_empty() {
-            "Could not extract text from this file."
-        } else {
-            &notes_prefix
-        })
+        empty_suggestion(source_note.unwrap_or_else(|| UiText::new(UiTextCode::NoTextExtracted)))
     };
 
     let model = model_label.or_else(|| suggestion.model.clone());
@@ -145,21 +159,35 @@ pub fn analyze_document_bytes(
 
     // The invoice reader emits 2-exponent minor units (cents). For currencies
     // with a different exponent the value would be silently wrong, so drop it.
-    if currency_exponent(default_currency) != 2 && suggestion.amount_minor.is_some() {
+    let two_decimals = currency_exponent(default_currency) == 2;
+    if !two_decimals && suggestion.amount_minor.is_some() {
         suggestion.amount_minor = None;
-        suggestion.notes = format!(
-            "{} Amount detection assumes 2-decimal currencies; enter the {default_currency} amount manually.",
-            suggestion.notes
+        suggestion.notes.push(
+            UiText::new(UiTextCode::AmountAssumesTwoDecimals)
+                .with_param("currency", default_currency.to_ascii_uppercase()),
         );
+    }
+
+    // A transfer fee is also read as cents, so for any other exponent it would
+    // be shown wrongly. Otherwise it needs the currency to be formatted as money.
+    if two_decimals {
+        for note in &mut suggestion.notes {
+            if note.code == UiTextCode::TransferFee {
+                note.params
+                    .insert("currency".to_owned(), default_currency.to_ascii_uppercase());
+            }
+        }
+    } else {
+        suggestion
+            .notes
+            .retain(|note| note.code != UiTextCode::TransferFee);
     }
 
     // Document dates (issue or due date) often fall outside the current month;
     // say so, or the entry seems to vanish from the dashboard after posting.
     if let Some(date) = suggestion.entry_date.as_deref() {
-        suggestion.notes = format!(
-            "{} Entry will be dated {date} (from the document) and counts toward that month — adjust the date if you want it in a different period.",
-            suggestion.notes
-        );
+        let note = UiText::new(UiTextCode::DatedFromDocument).with_param("date", date);
+        suggestion.notes.push(note);
     }
 
     Ok(suggestion)
@@ -205,10 +233,7 @@ fn finalize_suggestion(
     }
 
     if s.kind == EntryKindSuggestion::Bill && s.bill_unpaid && s.payable_account_id.is_none() {
-        s.notes = format!(
-            "{} Add a Bills Payable liability account to track unpaid bills.",
-            s.notes
-        );
+        s.notes.push(UiText::new(UiTextCode::AddPayableAccount));
     }
 }
 
@@ -216,7 +241,8 @@ struct ExtractedText {
     text: Option<String>,
     source: AnalyzeSource,
     model_label: Option<String>,
-    notes_prefix: String,
+    /// The note that says where the text came from, shown before the reader's.
+    source_note: Option<UiText>,
 }
 
 fn read_document_text(
@@ -228,7 +254,7 @@ fn read_document_text(
 ) -> ExtractedText {
     let mut source = AnalyzeSource::None;
     let mut model_label = None;
-    let mut notes_prefix = String::new();
+    let mut source_note = None;
 
     let text = if is_image {
         ocr_plain_image(
@@ -236,21 +262,18 @@ fn read_document_text(
             model_dir,
             &mut source,
             &mut model_label,
-            &mut notes_prefix,
+            &mut source_note,
         )
     } else {
         let pdf = mime.contains("pdf") || filename.to_ascii_lowercase().ends_with(".pdf");
         if pdf && !pdf_within_budget(data) {
-            notes_prefix =
-                "PDF exceeds the page or stream budget; enter the fields manually.".into();
+            source_note = Some(UiText::new(UiTextCode::PdfOverBudget));
             None
         } else {
             let t = extract_text(filename, mime, data);
             if t.is_some() {
                 source = AnalyzeSource::Heuristic;
-                notes_prefix =
-                    "Parsed from document text on-device (no network). Review before saving."
-                        .into();
+                source_note = Some(UiText::new(UiTextCode::ParsedFromDocumentText));
             }
             if pdf && should_ocr_pdf_images(t.as_deref()) {
                 ocr_pdf_embedded_images(
@@ -258,7 +281,7 @@ fn read_document_text(
                     model_dir,
                     &mut source,
                     &mut model_label,
-                    &mut notes_prefix,
+                    &mut source_note,
                 )
                 .or(t)
             } else {
@@ -271,7 +294,7 @@ fn read_document_text(
         text,
         source,
         model_label,
-        notes_prefix,
+        source_note,
     }
 }
 
@@ -280,38 +303,39 @@ fn ocr_plain_image(
     model_dir: Option<&Path>,
     source: &mut AnalyzeSource,
     model_label: &mut Option<String>,
-    notes_prefix: &mut String,
+    source_note: &mut Option<UiText>,
 ) -> Option<String> {
     let Some(dir) = model_dir else {
-        *notes_prefix = "OCR model path not configured.".into();
+        *source_note = Some(UiText::new(UiTextCode::OcrPathMissing));
         return None;
     };
     let paths = OcrModelPaths::from_dir(dir);
     if !ocr_available(&paths) {
-        *notes_prefix =
-            "Bundled OCR models not found. Use a text PDF or enter fields manually.".into();
+        *source_note = Some(UiText::new(UiTextCode::OcrModelsMissing));
         return None;
     }
     match ocr_image_bytes(&paths, data) {
         Ok(t) if !t.trim().is_empty() => {
             *source = AnalyzeSource::BundledOcr;
             *model_label = Some("ocrs-bundled".into());
-            *notes_prefix = "Read with built-in offline OCR. Review before saving.".into();
+            *source_note = Some(UiText::new(UiTextCode::OcrRead));
             Some(t)
         }
         Ok(_) => {
-            *notes_prefix =
-                "OCR ran but found little text — fill the form manually if needed.".into();
+            *source_note = Some(UiText::new(UiTextCode::OcrLittleText));
             None
         }
         Err(e) => {
-            *notes_prefix = format!("OCR error: {e}. You can still enter the fields.");
+            // The cause can carry file or model detail; it belongs in the log,
+            // not on the wire, and the user is told only that OCR failed.
+            log::warn!("OCR failed on an image: {e}");
+            *source_note = Some(UiText::new(UiTextCode::OcrFailed));
             None
         }
     }
 }
 
-fn empty_suggestion(notes: &str) -> DocumentSuggestion {
+fn empty_suggestion(note: UiText) -> DocumentSuggestion {
     DocumentSuggestion {
         source: AnalyzeSource::None,
         model: None,
@@ -326,7 +350,7 @@ fn empty_suggestion(notes: &str) -> DocumentSuggestion {
         wallet_account_id: None,
         payable_account_id: None,
         confidence: 0.0,
-        notes: notes.to_owned(),
+        notes: vec![note],
     }
 }
 
@@ -343,7 +367,7 @@ fn ocr_pdf_embedded_images(
     model_dir: Option<&Path>,
     source: &mut AnalyzeSource,
     model_label: &mut Option<String>,
-    notes_prefix: &mut String,
+    source_note: &mut Option<UiText>,
 ) -> Option<String> {
     let dir = model_dir?;
     let paths = OcrModelPaths::from_dir(dir);
@@ -357,8 +381,7 @@ fn ocr_pdf_embedded_images(
         if text.chars().count() > 8 {
             *source = AnalyzeSource::BundledOcr;
             *model_label = Some("ocrs-bundled".into());
-            *notes_prefix =
-                "Read embedded PDF image with built-in OCR. Review before saving.".into();
+            *source_note = Some(UiText::new(UiTextCode::OcrPdfImage));
             return Some(text);
         }
     }
@@ -590,16 +613,172 @@ mod tests {
         assert_eq!(s.amount_minor, Some(4590));
     }
 
+    fn notes_of(suggestion: Result<DocumentSuggestion>) -> Vec<UiText> {
+        suggestion.map_or_else(|_| Vec::new(), |s| s.notes)
+    }
+
+    fn codes_of(notes: &[UiText]) -> Vec<UiTextCode> {
+        notes.iter().map(|note| note.code).collect()
+    }
+
     #[test]
     fn non_two_exponent_currency_drops_amount() {
         let text = b"Invoice\nTOTAL 45,90\nThank you";
         let eur = analyze_document_bytes("bill.txt", "text/plain", text, &[], "EUR", None);
         let jpy = analyze_document_bytes("bill.txt", "text/plain", text, &[], "JPY", None);
 
+        let eur_notes = notes_of(eur.clone());
         assert_eq!(eur.map(|s| s.amount_minor), Ok(Some(4590)));
+        assert!(
+            !codes_of(&eur_notes).contains(&UiTextCode::AmountAssumesTwoDecimals),
+            "a 2-decimal currency needs no warning"
+        );
 
-        let (amount, notes) = jpy.map_or((Some(-1), String::new()), |s| (s.amount_minor, s.notes));
+        let amount = jpy.as_ref().map_or(Some(-1), |s| s.amount_minor);
         assert_eq!(amount, None, "JPY amount must not be prefilled");
-        assert!(notes.contains("JPY"), "notes explain the skip: {notes}");
+
+        let jpy_notes = notes_of(jpy);
+        assert!(
+            jpy_notes.contains(
+                &UiText::new(UiTextCode::AmountAssumesTwoDecimals).with_param("currency", "JPY")
+            ),
+            "notes explain the skip: {jpy_notes:?}"
+        );
+    }
+
+    #[test]
+    fn a_text_file_gets_the_source_note_then_the_reader_notes_then_the_date_note() {
+        let text = b"Invoice\nDate 15/03/2026\nTOTAL 45,90 EUR\nThank you";
+        let notes = notes_of(analyze_document_bytes(
+            "bill.txt",
+            "text/plain",
+            text,
+            &[],
+            "EUR",
+            None,
+        ));
+
+        assert_eq!(
+            codes_of(&notes),
+            [
+                UiTextCode::ParsedFromDocumentText,
+                UiTextCode::InvoiceParsed,
+                UiTextCode::DatedFromDocument,
+            ]
+        );
+        assert_eq!(
+            notes.last(),
+            Some(&UiText::new(UiTextCode::DatedFromDocument).with_param("date", "2026-03-15"))
+        );
+    }
+
+    #[test]
+    fn an_unreadable_file_says_no_text_was_found() {
+        let notes = notes_of(analyze_document_bytes(
+            "scan.bin",
+            "application/octet-stream",
+            b"\x00\x01",
+            &[],
+            "EUR",
+            None,
+        ));
+
+        assert_eq!(notes, [UiText::new(UiTextCode::NoTextExtracted)]);
+    }
+
+    #[test]
+    fn an_image_without_a_model_directory_says_the_path_is_missing() {
+        let notes = notes_of(analyze_document_bytes(
+            "scan.jpg",
+            "image/jpeg",
+            b"\xff\xd8",
+            &[],
+            "EUR",
+            None,
+        ));
+
+        assert_eq!(notes, [UiText::new(UiTextCode::OcrPathMissing)]);
+    }
+
+    #[test]
+    fn an_image_with_an_empty_model_directory_says_the_models_are_missing() {
+        let dir = tempfile::tempdir();
+        let path = dir.as_ref().map(|dir| dir.path().to_path_buf());
+
+        let notes = notes_of(analyze_document_bytes(
+            "scan.jpg",
+            "image/jpeg",
+            b"\xff\xd8",
+            &[],
+            "EUR",
+            path.as_deref().ok(),
+        ));
+
+        assert_eq!(notes, [UiText::new(UiTextCode::OcrModelsMissing)]);
+    }
+
+    #[test]
+    fn an_oversized_pdf_says_it_is_over_budget() {
+        // Not a PDF structure, so the loader fails and the size check applies.
+        let data = vec![0_u8; MAX_PDF_STREAM_BYTES + 1];
+        let notes = notes_of(analyze_document_bytes(
+            "big.pdf",
+            "application/pdf",
+            &data,
+            &[],
+            "EUR",
+            None,
+        ));
+
+        assert_eq!(notes, [UiText::new(UiTextCode::PdfOverBudget)]);
+    }
+
+    #[test]
+    fn an_unpaid_bill_without_a_payable_account_asks_for_one() {
+        let text = "Invoice\nTOTAL 45,90 EUR\nAmount due\nThank you";
+        let notes = notes_of(analyze_document_bytes(
+            "bill.txt",
+            "text/plain",
+            text.as_bytes(),
+            &[],
+            "EUR",
+            None,
+        ));
+
+        assert!(
+            codes_of(&notes).contains(&UiTextCode::AddPayableAccount),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn the_hint_says_whether_the_models_are_present() {
+        assert_eq!(analyzer_status(None).hint, AnalyzerHint::ModelsMissing);
+
+        let dir = tempfile::tempdir();
+        let Ok(dir) = dir else { return };
+        assert_eq!(
+            analyzer_status(Some(dir.path())).hint,
+            AnalyzerHint::ModelsMissing
+        );
+
+        for file in ["text-detection.rten", "text-recognition.rten"] {
+            assert!(std::fs::write(dir.path().join(file), b"x").is_ok());
+        }
+        assert_eq!(analyzer_status(Some(dir.path())).hint, AnalyzerHint::Ready);
+    }
+
+    #[test]
+    fn the_status_serializes_the_hint_as_a_snake_case_code() {
+        let json = serde_json::to_value(analyzer_status(None)).ok();
+
+        assert_eq!(
+            json,
+            Some(serde_json::json!({
+                "ocr_available": false,
+                "offline": true,
+                "hint": "models_missing",
+            }))
+        );
     }
 }

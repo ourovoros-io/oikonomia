@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { asCommandError } from './commandError'
 import { isTauri } from './tauri'
+import type { UiText } from './uiText'
 
 export type ChartTemplate = 'personal' | 'company' | 'blank'
 export type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense'
@@ -52,6 +53,9 @@ export type PostedEntryView = {
   is_voided: boolean
 }
 
+/** Which computed row a report line is; the UI shows the translated label. */
+export type SyntheticLine = 'retained_earnings' | 'net_income'
+
 export type ReportLine = {
   code: string
   name: string
@@ -59,6 +63,8 @@ export type ReportLine = {
   debit_minor: number
   credit_minor: number
   balance_minor: number
+  /** Set on a computed row (retained earnings, net income) that has no account behind it. */
+  synthetic?: SyntheticLine | null
 }
 
 export type TrialBalance = {
@@ -514,10 +520,13 @@ export const api = {
     }),
 }
 
+/** Which status line the analyzer shows; the UI words it (see uiText.ts). */
+export type AnalyzerHint = 'ready' | 'models_missing'
+
 export type AnalyzerStatus = {
   ocr_available: boolean
   offline: boolean
-  hint: string
+  hint: AnalyzerHint
 }
 
 export type DocumentSuggestion = {
@@ -534,7 +543,8 @@ export type DocumentSuggestion = {
   wallet_account_id: string | null
   payable_account_id: string | null
   confidence: number
-  notes: string
+  /** One coded note per sentence; the UI words them (see uiText.ts). */
+  notes: UiText[]
 }
 
 export type DocumentMeta = {

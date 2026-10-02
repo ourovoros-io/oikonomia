@@ -6,6 +6,7 @@
 //! amount, never a clock on `Ημερομηνία Αξίας` or the transfer fee. No network.
 
 use super::analyze::{DocumentSuggestion, EntryKindSuggestion};
+use crate::ui_text::{UiText, UiTextCode};
 
 /// Parse extracted document text into a draft suggestion.
 ///
@@ -497,29 +498,22 @@ fn first_date_on_line(line: &str) -> Option<String> {
     None
 }
 
-fn build_transfer_notes(amount: Option<i64>, fee_minor: Option<i64>) -> String {
-    let mut parts = vec![
-        "Parsed offline with the built-in invoice reader (no internet).".to_owned(),
-        "Detected a bank transfer / εμβασμα receipt (expense).".to_owned(),
+fn build_transfer_notes(amount: Option<i64>, fee_minor: Option<i64>) -> Vec<UiText> {
+    let mut notes = vec![
+        UiText::new(UiTextCode::InvoiceParsed),
+        UiText::new(UiTextCode::TransferDetected),
     ];
-    if amount.is_none() {
-        parts.push(
-            "Could not confidently detect the transfer principal — please enter the amount.".into(),
-        );
-    }
-    if let Some(fee) = fee_minor {
-        parts.push(format!(
-            "Transfer fee {} is shown on the receipt and is not the posted amount.",
-            format_minor_comma(fee)
-        ));
-    }
-    parts.join(" ")
-}
 
-fn format_minor_comma(minor: i64) -> String {
-    let whole = minor / 100;
-    let cents = minor.rem_euclid(100);
-    format!("{whole},{cents:02}")
+    if amount.is_none() {
+        notes.push(UiText::new(UiTextCode::TransferNoAmount));
+    }
+
+    if let Some(fee) = fee_minor {
+        // The currency is the book's, so the caller adds it. The UI formats the money.
+        notes.push(UiText::new(UiTextCode::TransferFee).with_param("fee_minor", fee.to_string()));
+    }
+
+    notes
 }
 
 fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
@@ -1524,25 +1518,26 @@ fn build_notes(
     kind: EntryKindSuggestion,
     unpaid: bool,
     lower: &str,
-) -> String {
-    let mut parts =
-        vec!["Parsed offline with the built-in invoice reader (no internet).".to_owned()];
+) -> Vec<UiText> {
+    let mut notes = vec![UiText::new(UiTextCode::InvoiceParsed)];
+
     if amount.is_none() {
-        parts.push("Could not confidently detect a total — please enter the amount.".into());
+        notes.push(UiText::new(UiTextCode::InvoiceNoTotal));
     }
     if matches!(kind, EntryKindSuggestion::Income) {
-        parts.push("Detected a sales/service invoice (income).".into());
+        notes.push(UiText::new(UiTextCode::InvoiceIncome));
     }
     if is_utility_bill(lower) {
-        parts.push("Detected a utility / electricity bill (expense).".into());
+        notes.push(UiText::new(UiTextCode::InvoiceUtility));
     }
     if unpaid {
-        parts.push("Marked as credit terms / amount due.".into());
+        notes.push(UiText::new(UiTextCode::InvoiceUnpaid));
     }
     if lower.contains("χωρίς φπα") || lower.contains("0%") {
-        parts.push("VAT appears zero / exempt.".into());
+        notes.push(UiText::new(UiTextCode::InvoiceVatExempt));
     }
-    parts.join(" ")
+
+    notes
 }
 
 #[cfg(test)]
@@ -1733,10 +1728,14 @@ mod tests {
             suggestion.description.as_deref(),
             Some("Έμβασμα — HELIOS TRADING IKE")
         );
-        assert!(
-            suggestion.notes.contains("1,40"),
-            "notes should mention the fee only: {}",
-            suggestion.notes
+        assert_eq!(
+            suggestion.notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::TransferDetected),
+                UiText::new(UiTextCode::TransferFee).with_param("fee_minor", "140"),
+            ],
+            "notes should mention the fee only, as integer minor units"
         );
         assert_ne!(suggestion.amount_minor, Some(140));
         assert_ne!(suggestion.amount_minor, Some(700));
@@ -1776,6 +1775,73 @@ mod tests {
         assert_eq!(suggestion.merchant.as_deref(), Some("HELIOS TRADING IKE"));
         assert_eq!(suggestion.reference.as_deref(), Some("F000TO0000000001"));
         assert_eq!(suggestion.kind, EntryKindSuggestion::Expense);
+    }
+
+    #[test]
+    fn a_transfer_without_a_principal_asks_for_the_amount() {
+        let suggestion = parse_invoice_text("Εμβασμα\nΜεταφορά σε άλλη τράπεζα\n");
+
+        assert_eq!(
+            suggestion.notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::TransferDetected),
+                UiText::new(UiTextCode::TransferNoAmount),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_plain_invoice_without_a_total_asks_for_the_amount() {
+        let suggestion = parse_invoice_text("Thank you for your visit");
+
+        assert_eq!(
+            suggestion.notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::InvoiceNoTotal),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_utility_bill_is_noted_as_one() {
+        let suggestion = parse_invoice_text(&corpus_text("synthetic/text/ngs_gas_bill.txt"));
+
+        assert!(
+            suggestion
+                .notes
+                .contains(&UiText::new(UiTextCode::InvoiceUtility)),
+            "{:?}",
+            suggestion.notes
+        );
+    }
+
+    #[test]
+    fn a_sales_invoice_is_noted_as_income() {
+        let notes = build_notes(Some(1000), EntryKindSuggestion::Income, false, "");
+
+        assert_eq!(
+            notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::InvoiceIncome),
+            ]
+        );
+    }
+
+    #[test]
+    fn credit_terms_and_zero_vat_each_add_their_note() {
+        let notes = build_notes(Some(1000), EntryKindSuggestion::Bill, true, "χωρίς φπα");
+
+        assert_eq!(
+            notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::InvoiceUnpaid),
+                UiText::new(UiTextCode::InvoiceVatExempt),
+            ]
+        );
     }
 
     #[test]

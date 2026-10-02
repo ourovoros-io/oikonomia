@@ -1016,7 +1016,7 @@
   "analyze": {
     "hint": {
       "ready": "Integrierter Offline-Rechnungsleser + OCR — nichts verlässt dieses Gerät.",
-      "missingModels": "Im App-Paket fehlen OCR-Modelle. Text-PDFs nutzt weiterhin der Offline-Rechnungsleser."
+      "missingModels": "Im App-Paket fehlen OCR-Modelle. Text-PDFs werden weiterhin vom Offline-Rechnungsleser gelesen."
     },
     "notes": {
       "noText": "Aus dieser Datei ließ sich kein Text lesen.",
@@ -1029,7 +1029,7 @@
       "ocrModelsMissing": "Die mitgelieferten OCR-Modelle fehlen. Nutzen Sie ein Text-PDF oder füllen Sie die Felder selbst aus.",
       "ocrRead": "Mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern.",
       "ocrLittleText": "Die OCR ist durchgelaufen, hat aber wenig Text gefunden — füllen Sie das Formular bei Bedarf selbst aus.",
-      "ocrError": "OCR-Fehler: {error}. Sie können die Felder selbst ausfüllen.",
+      "ocrError": "Die OCR ist fehlgeschlagen. Sie können die Felder selbst ausfüllen.",
       "ocrPdfImage": "Eingebettetes PDF-Bild mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern."
     },
     "invoice": {
@@ -1039,7 +1039,10 @@
         "income": "Verkaufs- oder Leistungsrechnung erkannt (Einnahme).",
         "utility": "Versorger- oder Stromrechnung erkannt (Ausgabe).",
         "unpaid": "Als unbezahlt / offener Betrag vermerkt.",
-        "vatExempt": "Die MwSt. steht auf null / steuerfrei."
+        "vatExempt": "Die MwSt. steht auf null / steuerfrei.",
+        "transferDetected": "Überweisungsbeleg erkannt (Ausgabe).",
+        "transferNoAmount": "Der überwiesene Betrag wurde nicht sicher erkannt — tragen Sie den Betrag ein.",
+        "transferFee": "Die Überweisungsgebühr {fee} steht auf dem Beleg und ist nicht der gebuchte Betrag."
       },
       "merchant": {
         "naturalGas": "Erdgas",

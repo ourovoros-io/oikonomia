@@ -36,6 +36,7 @@ import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import { t } from '../lib/i18n'
+import { reportLineName } from '../lib/uiText'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
@@ -301,7 +302,7 @@ function LineRow({ line, ccy }: { line: ReportLine; ccy: string }) {
         {/* Fixed code column: a line without a code (current year earnings)
             still starts its name where the others do. */}
         <span className="w-10 shrink-0 text-xs tabular-nums text-[var(--color-muted)]">{line.code}</span>
-        <span className="truncate text-sm text-[var(--color-fg-secondary)]">{line.name}</span>
+        <span className="truncate text-sm text-[var(--color-fg-secondary)]">{reportLineName(line)}</span>
       </div>
       <span className="shrink-0 text-sm tabular-nums text-[var(--color-fg)]">
         {formatMoney(line.balance_minor, ccy)}
@@ -483,7 +484,7 @@ function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: stri
                   <span className="mr-3 inline-block w-10 text-xs tabular-nums text-[var(--color-muted)]">
                     {l.code}
                   </span>
-                  <span className="text-[var(--color-fg-secondary)]">{l.name}</span>
+                  <span className="text-[var(--color-fg-secondary)]">{reportLineName(l)}</span>
                 </td>
                 <td className="py-1.5 pl-4 text-right tabular-nums text-[var(--color-fg)]">
                   {l.debit_minor ? formatMoney(l.debit_minor, ccy) : '—'}

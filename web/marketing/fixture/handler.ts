@@ -24,7 +24,7 @@ export function createHandler(lang: DemoLang) {
   const l = buildLedger(lang)
 
   const prefs: UiPrefs = { last_entity_id: l.entity.id, last_accounts_by_entity_kind: {}, locale: lang }
-  const analyzer: AnalyzerStatus = { ocr_available: true, offline: true, hint: '' }
+  const analyzer: AnalyzerStatus = { ocr_available: true, offline: true, hint: 'ready' }
 
   // Set to the command currently being answered so str/opt can name it in a
   // failure, without every call site having to repeat the command string.

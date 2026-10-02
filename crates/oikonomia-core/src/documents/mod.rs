@@ -10,8 +10,8 @@ mod pdf_repair;
 mod store;
 
 pub use analyze::{
-    AnalyzeSource, AnalyzerStatus, DocumentSuggestion, EntryKindSuggestion, analyze_document_bytes,
-    analyzer_status,
+    AnalyzeSource, AnalyzerHint, AnalyzerStatus, DocumentSuggestion, EntryKindSuggestion,
+    analyze_document_bytes, analyzer_status,
 };
 pub use invoice::parse_invoice_text;
 pub use ocr::OcrModelPaths;

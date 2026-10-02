@@ -9,8 +9,8 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, ReportLine, balance_sheet, cash_flow_series,
-    create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
+    CreateEntity, CreateJournalLine, PostJournal, ReportLine, SyntheticLine, balance_sheet,
+    cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
     set_account_opening_balance, set_entry_hidden, trial_balance, void_entry,
 };
 use oikonomia_core::vault::Vault;
@@ -1018,4 +1018,61 @@ fn randomized_ledgers_with_voids_keep_the_series_equal_to_the_dashboard() {
     ] {
         assert_series_matches_dashboard(conn, entity_id, from, to);
     }
+}
+
+#[test]
+fn only_the_synthetic_rows_carry_the_synthetic_marker() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-06-01", 1_000);
+
+    // A year later the expense is a prior-period result, so RE appears.
+    let next_year = balance_sheet(conn, entity_id, "2027-01-31").expect("next year");
+    let retained = line(&next_year.equity.lines, "RE");
+    assert_eq!(retained.synthetic, Some(SyntheticLine::RetainedEarnings));
+    assert_eq!(
+        retained.name, "Retained Earnings (prior periods)",
+        "the English name stays for exports and as a fallback"
+    );
+
+    // In the same year it is the current result, so NI appears.
+    let same_year = balance_sheet(conn, entity_id, "2026-12-31").expect("same year");
+    let net_income = line(&same_year.equity.lines, "NI");
+    assert_eq!(net_income.synthetic, Some(SyntheticLine::NetIncome));
+    assert_eq!(net_income.name, "Net Income (current period)");
+
+    let ledger_rows = same_year
+        .assets
+        .lines
+        .iter()
+        .chain(&same_year.liabilities.lines)
+        .chain(same_year.equity.lines.iter().filter(|l| l.code != "NI"));
+    for row in ledger_rows {
+        assert_eq!(row.synthetic, None, "{} is a real account", row.code);
+    }
+
+    // The trial balance lists the same synthetic rows.
+    let trial = trial_balance(conn, entity_id, "2027-01-31").expect("trial");
+    assert_eq!(
+        line(&trial.lines, "RE").synthetic,
+        Some(SyntheticLine::RetainedEarnings)
+    );
+}
+
+#[test]
+fn a_report_line_serializes_its_marker_as_a_snake_case_code() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-06-01", 1_000);
+
+    let sheet = balance_sheet(conn, entity_id, "2026-12-31").expect("sheet");
+    let json = serde_json::to_value(line(&sheet.equity.lines, "NI")).expect("json");
+
+    assert_eq!(json["synthetic"], "net_income");
+    assert_eq!(json["code"], "NI");
+
+    let checking = serde_json::to_value(&sheet.assets.lines[0]).expect("json");
+    assert_eq!(checking["synthetic"], serde_json::Value::Null);
 }

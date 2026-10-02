@@ -115,6 +115,8 @@ export function balanceSheet(l: DemoLedger, asOf: string): BalanceSheet {
     debit_minor: 0,
     credit_minor: earnings,
     balance_minor: earnings,
+    // Rust marks this computed row, and the app words it from the marker.
+    synthetic: 'net_income',
   })
 
   const total_assets = sum(assets)

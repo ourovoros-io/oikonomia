@@ -69,32 +69,6 @@ const PENDING_RUST: readonly string[] = [
   'analyze.invoice.desc.invoiceRefMerchant',
   'analyze.invoice.desc.invoiceRef',
   'analyze.invoice.desc.invoice',
-
-  // Analyzer hints and notes: rendered from coded Rust text (task 4).
-  'analyze.hint.ready',
-  'analyze.hint.missingModels',
-  'analyze.notes.noText',
-  'analyze.notes.amountCurrency',
-  'analyze.notes.datedFromDoc',
-  'analyze.notes.addPayable',
-  'analyze.notes.pdfBudget',
-  'analyze.notes.parsedText',
-  'analyze.notes.ocrPathMissing',
-  'analyze.notes.ocrModelsMissing',
-  'analyze.notes.ocrRead',
-  'analyze.notes.ocrLittleText',
-  'analyze.notes.ocrError',
-  'analyze.notes.ocrPdfImage',
-  'analyze.invoice.notes.parsed',
-  'analyze.invoice.notes.noTotal',
-  'analyze.invoice.notes.income',
-  'analyze.invoice.notes.utility',
-  'analyze.invoice.notes.unpaid',
-  'analyze.invoice.notes.vatExempt',
-
-  // Synthetic report rows (task 4).
-  'reports.synthetic.retainedEarnings',
-  'reports.synthetic.netIncome',
 ]
 
 /**

@@ -579,3 +579,89 @@ describe('ReportsPage empty-state CTA', () => {
     expect(screen.queryByRole('button', { name: 'Create a book' })).toBeNull()
   })
 })
+
+describe('ReportsPage synthetic rows', () => {
+  const retained = expense({
+    code: 'RE',
+    name: 'Retained Earnings (prior periods)',
+    account_type: 'equity',
+    balance_minor: 40_00,
+    synthetic: 'retained_earnings',
+  })
+  const netIncome = expense({
+    code: 'NI',
+    name: 'Net Income (current period)',
+    account_type: 'equity',
+    balance_minor: 60_00,
+    synthetic: 'net_income',
+  })
+
+  test('the balance sheet words the computed rows in the current language', async () => {
+    vi.mocked(api.reportBalanceSheet).mockResolvedValue({
+      entity_id: 'e1',
+      as_of: todayISO(),
+      assets: { title: 'Assets', lines: [], total: 100_00 },
+      liabilities: { title: 'Liabilities', lines: [], total: 0 },
+      equity: { title: 'Equity', lines: [retained, netIncome], total: 100_00 },
+      total_assets: 100_00,
+      total_liabilities_equity: 100_00,
+    })
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Balance sheet' }))
+    await waitFor(() => {
+      expect(screen.getByText('Net Income (current period)')).toBeTruthy()
+    })
+
+    act(() => setLocale('el'))
+
+    expect(screen.getByText('Παρακρατηθέντα κέρδη (προηγούμενες περίοδοι)')).toBeTruthy()
+    expect(screen.getByText('Καθαρό αποτέλεσμα (τρέχουσα περίοδος)')).toBeTruthy()
+    expect(screen.queryByText('Net Income (current period)')).toBeNull()
+
+    act(() => setLocale('de'))
+
+    expect(screen.getByText('Gewinnvortrag (frühere Perioden)')).toBeTruthy()
+    expect(screen.getByText('Periodenergebnis (aktuelle Periode)')).toBeTruthy()
+  })
+
+  test('the trial balance words the computed rows too', async () => {
+    vi.mocked(api.reportTrialBalance).mockResolvedValue({
+      entity_id: 'e1',
+      as_of: todayISO(),
+      lines: [retained],
+      total_debits: 0,
+      total_credits: 40_00,
+    })
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Trial balance' }))
+    await waitFor(() => {
+      expect(screen.getByText('Retained Earnings (prior periods)')).toBeTruthy()
+    })
+
+    act(() => setLocale('fr'))
+
+    expect(screen.getByText('Report à nouveau (périodes précédentes)')).toBeTruthy()
+  })
+
+  test('a real account keeps its own name in every language', async () => {
+    vi.mocked(api.reportTrialBalance).mockResolvedValue({
+      entity_id: 'e1',
+      as_of: todayISO(),
+      lines: [expense({ code: '1010', name: 'Checking', account_type: 'asset', balance_minor: 10_00 })],
+      total_debits: 10_00,
+      total_credits: 0,
+    })
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Trial balance' }))
+    await waitFor(() => {
+      expect(screen.getByText('Checking')).toBeTruthy()
+    })
+
+    act(() => setLocale('el'))
+
+    expect(screen.getByText('Checking')).toBeTruthy()
+  })
+})

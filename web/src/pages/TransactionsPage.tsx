@@ -27,6 +27,7 @@ import {
   type SimpleEntryInput,
 } from '../lib/api'
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
+import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
 import { CashFlowPulse } from '../components/CashFlowPulse'
@@ -135,7 +136,7 @@ export function TransactionsPage({
   const [editId, setEditId] = useState<string | null>(null)
   const [pendingDoc, setPendingDoc] = useState<PendingDocSource | null>(null)
   const [pendingAnalysis, setPendingAnalysis] = useState<string | null>(null)
-  const [scanNotes, setScanNotes] = useState<string | null>(null)
+  const [scanNotes, setScanNotes] = useState<UiText[] | null>(null)
   const [docs, setDocs] = useState<DocumentMeta[]>([])
   const [detailId, setDetailId] = useState<string | null>(null)
   const [viewerDocId, setViewerDocId] = useState<string | null>(null)
@@ -817,7 +818,7 @@ export function TransactionsPage({
               setError(null)
               applySuggestion(s, source)
               if (s.source === 'none' && !s.amount_minor) {
-                setError(s.notes || t('tx.couldNotReadDoc'))
+                setError(renderUiTexts(s.notes) || t('tx.couldNotReadDoc'))
               }
             }}
             onError={(msg) => setError(msg)}
@@ -895,9 +896,9 @@ export function TransactionsPage({
           />
         </div>
 
-        {scanNotes ? (
+        {scanNotes && scanNotes.length > 0 ? (
           <div className="mb-5 rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-xs text-[var(--color-fg-secondary)]">
-            {scanNotes}
+            {renderUiTexts(scanNotes)}
             {pendingDoc ? (
               <span className="mt-1 block text-[var(--color-muted)]">
                 {t('tx.docWillStore')}

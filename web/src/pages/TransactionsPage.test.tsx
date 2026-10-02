@@ -242,7 +242,7 @@ function documentSuggestion(over: Partial<DocumentSuggestion> = {}): DocumentSug
     wallet_account_id: null,
     payable_account_id: null,
     confidence: 0.4,
-    notes: '',
+    notes: [],
     ...over,
   }
 }
@@ -653,7 +653,7 @@ describe('TransactionsPage discards unfinished draft', () => {
         amount_minor: 1234,
         description: null,
         reference: null,
-        notes: 'Partial scan — amount only',
+        notes: [{ code: 'ocr_little_text' }],
       }),
     )
 
@@ -663,7 +663,9 @@ describe('TransactionsPage discards unfinished draft', () => {
     expect(screen.getByLabelText('Description')).toHaveValue('')
     expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('12.34')
     expect(screen.getByLabelText('Reference (optional)')).toHaveValue('')
-    expect(screen.getByText('Partial scan — amount only')).toBeTruthy()
+    expect(
+      screen.getByText('OCR ran but found little text — fill the form manually if needed.'),
+    ).toBeTruthy()
     expect(screen.queryByDisplayValue('LEFTOVER DRAFT PAYEE')).toBeNull()
     expect(screen.queryByDisplayValue('99.99')).toBeNull()
     expect(screen.queryByDisplayValue('DRAFT-REF-999')).toBeNull()
@@ -685,7 +687,7 @@ describe('TransactionsPage discards unfinished draft', () => {
     expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('')
     expect(screen.getByLabelText('Reference (optional)')).toHaveValue('')
     expect(screen.queryByDisplayValue('LEFTOVER DRAFT PAYEE')).toBeNull()
-    expect(screen.queryByText('Partial scan — amount only')).toBeNull()
+    expect(screen.queryByText(/OCR ran but found little text/)).toBeNull()
   })
 
   test('startEdit still populates from the posted entry after a discarded draft', async () => {

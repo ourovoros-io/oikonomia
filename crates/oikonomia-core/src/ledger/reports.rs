@@ -13,6 +13,25 @@ use crate::ledger::balance::{
 use crate::ledger::entities::get_entity;
 use crate::util::{format_date, parse_date};
 
+/// A report row the reports compute instead of reading from an account.
+///
+/// Unclosed profit and loss is shown as equity so the balance sheet balances.
+/// The UI words these rows in the user's language; `code` and the English
+/// `name` stay on the line for exports and as a fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticLine {
+    /// Profit and loss of earlier fiscal years not yet closed (code `RE`).
+    RetainedEarnings,
+    /// Profit and loss of the current fiscal year so far (code `NI`).
+    NetIncome,
+}
+
+impl SyntheticLine {
+    /// Every kind. A test checks this list against `web/src/lib/uiTextCodes.json`.
+    pub const ALL: &'static [Self] = &[Self::RetainedEarnings, Self::NetIncome];
+}
+
 /// One line on a trial balance or section report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportLine {
@@ -28,6 +47,9 @@ pub struct ReportLine {
     pub credit_minor: i64,
     /// Signed normal balance.
     pub balance_minor: i64,
+    /// Set on a computed row, which has no account behind it; `None` on a real account.
+    #[serde(default)]
+    pub synthetic: Option<SyntheticLine>,
 }
 
 /// Trial balance as of a date.
@@ -659,7 +681,7 @@ fn unclosed_pnl(
     })
 }
 
-fn equity_plug_line(code: &str, name: &str, net: i64) -> ReportLine {
+fn equity_plug_line(code: &str, name: &str, net: i64, synthetic: SyntheticLine) -> ReportLine {
     let (debit_minor, credit_minor) = if net >= 0 {
         (0, net)
     } else {
@@ -672,15 +694,26 @@ fn equity_plug_line(code: &str, name: &str, net: i64) -> ReportLine {
         debit_minor,
         credit_minor,
         balance_minor: net,
+        synthetic: Some(synthetic),
     }
 }
 
 fn retained_earnings_line(prior_net: i64) -> ReportLine {
-    equity_plug_line("RE", "Retained Earnings (prior periods)", prior_net)
+    equity_plug_line(
+        "RE",
+        "Retained Earnings (prior periods)",
+        prior_net,
+        SyntheticLine::RetainedEarnings,
+    )
 }
 
 fn net_income_line(net: i64) -> ReportLine {
-    equity_plug_line("NI", "Net Income (current period)", net)
+    equity_plug_line(
+        "NI",
+        "Net Income (current period)",
+        net,
+        SyntheticLine::NetIncome,
+    )
 }
 
 fn fiscal_year_start(as_of: Date, start_month: u8) -> Date {
@@ -716,6 +749,7 @@ fn map_report_line(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReportLine> {
         debit_minor: debits,
         credit_minor: credits,
         balance_minor: normal_balance(account_type, debits, credits),
+        synthetic: None,
     })
 }
 
