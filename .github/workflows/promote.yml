@@ -83,7 +83,7 @@ jobs:
           gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" --dir artifacts
           ls -la artifacts
 
-      - name: Assemble latest.json (darwin only in v1)
+      - name: Assemble latest.json (darwin only)
         run: |
           set -euo pipefail
           shopt -s nullglob

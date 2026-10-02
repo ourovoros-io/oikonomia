@@ -16,7 +16,7 @@ smoke:
 test:
 	cargo test -p oikonomia-core
 
-# Full quality gate, mirroring CI.
+# Local quality gate (a subset of CI).
 check:
 	cargo fmt --all -- --check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings

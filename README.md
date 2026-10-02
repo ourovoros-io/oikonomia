@@ -33,7 +33,7 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 - Document capture: attach files to entries, offline OCR (bundled `.rten` text-detection/recognition models) reads receipts and invoices with no network call
 - Mark entries Hidden so journal CSV omits them; the vault backup still includes those lines
 - Per-account register: running balance, drill from Accounts into any account's entries
-- Reports: trial balance, profit & loss, balance sheet; expense breakdown chart and expense PDF export
+- Reports: trial balance, profit & loss, balance sheet; expense breakdown chart and expense PDF export (Latin-script text only for now)
 - Dashboard: month, quarter, or year income, expenses, and assets, with savings and spending arcs and a cash-flow chart; every empty page offers a first-run "create a book" CTA
 - Cash-flow chart on the Transactions page
 - Documents page: every stored file in the book, with an in-app viewer and export
@@ -47,10 +47,10 @@ Design: [`docs/superpowers/specs/2026-08-10-oikonomia-design.md`](docs/superpowe
 
 ## Install
 
-Releases are published on the repository's Releases page for macOS on Apple
-Silicon (macOS 12 or later). Windows and Linux builds are not published; you
-can build them from source (see [Develop](#develop)). The in-app updater is
-macOS-only for now.
+No release has been published yet. The first release will appear on the
+repository's Releases page for macOS on Apple Silicon (macOS 12 or later).
+Windows and Linux builds will not be published; you can build them from source
+(see [Develop](#develop)). The in-app updater is macOS-only for now.
 
 ## Support
 
@@ -150,7 +150,7 @@ Check the coin and network before sending: crypto transfers cannot be reversed.
 | SOL, USDC, USDT | Solana | `EZVrqTLW3sTHdFZydoR31Nv3QLnWShfV4riah1otTC26` |
 | ZEC | Zcash (transparent) | `t1MyGx1wXSQRyQZeXJjyKjHKTZEWSyEiBkj` |
 
-The same addresses are shown in the app under Settings, Donate.
+The same addresses are shown in the app under Settings → Donate.
 
 ## Contributing
 

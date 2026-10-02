@@ -562,7 +562,7 @@
   "entry.edit": "Edit entry",
   "entry.fileTooLarge": "File too large (max 8 MB)",
   "entry.attachFailed": "Could not attach the file.",
-  "entry.deleteFailed": "Could not delete document",
+  "entry.deleteFailed": "Could not delete the document.",
   "entry.exportFailed": "Could not save a copy.",
   "viewer.document": "Document",
   "viewer.openFailed": "Could not open the document.",

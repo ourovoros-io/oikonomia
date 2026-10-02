@@ -766,7 +766,7 @@
       "title": "Dépenses du mois",
       "meta": "Catégories de dépenses · montants en {currency} · Les lignes masquées sont omises",
       "totalExpenses": "Total des dépenses",
-      "sliceNote": "Les 6 plus grandes catégories ; le reste va dans Autres…",
+      "sliceNote": "Les 6 plus grandes catégories ; le reste va dans Autres…",
       "emptyTitle": "Aucune dépense sur cette période",
       "emptyBody": "Rien à tracer pour {period}. Changez les dates du rapport, ou ajoutez des dépenses dans Mouvements.",
       "footerPrivacy": "Vos livres ne quittent jamais cet ordinateur",
