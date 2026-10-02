@@ -130,6 +130,7 @@ mod tests {
     use super::*;
     use crate::documents::AnalyzerHint;
     use crate::ledger::SyntheticLine;
+    use crate::test_macros::listed_variants;
 
     /// The wire spelling of a value that serializes as one string.
     fn wire_spelling<T: Serialize>(value: &T) -> String {
@@ -202,48 +203,57 @@ mod tests {
         );
     }
 
-    /// How many variants [`UiTextCode`] has. Kept by hand, next to the index
-    /// below: it is the number the indices must reach.
-    const CODE_COUNT: usize = 22;
-
-    /// The position of a variant, from an exhaustive `match` with no wildcard
-    /// arm. Adding a variant stops compiling here until it is given the next
-    /// index.
-    fn code_index(value: UiTextCode) -> usize {
-        match value {
-            UiTextCode::NoTextExtracted => 0,
-            UiTextCode::AmountAssumesTwoDecimals => 1,
-            UiTextCode::DatedFromDocument => 2,
-            UiTextCode::AddPayableAccount => 3,
-            UiTextCode::PdfOverBudget => 4,
-            UiTextCode::ParsedFromDocumentText => 5,
-            UiTextCode::OcrPathMissing => 6,
-            UiTextCode::OcrModelsMissing => 7,
-            UiTextCode::OcrRead => 8,
-            UiTextCode::OcrLittleText => 9,
-            UiTextCode::OcrFailed => 10,
-            UiTextCode::OcrPdfImage => 11,
-            UiTextCode::InvoiceParsed => 12,
-            UiTextCode::InvoiceNoTotal => 13,
-            UiTextCode::InvoiceIncome => 14,
-            UiTextCode::InvoiceUtility => 15,
-            UiTextCode::InvoiceUnpaid => 16,
-            UiTextCode::InvoiceVatExempt => 17,
-            UiTextCode::TransferDetected => 18,
-            UiTextCode::TransferNoAmount => 19,
-            UiTextCode::TransferFee => 20,
-            UiTextCode::TransferFeeUnstated => 21,
+    listed_variants! {
+        units listed_codes for UiTextCode {
+            UiTextCode::NoTextExtracted,
+            UiTextCode::AmountAssumesTwoDecimals,
+            UiTextCode::DatedFromDocument,
+            UiTextCode::AddPayableAccount,
+            UiTextCode::PdfOverBudget,
+            UiTextCode::ParsedFromDocumentText,
+            UiTextCode::OcrPathMissing,
+            UiTextCode::OcrModelsMissing,
+            UiTextCode::OcrRead,
+            UiTextCode::OcrLittleText,
+            UiTextCode::OcrFailed,
+            UiTextCode::OcrPdfImage,
+            UiTextCode::InvoiceParsed,
+            UiTextCode::InvoiceNoTotal,
+            UiTextCode::InvoiceIncome,
+            UiTextCode::InvoiceUtility,
+            UiTextCode::InvoiceUnpaid,
+            UiTextCode::InvoiceVatExempt,
+            UiTextCode::TransferDetected,
+            UiTextCode::TransferNoAmount,
+            UiTextCode::TransferFee,
+            UiTextCode::TransferFeeUnstated,
         }
     }
 
-    /// Fails when a variant is missing from `ALL`, repeated, or out of
-    /// order: the indices of the listed variants must be exactly `0..CODE_COUNT`. It
-    /// does not check that `CODE_COUNT` was raised for a new variant.
+    /// Fails unless `UiTextCode::ALL` is exactly the set of variants in the
+    /// `listed_codes` list above, each once. The compiler checks that list
+    /// against the enum with an exhaustive `match`, so a variant added to the
+    /// enum but left out of the list does not compile. It does not check the
+    /// order of `ALL`, nor that the UI has copy for a code;
+    /// `the_shared_fixture_lists_exactly_the_codes_rust_can_emit` does that.
     #[test]
     fn all_lists_exactly_the_variants_of_the_enum() {
-        let indices: Vec<usize> = UiTextCode::ALL.iter().copied().map(code_index).collect();
+        let listed = listed_codes::variants();
 
-        assert_eq!(indices, (0..CODE_COUNT).collect::<Vec<_>>());
+        assert_eq!(
+            UiTextCode::ALL.len(),
+            listed_codes::COUNT,
+            "UiTextCode::ALL and the listed variants differ in number"
+        );
+        for variant in listed {
+            assert!(
+                UiTextCode::ALL.contains(&variant),
+                "{variant:?} is missing from UiTextCode::ALL"
+            );
+        }
+        listed_codes::assert_every_position_once(
+            UiTextCode::ALL.iter().map(listed_codes::position).collect(),
+        );
     }
 
     #[test]

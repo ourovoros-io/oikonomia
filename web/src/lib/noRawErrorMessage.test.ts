@@ -13,9 +13,16 @@ import { stripComments } from './stripComments.testutil'
  *
  * This is a tripwire, not a proof. It scans source text for the common ways of
  * reaching the message (a `.message` read, destructuring, bracket access,
- * stringifying an error variable) and cannot see
- * an alias or a helper that does the same. It catches the careless slip; code
- * review catches the rest.
+ * stringifying an error variable) and cannot see an alias or a helper that
+ * does the same. It catches the careless slip; code review catches the rest.
+ *
+ * Known forms it does not catch:
+ * - `JSON.stringify(err)`
+ * - string concatenation with `+`
+ * - `err.stack`
+ * - a computed key (`err[key]`)
+ * - `Object.values(err)`
+ * - an error held in a variable whose name is not one of `ERROR_NAMES` below
  *
  * `instanceof Error` alone is not flagged: a branch that never reads the
  * message (`e instanceof Error && e.name === 'AbortError'`) leaks nothing, and

@@ -756,33 +756,42 @@ fn map_report_line(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReportLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::listed_variants;
 
-    /// How many variants [`SyntheticLine`] has. Kept by hand, next to the index
-    /// below: it is the number the indices must reach.
-    const SYNTHETIC_LINE_COUNT: usize = 2;
-
-    /// The position of a variant, from an exhaustive `match` with no wildcard
-    /// arm. Adding a variant stops compiling here until it is given the next
-    /// index.
-    fn synthetic_line_index(value: SyntheticLine) -> usize {
-        match value {
-            SyntheticLine::RetainedEarnings => 0,
-            SyntheticLine::NetIncome => 1,
+    listed_variants! {
+        units listed_lines for SyntheticLine {
+            SyntheticLine::RetainedEarnings,
+            SyntheticLine::NetIncome,
         }
     }
 
-    /// Fails when a variant is missing from `ALL`, repeated, or out of
-    /// order: the indices of the listed variants must be exactly `0..SYNTHETIC_LINE_COUNT`. It
-    /// does not check that `SYNTHETIC_LINE_COUNT` was raised for a new variant.
+    /// Fails unless `SyntheticLine::ALL` is exactly the set of variants in the
+    /// `listed_lines` list above, each once. The compiler checks that list
+    /// against the enum with an exhaustive `match`, so a variant added to the
+    /// enum but left out of the list does not compile. It does not check the
+    /// order of `ALL`, nor that the UI has copy for a line; the shared-fixture
+    /// test in `ui_text` does that.
     #[test]
     fn all_lists_every_synthetic_line() {
-        let indices: Vec<usize> = SyntheticLine::ALL
-            .iter()
-            .copied()
-            .map(synthetic_line_index)
-            .collect();
+        let listed = listed_lines::variants();
 
-        assert_eq!(indices, (0..SYNTHETIC_LINE_COUNT).collect::<Vec<_>>());
+        assert_eq!(
+            SyntheticLine::ALL.len(),
+            listed_lines::COUNT,
+            "SyntheticLine::ALL and the listed variants differ in number"
+        );
+        for variant in listed {
+            assert!(
+                SyntheticLine::ALL.contains(&variant),
+                "{variant:?} is missing from SyntheticLine::ALL"
+            );
+        }
+        listed_lines::assert_every_position_once(
+            SyntheticLine::ALL
+                .iter()
+                .map(listed_lines::position)
+                .collect(),
+        );
     }
 
     #[test]

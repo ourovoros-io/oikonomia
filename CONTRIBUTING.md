@@ -46,9 +46,12 @@ placeholders; `web/src/lib/i18n.catalog.test.ts` enforces this.
 To add a backend error or analyzer note:
 
 1. Add the variant and its `snake_case` code in Rust (`ValidationError`,
-   `DesktopError`, `UpdateError` or `UiTextCode`), add it to the enumeration's
-   `ALL` list, and give it the next index (and count) in that enumeration's
-   test.
+   `DesktopError`, `UpdateError`, `UiTextCode`, `AnalyzerHint` or
+   `SyntheticLine`), and add it to the enumeration's `ALL` list (or
+   `ALL_CODES`). Each of these lists is guarded by a test that lists the
+   variants once in a `listed_variants!` call: the tests do not compile until
+   the new variant is in that call, and they fail until it is also in the
+   enumeration's `ALL` list.
 2. Add the code to the matching JSON file in `web/src/lib` (`errorCodes.json`
    or `uiTextCodes.json`), and to `errorCodeParams.json` if it has parameters.
 3. Map the code to a catalog key in `web/src/lib/commandError.ts` or

@@ -617,6 +617,7 @@ mod tests {
     use super::*;
     use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
     use crate::domain::AccountType;
+    use crate::test_macros::listed_variants;
 
     #[test]
     fn extract_pdf_jpeg_images_ignores_non_pdf() {
@@ -1074,28 +1075,40 @@ mod tests {
         assert_eq!(analyzer_status(Some(dir.path())).hint, AnalyzerHint::Ready);
     }
 
-    /// How many variants [`AnalyzerHint`] has. Kept by hand, next to the index
-    /// below: it is the number the indices must reach.
-    const HINT_COUNT: usize = 2;
-
-    /// The position of a variant, from an exhaustive `match` with no wildcard
-    /// arm. Adding a variant stops compiling here until it is given the next
-    /// index.
-    fn hint_index(value: AnalyzerHint) -> usize {
-        match value {
-            AnalyzerHint::Ready => 0,
-            AnalyzerHint::ModelsMissing => 1,
+    listed_variants! {
+        units listed_hints for AnalyzerHint {
+            AnalyzerHint::Ready,
+            AnalyzerHint::ModelsMissing,
         }
     }
 
-    /// Fails when a variant is missing from `ALL`, repeated, or out of
-    /// order: the indices of the listed variants must be exactly `0..HINT_COUNT`. It
-    /// does not check that `HINT_COUNT` was raised for a new variant.
+    /// Fails unless `AnalyzerHint::ALL` is exactly the set of variants in the
+    /// `listed_hints` list above, each once. The compiler checks that list
+    /// against the enum with an exhaustive `match`, so a variant added to the
+    /// enum but left out of the list does not compile. It does not check the
+    /// order of `ALL`, nor that the UI has copy for a hint; the shared-fixture
+    /// test in `ui_text` does that.
     #[test]
     fn all_lists_every_hint_variant() {
-        let indices: Vec<usize> = AnalyzerHint::ALL.iter().copied().map(hint_index).collect();
+        let listed = listed_hints::variants();
 
-        assert_eq!(indices, (0..HINT_COUNT).collect::<Vec<_>>());
+        assert_eq!(
+            AnalyzerHint::ALL.len(),
+            listed_hints::COUNT,
+            "AnalyzerHint::ALL and the listed variants differ in number"
+        );
+        for variant in listed {
+            assert!(
+                AnalyzerHint::ALL.contains(&variant),
+                "{variant:?} is missing from AnalyzerHint::ALL"
+            );
+        }
+        listed_hints::assert_every_position_once(
+            AnalyzerHint::ALL
+                .iter()
+                .map(listed_hints::position)
+                .collect(),
+        );
     }
 
     #[test]

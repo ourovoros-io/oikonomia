@@ -13,6 +13,8 @@ mod donations;
 mod error;
 mod nav_guard;
 mod state;
+#[cfg(test)]
+mod test_macros;
 mod tray;
 mod update;
 mod update_exec;

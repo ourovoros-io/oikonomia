@@ -78,30 +78,10 @@ impl UpdateError {
 #[cfg(test)]
 mod tests {
     use super::UpdateError;
+    use crate::test_macros::listed_variants;
 
-    /// How many variants [`UpdateError`] has. Kept by hand, next to the index
-    /// below: it is the number the indices must reach.
-    const VARIANT_COUNT: usize = 8;
-
-    /// The position of a variant, from an exhaustive `match` with no wildcard
-    /// arm. Adding a variant stops compiling here until it is given the next
-    /// index.
-    fn variant_index(error: &UpdateError) -> usize {
-        match error {
-            UpdateError::InstallNotAvailable => 0,
-            UpdateError::MissingPublicKey => 1,
-            UpdateError::Network => 2,
-            UpdateError::ManifestSignature => 3,
-            UpdateError::ManifestParse => 4,
-            UpdateError::ArtifactUrl => 5,
-            UpdateError::ArtifactIntegrity => 6,
-            UpdateError::InvalidFeedUrl => 7,
-        }
-    }
-
-    /// One value of every variant, in declaration order.
-    fn every_variant() -> Vec<UpdateError> {
-        vec![
+    listed_variants! {
+        units listed_errors for UpdateError {
             UpdateError::InstallNotAvailable,
             UpdateError::MissingPublicKey,
             UpdateError::Network,
@@ -110,22 +90,23 @@ mod tests {
             UpdateError::ArtifactUrl,
             UpdateError::ArtifactIntegrity,
             UpdateError::InvalidFeedUrl,
-        ]
+        }
     }
 
-    /// Fails when a variant has no sample, a code is missing from `ALL_CODES`,
-    /// or the two lists differ in order. The samples must carry exactly the
-    /// indices `0..VARIANT_COUNT`, and `ALL_CODES` must be their codes in that
-    /// order. It does not check the wording of a code or that the UI has copy
-    /// for it (the desktop crate does), nor that `VARIANT_COUNT` was raised for
-    /// a new variant.
+    /// Fails unless `ALL_CODES` is the codes of the variants in the
+    /// `listed_errors` list above, in that order, each once. The compiler
+    /// checks that list against the enum with an exhaustive `match`, so a
+    /// variant added to the enum but left out of the list does not compile. It
+    /// does not check the wording of a code or that the UI has copy for it; the
+    /// desktop crate does.
     #[test]
     fn all_codes_lists_exactly_the_code_of_every_variant() {
-        let samples = every_variant();
-        let indices: Vec<usize> = samples.iter().map(variant_index).collect();
-        let codes: Vec<&str> = samples.iter().map(UpdateError::code).collect();
+        let listed = listed_errors::variants();
+        let codes: Vec<&str> = listed.iter().map(UpdateError::code).collect();
 
-        assert_eq!(indices, (0..VARIANT_COUNT).collect::<Vec<_>>());
+        listed_errors::assert_every_position_once(
+            listed.iter().map(listed_errors::position).collect(),
+        );
         assert_eq!(codes, UpdateError::ALL_CODES);
     }
 }

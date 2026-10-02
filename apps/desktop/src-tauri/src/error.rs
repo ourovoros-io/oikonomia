@@ -150,40 +150,47 @@ mod tests {
     use oikonomia_update::UpdateError;
 
     use super::{CommandError, DesktopError};
+    use crate::test_macros::listed_variants;
 
-    /// How many variants [`DesktopError`] has. Kept by hand, next to the index
-    /// below: it is the number the indices must reach.
-    const DESKTOP_ERROR_COUNT: usize = 7;
-
-    /// The position of a variant, from an exhaustive `match` with no wildcard
-    /// arm. Adding a variant stops compiling here until it is given the next
-    /// index.
-    fn desktop_error_index(value: DesktopError) -> usize {
-        match value {
-            DesktopError::FileDataInvalid => 0,
-            DesktopError::FileUnreadable => 1,
-            DesktopError::SaveLocationInvalid => 2,
-            DesktopError::SaveFailed => 3,
-            DesktopError::PathNotGranted => 4,
-            DesktopError::MailClientFailed => 5,
-            DesktopError::TaskFailed => 6,
+    listed_variants! {
+        units listed_desktop_errors for DesktopError {
+            DesktopError::FileDataInvalid,
+            DesktopError::FileUnreadable,
+            DesktopError::SaveLocationInvalid,
+            DesktopError::SaveFailed,
+            DesktopError::PathNotGranted,
+            DesktopError::MailClientFailed,
+            DesktopError::TaskFailed,
         }
     }
 
-    /// Fails when a variant is missing from [`DesktopError::ALL`], repeated, or out of
-    /// order: the indices of the listed variants must be exactly `0..DESKTOP_ERROR_COUNT`. It
-    /// does not check that `DESKTOP_ERROR_COUNT` was raised for a new variant,
-    /// nor that the UI has copy for the code;
+    /// Fails unless `DesktopError::ALL` is exactly the set of variants in the
+    /// `listed_desktop_errors` list above, each once. The compiler checks that
+    /// list against the enum with an exhaustive `match`, so a variant added to
+    /// the enum but left out of the list does not compile. It does not check
+    /// the order of `ALL`, nor that the UI has copy for the code;
     /// `the_shared_fixture_lists_exactly_the_codes_rust_can_emit` does that.
     #[test]
     fn all_lists_every_desktop_variant() {
-        let indices: Vec<usize> = DesktopError::ALL
-            .iter()
-            .copied()
-            .map(desktop_error_index)
-            .collect();
+        let listed = listed_desktop_errors::variants();
 
-        assert_eq!(indices, (0..DESKTOP_ERROR_COUNT).collect::<Vec<_>>());
+        assert_eq!(
+            DesktopError::ALL.len(),
+            listed_desktop_errors::COUNT,
+            "DesktopError::ALL and the listed variants differ in number"
+        );
+        for variant in listed {
+            assert!(
+                DesktopError::ALL.contains(&variant),
+                "{variant:?} is missing from DesktopError::ALL"
+            );
+        }
+        listed_desktop_errors::assert_every_position_once(
+            DesktopError::ALL
+                .iter()
+                .map(listed_desktop_errors::position)
+                .collect(),
+        );
     }
 
     #[test]

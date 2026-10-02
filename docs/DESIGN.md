@@ -169,8 +169,9 @@ the trust root. See [`release.md`](release.md) for how releases are cut.
     every key has a reader, exists in all four languages and has the same
     placeholders in each.
   - *Stored text* is written by the Rust core in the app's language when it is
-    created: the account names a chart template seeds, and the descriptions
-    core generates for opening balances and voids. The wording is a table in
+    created: the account names a chart template seeds, the descriptions
+    core generates for opening balances and voids, and the descriptions and
+    merchants the document reader suggests. The wording is a table in
     `crates/oikonomia-core/src/text.rs`, keyed by language. It is not renamed
     when the language changes later.
   - *Default accounts* for the entry forms are chosen in Rust by template code

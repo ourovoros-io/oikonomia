@@ -359,6 +359,7 @@ impl ValidationError {
 #[cfg(test)]
 mod tests {
     use super::{AccountRole, ValidationError};
+    use crate::test_macros::listed_variants;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn params_of(error: &ValidationError) -> Vec<(&'static str, String)> {
@@ -459,34 +460,45 @@ mod tests {
         }
     }
 
-    /// How many variants [`AccountRole`] has. Kept by hand, next to the index
-    /// below: it is the number the indices must reach.
-    const ROLE_COUNT: usize = 8;
-
-    /// The position of a variant, from an exhaustive `match` with no wildcard
-    /// arm. Adding a variant stops compiling here until it is given the next
-    /// index.
-    fn role_index(value: AccountRole) -> usize {
-        match value {
-            AccountRole::Category => 0,
-            AccountRole::Payment => 1,
-            AccountRole::Deposit => 2,
-            AccountRole::Income => 3,
-            AccountRole::BillCategory => 4,
-            AccountRole::BillsPayable => 5,
-            AccountRole::TransferSource => 6,
-            AccountRole::TransferDestination => 7,
+    listed_variants! {
+        units listed_roles for AccountRole {
+            AccountRole::Category,
+            AccountRole::Payment,
+            AccountRole::Deposit,
+            AccountRole::Income,
+            AccountRole::BillCategory,
+            AccountRole::BillsPayable,
+            AccountRole::TransferSource,
+            AccountRole::TransferDestination,
         }
     }
 
-    /// Fails when a variant is missing from `ALL`, repeated, or out of
-    /// order: the indices of the listed roles must be exactly `0..ROLE_COUNT`. It
-    /// does not check that `ROLE_COUNT` was raised for a new variant.
+    /// Fails unless `AccountRole::ALL` is exactly the set of roles in the
+    /// `listed_roles` list above, each once. The compiler checks that list
+    /// against the enum with an exhaustive `match`, so a role added to the enum
+    /// but left out of the list does not compile. The order of `ALL` is pinned
+    /// separately, against `accountRoles.json`.
     #[test]
     fn the_role_list_covers_every_variant() {
-        let indices: Vec<usize> = AccountRole::ALL.iter().copied().map(role_index).collect();
+        let listed = listed_roles::variants();
 
-        assert_eq!(indices, (0..ROLE_COUNT).collect::<Vec<_>>());
+        assert_eq!(
+            AccountRole::ALL.len(),
+            listed_roles::COUNT,
+            "AccountRole::ALL and the listed variants differ in number"
+        );
+        for role in listed {
+            assert!(
+                AccountRole::ALL.contains(&role),
+                "{role:?} is missing from AccountRole::ALL"
+            );
+        }
+        listed_roles::assert_every_position_once(
+            AccountRole::ALL
+                .iter()
+                .map(listed_roles::position)
+                .collect(),
+        );
     }
 
     #[test]
@@ -532,43 +544,36 @@ mod tests {
         assert_eq!(ValidationError::DateRangeInverted.params(), BTreeMap::new());
     }
 
-    /// How many variants [`ValidationError`] has. Kept by hand, next to the
-    /// index below: it is the number the indices must reach.
-    const VARIANT_COUNT: usize = 28;
-
-    /// The position of a variant, from an exhaustive `match` with no wildcard
-    /// arm; fields are ignored. Adding a variant stops compiling here until it
-    /// is given the next index.
-    fn variant_index(error: &ValidationError) -> usize {
-        match error {
-            ValidationError::PasswordTooShort { .. } => 0,
-            ValidationError::NameRequired { .. } => 1,
-            ValidationError::NameTaken { .. } => 2,
-            ValidationError::AccountCodeTaken => 3,
-            ValidationError::SystemAccountProtected => 4,
-            ValidationError::AccountInactive { .. } => 5,
-            ValidationError::AccountRequired { .. } => 6,
-            ValidationError::AccountWrongType { .. } => 7,
-            ValidationError::SameAccount => 8,
-            ValidationError::AmountNotPositive => 9,
-            ValidationError::BillStatusRequired => 10,
-            ValidationError::InvalidDate { .. } => 11,
-            ValidationError::DateRangeInverted => 12,
-            ValidationError::DateOutOfRange => 13,
-            ValidationError::DayOfMonthInvalid => 14,
-            ValidationError::LockTimeoutTooShort { .. } => 15,
-            ValidationError::CurrencyInvalid => 16,
-            ValidationError::EntryAlreadyVoided => 17,
-            ValidationError::EntryNotPosted => 18,
-            ValidationError::WrongBook => 19,
-            ValidationError::OpeningBalanceAccountType => 20,
-            ValidationError::OpeningBalanceUnchanged => 21,
-            ValidationError::NoEquityAccount => 22,
-            ValidationError::FileEmpty => 23,
-            ValidationError::FileTooLarge { .. } => 24,
-            ValidationError::FileTypeUnsupported => 25,
-            ValidationError::VaultAlreadyInitialized => 26,
-            ValidationError::Internal { .. } => 27,
+    listed_variants! {
+        patterns listed_errors for ValidationError {
+            ValidationError::PasswordTooShort { .. },
+            ValidationError::NameRequired { .. },
+            ValidationError::NameTaken { .. },
+            ValidationError::AccountCodeTaken,
+            ValidationError::SystemAccountProtected,
+            ValidationError::AccountInactive { .. },
+            ValidationError::AccountRequired { .. },
+            ValidationError::AccountWrongType { .. },
+            ValidationError::SameAccount,
+            ValidationError::AmountNotPositive,
+            ValidationError::BillStatusRequired,
+            ValidationError::InvalidDate { .. },
+            ValidationError::DateRangeInverted,
+            ValidationError::DateOutOfRange,
+            ValidationError::DayOfMonthInvalid,
+            ValidationError::LockTimeoutTooShort { .. },
+            ValidationError::CurrencyInvalid,
+            ValidationError::EntryAlreadyVoided,
+            ValidationError::EntryNotPosted,
+            ValidationError::WrongBook,
+            ValidationError::OpeningBalanceAccountType,
+            ValidationError::OpeningBalanceUnchanged,
+            ValidationError::NoEquityAccount,
+            ValidationError::FileEmpty,
+            ValidationError::FileTooLarge { .. },
+            ValidationError::FileTypeUnsupported,
+            ValidationError::VaultAlreadyInitialized,
+            ValidationError::Internal { .. },
         }
     }
 
@@ -613,18 +618,20 @@ mod tests {
         ]
     }
 
-    /// Fails when a variant has no sample, a code is missing from `ALL_CODES`,
-    /// or the two lists differ in order. The samples must carry exactly the
-    /// indices `0..VARIANT_COUNT`, and `ALL_CODES` must be their codes in that
-    /// order. It does not check that `VARIANT_COUNT` was raised for a new
-    /// variant.
+    /// Fails when `every_variant` has no sample for a variant named in the
+    /// `listed_errors` list above, or when `ALL_CODES` is not the codes of the
+    /// samples in order. The compiler checks `listed_errors` against the enum
+    /// with an exhaustive `match`, so a variant added to the enum but not to
+    /// that list does not compile. It does not check the wording of a code or
+    /// that the UI has copy for it; the desktop crate does.
     #[test]
     fn all_lists_exactly_the_code_of_every_variant() {
         let samples = every_variant();
-        let indices: Vec<usize> = samples.iter().map(variant_index).collect();
         let codes: Vec<&str> = samples.iter().map(ValidationError::code).collect();
 
-        assert_eq!(indices, (0..VARIANT_COUNT).collect::<Vec<_>>());
+        listed_errors::assert_every_position_once(
+            samples.iter().map(listed_errors::position).collect(),
+        );
         assert_eq!(codes, ValidationError::ALL_CODES);
     }
 
