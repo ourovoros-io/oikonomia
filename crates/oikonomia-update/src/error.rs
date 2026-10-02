@@ -45,6 +45,20 @@ pub enum UpdateError {
 }
 
 impl UpdateError {
+    /// Every code [`UpdateError::code`] can return.
+    ///
+    /// The desktop crate checks this list against the codes the UI has copy for.
+    pub const ALL_CODES: &'static [&'static str] = &[
+        "update_install_not_allowed",
+        "update_missing_public_key",
+        "update_network",
+        "update_manifest_signature",
+        "update_manifest_parse",
+        "update_artifact_url",
+        "update_artifact_integrity",
+        "update_invalid_feed_url",
+    ];
+
     /// Stable machine code for desktop [`CommandError`] mapping.
     #[must_use]
     pub fn code(&self) -> &'static str {
@@ -58,5 +72,31 @@ impl UpdateError {
             Self::ArtifactIntegrity => "update_artifact_integrity",
             Self::InvalidFeedUrl => "update_invalid_feed_url",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdateError;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn all_codes_lists_exactly_the_code_of_every_variant() {
+        let variants = [
+            UpdateError::InstallNotAvailable,
+            UpdateError::MissingPublicKey,
+            UpdateError::Network,
+            UpdateError::ManifestSignature,
+            UpdateError::ManifestParse,
+            UpdateError::ArtifactUrl,
+            UpdateError::ArtifactIntegrity,
+            UpdateError::InvalidFeedUrl,
+        ];
+
+        let from_variants: BTreeSet<&str> = variants.iter().map(UpdateError::code).collect();
+        let listed: BTreeSet<&str> = UpdateError::ALL_CODES.iter().copied().collect();
+
+        assert_eq!(from_variants, listed);
+        assert_eq!(listed.len(), UpdateError::ALL_CODES.len(), "duplicate code");
     }
 }

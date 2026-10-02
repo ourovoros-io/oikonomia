@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::domain::{Account, AccountId, AccountType, EntityId, JournalEntryId};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
 };
@@ -55,6 +55,12 @@ pub struct DocumentMeta {
 /// Max upload size (8 MiB) — keeps vault lean and model latency reasonable.
 pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 
+/// [`MAX_DOCUMENT_BYTES`] in whole megabytes, as shown to the user.
+const MAX_DOCUMENT_MEGABYTES: u64 = 8;
+
+// The two limits must never drift apart.
+const _: () = assert!(MAX_DOCUMENT_BYTES as u64 == MAX_DOCUMENT_MEGABYTES * 1024 * 1024);
+
 /// Validate a candidate document before its bytes are loaded or stored.
 ///
 /// Shared by [`save_document`] and the drop-path command so oversized or
@@ -66,21 +72,20 @@ pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 /// or unsupported MIME types.
 pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Result<()> {
     if size_bytes == 0 {
-        return Err(Error::Validation("empty file".into()));
+        return Err(Error::Validation(ValidationError::FileEmpty));
     }
     if size_bytes > MAX_DOCUMENT_BYTES as u64 {
-        return Err(Error::Validation(format!(
-            "file too large (max {} MB)",
-            MAX_DOCUMENT_BYTES / (1024 * 1024)
-        )));
+        return Err(Error::Validation(ValidationError::FileTooLarge {
+            max_mb: MAX_DOCUMENT_MEGABYTES,
+        }));
     }
     if filename.trim().is_empty() {
-        return Err(Error::Validation("filename is required".into()));
+        return Err(Error::Validation(ValidationError::NameRequired {
+            field: "filename",
+        }));
     }
     if !is_allowed_mime(mime) {
-        return Err(Error::Validation(
-            "unsupported file type — use PDF, PNG, JPEG, WebP, or plain text".into(),
-        ));
+        return Err(Error::Validation(ValidationError::FileTypeUnsupported));
     }
     Ok(())
 }
@@ -105,9 +110,7 @@ pub fn save_document(
 
     let entry = get_entry(conn, entry_id)?;
     if entry.entry.entity_id != entity_id {
-        return Err(Error::Validation(
-            "document entry belongs to another book".into(),
-        ));
+        return Err(Error::Validation(ValidationError::WrongBook));
     }
 
     let clash: i64 = conn
@@ -118,9 +121,9 @@ pub fn save_document(
         )
         .map_err(|err| Error::Io(err.to_string()))?;
     if clash > 0 {
-        return Err(Error::Validation(format!(
-            "a document named {name} already exists in this book"
-        )));
+        return Err(Error::Validation(ValidationError::NameTaken {
+            name: name.to_owned(),
+        }));
     }
 
     // Validation caps the size at 8 MiB, so the length always fits an i64.
@@ -153,9 +156,9 @@ pub fn save_document(
             Some(rusqlite::ErrorCode::ConstraintViolation)
         ) && text.contains("UNIQUE")
         {
-            Error::Validation(format!(
-                "a document named {name} already exists in this book"
-            ))
+            Error::Validation(ValidationError::NameTaken {
+                name: name.to_owned(),
+            })
         } else {
             Error::Io(text)
         }
@@ -192,9 +195,7 @@ pub fn attach_document(
 ) -> Result<DocumentMeta> {
     let entry = get_entry(conn, entry_id)?;
     if entry.entry.entity_id != entity_id {
-        return Err(Error::Validation(
-            "entry belongs to a different book".into(),
-        ));
+        return Err(Error::Validation(ValidationError::WrongBook));
     }
 
     save_document(conn, entity_id, entry_id, filename, mime_type, data)

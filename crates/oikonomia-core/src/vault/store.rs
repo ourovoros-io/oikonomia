@@ -10,7 +10,7 @@ use super::crypto::{self, VaultKey};
 use super::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
 use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
 use super::permissions::{create_private_dir, create_private_file, restrict_to_owner};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 
 /// Lifecycle status for the vault (serializable to the UI).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -96,7 +96,7 @@ impl Vault {
     /// Weak password, already initialized, crypto, or I/O failures.
     pub fn init(&mut self, password: &str) -> Result<()> {
         if self.header.is_some() || vault_db_path(&self.data_dir).exists() {
-            return Err(Error::Validation("vault is already initialized".into()));
+            return Err(Error::Validation(ValidationError::VaultAlreadyInitialized));
         }
 
         validate_password(password)?;
@@ -289,9 +289,9 @@ impl Vault {
 
 fn validate_password(password: &str) -> Result<()> {
     if password.chars().count() < MIN_PASSWORD_LEN {
-        return Err(Error::Validation(format!(
-            "password must be at least {MIN_PASSWORD_LEN} characters"
-        )));
+        return Err(Error::Validation(ValidationError::PasswordTooShort {
+            min: MIN_PASSWORD_LEN,
+        }));
     }
     Ok(())
 }

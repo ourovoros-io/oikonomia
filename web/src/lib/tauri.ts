@@ -23,7 +23,10 @@ export type AppInfo = {
 
 export type CommandError = {
   code: string
+  /** English; for logs and as the last-resort text when a code has no copy. */
   message: string
+  /** Named values for the localized text of `code`. */
+  params?: Record<string, string>
 }
 
 /** True when running inside the Tauri webview (not a plain browser tab). */

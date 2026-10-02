@@ -8,6 +8,7 @@ use oikonomia_core::csv::{
 };
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_for_post};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts,
     list_entries, post_simple_entry, set_entry_hidden, void_entry,
@@ -144,7 +145,7 @@ fn junk_row_rejected_and_batch_rolls_back() {
     let mut junk = good.clone();
     junk.amount_minor = 0;
     let err = post_import_rows(conn, &[good, junk], false).expect_err("junk");
-    assert!(matches!(err, Error::Validation(_)));
+    assert_eq!(err, Error::Validation(ValidationError::AmountNotPositive));
     assert_eq!(count_entries(conn, entity_id), 0);
 }
 

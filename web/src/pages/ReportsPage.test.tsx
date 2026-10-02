@@ -361,7 +361,7 @@ describe('ReportsPage historical dates', () => {
 
     await act(async () => {
       first.reject({
-        code: 'validation',
+        code: 'date_range_inverted',
         message: 'from date must be on or before to',
       })
     })
@@ -438,12 +438,12 @@ describe('ReportsPage historical dates', () => {
 describe('ReportsPage statements', () => {
   test('shows the fetch error instead of a stale statement', async () => {
     vi.mocked(api.reportPnl).mockRejectedValue({
-      code: 'validation',
+      code: 'date_range_inverted',
       message: 'from date must be on or before to',
     })
     render(<ReportsPage entity={entity} />)
     await waitFor(() => {
-      expect(screen.getByRole('alert').textContent).toBe('That input is not valid.')
+      expect(screen.getByRole('alert').textContent).toBe('The From date must be on or before the To date.')
     })
     expect(screen.queryByText('Profit & Loss')).toBeNull()
   })

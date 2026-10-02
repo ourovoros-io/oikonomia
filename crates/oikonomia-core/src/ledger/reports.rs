@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use time::Date;
 
 use crate::domain::{AccountType, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_type_str, normal_balance, parse_account_type, sum_types_as_of,
     sum_types_in_range,
@@ -248,9 +248,7 @@ fn profit_and_loss_filtered(
     let from_d = parse_date(from)?;
     let to_d = parse_date(to)?;
     if from_d > to_d {
-        return Err(Error::Validation(
-            "from date must be on or before to".into(),
-        ));
+        return Err(Error::Validation(ValidationError::DateRangeInverted));
     }
     let _ = get_entity(conn, entity_id)?;
 
@@ -359,9 +357,7 @@ pub fn dashboard_summary(
     let to_d = parse_date(to)?;
     let assets_as_of_d = parse_date(assets_as_of)?;
     if from_d > to_d {
-        return Err(Error::Validation(
-            "from date must be on or before to".into(),
-        ));
+        return Err(Error::Validation(ValidationError::DateRangeInverted));
     }
 
     let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], assets_as_of_d)?;

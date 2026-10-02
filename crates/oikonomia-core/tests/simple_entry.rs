@@ -5,6 +5,7 @@
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity, list_accounts,
     post_simple_entry,
@@ -177,7 +178,10 @@ fn bill_statuses_route_to_payable() {
     missing.category_account_id = Some(acc.food);
     missing.wallet_account_id = Some(acc.checking);
     assert!(
-        matches!(post_simple_entry(conn, &missing), Err(Error::Validation(_))),
+        matches!(
+            post_simple_entry(conn, &missing),
+            Err(Error::Validation(ValidationError::BillStatusRequired))
+        ),
         "bill without bill_status must be rejected"
     );
 
@@ -189,7 +193,7 @@ fn bill_statuses_route_to_payable() {
     assert!(
         matches!(
             post_simple_entry(conn, &circular),
-            Err(Error::Validation(_))
+            Err(Error::Validation(ValidationError::SameAccount))
         ),
         "same account on both sides must be rejected"
     );
@@ -217,7 +221,10 @@ fn transfer_debits_to_credits_from() {
     same.from_account_id = Some(acc.checking);
     same.to_account_id = Some(acc.checking);
     assert!(
-        matches!(post_simple_entry(conn, &same), Err(Error::Validation(_))),
+        matches!(
+            post_simple_entry(conn, &same),
+            Err(Error::Validation(ValidationError::SameAccount))
+        ),
         "transfer between the same account must be rejected"
     );
 }
@@ -234,7 +241,7 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     wrong_type.wallet_account_id = Some(acc.checking);
     assert!(matches!(
         post_simple_entry(conn, &wrong_type),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::AccountWrongType { .. }))
     ));
 
     // Liability wallet for income (money received into a debt account).
@@ -243,7 +250,7 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     liab_income.wallet_account_id = Some(acc.bills_payable);
     assert!(matches!(
         post_simple_entry(conn, &liab_income),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::AccountWrongType { .. }))
     ));
 
     // Non-positive amount.
@@ -253,13 +260,13 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     zero.amount_minor = 0;
     assert!(matches!(
         post_simple_entry(conn, &zero),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::AmountNotPositive))
     ));
 
     // Missing role entirely.
     let missing = base_input(entity_id, SimpleEntryKind::Expense);
     assert!(matches!(
         post_simple_entry(conn, &missing),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::AccountRequired { .. }))
     ));
 }

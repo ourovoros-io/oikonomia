@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::coa::template_accounts;
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
 use crate::util::{now_utc_string, parse_uuid};
 
@@ -95,21 +95,21 @@ pub fn count_entities(conn: &Connection) -> Result<u64> {
 fn create_entity_in_tx(conn: &Connection, input: &CreateEntity) -> Result<Entity> {
     let name = input.name.trim();
     if name.is_empty() {
-        return Err(Error::Validation("entity name is required".into()));
+        return Err(Error::Validation(ValidationError::NameRequired {
+            field: "entity name",
+        }));
     }
 
     let currency = input.base_currency.trim().to_uppercase();
     if currency.len() != 3 {
-        return Err(Error::Validation(
-            "base_currency must be a 3-letter ISO code".into(),
-        ));
+        return Err(Error::Validation(ValidationError::CurrencyInvalid));
     }
 
     let month = input.fiscal_year_start_month.unwrap_or(1);
     if !(1..=12).contains(&month) {
-        return Err(Error::Validation(
-            "fiscal_year_start_month must be 1–12".into(),
-        ));
+        return Err(Error::Validation(ValidationError::Internal {
+            detail: "fiscal_year_start_month must be 1-12".into(),
+        }));
     }
 
     ensure_unique_name(conn, name, None)?;
@@ -160,7 +160,9 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity) -> Result<Entity
 pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Entity> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(Error::Validation("entity name is required".into()));
+        return Err(Error::Validation(ValidationError::NameRequired {
+            field: "entity name",
+        }));
     }
 
     ensure_unique_name(conn, name, Some(id))?;
@@ -305,9 +307,9 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
     };
 
     if count > 0 {
-        return Err(Error::Validation(format!(
-            "an entity named \"{name}\" already exists"
-        )));
+        return Err(Error::Validation(ValidationError::NameTaken {
+            name: name.to_owned(),
+        }));
     }
 
     Ok(())

@@ -333,19 +333,6 @@
       "busy": "Création…"
     }
   },
-  "native": {
-    "dialog": {
-      "error": {
-        "invalidSave": "emplacement d’enregistrement non valide : {error}",
-        "invalidBackup": "emplacement de sauvegarde non valide : {error}",
-        "invalidFileData": "données de fichier non valides : {error}",
-        "readDropped": "impossible de lire le fichier déposé : {error}",
-        "readDroppedShort": "impossible de lire le fichier glissé : {error}",
-        "saveFile": "impossible d’enregistrer le fichier : {error}",
-        "bgTask": "échec de la tâche en arrière-plan : {error}"
-      }
-    }
-  },
   "dialog": {
     "confirm": {
       "default": "Confirmer"
@@ -958,10 +945,6 @@
     }
   },
   "error": {
-    "backup": {
-      "notOikonomia": "ce n’est pas une sauvegarde de coffre Oikonomia",
-      "unsupportedVersion": "version de sauvegarde {version} non prise en charge"
-    },
     "vaultUninitialized": "Le coffre n’a pas encore été configuré.",
     "vaultLocked": "Le coffre est verrouillé.",
     "invalidPassword": "Ce mot de passe est incorrect.",
@@ -971,7 +954,6 @@
     "accountWrongEntity": "Ce compte n’appartient pas à ce livre.",
     "moneyOverflow": "Ce montant est trop élevé.",
     "negativeMoney": "Ce montant ne peut pas être négatif.",
-    "validation": "Cette saisie n’est pas valide.",
     "io": "Une opération sur un fichier a échoué.",
     "crypto": "Une opération de sécurité a échoué.",
     "vaultCorrupt": "Le fichier du coffre est corrompu.",
@@ -980,7 +962,43 @@
     "notFound": "Cet élément est introuvable.",
     "analysis": "L’analyse du document a échoué.",
     "csvParse": "Ce fichier CSV n’a pas pu être lu.",
-    "unknown": "Une erreur est survenue."
+    "unknown": "Une erreur est survenue.",
+    "passwordTooShort": "Ce mot de passe est trop court. Utilisez au moins {min} caractères.",
+    "nameRequired": "Un nom ou un code obligatoire est vide. Renseignez-le, puis réessayez.",
+    "nameTaken": "Le nom « {name} » est déjà utilisé. Choisissez un autre nom.",
+    "accountCodeTaken": "Un autre compte de ce livre utilise déjà ce code. Choisissez un autre code.",
+    "systemAccountProtected": "Les comptes système ne peuvent pas être désactivés.",
+    "accountInactive": "Le compte {code} est inactif. Choisissez un compte actif.",
+    "accountRequired": "Choisissez un compte pour chaque champ que requiert l’écriture.",
+    "accountWrongType": "Le type du compte {code} ne convient pas à cette écriture. Choisissez un autre compte.",
+    "sameAccount": "Une écriture nécessite deux comptes différents. Changez l’un des deux.",
+    "amountNotPositive": "Le montant doit être supérieur à zéro.",
+    "billStatusRequired": "Choisissez un état pour cette facture : réglée, non réglée ou règlement d’une facture en attente.",
+    "invalidDate": "« {value} » n’est pas une date valide. Saisissez une date réelle du calendrier.",
+    "dateRangeInverted": "La date Du doit être antérieure ou égale à la date Au.",
+    "dateOutOfRange": "Cette date est hors de la plage prise en charge. Choisissez une date plus proche d’aujourd’hui.",
+    "dayOfMonthInvalid": "Saisissez un jour du mois de 1 à 31. Seuls les modèles mensuels utilisent un jour du mois.",
+    "lockTimeoutTooShort": "Le délai de verrouillage automatique doit être d’au moins {min_secs} secondes.",
+    "currencyInvalid": "Saisissez un code de devise à trois lettres, par exemple EUR.",
+    "entryAlreadyVoided": "Cette écriture a déjà été supprimée.",
+    "entryNotPosted": "Seules les écritures comptabilisées peuvent être supprimées.",
+    "wrongBook": "Cet élément appartient à un autre livre. Passez au bon livre, puis réessayez.",
+    "openingBalanceAccountType": "Un solde d’ouverture ne peut être défini que sur un compte d’actif ou de passif.",
+    "openingBalanceUnchanged": "Ce compte a déjà ce solde.",
+    "noEquityAccount": "Ce livre n’a aucun compte de capitaux propres pour contrepasser le solde d’ouverture. Ajoutez d’abord un compte de capitaux propres.",
+    "fileEmpty": "Ce fichier est vide.",
+    "fileTooLarge": "Ce fichier est trop volumineux. La limite est de {max_mb} Mo.",
+    "fileTypeUnsupported": "Ce type de fichier n’est pas pris en charge. Utilisez un PDF, PNG, JPEG, WebP ou du texte brut.",
+    "vaultAlreadyInitialized": "Un coffre existe déjà sur cet ordinateur.",
+    "validationInternal": "Cette demande n’a pas pu être traitée. Réessayez.",
+    "fileDataInvalid": "Impossible de lire ce fichier. Essayez de le choisir à nouveau.",
+    "fileUnreadable": "Impossible de lire ce fichier. Vérifiez qu’il existe toujours et que vous pouvez l’ouvrir.",
+    "saveLocationInvalid": "Impossible d’utiliser cet emplacement. Choisissez-en un autre.",
+    "saveFailed": "Impossible d’enregistrer le fichier. Vérifiez que l’emplacement est accessible en écriture, puis réessayez.",
+    "pathNotGranted": "Ce fichier n’a pas été choisi dans l’application. Choisissez-le à nouveau avec le sélecteur de fichiers.",
+    "mailClientFailed": "Impossible d’ouvrir votre application de messagerie.",
+    "taskFailed": "Un problème est survenu en arrière-plan. Réessayez.",
+    "update": "Impossible de rechercher ou d’installer la mise à jour. Réessayez plus tard."
   },
   "analyze": {
     "hint": {

@@ -5,6 +5,7 @@
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CashFlowGranularity, CashFlowSeries, CreateEntity, CreateJournalLine, PostJournal,
     activity_window, cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry,
@@ -339,11 +340,11 @@ fn inverted_and_malformed_windows_are_validation_errors() {
 
     assert!(matches!(
         cash_flow_series(conn, e, "2026-08-31", "2026-08-01"),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::DateRangeInverted))
     ));
     assert!(matches!(
         cash_flow_series(conn, e, "2026-13-01", "2026-12-31"),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::InvalidDate { .. }))
     ));
 }
 
@@ -473,7 +474,7 @@ fn an_explicit_inverted_window_is_a_validation_error() {
 
     assert!(matches!(
         activity_window(conn, e, Some("2026-05-01"), Some("2026-04-01"), today),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::DateRangeInverted))
     ));
     assert_eq!(
         activity_window(conn, EntityId::new(), None, None, today).expect_err("unknown"),

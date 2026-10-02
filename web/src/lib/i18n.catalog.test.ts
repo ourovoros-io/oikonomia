@@ -95,17 +95,6 @@ const PENDING_RUST: readonly string[] = [
   'reports.synthetic.retainedEarnings',
   'reports.synthetic.netIncome',
 
-  // Error copy, re-authored under error.* (task 2).
-  'native.dialog.error.invalidSave',
-  'native.dialog.error.invalidBackup',
-  'native.dialog.error.invalidFileData',
-  'native.dialog.error.readDropped',
-  'native.dialog.error.readDroppedShort',
-  'native.dialog.error.saveFile',
-  'native.dialog.error.bgTask',
-  'error.backup.notOikonomia',
-  'error.backup.unsupportedVersion',
-
   // File-read failure copy (task 3).
   'files.error.read',
 ]

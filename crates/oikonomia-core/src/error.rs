@@ -2,6 +2,10 @@
 
 use thiserror::Error;
 
+mod validation;
+
+pub use validation::ValidationError;
+
 /// Fallible operations in `oikonomia-core`.
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -50,9 +54,10 @@ pub enum Error {
     #[error("money amount must be non-negative")]
     NegativeMoney,
 
-    /// Generic validation failure with a stable message for logs/UI mapping.
+    /// A rule the caller broke; the typed reason carries a stable code and
+    /// parameters so the UI can show localized text.
     #[error("{0}")]
-    Validation(String),
+    Validation(ValidationError),
 
     /// Filesystem or database I/O failure.
     #[error("I/O error: {0}")]

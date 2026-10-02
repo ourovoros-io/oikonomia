@@ -7,6 +7,7 @@
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, ReportLine, balance_sheet, cash_flow_series,
     create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
@@ -573,11 +574,13 @@ fn pnl_rejects_inverted_and_invalid_dates() {
 
     assert_eq!(
         profit_and_loss(conn, entity_id, "2026-03-31", "2026-03-01").expect_err("inverted"),
-        Error::Validation("from date must be on or before to".into())
+        Error::Validation(ValidationError::DateRangeInverted)
     );
     assert_eq!(
         profit_and_loss(conn, entity_id, "2026-13-01", "2026-03-31").expect_err("bad date"),
-        Error::Validation("invalid date: 2026-13-01".into())
+        Error::Validation(ValidationError::InvalidDate {
+            value: "2026-13-01".into()
+        })
     );
 }
 

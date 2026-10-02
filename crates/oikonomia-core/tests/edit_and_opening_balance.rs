@@ -6,6 +6,7 @@
 use oikonomia_core::documents::{attach_document, list_documents};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, UpdateAccount, account_balance,
     create_entity, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
@@ -142,7 +143,7 @@ fn replace_rejects_voided_and_foreign_entries() {
     void_entry(conn, voided.entry.id).expect("void");
     assert!(matches!(
         replace_simple_entry(conn, voided.entry.id, &expense(entity_id, &acc, 2_600)),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::EntryAlreadyVoided))
     ));
 
     let original = post_simple_entry(conn, &expense(entity_id, &acc, 2_500)).expect("post");
@@ -160,7 +161,7 @@ fn replace_rejects_voided_and_foreign_entries() {
     foreign.entity_id = other.id;
     assert!(matches!(
         replace_simple_entry(conn, original.entry.id, &foreign),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::WrongBook))
     ));
 }
 
@@ -210,7 +211,7 @@ fn opening_balance_handles_liability_negative_and_no_op_targets() {
     // Stating the balance it already has is refused, not silently duplicated.
     assert!(matches!(
         set_account_opening_balance(conn, acc.bills_payable, 50_000, "2026-01-01"),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::OpeningBalanceUnchanged))
     ));
 }
 
@@ -236,9 +237,9 @@ fn update_account_cannot_deactivate_system_accounts() {
         },
     )
     .expect_err("system deactivate");
-    assert!(
-        matches!(err, Error::Validation(ref msg) if msg.contains("system accounts cannot be archived")),
-        "{err:?}"
+    assert_eq!(
+        err,
+        Error::Validation(ValidationError::SystemAccountProtected)
     );
     let after = list_accounts(conn, entity_id)
         .expect("reload")

@@ -642,6 +642,13 @@ export async function buildExpensePdfBytes(input: ExpensePdfInput): Promise<Uint
 }
 
 export function pdfExportErrorMessage(err: { code?: string; message?: string }): string {
-  if (err.code === 'io' || err.code === 'validation') return t('reports.pdf.error')
+  const exportFailureCodes = [
+    'io',
+    'save_location_invalid',
+    'save_failed',
+    'file_data_invalid',
+    'file_too_large',
+  ]
+  if (err.code && exportFailureCodes.includes(err.code)) return t('reports.pdf.error')
   return err.message || t('reports.pdf.error')
 }

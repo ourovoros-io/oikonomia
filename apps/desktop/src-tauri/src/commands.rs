@@ -1,6 +1,6 @@
 //! Tauri command handlers (thin wrappers over core + state).
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
 use base64::Engine;
 use oikonomia_core::csv::{
@@ -16,7 +16,7 @@ use oikonomia_core::documents::{
 use oikonomia_core::domain::{
     Account, AccountId, Entity, EntityId, JournalEntryId, RecurringTemplateId,
 };
-use oikonomia_core::error::Error as CoreError;
+use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplate,
     DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary, EntryFilter, PnL, PostJournal, PostSimpleEntry,
@@ -155,7 +155,7 @@ mod tests {
         let text = archive.to_str().expect("utf-8 path");
 
         let refused = require_granted_path(&state, text).expect_err("ungranted path");
-        assert_eq!(refused.code, "validation");
+        assert_eq!(refused.code, "path_not_granted");
 
         state.grant_paths([archive.clone()]);
         assert_eq!(
@@ -236,9 +236,11 @@ pub async fn vault_backup(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let dest = with_backup_extension(file_path.into_path().map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("invalid save location: {e}"),
+    let dest = with_backup_extension(file_path.into_path().map_err(|e| {
+        CommandError::desktop(
+            DesktopError::SaveLocationInvalid,
+            format!("invalid save location: {e}"),
+        )
     })?);
 
     with_vault_blocking(&state, move |vault| {
@@ -330,9 +332,11 @@ async fn pick_backup_path(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let path = file_path.into_path().map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("invalid backup location: {e}"),
+    let path = file_path.into_path().map_err(|e| {
+        CommandError::desktop(
+            DesktopError::SaveLocationInvalid,
+            format!("invalid backup location: {e}"),
+        )
     })?;
     state.grant_paths([path.clone()]);
     Ok(Some(path))
@@ -399,9 +403,11 @@ pub fn open_support_email(app: tauri::AppHandle) -> CommandResult<()> {
 
     app.opener()
         .open_url(support_mailto(env!("CARGO_PKG_VERSION")), None::<&str>)
-        .map_err(|e| CommandError {
-            code: "io".into(),
-            message: format!("could not open the mail client: {e}"),
+        .map_err(|e| {
+            CommandError::desktop(
+                DesktopError::MailClientFailed,
+                format!("could not open the mail client: {e}"),
+            )
         })
 }
 
@@ -693,17 +699,16 @@ pub async fn entry_post_simple_with_document(
     // file cannot balloon memory (same gate as document_analyze).
     let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
     if data_base64.len() > max_base64_len {
-        return Err(CommandError {
-            code: "validation".into(),
-            message: "file too large (max 8 MB)".into(),
-        });
+        return Err(document_too_large_error());
     }
 
     let data = base64::engine::general_purpose::STANDARD
         .decode(data_base64.trim())
-        .map_err(|e| CommandError {
-            code: "validation".into(),
-            message: format!("invalid file data: {e}"),
+        .map_err(|e| {
+            CommandError::desktop(
+                DesktopError::FileDataInvalid,
+                format!("invalid file data: {e}"),
+            )
         })?;
 
     with_vault_blocking(&state, move |vault| {
@@ -744,16 +749,20 @@ pub async fn entry_post_simple_with_document_path(
             .to_owned();
 
         // Reject oversized/unsupported files from metadata alone before reading.
-        let meta = std::fs::metadata(&path).map_err(|e| CommandError {
-            code: "io".into(),
-            message: format!("could not read the dropped file: {e}"),
+        let meta = std::fs::metadata(&path).map_err(|e| {
+            CommandError::desktop(
+                DesktopError::FileUnreadable,
+                format!("could not read the dropped file: {e}"),
+            )
         })?;
         let mime = oikonomia_core::documents::resolve_mime("", &filename);
         oikonomia_core::documents::validate_document_file(&filename, &mime, meta.len())?;
 
-        let data = std::fs::read(&path).map_err(|e| CommandError {
-            code: "io".into(),
-            message: format!("could not read the dropped file: {e}"),
+        let data = std::fs::read(&path).map_err(|e| {
+            CommandError::desktop(
+                DesktopError::FileUnreadable,
+                format!("could not read the dropped file: {e}"),
+            )
         })?;
 
         let guard = crate::state::lock_vault(&vault);
@@ -985,14 +994,15 @@ pub async fn csv_export_journal(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let dest = ensure_csv_path(file_path.into_path().map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("invalid save location: {e}"),
+    let dest = ensure_csv_path(file_path.into_path().map_err(|e| {
+        CommandError::desktop(
+            DesktopError::SaveLocationInvalid,
+            format!("invalid save location: {e}"),
+        )
     })?);
 
-    std::fs::write(&dest, csv_text.as_bytes()).map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("could not save CSV: {e}"),
+    std::fs::write(&dest, csv_text.as_bytes()).map_err(|e| {
+        CommandError::desktop(DesktopError::SaveFailed, format!("could not save CSV: {e}"))
     })?;
 
     Ok(Some(dest.display().to_string()))
@@ -1016,9 +1026,11 @@ async fn pick_csv_path(app: &tauri::AppHandle, state: &AppState) -> CommandResul
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let path = file_path.into_path().map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("invalid CSV location: {e}"),
+    let path = file_path.into_path().map_err(|e| {
+        CommandError::desktop(
+            DesktopError::SaveLocationInvalid,
+            format!("invalid CSV location: {e}"),
+        )
     })?;
     state.grant_paths([path.clone()]);
     Ok(Some(path))
@@ -1110,14 +1122,15 @@ pub async fn report_export_pdf(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let dest = ensure_pdf_path(file_path.into_path().map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("invalid save location: {e}"),
+    let dest = ensure_pdf_path(file_path.into_path().map_err(|e| {
+        CommandError::desktop(
+            DesktopError::SaveLocationInvalid,
+            format!("invalid save location: {e}"),
+        )
     })?);
 
-    std::fs::write(&dest, &data).map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("could not save PDF: {e}"),
+    std::fs::write(&dest, &data).map_err(|e| {
+        CommandError::desktop(DesktopError::SaveFailed, format!("could not save PDF: {e}"))
     })?;
 
     Ok(Some(dest.display().to_string()))
@@ -1140,9 +1153,11 @@ fn decode_capped_base64(bytes_base64: &str, max_decoded: usize) -> CommandResult
 
     let data = base64::engine::general_purpose::STANDARD
         .decode(trimmed)
-        .map_err(|e| CommandError {
-            code: "validation".into(),
-            message: format!("invalid file data: {e}"),
+        .map_err(|e| {
+            CommandError::desktop(
+                DesktopError::FileDataInvalid,
+                format!("invalid file data: {e}"),
+            )
         })?;
 
     if data.len() > max_decoded {
@@ -1152,10 +1167,19 @@ fn decode_capped_base64(bytes_base64: &str, max_decoded: usize) -> CommandResult
 }
 
 fn pdf_too_large_error(max_decoded: usize) -> CommandError {
-    CommandError {
-        code: "validation".into(),
-        message: format!("PDF too large (max {} MB)", max_decoded / (1024 * 1024)),
-    }
+    too_large_error(max_decoded / (1024 * 1024))
+}
+
+/// The error for a picked document over the size cap, with the same code and
+/// parameters core uses for a stored document that is too large.
+fn document_too_large_error() -> CommandError {
+    too_large_error(oikonomia_core::documents::MAX_DOCUMENT_BYTES / (1024 * 1024))
+}
+
+fn too_large_error(max_megabytes: usize) -> CommandError {
+    CommandError::from(CoreError::Validation(ValidationError::FileTooLarge {
+        max_mb: u64::try_from(max_megabytes).unwrap_or(u64::MAX),
+    }))
 }
 
 fn pdf_export_file_name(suggested_name: Option<&str>) -> String {
@@ -1196,14 +1220,14 @@ mod pdf_export_tests {
     #[test]
     fn decode_pdf_export_rejects_invalid_base64() {
         let err = decode_pdf_export_bytes("not-valid-base64!!!").expect_err("invalid");
-        assert_eq!(err.code, "validation");
+        assert_eq!(err.code, "file_data_invalid");
     }
 
     #[test]
     fn decode_pdf_export_rejects_oversized_before_decode() {
         // max_decoded=2 → max_base64 = 4; six chars must fail before decode.
         let err = decode_capped_base64("AAAAAA", 2).expect_err("cap");
-        assert_eq!(err.code, "validation");
+        assert_eq!(err.code, "file_too_large");
         assert!(err.message.contains("large"), "{}", err.message);
     }
 
@@ -1213,7 +1237,7 @@ mod pdf_export_tests {
         let encoded = base64::engine::general_purpose::STANDARD.encode([1_u8, 2, 3, 4]);
         assert_eq!(encoded.len(), 8);
         let err = decode_capped_base64(&encoded, 3).expect_err("after decode");
-        assert_eq!(err.code, "validation");
+        assert_eq!(err.code, "file_too_large");
     }
 
     #[test]
@@ -1387,17 +1411,16 @@ pub async fn document_analyze(
     // file cannot balloon memory (the drop path gates on fs metadata the same way).
     let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
     if data_base64.len() > max_base64_len {
-        return Err(CommandError {
-            code: "validation".into(),
-            message: "file too large (max 8 MB)".into(),
-        });
+        return Err(document_too_large_error());
     }
 
     let data = base64::engine::general_purpose::STANDARD
         .decode(data_base64.trim())
-        .map_err(|e| CommandError {
-            code: "validation".into(),
-            message: format!("invalid file data: {e}"),
+        .map_err(|e| {
+            CommandError::desktop(
+                DesktopError::FileDataInvalid,
+                format!("invalid file data: {e}"),
+            )
         })?;
 
     let vault = state.vault();
@@ -1432,16 +1455,20 @@ pub async fn document_analyze_path(
 
         // Reject oversized/unsupported drops from metadata alone — a stray
         // 10 GB drop must not be read into memory before failing the size cap.
-        let meta = std::fs::metadata(&path).map_err(|e| CommandError {
-            code: "io".into(),
-            message: format!("could not read dropped file: {e}"),
+        let meta = std::fs::metadata(&path).map_err(|e| {
+            CommandError::desktop(
+                DesktopError::FileUnreadable,
+                format!("could not read dropped file: {e}"),
+            )
         })?;
         let mime = oikonomia_core::documents::resolve_mime("", &filename);
         oikonomia_core::documents::validate_document_file(&filename, &mime, meta.len())?;
 
-        let data = std::fs::read(&path).map_err(|e| CommandError {
-            code: "io".into(),
-            message: format!("could not read dropped file: {e}"),
+        let data = std::fs::read(&path).map_err(|e| {
+            CommandError::desktop(
+                DesktopError::FileUnreadable,
+                format!("could not read dropped file: {e}"),
+            )
         })?;
         analyze_readonly(&vault, &model_dir, entity_id, &filename, &mime, &data)
     }))
@@ -1455,10 +1482,10 @@ fn require_granted_path(state: &AppState, path: &str) -> CommandResult<PathBuf> 
     if state.path_is_granted(&path) {
         Ok(path)
     } else {
-        Err(CommandError {
-            code: "validation".into(),
-            message: "file path was not chosen through the app".into(),
-        })
+        Err(CommandError::desktop(
+            DesktopError::PathNotGranted,
+            "file path was not chosen through the app",
+        ))
     }
 }
 
@@ -1486,10 +1513,10 @@ async fn await_blocking<T>(
 ) -> CommandResult<T> {
     match handle.await {
         Ok(result) => result,
-        Err(err) => Err(CommandError {
-            code: "io".into(),
-            message: format!("background task failed: {err}"),
-        }),
+        Err(err) => Err(CommandError::desktop(
+            DesktopError::TaskFailed,
+            format!("background task failed: {err}"),
+        )),
     }
 }
 
@@ -1596,17 +1623,16 @@ pub async fn document_attach(
     // file cannot balloon memory (same gate as document_analyze).
     let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
     if data_base64.len() > max_base64_len {
-        return Err(CommandError {
-            code: "validation".into(),
-            message: "file too large (max 8 MB)".into(),
-        });
+        return Err(document_too_large_error());
     }
 
     let data = base64::engine::general_purpose::STANDARD
         .decode(data_base64.trim())
-        .map_err(|e| CommandError {
-            code: "validation".into(),
-            message: format!("invalid file data: {e}"),
+        .map_err(|e| {
+            CommandError::desktop(
+                DesktopError::FileDataInvalid,
+                format!("invalid file data: {e}"),
+            )
         })?;
 
     with_vault_blocking(&state, move |vault| {
@@ -1646,14 +1672,18 @@ pub async fn document_export(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let path = file_path.into_path().map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("invalid save location: {e}"),
+    let path = file_path.into_path().map_err(|e| {
+        CommandError::desktop(
+            DesktopError::SaveLocationInvalid,
+            format!("invalid save location: {e}"),
+        )
     })?;
 
-    std::fs::write(&path, &data).map_err(|e| CommandError {
-        code: "io".into(),
-        message: format!("could not save file: {e}"),
+    std::fs::write(&path, &data).map_err(|e| {
+        CommandError::desktop(
+            DesktopError::SaveFailed,
+            format!("could not save file: {e}"),
+        )
     })?;
 
     Ok(Some(path.display().to_string()))

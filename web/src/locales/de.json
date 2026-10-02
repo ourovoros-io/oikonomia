@@ -333,19 +333,6 @@
       "busy": "Wird angelegt…"
     }
   },
-  "native": {
-    "dialog": {
-      "error": {
-        "invalidSave": "ungültiger Speicherort: {error}",
-        "invalidBackup": "ungültiger Sicherungsort: {error}",
-        "invalidFileData": "ungültige Dateidaten: {error}",
-        "readDropped": "die abgelegte Datei ließ sich nicht lesen: {error}",
-        "readDroppedShort": "abgelegte Datei nicht lesbar: {error}",
-        "saveFile": "Datei konnte nicht gespeichert werden: {error}",
-        "bgTask": "Hintergrundaufgabe fehlgeschlagen: {error}"
-      }
-    }
-  },
   "dialog": {
     "confirm": {
       "default": "Bestätigen"
@@ -958,10 +945,6 @@
     }
   },
   "error": {
-    "backup": {
-      "notOikonomia": "ist keine Oikonomia-Tresorsicherung",
-      "unsupportedVersion": "nicht unterstützte Sicherungsversion {version}"
-    },
     "vaultUninitialized": "Der Tresor wurde noch nicht eingerichtet.",
     "vaultLocked": "Der Tresor ist gesperrt.",
     "invalidPassword": "Dieses Passwort ist falsch.",
@@ -971,7 +954,6 @@
     "accountWrongEntity": "Dieses Konto gehört nicht zu diesem Buch.",
     "moneyOverflow": "Dieser Betrag ist zu groß.",
     "negativeMoney": "Dieser Betrag darf nicht negativ sein.",
-    "validation": "Diese Eingabe ist ungültig.",
     "io": "Ein Dateivorgang ist fehlgeschlagen.",
     "crypto": "Ein Sicherheitsvorgang ist fehlgeschlagen.",
     "vaultCorrupt": "Die Tresordatei ist beschädigt.",
@@ -980,7 +962,43 @@
     "notFound": "Dieses Element wurde nicht gefunden.",
     "analysis": "Die Dokumentanalyse ist fehlgeschlagen.",
     "csvParse": "Diese CSV-Datei konnte nicht gelesen werden.",
-    "unknown": "Etwas ist schiefgelaufen."
+    "unknown": "Etwas ist schiefgelaufen.",
+    "passwordTooShort": "Dieses Passwort ist zu kurz. Verwenden Sie mindestens {min} Zeichen.",
+    "nameRequired": "Ein erforderlicher Name oder Code fehlt. Füllen Sie das Feld aus und versuchen Sie es erneut.",
+    "nameTaken": "Der Name „{name}“ wird bereits verwendet. Wählen Sie einen anderen Namen.",
+    "accountCodeTaken": "Ein anderes Konto in diesem Buch verwendet diesen Code bereits. Wählen Sie einen anderen Code.",
+    "systemAccountProtected": "Systemkonten können nicht deaktiviert werden.",
+    "accountInactive": "Das Konto {code} ist inaktiv. Wählen Sie ein aktives Konto.",
+    "accountRequired": "Wählen Sie für jedes Feld, das die Buchung benötigt, ein Konto aus.",
+    "accountWrongType": "Der Kontotyp von {code} passt nicht zu dieser Buchung. Wählen Sie ein anderes Konto.",
+    "sameAccount": "Eine Buchung braucht zwei verschiedene Konten. Ändern Sie eines davon.",
+    "amountNotPositive": "Der Betrag muss größer als null sein.",
+    "billStatusRequired": "Wählen Sie einen Status für diese Rechnung: bezahlt, offen oder Bezahlung einer bestehenden offenen Rechnung.",
+    "invalidDate": "„{value}“ ist kein gültiges Datum. Geben Sie ein existierendes Kalenderdatum ein.",
+    "dateRangeInverted": "Das Von-Datum muss vor oder auf dem Bis-Datum liegen.",
+    "dateOutOfRange": "Dieses Datum liegt außerhalb des unterstützten Bereichs. Wählen Sie ein Datum näher an heute.",
+    "dayOfMonthInvalid": "Geben Sie einen Tag des Monats von 1 bis 31 ein. Nur monatliche Vorlagen verwenden einen Tag des Monats.",
+    "lockTimeoutTooShort": "Die Zeit bis zur automatischen Sperre muss mindestens {min_secs} Sekunden betragen.",
+    "currencyInvalid": "Geben Sie einen dreistelligen Währungscode ein, zum Beispiel EUR.",
+    "entryAlreadyVoided": "Diese Buchung wurde bereits gelöscht.",
+    "entryNotPosted": "Nur gebuchte Buchungen können gelöscht werden.",
+    "wrongBook": "Dieses Element gehört zu einem anderen Buch. Wechseln Sie zum richtigen Buch und versuchen Sie es erneut.",
+    "openingBalanceAccountType": "Ein Anfangssaldo lässt sich nur für Aktiv- oder Passivkonten festlegen.",
+    "openingBalanceUnchanged": "Dieses Konto hat bereits diesen Saldo.",
+    "noEquityAccount": "Dieses Buch hat kein Eigenkapitalkonto, gegen das der Anfangssaldo gebucht werden kann. Legen Sie zuerst ein Eigenkapitalkonto an.",
+    "fileEmpty": "Diese Datei ist leer.",
+    "fileTooLarge": "Diese Datei ist zu groß. Das Limit beträgt {max_mb} MB.",
+    "fileTypeUnsupported": "Dieser Dateityp wird nicht unterstützt. Verwenden Sie PDF, PNG, JPEG, WebP oder reinen Text.",
+    "vaultAlreadyInitialized": "Auf diesem Computer existiert bereits ein Tresor.",
+    "validationInternal": "Die Anfrage konnte nicht verarbeitet werden. Versuchen Sie es erneut.",
+    "fileDataInvalid": "Die Datei konnte nicht gelesen werden. Wählen Sie sie erneut aus.",
+    "fileUnreadable": "Die Datei konnte nicht gelesen werden. Prüfen Sie, ob sie noch existiert und Sie sie öffnen können.",
+    "saveLocationInvalid": "Dieser Ort kann nicht verwendet werden. Wählen Sie einen anderen.",
+    "saveFailed": "Die Datei konnte nicht gespeichert werden. Prüfen Sie, ob der Ort beschreibbar ist, und versuchen Sie es erneut.",
+    "pathNotGranted": "Diese Datei wurde nicht in der App ausgewählt. Wählen Sie sie erneut mit der Dateiauswahl.",
+    "mailClientFailed": "Ihr E-Mail-Programm ließ sich nicht öffnen.",
+    "taskFailed": "Im Hintergrund ist etwas schiefgelaufen. Versuchen Sie es erneut.",
+    "update": "Das Update konnte nicht gesucht oder installiert werden. Versuchen Sie es später erneut."
   },
   "analyze": {
     "hint": {

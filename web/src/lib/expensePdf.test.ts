@@ -248,9 +248,11 @@ describe('pdfExportErrorMessage', () => {
     expect(pdfExportErrorMessage({ code: 'io', message: 'EACCES /tmp/x.pdf' })).toBe(
       'Could not export the PDF.',
     )
-    expect(pdfExportErrorMessage({ code: 'validation', message: 'invalid file data' })).toBe(
-      'Could not export the PDF.',
-    )
+    for (const code of ['save_location_invalid', 'save_failed', 'file_data_invalid', 'file_too_large']) {
+      expect(pdfExportErrorMessage({ code, message: 'invalid file data' })).toBe(
+        'Could not export the PDF.',
+      )
+    }
     expect(pdfExportErrorMessage({ code: 'vault_locked', message: 'Vault is locked' })).toBe(
       'Vault is locked',
     )

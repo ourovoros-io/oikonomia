@@ -798,7 +798,7 @@ describe('TransactionsPage summary', () => {
   test('an inverted date range draws nothing and says why', async () => {
     vi.mocked(api.cashFlowSeries).mockImplementation(async (_entityId, from, to) => {
       if (from && to) {
-        throw { code: 'validation', message: 'from date must be on or before to' }
+        throw { code: 'date_range_inverted', message: 'from date must be on or before to' }
       }
       return series
     })

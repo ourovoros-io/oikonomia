@@ -12,7 +12,7 @@ use super::{
     suggested_entry,
 };
 use crate::domain::{AccountId, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_account, get_entity, post_simple_entry_unchecked,
 };
@@ -160,9 +160,9 @@ pub fn post_import_rows(
     let entity_id = first.entity_id;
     for row in rows {
         if row.entity_id != entity_id {
-            return Err(Error::Validation(
-                "import rows must belong to a single entity".into(),
-            ));
+            return Err(Error::Validation(ValidationError::Internal {
+                detail: "import rows must belong to a single entity".into(),
+            }));
         }
     }
     let _entity = get_entity(conn, entity_id)?;

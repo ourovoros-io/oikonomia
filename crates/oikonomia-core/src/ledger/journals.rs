@@ -10,7 +10,7 @@ use crate::domain::{
     AccountId, EntityId, EntryStatus, JournalEntry, JournalEntryId, JournalLine, JournalLineId,
     validate_lines_for_post,
 };
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, account_balance_as_of, normal_balance};
 use crate::money::Money;
@@ -372,10 +372,9 @@ fn insert_posted_entry(
             return Err(Error::AccountWrongEntity);
         }
         if !account.is_active {
-            return Err(Error::Validation(format!(
-                "account {} is inactive",
-                account.code
-            )));
+            return Err(Error::Validation(ValidationError::AccountInactive {
+                code: account.code.clone(),
+            }));
         }
 
         let debit = Money::from_minor(raw.debit_minor)?;
@@ -461,14 +460,12 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
     hidden: bool,
 ) -> Result<PostedEntryView> {
     if input.amount_minor <= 0 {
-        return Err(Error::Validation("amount must be positive".into()));
+        return Err(Error::Validation(ValidationError::AmountNotPositive));
     }
 
     let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
     if debit_account == credit_account {
-        return Err(Error::Validation(
-            "entry needs two different accounts".into(),
-        ));
+        return Err(Error::Validation(ValidationError::SameAccount));
     }
 
     let lines = vec![
@@ -529,17 +526,18 @@ fn simple_entry_sides(
 ) -> Result<(AccountId, AccountId)> {
     use crate::domain::AccountType::{Asset, Expense, Income, Liability};
 
-    let role = |id: Option<AccountId>, role: &str, allowed: &[crate::domain::AccountType]| {
-        let id = id.ok_or_else(|| Error::Validation(format!("{role} account is required")))?;
-        let account = get_account(conn, id)?;
-        if !allowed.contains(&account.account_type) {
-            return Err(Error::Validation(format!(
-                "{role} account {} has the wrong type for this entry",
-                account.code
-            )));
-        }
-        Ok(id)
-    };
+    let role =
+        |id: Option<AccountId>, role: &'static str, allowed: &[crate::domain::AccountType]| {
+            let id = id.ok_or(Error::Validation(ValidationError::AccountRequired { role }))?;
+            let account = get_account(conn, id)?;
+            if !allowed.contains(&account.account_type) {
+                return Err(Error::Validation(ValidationError::AccountWrongType {
+                    role,
+                    code: account.code.clone(),
+                }));
+            }
+            Ok(id)
+        };
 
     match input.kind {
         SimpleEntryKind::Expense => Ok((
@@ -563,7 +561,7 @@ fn simple_entry_sides(
                 role(input.payable_account_id, "bills payable", &[Liability])?,
                 role(input.wallet_account_id, "payment", &[Asset, Liability])?,
             )),
-            None => Err(Error::Validation("bill entries need a bill status".into())),
+            None => Err(Error::Validation(ValidationError::BillStatusRequired)),
         },
         SimpleEntryKind::Transfer => Ok((
             role(
@@ -602,12 +600,10 @@ pub fn void_entry(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
 fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
     let view = get_entry(conn, id)?;
     if view.is_voided {
-        return Err(Error::Validation("entry is already voided".into()));
+        return Err(Error::Validation(ValidationError::EntryAlreadyVoided));
     }
     if view.entry.status != EntryStatus::Posted {
-        return Err(Error::Validation(
-            "only posted entries can be voided".into(),
-        ));
+        return Err(Error::Validation(ValidationError::EntryNotPosted));
     }
 
     let reverse_lines: Vec<CreateJournalLine> = view
@@ -674,9 +670,7 @@ pub fn replace_simple_entry(
 
     let original = get_entry(&tx, original_id)?;
     if original.entry.entity_id != input.entity_id {
-        return Err(Error::Validation(
-            "entry belongs to a different book".into(),
-        ));
+        return Err(Error::Validation(ValidationError::WrongBook));
     }
 
     void_entry_in_tx(&tx, original_id)?;
@@ -718,14 +712,13 @@ pub fn set_account_opening_balance(
     if account.account_type != AccountType::Asset && account.account_type != AccountType::Liability
     {
         return Err(Error::Validation(
-            "opening balances apply to asset or liability accounts".into(),
+            ValidationError::OpeningBalanceAccountType,
         ));
     }
     if !account.is_active {
-        return Err(Error::Validation(format!(
-            "account {} is inactive",
-            account.code
-        )));
+        return Err(Error::Validation(ValidationError::AccountInactive {
+            code: account.code.clone(),
+        }));
     }
 
     let as_of_d = parse_date(as_of)?;
@@ -734,9 +727,7 @@ pub fn set_account_opening_balance(
         .checked_sub(current)
         .ok_or(Error::MoneyOverflow)?;
     if delta == 0 {
-        return Err(Error::Validation(
-            "the account already has this balance".into(),
-        ));
+        return Err(Error::Validation(ValidationError::OpeningBalanceUnchanged));
     }
 
     // Prefer the system Opening Balances account; fall back to any active
@@ -750,11 +741,7 @@ pub fn set_account_opening_balance(
                 .iter()
                 .find(|a| a.account_type == AccountType::Equity && a.is_active)
         })
-        .ok_or_else(|| {
-            Error::Validation(
-                "this book has no equity account to post the opening balance against".into(),
-            )
-        })?;
+        .ok_or(Error::Validation(ValidationError::NoEquityAccount))?;
 
     // A debit-normal account grows by debiting: a positive delta debits the
     // account and credits equity; every other combination flips the sides.

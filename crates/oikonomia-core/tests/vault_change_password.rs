@@ -3,6 +3,7 @@
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::vault::{Vault, VaultStatus, vault_db_path};
 use tempfile::TempDir;
 
@@ -73,7 +74,12 @@ fn change_password_rejects_wrong_old_and_weak_new() {
 
     let weak = vault.change_password(OLD, "short");
     assert!(
-        matches!(weak, Err(Error::Validation(_))),
+        matches!(
+            weak,
+            Err(Error::Validation(ValidationError::PasswordTooShort {
+                min: 12
+            }))
+        ),
         "weak new password must be rejected, got {weak:?}"
     );
     assert_eq!(vault.status(), VaultStatus::Unlocked);
@@ -125,7 +131,12 @@ fn init_rejects_password_shorter_than_min() {
     let mut vault = Vault::open_path(dir.path()).expect("open vault");
     let err = vault.init("short");
     assert!(
-        matches!(err, Err(Error::Validation(ref msg)) if msg.contains("at least 12")),
+        matches!(
+            err,
+            Err(Error::Validation(ValidationError::PasswordTooShort {
+                min: 12
+            }))
+        ),
         "weak init password must be rejected, got {err:?}"
     );
     assert_eq!(vault.status(), VaultStatus::Uninitialized);

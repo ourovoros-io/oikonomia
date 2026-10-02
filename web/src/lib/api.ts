@@ -174,6 +174,9 @@ function asCommandError(err: unknown): CommandError {
       return {
         code: typeof obj.code === 'string' ? obj.code : 'unknown',
         message: obj.message,
+        ...(obj.params && typeof obj.params === 'object'
+          ? { params: obj.params as Record<string, string> }
+          : {}),
       }
     }
     if (typeof obj.error === 'string') {

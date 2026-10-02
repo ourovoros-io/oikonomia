@@ -771,7 +771,7 @@ export function TransactionsPage({
               >
                 {series ? formatMoney(series.net_minor, ccy, undefined, { signed: true }) : '—'}
               </p>
-              {seriesError?.code === 'validation' ? (
+              {seriesError?.code === 'date_range_inverted' ? (
                 <p className="mt-1.5 text-xs text-[var(--color-danger)]">{t('tx.summary.invalidRange')}</p>
               ) : seriesError ? (
                 <p className="mt-1.5 text-xs text-[var(--color-danger)]">{commandErrorMessage(seriesError)}</p>

@@ -5,7 +5,7 @@
 //! already-verified local path via [`crate::update_exec::VerifiedPathInstaller`].
 //! `setup()` never starts a check.
 
-use crate::error::{CommandError, CommandResult};
+use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
 use crate::update_exec::VerifiedPathInstaller;
 use crate::update_key::UPDATER_PUBLIC_KEY;
@@ -46,10 +46,10 @@ pub async fn update_check(state: State<'_, AppState>) -> CommandResult<UpdateSta
     {
         Ok(outcome) => outcome,
         Err(err) => {
-            return Err(CommandError {
-                code: "io".into(),
-                message: format!("background task failed: {err}"),
-            });
+            return Err(CommandError::desktop(
+                DesktopError::TaskFailed,
+                format!("background task failed: {err}"),
+            ));
         }
     };
 
@@ -81,10 +81,10 @@ pub async fn update_install(
         Ok(Ok(status)) => status,
         Ok(Err(err)) => return Err(CommandError::from(err)),
         Err(err) => {
-            return Err(CommandError {
-                code: "io".into(),
-                message: format!("background task failed: {err}"),
-            });
+            return Err(CommandError::desktop(
+                DesktopError::TaskFailed,
+                format!("background task failed: {err}"),
+            ));
         }
     };
 
