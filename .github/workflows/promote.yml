@@ -135,8 +135,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Ship an explicit allow-list only. The draft may also carry Linux
-          # AppImage/.deb or Windows assets that never went through the
+          # Ship an explicit allow-list only. The draft also carries the Linux
+          # AppImage/.deb, which never went through the
           # smoke-tested darwin feed above; remove them so the published
           # release holds exactly what the feed names and nothing un-vetted.
           is_published_asset() {

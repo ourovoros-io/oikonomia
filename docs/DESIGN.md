@@ -82,7 +82,8 @@ The vault is one SQLCipher database, `vault.db`, plus a small public header,
   reverse entry and links the two so the pair drops out of the books. Editing is
   `replace_simple_entry`: void the original, post the replacement and move any
   attached documents, in one transaction. Hidden entries are left out of the
-  journal CSV export only.
+  journal CSV export and the expense PDF; in-app lists and reports still show
+  them, and the vault backup still contains them.
 - **Reports** (trial balance, profit and loss, balance sheet, dashboard
   summary, cash-flow series) are computed in SQL over posted entries only
   (`crates/oikonomia-core/src/ledger`).
@@ -97,7 +98,8 @@ The vault is one SQLCipher database, `vault.db`, plus a small public header,
 Receipts and invoices are attached to journal entries (a document cannot exist
 without one). Files are capped at 8 MiB and stored as blobs inside the encrypted
 database, so backups include them.
-Analysis runs offline: PDFs and text have their text extracted; images go
+Analysis runs offline: PDFs and text have their text extracted; a PDF with no
+usable text layer has its embedded JPEG images run through OCR as well. Images go
 through the `ocrs` engine using two `.rten` models that ship in the app bundle
 (`apps/desktop/src-tauri/resources/ocr`), and an invoice reader pulls totals and
 kind from the text. The result only pre-fills the entry form
@@ -105,8 +107,10 @@ kind from the text. The result only pre-fills the entry form
 
 ## The IPC boundary
 
-The webview talks to Rust only through Tauri commands, registered in one list in
-`apps/desktop/src-tauri/src/lib.rs`; nothing outside it is reachable.
+The webview talks to Rust only through Tauri commands. The app's own commands
+are registered in one list in `apps/desktop/src-tauri/src/lib.rs`. Beyond
+those, the webview can call only the Tauri built-ins that
+`capabilities/default.json` grants.
 
 - **Path grants.** A command that takes a file path accepts it only if the user
   handed it over through a native drop or a native dialog. Those paths are
@@ -122,16 +126,17 @@ The webview talks to Rust only through Tauri commands, registered in one list in
 
 ## Updates and the network
 
-`oikonomia-core` has no network dependencies, and `deny.toml` bans every
-socket-capable crate except under `oikonomia-update` and the Tauri updater
-plugin, so the network is confined to the update path.
+`oikonomia-core` has no network dependencies, and `deny.toml` bans the HTTP, TLS,
+socket and websocket crates it lists everywhere except under `oikonomia-update`
+and the Tauri updater plugin, so the network is confined to the update path.
 
 When the user clicks to check, `oikonomia-update` fetches `latest.json` and its
 detached signature from the project's GitHub releases, verifies the signature
 with a minisign public key compiled into the app, and compares versions. Every
 URL, redirects included, must be HTTPS on an allow-listed GitHub host
 (`hosts.rs`). The webview cannot supply a feed URL or key. Installing downloads
-the artifact, verifies it against the signed manifest, runs it and restarts.
+the artifact, checks its hash and minisign signature against the signed
+manifest, installs it over the current app and restarts.
 Nothing checks for updates at startup. GitHub is only a host; the signing key is
 the trust root. See [`release.md`](release.md) for how releases are cut.
 
@@ -154,5 +159,6 @@ the trust root. See [`release.md`](release.md) for how releases are cut.
   with a hairline edge. Brand color marks chrome and never money; money in and
   out have their own pair of colors. The design tokens are the `@theme` block
   and the glass and aurora variables in `web/src/index.css`; fonts are bundled
-  (`web/src/fonts.css`, `web/public/fonts`). `web/tests/tokens.test.ts` checks
+  (`web/src/fonts.css`, `web/public/fonts`; Inter for the expense PDF is in
+  `web/src/assets/fonts`). `web/tests/tokens.test.ts` checks
   text contrast against the glass surface.

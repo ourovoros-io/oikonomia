@@ -63,7 +63,7 @@ Workspace Clippy: `unwrap_used = deny`, `panic = deny`, etc.
   2–3 letter helpers. Public and `pub(crate)` items have rustdoc. Comments
   explain intent and invariants, not the identifier.
 
-## Product decisions (locked)
+## Design overview
 
 See [`docs/DESIGN.md`](docs/DESIGN.md).
 

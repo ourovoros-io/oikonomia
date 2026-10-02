@@ -185,6 +185,9 @@ jobs:
 
   linux:
     name: linux
+    # After macos, so the two jobs cannot race to create the draft release and
+    # leave two drafts for one tag (promotion would then refuse to run).
+    needs: macos
     runs-on: ubuntu-22.04
     environment: release
     steps:

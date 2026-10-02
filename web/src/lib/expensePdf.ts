@@ -467,7 +467,7 @@ async function embedReportFonts(pdf: PDFDocument): Promise<{ regular: PDFFont; s
       semibold: await pdf.embedFont(semiboldBytes, { subset: true }),
     }
   } catch (cause) {
-    // Helvetica still covers Latin-script reports, but not Greek or other scripts.
+    // Helvetica covers plain Latin-1 text only; Greek, other scripts and U+202F will fail.
     console.warn('Could not embed the Inter font in the expense PDF; using Helvetica.', cause)
   }
 

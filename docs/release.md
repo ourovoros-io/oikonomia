@@ -54,7 +54,7 @@ Tauri app updates are signed with minisign.
 
 Until the Apple secrets are present, the macOS job **fails closed**: it will not publish an unsigned Mac build as if it were signed. The Linux job builds unsigned `.deb` and AppImage files and is only there to prove the build. Both jobs **fail closed** if `TAURI_SIGNING_PRIVATE_KEY` is empty, so updater JSON (`latest.json`) is never produced without it. macOS uses Tauri's official `APPLE_*` environment variables once those secrets are set.
 
-Optional: Actions → Release → Run workflow with `dry_run` still requires Environment `release` and does not attach a GitHub Release.
+Optional: Actions → Release → Run workflow with `dry_run` still requires Environment `release` and does not attach a GitHub Release. Start it from `main`: the environment accepts deployments only from `main` and `v*` tags.
 
 ## Promote the draft to a published release
 
