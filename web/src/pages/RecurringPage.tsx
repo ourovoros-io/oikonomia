@@ -14,6 +14,7 @@ import {
   formatMoney,
   todayISO,
   type Account,
+  type AccountDefaults,
   type Entity,
   type RecurringCadence,
   type RecurringKind,
@@ -21,6 +22,7 @@ import {
 } from '../lib/api'
 import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
 import { beginExclusive } from '../lib/guards'
+import { kindDefaultAccounts } from '../lib/simpleEntry'
 import {
   billStatusForKind,
   cadenceLabelKey,
@@ -59,19 +61,6 @@ const CADENCES: RecurringCadence[] = ['monthly', 'weekly', 'yearly']
 
 function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
-}
-
-function pickDefault(
-  accounts: Account[],
-  type: Account['account_type'],
-  nameHints: string[] = [],
-): string {
-  const active = accounts.filter((a) => a.is_active && a.account_type === type)
-  for (const hint of nameHints) {
-    const found = active.find((a) => a.name.toLowerCase().includes(hint.toLowerCase()))
-    if (found) return found.id
-  }
-  return active[0]?.id ?? ''
 }
 
 function majorString(minor: number, currency: string): string {
@@ -125,6 +114,8 @@ export function RecurringPage({ entity, onBack }: Props) {
   const { t } = useI18n()
   const [templates, setTemplates] = useState<RecurringTemplate[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  // Which account plays which role by default; Rust decides, this only holds it.
+  const [defaults, setDefaults] = useState<AccountDefaults | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -159,29 +150,29 @@ export function RecurringPage({ entity, onBack }: Props) {
   const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
   const categoryAccounts = kind === 'income' ? incomeAccounts : expenseAccounts
 
-  function applyKindDefaults(nextKind: RecurringKind, list: Account[]) {
-    if (nextKind === 'income') {
-      setCategoryId(pickDefault(list, 'income', ['salary', 'sales', 'freelance']))
-      setWalletId(pickDefault(list, 'asset', ['checking', 'bank', 'cash']))
-    } else if (nextKind === 'transfer') {
-      setFromId(pickDefault(list, 'asset', ['checking', 'bank']))
-      const savings = pickDefault(list, 'asset', ['savings', 'cash'])
-      setToId(savings || pickDefault(list, 'asset', []))
-    } else {
-      setCategoryId(
-        pickDefault(list, 'expense', ['rent', 'utilities', 'bills', 'subscription', 'housing']),
-      )
-      setWalletId(pickDefault(list, 'asset', ['checking', 'bank', 'cash']))
+  function applyKindDefaults(nextKind: RecurringKind, roles: AccountDefaults | null) {
+    if (nextKind === 'transfer') {
+      const picked = kindDefaultAccounts('transfer', roles)
+      setFromId(picked.fromId)
+      setToId(picked.toId)
+      return
     }
+
+    // A recurring expense is booked like a bill: the same category default.
+    const picked = kindDefaultAccounts(nextKind === 'income' ? 'income' : 'bill', roles)
+    setCategoryId(picked.categoryId)
+    setWalletId(picked.walletId)
   }
 
   async function reload() {
-    const [rows, list] = await Promise.all([
+    const [rows, list, roles] = await Promise.all([
       api.recurringList(entity.id),
       api.accountList(entity.id),
+      api.accountDefaults(entity.id),
     ])
     setTemplates(rows)
     setAccounts(list)
+    setDefaults(roles)
   }
 
   useEffect(() => {
@@ -198,7 +189,7 @@ export function RecurringPage({ entity, onBack }: Props) {
     setDayOfMonth('1')
     setMemo('')
     setNextDate(todayISO())
-    applyKindDefaults('expense', accounts)
+    applyKindDefaults('expense', defaults)
   }
 
   function openNew() {
@@ -230,7 +221,7 @@ export function RecurringPage({ entity, onBack }: Props) {
 
   function setKindAndDefaults(next: RecurringKind) {
     setKind(next)
-    applyKindDefaults(next, accounts)
+    applyKindDefaults(next, defaults)
   }
 
   function accountSummary(row: RecurringTemplate): string {

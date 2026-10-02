@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type {
   Account,
+  AccountDefaults,
   CashFlowSeries,
   CsvImportPreview,
   DocumentSuggestion,
@@ -45,6 +46,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       ...actual.api,
       entryList: vi.fn(),
       accountList: vi.fn(),
+      accountDefaults: vi.fn(),
       documentList: vi.fn(),
       getUiPrefs: vi.fn(),
       csvImportPreview: vi.fn(),
@@ -247,6 +249,17 @@ function documentSuggestion(over: Partial<DocumentSuggestion> = {}): DocumentSug
   }
 }
 
+const DEFAULTS: AccountDefaults = {
+  category: 'exp1',
+  payment: 'w1',
+  deposit: 'w1',
+  income: 'inc1',
+  bill_category: 'exp1',
+  bills_payable: null,
+  transfer_source: 'w1',
+  transfer_destination: 'w1',
+}
+
 afterEach(() => {
   cleanup()
   dropZone.onSuggestion = null
@@ -256,6 +269,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(api.entryList).mockReset().mockResolvedValue([postedEntry])
   vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
+  vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)
   vi.mocked(api.documentList).mockReset().mockResolvedValue([])
   vi.mocked(api.getUiPrefs).mockReset().mockRejectedValue(new Error('no prefs'))
   vi.mocked(api.csvImportPreview).mockReset().mockResolvedValue(preview)
@@ -726,6 +740,27 @@ describe('TransactionsPage empty-state CTA', () => {
   test('renders without a CTA when onCreateBook is not supplied', () => {
     render(<TransactionsPage entity={null} />)
     expect(screen.queryByRole('button', { name: 'Create a book' })).toBeNull()
+  })
+})
+
+describe('TransactionsPage default accounts', () => {
+  test('New entry preselects the accounts Rust returned, whatever they are called', async () => {
+    // Neither name holds an English word, and the default is not the first
+    // expense account in the list: only Rust's answer can pick it.
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'exp2', name: 'Λογαριασμός 5100', account_type: 'expense', code: '5100' }),
+    ])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, category: 'exp2' })
+
+    render(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'New entry' })
+
+    await waitFor(() => {
+      const values = screen.getAllByRole('combobox').map((el) => (el as HTMLSelectElement).value)
+      expect(values).toContain('exp2')
+    })
+    expect(api.accountDefaults).toHaveBeenCalledWith('e1')
   })
 })
 

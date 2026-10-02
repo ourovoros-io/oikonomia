@@ -24,6 +24,15 @@ describe('marketing IPC handler', () => {
     expect((h('entity_list') as unknown[]).length).toBe(1)
   })
 
+  test('answers the default accounts the entry forms ask for', () => {
+    const h = createHandler('en')
+    const defaults = h('account_defaults', { entityId: 'demo-entity' }) as Record<string, string>
+    const ids = new Set((h('account_list') as { id: string }[]).map((a) => a.id))
+
+    expect(Object.keys(defaults).length).toBe(8)
+    for (const id of Object.values(defaults)) expect(ids.has(id)).toBe(true)
+  })
+
   test('an unknown command logs and throws, so the capture fails loudly', () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     const h = createHandler('en')

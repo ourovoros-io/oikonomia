@@ -16,6 +16,7 @@ import {
   isoDate,
   todayISO,
   type Account,
+  type AccountDefaults,
   type CashFlowSeries,
   type CsvImportPreview,
   type CsvColumnMapping,
@@ -42,7 +43,7 @@ import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
 import { TopBar } from '../components/TopBar'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
-import { lastAccountsMapKey } from '../lib/simpleEntry'
+import { kindDefaultAccounts, lastAccountsMapKey } from '../lib/simpleEntry'
 import {
   AmountPill,
   Button,
@@ -77,19 +78,6 @@ type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 
 type BillStatus = 'paid' | 'unpaid' | 'pay_existing'
 
-function pickDefault(
-  accounts: Account[],
-  type: Account['account_type'],
-  nameHints: string[] = [],
-): string {
-  const active = accounts.filter((a) => a.is_active && a.account_type === type)
-  for (const hint of nameHints) {
-    const found = active.find((a) => a.name.toLowerCase().includes(hint.toLowerCase()))
-    if (found) return found.id
-  }
-  return active[0]?.id ?? ''
-}
-
 function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
@@ -114,6 +102,8 @@ export function TransactionsPage({
   const { t } = useI18n()
   const [entries, setEntries] = useState<PostedEntryView[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
+  // Which account plays which role by default; Rust decides, this only holds it.
+  const [defaults, setDefaults] = useState<AccountDefaults | null>(null)
   const [error, setError] = useState<string | null>(null)
   const errorBannerId = useId()
   const [showForm, setShowForm] = useState(false)
@@ -205,47 +195,23 @@ export function TransactionsPage({
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
-  const walletAccounts = useMemo(
-    () =>
-      accountsOf(accounts, ['asset', 'liability']).filter((a) => {
-        // Prefer money accounts; exclude pure equity-like names
-        const n = a.name.toLowerCase()
-        if (a.account_type === 'liability') {
-          return (
-            n.includes('card') || n.includes('payable') || n.includes('loan') || n.includes('bill')
-          )
-        }
-        return true
-      }),
-    [accounts],
-  )
-  const payableAccounts = useMemo(() => {
-    const liab = accountsOf(accounts, ['liability'])
-    const preferred = liab.filter((a) => {
-      const n = a.name.toLowerCase()
-      return n.includes('payable') || n.includes('bill') || n.includes('ap')
-    })
-    return preferred.length > 0 ? preferred : liab
-  }, [accounts])
+  const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
+  const payableAccounts = useMemo(() => accountsOf(accounts, ['liability']), [accounts])
 
-  function applyKindDefaults(nextKind: EntryKind, list: Account[]) {
-    if (nextKind === 'expense') {
-      setCategoryId(pickDefault(list, 'expense', ['food', 'utilities', 'bills', 'other']))
-      setWalletId(pickDefault(list, 'asset', ['checking', 'bank', 'cash']))
-    } else if (nextKind === 'income') {
-      setCategoryId(pickDefault(list, 'income', ['salary', 'sales', 'freelance']))
-      setWalletId(pickDefault(list, 'asset', ['checking', 'bank', 'cash']))
-    } else if (nextKind === 'bill') {
-      setCategoryId(
-        pickDefault(list, 'expense', ['utilities', 'bills', 'housing', 'subscription', 'rent']),
-      )
-      setWalletId(pickDefault(list, 'asset', ['checking', 'bank', 'cash']))
-      setPayableId(pickDefault(list, 'liability', ['bills payable', 'accounts payable', 'payable']))
+  function applyKindDefaults(nextKind: EntryKind, roles: AccountDefaults | null) {
+    const picked = kindDefaultAccounts(nextKind, roles)
+
+    if (nextKind === 'transfer') {
+      setFromId(picked.fromId)
+      setToId(picked.toId)
+      return
+    }
+
+    setCategoryId(picked.categoryId)
+    setWalletId(picked.walletId)
+    if (nextKind === 'bill') {
+      setPayableId(picked.payableId)
       setBillStatus('paid')
-    } else {
-      setFromId(pickDefault(list, 'asset', ['checking', 'bank']))
-      const savings = pickDefault(list, 'asset', ['savings', 'cash'])
-      setToId(savings || pickDefault(list, 'asset', []))
     }
   }
 
@@ -274,7 +240,7 @@ export function TransactionsPage({
 
   async function reload() {
     if (!entity) return
-    const [e, a, d] = await Promise.all([
+    const [e, a, d, roles] = await Promise.all([
       api.entryList(entity.id, {
         search: debouncedSearch.trim() || undefined,
         from: fromDate || undefined,
@@ -283,13 +249,15 @@ export function TransactionsPage({
       }),
       api.accountList(entity.id),
       api.documentList(entity.id),
+      api.accountDefaults(entity.id),
     ])
     setEntries(e)
     setAccounts(a)
+    setDefaults(roles)
     setDocs(d)
     loadSeries()
     if (!categoryId && !walletId) {
-      applyKindDefaults(kind, a)
+      applyKindDefaults(kind, roles)
     }
   }
 
@@ -323,8 +291,8 @@ export function TransactionsPage({
     setError(null)
     try {
       const last = await lastAccountsForCsv()
-      const defaults = csvImportAccountDefaults({
-        accounts,
+      const csvDefaults = csvImportAccountDefaults({
+        defaults,
         walletId,
         categoryId,
         kind,
@@ -333,12 +301,12 @@ export function TransactionsPage({
       })
       const preview = await api.csvImportPreview({
         entity_id: entity.id,
-        wallet_account_id: defaults.wallet_account_id,
-        expense_account_id: defaults.expense_account_id,
-        income_account_id: defaults.income_account_id,
+        wallet_account_id: csvDefaults.wallet_account_id,
+        expense_account_id: csvDefaults.expense_account_id,
+        income_account_id: csvDefaults.income_account_id,
       })
       if (!preview) return
-      setCsvRoles(defaults)
+      setCsvRoles(csvDefaults)
       setCsvPreview(preview)
       setCsvStep('mapping')
     } catch (err) {
@@ -432,7 +400,7 @@ export function TransactionsPage({
     setPendingAnalysis(null)
     setScanNotes(null)
     setEditId(null)
-    applyKindDefaults('expense', accounts)
+    applyKindDefaults('expense', defaults)
   }
 
   function closeForm() {
@@ -491,7 +459,7 @@ export function TransactionsPage({
 
   function setKindAndDefaults(next: EntryKind) {
     setKind(next)
-    applyKindDefaults(next, accounts)
+    applyKindDefaults(next, defaults)
   }
 
   function applySuggestion(s: DocumentSuggestion, source: PendingDocSource) {
@@ -503,14 +471,14 @@ export function TransactionsPage({
 
     if (s.kind === 'bill') {
       setKind('bill')
-      applyKindDefaults('bill', accounts)
+      applyKindDefaults('bill', defaults)
       setBillStatus(s.bill_unpaid ? 'unpaid' : 'paid')
     } else if (s.kind === 'income') {
       setKind('income')
-      applyKindDefaults('income', accounts)
+      applyKindDefaults('income', defaults)
     } else {
       setKind('expense')
-      applyKindDefaults('expense', accounts)
+      applyKindDefaults('expense', defaults)
     }
 
     if (s.entry_date) setDate(s.entry_date)

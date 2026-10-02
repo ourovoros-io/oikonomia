@@ -128,6 +128,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::entity_archive,
         commands::entity_delete,
         commands::account_list,
+        commands::account_defaults,
         commands::account_create,
         commands::account_update,
         commands::account_archive,

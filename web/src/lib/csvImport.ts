@@ -1,5 +1,6 @@
 import { kindDefaultAccounts, type AccountLike } from './simpleEntry'
 import type {
+  AccountDefaults,
   CsvColumnMapping,
   CsvImportPreviewRow,
   LastRoleAccounts,
@@ -143,9 +144,9 @@ function orNull(value: string | null | undefined): string | null {
   return value ? value : null
 }
 
-/** Wallet + expense/income categories from last-used picks, then form state, then name hints. */
+/** Wallet + expense/income categories from last-used picks, then form state, then Rust's defaults. */
 export function csvImportAccountDefaults(opts: {
-  accounts: AccountLike[]
+  defaults: AccountDefaults | null
   walletId: string
   categoryId: string
   kind: 'expense' | 'income' | 'bill' | 'transfer'
@@ -156,8 +157,8 @@ export function csvImportAccountDefaults(opts: {
   expense_account_id: string | null
   income_account_id: string | null
 } {
-  const expense = kindDefaultAccounts('expense', opts.accounts)
-  const income = kindDefaultAccounts('income', opts.accounts)
+  const expense = kindDefaultAccounts('expense', opts.defaults)
+  const income = kindDefaultAccounts('income', opts.defaults)
   return {
     wallet_account_id: orNull(
       opts.expenseLast?.wallet_account_id || opts.walletId || expense.walletId,

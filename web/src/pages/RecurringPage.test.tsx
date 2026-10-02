@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Account, Entity, RecurringTemplate } from '../lib/api'
+import type { Account, AccountDefaults, Entity, RecurringTemplate } from '../lib/api'
 
 vi.mock('../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/api')>()
@@ -18,6 +18,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       recurringDelete: vi.fn(),
       recurringPost: vi.fn(),
       accountList: vi.fn(),
+      accountDefaults: vi.fn(),
     },
   }
 })
@@ -85,6 +86,17 @@ const payroll = template({
   category_account_id: 'inc1',
 })
 
+const DEFAULTS: AccountDefaults = {
+  category: 'exp1',
+  payment: 'w1',
+  deposit: 'w1',
+  income: 'inc1',
+  bill_category: 'exp1',
+  bills_payable: null,
+  transfer_source: 'w1',
+  transfer_destination: 'w1',
+}
+
 afterEach(() => {
   cleanup()
   resetI18nForTests()
@@ -109,6 +121,7 @@ beforeEach(() => {
     is_voided: false,
   })
   vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
+  vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)
 })
 
 async function renderPage(onBack = vi.fn()) {

@@ -26,6 +26,22 @@ export type Account = {
   sort_order: number
 }
 
+/**
+ * The default account for each role the entry forms need, chosen by Rust from
+ * the seeded account's template code and type, never from its name. A role is
+ * null only when the book has no active account of the type it needs.
+ */
+export type AccountDefaults = {
+  category: string | null
+  payment: string | null
+  deposit: string | null
+  income: string | null
+  bill_category: string | null
+  bills_payable: string | null
+  transfer_source: string | null
+  transfer_destination: string | null
+}
+
 export type Money = { amount_minor: number }
 
 export type JournalLine = {
@@ -290,6 +306,8 @@ export const api = {
   entityDelete: (id: string) => call<void>('entity_delete', { id }),
 
   accountList: (entityId: string) => call<Account[]>('account_list', { entityId }),
+  accountDefaults: (entityId: string) =>
+    call<AccountDefaults>('account_defaults', { entityId }),
   accountCreate: (input: {
     entity_id: string
     code: string

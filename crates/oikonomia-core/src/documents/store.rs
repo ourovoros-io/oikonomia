@@ -4,7 +4,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{Account, AccountId, AccountType, EntityId, JournalEntryId};
+use crate::coa::{DocumentTopic, document_topic_codes};
+use crate::default_accounts::{account_by_codes, first_of_type};
+use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
@@ -426,21 +428,52 @@ fn has_extension(filename: &str, ext: &str) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }
 
-/// Pick best expense account id from merchant/description hints.
+/// Pick the expense account a document most likely belongs to.
+///
+/// The merchant and description hints choose a topic; the topic is mapped to a
+/// seeded account by template code, so the account's name never matters. With
+/// no recognised topic the template's catch-all is used, then the first active
+/// expense account.
 #[must_use]
-pub fn match_expense_account(accounts: &[Account], hints: &str) -> Option<AccountId> {
-    match_account_of_type(accounts, AccountType::Expense, hints, EXPENSE_KEYWORDS)
+pub fn match_expense_account(
+    template: ChartTemplate,
+    accounts: &[Account],
+    hints: &str,
+) -> Option<AccountId> {
+    match_account_of_type(
+        template,
+        accounts,
+        AccountType::Expense,
+        hints,
+        EXPENSE_KEYWORDS,
+        DocumentTopic::OtherExpense,
+    )
 }
 
-/// Pick best income account (sales/services, freelance, other).
+/// Pick the income account a document most likely belongs to (sales, freelance,
+/// salary), by the same rule as [`match_expense_account`].
 #[must_use]
-pub fn match_income_account(accounts: &[Account], hints: &str) -> Option<AccountId> {
-    match_account_of_type(accounts, AccountType::Income, hints, INCOME_KEYWORDS)
+pub fn match_income_account(
+    template: ChartTemplate,
+    accounts: &[Account],
+    hints: &str,
+) -> Option<AccountId> {
+    match_account_of_type(
+        template,
+        accounts,
+        AccountType::Income,
+        hints,
+        INCOME_KEYWORDS,
+        DocumentTopic::OtherIncome,
+    )
 }
 
-const EXPENSE_KEYWORDS: &[(&str, &[&str])] = &[
+/// Words in a document's text that point at a topic, in the order topics are tried.
+type TopicKeywords = [(DocumentTopic, &'static [&'static str])];
+
+const EXPENSE_KEYWORDS: &TopicKeywords = &[
     (
-        "utilities",
+        DocumentTopic::Utilities,
         &[
             "utilit",
             "electric",
@@ -461,28 +494,34 @@ const EXPENSE_KEYWORDS: &[(&str, &[&str])] = &[
             "έναντι",
         ],
     ),
-    ("bills", &["bill", "invoice", "receipt"]),
-    ("housing", &["rent", "mortgage", "housing"]),
+    (DocumentTopic::Bills, &["bill", "invoice", "receipt"]),
+    (DocumentTopic::Housing, &["rent", "mortgage", "housing"]),
     (
-        "subscription",
+        DocumentTopic::Subscription,
         &["netflix", "spotify", "subscription", "saas"],
     ),
-    ("food", &["food", "grocery", "supermarket", "restaurant"]),
     (
-        "transport",
+        DocumentTopic::Food,
+        &["food", "grocery", "supermarket", "restaurant"],
+    ),
+    (
+        DocumentTopic::Transport,
         &["fuel", "uber", "taxi", "transport", "parking"],
     ),
     (
-        "software",
+        DocumentTopic::Software,
         &["software", "github", "aws", "cloud", "security", "program"],
     ),
-    ("health", &["pharma", "doctor", "health", "clinic"]),
-    ("tax", &["tax", "vat", "irs"]),
+    (
+        DocumentTopic::Health,
+        &["pharma", "doctor", "health", "clinic"],
+    ),
+    (DocumentTopic::Tax, &["tax", "vat", "irs"]),
 ];
 
-const INCOME_KEYWORDS: &[(&str, &[&str])] = &[
+const INCOME_KEYWORDS: &TopicKeywords = &[
     (
-        "sales",
+        DocumentTopic::Sales,
         &[
             "sales",
             "service",
@@ -493,82 +532,43 @@ const INCOME_KEYWORDS: &[(&str, &[&str])] = &[
             "τιμολ",
         ],
     ),
-    ("freelance", &["freelance", "project"]),
-    ("salary", &["salary", "payroll", "wage"]),
+    (DocumentTopic::Freelance, &["freelance", "project"]),
+    (DocumentTopic::Salary, &["salary", "payroll", "wage"]),
 ];
 
 fn match_account_of_type(
+    template: ChartTemplate,
     accounts: &[Account],
-    ty: AccountType,
+    account_type: AccountType,
     hints: &str,
-    keywords: &[(&str, &[&str])],
+    keywords: &TopicKeywords,
+    catch_all: DocumentTopic,
 ) -> Option<AccountId> {
     let hints = hints.to_lowercase();
-    let pool: Vec<_> = accounts
-        .iter()
-        .filter(|a| a.is_active && a.account_type == ty)
-        .collect();
 
-    for (account_hint, words) in keywords {
-        if words.iter().any(|w| hints.contains(*w))
-            && let Some(acc) = pool.iter().find(|a| {
-                let name = a.name.to_lowercase();
-                name.contains(account_hint)
-                    || (*account_hint == "sales"
-                        && (name.contains("sales")
-                            || name.contains("service")
-                            || name.contains("other")))
-            })
-        {
-            return Some(acc.id);
+    // The first topic the text points at that the chart has an account for.
+    for (topic, words) in keywords {
+        if !words.iter().any(|word| hints.contains(*word)) {
+            continue;
+        }
+
+        let codes = document_topic_codes(template, *topic);
+        if let Some(account) = account_by_codes(accounts, account_type, codes) {
+            return Some(account.id);
         }
     }
 
-    pool.iter()
-        .find(|a| a.name.to_lowercase().contains("other"))
-        .or_else(|| pool.first())
-        .map(|a| a.id)
-}
+    let codes = document_topic_codes(template, catch_all);
 
-/// First active asset (bank/cash) for payments.
-#[must_use]
-pub fn match_wallet_account(accounts: &[Account]) -> Option<AccountId> {
-    let assets: Vec<_> = accounts
-        .iter()
-        .filter(|a| a.is_active && a.account_type == AccountType::Asset)
-        .collect();
-    for hint in ["checking", "bank", "cash"] {
-        if let Some(a) = assets
-            .iter()
-            .find(|a| a.name.to_ascii_lowercase().contains(hint))
-        {
-            return Some(a.id);
-        }
-    }
-    assets.first().map(|a| a.id)
-}
-
-/// Bills payable / AP liability.
-#[must_use]
-pub fn match_payable_account(accounts: &[Account]) -> Option<AccountId> {
-    let liab: Vec<_> = accounts
-        .iter()
-        .filter(|a| a.is_active && a.account_type == AccountType::Liability)
-        .collect();
-    for hint in ["bills payable", "accounts payable", "payable"] {
-        if let Some(a) = liab
-            .iter()
-            .find(|a| a.name.to_ascii_lowercase().contains(hint))
-        {
-            return Some(a.id);
-        }
-    }
-    None
+    account_by_codes(accounts, account_type, codes)
+        .or_else(|| first_of_type(accounts, account_type))
+        .map(|account| account.id)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
 
     #[test]
     fn validate_document_file_gates_size_name_and_mime() {
@@ -580,5 +580,212 @@ mod tests {
         );
         assert!(validate_document_file("  ", "application/pdf", 1_000).is_err());
         assert!(validate_document_file("a.exe", "application/x-msdownload", 1_000).is_err());
+    }
+
+    /// Code of the expense account suggested for `hints`.
+    fn expense_code(template: ChartTemplate, accounts: &[Account], hints: &str) -> Option<String> {
+        code_of_for_tests(accounts, match_expense_account(template, accounts, hints))
+    }
+
+    /// Code of the income account suggested for `hints`.
+    fn income_code(template: ChartTemplate, accounts: &[Account], hints: &str) -> Option<String> {
+        code_of_for_tests(accounts, match_income_account(template, accounts, hints))
+    }
+
+    /// Every hint the matcher is exercised with, for both charts.
+    const EXPENSE_HINTS: &[&str] = &[
+        "dei electricity",
+        "monthly invoice",
+        "rent for march",
+        "netflix",
+        "supermarket",
+        "uber ride",
+        "github cloud",
+        "pharmacy",
+        "vat payment",
+        "something unrecognised",
+        "",
+    ];
+
+    const INCOME_HINTS: &[&str] = &[
+        "consulting services",
+        "freelance project",
+        "monthly salary",
+        "something unrecognised",
+        "",
+    ];
+
+    #[test]
+    fn english_personal_chart_matches_as_before() {
+        let accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        let template = ChartTemplate::Personal;
+
+        assert_eq!(
+            expense_code(template, &accounts, "dei electricity").as_deref(),
+            Some("5300")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "monthly invoice").as_deref(),
+            Some("5350")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "rent for march").as_deref(),
+            Some("5000")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "netflix").as_deref(),
+            Some("5500")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "supermarket").as_deref(),
+            Some("5100")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "uber ride").as_deref(),
+            Some("5200")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "pharmacy").as_deref(),
+            Some("5400")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "vat payment").as_deref(),
+            Some("5700")
+        );
+        // No personal account covers software, so it falls to the catch-all.
+        assert_eq!(
+            expense_code(template, &accounts, "github cloud").as_deref(),
+            Some("5900")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "something unrecognised").as_deref(),
+            Some("5900")
+        );
+
+        assert_eq!(
+            income_code(template, &accounts, "consulting services").as_deref(),
+            Some("4900")
+        );
+        assert_eq!(
+            income_code(template, &accounts, "freelance project").as_deref(),
+            Some("4100")
+        );
+        assert_eq!(
+            income_code(template, &accounts, "monthly salary").as_deref(),
+            Some("4000")
+        );
+        assert_eq!(
+            income_code(template, &accounts, "something unrecognised").as_deref(),
+            Some("4900")
+        );
+    }
+
+    #[test]
+    fn english_company_chart_matches_as_before() {
+        let accounts = seeded_chart_for_tests(ChartTemplate::Company, false);
+        let template = ChartTemplate::Company;
+
+        assert_eq!(
+            expense_code(template, &accounts, "github cloud").as_deref(),
+            Some("5300")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "vat payment").as_deref(),
+            Some("5700")
+        );
+        // The company chart has no utilities, bills or housing account.
+        assert_eq!(
+            expense_code(template, &accounts, "dei electricity").as_deref(),
+            Some("5900")
+        );
+        assert_eq!(
+            expense_code(template, &accounts, "rent for march").as_deref(),
+            Some("5900")
+        );
+
+        assert_eq!(
+            income_code(template, &accounts, "consulting services").as_deref(),
+            Some("4000")
+        );
+        assert_eq!(
+            income_code(template, &accounts, "monthly salary").as_deref(),
+            Some("4900")
+        );
+    }
+
+    #[test]
+    fn renamed_charts_match_the_same_accounts_as_english_ones() {
+        for template in [ChartTemplate::Personal, ChartTemplate::Company] {
+            let english = seeded_chart_for_tests(template, false);
+            let renamed = seeded_chart_for_tests(template, true);
+
+            for hints in EXPENSE_HINTS {
+                assert_eq!(
+                    expense_code(template, &renamed, hints),
+                    expense_code(template, &english, hints),
+                    "{template:?} expense for {hints:?}",
+                );
+            }
+            for hints in INCOME_HINTS {
+                assert_eq!(
+                    income_code(template, &renamed, hints),
+                    income_code(template, &english, hints),
+                    "{template:?} income for {hints:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_deactivated_topic_account_falls_through_to_the_next_choice() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        for account in &mut accounts {
+            if account.code == "5300" {
+                account.is_active = false;
+            }
+        }
+
+        // Utilities is gone, so the catch-all "Other" takes the document.
+        assert_eq!(
+            expense_code(ChartTemplate::Personal, &accounts, "dei electricity").as_deref(),
+            Some("5900")
+        );
+    }
+
+    #[test]
+    fn a_blank_book_suggests_the_first_account_of_the_type_whatever_it_is_called() {
+        let template = ChartTemplate::Blank;
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        // A blank book's accounts are the user's own: none carries a seeded
+        // code, so the words in their names must not steer the choice.
+        for (index, account) in accounts.iter_mut().enumerate() {
+            account.code = format!("U{index:03}");
+        }
+
+        assert_eq!(
+            expense_code(template, &accounts, "dei electricity").as_deref(),
+            Some("U013")
+        );
+        assert_eq!(
+            income_code(template, &accounts, "monthly salary").as_deref(),
+            Some("U009")
+        );
+    }
+
+    #[test]
+    fn a_book_with_no_account_of_the_type_suggests_nothing() {
+        let accounts: Vec<Account> = seeded_chart_for_tests(ChartTemplate::Personal, false)
+            .into_iter()
+            .filter(|account| account.account_type == AccountType::Asset)
+            .collect();
+
+        assert_eq!(
+            match_expense_account(ChartTemplate::Personal, &accounts, "electricity"),
+            None
+        );
+        assert_eq!(
+            match_income_account(ChartTemplate::Personal, &accounts, "salary"),
+            None
+        );
     }
 }

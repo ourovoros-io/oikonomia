@@ -8,6 +8,7 @@ use oikonomia_core::csv::{
     default_journal_export_file_name, ensure_csv_path, export_journal_csv, post_import_rows,
     preview_bank_csv_file,
 };
+use oikonomia_core::default_accounts::{DefaultAccounts, default_accounts_for_entity};
 use oikonomia_core::documents::{
     AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, analyze_document_bytes,
     analyzer_status, attach_document, delete_document, get_document, list_documents,
@@ -536,6 +537,22 @@ pub async fn account_list(
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         list_accounts(conn, entity_id)
+    })
+    .await
+}
+
+/// The default account for each role the entry forms need.
+///
+/// Chosen in Rust by the seeded account's template code and type, never by
+/// name, so it is right for a renamed or translated chart.
+#[tauri::command]
+pub async fn account_defaults(
+    state: State<'_, AppState>,
+    entity_id: EntityId,
+) -> CommandResult<DefaultAccounts> {
+    with_vault_blocking(&state, move |vault| {
+        let conn = vault.connection()?;
+        default_accounts_for_entity(conn, entity_id)
     })
     .await
 }
@@ -1547,6 +1564,7 @@ fn analyze_readonly(
         filename,
         &mime,
         data,
+        entity.chart_template,
         &accounts,
         &entity.base_currency,
         Some(model_dir),

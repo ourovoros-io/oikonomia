@@ -1,5 +1,6 @@
 import type {
   Account,
+  AccountDefaults,
   AccountType,
   DocumentMeta,
   Entity,
@@ -11,6 +12,24 @@ export type DemoLang = 'en' | 'el'
 
 /** The day every capture pretends is today. Nothing in the ledger is later. */
 export const DEMO_TODAY = '2026-09-24'
+
+/**
+ * The demo book's default account per role, as Rust's `account_defaults`
+ * would answer for it. The demo chart is its own, so the roles are named here
+ * by code rather than derived.
+ */
+export function accountDefaults(): AccountDefaults {
+  return {
+    category: accountId('5000'),
+    payment: accountId('1020'),
+    deposit: accountId('1020'),
+    income: accountId('4000'),
+    bill_category: accountId('5020'),
+    bills_payable: accountId('2000'),
+    transfer_source: accountId('1020'),
+    transfer_destination: accountId('1000'),
+  }
+}
 
 export type DemoLedger = {
   lang: DemoLang

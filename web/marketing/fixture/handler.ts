@@ -1,5 +1,5 @@
 import type { AnalyzerStatus, UiPrefs } from '../../src/lib/api'
-import { buildLedger, type DemoLang } from './ledger'
+import { accountDefaults, buildLedger, type DemoLang } from './ledger'
 import {
   accountBalance,
   accountRegister,
@@ -57,6 +57,7 @@ export function createHandler(lang: DemoLang) {
     settings_get_lock_timeout: () => 900,
     entity_list: () => [l.entity],
     account_list: () => l.accounts,
+    account_defaults: () => accountDefaults(),
     entry_list: (a) =>
       entryList(l, { from: opt(a, 'from'), to: opt(a, 'to'), search: opt(a, 'search'), accountId: opt(a, 'accountId') }),
     dashboard_summary_cmd: (a) => dashboardSummary(l, str(a, 'from'), str(a, 'to'), str(a, 'assetsAsOf')),

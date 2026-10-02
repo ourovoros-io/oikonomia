@@ -1,20 +1,24 @@
 import { afterEach, describe, expect, test } from 'vitest'
+import type { AccountDefaults } from './api'
 import { resetI18nForTests, t } from './i18n'
 import {
   buildSimpleEntryInput,
   kindDefaultAccounts,
   lastAccountsMapKey,
   validateTrayAccounts,
-  type AccountLike,
 } from './simpleEntry'
 
-const accounts: AccountLike[] = [
-  { id: 'e1', name: 'Food', account_type: 'expense', is_active: true },
-  { id: 'i1', name: 'Salary', account_type: 'income', is_active: true },
-  { id: 'a1', name: 'Checking', account_type: 'asset', is_active: true },
-  { id: 'a2', name: 'Savings', account_type: 'asset', is_active: true },
-  { id: 'l1', name: 'Bills Payable', account_type: 'liability', is_active: true },
-]
+/** What Rust's `account_defaults` returns; the names here are deliberately not English. */
+const defaults: AccountDefaults = {
+  category: 'e1',
+  payment: 'a1',
+  deposit: 'a3',
+  income: 'i1',
+  bill_category: 'e2',
+  bills_payable: 'l1',
+  transfer_source: 'a1',
+  transfer_destination: 'a2',
+}
 
 afterEach(() => {
   resetI18nForTests()
@@ -27,16 +31,46 @@ describe('lastAccountsMapKey', () => {
 })
 
 describe('kindDefaultAccounts', () => {
-  test('expense picks expense + checking', () => {
-    const d = kindDefaultAccounts('expense', accounts)
-    expect(d.categoryId).toBe('e1')
-    expect(d.walletId).toBe('a1')
+  test('expense follows the category and payment roles Rust returned', () => {
+    expect(kindDefaultAccounts('expense', defaults)).toEqual({
+      categoryId: 'e1',
+      walletId: 'a1',
+      payableId: '',
+      fromId: '',
+      toId: '',
+    })
   })
 
-  test('transfer picks two assets', () => {
-    const d = kindDefaultAccounts('transfer', accounts)
+  test('income follows the income and deposit roles', () => {
+    const d = kindDefaultAccounts('income', defaults)
+    expect(d.categoryId).toBe('i1')
+    expect(d.walletId).toBe('a3')
+  })
+
+  test('bill follows the bill category, payment and payable roles', () => {
+    const d = kindDefaultAccounts('bill', defaults)
+    expect(d.categoryId).toBe('e2')
+    expect(d.walletId).toBe('a1')
+    expect(d.payableId).toBe('l1')
+  })
+
+  test('transfer follows the source and destination roles', () => {
+    const d = kindDefaultAccounts('transfer', defaults)
     expect(d.fromId).toBe('a1')
     expect(d.toId).toBe('a2')
+  })
+
+  test('a role Rust left null stays empty, and no defaults at all leaves every field empty', () => {
+    const d = kindDefaultAccounts('bill', { ...defaults, bills_payable: null })
+    expect(d.payableId).toBe('')
+
+    expect(kindDefaultAccounts('expense', null)).toEqual({
+      categoryId: '',
+      walletId: '',
+      payableId: '',
+      fromId: '',
+      toId: '',
+    })
   })
 })
 

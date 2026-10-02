@@ -13,6 +13,7 @@ use oikonomia_core::documents::{
     DocumentSuggestion, EntryKindSuggestion, analyze_document_bytes, analyzer_status,
     parse_invoice_text,
 };
+use oikonomia_core::domain::ChartTemplate;
 use serde::{Deserialize, Serialize};
 
 const CORPUS_REL: &str = "testdata/documents";
@@ -201,7 +202,8 @@ fn suggest_for(entry: &ManifestEntry, bytes: &[u8]) -> DocumentSuggestion {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("document");
-            analyze_document_bytes(name, mime, bytes, &[], "EUR", None).expect("analyze")
+            analyze_document_bytes(name, mime, bytes, ChartTemplate::Blank, &[], "EUR", None)
+                .expect("analyze")
         }
         other => unreachable!("id {}: unknown parser {other}", entry.id),
     }
@@ -389,6 +391,7 @@ fn text_mime_analyze_path_matches_invoice_reader() {
         "dei_electricity_current.txt",
         "text/plain",
         &text,
+        ChartTemplate::Blank,
         &[],
         "EUR",
         None,
@@ -407,6 +410,7 @@ fn text_mime_analyze_path_matches_invoice_reader() {
         "greek_bank_embasma.txt",
         "text/plain",
         &transfer,
+        ChartTemplate::Blank,
         &[],
         "EUR",
         None,
@@ -462,6 +466,7 @@ fn jpeg_ocr_smoke() {
         "english_total.jpg",
         "image/jpeg",
         &bytes,
+        ChartTemplate::Blank,
         &[],
         "EUR",
         Some(model_dir.as_path()),

@@ -14,6 +14,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       cashFlowSeries: vi.fn(),
       entryList: vi.fn(),
       accountList: vi.fn(),
+      accountDefaults: vi.fn(),
       documentList: vi.fn(),
       recurringList: vi.fn(),
     },
@@ -25,7 +26,7 @@ vi.mock('../components/CashFlowPulse', () => ({
   CashFlowPulse: ({ label }: { label: string }) => <div role="img" aria-label={label} />,
 }))
 
-import type { Entity } from '../lib/api'
+import type { AccountDefaults, Entity } from '../lib/api'
 import { api } from '../lib/api'
 import { resetI18nForTests } from '../lib/i18n'
 import { DashboardPage } from './DashboardPage'
@@ -48,9 +49,21 @@ beforeEach(() => {
   vi.mocked(api.cashFlowSeries).mockReset().mockResolvedValue(undefined as never)
   vi.mocked(api.entryList).mockReset().mockResolvedValue([])
   vi.mocked(api.accountList).mockReset().mockResolvedValue([])
+  vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)
   vi.mocked(api.documentList).mockReset().mockResolvedValue([])
   vi.mocked(api.recurringList).mockReset().mockResolvedValue([])
 })
+
+const DEFAULTS: AccountDefaults = {
+  category: null,
+  payment: null,
+  deposit: null,
+  income: null,
+  bill_category: null,
+  bills_payable: null,
+  transfer_source: null,
+  transfer_destination: null,
+}
 
 afterEach(() => {
   cleanup()

@@ -1744,6 +1744,7 @@ mod tests {
             "greek_bank_embasma.txt",
             "text/plain",
             text.as_bytes(),
+            crate::domain::ChartTemplate::Blank,
             &[],
             "EUR",
             None,

@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Account, Entity, PostedEntryView, UiPrefs } from '../lib/api'
+import type { Account, AccountDefaults, Entity, PostedEntryView, UiPrefs } from '../lib/api'
 
 vi.mock('../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/api')>()
@@ -14,6 +14,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       ...actual.api,
       entityList: vi.fn(),
       accountList: vi.fn(),
+      accountDefaults: vi.fn(),
       getUiPrefs: vi.fn(),
       entryPostSimple: vi.fn(),
       entrySetHidden: vi.fn(),
@@ -79,6 +80,17 @@ const prefs: UiPrefs = {
   last_accounts_by_entity_kind: {},
 }
 
+const DEFAULTS: AccountDefaults = {
+  category: 'exp1',
+  payment: 'w1',
+  deposit: 'w1',
+  income: null,
+  bill_category: 'exp1',
+  bills_payable: null,
+  transfer_source: 'w1',
+  transfer_destination: 'w1',
+}
+
 afterEach(() => {
   cleanup()
   resetI18nForTests()
@@ -87,6 +99,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(api.entityList).mockReset().mockResolvedValue([entity])
   vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
+  vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)
   vi.mocked(api.getUiPrefs).mockReset().mockResolvedValue(prefs)
   vi.mocked(api.entryPostSimple).mockReset().mockResolvedValue(posted)
   vi.mocked(api.entrySetHidden).mockReset().mockResolvedValue({
@@ -185,6 +198,60 @@ describe('QuickAddPage hidden paint', () => {
     expect(onPosted).not.toHaveBeenCalled()
     expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong in the background.')
     expect(screen.queryByText('hide failed')).toBeNull()
+  })
+})
+
+describe('QuickAddPage default accounts', () => {
+  // The first expense account is not the default: only Rust's answer says
+  // which one is, and neither name contains an English word it could match.
+  const second: Account = {
+    ...accounts[1],
+    id: 'exp2',
+    code: '5100',
+    name: 'Λογαριασμός 5100',
+    sort_order: 2,
+  }
+
+  async function categoryAfterChoosingExpense(): Promise<HTMLElement> {
+    render(<QuickAddPage onPosted={() => {}} />)
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: 'Expense' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('radio', { name: 'Expense' }))
+    await afterRoll()
+    await userEvent.type(screen.getByLabelText('Amount (EUR)'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Category')).toBeTruthy()
+    })
+    return screen.getByLabelText('Category')
+  }
+
+  test('the category follows the default Rust returned, not the list order', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, second])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, category: 'exp2' })
+
+    expect(await categoryAfterChoosingExpense()).toHaveValue('exp2')
+    expect(api.accountDefaults).toHaveBeenCalledWith('e1')
+  })
+
+  test('remembered last-used accounts still win over the default', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, second])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, category: 'exp2' })
+    vi.mocked(api.getUiPrefs).mockResolvedValue({
+      ...prefs,
+      last_accounts_by_entity_kind: {
+        'e1:expense': {
+          category_account_id: 'exp1',
+          wallet_account_id: 'w1',
+          payable_account_id: null,
+          from_account_id: null,
+          to_account_id: null,
+        },
+      },
+    })
+
+    expect(await categoryAfterChoosingExpense()).toHaveValue('exp1')
   })
 })
 

@@ -11,11 +11,10 @@ use serde::{Deserialize, Serialize};
 
 use super::invoice::parse_invoice_text;
 use super::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
-use super::store::{
-    match_expense_account, match_income_account, match_payable_account, match_wallet_account,
-};
-use crate::domain::{Account, AccountId};
-use crate::error::Result;
+use super::store::{match_expense_account, match_income_account};
+use crate::default_accounts::default_account_for_role;
+use crate::domain::{Account, AccountId, ChartTemplate};
+use crate::error::{AccountRole, Result};
 use crate::ui_text::{UiText, UiTextCode};
 
 /// Suggested high-level entry kind.
@@ -128,6 +127,7 @@ pub fn analyze_document_bytes(
     filename: &str,
     mime_type: &str,
     data: &[u8],
+    template: ChartTemplate,
     accounts: &[Account],
     default_currency: &str,
     model_dir: Option<&std::path::Path>,
@@ -155,7 +155,7 @@ pub fn analyze_document_bytes(
     };
 
     let model = model_label.or_else(|| suggestion.model.clone());
-    finalize_suggestion(&mut suggestion, accounts, source, model);
+    finalize_suggestion(&mut suggestion, template, accounts, source, model);
 
     // The invoice reader emits 2-exponent minor units (cents). For currencies
     // with a different exponent the value would be silently wrong, so drop it.
@@ -204,6 +204,7 @@ fn currency_exponent(code: &str) -> u32 {
 
 fn finalize_suggestion(
     s: &mut DocumentSuggestion,
+    template: ChartTemplate,
     accounts: &[Account],
     source: AnalyzeSource,
     model: Option<String>,
@@ -219,17 +220,18 @@ fn finalize_suggestion(
 
     if s.category_account_id.is_none() {
         s.category_account_id = match s.kind {
-            EntryKindSuggestion::Income => match_income_account(accounts, &hint),
+            EntryKindSuggestion::Income => match_income_account(template, accounts, &hint),
             EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
-                match_expense_account(accounts, &hint)
+                match_expense_account(template, accounts, &hint)
             }
         };
     }
     if s.wallet_account_id.is_none() {
-        s.wallet_account_id = match_wallet_account(accounts);
+        s.wallet_account_id = default_account_for_role(template, accounts, AccountRole::Payment);
     }
     if s.payable_account_id.is_none() {
-        s.payable_account_id = match_payable_account(accounts);
+        s.payable_account_id =
+            default_account_for_role(template, accounts, AccountRole::BillsPayable);
     }
 
     if s.kind == EntryKindSuggestion::Bill && s.bill_unpaid && s.payable_account_id.is_none() {
@@ -580,6 +582,7 @@ fn pdf_text_per_page(data: &[u8]) -> Option<String> {
 mod tests {
     use super::super::invoice::parse_invoice_text;
     use super::*;
+    use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
 
     #[test]
     fn extract_pdf_jpeg_images_ignores_non_pdf() {
@@ -624,8 +627,24 @@ mod tests {
     #[test]
     fn non_two_exponent_currency_drops_amount() {
         let text = b"Invoice\nTOTAL 45,90\nThank you";
-        let eur = analyze_document_bytes("bill.txt", "text/plain", text, &[], "EUR", None);
-        let jpy = analyze_document_bytes("bill.txt", "text/plain", text, &[], "JPY", None);
+        let eur = analyze_document_bytes(
+            "bill.txt",
+            "text/plain",
+            text,
+            ChartTemplate::Blank,
+            &[],
+            "EUR",
+            None,
+        );
+        let jpy = analyze_document_bytes(
+            "bill.txt",
+            "text/plain",
+            text,
+            ChartTemplate::Blank,
+            &[],
+            "JPY",
+            None,
+        );
 
         let eur_notes = notes_of(eur.clone());
         assert_eq!(eur.map(|s| s.amount_minor), Ok(Some(4590)));
@@ -653,6 +672,7 @@ mod tests {
             "bill.txt",
             "text/plain",
             text,
+            ChartTemplate::Blank,
             &[],
             "EUR",
             None,
@@ -678,6 +698,7 @@ mod tests {
             "scan.bin",
             "application/octet-stream",
             b"\x00\x01",
+            ChartTemplate::Blank,
             &[],
             "EUR",
             None,
@@ -692,6 +713,7 @@ mod tests {
             "scan.jpg",
             "image/jpeg",
             b"\xff\xd8",
+            ChartTemplate::Blank,
             &[],
             "EUR",
             None,
@@ -709,6 +731,7 @@ mod tests {
             "scan.jpg",
             "image/jpeg",
             b"\xff\xd8",
+            ChartTemplate::Blank,
             &[],
             "EUR",
             path.as_deref().ok(),
@@ -725,6 +748,7 @@ mod tests {
             "big.pdf",
             "application/pdf",
             &data,
+            ChartTemplate::Blank,
             &[],
             "EUR",
             None,
@@ -740,6 +764,7 @@ mod tests {
             "bill.txt",
             "text/plain",
             text.as_bytes(),
+            ChartTemplate::Blank,
             &[],
             "EUR",
             None,
@@ -748,6 +773,38 @@ mod tests {
         assert!(
             codes_of(&notes).contains(&UiTextCode::AddPayableAccount),
             "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn an_unpaid_bill_finds_a_renamed_payable_account_and_asks_for_nothing() {
+        let text = "Invoice\nTOTAL 45,90 EUR\nAmount due\nThank you";
+        let accounts = seeded_chart_for_tests(ChartTemplate::Personal, true);
+
+        let suggestion = analyze_document_bytes(
+            "bill.txt",
+            "text/plain",
+            text.as_bytes(),
+            ChartTemplate::Personal,
+            &accounts,
+            "EUR",
+            None,
+        );
+        assert!(suggestion.is_ok(), "analysis must succeed");
+        let Ok(suggestion) = suggestion else { return };
+
+        assert_eq!(
+            code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
+            Some("2050"),
+        );
+        assert!(
+            !codes_of(&suggestion.notes).contains(&UiTextCode::AddPayableAccount),
+            "{:?}",
+            suggestion.notes
+        );
+        assert_eq!(
+            code_of_for_tests(&accounts, suggestion.wallet_account_id).as_deref(),
+            Some("1010"),
         );
     }
 

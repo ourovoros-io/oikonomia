@@ -7,6 +7,7 @@
 pub mod coa;
 pub mod csv;
 pub mod db;
+pub mod default_accounts;
 pub mod documents;
 pub mod domain;
 pub mod error;
