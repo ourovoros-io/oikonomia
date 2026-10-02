@@ -5,7 +5,7 @@
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
-use oikonomia_core::error::ValidationError;
+use oikonomia_core::error::{AccountRole, ValidationError};
 use oikonomia_core::ledger::{
     CreateEntity, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity, list_accounts,
     post_simple_entry,
@@ -241,7 +241,10 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     wrong_type.wallet_account_id = Some(acc.checking);
     assert!(matches!(
         post_simple_entry(conn, &wrong_type),
-        Err(Error::Validation(ValidationError::AccountWrongType { .. }))
+        Err(Error::Validation(ValidationError::AccountWrongType {
+            role: AccountRole::Category,
+            ..
+        }))
     ));
 
     // Liability wallet for income (money received into a debt account).
@@ -250,7 +253,10 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     liab_income.wallet_account_id = Some(acc.bills_payable);
     assert!(matches!(
         post_simple_entry(conn, &liab_income),
-        Err(Error::Validation(ValidationError::AccountWrongType { .. }))
+        Err(Error::Validation(ValidationError::AccountWrongType {
+            role: AccountRole::Deposit,
+            ..
+        }))
     ));
 
     // Non-positive amount.
@@ -267,6 +273,8 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     let missing = base_input(entity_id, SimpleEntryKind::Expense);
     assert!(matches!(
         post_simple_entry(conn, &missing),
-        Err(Error::Validation(ValidationError::AccountRequired { .. }))
+        Err(Error::Validation(ValidationError::AccountRequired {
+            role: AccountRole::Category
+        }))
     ));
 }

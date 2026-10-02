@@ -10,7 +10,7 @@ use crate::domain::{
     AccountId, EntityId, EntryStatus, JournalEntry, JournalEntryId, JournalLine, JournalLineId,
     validate_lines_for_post,
 };
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{AccountRole, Error, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, account_balance_as_of, normal_balance};
 use crate::money::Money;
@@ -527,7 +527,7 @@ fn simple_entry_sides(
     use crate::domain::AccountType::{Asset, Expense, Income, Liability};
 
     let role =
-        |id: Option<AccountId>, role: &'static str, allowed: &[crate::domain::AccountType]| {
+        |id: Option<AccountId>, role: AccountRole, allowed: &[crate::domain::AccountType]| {
             let id = id.ok_or(Error::Validation(ValidationError::AccountRequired { role }))?;
             let account = get_account(conn, id)?;
             if !allowed.contains(&account.account_type) {
@@ -541,37 +541,65 @@ fn simple_entry_sides(
 
     match input.kind {
         SimpleEntryKind::Expense => Ok((
-            role(input.category_account_id, "category", &[Expense])?,
-            role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+            role(input.category_account_id, AccountRole::Category, &[Expense])?,
+            role(
+                input.wallet_account_id,
+                AccountRole::Payment,
+                &[Asset, Liability],
+            )?,
         )),
         SimpleEntryKind::Income => Ok((
-            role(input.wallet_account_id, "deposit", &[Asset])?,
-            role(input.category_account_id, "income", &[Income])?,
+            role(input.wallet_account_id, AccountRole::Deposit, &[Asset])?,
+            role(input.category_account_id, AccountRole::Income, &[Income])?,
         )),
         SimpleEntryKind::Bill => match input.bill_status {
             Some(SimpleBillStatus::Paid) => Ok((
-                role(input.category_account_id, "bill category", &[Expense])?,
-                role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+                role(
+                    input.category_account_id,
+                    AccountRole::BillCategory,
+                    &[Expense],
+                )?,
+                role(
+                    input.wallet_account_id,
+                    AccountRole::Payment,
+                    &[Asset, Liability],
+                )?,
             )),
             Some(SimpleBillStatus::Unpaid) => Ok((
-                role(input.category_account_id, "bill category", &[Expense])?,
-                role(input.payable_account_id, "bills payable", &[Liability])?,
+                role(
+                    input.category_account_id,
+                    AccountRole::BillCategory,
+                    &[Expense],
+                )?,
+                role(
+                    input.payable_account_id,
+                    AccountRole::BillsPayable,
+                    &[Liability],
+                )?,
             )),
             Some(SimpleBillStatus::PayExisting) => Ok((
-                role(input.payable_account_id, "bills payable", &[Liability])?,
-                role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+                role(
+                    input.payable_account_id,
+                    AccountRole::BillsPayable,
+                    &[Liability],
+                )?,
+                role(
+                    input.wallet_account_id,
+                    AccountRole::Payment,
+                    &[Asset, Liability],
+                )?,
             )),
             None => Err(Error::Validation(ValidationError::BillStatusRequired)),
         },
         SimpleEntryKind::Transfer => Ok((
             role(
                 input.to_account_id,
-                "transfer destination",
+                AccountRole::TransferDestination,
                 &[Asset, Liability],
             )?,
             role(
                 input.from_account_id,
-                "transfer source",
+                AccountRole::TransferSource,
                 &[Asset, Liability],
             )?,
         )),

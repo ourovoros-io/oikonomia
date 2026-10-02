@@ -146,10 +146,69 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use oikonomia_core::Error as CoreError;
-    use oikonomia_core::error::ValidationError;
+    use oikonomia_core::error::{AccountRole, ValidationError};
     use oikonomia_update::UpdateError;
 
     use super::{CommandError, DesktopError};
+
+    /// One value of every desktop variant. The `match` makes a new variant a
+    /// compile error here until it is given a sample, and
+    /// `all_lists_every_desktop_variant` then fails until it is in
+    /// [`DesktopError::ALL`]. It does not check that the UI has copy for the
+    /// code; `the_shared_fixture_lists_exactly_the_codes_rust_can_emit` does.
+    fn every_desktop_variant() -> Vec<DesktopError> {
+        let samples = vec![
+            DesktopError::FileDataInvalid,
+            DesktopError::FileUnreadable,
+            DesktopError::SaveLocationInvalid,
+            DesktopError::SaveFailed,
+            DesktopError::PathNotGranted,
+            DesktopError::MailClientFailed,
+            DesktopError::TaskFailed,
+        ];
+
+        for sample in &samples {
+            match sample {
+                DesktopError::FileDataInvalid
+                | DesktopError::FileUnreadable
+                | DesktopError::SaveLocationInvalid
+                | DesktopError::SaveFailed
+                | DesktopError::PathNotGranted
+                | DesktopError::MailClientFailed
+                | DesktopError::TaskFailed => {}
+            }
+        }
+
+        samples
+    }
+
+    #[test]
+    fn all_lists_every_desktop_variant() {
+        let from_variants: BTreeSet<&str> = every_desktop_variant()
+            .iter()
+            .map(|kind| kind.code())
+            .collect();
+        let listed: BTreeSet<&str> = DesktopError::ALL.iter().map(|kind| kind.code()).collect();
+
+        assert_eq!(from_variants, listed);
+        assert_eq!(listed.len(), DesktopError::ALL.len(), "duplicate variant");
+    }
+
+    #[test]
+    fn the_role_fixture_lists_exactly_the_roles_rust_can_name() {
+        let fixture: Vec<String> =
+            serde_json::from_str(include_str!("../../../../web/src/lib/accountRoles.json"))
+                .expect("accountRoles.json");
+        let listed: Vec<&str> = AccountRole::ALL
+            .iter()
+            .map(|role| role.identifier())
+            .collect();
+
+        assert_eq!(
+            fixture, listed,
+            "accountRoles.json and AccountRole::ALL differ"
+        );
+    }
 
     /// One value of each core variant except `Validation`, whose codes come
     /// from [`ValidationError::ALL_CODES`].

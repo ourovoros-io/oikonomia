@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import codes from './errorCodes.json'
+import roles from './accountRoles.json'
 import { asCommandError, commandErrorMessage, ERROR_CODE_KEYS, fileReadError } from './commandError'
 import { flattenMessages, LOCALES, resetI18nForTests, setLocale } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
@@ -31,7 +32,8 @@ describe('command error localization', () => {
       password_too_short: ['min'],
       name_taken: ['name'],
       account_inactive: ['code'],
-      account_wrong_type: ['code'],
+      account_required: ['role'],
+      account_wrong_type: ['code', 'role'],
       invalid_date: ['value'],
       lock_timeout_too_short: ['min_secs'],
       file_too_large: ['max_mb'],
@@ -125,5 +127,84 @@ describe('command error localization', () => {
 
     setLocale('el')
     expect(commandErrorMessage(fileReadError())).toBe('Δεν ήταν δυνατή η ανάγνωση του αρχείου')
+  })
+
+  it('names the missing account in every language, with the form\u2019s own label', () => {
+    const error = {
+      code: 'account_required',
+      message: 'category account is required',
+      params: { role: 'category' },
+    }
+    const expected = {
+      en: 'Category (what for)',
+      el: 'Κατηγορία (για τι)',
+      fr: 'Catégorie (pour quoi)',
+      de: 'Kategorie (wofür)',
+    }
+
+    for (const locale of LOCALES) {
+      setLocale(locale)
+      const shown = commandErrorMessage(error)
+
+      expect(shown, locale).toContain(expected[locale])
+      expect(shown, locale).not.toContain('{')
+      expect(shown, locale).not.toContain('category account')
+    }
+  })
+
+  it('names the role and the account for a wrong account type in every language', () => {
+    const error = {
+      code: 'account_wrong_type',
+      message: 'payment account 5100 has the wrong type for this entry',
+      params: { role: 'payment', code: '5100' },
+    }
+    const expected = { en: 'Paid from', el: 'Πληρωμή από', fr: 'Payé depuis', de: 'Bezahlt von' }
+
+    for (const locale of LOCALES) {
+      setLocale(locale)
+      const shown = commandErrorMessage(error)
+
+      expect(shown, locale).toContain(expected[locale])
+      expect(shown, locale).toContain('5100')
+    }
+  })
+
+  it('has a label for every role in every language', () => {
+    for (const role of roles) {
+      for (const locale of LOCALES) {
+        setLocale(locale)
+        const shown = commandErrorMessage({
+          code: 'account_required',
+          message: 'm',
+          params: { role },
+        })
+
+        expect(shown, `${locale} ${role}`).not.toContain(role)
+        expect(shown, `${locale} ${role}`).not.toContain('{')
+      }
+    }
+  })
+
+  it('falls back to the sentence without a role when the role has no label', () => {
+    for (const locale of LOCALES) {
+      setLocale(locale)
+
+      for (const params of [{ role: 'mystery' }, undefined]) {
+        const shown = commandErrorMessage({ code: 'account_required', message: 'm', params })
+
+        expect(shown, locale).not.toContain('mystery')
+        expect(shown, locale).not.toContain('{')
+        expect(shown, locale).not.toContain('error.')
+      }
+    }
+
+    setLocale('en')
+    expect(
+      commandErrorMessage({
+        code: 'account_wrong_type',
+        message: 'm',
+        params: { role: 'mystery', code: '5100' },
+      }),
+    ).toBe('Account 5100 is the wrong type for this entry. Choose a different account.')
   })
 })

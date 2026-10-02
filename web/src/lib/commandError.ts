@@ -117,6 +117,29 @@ export function fileReadError(): CommandError {
 }
 
 /**
+ * Codes whose copy names an account role with `{role}`, mapped to the copy
+ * used when the role is missing or has no label. Rust sends the role as an
+ * identifier (see accountRoles.json); the label is the one the entry form shows.
+ */
+const ROLE_FALLBACK_KEYS: Record<string, string> = {
+  'error.accountRequired': 'error.accountRequiredGeneric',
+  'error.accountWrongType': 'error.accountWrongTypeGeneric',
+}
+
+/** Copy that names the account role, or the sentence without one when the role has no label. */
+function roleCopy(key: string, params: Record<string, string> | undefined): string {
+  const labelKey = `error.role.${params?.role ?? ''}`
+  const label = t(labelKey)
+
+  if (params?.role && label !== labelKey) {
+    const copy = t(key, { ...params, role: label })
+    if (copy !== key) return copy
+  }
+
+  return t(ROLE_FALLBACK_KEYS[key], params)
+}
+
+/**
  * The one way to show a failed command to the user: localized copy for the
  * error's `code`, with its `params` filled in. A code with no copy gets the
  * screen's own localized fallback (`fallbackKey`), never the raw Rust text,
@@ -128,6 +151,10 @@ export function commandErrorMessage(err: unknown, fallbackKey = 'error.unknown')
 
   // 'unknown' is Rust's catch-all: the screen's own sentence says more than a generic one.
   const key = cmd.code === 'unknown' ? undefined : (ERROR_CODE_KEYS[cmd.code] ?? WEB_ERROR_KEYS[cmd.code])
+  if (key && key in ROLE_FALLBACK_KEYS) {
+    return roleCopy(key, cmd.params)
+  }
+
   if (key) {
     const copy = t(key, cmd.params)
     if (copy !== key) return copy

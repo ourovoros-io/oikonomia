@@ -970,8 +970,10 @@
     "accountCodeTaken": "Un autre compte de ce livre utilise déjà ce code. Choisissez un autre code.",
     "systemAccountProtected": "Les comptes système ne peuvent pas être désactivés.",
     "accountInactive": "Le compte {code} est inactif. Choisissez un compte actif.",
-    "accountRequired": "Choisissez un compte pour chaque champ que requiert l’écriture.",
-    "accountWrongType": "Le type du compte {code} ne convient pas à cette écriture. Choisissez un autre compte.",
+    "accountRequired": "Choisissez un compte pour « {role} ».",
+    "accountRequiredGeneric": "Choisissez un compte pour chaque champ que requiert l’écriture.",
+    "accountWrongType": "Le compte {code} ne peut pas être utilisé pour « {role} ». Choisissez un autre compte.",
+    "accountWrongTypeGeneric": "Le type du compte {code} ne convient pas à cette écriture. Choisissez un autre compte.",
     "sameAccount": "Une écriture nécessite deux comptes différents. Changez l’un des deux.",
     "amountNotPositive": "Le montant doit être supérieur à zéro.",
     "billStatusRequired": "Choisissez un état pour cette facture : réglée, non réglée ou règlement d’une facture en attente.",
@@ -986,10 +988,10 @@
     "wrongBook": "Cet élément appartient à un autre livre. Passez au bon livre, puis réessayez.",
     "openingBalanceAccountType": "Un solde d’ouverture ne peut être défini que sur un compte d’actif ou de passif.",
     "openingBalanceUnchanged": "Ce compte a déjà ce solde.",
-    "noEquityAccount": "Ce livre n’a aucun compte de capitaux propres pour contrepasser le solde d’ouverture. Ajoutez d’abord un compte de capitaux propres.",
+    "noEquityAccount": "Ce livre n’a aucun compte de capitaux propres pour servir de contrepartie au solde d’ouverture. Ajoutez d’abord un compte de capitaux propres.",
     "fileEmpty": "Ce fichier est vide.",
     "fileTooLarge": "Ce fichier est trop volumineux. La limite est de {max_mb} Mo.",
-    "fileTypeUnsupported": "Ce type de fichier n’est pas pris en charge. Utilisez un PDF, PNG, JPEG, WebP ou du texte brut.",
+    "fileTypeUnsupported": "Ce type de fichier n’est pas pris en charge. Utilisez un fichier PDF, PNG, JPEG, WebP ou texte brut.",
     "vaultAlreadyInitialized": "Un coffre existe déjà sur cet ordinateur.",
     "validationInternal": "Cette demande n’a pas pu être traitée. Réessayez.",
     "fileDataInvalid": "Impossible de lire ce fichier. Essayez de le choisir à nouveau.",
@@ -999,7 +1001,17 @@
     "pathNotGranted": "Ce fichier n’a pas été choisi dans l’application. Choisissez-le à nouveau avec le sélecteur de fichiers.",
     "mailClientFailed": "Impossible d’ouvrir votre application de messagerie.",
     "taskFailed": "Un problème est survenu en arrière-plan. Réessayez.",
-    "update": "Impossible de rechercher ou d’installer la mise à jour. Réessayez plus tard."
+    "update": "Impossible de rechercher ou d’installer la mise à jour. Réessayez plus tard.",
+    "role": {
+      "category": "Catégorie (pour quoi)",
+      "payment": "Payé depuis",
+      "deposit": "Reçu sur",
+      "income": "Type de recette",
+      "bill_category": "Catégorie de facture",
+      "bills_payable": "Compte Factures à payer",
+      "transfer_source": "Virement depuis",
+      "transfer_destination": "Virement vers"
+    }
   },
   "analyze": {
     "hint": {

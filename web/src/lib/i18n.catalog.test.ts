@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import { CURRENCIES } from './currencies'
+import accountRoles from './accountRoles.json'
 import { KEY_ALIASES, REVERSE_ALIASES, flattenMessages } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
@@ -122,6 +123,8 @@ const DYNAMIC_KEY_FAMILIES: Record<string, readonly string[]> = {
   'dashboard.arc.previous.hint.*': ['month', 'quarter', 'year'].map(
     (v) => `dashboard.arc.previous.hint.${v}`,
   ),
+  // commandError.ts: t(`error.role.${role}`), the roles Rust names in accountRoles.json
+  'error.role.*': accountRoles.map((v) => `error.role.${v}`),
   // recurring.ts kindLabelKey: `tx.form.kind.${kind}`
   'tx.form.kind.*': ['expense', 'income', 'bill', 'transfer'].map((v) => `tx.form.kind.${v}`),
 }

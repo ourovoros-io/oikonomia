@@ -5,8 +5,73 @@
 //! meant for logs only.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use thiserror::Error;
+
+/// The part an account plays in a simple entry.
+///
+/// A refused entry names the role so the UI can say which field to fix. The
+/// UI shows the same label the entry form uses for it, chosen by
+/// [`AccountRole::identifier`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AccountRole {
+    /// The expense account an expense is for.
+    Category,
+    /// The asset or liability account an expense or bill is paid from.
+    Payment,
+    /// The asset account an income is received into.
+    Deposit,
+    /// The income account an income is booked to.
+    Income,
+    /// The expense account a bill is for.
+    BillCategory,
+    /// The liability account that holds an unpaid bill.
+    BillsPayable,
+    /// The account a transfer takes money from.
+    TransferSource,
+    /// The account a transfer puts money into.
+    TransferDestination,
+}
+
+impl AccountRole {
+    /// Every role, in the order the entry form meets them.
+    ///
+    /// The desktop crate checks this list against `accountRoles.json`.
+    pub const ALL: &'static [Self] = &[
+        Self::Category,
+        Self::Payment,
+        Self::Deposit,
+        Self::Income,
+        Self::BillCategory,
+        Self::BillsPayable,
+        Self::TransferSource,
+        Self::TransferDestination,
+    ];
+
+    /// Stable `snake_case` identifier the UI maps to a translated label.
+    #[must_use]
+    pub fn identifier(self) -> &'static str {
+        match self {
+            Self::Category => "category",
+            Self::Payment => "payment",
+            Self::Deposit => "deposit",
+            Self::Income => "income",
+            Self::BillCategory => "bill_category",
+            Self::BillsPayable => "bills_payable",
+            Self::TransferSource => "transfer_source",
+            Self::TransferDestination => "transfer_destination",
+        }
+    }
+}
+
+impl fmt::Display for AccountRole {
+    /// The identifier with spaces, which reads as English in logs.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.identifier().replace('_', " "))
+    }
+}
 
 /// Why a request was refused. Mapped one to one onto a UI code.
 ///
@@ -54,15 +119,15 @@ pub enum ValidationError {
     /// An entry needs an account for a role and none was chosen.
     #[error("{role} account is required")]
     AccountRequired {
-        /// English name of the role, for logs.
-        role: &'static str,
+        /// The role that has no account.
+        role: AccountRole,
     },
 
     /// The chosen account has the wrong type for its role in the entry.
     #[error("{role} account {code} has the wrong type for this entry")]
     AccountWrongType {
-        /// English name of the role, for logs.
-        role: &'static str,
+        /// The role the account was chosen for.
+        role: AccountRole,
         /// Code of the account that was chosen.
         code: String,
     },
@@ -233,8 +298,8 @@ impl ValidationError {
 
     /// The values the UI substitutes into the localized text, by name.
     ///
-    /// English role names and internal detail are left out on purpose: the
-    /// UI cannot translate them.
+    /// Roles go out as identifiers, never English labels, so the UI can
+    /// translate them. Internal detail is left out on purpose.
     #[must_use]
     pub fn params(&self) -> BTreeMap<&'static str, String> {
         let mut params = BTreeMap::new();
@@ -246,8 +311,15 @@ impl ValidationError {
             Self::NameTaken { name } => {
                 params.insert("name", name.clone());
             }
-            Self::AccountInactive { code } | Self::AccountWrongType { code, .. } => {
+            Self::AccountInactive { code } => {
                 params.insert("code", code.clone());
+            }
+            Self::AccountRequired { role } => {
+                params.insert("role", role.identifier().to_owned());
+            }
+            Self::AccountWrongType { role, code } => {
+                params.insert("code", code.clone());
+                params.insert("role", role.identifier().to_owned());
             }
             Self::InvalidDate { value } => {
                 params.insert("value", value.clone());
@@ -261,7 +333,6 @@ impl ValidationError {
             Self::NameRequired { .. }
             | Self::AccountCodeTaken
             | Self::SystemAccountProtected
-            | Self::AccountRequired { .. }
             | Self::SameAccount
             | Self::AmountNotPositive
             | Self::BillStatusRequired
@@ -284,9 +355,10 @@ impl ValidationError {
         params
     }
 }
+
 #[cfg(test)]
 mod tests {
-    use super::ValidationError;
+    use super::{AccountRole, ValidationError};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn params_of(error: &ValidationError) -> Vec<(&'static str, String)> {
@@ -322,15 +394,92 @@ mod tests {
     }
 
     #[test]
-    fn account_wrong_type_reports_the_account_code_but_not_the_english_role() {
+    fn account_wrong_type_reports_the_account_code_and_the_role_identifier() {
         let error = ValidationError::AccountWrongType {
-            role: "payment",
+            role: AccountRole::Payment,
             code: "5100".into(),
         };
 
         assert_eq!(error.code(), "account_wrong_type");
-        assert_eq!(params_of(&error), vec![("code", "5100".to_owned())]);
+        assert_eq!(
+            params_of(&error),
+            vec![("code", "5100".to_owned()), ("role", "payment".to_owned())]
+        );
         assert!(error.to_string().contains("payment"));
+    }
+
+    #[test]
+    fn account_required_reports_which_role_is_missing() {
+        for (role, identifier) in [
+            (AccountRole::Category, "category"),
+            (AccountRole::BillsPayable, "bills_payable"),
+            (AccountRole::TransferDestination, "transfer_destination"),
+        ] {
+            let error = ValidationError::AccountRequired { role };
+
+            assert_eq!(error.code(), "account_required");
+            assert_eq!(params_of(&error), vec![("role", identifier.to_owned())]);
+        }
+    }
+
+    #[test]
+    fn account_wrong_type_reports_the_role_for_other_roles_too() {
+        for (role, identifier) in [
+            (AccountRole::Deposit, "deposit"),
+            (AccountRole::BillCategory, "bill_category"),
+            (AccountRole::TransferSource, "transfer_source"),
+        ] {
+            let error = ValidationError::AccountWrongType {
+                role,
+                code: "1010".into(),
+            };
+
+            assert_eq!(
+                params_of(&error),
+                vec![("code", "1010".to_owned()), ("role", identifier.to_owned())]
+            );
+        }
+    }
+
+    #[test]
+    fn every_role_has_a_distinct_snake_case_identifier() {
+        let identifiers: BTreeSet<&str> = AccountRole::ALL
+            .iter()
+            .map(|role| role.identifier())
+            .collect();
+
+        assert_eq!(identifiers.len(), AccountRole::ALL.len());
+        for identifier in identifiers {
+            assert!(
+                identifier
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_'),
+                "{identifier}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_role_list_covers_every_variant() {
+        let from_variants: BTreeSet<&str> = [
+            AccountRole::Category,
+            AccountRole::Payment,
+            AccountRole::Deposit,
+            AccountRole::Income,
+            AccountRole::BillCategory,
+            AccountRole::BillsPayable,
+            AccountRole::TransferSource,
+            AccountRole::TransferDestination,
+        ]
+        .iter()
+        .map(|role| role.identifier())
+        .collect();
+        let listed: BTreeSet<&str> = AccountRole::ALL
+            .iter()
+            .map(|role| role.identifier())
+            .collect();
+
+        assert_eq!(from_variants, listed);
     }
 
     #[test]
@@ -388,9 +537,11 @@ mod tests {
             ValidationError::AccountCodeTaken,
             ValidationError::SystemAccountProtected,
             ValidationError::AccountInactive { code: "x".into() },
-            ValidationError::AccountRequired { role: "category" },
+            ValidationError::AccountRequired {
+                role: AccountRole::Category,
+            },
             ValidationError::AccountWrongType {
-                role: "category",
+                role: AccountRole::Category,
                 code: "x".into(),
             },
             ValidationError::SameAccount,

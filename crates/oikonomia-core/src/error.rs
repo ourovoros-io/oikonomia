@@ -4,7 +4,7 @@ use thiserror::Error;
 
 mod validation;
 
-pub use validation::ValidationError;
+pub use validation::{AccountRole, ValidationError};
 
 /// Fallible operations in `oikonomia-core`.
 pub type Result<T> = std::result::Result<T, Error>;

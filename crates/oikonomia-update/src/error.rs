@@ -80,9 +80,12 @@ mod tests {
     use super::UpdateError;
     use std::collections::BTreeSet;
 
-    #[test]
-    fn all_codes_lists_exactly_the_code_of_every_variant() {
-        let variants = [
+    /// One value of every variant. The `match` makes a new variant a compile
+    /// error here until it is given a sample, and the test below then fails
+    /// until its code is in `ALL_CODES`. It does not check the wording of a
+    /// code or that the UI has copy for it; the desktop crate checks that.
+    fn every_variant() -> Vec<UpdateError> {
+        let samples = vec![
             UpdateError::InstallNotAvailable,
             UpdateError::MissingPublicKey,
             UpdateError::Network,
@@ -92,6 +95,26 @@ mod tests {
             UpdateError::ArtifactIntegrity,
             UpdateError::InvalidFeedUrl,
         ];
+
+        for sample in &samples {
+            match sample {
+                UpdateError::InstallNotAvailable
+                | UpdateError::MissingPublicKey
+                | UpdateError::Network
+                | UpdateError::ManifestSignature
+                | UpdateError::ManifestParse
+                | UpdateError::ArtifactUrl
+                | UpdateError::ArtifactIntegrity
+                | UpdateError::InvalidFeedUrl => {}
+            }
+        }
+
+        samples
+    }
+
+    #[test]
+    fn all_codes_lists_exactly_the_code_of_every_variant() {
+        let variants = every_variant();
 
         let from_variants: BTreeSet<&str> = variants.iter().map(UpdateError::code).collect();
         let listed: BTreeSet<&str> = UpdateError::ALL_CODES.iter().copied().collect();

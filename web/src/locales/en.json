@@ -590,8 +590,10 @@
   "error.accountCodeTaken": "Another account in this book already uses that code. Choose a different code.",
   "error.systemAccountProtected": "System accounts cannot be made inactive.",
   "error.accountInactive": "Account {code} is inactive. Choose an active account.",
-  "error.accountRequired": "Choose an account for every field this entry needs.",
-  "error.accountWrongType": "Account {code} is the wrong type for this entry. Choose a different account.",
+  "error.accountRequired": "Choose an account for “{role}”.",
+  "error.accountRequiredGeneric": "Choose an account for every field this entry needs.",
+  "error.accountWrongType": "Account {code} cannot be used for “{role}”. Choose a different account.",
+  "error.accountWrongTypeGeneric": "Account {code} is the wrong type for this entry. Choose a different account.",
   "error.sameAccount": "An entry needs two different accounts. Change one of them.",
   "error.amountNotPositive": "The amount must be greater than zero.",
   "error.billStatusRequired": "Choose a status for this bill: paid, unpaid, or paying an existing bill.",
@@ -619,5 +621,13 @@
   "error.pathNotGranted": "That file was not chosen in the app. Choose it again with the file picker.",
   "error.mailClientFailed": "Could not open your mail app.",
   "error.taskFailed": "Something went wrong in the background. Please try again.",
-  "error.update": "Could not check for or install the update. Try again later."
+  "error.update": "Could not check for or install the update. Try again later.",
+  "error.role.category": "Category (what for)",
+  "error.role.payment": "Paid from",
+  "error.role.deposit": "Received into",
+  "error.role.income": "Income type",
+  "error.role.bill_category": "Bill category",
+  "error.role.bills_payable": "Bills payable account",
+  "error.role.transfer_source": "Transfer from",
+  "error.role.transfer_destination": "Transfer to"
 }
