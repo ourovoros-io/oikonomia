@@ -79,10 +79,31 @@ describe('backupCommandError', () => {
       /not been initialized/i,
     )
     expect(backupCommandError({ code: 'backup_invalid', message: 'backup is invalid: truncated' })).toBe(
-      'backup is invalid: truncated',
+      'That file is not a valid Oikonomia backup.',
     )
     expect(backupCommandError({ code: 'restore_would_overwrite', message: 'x' })).toMatch(/already exists/i)
-    expect(backupCommandError({ code: 'not_found', message: 'file not found' })).toBe('file not found')
-    expect(backupCommandError({ code: 'io', message: 'I/O error: disk' })).toBe('I/O error: disk')
+    expect(backupCommandError({ code: 'not_found', message: 'file not found' })).toBe(
+      'Backup file not found.',
+    )
+    expect(backupCommandError({ code: 'io', message: 'I/O error: disk' })).toBe(
+      'Could not read or write the backup file.',
+    )
+  })
+
+  test('a code with its own copy shows that copy, with its parameters', () => {
+    expect(
+      backupCommandError({
+        code: 'file_too_large',
+        message: 'file too large (max 8 MB)',
+        params: { max_mb: '8' },
+      }),
+    ).toBe('That file is too large. The limit is 8 MB.')
+  })
+
+  test('an unknown code shows the backup fallback, never the raw message', () => {
+    const shown = backupCommandError({ code: 'brand_new', message: 'sqlcipher: disk image is malformed' })
+
+    expect(shown).toBe('Could not complete the backup.')
+    expect(shown).not.toContain('sqlcipher')
   })
 })

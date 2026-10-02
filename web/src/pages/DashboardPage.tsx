@@ -35,7 +35,7 @@ import {
   Segmented,
 } from '../components/ui'
 import { cn } from '../lib/cn'
-import type { CommandError } from '../lib/tauri'
+import { commandErrorMessage } from '../lib/commandError'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
@@ -138,7 +138,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
           setError(null)
         }
       } catch (err) {
-        if (!cancelled) setError((err as CommandError).message)
+        if (!cancelled) setError(commandErrorMessage(err))
       } finally {
         if (!cancelled) setLoading(false)
       }

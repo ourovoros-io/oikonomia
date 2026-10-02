@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
-import { isTauri, type CommandError } from './tauri'
+import { asCommandError } from './commandError'
+import { isTauri } from './tauri'
 
 export type ChartTemplate = 'personal' | 'company' | 'blank'
 export type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense'
@@ -161,35 +162,6 @@ export type RegisterLine = {
   credit_minor: number
   balance_minor: number
   hidden: boolean
-}
-
-function asCommandError(err: unknown): CommandError {
-  if (typeof err === 'string') {
-    return { code: 'unknown', message: err }
-  }
-  if (err && typeof err === 'object') {
-    const obj = err as Record<string, unknown>
-    // Tauri often wraps payload as { message, code } or { error, ... }
-    if (typeof obj.message === 'string') {
-      return {
-        code: typeof obj.code === 'string' ? obj.code : 'unknown',
-        message: obj.message,
-        ...(obj.params && typeof obj.params === 'object'
-          ? { params: obj.params as Record<string, string> }
-          : {}),
-      }
-    }
-    if (typeof obj.error === 'string') {
-      return { code: 'unknown', message: obj.error }
-    }
-  }
-  if (err instanceof Error) {
-    return { code: 'unknown', message: err.message }
-  }
-  return {
-    code: 'unknown',
-    message: String(err),
-  }
 }
 
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {

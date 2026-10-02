@@ -94,9 +94,6 @@ const PENDING_RUST: readonly string[] = [
   // Synthetic report rows (task 4).
   'reports.synthetic.retainedEarnings',
   'reports.synthetic.netIncome',
-
-  // File-read failure copy (task 3).
-  'files.error.read',
 ]
 
 /**

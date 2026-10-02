@@ -525,6 +525,8 @@
   "entry.attachFailed": "Could not attach the file.",
   "entry.deleteFailed": "Could not delete the document.",
   "entry.exportFailed": "Could not save a copy.",
+  "entry.updateFailed": "Could not update the entry.",
+  "files.error.read": "Could not read the file",
   "viewer.document": "Document",
   "viewer.openFailed": "Could not open the document.",
   "viewer.exportFailed": "Could not save a copy.",

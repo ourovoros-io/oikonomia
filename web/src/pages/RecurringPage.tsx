@@ -48,7 +48,6 @@ import {
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
-import type { CommandError } from '../lib/tauri'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = {
@@ -186,7 +185,7 @@ export function RecurringPage({ entity, onBack }: Props) {
   }
 
   useEffect(() => {
-    void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
+    void reload().catch((err) => setError(commandErrorMessage(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.id])
 
@@ -286,7 +285,7 @@ export function RecurringPage({ entity, onBack }: Props) {
       setEditId(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError) || t('recurring.form.error'))
+      setError(commandErrorMessage(err, 'recurring.form.error'))
     } finally {
       formBusyRef.current = false
       setFormBusy(false)
@@ -314,7 +313,7 @@ export function RecurringPage({ entity, onBack }: Props) {
       setPosting(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError) || t('recurring.posting.error'))
+      setError(commandErrorMessage(err, 'recurring.posting.error'))
     } finally {
       postBusyRef.current = false
       setPostBusy(false)
@@ -332,7 +331,7 @@ export function RecurringPage({ entity, onBack }: Props) {
       setEditId(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
+      setError(commandErrorMessage(err))
     } finally {
       deleteBusyRef.current = false
       setDeleteBusy(false)

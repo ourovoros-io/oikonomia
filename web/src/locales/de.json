@@ -552,7 +552,8 @@
       "noFiles": "An dieser Buchung hängt keine Datei.",
       "edit": "Buchung bearbeiten",
       "ref": " · Ref. {reference}",
-      "attachError": "Die Datei konnte nicht angehängt werden"
+      "attachError": "Die Datei konnte nicht angehängt werden",
+      "updateError": "Die Buchung konnte nicht aktualisiert werden"
     }
   },
   "dropzone": {

@@ -152,7 +152,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
           }
         }
       } catch (err) {
-        if (!cancelled) setError(commandErrorMessage(err as CommandError))
+        if (!cancelled) setError(commandErrorMessage(err))
       }
     })()
 

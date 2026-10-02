@@ -341,7 +341,7 @@ export function TransactionsPage({
       setCsvPreview(preview)
       setCsvStep('mapping')
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
+      setError(commandErrorMessage(err))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -374,7 +374,7 @@ export function TransactionsPage({
       setCsvPreview(preview)
       setCsvStep('preview')
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
+      setError(commandErrorMessage(err))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -389,7 +389,7 @@ export function TransactionsPage({
     try {
       await api.csvExportJournal(entity.id)
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
+      setError(commandErrorMessage(err))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -407,7 +407,7 @@ export function TransactionsPage({
       setCsvRoles(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
+      setError(commandErrorMessage(err))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -474,7 +474,7 @@ export function TransactionsPage({
         return
       }
     }
-    void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
+    void reload().catch((err) => setError(commandErrorMessage(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id, debouncedSearch, fromDate, toDate, accountFilter])
 
@@ -582,7 +582,7 @@ export function TransactionsPage({
       setShowForm(false)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
+      setError(commandErrorMessage(err))
     } finally {
       busyRef.current = false
       setBusy(false)
@@ -601,7 +601,7 @@ export function TransactionsPage({
       setEntries((prev) => prev.filter((e) => e.entry.id !== id && !e.is_voided))
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError) || t('tx.deleteFailed'))
+      setError(commandErrorMessage(err, 'tx.deleteFailed'))
     } finally {
       setVoidBusy(false)
     }

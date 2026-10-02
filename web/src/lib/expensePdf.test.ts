@@ -254,7 +254,13 @@ describe('pdfExportErrorMessage', () => {
       )
     }
     expect(pdfExportErrorMessage({ code: 'vault_locked', message: 'Vault is locked' })).toBe(
-      'Vault is locked',
+      'The vault is locked.',
+    )
+  })
+
+  test('an unknown code shows the PDF fallback, never the raw message', () => {
+    expect(pdfExportErrorMessage({ code: 'brand_new', message: 'EACCES /tmp/x.pdf' })).toBe(
+      'Could not export the PDF.',
     )
   })
 })

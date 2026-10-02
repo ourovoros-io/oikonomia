@@ -1,5 +1,7 @@
 /** File → base64 payload and MIME helpers shared by drop-zone, attach, and viewer. */
 
+import { fileReadError } from './commandError'
+
 export function mimeFromName(name: string, fallback = ''): string {
   const lower = name.toLowerCase()
   if (lower.endsWith('.pdf')) return 'application/pdf'
@@ -16,13 +18,13 @@ export function fileToBase64(file: File): Promise<string> {
     reader.onload = () => {
       const result = reader.result
       if (typeof result !== 'string') {
-        reject(new Error('Could not read file'))
+        reject(fileReadError())
         return
       }
       const comma = result.indexOf(',')
       resolve(comma >= 0 ? result.slice(comma + 1) : result)
     }
-    reader.onerror = () => reject(new Error('Could not read file'))
+    reader.onerror = () => reject(fileReadError())
     reader.readAsDataURL(file)
   })
 }

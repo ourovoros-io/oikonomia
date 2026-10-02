@@ -8,7 +8,7 @@ import {
   type DocumentMeta,
   type PostedEntryView,
 } from '../lib/api'
-import type { CommandError } from '../lib/tauri'
+import { commandErrorMessage } from '../lib/commandError'
 import { fileToBase64, formatBytes, mimeFromName } from '../lib/files'
 import { ConfirmDialog } from './ConfirmDialog'
 import { Modal } from './Modal'
@@ -78,7 +78,7 @@ export function EntryDetailModal({
       })
       await onChanged()
     } catch (err) {
-      onError((err as CommandError).message || t('entry.attachFailed'))
+      onError(commandErrorMessage(err, 'entry.attachFailed'))
     } finally {
       setAttachBusy(false)
     }
@@ -93,7 +93,7 @@ export function EntryDetailModal({
       setDeleteId(null)
       await onChanged()
     } catch (err) {
-      onError((err as CommandError).message || t('entry.deleteFailed'))
+      onError(commandErrorMessage(err, 'entry.deleteFailed'))
     } finally {
       setBusyId(null)
     }
@@ -107,7 +107,7 @@ export function EntryDetailModal({
       await api.entrySetHidden(view.entry.id, hidden)
       await onChanged()
     } catch (err) {
-      onError((err as CommandError).message || t('tx.form.hidden.label'))
+      onError(commandErrorMessage(err, 'entry.updateFailed'))
     } finally {
       setHideBusy(false)
     }
@@ -119,7 +119,7 @@ export function EntryDetailModal({
     try {
       await api.documentExport(id)
     } catch (err) {
-      onError((err as CommandError).message || t('entry.exportFailed'))
+      onError(commandErrorMessage(err, 'entry.exportFailed'))
     } finally {
       setBusyId(null)
     }

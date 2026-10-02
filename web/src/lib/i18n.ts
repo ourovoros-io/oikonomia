@@ -410,6 +410,7 @@ export const KEY_ALIASES: Record<string, string> = {
   'entry.edit': 'documents.detail.edit',
   'entry.ref': 'documents.detail.ref',
   'entry.attachFailed': 'documents.detail.attachError',
+  'entry.updateFailed': 'documents.detail.updateError',
   'entry.deleteDocTitle': 'documents.deleteConfirm.title',
   'entry.deleteDocBody': 'documents.deleteConfirm.body.detail',
   'entry.deleteFailed': 'documents.error.delete',

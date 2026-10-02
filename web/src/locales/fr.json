@@ -552,7 +552,8 @@
       "noFiles": "Aucune pièce jointe sur cette écriture.",
       "edit": "Modifier l’écriture",
       "ref": " · Réf. {reference}",
-      "attachError": "Impossible de joindre le fichier"
+      "attachError": "Impossible de joindre le fichier",
+      "updateError": "Impossible de mettre à jour l’écriture"
     }
   },
   "dropzone": {

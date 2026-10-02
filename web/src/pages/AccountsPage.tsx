@@ -41,7 +41,6 @@ import {
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
-import type { CommandError } from '../lib/tauri'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
@@ -112,7 +111,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       setAccounts([])
       return
     }
-    void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
+    void reload().catch((err) => setError(commandErrorMessage(err)))
   }, [entity?.id])
 
   const counts = useMemo(() => {
@@ -142,7 +141,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       setShowForm(false)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
+      setError(commandErrorMessage(err))
     } finally {
       setBusy(false)
     }
@@ -153,7 +152,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       await api.accountArchive(id)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError))
+      setError(commandErrorMessage(err))
     }
   }
 
@@ -186,7 +185,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         if (!cancelled) setRegisterLines(lines)
       })
       .catch((err) => {
-        if (!cancelled) setRegisterError(commandErrorMessage(err as CommandError))
+        if (!cancelled) setRegisterError(commandErrorMessage(err))
       })
       .finally(() => {
         if (!cancelled) setRegisterBusy(false)
@@ -213,7 +212,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       setBalanceAccount(null)
       await reload()
     } catch (err) {
-      setBalanceError(commandErrorMessage(err as CommandError))
+      setBalanceError(commandErrorMessage(err))
     } finally {
       setBalanceBusy(false)
     }

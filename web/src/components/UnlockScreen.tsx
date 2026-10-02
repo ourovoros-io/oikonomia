@@ -20,6 +20,7 @@ import {
   vaultUnlock,
   type CommandError,
 } from '../lib/tauri'
+import { commandErrorMessage } from '../lib/commandError'
 import { backupCommandError, restoreConfirm } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
 import { Button, ErrorBanner, Field, Input } from './ui'
@@ -90,7 +91,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
       setError(
         cmd.code === 'invalid_password'
           ? t('unlock.incorrectPassword')
-          : cmd.message || t('unlock.unlockFailed'),
+          : commandErrorMessage(cmd, 'unlock.unlockFailed'),
       )
       setPasswordInvalid(true)
       setShaking(true)

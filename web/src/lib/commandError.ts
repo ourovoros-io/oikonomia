@@ -66,12 +66,74 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   unknown: 'error.unknown',
 }
 
-/** Localized copy for a known command error code, filled in from its params; raw English otherwise. */
-export function commandErrorMessage(err: CommandError): string {
-  const key = ERROR_CODE_KEYS[err.code]
+/**
+ * The single place that turns whatever `invoke` threw into a CommandError.
+ * It keeps `code` and `params` so the UI can localize by code; `message` is
+ * only for logs and is never shown.
+ */
+export function asCommandError(err: unknown): CommandError {
+  if (typeof err === 'string') {
+    return { code: 'unknown', message: err }
+  }
+
+  if (err && typeof err === 'object') {
+    const obj = err as Record<string, unknown>
+
+    // Tauri often wraps the payload as { message, code } or { error, ... }.
+    if (typeof obj.message === 'string') {
+      return {
+        code: typeof obj.code === 'string' ? obj.code : 'unknown',
+        message: obj.message,
+        ...(obj.params && typeof obj.params === 'object'
+          ? { params: obj.params as Record<string, string> }
+          : {}),
+      }
+    }
+
+    if (typeof obj.error === 'string') {
+      return { code: 'unknown', message: obj.error }
+    }
+  }
+
+  if (err instanceof Error) {
+    return { code: 'unknown', message: err.message }
+  }
+
+  return { code: 'unknown', message: String(err) }
+}
+
+/**
+ * Codes raised by the web layer itself, for failures that never reach Rust
+ * (a browser FileReader error, for example). They share the display path of
+ * the Rust codes, but they are not in errorCodes.json.
+ */
+export const WEB_ERROR_KEYS: Record<string, string> = {
+  file_read_failed: 'files.error.read',
+}
+
+/** The error a failed browser file read raises, so it is localized like any other. */
+export function fileReadError(): CommandError {
+  return { code: 'file_read_failed', message: 'Could not read file' }
+}
+
+/**
+ * The one way to show a failed command to the user: localized copy for the
+ * error's `code`, with its `params` filled in. A code with no copy gets the
+ * screen's own localized fallback (`fallbackKey`), never the raw Rust text,
+ * which is English and can carry operating-system detail. The raw message
+ * goes to the console for diagnosis only.
+ */
+export function commandErrorMessage(err: unknown, fallbackKey = 'error.unknown'): string {
+  const cmd = asCommandError(err)
+
+  // 'unknown' is Rust's catch-all: the screen's own sentence says more than a generic one.
+  const key = cmd.code === 'unknown' ? undefined : (ERROR_CODE_KEYS[cmd.code] ?? WEB_ERROR_KEYS[cmd.code])
   if (key) {
-    const copy = t(key, err.params)
+    const copy = t(key, cmd.params)
     if (copy !== key) return copy
   }
-  return err.message
+
+  console.warn(`Unlocalized command error "${cmd.code}": ${cmd.message}`)
+
+  return t(fallbackKey)
 }

@@ -470,7 +470,7 @@ describe('TransactionsPage hidden paint', () => {
   test('setHidden reject shows ErrorBanner', async () => {
     vi.mocked(api.entrySetHidden).mockRejectedValue({
       code: 'unknown',
-      message: 'could not hide entry',
+      message: 'sqlite: could not hide entry',
     })
     await renderReady()
     await userEvent.click(screen.getByText('Alpha supermarket'))
@@ -479,8 +479,9 @@ describe('TransactionsPage hidden paint', () => {
     })
     await userEvent.click(screen.getByRole('checkbox', { name: /hide/i }))
     await waitFor(() => {
-      expect(screen.getByText('could not hide entry')).toBeTruthy()
+      expect(screen.getByText('Could not update the entry.')).toBeTruthy()
     })
+    expect(screen.queryByText(/sqlite/)).toBeNull()
   })
 })
 
@@ -830,6 +831,22 @@ describe('TransactionsPage summary', () => {
       expect(pane?.querySelector('[data-net]')).toHaveTextContent('—')
     })
     expect(pane).toHaveTextContent(commandErrorMessage({ code: 'io', message: 'disk' }))
+  })
+
+  test('a failing summary with an unknown code never shows the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.cashFlowSeries).mockRejectedValue({
+      code: 'brand_new',
+      message: 'sqlcipher: disk image is malformed',
+    })
+    await renderReady()
+
+    const heading = await screen.findByRole('heading', { name: 'In view' })
+    const pane = heading.closest('section')
+    await waitFor(() => {
+      expect(pane).toHaveTextContent('Something went wrong.')
+    })
+    expect(pane).not.toHaveTextContent('sqlcipher')
   })
 })
 

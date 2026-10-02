@@ -215,11 +215,28 @@ describe('App shell', () => {
     // The app-level error box used to be hand-copied markup with no
     // role/aria-live and a stale hex edge; it now reuses ErrorBanner like
     // every other error surface in the app.
-    vi.mocked(api.entityList).mockReset().mockRejectedValue(new Error('backend down'))
+    vi.mocked(api.entityList)
+      .mockReset()
+      .mockRejectedValue({ code: 'vault_locked', message: 'backend down' })
     render(<App />)
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('backend down')
+      expect(screen.getByRole('alert')).toHaveTextContent('The vault is locked.')
     })
+    expect(screen.queryByText('backend down')).toBeNull()
+  })
+
+  test('an unknown backend failure shows the localized fallback, never the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.entityList)
+      .mockReset()
+      .mockRejectedValue({ code: 'brand_new', message: 'sqlcipher: disk image is malformed' })
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Something went wrong while talking to the app. Restart Oikonomia and try again.',
+      )
+    })
+    expect(screen.queryByText(/sqlcipher/)).toBeNull()
   })
 
   test('is dark-only: offers no light or dark mode switch', async () => {

@@ -448,6 +448,18 @@ describe('ReportsPage statements', () => {
     expect(screen.queryByText('Profit & Loss')).toBeNull()
   })
 
+  test('a fetch failure with an unknown code never shows the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.reportPnl).mockRejectedValue({
+      code: 'brand_new',
+      message: 'sqlcipher: disk image is malformed',
+    })
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toBe('Something went wrong.')
+    })
+  })
+
   test('empty P&L period shows the empty-line copy', async () => {
     vi.mocked(api.reportPnl).mockResolvedValue(
       pnl({

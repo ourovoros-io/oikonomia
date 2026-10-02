@@ -28,7 +28,8 @@ import {
   QUICK_ADD_STEPPER_HEIGHT,
   setQuickAddHeight,
 } from '../lib/quickAddWindow'
-import { isTauri, type CommandError } from '../lib/tauri'
+import { isTauri } from '../lib/tauri'
+import { commandErrorMessage } from '../lib/commandError'
 import { beginExclusive } from '../lib/guards'
 import { HideFromExportControl } from '../components/hiddenUi'
 import { Button } from '../components/ui'
@@ -336,7 +337,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         // Book step only when multiple books exist.
         setStep(ents.length > 1 ? 'entity' : 'kind')
       } catch (err) {
-        if (!cancelled) setError((err as CommandError).message)
+        if (!cancelled) setError(commandErrorMessage(err))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -364,7 +365,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       if (gen !== accountsGenRef.current) return
       rollTo('kind', 1)
     } catch (err) {
-      if (gen === accountsGenRef.current) setError((err as CommandError).message)
+      if (gen === accountsGenRef.current) setError(commandErrorMessage(err))
     }
   }
 
@@ -474,7 +475,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         applySuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
         if (analyzeGenRef.current !== gen) return
-        setError((err as CommandError).message || t('quickAdd.couldNotAnalyze'))
+        setError(commandErrorMessage(err, 'quickAdd.couldNotAnalyze'))
         setPendingDoc(null)
         setPendingAnalysis(null)
       } finally {
@@ -505,7 +506,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         applySuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
         if (analyzeGenRef.current !== gen) return
-        setError((err as CommandError).message || t('quickAdd.couldNotAnalyze'))
+        setError(commandErrorMessage(err, 'quickAdd.couldNotAnalyze'))
         setPendingDoc(null)
         setPendingAnalysis(null)
       } finally {
@@ -517,7 +518,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         setDragOver(false)
       }
     },
-    [rollTo, t],
+    [rollTo],
   )
 
   useEffect(() => {
@@ -663,7 +664,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       onBusyChange?.(false)
       onPosted({ kind, amountMinor: minor, currency: entity.base_currency })
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err))
       setBusy(false)
       busyRef.current = false
     }

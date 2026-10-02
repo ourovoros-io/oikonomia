@@ -153,7 +153,7 @@ describe('QuickAddPage hidden paint', () => {
   test('Hide after post fails: retries hide, shows error, does not void', async () => {
     const onPosted = vi.fn()
     vi.mocked(api.entrySetHidden).mockRejectedValue({
-      code: 'unknown',
+      code: 'task_failed',
       message: 'hide failed',
     })
     render(<QuickAddPage onPosted={onPosted} />)
@@ -183,6 +183,39 @@ describe('QuickAddPage hidden paint', () => {
     expect(api.entryPostSimple).toHaveBeenCalledTimes(1)
     expect(api.entryVoid).not.toHaveBeenCalled()
     expect(onPosted).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('hide failed')
+    expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong in the background.')
+    expect(screen.queryByText('hide failed')).toBeNull()
+  })
+})
+
+describe('QuickAddPage post failures', () => {
+  test('a failed post with a known code shows the localized copy for it', async () => {
+    vi.mocked(api.entryPostSimple).mockReset().mockRejectedValue({
+      code: 'account_inactive',
+      message: 'account 5100 is inactive',
+      params: { code: '5100' },
+    })
+    await reachSaveStep()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Account 5100 is inactive. Choose an active account.',
+    )
+    expect(screen.queryByText('account 5100 is inactive')).toBeNull()
+  })
+
+  test('a failed post with an unknown code never shows the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.entryPostSimple).mockReset().mockRejectedValue({
+      code: 'brand_new',
+      message: 'sqlcipher: disk image is malformed',
+    })
+    await reachSaveStep()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong.')
+    expect(screen.queryByText(/sqlcipher/)).toBeNull()
   })
 })

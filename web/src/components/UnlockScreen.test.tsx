@@ -116,13 +116,26 @@ describe('UnlockScreen submit', () => {
   })
 
   test('generic unlock failure shows unlock.unlockFailed banner', async () => {
-    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'unknown', message: '' })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'brand_new', message: 'sqlcipher: raw detail' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
     await userEvent.type(screen.getByLabelText('Password'), 'secret')
     await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
     await waitFor(() => {
       expect(screen.getByText('Could not unlock the vault.')).toBeTruthy()
     })
+    expect(screen.queryByText(/sqlcipher/)).toBeNull()
+  })
+
+  test('a known failure code shows its own copy instead of the unlock fallback', async () => {
+    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'vault_corrupt', message: 'bad header' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(screen.getByText('The vault file is corrupt.')).toBeTruthy()
+    })
+    expect(screen.queryByText('bad header')).toBeNull()
   })
 })
 

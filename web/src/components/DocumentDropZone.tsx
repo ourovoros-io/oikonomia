@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { FileUp, Loader2, Sparkles } from 'lucide-react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { api, type AnalyzerStatus, type DocumentSuggestion, type PendingDocSource } from '../lib/api'
-import { isTauri, type CommandError } from '../lib/tauri'
+import { isTauri } from '../lib/tauri'
+import { commandErrorMessage } from '../lib/commandError'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { cn } from '../lib/cn'
 import { useI18n } from '../lib/I18nProvider'
@@ -60,7 +61,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         })
         onSuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
-        const msg = (err as CommandError).message || t('drop.analyzeFailed')
+        const msg = commandErrorMessage(err, 'drop.analyzeFailed')
         setLocalError(msg)
         onError(msg)
       } finally {
@@ -82,7 +83,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         const suggestion = await api.documentAnalyzePath({ entityId, path })
         onSuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
-        const msg = (err as CommandError).message || t('drop.analyzeFailed')
+        const msg = commandErrorMessage(err, 'drop.analyzeFailed')
         setLocalError(msg)
         onError(msg)
       } finally {
@@ -91,7 +92,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         setDragOver(false)
       }
     },
-    [disabled, entityId, onError, onSuggestion, t],
+    [disabled, entityId, onError, onSuggestion],
   )
 
   // Tauri webviews often give empty dataTransfer.files on OS file drops.

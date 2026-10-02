@@ -27,6 +27,7 @@ import {
   type AppInfo,
   type CommandError,
 } from '../lib/tauri'
+import { commandErrorMessage } from '../lib/commandError'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
@@ -238,11 +239,6 @@ export function SettingsPage({
     onCreateBookIntentHandled?.()
   }, [createBookIntent, onCreateBookIntentHandled])
 
-  function commandErrorMessage(err: unknown, fallback = ''): string {
-    const cmd = err as CommandError
-    return cmd.message || fallback
-  }
-
   async function onCreate(ev: FormEvent) {
     ev.preventDefault()
     setBusy(true)
@@ -274,7 +270,7 @@ export function SettingsPage({
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
-      setPageError(commandErrorMessage(err, t('settings.deleteFailed')))
+      setPageError(commandErrorMessage(err, 'settings.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -322,7 +318,7 @@ export function SettingsPage({
       setPageError(
         cmd.code === 'invalid_password'
           ? t('settings.currentPasswordIncorrect')
-          : cmd.message || t('settings.changePasswordFailed'),
+          : commandErrorMessage(cmd, 'settings.changePasswordFailed'),
         'current',
       )
     } finally {
