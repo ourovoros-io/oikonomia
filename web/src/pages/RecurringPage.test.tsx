@@ -142,7 +142,7 @@ describe('RecurringPage empty state', () => {
     expect(screen.getByText('No recurring templates yet')).toBeTruthy()
     expect(
       screen.getByText(
-        'Save rent, payroll, utilities, or a subscription as a recipe. You post each occurrence when it is due.',
+        'Save rent, payroll, utilities, or a subscription as a template. You post each occurrence when it is due.',
       ),
     ).toBeTruthy()
     expect(screen.getByText('0 templates · local only')).toBeTruthy()

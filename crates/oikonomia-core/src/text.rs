@@ -10,9 +10,11 @@
 //!
 //! Conventions for stored wording:
 //!
-//! - The text is data. It is exported to CSV and printed in the expense PDF,
-//!   whose fallback font cannot encode U+202F, so French uses ordinary spaces
-//!   and the plain apostrophe, never a narrow no-break space.
+//! - The text is data. It is exported to CSV and printed in the expense PDF.
+//!   The embedded Inter font covers U+202F and the typographic apostrophe, but
+//!   the Helvetica fallback used if the embed fails cannot encode them, so
+//!   stored text avoids them: French uses ordinary spaces and the plain
+//!   apostrophe, never a narrow no-break space.
 //! - A generated description never starts with `=`, `+`, `-` or `@`, so it is
 //!   not mistaken for a formula by a spreadsheet.
 
@@ -149,7 +151,12 @@ const PERSONAL_ACCOUNT_NAMES: &[(&str, Localized)] = &[
     ),
     (
         "5300",
-        Localized::new("Utilities", "Κοινή ωφέλεια", "Charges", "Nebenkosten"),
+        Localized::new(
+            "Utilities",
+            "Λογαριασμοί κοινής ωφέλειας",
+            "Charges",
+            "Nebenkosten",
+        ),
     ),
     (
         "5350",
@@ -157,7 +164,7 @@ const PERSONAL_ACCOUNT_NAMES: &[(&str, Localized)] = &[
             "Bills & services",
             "Λογαριασμοί και υπηρεσίες",
             "Factures et services",
-            "Rechnungen und Dienste",
+            "Rechnungen und Dienstleistungen",
         ),
     ),
     (
@@ -273,7 +280,7 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
             "Other Income",
             "Λοιπά έσοδα",
             "Autres produits",
-            "Sonstige Einnahmen",
+            "Sonstige Erträge",
         ),
     ),
     (

@@ -50,7 +50,7 @@ describe('SettingsPage i18n', () => {
     )
     expect(screen.getByRole('heading', { name: 'Ρυθμίσεις' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Γλώσσα' })).toBeTruthy()
-    expect(screen.getByText('Μενού, ετικέτες και Γρήγορη καταχώριση. Τα νέα βιβλία παίρνουν ονόματα λογαριασμών σε αυτή τη γλώσσα· τα υπάρχοντα βιβλία κρατούν τα δικά τους.')).toBeTruthy()
+    expect(screen.getByText('Μενού, ετικέτες και Γρήγορη καταχώριση. Τα νέα βιβλία και οι νέες αυτόματες καταχωρίσεις χρησιμοποιούν αυτή τη γλώσσα· ό,τι υπάρχει ήδη δεν αλλάζει.')).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: /γλώσσα/i }))
     expect(screen.getByRole('radio', { name: 'English' })).toBeTruthy()
     expect(screen.getByRole('radio', { name: 'Ελληνικά' })).toBeTruthy()

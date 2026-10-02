@@ -198,7 +198,7 @@
     },
     "language": {
       "title": "Langue",
-      "description": "Menus, libellés et Saisie rapide. Les nouveaux livres reçoivent des noms de comptes dans cette langue ; les livres existants gardent les leurs.",
+      "description": "Menus, libellés et Saisie rapide. Les nouveaux livres et les nouvelles écritures générées utilisent cette langue ; ce qui existe déjà n’est pas modifié.",
       "option": {
         "en": "English",
         "el": "Ελληνικά",
@@ -903,7 +903,7 @@
     "new": "Nouveau modèle",
     "backToEntries": "Retour aux écritures",
     "emptyTitle": "Pas encore de modèles récurrents",
-    "emptyBody": "Enregistrez un loyer, une paie, des charges ou un abonnement comme recette. Vous comptabilisez chaque occurrence le moment venu.",
+    "emptyBody": "Enregistrez un loyer, une paie, des charges ou un abonnement comme modèle. Vous comptabilisez chaque occurrence le moment venu.",
     "templatesCount": "{n} modèles",
     "dueCount": "{n} dus",
     "due": "Dû",
@@ -984,7 +984,7 @@
     "amountNotPositive": "Le montant doit être supérieur à zéro.",
     "billStatusRequired": "Choisissez un état pour cette facture : réglée, non réglée ou règlement d’une facture en attente.",
     "invalidDate": "« {value} » n’est pas une date valide. Saisissez une date réelle du calendrier.",
-    "dateRangeInverted": "La date Du doit être antérieure ou égale à la date Au.",
+    "dateRangeInverted": "La date « Du » doit être antérieure ou égale à la date « Au ».",
     "dateOutOfRange": "Cette date est hors de la plage prise en charge. Choisissez une date plus proche d’aujourd’hui.",
     "dayOfMonthInvalid": "Saisissez un jour du mois de 1 à 31. Seuls les modèles mensuels utilisent un jour du mois.",
     "lockTimeoutTooShort": "Le délai de verrouillage automatique doit être d’au moins {min_secs} secondes.",
@@ -1034,7 +1034,7 @@
       "ocrPathMissing": "Le chemin des modèles OCR n’est pas défini.",
       "ocrModelsMissing": "Les modèles OCR intégrés sont introuvables. Utilisez un PDF texte ou remplissez les champs à la main.",
       "ocrRead": "Lu avec l’OCR hors ligne intégré. Vérifiez avant d’enregistrer.",
-      "ocrLittleText": "L’OCR a tourné mais a trouvé peu de texte — remplissez le formulaire à la main si besoin.",
+      "ocrLittleText": "L’OCR s’est exécuté mais a trouvé peu de texte — remplissez le formulaire à la main si besoin.",
       "ocrError": "L’OCR a échoué. Vous pouvez tout de même remplir les champs.",
       "ocrPdfImage": "Image PDF lue avec l’OCR intégré. Vérifiez avant d’enregistrer."
     },

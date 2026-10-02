@@ -156,8 +156,8 @@ the trust root. See [`release.md`](release.md) for how releases are cut.
   - *Transient text* travels as a code plus named parameters, and the UI words
     it. This covers command errors (`CommandError` in the desktop crate's
     `error.rs`, built from `ValidationError` and the other core and update
-    errors), analyzer notes and the analyzer status hint (`UiTextCode` in
-    `ui_text.rs`, `AnalyzerHint` in `documents/analyze.rs`), and the computed
+    errors), analyzer notes, CSV import row problems and the analyzer status hint
+    (`UiTextCode` in `ui_text.rs`, `AnalyzerHint` in `documents/analyze.rs`), and the computed
     report rows (`SyntheticLine` in `ledger/reports.rs`). `lib/commandError.ts`
     and `lib/uiText.ts` map each code to a catalog key. The lists of codes are
     shared JSON files in `web/src/lib` (`errorCodes.json`,

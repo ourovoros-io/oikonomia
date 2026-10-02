@@ -96,6 +96,53 @@ fn every_seeded_account_has_a_clean_unique_name_in_every_language() {
     }
 }
 
+/// Names that were corrected after review, pinned so they stay as chosen:
+/// Greek utilities is told apart from bills and services, and German income
+/// and bills use the words a German bookkeeper would.
+#[test]
+fn corrected_account_names_are_the_ones_chosen_on_review() {
+    for (template, code, locale, expected) in [
+        (
+            ChartTemplate::Personal,
+            "5300",
+            Locale::El,
+            "Λογαριασμοί κοινής ωφέλειας",
+        ),
+        (
+            ChartTemplate::Personal,
+            "5350",
+            Locale::El,
+            "Λογαριασμοί και υπηρεσίες",
+        ),
+        (
+            ChartTemplate::Personal,
+            "5350",
+            Locale::De,
+            "Rechnungen und Dienstleistungen",
+        ),
+        (
+            ChartTemplate::Personal,
+            "4900",
+            Locale::De,
+            "Sonstige Einnahmen",
+        ),
+        (
+            ChartTemplate::Company,
+            "4900",
+            Locale::De,
+            "Sonstige Erträge",
+        ),
+    ] {
+        let accounts = template_accounts(template, locale);
+        let account = accounts
+            .iter()
+            .find(|account| account.code == code)
+            .expect(code);
+
+        assert_eq!(account.name, expected, "{template:?} {code} in {locale:?}");
+    }
+}
+
 #[test]
 fn english_names_are_the_ones_seeded_before_localization() {
     let personal: Vec<&str> = template_accounts(ChartTemplate::Personal, Locale::En)
