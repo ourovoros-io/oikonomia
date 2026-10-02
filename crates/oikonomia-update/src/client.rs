@@ -15,10 +15,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use url::Url;
 
-/// GitHub Releases CDN for `latest.json` on the public releases repo.
+/// `latest.json` of the newest published release in the source repository.
+/// GitHub resolves `releases/latest` to published, non-prerelease releases
+/// only, so a draft awaiting promotion is never offered.
 /// Trust is the baked minisign key, not GitHub.
 pub const UPDATE_FEED_URL: &str =
-    "https://github.com/ourovoros-io/oikonomia-releases/releases/latest/download/latest.json";
+    "https://github.com/ourovoros-io/oikonomia/releases/latest/download/latest.json";
 
 const MAX_MANIFEST_BYTES: usize = 1_048_576;
 const MAX_SIGNATURE_BYTES: usize = 16_384;
