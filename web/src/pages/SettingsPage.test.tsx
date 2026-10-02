@@ -98,6 +98,23 @@ describe('SettingsPage', () => {
     expect(await screen.findByText('bc1qexampleexampleexample')).toBeTruthy()
   })
 
+  test('Donate section is absent when Rust returns no addresses', async () => {
+    vi.mocked(api.donationAddresses).mockResolvedValue([])
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    // Wait for the call to be made and settled, or the absence check is vacuous.
+    await waitFor(() => expect(api.donationAddresses).toHaveBeenCalled())
+    await vi.mocked(api.donationAddresses).mock.results[0].value
+    await waitFor(() => expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0))
+
+    expect(screen.queryByRole('heading', { name: 'Donate' })).toBeNull()
+  })
+
   test('New entity is enabled when the vault already has a book', async () => {
     render(
       <SettingsPage

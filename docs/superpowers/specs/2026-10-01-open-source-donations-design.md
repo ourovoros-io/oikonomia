@@ -21,7 +21,7 @@ signing from that program stay.
 | Licensing code | Deleted outright; no always-allowed stub, no Cargo feature |
 | Donations | Shown in the app (Settings) and in the README |
 | Donation mechanism | Static receiving addresses only; no processor, no network call |
-| Coins | BTC, ETH, XMR, DASH, LTC, SOL; USDC and USDT on Ethereum and Solana |
+| Coins | BTC, ETH, DASH, LTC, SOL, ZEC; USDC and USDT on Ethereum and Solana; XMR is supported by the format checks but not listed until the owner supplies an address |
 | Git history | Published as is, provided the secret scan is clean |
 | Website | Out of scope; reworked separately |
 

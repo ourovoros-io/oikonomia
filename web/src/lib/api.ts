@@ -594,14 +594,15 @@ export type CsvColumnMapping = {
   reference?: string | null
 }
 
-/** Preview of a bank CSV. Does not write to the ledger. */
+/** One donation address from the Rust table (`donation_addresses`). */
 export type DonationAddress = {
-  coin: 'BTC' | 'ETH' | 'XMR' | 'DASH' | 'LTC' | 'SOL'
+  coin: 'BTC' | 'ETH' | 'XMR' | 'DASH' | 'LTC' | 'SOL' | 'ZEC'
   network: string
   also_accepts: string[]
   address: string
 }
 
+/** Preview of a bank CSV. Does not write to the ledger. */
 export type CsvImportPreview = {
   source: string
   /** Present once Rust returns the header row (Map columns selects). */

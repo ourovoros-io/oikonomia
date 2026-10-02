@@ -7,17 +7,6 @@
 use serde::Serialize;
 
 /// A coin with its own receiving address.
-///
-/// No variant is constructed outside tests while [`DONATION_ADDRESSES`] is
-/// empty, hence the `expect`. It fails to compile once the table uses every
-/// variant, which is the cue to delete it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the address table is empty until the owner supplies addresses"
-    )
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub(crate) enum Coin {
@@ -26,6 +15,13 @@ pub(crate) enum Coin {
     /// Ether, on Ethereum mainnet.
     Eth,
     /// Monero.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "no Monero address has been supplied yet; list it in DONATION_ADDRESSES and delete this attribute"
+        )
+    )]
     Xmr,
     /// Dash.
     Dash,
@@ -33,6 +29,8 @@ pub(crate) enum Coin {
     Ltc,
     /// SOL, on Solana.
     Sol,
+    /// Zcash, transparent address.
+    Zec,
 }
 
 /// One receiving address, as shown in Settings and the README.
@@ -48,12 +46,45 @@ pub(crate) struct DonationAddress {
     pub(crate) address: &'static str,
 }
 
-/// Every address donations are accepted on.
-///
-/// This table is empty until the project owner supplies the receiving
-/// addresses; none are invented or copied in the meantime. While it is empty,
-/// the Settings donation section stays hidden.
-pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[];
+/// Every address donations are accepted on. Each was supplied by the project owner; never edit one without the owner confirming it against their wallet.
+pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
+    DonationAddress {
+        coin: Coin::Btc,
+        network: "Bitcoin",
+        also_accepts: &[],
+        address: "bc1q9gey0j6vvd2nh7eh76tp932r2ttmdj75u55een",
+    },
+    DonationAddress {
+        coin: Coin::Eth,
+        network: "Ethereum",
+        also_accepts: &["USDC", "USDT"],
+        address: "0x544506F873EF9157E3639B9D0Af13562245baf07",
+    },
+    DonationAddress {
+        coin: Coin::Dash,
+        network: "Dash",
+        also_accepts: &[],
+        address: "XkfYevHXMAFwMcY6nj95oedwxaicTpqbSs",
+    },
+    DonationAddress {
+        coin: Coin::Ltc,
+        network: "Litecoin",
+        also_accepts: &[],
+        address: "ltc1q2lhxq7crwaam9upc8ks0gmyvtxn9htatfgns33",
+    },
+    DonationAddress {
+        coin: Coin::Sol,
+        network: "Solana",
+        also_accepts: &["USDC", "USDT"],
+        address: "EZVrqTLW3sTHdFZydoR31Nv3QLnWShfV4riah1otTC26",
+    },
+    DonationAddress {
+        coin: Coin::Zec,
+        network: "Zcash",
+        also_accepts: &[],
+        address: "t1MyGx1wXSQRyQZeXJjyKjHKTZEWSyEiBkj",
+    },
+];
 
 /// Donation addresses for the Settings page. Readable while locked.
 #[tauri::command]
@@ -113,6 +144,11 @@ mod tests {
                     || is_base58_with(address, &['4'], 106..=106)
             }
             Coin::Sol => all_in(address, BASE58) && (32..=44).contains(&address.len()),
+            Coin::Zec => {
+                all_in(address, BASE58)
+                    && address.len() == 35
+                    && (address.starts_with("t1") || address.starts_with("t3"))
+            }
             Coin::Eth => address.strip_prefix("0x").is_some_and(|hex| {
                 hex.len() == 40 && hex.chars().all(|character| character.is_ascii_hexdigit())
             }),
@@ -141,6 +177,7 @@ mod tests {
         assert!(has_valid_shape(Coin::Ltc, &format!("L{}", "a".repeat(33))));
         assert!(has_valid_shape(Coin::Xmr, &format!("4{}", "A".repeat(94))));
         assert!(has_valid_shape(Coin::Xmr, &format!("8{}", "A".repeat(94))));
+        assert!(has_valid_shape(Coin::Zec, &format!("t1{}", "a".repeat(33))));
     }
 
     #[test]
@@ -160,6 +197,10 @@ mod tests {
             "0OIl0OIl0OIl0OIl0OIl0OIl0OIl0OIl"
         ));
         assert!(!has_valid_shape(Coin::Xmr, &format!("4{}", "A".repeat(93))));
+        assert!(!has_valid_shape(
+            Coin::Zec,
+            &format!("t1{}", "a".repeat(32))
+        ));
 
         // The right address in the wrong row.
         assert!(!has_valid_shape(Coin::Ltc, bitcoin));
@@ -167,6 +208,14 @@ mod tests {
         assert!(!has_valid_shape(
             Coin::Dash,
             "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+        ));
+        assert!(!has_valid_shape(
+            Coin::Zec,
+            "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+        ));
+        assert!(!has_valid_shape(
+            Coin::Dash,
+            &format!("t1{}", "a".repeat(33))
         ));
     }
 
@@ -194,6 +243,50 @@ mod tests {
             DONATION_ADDRESSES.len(),
             "a coin is listed twice"
         );
+    }
+
+    #[test]
+    fn table_lists_the_supplied_coins_in_display_order() {
+        let coins: Vec<Coin> = DONATION_ADDRESSES.iter().map(|entry| entry.coin).collect();
+
+        assert_eq!(
+            coins,
+            [
+                Coin::Btc,
+                Coin::Eth,
+                Coin::Dash,
+                Coin::Ltc,
+                Coin::Sol,
+                Coin::Zec
+            ]
+        );
+    }
+
+    #[test]
+    fn payload_carries_ticker_network_and_stablecoin_note() {
+        let json = serde_json::to_value(super::donation_addresses()).expect("serialize");
+
+        assert_eq!(json[0]["coin"], "BTC");
+        assert_eq!(json[0]["network"], "Bitcoin");
+        assert_eq!(json[1]["also_accepts"][0], "USDC");
+        assert_eq!(json[5]["coin"], "ZEC");
+    }
+
+    /// Guards against a placeholder or a padded paste ever shipping.
+    #[test]
+    fn no_listed_address_is_a_stand_in_or_contains_whitespace() {
+        for entry in DONATION_ADDRESSES {
+            assert!(
+                !entry.address.contains("OWNER"),
+                "{:?} still holds a stand-in",
+                entry.coin
+            );
+            assert!(
+                !entry.address.chars().any(char::is_whitespace),
+                "{:?} address contains whitespace",
+                entry.coin
+            );
+        }
     }
 
     #[test]
@@ -229,6 +322,7 @@ mod tests {
             Coin::Dash,
             Coin::Ltc,
             Coin::Sol,
+            Coin::Zec,
         ];
 
         let tickers: Vec<String> = coins
@@ -242,6 +336,6 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(tickers, ["BTC", "ETH", "XMR", "DASH", "LTC", "SOL"]);
+        assert_eq!(tickers, ["BTC", "ETH", "XMR", "DASH", "LTC", "SOL", "ZEC"]);
     }
 }
