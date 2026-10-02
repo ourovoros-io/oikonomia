@@ -121,6 +121,49 @@ fn webview_has_no_opener_permission() {
 }
 
 #[test]
+fn the_first_run_language_command_is_registered() {
+    let registrations = include_str!("lib.rs");
+
+    assert!(
+        registrations.contains("commands::settings_resolve_locale,"),
+        "settings_resolve_locale is not in the command list"
+    );
+}
+
+#[test]
+fn an_app_command_needs_no_new_webview_permission() {
+    // App commands registered in the invoke handler are callable by every
+    // window in the capability; the permission list stays exactly as audited.
+    let capabilities: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json"))
+            .expect("capabilities json");
+
+    let permissions: Vec<&str> = capabilities["permissions"]
+        .as_array()
+        .expect("permissions array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+
+    assert_eq!(
+        permissions,
+        [
+            "core:default",
+            "core:event:default",
+            "core:window:allow-show",
+            "core:window:allow-hide",
+            "core:window:allow-close",
+            "core:window:allow-set-focus",
+            "core:window:allow-set-size",
+            "core:window:allow-set-position",
+            "core:window:allow-outer-position",
+            "core:window:allow-outer-size",
+            "core:window:allow-is-visible",
+        ]
+    );
+}
+
+#[test]
 fn no_licensing_commands_are_registered() {
     let registrations = include_str!("lib.rs");
 

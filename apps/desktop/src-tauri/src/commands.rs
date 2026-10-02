@@ -33,7 +33,8 @@ use oikonomia_core::ledger::{
     void_entry,
 };
 use oikonomia_core::prefs::{
-    LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, save_ui_prefs,
+    LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, resolve_locale,
+    save_ui_prefs, store_locale,
 };
 use oikonomia_core::util::{format_date, utc_today};
 use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
@@ -1417,12 +1418,38 @@ pub fn settings_set_locale(
     locale: Locale,
 ) -> CommandResult<()> {
     let prefs_guard = state.lock_prefs();
-    let mut prefs = load_ui_prefs(state.data_dir());
-    prefs.locale = locale;
-    save_ui_prefs(state.data_dir(), &prefs)?;
+    store_locale(state.data_dir(), locale)?;
     drop(prefs_guard);
     crate::tray::apply_locale(&app, locale);
     Ok(())
+}
+
+/// The app language, chosen from the system on the very first run.
+///
+/// `system_languages` is the webview's report of the OS preferred languages
+/// (`navigator.languages`); Rust decides everything else. When a language is
+/// already stored it is returned unchanged and nothing is written, so the
+/// system is consulted once per installation. Otherwise the supported
+/// language is mapped, stored, and the native strings are refreshed exactly
+/// as after a change in Settings. Works before a vault exists and while
+/// locked, and is safe to call on every launch.
+#[tauri::command]
+pub fn settings_resolve_locale(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    system_languages: Vec<String>,
+) -> CommandResult<Locale> {
+    let prefs_guard = state.lock_prefs();
+    let resolution = resolve_locale(state.data_dir(), &system_languages)?;
+    drop(prefs_guard);
+
+    // The tray was built at startup from the stored language, English on a
+    // first run, so it only needs a rebuild when this call stored a new one.
+    if resolution.newly_stored {
+        crate::tray::apply_locale(&app, resolution.locale);
+    }
+
+    Ok(resolution.locale)
 }
 
 /// Full plaintext UI prefs (locale, tray last-used). Safe before unlock.
