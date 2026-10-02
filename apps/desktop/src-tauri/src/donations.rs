@@ -2,6 +2,9 @@
 //!
 //! The table is the single source of truth: the Settings page renders what
 //! [`donation_addresses`] returns, and a test keeps `README.md` in step.
+//! The tests check each address's format only; they cannot confirm an
+//! address is the owner's or that its checksum is valid. Verify checksums
+//! offline whenever an address is added or changed.
 //! Nothing here touches the network.
 
 use serde::Serialize;
@@ -15,13 +18,6 @@ pub(crate) enum Coin {
     /// Ether, on Ethereum mainnet.
     Eth,
     /// Monero.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "no Monero address has been supplied yet; list it in DONATION_ADDRESSES and delete this attribute"
-        )
-    )]
     Xmr,
     /// Dash.
     Dash,
@@ -46,7 +42,11 @@ pub(crate) struct DonationAddress {
     pub(crate) address: &'static str,
 }
 
-/// Every address donations are accepted on. Each was supplied by the project owner; never edit one without the owner confirming it against their wallet.
+/// Every address donations are accepted on.
+///
+/// Each was supplied by the project owner; never edit one without the owner
+/// confirming it against their wallet. The tests only check format, so
+/// verify the checksum offline whenever an address is added or changed.
 pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
     DonationAddress {
         coin: Coin::Btc,
@@ -59,6 +59,12 @@ pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
         network: "Ethereum",
         also_accepts: &["USDC", "USDT"],
         address: "0x544506F873EF9157E3639B9D0Af13562245baf07",
+    },
+    DonationAddress {
+        coin: Coin::Xmr,
+        network: "Monero",
+        also_accepts: &[],
+        address: "8ABaPsJS6754dY7YsZLKuHRrYFMtE5BBmi8SwZ7n79ukMAHkN987PZFHPMwaD4QhLegX6MPAjwEup69RbMAEnRcENDdfavg",
     },
     DonationAddress {
         coin: Coin::Dash,
@@ -80,7 +86,7 @@ pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
     },
     DonationAddress {
         coin: Coin::Zec,
-        network: "Zcash",
+        network: "Zcash (transparent)",
         also_accepts: &[],
         address: "t1MyGx1wXSQRyQZeXJjyKjHKTZEWSyEiBkj",
     },
@@ -97,7 +103,7 @@ pub fn donation_addresses() -> Vec<DonationAddress> {
 mod tests {
     use std::collections::HashSet;
 
-    use super::{Coin, DONATION_ADDRESSES};
+    use super::{Coin, DONATION_ADDRESSES, DonationAddress};
 
     const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
     const BECH32: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
@@ -126,8 +132,11 @@ mod tests {
     }
 
     /// Whether `address` has the right shape for `coin`. A format check, not
-    /// a checksum: it catches a typo, a truncation, or the wrong coin's
-    /// address in a row. It cannot tell whose address it is.
+    /// a checksum: it catches a changed prefix, a changed length, or a
+    /// character outside the alphabet. A same-length substitution of another
+    /// in-alphabet character passes, as does a case change in an Ethereum
+    /// address. Verify checksums separately whenever an address is added or
+    /// changed. It cannot tell whose address it is.
     fn has_valid_shape(coin: Coin, address: &str) -> bool {
         match coin {
             Coin::Btc => {
@@ -254,6 +263,7 @@ mod tests {
             [
                 Coin::Btc,
                 Coin::Eth,
+                Coin::Xmr,
                 Coin::Dash,
                 Coin::Ltc,
                 Coin::Sol,
@@ -265,28 +275,26 @@ mod tests {
     #[test]
     fn payload_carries_ticker_network_and_stablecoin_note() {
         let json = serde_json::to_value(super::donation_addresses()).expect("serialize");
+        let entries = json.as_array().expect("array");
+        let find = |ticker: &str| {
+            entries
+                .iter()
+                .find(|entry| entry["coin"] == ticker)
+                .expect("every listed coin is in the payload")
+        };
 
-        assert_eq!(json[0]["coin"], "BTC");
-        assert_eq!(json[0]["network"], "Bitcoin");
-        assert_eq!(json[1]["also_accepts"][0], "USDC");
-        assert_eq!(json[5]["coin"], "ZEC");
-    }
+        let bitcoin = find("BTC");
+        assert_eq!(bitcoin["network"], "Bitcoin");
+        assert_eq!(bitcoin["also_accepts"].as_array().expect("array").len(), 0);
 
-    /// Guards against a placeholder or a padded paste ever shipping.
-    #[test]
-    fn no_listed_address_is_a_stand_in_or_contains_whitespace() {
-        for entry in DONATION_ADDRESSES {
-            assert!(
-                !entry.address.contains("OWNER"),
-                "{:?} still holds a stand-in",
-                entry.coin
-            );
-            assert!(
-                !entry.address.chars().any(char::is_whitespace),
-                "{:?} address contains whitespace",
-                entry.coin
-            );
-        }
+        let ether = find("ETH");
+        assert_eq!(ether["also_accepts"], serde_json::json!(["USDC", "USDT"]));
+
+        let monero = find("XMR");
+        assert_eq!(monero["network"], "Monero");
+
+        let zcash = find("ZEC");
+        assert_eq!(zcash["network"], "Zcash (transparent)");
     }
 
     #[test]
@@ -300,17 +308,50 @@ mod tests {
         }
     }
 
+    fn ticker(coin: Coin) -> String {
+        serde_json::to_value(coin)
+            .expect("serialize")
+            .as_str()
+            .expect("string")
+            .to_owned()
+    }
+
+    /// The exact README table line an entry must have: the ticker and any
+    /// tokens it also accepts, the network, then the address in backticks.
+    fn expected_readme_row(entry: &DonationAddress) -> String {
+        let mut labels = vec![ticker(entry.coin)];
+        labels.extend(entry.also_accepts.iter().map(|token| (*token).to_owned()));
+
+        format!(
+            "| {} | {} | `{}` |",
+            labels.join(", "),
+            entry.network,
+            entry.address
+        )
+    }
+
     #[test]
-    fn readme_lists_every_address() {
+    fn readme_donate_table_matches_the_address_table() {
         let readme = include_str!("../../../../README.md");
 
-        for entry in DONATION_ADDRESSES {
-            assert!(
-                readme.contains(entry.address),
-                "README.md is missing the {:?} address",
-                entry.coin
-            );
-        }
+        let after_heading = readme
+            .split_once("## Donate")
+            .expect("README.md has a Donate section")
+            .1;
+        let section = after_heading
+            .split_once("\n## ")
+            .map_or(after_heading, |(section, _)| section);
+
+        let rows: Vec<&str> = section
+            .lines()
+            .filter(|line| line.starts_with("| ") && line.contains('`'))
+            .collect();
+
+        let expected: Vec<String> = DONATION_ADDRESSES.iter().map(expected_readme_row).collect();
+
+        // Whole-line comparison catches a wrong coin or network label, a
+        // stale or dropped row, and rows listed in a different order.
+        assert_eq!(rows, expected);
     }
 
     #[test]

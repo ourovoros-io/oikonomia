@@ -122,6 +122,7 @@ Check the coin and network before sending: crypto transfers cannot be reversed.
 |------|---------|---------|
 | BTC | Bitcoin | `bc1q9gey0j6vvd2nh7eh76tp932r2ttmdj75u55een` |
 | ETH, USDC, USDT | Ethereum | `0x544506F873EF9157E3639B9D0Af13562245baf07` |
+| XMR | Monero | `8ABaPsJS6754dY7YsZLKuHRrYFMtE5BBmi8SwZ7n79ukMAHkN987PZFHPMwaD4QhLegX6MPAjwEup69RbMAEnRcENDdfavg` |
 | DASH | Dash | `XkfYevHXMAFwMcY6nj95oedwxaicTpqbSs` |
 | LTC | Litecoin | `ltc1q2lhxq7crwaam9upc8ks0gmyvtxn9htatfgns33` |
 | SOL, USDC, USDT | Solana | `EZVrqTLW3sTHdFZydoR31Nv3QLnWShfV4riah1otTC26` |
