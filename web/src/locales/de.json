@@ -1,6 +1,5 @@
 {
   "app": {
-    "htmlTitle": "Oikonomia",
     "nav": {
       "dashboard": "Übersicht",
       "transactions": "Buchungen",
@@ -15,7 +14,6 @@
     },
     "loading": "Laden…",
     "brand": {
-      "name": "Oikonomia",
       "tagline": "Lokales Journal"
     },
     "book": {
@@ -35,9 +33,6 @@
       "aria": "Tresor sperren",
       "busy": "Sperren…",
       "label": "Sperren"
-    },
-    "logo": {
-      "aria": "Oikonomia"
     },
     "chartTemplate": {
       "personal": "privat",
@@ -72,7 +67,6 @@
     "support": "Brauchen Sie Hilfe? Schreiben Sie an {email}.",
     "update": {
       "button": "Nach Update suchen",
-      "dialogTitle": "Update",
       "checking": {
         "title": "Prüfung",
         "body": "Es wird nach einer neueren Version gesucht."
@@ -84,8 +78,6 @@
       "available": {
         "title": "Ein Update ist verfügbar",
         "version": "Oikonomia {version}",
-        "notesLabel": "Neuigkeiten",
-        "size": "{size}",
         "honesty": "Das ist das einzige Mal, dass Oikonomia sich mit dem Internet verbindet, und nur, um ein Update herunterzuladen.",
         "confirm": "Installieren und neu starten"
       },
@@ -107,7 +99,6 @@
     }
   },
   "quickAdd": {
-    "windowTitle": "Schnellerfassung",
     "loading": "Laden…",
     "locked": {
       "body": "Der Tresor ist gesperrt",
@@ -116,20 +107,14 @@
     "success": {
       "saved": "{kind} {money} gespeichert"
     },
-    "page": {
-      "loading": "Laden"
-    },
     "empty": {
-      "body": "Legen Sie zuerst ein Buch an",
-      "open": "Öffnen"
+      "body": "Legen Sie zuerst ein Buch an"
     },
     "kind": {
       "expense": "Ausgabe",
       "income": "Einnahme",
       "bill": "Rechnung",
       "transfer": "Umbuchung",
-      "expenseShort": "Ausgabe",
-      "incomeShort": "Einnahme",
       "billShort": "Rechn.",
       "transferShort": "Umb."
     },
@@ -148,7 +133,6 @@
       "aria": "Buchungsart"
     },
     "amount": {
-      "placeholder": "0.00",
       "aria": "Betrag ({currency})"
     },
     "accounts": {
@@ -183,8 +167,7 @@
       "paid": "Bezahlt"
     },
     "memo": {
-      "placeholder": "Notiz",
-      "aria": "Notiz"
+      "placeholder": "Notiz"
     },
     "drop": {
       "hint": "Ablegen"
@@ -206,17 +189,12 @@
       "pickWallet": "Bitte Konto wählen",
       "pickPayable": "Bitte Verbindlichkeit wählen",
       "pickDifferent": "Bitte unterschiedliche Konten wählen"
-    },
-    "hidden": {
-      "label": "Ausgeblendet"
     }
   },
   "settings": {
     "header": {
-      "eyebrow": "Arbeitsbereich",
       "title": "Einstellungen",
-      "description": "Bücher, Sicherheit und Vorgaben",
-      "meta": "Nur lokaler Tresor"
+      "description": "Bücher, Sicherheit und Vorgaben"
     },
     "language": {
       "title": "Sprache",
@@ -326,8 +304,7 @@
       "deleteTitle": "Löschen",
       "deleteConfirm": {
         "title": "Buch löschen?",
-        "body": "„{name}“ und alle Konten und Buchungen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
-        "confirm": "Löschen"
+        "body": "„{name}“ und alle Konten und Buchungen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen."
       },
       "deleteError": "Das Buch konnte nicht gelöscht werden"
     },
@@ -352,26 +329,12 @@
           "description": "Mit leerem Kontenplan beginnen"
         }
       },
-      "cancel": "Abbrechen",
       "submit": "Buch anlegen",
       "busy": "Wird angelegt…"
     }
   },
-  "tray": {
-    "menu": {
-      "open": "Oikonomia öffnen",
-      "quit": "Oikonomia beenden"
-    },
-    "tooltip": "Oikonomia"
-  },
   "native": {
-    "window": {
-      "mainTitle": "Oikonomia"
-    },
     "dialog": {
-      "filter": {
-        "backup": "Oikonomia-Sicherung"
-      },
       "error": {
         "invalidSave": "ungültiger Speicherort: {error}",
         "invalidBackup": "ungültiger Sicherungsort: {error}",
@@ -385,13 +348,10 @@
   },
   "dialog": {
     "confirm": {
-      "default": "Bestätigen",
-      "cancel": "Abbrechen",
-      "busy": "Wird ausgeführt…"
+      "default": "Bestätigen"
     },
     "modal": {
-      "closeAria": "Schließen",
-      "closeTitle": "Schließen"
+      "closeAria": "Schließen"
     }
   },
   "date": {
@@ -491,7 +451,6 @@
       "title": "Legen Sie ein Buch an, um zu starten",
       "body": "Legen Sie unter Einstellungen ein privates oder ein Firmenbuch an. Jedes Buch hat einen eigenen Kontenplan und eigene Berichte."
     },
-    "eyebrow": "Übersicht",
     "period": {
       "month": "Monat",
       "year": "Jahr",
@@ -503,13 +462,8 @@
         "quarter": "Quartal"
       }
     },
-    "meta": {
-      "encrypted": "Verschlüsselter Tresor · nur lokal"
-    },
     "hero": {
       "netLabel": "Saldo in diesem {period}",
-      "body": "Einnahmen minus Ausgaben in diesem {period}. Legen Sie Rechnungen unter Buchungen ab für Offline-OCR, oder buchen Sie von Hand.",
-      "ocr": "Offline-Rechnungsleser",
       "entryCount": "{n} Buchungen in diesem {period}",
       "kept": "Sie haben {percent} % von allem behalten, was hereinkam."
     },
@@ -536,35 +490,14 @@
       },
       "top": { "label": "Größte Ausgabe", "none": "Noch keine Ausgaben" }
     },
-    "flow": {
-      "income": "Einnahmen",
-      "expenses": "Ausgaben",
-      "footnote": "Zufluss gegen Abfluss (Bewegung der Periode). Das Vermögen darunter sind die Bestände von heute."
-    },
-    "metric": {
-      "assets": "Gesamtvermögen",
-      "assetsHint": "Stand heute",
-      "income": "Einnahmen",
-      "expenses": "Ausgaben",
-      "thisMonth": "Dieser Monat",
-      "thisYear": "Dieses Jahr",
-      "net": "Ergebnis",
-      "netHint": "Einnahmen − Ausgaben"
-    },
     "activity": {
       "title": "Letzte Aktivität",
-      "description": "Buchungen in diesem {period}",
-      "loading": "Laden…",
       "empty": "In diesem {period} noch keine Buchungen. Legen Sie eine unter Buchungen an."
     }
   },
   "entry": {
     "kind": {
-      "income": "Einnahme",
-      "expense": "Ausgabe",
-      "transfer": "Umbuchung",
-      "other": "Sonstiges",
-      "bill": "Rechnung"
+      "other": "Sonstiges"
     }
   },
   "common": {
@@ -578,10 +511,7 @@
   },
   "documents": {
     "header": {
-      "eyebrow": "Tresor",
-      "title": "Dokumente",
-      "description": "Jede Datei, die im verschlüsselten Tresor dieses Buchs liegt.",
-      "meta": "Verschlüsselt gespeichert"
+      "title": "Dokumente"
     },
     "empty": {
       "title": "Noch keine Dokumente",
@@ -604,16 +534,14 @@
       "busy": "Speichern…"
     },
     "delete": {
-      "aria": "Dokument löschen",
-      "title": "Löschen"
+      "aria": "Dokument löschen"
     },
     "deleteConfirm": {
       "title": "Dokument löschen?",
       "body": {
         "list": "Die Datei wird dauerhaft aus Ihrem Tresor entfernt. Das lässt sich nicht rückgängig machen. Die Buchungen bleiben unberührt.",
         "detail": "Die Datei wird dauerhaft aus Ihrem Tresor gelöscht. Das lässt sich nicht rückgängig machen. Die Buchung bleibt."
-      },
-      "confirm": "Löschen"
+      }
     },
     "error": {
       "delete": "Das Dokument konnte nicht gelöscht werden",
@@ -661,10 +589,7 @@
   },
   "accounts": {
     "header": {
-      "eyebrow": "Plan",
-      "title": "Konten",
-      "description": "Kontenplan für {name}",
-      "meta": "{n} aktiv"
+      "title": "Konten"
     },
     "add": {
       "close": "Schließen",
@@ -695,8 +620,7 @@
       "name": "Name",
       "namePlaceholder": "Kontoname",
       "type": "Art",
-      "submit": "Konto anlegen",
-      "busy": "Speichern…"
+      "submit": "Konto anlegen"
     },
     "balance": {
       "title": "Saldo setzen — {name}",
@@ -704,11 +628,8 @@
       "description": "Geben Sie an, was wirklich auf dem Konto liegt; die Differenz wird auf Anfangssalden gebucht",
       "ledgerToday": "Saldo im Journal heute:",
       "actual": "Tatsächlicher Saldo ({currency})",
-      "placeholder": "2.500,00",
       "asOf": "Zum",
       "asOfAria": "Saldo zum Stichtag",
-      "cancel": "Abbrechen",
-      "submit": "Saldo setzen",
       "busy": "Wird gebucht…",
       "error": {
         "invalid": "Geben Sie einen gültigen Betrag ein (z. B. 2.500,00 — negativ ist erlaubt)"
@@ -743,9 +664,7 @@
   },
   "reports": {
     "header": {
-      "eyebrow": "Auswertungen",
-      "title": "Berichte",
-      "description": "Gewinn und Verlust, Bilanz und Saldenliste"
+      "title": "Berichte"
     },
     "tab": {
       "pnl": "GuV",
@@ -791,12 +710,9 @@
       "donutDescription": "Anteil der Ausgaben im Zeitraum nach Kategorie"
     },
     "donut": {
-      "empty": "Keine Ausgaben in diesem Zeitraum.",
-      "total": "Summe Ausgaben",
-      "other": "Sonstiges ({n} Kategorien)"
+      "empty": "Keine Ausgaben in diesem Zeitraum."
     },
     "bs": {
-      "title": "Bilanz",
       "asOf": "Zum {date}",
       "emptySection": "Keine Konten unter {section} mit Bewegung.",
       "totalSection": "Summe {section}",
@@ -806,7 +722,6 @@
       "unbalanced": "Differenz von {amount} — prüfen Sie Buchungen außerhalb des Zeitraums."
     },
     "trial": {
-      "title": "Saldenliste",
       "account": "Konto",
       "debit": "Soll",
       "credit": "Haben",
@@ -825,10 +740,7 @@
   "tx": {
     "recurring": "Wiederkehrend",
     "header": {
-      "eyebrow": "Journal",
-      "title": "Bewegungen",
-      "description": "Erfassen Sie Einnahmen, Ausgaben, Rechnungen und Umbuchungen.",
-      "meta": "Offline-OCR · verschlüsselte Dokumente"
+      "title": "Bewegungen"
     },
     "search": {
       "label": "Suchen",
@@ -892,9 +804,6 @@
       "payableAccount": "Konto für offene Rechnungen",
       "noLiability": "Keine Konten für Verbindlichkeiten — legen Sie eines an",
       "payableTip": "Tipp: Legen Sie unter Konten eine Verbindlichkeit namens „Offene Rechnungen“ an. Neue persönliche Bücher haben sie schon.",
-      "from": "Von",
-      "to": "Nach",
-      "cancel": "Abbrechen",
       "save": "Buchung speichern",
       "saveChanges": "Änderungen speichern",
       "busy": "Speichern…",
@@ -907,33 +816,19 @@
       }
     },
     "hidden": {
-      "badge": "Ausgeblendet",
-      "action": {
-        "hide": "Ausblenden",
-        "show": "Einblenden"
-      },
-      "aria": {
-        "hide": "Beim Export ausblenden",
-        "show": "Im Export zeigen"
-      }
+      "badge": "Ausgeblendet"
     },
     "export": {
-      "whisper": "Der Export lässt ausgeblendete Zeilen weg.",
-      "empty": {
-        "hidden": "Nichts zu exportieren. Alle Zeilen sind ausgeblendet."
-      }
+      "whisper": "Der Export lässt ausgeblendete Zeilen weg."
     },
     "void": {
       "title": "Buchung löschen?",
       "body": "Die Buchung verschwindet aus Ihrer Liste. In den Büchern bleibt eine Gegenbuchung zur Prüfung (hier sehen Sie sie nicht).",
-      "confirm": "Löschen",
       "error": "Die Buchung konnte nicht gelöscht werden",
-      "aria": "Buchung löschen",
-      "titleAttr": "Löschen"
+      "aria": "Buchung löschen"
     },
     "list": {
       "title": "Alle Buchungen",
-      "description": "{n} gebucht · {currency}",
       "new": "Neue Buchung",
       "meta": {
         "counts": "{posted} gebucht · {hidden} ausgeblendet"
@@ -1060,12 +955,6 @@
     "posting": {
       "busy": "Wird gebucht…",
       "error": "Die Vorlage konnte nicht gebucht werden."
-    }
-  },
-  "tauri": {
-    "browser": {
-      "vaultRequired": "Tresor-Befehle brauchen die Desktop-App",
-      "cmdRequired": "{cmd} braucht die Desktop-App"
     }
   },
   "error": {

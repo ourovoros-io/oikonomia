@@ -31,7 +31,7 @@ export function flattenMessages(input: unknown, prefix = ''): Record<string, str
  * Current t() keys → Writer dotted paths. el.json is Writer-owned and nested;
  * en.json stays flat for pages Writer has not catalogued yet.
  */
-const KEY_ALIASES: Record<string, string> = {
+export const KEY_ALIASES: Record<string, string> = {
   'nav.dashboard': 'app.nav.dashboard',
   'nav.transactions': 'app.nav.transactions',
   'nav.documents': 'app.nav.documents',
@@ -78,8 +78,6 @@ const KEY_ALIASES: Record<string, string> = {
   'kind.bill': 'quickAdd.kind.bill',
   'kind.transfer': 'quickAdd.kind.transfer',
   'kind.other': 'entry.kind.other',
-  'kind.expenseShort': 'quickAdd.kind.expenseShort',
-  'kind.incomeShort': 'quickAdd.kind.incomeShort',
   'kind.billShort': 'quickAdd.kind.billShort',
   'kind.transferShort': 'quickAdd.kind.transferShort',
   'common.next': 'quickAdd.next.aria',
@@ -119,10 +117,8 @@ const KEY_ALIASES: Record<string, string> = {
   'quickAdd.pickPayable': 'quickAdd.error.pickPayable',
   'quickAdd.pickDifferentAccounts': 'quickAdd.error.pickDifferent',
 
-  'settings.eyebrow': 'settings.header.eyebrow',
   'settings.title': 'settings.header.title',
   'settings.description': 'settings.header.description',
-  'settings.meta': 'settings.header.meta',
   'settings.autoLock.title': 'settings.lock.title',
   'settings.autoLock.description': 'settings.lock.description',
   'settings.lock.5min': 'settings.lock.preset.5min',
@@ -226,35 +222,18 @@ const KEY_ALIASES: Record<string, string> = {
 
   'dash.createTitle': 'dashboard.empty.title',
   'dash.createBody': 'dashboard.empty.body',
-  'dash.overview': 'dashboard.eyebrow',
   'dash.month': 'dashboard.period.month',
   'dash.year': 'dashboard.period.year',
   'dash.period.month': 'dashboard.period.word.month',
   'dash.period.year': 'dashboard.period.word.year',
-  'dash.encryptedVault': 'dashboard.meta.encrypted',
   'dash.netThis': 'dashboard.hero.netLabel',
-  'dash.netBody': 'dashboard.hero.body',
-  'dash.offlineReader': 'dashboard.hero.ocr',
   'dash.entriesThis': 'dashboard.hero.entryCount',
-  'dash.income': 'dashboard.flow.income',
-  'dash.expenses': 'dashboard.flow.expenses',
-  'dash.cashInVsOut': 'dashboard.flow.footnote',
-  'dash.totalAssets': 'dashboard.metric.assets',
-  'dash.asOfToday': 'dashboard.metric.assetsHint',
-  'dash.thisMonth': 'dashboard.metric.thisMonth',
-  'dash.thisYear': 'dashboard.metric.thisYear',
-  'dash.netResult': 'dashboard.metric.net',
-  'dash.netHint': 'dashboard.metric.netHint',
   'dash.recentActivity': 'dashboard.activity.title',
-  'dash.recentDesc': 'dashboard.activity.description',
   'dash.noEntries': 'dashboard.activity.empty',
 
   'tx.noBookTitle': 'common.emptyBook.title',
   'tx.noBookBody': 'common.emptyBook.body',
-  'tx.eyebrow': 'tx.header.eyebrow',
   'tx.title': 'tx.header.title',
-  'tx.description': 'tx.header.description',
-  'tx.meta': 'tx.header.meta',
   'tx.search': 'tx.search.label',
   'tx.searchPlaceholder': 'tx.search.placeholder',
   'tx.from': 'tx.filter.from',
@@ -303,7 +282,6 @@ const KEY_ALIASES: Record<string, string> = {
   'tx.deleteFailed': 'tx.void.error',
   'tx.deleteEntry': 'tx.void.aria',
   'tx.allEntries': 'tx.list.title',
-  'tx.allEntriesDesc': 'tx.list.description',
   'tx.newEntry': 'tx.list.new',
   'tx.emptyTitle': 'tx.empty.title',
   'tx.emptyBody': 'tx.empty.body',
@@ -314,10 +292,7 @@ const KEY_ALIASES: Record<string, string> = {
 
   'acct.noBookTitle': 'common.emptyBook.title',
   'acct.noBookBody': 'common.emptyBook.body',
-  'acct.eyebrow': 'accounts.header.eyebrow',
   'acct.title': 'accounts.header.title',
-  'acct.description': 'accounts.header.description',
-  'acct.meta': 'accounts.header.meta',
   'acct.close': 'accounts.add.close',
   'acct.addAccount': 'accounts.add.label',
   'acct.activeAccounts': 'accounts.metric.active',
@@ -363,9 +338,7 @@ const KEY_ALIASES: Record<string, string> = {
 
   'rpt.noBookTitle': 'common.emptyBook.title',
   'rpt.noBookBody': 'common.emptyBook.body',
-  'rpt.eyebrow': 'reports.header.eyebrow',
   'rpt.title': 'reports.header.title',
-  'rpt.description': 'reports.header.description',
   'rpt.pnl': 'reports.tab.pnl',
   'rpt.balanceSheet': 'reports.tab.bs',
   'rpt.trialBalance': 'reports.tab.trial',
@@ -388,8 +361,6 @@ const KEY_ALIASES: Record<string, string> = {
   'rpt.expenseBreakdown': 'reports.pnl.donutTitle',
   'rpt.expenseBreakdownDesc': 'reports.pnl.donutDescription',
   'donut.noExpenses': 'reports.donut.empty',
-  'donut.totalExpenses': 'reports.donut.total',
-  'donut.other': 'reports.donut.other',
   'rpt.asOfPeriod': 'reports.bs.asOf',
   'rpt.noSectionAccounts': 'reports.bs.emptySection',
   'rpt.totalSection': 'reports.bs.totalSection',
@@ -407,10 +378,7 @@ const KEY_ALIASES: Record<string, string> = {
 
   'docs.noBookTitle': 'common.emptyBook.title',
   'docs.noBookBody': 'common.emptyBook.body',
-  'docs.eyebrow': 'documents.header.eyebrow',
   'docs.title': 'documents.header.title',
-  'docs.description': 'documents.header.description',
-  'docs.meta': 'documents.header.meta',
   'docs.emptyTitle': 'documents.empty.title',
   'docs.emptyBody': 'documents.empty.body',
   'docs.vaultFiles': 'documents.list.title',
@@ -458,13 +426,10 @@ const KEY_ALIASES: Record<string, string> = {
 }
 
 /** Writer path → current en.json key, for t() calls that use Writer paths in EN. */
-const REVERSE_ALIASES: Record<string, string> = {
+export const REVERSE_ALIASES: Record<string, string> = {
   'settings.entityCreate.template.personal.title': 'chart.personal',
   'settings.entityCreate.template.company.title': 'chart.company',
   'settings.entityCreate.template.blank.title': 'chart.blank',
-  'settings.entityCreate.cancel': 'common.cancel',
-  'quickAdd.memo.aria': 'quickAdd.memo',
-  'quickAdd.empty.open': 'common.open',
 }
 
 for (const [from, to] of Object.entries(KEY_ALIASES)) {

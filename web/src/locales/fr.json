@@ -1,6 +1,5 @@
 {
   "app": {
-    "htmlTitle": "Oikonomia",
     "nav": {
       "dashboard": "Tableau de bord",
       "transactions": "Mouvements",
@@ -15,7 +14,6 @@
     },
     "loading": "Chargement…",
     "brand": {
-      "name": "Oikonomia",
       "tagline": "Grand livre local"
     },
     "book": {
@@ -35,9 +33,6 @@
       "aria": "Verrouiller le coffre",
       "busy": "Verrouillage…",
       "label": "Verrouiller"
-    },
-    "logo": {
-      "aria": "Oikonomia"
     },
     "chartTemplate": {
       "personal": "personnel",
@@ -72,7 +67,6 @@
     "support": "Besoin d’aide ? Écrivez à {email}.",
     "update": {
       "button": "Rechercher une mise à jour",
-      "dialogTitle": "Mise à jour",
       "checking": {
         "title": "Vérification",
         "body": "Recherche d’une version plus récente."
@@ -84,8 +78,6 @@
       "available": {
         "title": "Une mise à jour est disponible",
         "version": "Oikonomia {version}",
-        "notesLabel": "Nouveautés",
-        "size": "{size}",
         "honesty": "C’est la seule fois où Oikonomia se connecte à Internet, et uniquement pour télécharger une mise à jour.",
         "confirm": "Installer et redémarrer"
       },
@@ -107,7 +99,6 @@
     }
   },
   "quickAdd": {
-    "windowTitle": "Saisie rapide",
     "loading": "Chargement",
     "locked": {
       "body": "Le coffre est verrouillé",
@@ -116,20 +107,14 @@
     "success": {
       "saved": "Enregistré {kind} {money}"
     },
-    "page": {
-      "loading": "Chargement"
-    },
     "empty": {
-      "body": "Créez d’abord un livre",
-      "open": "Ouvrir"
+      "body": "Créez d’abord un livre"
     },
     "kind": {
       "expense": "Dépense",
       "income": "Recette",
       "bill": "Facture",
       "transfer": "Virement",
-      "expenseShort": "Dépense",
-      "incomeShort": "Recette",
       "billShort": "Fact.",
       "transferShort": "Vir."
     },
@@ -148,7 +133,6 @@
       "aria": "Type d’écriture"
     },
     "amount": {
-      "placeholder": "0.00",
       "aria": "Montant ({currency})"
     },
     "accounts": {
@@ -183,8 +167,7 @@
       "paid": "Payée"
     },
     "memo": {
-      "placeholder": "Note",
-      "aria": "Note"
+      "placeholder": "Note"
     },
     "drop": {
       "hint": "Déposer"
@@ -206,17 +189,12 @@
       "pickWallet": "Choisissez un portefeuille",
       "pickPayable": "Choisissez un compte à payer",
       "pickDifferent": "Choisissez des comptes différents"
-    },
-    "hidden": {
-      "label": "Masquée"
     }
   },
   "settings": {
     "header": {
-      "eyebrow": "Espace de travail",
       "title": "Paramètres",
-      "description": "Livres, sécurité et préférences",
-      "meta": "Coffre local uniquement"
+      "description": "Livres, sécurité et préférences"
     },
     "language": {
       "title": "Langue",
@@ -326,8 +304,7 @@
       "deleteTitle": "Supprimer",
       "deleteConfirm": {
         "title": "Supprimer l’entité ?",
-        "body": "« {name} » et tous ses comptes et mouvements seront définitivement supprimés. Cette action est irréversible.",
-        "confirm": "Supprimer"
+        "body": "« {name} » et tous ses comptes et mouvements seront définitivement supprimés. Cette action est irréversible."
       },
       "deleteError": "Impossible de supprimer l’entité"
     },
@@ -352,26 +329,12 @@
           "description": "Commencez avec un plan comptable vide"
         }
       },
-      "cancel": "Annuler",
       "submit": "Créer l’entité",
       "busy": "Création…"
     }
   },
-  "tray": {
-    "menu": {
-      "open": "Ouvrir Oikonomia",
-      "quit": "Quitter Oikonomia"
-    },
-    "tooltip": "Oikonomia"
-  },
   "native": {
-    "window": {
-      "mainTitle": "Oikonomia"
-    },
     "dialog": {
-      "filter": {
-        "backup": "Sauvegarde Oikonomia"
-      },
       "error": {
         "invalidSave": "emplacement d’enregistrement non valide : {error}",
         "invalidBackup": "emplacement de sauvegarde non valide : {error}",
@@ -385,13 +348,10 @@
   },
   "dialog": {
     "confirm": {
-      "default": "Confirmer",
-      "cancel": "Annuler",
-      "busy": "Exécution…"
+      "default": "Confirmer"
     },
     "modal": {
-      "closeAria": "Fermer",
-      "closeTitle": "Fermer"
+      "closeAria": "Fermer"
     }
   },
   "date": {
@@ -491,7 +451,6 @@
       "title": "Créez un livre pour commencer",
       "body": "Ajoutez une entité personnelle ou d’entreprise dans Paramètres. Chaque entité a son propre plan comptable et ses rapports."
     },
-    "eyebrow": "Aperçu",
     "period": {
       "month": "Mois",
       "year": "Année",
@@ -503,13 +462,8 @@
         "quarter": "de ce trimestre"
       }
     },
-    "meta": {
-      "encrypted": "Coffre chiffré · local uniquement"
-    },
     "hero": {
       "netLabel": "Résultat net {period}",
-      "body": "Recettes moins dépenses {period}. Déposez des factures dans Mouvements pour le lecteur OCR hors ligne, ou saisissez les écritures à la main.",
-      "ocr": "Lecteur de factures hors ligne",
       "entryCount": "{n} écritures {period}",
       "kept": "Vous avez conservé {percent} % de tout ce qui est entré."
     },
@@ -536,35 +490,14 @@
       },
       "top": { "label": "Dépense principale", "none": "Aucune dépense pour l’instant" }
     },
-    "flow": {
-      "income": "Recettes",
-      "expenses": "Dépenses",
-      "footnote": "Entrées et sorties d’argent (activité de la période). L’actif ci-dessous indique les soldes à ce jour."
-    },
-    "metric": {
-      "assets": "Total de l’actif",
-      "assetsHint": "À ce jour",
-      "income": "Recettes",
-      "expenses": "Dépenses",
-      "thisMonth": "Ce mois-ci",
-      "thisYear": "Cette année",
-      "net": "Résultat net",
-      "netHint": "Recettes − dépenses"
-    },
     "activity": {
       "title": "Activité récente",
-      "description": "Écritures {period}",
-      "loading": "Chargement…",
       "empty": "Aucune écriture {period}. Saisissez-en une dans Mouvements."
     }
   },
   "entry": {
     "kind": {
-      "income": "recette",
-      "expense": "dépense",
-      "transfer": "virement",
-      "other": "autre",
-      "bill": "facture"
+      "other": "autre"
     }
   },
   "common": {
@@ -578,10 +511,7 @@
   },
   "documents": {
     "header": {
-      "eyebrow": "Coffre",
-      "title": "Documents",
-      "description": "Chaque fichier conservé dans le coffre chiffré de ce livre.",
-      "meta": "Chiffrés sur le disque"
+      "title": "Documents"
     },
     "empty": {
       "title": "Pas encore de documents",
@@ -604,16 +534,14 @@
       "busy": "Enregistrement…"
     },
     "delete": {
-      "aria": "Supprimer le document",
-      "title": "Supprimer"
+      "aria": "Supprimer le document"
     },
     "deleteConfirm": {
       "title": "Supprimer le document ?",
       "body": {
         "list": "Cela retire définitivement le fichier de votre coffre. Irréversible. Les écritures du journal ne changent pas.",
         "detail": "Cela supprime définitivement le fichier de votre coffre. Irréversible. L’écriture, elle, reste."
-      },
-      "confirm": "Supprimer"
+      }
     },
     "error": {
       "delete": "Impossible de supprimer le document",
@@ -661,10 +589,7 @@
   },
   "accounts": {
     "header": {
-      "eyebrow": "Plan",
-      "title": "Comptes",
-      "description": "Plan comptable de {name}",
-      "meta": "{n} actifs"
+      "title": "Comptes"
     },
     "add": {
       "close": "Fermer",
@@ -695,8 +620,7 @@
       "name": "Nom",
       "namePlaceholder": "Nom du compte",
       "type": "Type",
-      "submit": "Créer le compte",
-      "busy": "Enregistrement…"
+      "submit": "Créer le compte"
     },
     "balance": {
       "title": "Fixer le solde — {name}",
@@ -704,11 +628,8 @@
       "description": "Indiquez ce que le compte détient vraiment ; l’écart va sur Soldes d’ouverture",
       "ledgerToday": "Solde du journal aujourd’hui :",
       "actual": "Solde réel ({currency})",
-      "placeholder": "2.500,00",
       "asOf": "Au",
       "asOfAria": "Solde à la date",
-      "cancel": "Annuler",
-      "submit": "Fixer le solde",
       "busy": "Comptabilisation…",
       "error": {
         "invalid": "Saisissez un montant valable (ex. 2.500,00 — négatif accepté)"
@@ -743,9 +664,7 @@
   },
   "reports": {
     "header": {
-      "eyebrow": "États",
-      "title": "Rapports",
-      "description": "Résultat, bilan et balance"
+      "title": "Rapports"
     },
     "tab": {
       "pnl": "Résultat",
@@ -791,12 +710,9 @@
       "donutDescription": "Part des dépenses de la période par catégorie"
     },
     "donut": {
-      "empty": "Aucune dépense sur cette période.",
-      "total": "Total des dépenses",
-      "other": "Autres ({n} catégories)"
+      "empty": "Aucune dépense sur cette période."
     },
     "bs": {
-      "title": "Bilan",
       "asOf": "Au {date}",
       "emptySection": "Aucun compte {section} n’a de mouvement.",
       "totalSection": "Total {section}",
@@ -806,7 +722,6 @@
       "unbalanced": "Écart de {amount} — vérifiez les écritures hors période."
     },
     "trial": {
-      "title": "Balance",
       "account": "Compte",
       "debit": "Débit",
       "credit": "Crédit",
@@ -825,10 +740,7 @@
   "tx": {
     "recurring": "Récurrents",
     "header": {
-      "eyebrow": "Journal",
-      "title": "Mouvements",
-      "description": "Notez les rentrées, les sorties, les factures et les virements.",
-      "meta": "OCR hors ligne · documents chiffrés"
+      "title": "Mouvements"
     },
     "search": {
       "label": "Recherche",
@@ -892,9 +804,6 @@
       "payableAccount": "Compte Factures à payer",
       "noLiability": "Aucun compte de passif — ajoutez-en un",
       "payableTip": "Astuce : dans Comptes, ajoutez un passif nommé « Factures à payer ». Les nouveaux livres Personnels l’ont déjà.",
-      "from": "De",
-      "to": "Vers",
-      "cancel": "Annuler",
       "save": "Enregistrer l’écriture",
       "saveChanges": "Enregistrer les modifications",
       "busy": "Enregistrement…",
@@ -907,33 +816,19 @@
       }
     },
     "hidden": {
-      "badge": "Masquée",
-      "action": {
-        "hide": "Masquer",
-        "show": "Afficher"
-      },
-      "aria": {
-        "hide": "Masquer à l’export",
-        "show": "Afficher dans l’export"
-      }
+      "badge": "Masquée"
     },
     "export": {
-      "whisper": "L’export laisse de côté les lignes masquées.",
-      "empty": {
-        "hidden": "Rien à exporter. Toutes les lignes sont masquées."
-      }
+      "whisper": "L’export laisse de côté les lignes masquées."
     },
     "void": {
       "title": "Supprimer l’écriture ?",
       "body": "L’écriture disparaît de votre liste. Une écriture inverse reste dans les livres pour le contrôle (vous ne la verrez pas ici).",
-      "confirm": "Supprimer",
       "error": "Impossible de supprimer l’écriture",
-      "aria": "Supprimer l’écriture",
-      "titleAttr": "Supprimer"
+      "aria": "Supprimer l’écriture"
     },
     "list": {
       "title": "Toutes les écritures",
-      "description": "{n} enregistrées · {currency}",
       "new": "Nouvelle écriture",
       "meta": {
         "counts": "{posted} enregistrées · {hidden} masquées"
@@ -1060,12 +955,6 @@
     "posting": {
       "busy": "Comptabilisation…",
       "error": "La comptabilisation du modèle n’a pas abouti."
-    }
-  },
-  "tauri": {
-    "browser": {
-      "vaultRequired": "Les commandes du coffre demandent l’application de bureau",
-      "cmdRequired": "{cmd} demande l’application de bureau"
     }
   },
   "error": {

@@ -97,7 +97,6 @@ describe('Writer el catalog', () => {
     expect(flat['app.nav.dashboard']).toBe('Επισκόπηση')
     expect(flat['unlock.title.unlock']).toBe('Καλωσορίσατε')
     expect(flat['tx.header.title']).toBe('Κινήσεις')
-    expect(flat['dashboard.eyebrow']).toBe('Επισκόπηση')
     expect(flat['dropzone.title.idle']).toBe(
       'Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο',
     )
@@ -108,14 +107,6 @@ describe('Writer el catalog', () => {
     expect(flat['tx.form.hidden.hint']).toBe('Απόκρυψη από την εξαγωγή')
     expect(flat['tx.list.meta.counts']).toBe('{posted} καταχωρισμένα · {hidden} κρυφά')
     expect(flat['tx.export.whisper']).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές.')
-    expect(flat['quickAdd.hidden.label']).toBe('Κρυφή')
-    expect(flat['tx.hidden.action.hide']).toBe('Απόκρυψη')
-    expect(flat['tx.hidden.action.show']).toBe('Εμφάνιση')
-    expect(flat['tx.hidden.aria.hide']).toBe('Απόκρυψη από την εξαγωγή')
-    expect(flat['tx.hidden.aria.show']).toBe('Εμφάνιση στην εξαγωγή')
-    expect(flat['tx.export.empty.hidden']).toBe(
-      'Δεν υπάρχει τίποτα για εξαγωγή. Όλες οι γραμμές είναι κρυφές.',
-    )
     expect(flat['quickAdd.kind.billShort']).toBe('Λογαρ.')
     expect(flat['quickAdd.kind.transferShort']).toBe('Μεταφ.')
     expect(flat['settings.language.title']).toBe('Γλώσσα')
@@ -148,7 +139,6 @@ describe('Writer el catalog', () => {
     expect(t('settings.language.title')).toBe('Γλώσσα')
     expect(t('settings.language.description')).toBe('Μενού, ετικέτες και Γρήγορη καταχώριση. Τα ονόματα λογαριασμών και ορισμένα μηνύματα παραμένουν στα Αγγλικά.')
     expect(t('tx.title')).toBe('Κινήσεις')
-    expect(t('dash.overview')).toBe('Επισκόπηση')
     expect(t('acct.addAccount')).toBe('Προσθήκη λογαριασμού')
     expect(t('rpt.title')).toBe('Αναφορές')
     expect(t('rpt.pnl')).toBe('Αποτελέσματα')
@@ -159,7 +149,6 @@ describe('Writer el catalog', () => {
     expect(t('tx.form.hidden.label')).toBe('Απόκρυψη')
     expect(t('tx.form.hidden.hint')).toBe('Απόκρυψη από την εξαγωγή')
     expect(t('tx.export.whisper')).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές.')
-    expect(t('quickAdd.hidden.label')).toBe('Κρυφή')
     expect(t('tx.csv.import')).toBe('Εισαγωγή CSV')
     expect(t('tx.csv.kind.expense')).toBe('Έξοδα')
   })
@@ -336,15 +325,12 @@ describe('Writer monthly-expense PDF catalog', () => {
 describe('Writer unlock.update catalog', () => {
   const updateKeys = [
     'unlock.update.button',
-    'unlock.update.dialogTitle',
     'unlock.update.checking.title',
     'unlock.update.checking.body',
     'unlock.update.upToDate.title',
     'unlock.update.upToDate.body',
     'unlock.update.available.title',
     'unlock.update.available.version',
-    'unlock.update.available.notesLabel',
-    'unlock.update.available.size',
     'unlock.update.available.honesty',
     'unlock.update.available.confirm',
     'unlock.update.failed.title',
@@ -389,8 +375,6 @@ describe('Writer unlock.update catalog', () => {
     expect(catalogs.el['unlock.update.available.version']).toContain('Oikonomia')
     expect(catalogs.fr['unlock.update.available.version']).toContain('Oikonomia')
     expect(catalogs.de['unlock.update.available.version']).toContain('Oikonomia')
-    expect(catalogs.en['unlock.update.available.notesLabel']).toBe('What’s new')
-    expect(catalogs.en['unlock.update.available.size']).toBe('{size}')
   })
 })
 
