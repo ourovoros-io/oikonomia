@@ -78,14 +78,30 @@ impl UpdateError {
 #[cfg(test)]
 mod tests {
     use super::UpdateError;
-    use std::collections::BTreeSet;
 
-    /// One value of every variant. The `match` makes a new variant a compile
-    /// error here until it is given a sample, and the test below then fails
-    /// until its code is in `ALL_CODES`. It does not check the wording of a
-    /// code or that the UI has copy for it; the desktop crate checks that.
+    /// How many variants [`UpdateError`] has. Kept by hand, next to the index
+    /// below: it is the number the indices must reach.
+    const VARIANT_COUNT: usize = 8;
+
+    /// The position of a variant, from an exhaustive `match` with no wildcard
+    /// arm. Adding a variant stops compiling here until it is given the next
+    /// index.
+    fn variant_index(error: &UpdateError) -> usize {
+        match error {
+            UpdateError::InstallNotAvailable => 0,
+            UpdateError::MissingPublicKey => 1,
+            UpdateError::Network => 2,
+            UpdateError::ManifestSignature => 3,
+            UpdateError::ManifestParse => 4,
+            UpdateError::ArtifactUrl => 5,
+            UpdateError::ArtifactIntegrity => 6,
+            UpdateError::InvalidFeedUrl => 7,
+        }
+    }
+
+    /// One value of every variant, in declaration order.
     fn every_variant() -> Vec<UpdateError> {
-        let samples = vec![
+        vec![
             UpdateError::InstallNotAvailable,
             UpdateError::MissingPublicKey,
             UpdateError::Network,
@@ -94,32 +110,22 @@ mod tests {
             UpdateError::ArtifactUrl,
             UpdateError::ArtifactIntegrity,
             UpdateError::InvalidFeedUrl,
-        ];
-
-        for sample in &samples {
-            match sample {
-                UpdateError::InstallNotAvailable
-                | UpdateError::MissingPublicKey
-                | UpdateError::Network
-                | UpdateError::ManifestSignature
-                | UpdateError::ManifestParse
-                | UpdateError::ArtifactUrl
-                | UpdateError::ArtifactIntegrity
-                | UpdateError::InvalidFeedUrl => {}
-            }
-        }
-
-        samples
+        ]
     }
 
+    /// Fails when a variant has no sample, a code is missing from `ALL_CODES`,
+    /// or the two lists differ in order. The samples must carry exactly the
+    /// indices `0..VARIANT_COUNT`, and `ALL_CODES` must be their codes in that
+    /// order. It does not check the wording of a code or that the UI has copy
+    /// for it (the desktop crate does), nor that `VARIANT_COUNT` was raised for
+    /// a new variant.
     #[test]
     fn all_codes_lists_exactly_the_code_of_every_variant() {
-        let variants = every_variant();
+        let samples = every_variant();
+        let indices: Vec<usize> = samples.iter().map(variant_index).collect();
+        let codes: Vec<&str> = samples.iter().map(UpdateError::code).collect();
 
-        let from_variants: BTreeSet<&str> = variants.iter().map(UpdateError::code).collect();
-        let listed: BTreeSet<&str> = UpdateError::ALL_CODES.iter().copied().collect();
-
-        assert_eq!(from_variants, listed);
-        assert_eq!(listed.len(), UpdateError::ALL_CODES.len(), "duplicate code");
+        assert_eq!(indices, (0..VARIANT_COUNT).collect::<Vec<_>>());
+        assert_eq!(codes, UpdateError::ALL_CODES);
     }
 }

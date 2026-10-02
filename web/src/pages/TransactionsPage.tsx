@@ -58,7 +58,7 @@ import {
   Select,
 } from '../components/ui'
 import { cn } from '../lib/cn'
-import { commandErrorMessage } from '../lib/commandError'
+import { asCommandError, commandErrorMessage } from '../lib/commandError'
 import type { CommandError } from '../lib/tauri'
 import type { DocumentSuggestion } from '../lib/api'
 import { formatMoney as fmtMoney } from '../lib/money'
@@ -233,7 +233,7 @@ export function TransactionsPage({
       (err) => {
         if (seriesRequestRef.current !== requestId) return
         setSeries(null)
-        setSeriesError(err as CommandError)
+        setSeriesError(asCommandError(err))
       },
     )
   }

@@ -459,42 +459,34 @@ mod tests {
         }
     }
 
-    /// One value of every role. The `match` has no wildcard arm, so adding a
-    /// variant stops compiling here until it is handled.
-    ///
-    /// This guarantees a new variant is noticed. It does not prove the list is
-    /// complete or in the form's order; the test below compares it with `ALL`.
-    fn every_role() -> Vec<AccountRole> {
-        let mut roles = Vec::new();
+    /// How many variants [`AccountRole`] has. Kept by hand, next to the index
+    /// below: it is the number the indices must reach.
+    const ROLE_COUNT: usize = 8;
 
-        for role in [
-            AccountRole::Category,
-            AccountRole::Payment,
-            AccountRole::Deposit,
-            AccountRole::Income,
-            AccountRole::BillCategory,
-            AccountRole::BillsPayable,
-            AccountRole::TransferSource,
-            AccountRole::TransferDestination,
-        ] {
-            match role {
-                AccountRole::Category
-                | AccountRole::Payment
-                | AccountRole::Deposit
-                | AccountRole::Income
-                | AccountRole::BillCategory
-                | AccountRole::BillsPayable
-                | AccountRole::TransferSource
-                | AccountRole::TransferDestination => roles.push(role),
-            }
+    /// The position of a variant, from an exhaustive `match` with no wildcard
+    /// arm. Adding a variant stops compiling here until it is given the next
+    /// index.
+    fn role_index(value: AccountRole) -> usize {
+        match value {
+            AccountRole::Category => 0,
+            AccountRole::Payment => 1,
+            AccountRole::Deposit => 2,
+            AccountRole::Income => 3,
+            AccountRole::BillCategory => 4,
+            AccountRole::BillsPayable => 5,
+            AccountRole::TransferSource => 6,
+            AccountRole::TransferDestination => 7,
         }
-
-        roles
     }
 
+    /// Fails when a variant is missing from `ALL`, repeated, or out of
+    /// order: the indices of the listed roles must be exactly `0..ROLE_COUNT`. It
+    /// does not check that `ROLE_COUNT` was raised for a new variant.
     #[test]
     fn the_role_list_covers_every_variant() {
-        assert_eq!(AccountRole::ALL, every_role().as_slice());
+        let indices: Vec<usize> = AccountRole::ALL.iter().copied().map(role_index).collect();
+
+        assert_eq!(indices, (0..ROLE_COUNT).collect::<Vec<_>>());
     }
 
     #[test]
@@ -540,10 +532,49 @@ mod tests {
         assert_eq!(ValidationError::DateRangeInverted.params(), BTreeMap::new());
     }
 
-    /// One value of every variant. The `match` makes a new variant a compile
-    /// error here until it is given a sample.
+    /// How many variants [`ValidationError`] has. Kept by hand, next to the
+    /// index below: it is the number the indices must reach.
+    const VARIANT_COUNT: usize = 28;
+
+    /// The position of a variant, from an exhaustive `match` with no wildcard
+    /// arm; fields are ignored. Adding a variant stops compiling here until it
+    /// is given the next index.
+    fn variant_index(error: &ValidationError) -> usize {
+        match error {
+            ValidationError::PasswordTooShort { .. } => 0,
+            ValidationError::NameRequired { .. } => 1,
+            ValidationError::NameTaken { .. } => 2,
+            ValidationError::AccountCodeTaken => 3,
+            ValidationError::SystemAccountProtected => 4,
+            ValidationError::AccountInactive { .. } => 5,
+            ValidationError::AccountRequired { .. } => 6,
+            ValidationError::AccountWrongType { .. } => 7,
+            ValidationError::SameAccount => 8,
+            ValidationError::AmountNotPositive => 9,
+            ValidationError::BillStatusRequired => 10,
+            ValidationError::InvalidDate { .. } => 11,
+            ValidationError::DateRangeInverted => 12,
+            ValidationError::DateOutOfRange => 13,
+            ValidationError::DayOfMonthInvalid => 14,
+            ValidationError::LockTimeoutTooShort { .. } => 15,
+            ValidationError::CurrencyInvalid => 16,
+            ValidationError::EntryAlreadyVoided => 17,
+            ValidationError::EntryNotPosted => 18,
+            ValidationError::WrongBook => 19,
+            ValidationError::OpeningBalanceAccountType => 20,
+            ValidationError::OpeningBalanceUnchanged => 21,
+            ValidationError::NoEquityAccount => 22,
+            ValidationError::FileEmpty => 23,
+            ValidationError::FileTooLarge { .. } => 24,
+            ValidationError::FileTypeUnsupported => 25,
+            ValidationError::VaultAlreadyInitialized => 26,
+            ValidationError::Internal { .. } => 27,
+        }
+    }
+
+    /// One value of every variant, in declaration order.
     fn every_variant() -> Vec<ValidationError> {
-        let samples = vec![
+        vec![
             ValidationError::PasswordTooShort { min: 12 },
             ValidationError::NameRequired {
                 field: "entity name",
@@ -579,55 +610,63 @@ mod tests {
             ValidationError::FileTypeUnsupported,
             ValidationError::VaultAlreadyInitialized,
             ValidationError::Internal { detail: "x".into() },
-        ];
+        ]
+    }
 
-        for sample in &samples {
-            match sample {
-                ValidationError::PasswordTooShort { .. }
-                | ValidationError::NameRequired { .. }
-                | ValidationError::NameTaken { .. }
-                | ValidationError::AccountCodeTaken
-                | ValidationError::SystemAccountProtected
-                | ValidationError::AccountInactive { .. }
-                | ValidationError::AccountRequired { .. }
-                | ValidationError::AccountWrongType { .. }
-                | ValidationError::SameAccount
-                | ValidationError::AmountNotPositive
-                | ValidationError::BillStatusRequired
-                | ValidationError::InvalidDate { .. }
-                | ValidationError::DateRangeInverted
-                | ValidationError::DateOutOfRange
-                | ValidationError::DayOfMonthInvalid
-                | ValidationError::LockTimeoutTooShort { .. }
-                | ValidationError::CurrencyInvalid
-                | ValidationError::EntryAlreadyVoided
-                | ValidationError::EntryNotPosted
-                | ValidationError::WrongBook
-                | ValidationError::OpeningBalanceAccountType
-                | ValidationError::OpeningBalanceUnchanged
-                | ValidationError::NoEquityAccount
-                | ValidationError::FileEmpty
-                | ValidationError::FileTooLarge { .. }
-                | ValidationError::FileTypeUnsupported
-                | ValidationError::VaultAlreadyInitialized
-                | ValidationError::Internal { .. } => {}
+    /// Fails when a variant has no sample, a code is missing from `ALL_CODES`,
+    /// or the two lists differ in order. The samples must carry exactly the
+    /// indices `0..VARIANT_COUNT`, and `ALL_CODES` must be their codes in that
+    /// order. It does not check that `VARIANT_COUNT` was raised for a new
+    /// variant.
+    #[test]
+    fn all_lists_exactly_the_code_of_every_variant() {
+        let samples = every_variant();
+        let indices: Vec<usize> = samples.iter().map(variant_index).collect();
+        let codes: Vec<&str> = samples.iter().map(ValidationError::code).collect();
+
+        assert_eq!(indices, (0..VARIANT_COUNT).collect::<Vec<_>>());
+        assert_eq!(codes, ValidationError::ALL_CODES);
+    }
+
+    /// The parameter names the shared fixture pins for each code that has any.
+    #[expect(
+        clippy::expect_used,
+        reason = "a malformed fixture must fail the test loudly"
+    )]
+    fn pinned_params() -> BTreeMap<String, Vec<String>> {
+        serde_json::from_str(include_str!("../../../../web/src/lib/errorCodeParams.json"))
+            .expect("errorCodeParams.json parses")
+    }
+
+    /// The parameter names Rust sends for each code that sends any, taken from
+    /// each variant's sample.
+    ///
+    /// A parameter that depends on the value (an optional field) would need
+    /// the full set the UI copy may reference; none of the codes has one.
+    fn produced_params() -> BTreeMap<String, Vec<String>> {
+        let mut produced = BTreeMap::new();
+
+        for sample in every_variant() {
+            let names: Vec<String> = sample
+                .params()
+                .keys()
+                .map(|name| (*name).to_owned())
+                .collect();
+
+            if !names.is_empty() {
+                produced.insert(sample.code().to_owned(), names);
             }
         }
 
-        samples
+        produced
     }
 
     #[test]
-    fn all_lists_exactly_the_code_of_every_variant() {
-        let from_variants: BTreeSet<&str> =
-            every_variant().iter().map(ValidationError::code).collect();
-        let listed: BTreeSet<&str> = ValidationError::ALL_CODES.iter().copied().collect();
-
-        assert_eq!(from_variants, listed);
+    fn the_params_fixture_lists_exactly_the_params_rust_sends() {
         assert_eq!(
-            listed.len(),
-            ValidationError::ALL_CODES.len(),
-            "duplicate code"
+            pinned_params(),
+            produced_params(),
+            "errorCodeParams.json and ValidationError::params differ"
         );
     }
 

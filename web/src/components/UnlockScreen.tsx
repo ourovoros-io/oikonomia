@@ -20,7 +20,7 @@ import {
   vaultUnlock,
 } from '../lib/tauri'
 import { asCommandError, commandErrorMessage } from '../lib/commandError'
-import { backupCommandError, restoreConfirm } from '../lib/vaultBackupUi'
+import { restoreCommandError, restoreConfirm } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
 import { Button, ErrorBanner, Field, Input } from './ui'
 
@@ -113,7 +113,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setError(backupCommandError(err))
+      setError(restoreCommandError(err))
     } finally {
       setRestorePicking(false)
     }
@@ -136,7 +136,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
       setRestorePath(undefined)
       onUnlocked(next)
     } catch (err) {
-      setError(backupCommandError(err))
+      setError(restoreCommandError(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {

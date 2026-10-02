@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   backupCommandError,
+  restoreCommandError,
   canBackupVault,
   restoreConfirm,
   vaultBackupAvailability,
@@ -115,5 +116,23 @@ describe('backupCommandError', () => {
 
     expect(shown).toBe('Could not complete the backup.')
     expect(shown).not.toContain('sqlcipher')
+  })
+})
+
+describe('restoreCommandError', () => {
+  test('a vague code gets the restore sentence, where backup gets its own', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = { code: 'crypto', message: 'bad tag' }
+
+    expect(restoreCommandError(error)).toBe('Could not restore the backup.')
+    expect(backupCommandError(error)).toBe('Could not complete the backup.')
+  })
+
+  test('shares the specific sentences with backup', () => {
+    for (const code of ['vault_uninitialized', 'backup_invalid', 'restore_would_overwrite', 'not_found']) {
+      expect(restoreCommandError({ code, message: 'x' }), code).toBe(
+        backupCommandError({ code, message: 'x' }),
+      )
+    }
   })
 })

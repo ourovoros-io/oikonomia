@@ -757,6 +757,34 @@ fn map_report_line(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReportLine> {
 mod tests {
     use super::*;
 
+    /// How many variants [`SyntheticLine`] has. Kept by hand, next to the index
+    /// below: it is the number the indices must reach.
+    const SYNTHETIC_LINE_COUNT: usize = 2;
+
+    /// The position of a variant, from an exhaustive `match` with no wildcard
+    /// arm. Adding a variant stops compiling here until it is given the next
+    /// index.
+    fn synthetic_line_index(value: SyntheticLine) -> usize {
+        match value {
+            SyntheticLine::RetainedEarnings => 0,
+            SyntheticLine::NetIncome => 1,
+        }
+    }
+
+    /// Fails when a variant is missing from `ALL`, repeated, or out of
+    /// order: the indices of the listed variants must be exactly `0..SYNTHETIC_LINE_COUNT`. It
+    /// does not check that `SYNTHETIC_LINE_COUNT` was raised for a new variant.
+    #[test]
+    fn all_lists_every_synthetic_line() {
+        let indices: Vec<usize> = SyntheticLine::ALL
+            .iter()
+            .copied()
+            .map(synthetic_line_index)
+            .collect();
+
+        assert_eq!(indices, (0..SYNTHETIC_LINE_COUNT).collect::<Vec<_>>());
+    }
+
     #[test]
     fn ratio_bps_rounds_half_away_from_zero() {
         assert_eq!(ratio_bps(1, 3), Some(3_333));

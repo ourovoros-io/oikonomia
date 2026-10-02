@@ -137,6 +137,7 @@
   "settings.vaultBackup.errNotFound": "Backup file not found.",
   "settings.vaultBackup.errIo": "Could not read or write the backup file.",
   "settings.vaultBackup.errDefault": "Could not complete the backup.",
+  "settings.vaultBackup.errRestoreDefault": "Could not restore the backup.",
   "settings.restore.loadTitle": "Load backup on this device?",
   "settings.restore.loadBody": "This becomes the vault on this computer. After it loads, the vault will be locked — unlock with your existing master password.",
   "settings.restore.loadConfirm": "Load backup",

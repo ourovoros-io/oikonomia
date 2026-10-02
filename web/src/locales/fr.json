@@ -289,7 +289,8 @@
         "wouldOverwrite": "Un coffre existe déjà sur cet ordinateur. Confirmez le remplacement pour continuer.",
         "notFound": "Fichier de sauvegarde introuvable.",
         "io": "Impossible de lire ou d’écrire le fichier de sauvegarde.",
-        "generic": "Impossible de terminer la sauvegarde."
+        "generic": "Impossible de terminer la sauvegarde.",
+        "restoreGeneric": "Impossible de restaurer la sauvegarde."
       }
     },
     "entities": {

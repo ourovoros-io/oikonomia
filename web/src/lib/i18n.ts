@@ -159,6 +159,7 @@ export const KEY_ALIASES: Record<string, string> = {
   'settings.vaultBackup.errNotFound': 'settings.backup.error.notFound',
   'settings.vaultBackup.errIo': 'settings.backup.error.io',
   'settings.vaultBackup.errDefault': 'settings.backup.error.generic',
+  'settings.vaultBackup.errRestoreDefault': 'settings.backup.error.restoreGeneric',
   'settings.entities.none': 'settings.entities.emptyCount',
   'settings.entities.oneBook': 'settings.entities.countOne',
   'settings.entities.nBooks': 'settings.entities.countMany',

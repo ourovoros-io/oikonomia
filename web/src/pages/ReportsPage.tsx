@@ -34,7 +34,6 @@ import {
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
-import type { CommandError } from '../lib/tauri'
 import { t } from '../lib/i18n'
 import { reportLineName } from '../lib/uiText'
 import { useI18n } from '../lib/I18nProvider'
@@ -106,7 +105,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
         suggestedName: suggestedExpensePdfName(data.from, data.to),
       })
     } catch (err) {
-      setError(pdfExportErrorMessage(err as CommandError))
+      setError(pdfExportErrorMessage(err))
     } finally {
       pdfBusyRef.current = false
       setPdfBusy(false)

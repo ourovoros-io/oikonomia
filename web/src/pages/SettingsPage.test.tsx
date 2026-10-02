@@ -450,6 +450,66 @@ describe('SettingsPage vault backup', () => {
     }
   })
 
+  test('a vague restore failure says the restore failed, not the backup', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultPickBackup).mockResolvedValue(BACKUP_PATH)
+    vi.mocked(vaultRestore).mockRejectedValue({ code: 'crypto', message: 'bad tag' })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await expandVaultBackup()
+    await userEvent.click(screen.getByRole('button', { name: /restore from backup/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Replace local vault?' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not restore the backup.')).toBeTruthy()
+    })
+    expect(screen.queryByText('Could not complete the backup.')).toBeNull()
+  })
+
+  test('a failure choosing the backup file says the restore failed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultPickBackup).mockRejectedValue({ code: 'crypto', message: 'x' })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await expandVaultBackup()
+    await userEvent.click(screen.getByRole('button', { name: /restore from backup/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not restore the backup.')).toBeTruthy()
+    })
+  })
+
+  test('a vague backup failure still says the backup failed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultBackup).mockRejectedValue({ code: 'crypto', message: 'bad tag' })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await expandVaultBackup()
+    await userEvent.click(screen.getByRole('button', { name: /backup vault/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not complete the backup.')).toBeTruthy()
+    })
+  })
+
   test('cancelled pick does not restore and does not show confirm', async () => {
     vi.mocked(vaultPickBackup).mockResolvedValue(null)
     render(

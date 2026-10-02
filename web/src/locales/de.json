@@ -289,7 +289,8 @@
         "wouldOverwrite": "Auf diesem Computer gibt es schon einen Tresor. Bestätigen Sie das Ersetzen, um fortzufahren.",
         "notFound": "Sicherungsdatei nicht gefunden.",
         "io": "Die Sicherungsdatei ließ sich nicht lesen oder schreiben.",
-        "generic": "Die Sicherung konnte nicht abgeschlossen werden."
+        "generic": "Die Sicherung konnte nicht abgeschlossen werden.",
+        "restoreGeneric": "Die Sicherung konnte nicht wiederhergestellt werden."
       }
     },
     "entities": {

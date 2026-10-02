@@ -202,89 +202,48 @@ mod tests {
         );
     }
 
-    /// One value of every code. The `match` has no wildcard arm, so adding a
-    /// variant stops compiling here until it is handled.
-    ///
-    /// This guarantees a new variant is noticed. It does not prove the list
-    /// below is complete or in the right order, which the equality test checks
-    /// against `ALL`, and it cannot see `ALL` being edited on its own.
-    fn every_code() -> Vec<UiTextCode> {
-        let mut codes = Vec::new();
+    /// How many variants [`UiTextCode`] has. Kept by hand, next to the index
+    /// below: it is the number the indices must reach.
+    const CODE_COUNT: usize = 22;
 
-        for code in [
-            UiTextCode::NoTextExtracted,
-            UiTextCode::AmountAssumesTwoDecimals,
-            UiTextCode::DatedFromDocument,
-            UiTextCode::AddPayableAccount,
-            UiTextCode::PdfOverBudget,
-            UiTextCode::ParsedFromDocumentText,
-            UiTextCode::OcrPathMissing,
-            UiTextCode::OcrModelsMissing,
-            UiTextCode::OcrRead,
-            UiTextCode::OcrLittleText,
-            UiTextCode::OcrFailed,
-            UiTextCode::OcrPdfImage,
-            UiTextCode::InvoiceParsed,
-            UiTextCode::InvoiceNoTotal,
-            UiTextCode::InvoiceIncome,
-            UiTextCode::InvoiceUtility,
-            UiTextCode::InvoiceUnpaid,
-            UiTextCode::InvoiceVatExempt,
-            UiTextCode::TransferDetected,
-            UiTextCode::TransferNoAmount,
-            UiTextCode::TransferFee,
-            UiTextCode::TransferFeeUnstated,
-        ] {
-            match code {
-                UiTextCode::NoTextExtracted
-                | UiTextCode::AmountAssumesTwoDecimals
-                | UiTextCode::DatedFromDocument
-                | UiTextCode::AddPayableAccount
-                | UiTextCode::PdfOverBudget
-                | UiTextCode::ParsedFromDocumentText
-                | UiTextCode::OcrPathMissing
-                | UiTextCode::OcrModelsMissing
-                | UiTextCode::OcrRead
-                | UiTextCode::OcrLittleText
-                | UiTextCode::OcrFailed
-                | UiTextCode::OcrPdfImage
-                | UiTextCode::InvoiceParsed
-                | UiTextCode::InvoiceNoTotal
-                | UiTextCode::InvoiceIncome
-                | UiTextCode::InvoiceUtility
-                | UiTextCode::InvoiceUnpaid
-                | UiTextCode::InvoiceVatExempt
-                | UiTextCode::TransferDetected
-                | UiTextCode::TransferNoAmount
-                | UiTextCode::TransferFee
-                | UiTextCode::TransferFeeUnstated => codes.push(code),
-            }
+    /// The position of a variant, from an exhaustive `match` with no wildcard
+    /// arm. Adding a variant stops compiling here until it is given the next
+    /// index.
+    fn code_index(value: UiTextCode) -> usize {
+        match value {
+            UiTextCode::NoTextExtracted => 0,
+            UiTextCode::AmountAssumesTwoDecimals => 1,
+            UiTextCode::DatedFromDocument => 2,
+            UiTextCode::AddPayableAccount => 3,
+            UiTextCode::PdfOverBudget => 4,
+            UiTextCode::ParsedFromDocumentText => 5,
+            UiTextCode::OcrPathMissing => 6,
+            UiTextCode::OcrModelsMissing => 7,
+            UiTextCode::OcrRead => 8,
+            UiTextCode::OcrLittleText => 9,
+            UiTextCode::OcrFailed => 10,
+            UiTextCode::OcrPdfImage => 11,
+            UiTextCode::InvoiceParsed => 12,
+            UiTextCode::InvoiceNoTotal => 13,
+            UiTextCode::InvoiceIncome => 14,
+            UiTextCode::InvoiceUtility => 15,
+            UiTextCode::InvoiceUnpaid => 16,
+            UiTextCode::InvoiceVatExempt => 17,
+            UiTextCode::TransferDetected => 18,
+            UiTextCode::TransferNoAmount => 19,
+            UiTextCode::TransferFee => 20,
+            UiTextCode::TransferFeeUnstated => 21,
         }
-
-        codes
     }
 
+    /// Fails when a variant is missing from `ALL`, repeated, or out of
+    /// order: the indices of the listed variants must be exactly `0..CODE_COUNT`. It
+    /// does not check that `CODE_COUNT` was raised for a new variant.
     #[test]
     fn all_lists_exactly_the_variants_of_the_enum() {
-        assert_eq!(UiTextCode::ALL, every_code().as_slice());
-    }
+        let indices: Vec<usize> = UiTextCode::ALL.iter().copied().map(code_index).collect();
 
-    /// Same guard for the synthetic report rows: no wildcard arm.
-    fn every_synthetic_line() -> Vec<SyntheticLine> {
-        let mut lines = Vec::new();
-
-        for line in [SyntheticLine::RetainedEarnings, SyntheticLine::NetIncome] {
-            match line {
-                SyntheticLine::RetainedEarnings | SyntheticLine::NetIncome => lines.push(line),
-            }
-        }
-
-        lines
-    }
-
-    #[test]
-    fn the_synthetic_line_list_covers_every_variant() {
-        assert_eq!(SyntheticLine::ALL, every_synthetic_line().as_slice());
+        assert_eq!(indices, (0..CODE_COUNT).collect::<Vec<_>>());
     }
 
     #[test]

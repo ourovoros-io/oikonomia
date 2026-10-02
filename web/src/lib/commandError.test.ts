@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import codes from './errorCodes.json'
 import roles from './accountRoles.json'
+import codeParams from './errorCodeParams.json'
 import {
   asCommandError,
   commandErrorMessage,
@@ -34,28 +35,21 @@ describe('command error localization', () => {
   })
 
   it('has copy that uses exactly the parameters Rust sends, in every locale', () => {
-    // Mirrors ValidationError::params in oikonomia-core; the Rust tests pin the other side.
-    const codeParams: Record<string, string[]> = {
-      password_too_short: ['min'],
-      name_taken: ['name'],
-      account_inactive: ['code'],
-      account_required: ['role'],
-      account_wrong_type: ['code', 'role'],
-      invalid_date: ['value'],
-      lock_timeout_too_short: ['min_secs'],
-      file_too_large: ['max_mb'],
-    }
+    // errorCodeParams.json is pinned to ValidationError::params by a Rust test, so
+    // this is checked against what Rust sends, not a hand copy. Where a
+    // parameter depends on the value, the file lists every name the copy may use.
+    const paramsByCode: Record<string, string[]> = codeParams
     const catalogs = { en, el, fr, de }
 
     for (const code of codes) {
-      const expected = [...(codeParams[code] ?? [])].sort()
+      const expected = [...(paramsByCode[code] ?? [])].sort()
       for (const [locale, catalog] of Object.entries(catalogs)) {
         const copy = flattenMessages(catalog)[ERROR_CODE_KEYS[code]]
         const used = [...new Set([...copy.matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort()
         expect(used, `${locale} copy for ${code}`).toEqual(expected)
       }
     }
-    for (const code of Object.keys(codeParams)) {
+    for (const code of Object.keys(paramsByCode)) {
       expect(codes, `${code} is not in errorCodes.json`).toContain(code)
     }
   })

@@ -1,0 +1,10 @@
+{
+  "account_inactive": ["code"],
+  "account_required": ["role"],
+  "account_wrong_type": ["code", "role"],
+  "file_too_large": ["max_mb"],
+  "invalid_date": ["value"],
+  "lock_timeout_too_short": ["min_secs"],
+  "name_taken": ["name"],
+  "password_too_short": ["min"]
+}

@@ -151,47 +151,39 @@ mod tests {
 
     use super::{CommandError, DesktopError};
 
-    /// One value of every desktop variant. The `match` makes a new variant a
-    /// compile error here until it is given a sample, and
-    /// `all_lists_every_desktop_variant` then fails until it is in
-    /// [`DesktopError::ALL`]. It does not check that the UI has copy for the
-    /// code; `the_shared_fixture_lists_exactly_the_codes_rust_can_emit` does.
-    fn every_desktop_variant() -> Vec<DesktopError> {
-        let samples = vec![
-            DesktopError::FileDataInvalid,
-            DesktopError::FileUnreadable,
-            DesktopError::SaveLocationInvalid,
-            DesktopError::SaveFailed,
-            DesktopError::PathNotGranted,
-            DesktopError::MailClientFailed,
-            DesktopError::TaskFailed,
-        ];
+    /// How many variants [`DesktopError`] has. Kept by hand, next to the index
+    /// below: it is the number the indices must reach.
+    const DESKTOP_ERROR_COUNT: usize = 7;
 
-        for sample in &samples {
-            match sample {
-                DesktopError::FileDataInvalid
-                | DesktopError::FileUnreadable
-                | DesktopError::SaveLocationInvalid
-                | DesktopError::SaveFailed
-                | DesktopError::PathNotGranted
-                | DesktopError::MailClientFailed
-                | DesktopError::TaskFailed => {}
-            }
+    /// The position of a variant, from an exhaustive `match` with no wildcard
+    /// arm. Adding a variant stops compiling here until it is given the next
+    /// index.
+    fn desktop_error_index(value: DesktopError) -> usize {
+        match value {
+            DesktopError::FileDataInvalid => 0,
+            DesktopError::FileUnreadable => 1,
+            DesktopError::SaveLocationInvalid => 2,
+            DesktopError::SaveFailed => 3,
+            DesktopError::PathNotGranted => 4,
+            DesktopError::MailClientFailed => 5,
+            DesktopError::TaskFailed => 6,
         }
-
-        samples
     }
 
+    /// Fails when a variant is missing from [`DesktopError::ALL`], repeated, or out of
+    /// order: the indices of the listed variants must be exactly `0..DESKTOP_ERROR_COUNT`. It
+    /// does not check that `DESKTOP_ERROR_COUNT` was raised for a new variant,
+    /// nor that the UI has copy for the code;
+    /// `the_shared_fixture_lists_exactly_the_codes_rust_can_emit` does that.
     #[test]
     fn all_lists_every_desktop_variant() {
-        let from_variants: BTreeSet<&str> = every_desktop_variant()
+        let indices: Vec<usize> = DesktopError::ALL
             .iter()
-            .map(|kind| kind.code())
+            .copied()
+            .map(desktop_error_index)
             .collect();
-        let listed: BTreeSet<&str> = DesktopError::ALL.iter().map(|kind| kind.code()).collect();
 
-        assert_eq!(from_variants, listed);
-        assert_eq!(listed.len(), DesktopError::ALL.len(), "duplicate variant");
+        assert_eq!(indices, (0..DESKTOP_ERROR_COUNT).collect::<Vec<_>>());
     }
 
     #[test]

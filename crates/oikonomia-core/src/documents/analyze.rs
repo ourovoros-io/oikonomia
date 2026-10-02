@@ -1074,26 +1074,28 @@ mod tests {
         assert_eq!(analyzer_status(Some(dir.path())).hint, AnalyzerHint::Ready);
     }
 
-    /// One value of every hint. The `match` has no wildcard arm, so adding a
-    /// variant stops compiling here until it is handled.
-    ///
-    /// This guarantees a new variant is noticed. It does not prove the value
-    /// returned for it is the right one, and it cannot see `ALL` itself.
-    fn every_hint() -> Vec<AnalyzerHint> {
-        let mut hints = Vec::new();
+    /// How many variants [`AnalyzerHint`] has. Kept by hand, next to the index
+    /// below: it is the number the indices must reach.
+    const HINT_COUNT: usize = 2;
 
-        for hint in [AnalyzerHint::Ready, AnalyzerHint::ModelsMissing] {
-            match hint {
-                AnalyzerHint::Ready | AnalyzerHint::ModelsMissing => hints.push(hint),
-            }
+    /// The position of a variant, from an exhaustive `match` with no wildcard
+    /// arm. Adding a variant stops compiling here until it is given the next
+    /// index.
+    fn hint_index(value: AnalyzerHint) -> usize {
+        match value {
+            AnalyzerHint::Ready => 0,
+            AnalyzerHint::ModelsMissing => 1,
         }
-
-        hints
     }
 
+    /// Fails when a variant is missing from `ALL`, repeated, or out of
+    /// order: the indices of the listed variants must be exactly `0..HINT_COUNT`. It
+    /// does not check that `HINT_COUNT` was raised for a new variant.
     #[test]
     fn all_lists_every_hint_variant() {
-        assert_eq!(AnalyzerHint::ALL, every_hint().as_slice());
+        let indices: Vec<usize> = AnalyzerHint::ALL.iter().copied().map(hint_index).collect();
+
+        assert_eq!(indices, (0..HINT_COUNT).collect::<Vec<_>>());
     }
 
     #[test]

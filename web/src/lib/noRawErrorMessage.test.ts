@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
+import { stripComments } from './stripComments.testutil'
 
 /**
  * Guard: screens must not put raw backend error text on screen.
@@ -12,9 +13,14 @@ import { describe, expect, test } from 'vitest'
  *
  * This is a tripwire, not a proof. It scans source text for the common ways of
  * reaching the message (a `.message` read, destructuring, bracket access,
- * stringifying an error variable, `instanceof Error` branches) and cannot see
+ * stringifying an error variable) and cannot see
  * an alias or a helper that does the same. It catches the careless slip; code
  * review catches the rest.
+ *
+ * `instanceof Error` alone is not flagged: a branch that never reads the
+ * message (`e instanceof Error && e.name === 'AbortError'`) leaks nothing, and
+ * one that does read it is caught by the `.message`, `String(...)`, template
+ * and `toString()` patterns.
  *
  * When it fires on a legitimate field that merely happens to be named
  * `message`, the right fix is to rename that field, not to add an exemption.
@@ -49,16 +55,7 @@ const RAW_MESSAGE_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'template of error', pattern: new RegExp(`\\$\\{\\s*${ERROR_NAMES}\\s*\\}`, 'g') },
   // err.toString()
   { name: 'error.toString()', pattern: new RegExp(`\\b${ERROR_NAMES}\\.toString\\(\\)`, 'g') },
-  // if (err instanceof Error) { ...message... }: the branch exists to read it.
-  { name: 'instanceof Error', pattern: /\binstanceof\s+Error\b/g },
 ]
-
-/** Blank out comments, keeping every newline so reported line numbers stay right. */
-function stripComments(source: string): string {
-  const blank = (match: string) => match.replace(/[^\n]/g, ' ')
-
-  return source.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/(^|\s)\/\/.*$/gm, blank)
-}
 
 /**
  * Every place `source` could put raw error text on screen, as "line: pattern".
@@ -92,7 +89,7 @@ function productionSources(dir: string = SRC_ROOT): string[] {
     }
 
     if (!/\.tsx?$/.test(entry.name)) continue
-    if (/\.test\.tsx?$/.test(entry.name) || entry.name.endsWith('.d.ts')) continue
+    if (/\.(test|testutil)\.tsx?$/.test(entry.name) || entry.name.endsWith('.d.ts')) continue
 
     files.push(path)
   }
@@ -100,30 +97,78 @@ function productionSources(dir: string = SRC_ROOT): string[] {
   return files
 }
 
+/** Just the names of the patterns that fired, in source order. */
+function firedPatterns(source: string): string[] {
+  return rawMessageReads(source).map((hit) => hit.slice(hit.indexOf(': ') + 2))
+}
+
 describe('rawMessageReads', () => {
-  const flagged: Array<[string, string]> = [
-    ['a .message read', "setError(err.message)"],
-    ['an optional .message read', "setError(err?.message)"],
-    ['a .message read split over lines', "const text = error\n    .message"],
-    ['message destructuring', "const { message } = err"],
-    ['renamed message destructuring', "const { message: text } = error"],
-    ['multi-field destructuring', "const { code, message } = asCommandError(err)"],
-    ['multi-line destructuring', "const {\n  code,\n  message,\n} = caught"],
-    ['catch parameter destructuring', "try { run() } catch ({ message }) { show(message) }"],
-    ['bracket access', "setError(err['message'])"],
-    ['double-quoted bracket access', 'setError(error["message"])'],
-    ['String(err)', "setError(String(err))"],
-    ['String(e)', "setError(String(e))"],
-    ['String(cause)', "setError(String( cause ))"],
-    ['template of error', "setError(`Failed: ${error}`)"],
-    ['template of reason', "setError(`${reason}`)"],
-    ['err.toString()', "setError(err.toString())"],
-    ['cause.toString()', "setError(cause.toString())"],
-    ['an instanceof Error branch', "setError(err instanceof Error ? 'x' : 'y')"],
+  // [description, source, the one pattern that must fire]
+  const flagged: Array<[string, string, string]> = [
+    ['a .message read', "setError(err.message)", '.message read'],
+    ['an optional .message read', "setError(err?.message)", '.message read'],
+    ['a .message read split over lines', "const text = error\n    .message", '.message read'],
+    // A UI prop or event field named `message` is flagged on purpose: the scan
+    // cannot tell it from an error's message. The fix is to rename the field
+    // (`text`, `body`, `notice`), not to add an exemption.
+    ['a message prop read', "return <p>{props.message}</p>", '.message read'],
+    ['a nested event field read', "show(event.data.message)", '.message read'],
+    ['message destructuring', "const { message } = err", 'message destructuring'],
+    ['renamed message destructuring', "const { message: text } = error", 'message destructuring'],
+    [
+      'multi-field destructuring',
+      "const { code, message } = asCommandError(err)",
+      'message destructuring',
+    ],
+    ['multi-line destructuring', "const {\n  code,\n  message,\n} = caught", 'message destructuring'],
+    [
+      'catch parameter destructuring',
+      "try { run() } catch ({ message }) { show(message) }",
+      'message destructuring',
+    ],
+    ['bracket access', "setError(err['message'])", 'bracket access'],
+    ['double-quoted bracket access', 'setError(error["message"])', 'bracket access'],
+    ['String(err)', "setError(String(err))", 'String(error)'],
+    ['String(e)', "setError(String(e))", 'String(error)'],
+    ['String(cause)', "setError(String( cause ))", 'String(error)'],
+    ['template of error', "setError(`Failed: ${error}`)", 'template of error'],
+    ['template of reason', "setError(`${reason}`)", 'template of error'],
+    ['err.toString()', "setError(err.toString())", 'error.toString()'],
+    ['cause.toString()', "setError(cause.toString())", 'error.toString()'],
+    [
+      'an instanceof branch that reads the message',
+      "setError(err instanceof Error ? err.message : 'x')",
+      '.message read',
+    ],
+    [
+      'an instanceof branch that stringifies the error',
+      "setError(err instanceof Error ? 'x' : String(err))",
+      'String(error)',
+    ],
+    [
+      'a read after a comment-looking string',
+      'const url = "https://example.com"; show(err.message)',
+      '.message read',
+    ],
+    [
+      'a read after a double slash inside a string',
+      'const a = "x // y"; show(err.message)',
+      '.message read',
+    ],
+    [
+      'a read after a double slash inside a single-quoted string',
+      "const a = 'x // y'; show(err.message)",
+      '.message read',
+    ],
+    [
+      'a read after a double slash inside a template',
+      'const a = `x // ${n}`; show(err.message)',
+      '.message read',
+    ],
   ]
 
-  test.each(flagged)('flags %s', (_name, source) => {
-    expect(rawMessageReads(source)).not.toEqual([])
+  test.each(flagged)('flags %s', (_name, source, pattern) => {
+    expect(firedPatterns(source)).toEqual([pattern])
   })
 
   const allowed: Array<[string, string]> = [
@@ -137,6 +182,11 @@ describe('rawMessageReads', () => {
     ['a template of a non-error', "const label = `${name} (${currency})`"],
     ['toString() of a non-error', "const label = value.toString()"],
     ['instanceof of another class', "if (value instanceof Date) return value"],
+    [
+      'an instanceof Error check that never reads the message',
+      "if (e instanceof Error && e.name === 'AbortError') return",
+    ],
+    ['a bare instanceof Error branch', "const ok = err instanceof Error ? 'x' : 'y'"],
     ['a type with a message field', "type Toast = { message: string }"],
     ['a read inside a line comment', "// err.message is raw backend text"],
     ['a read inside a trailing comment', "run() // never show err.message"],

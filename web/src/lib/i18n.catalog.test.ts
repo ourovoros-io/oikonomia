@@ -4,21 +4,11 @@ import { describe, expect, test } from 'vitest'
 import { CURRENCIES } from './currencies'
 import accountRoles from './accountRoles.json'
 import { KEY_ALIASES, REVERSE_ALIASES, flattenMessages } from './i18n'
+import { stripComments } from './stripComments.testutil'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
 import fr from '../locales/fr.json' with { type: 'json' }
 import de from '../locales/de.json' with { type: 'json' }
-
-/**
- * TEMPORARY. Nested catalog keys that the Rust-text work (tasks 2 to 6 of
- * .superpowers/sdd/i18n-rust-text/plan.md) will either start reading, or
- * delete once Rust owns the text. Until then nothing reads them and English
- * has no twin for them, so the two guards below would fail on them.
- *
- * Later work empties this list, and it must end empty: the final task
- * deletes it together with its exemptions. Do not add keys to it.
- */
-const PENDING_RUST: readonly string[] = []
 
 /**
  * Keys that production code builds at run time, as template literals. Each
@@ -63,8 +53,6 @@ const catalogs = {
 
 const NESTED_LOCALES = ['el', 'fr', 'de'] as const
 
-const pending = new Set(PENDING_RUST)
-
 const enKeys = Object.keys(catalogs.en)
 
 /**
@@ -88,11 +76,7 @@ function twin(locale: keyof typeof catalogs, key: string): string | undefined {
   return spellings(key).find((spelling) => catalogs[locale][spelling] !== undefined)
 }
 
-function isPending(key: string): boolean {
-  return spellings(key).some((spelling) => pending.has(spelling))
-}
-
-/** Production sources only: no tests, no type stubs, no catalogs, not i18n.ts. */
+/** Production sources only: no tests or test helpers, no type stubs, no catalogs, not i18n.ts. */
 function productionSources(dir: string = SRC_ROOT): string[] {
   const files: string[] = []
 
@@ -106,7 +90,7 @@ function productionSources(dir: string = SRC_ROOT): string[] {
     }
 
     if (!/\.tsx?$/.test(entry.name)) continue
-    if (/\.test\.tsx?$/.test(entry.name) || entry.name.endsWith('.d.ts')) continue
+    if (/\.(test|testutil)\.tsx?$/.test(entry.name) || entry.name.endsWith('.d.ts')) continue
     if (path === `${SRC_ROOT}lib/i18n.ts`) continue
 
     files.push(path)
@@ -115,13 +99,13 @@ function productionSources(dir: string = SRC_ROOT): string[] {
   return files
 }
 
-/** Every quoted string that looks like a dotted catalog key. */
+/** Every quoted string in code (not in a comment) that looks like a dotted catalog key. */
 function literalKeys(): Set<string> {
   const found = new Set<string>()
   const quoted = /(['"`])([A-Za-z][\w-]*(?:\.[\w-]+)*)\1/g
 
   for (const file of productionSources()) {
-    for (const match of readFileSync(file, 'utf8').matchAll(quoted)) {
+    for (const match of stripComments(readFileSync(file, 'utf8')).matchAll(quoted)) {
       found.add(match[2])
     }
   }
@@ -174,7 +158,7 @@ describe('catalog readers', () => {
     const read = new Set([...literalKeys(), ...Object.values(DYNAMIC_KEY_FAMILIES).flat()])
 
     const unread = enKeys.filter(
-      (key) => !isPending(key) && !spellings(key).some((spelling) => read.has(spelling)),
+      (key) => !spellings(key).some((spelling) => read.has(spelling)),
     )
 
     expect(unread).toEqual([])
@@ -182,10 +166,6 @@ describe('catalog readers', () => {
 })
 
 describe('catalog parity', () => {
-  test('every pending key exists in the nested catalogs', () => {
-    expect(PENDING_RUST.filter((key) => catalogs.el[key] === undefined)).toEqual([])
-  })
-
   test('el, fr and de have the same keys', () => {
     const elKeys = Object.keys(catalogs.el).sort()
 
@@ -214,7 +194,7 @@ describe('catalog parity', () => {
   test('every English key has a translation in each nested locale', () => {
     const missing = NESTED_LOCALES.flatMap((locale) =>
       enKeys
-        .filter((key) => !isPending(key) && twin(locale, key) === undefined)
+        .filter((key) => twin(locale, key) === undefined)
         .map((key) => `${locale}: ${key}`),
     )
 
@@ -224,9 +204,7 @@ describe('catalog parity', () => {
   test('no nested key lacks an English counterpart', () => {
     const reachable = new Set(enKeys.flatMap((key) => spellings(key)))
 
-    const orphans = Object.keys(catalogs.el).filter(
-      (key) => !reachable.has(key) && !pending.has(key),
-    )
+    const orphans = Object.keys(catalogs.el).filter((key) => !reachable.has(key))
 
     expect(orphans).toEqual([])
   })
@@ -235,8 +213,6 @@ describe('catalog parity', () => {
     const mismatched: string[] = []
 
     for (const key of enKeys) {
-      if (isPending(key)) continue
-
       const english = placeholders(catalogs.en[key])
 
       for (const locale of NESTED_LOCALES) {

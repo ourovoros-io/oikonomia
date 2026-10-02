@@ -43,6 +43,7 @@ import {
 } from '../components/ui'
 import {
   backupCommandError,
+  restoreCommandError,
   canBackupVault,
   restoreConfirm,
   vaultBackupAvailability,
@@ -361,7 +362,7 @@ export function SettingsPage({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setPageError(backupCommandError(err))
+      setPageError(restoreCommandError(err))
     } finally {
       setRestorePicking(false)
     }
@@ -381,7 +382,7 @@ export function SettingsPage({
       setRestoreOpen(false)
       setRestorePath(undefined)
     } catch (err) {
-      setPageError(backupCommandError(err))
+      setPageError(restoreCommandError(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {
