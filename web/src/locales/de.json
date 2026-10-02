@@ -75,18 +75,18 @@
       "dialogTitle": "Update",
       "checking": {
         "title": "Prüfung",
-        "body": "Es wird nach einer neuen Anwendung gesucht."
+        "body": "Es wird nach einer neueren Version gesucht."
       },
       "upToDate": {
         "title": "Sie sind auf dem neuesten Stand",
-        "body": "Das ist das aktuelle Oikonomia."
+        "body": "Sie haben die neueste Version von Oikonomia."
       },
       "available": {
-        "title": "Eine neue Anwendung ist bereit",
+        "title": "Ein Update ist verfügbar",
         "version": "Oikonomia {version}",
         "notesLabel": "Neuigkeiten",
         "size": "{size}",
-        "honesty": "Das ist der einzige Kontakt zum Internet, und nur, um eine neue Anwendung zu holen.",
+        "honesty": "Das ist das einzige Mal, dass Oikonomia sich mit dem Internet verbindet, und nur, um ein Update herunterzuladen.",
         "confirm": "Installieren und neu starten"
       },
       "failed": {
@@ -301,7 +301,7 @@
         },
         "replace": {
           "title": "Lokalen Tresor ersetzen?",
-          "body": "Das Wiederherstellen ersetzt den Tresor auf diesem Computer. Der aktuelle Tresor ist danach weg. Danach ist er gesperrt — entsperren Sie ihn mit Ihrem Hauptpasswort.",
+          "body": "Das Wiederherstellen ersetzt den Tresor auf diesem Computer. Der aktuelle Tresor lässt sich danach nicht wiederherstellen. Anschließend ist der Tresor gesperrt — entsperren Sie ihn mit Ihrem Hauptpasswort.",
           "confirm": "Tresor ersetzen"
         }
       },
@@ -769,14 +769,14 @@
       "sliceNote": "Die 6 größten Kategorien; der Rest in Sonstiges…",
       "emptyTitle": "Keine Ausgaben in diesem Zeitraum",
       "emptyBody": "Für {period} gibt es nichts zu zeigen. Ändern Sie den Zeitraum oder erfassen Sie Ausgaben unter Bewegungen.",
-      "footerPrivacy": "Ihre Bücher verlassen diesen Rechner nie",
+      "footerPrivacy": "Ihre Bücher verlassen diesen Computer nie",
       "footerLocal": "Oikonomia · lokaler Bericht",
       "other": "Sonstiges ({n} Kategorien)",
       "busy": "Exportieren…",
       "error": "Der PDF-Export ist nicht durchgelaufen."
     },
     "statement": {
-      "amountsIn": "Alle Beträge in {currency}"
+      "amountsIn": "{period} · Alle Beträge in {currency}"
     },
     "pnl": {
       "title": "Gewinn- und Verlustrechnung",

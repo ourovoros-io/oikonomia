@@ -792,7 +792,7 @@ describe('TransactionsPage summary', () => {
       expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ accountId: select.options[1]?.value }))
     })
     expect(api.cashFlowSeries).toHaveBeenLastCalledWith('e1', null, null)
-    expect(screen.getByText("The account and search filters don't change this summary.")).toBeInTheDocument()
+    expect(screen.getByText("The account and search filters don’t change this summary.")).toBeInTheDocument()
   })
 
   test('an inverted date range draws nothing and says why', async () => {
