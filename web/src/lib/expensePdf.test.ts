@@ -244,15 +244,34 @@ describe('buildExpensePdfBytes in every language', () => {
 })
 
 describe('pdfExportErrorMessage', () => {
+  test('logs the raw cause of an export failure, which the sentence hides', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    pdfExportErrorMessage({ code: 'save_failed', message: 'ENOSPC /tmp/x.pdf' })
+    pdfExportErrorMessage({ code: 'io', message: 'EACCES /tmp/y.pdf' })
+
+    expect(warn).toHaveBeenCalledTimes(2)
+    expect(warn.mock.calls[0][0]).toContain('ENOSPC /tmp/x.pdf')
+    expect(warn.mock.calls[1][0]).toContain('EACCES /tmp/y.pdf')
+  })
+
   test('maps io by code only', () => {
     expect(pdfExportErrorMessage({ code: 'io', message: 'EACCES /tmp/x.pdf' })).toBe(
       'Could not export the PDF.',
     )
-    expect(pdfExportErrorMessage({ code: 'validation', message: 'invalid file data' })).toBe(
-      'Could not export the PDF.',
-    )
+    for (const code of ['save_location_invalid', 'save_failed', 'file_data_invalid', 'file_too_large']) {
+      expect(pdfExportErrorMessage({ code, message: 'invalid file data' })).toBe(
+        'Could not export the PDF.',
+      )
+    }
     expect(pdfExportErrorMessage({ code: 'vault_locked', message: 'Vault is locked' })).toBe(
-      'Vault is locked',
+      'The vault is locked.',
+    )
+  })
+
+  test('an unknown code shows the PDF fallback, never the raw message', () => {
+    expect(pdfExportErrorMessage({ code: 'brand_new', message: 'EACCES /tmp/x.pdf' })).toBe(
+      'Could not export the PDF.',
     )
   })
 })

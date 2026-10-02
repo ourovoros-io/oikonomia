@@ -8,10 +8,13 @@ use oikonomia_core::csv::{
 };
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_for_post};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts,
     list_entries, post_simple_entry, set_entry_hidden, void_entry,
 };
+use oikonomia_core::prefs::Locale;
+use oikonomia_core::ui_text::{UiText, UiTextCode};
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -38,6 +41,7 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, Accounts) {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");
@@ -138,13 +142,24 @@ fn junk_row_rejected_and_batch_rolls_back() {
     let csv = "Date,Description,Amount\n2026-03-15,Groceries,-25.00\nbad-date,Nope,1.00\n";
     let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
     assert!(preview.rows[0].error.is_none());
-    assert!(preview.rows[1].error.is_some());
+    assert_eq!(
+        preview.rows[1].error,
+        Some(UiText::new(UiTextCode::CsvInvalidDate).with_param("value", "bad-date"))
+    );
+
+    assert_eq!(
+        serde_json::to_value(&preview.rows[1].error).expect("json"),
+        serde_json::json!({
+            "code": "csv_invalid_date",
+            "params": { "value": "bad-date" },
+        })
+    );
 
     let good = preview.rows[0].suggested.clone().expect("good row");
     let mut junk = good.clone();
     junk.amount_minor = 0;
     let err = post_import_rows(conn, &[good, junk], false).expect_err("junk");
-    assert!(matches!(err, Error::Validation(_)));
+    assert_eq!(err, Error::Validation(ValidationError::AmountNotPositive));
     assert_eq!(count_entries(conn, entity_id), 0);
 }
 
@@ -217,7 +232,7 @@ fn export_round_trips_posted_lines_and_marks_voided() {
         to_account_id: None,
     };
     let view = post_simple_entry(conn, &grocery).expect("post");
-    void_entry(conn, view.entry.id).expect("void");
+    void_entry(conn, view.entry.id, Locale::En).expect("void");
 
     let salary = PostSimpleEntry {
         entity_id,

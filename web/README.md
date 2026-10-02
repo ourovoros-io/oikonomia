@@ -18,5 +18,9 @@ npm run preview              # serve the production build locally
 npm run capture:marketing    # marketing screenshots (see marketing/README.md)
 ```
 
+The catalog guard tests in `src/lib` (`i18n.catalog.test.ts` and
+`noRawErrorMessage.test.ts`) fail when a translation key is unused or missing
+in a language, or when a screen shows a raw backend error message.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) in the repository root for setup,
 the full quality gate, and the project rules.

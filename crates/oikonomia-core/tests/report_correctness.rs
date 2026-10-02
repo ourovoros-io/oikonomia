@@ -7,11 +7,13 @@
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, ReportLine, balance_sheet, cash_flow_series,
-    create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
+    CreateEntity, CreateJournalLine, PostJournal, ReportLine, SyntheticLine, balance_sheet,
+    cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
     set_account_opening_balance, set_entry_hidden, trial_balance, void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
@@ -38,6 +40,7 @@ fn setup_entity_fy(conn: &Connection, fiscal_year_start_month: u8) -> EntityId {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(fiscal_year_start_month),
         },
+        Locale::En,
     )
     .expect("entity")
     .id
@@ -461,7 +464,7 @@ fn voided_entry_leaves_no_trace_in_trial_balance() {
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let entry_id = post_expense(conn, entity_id, "2026-01-15", 1_000);
-    void_entry(conn, entry_id).expect("void");
+    void_entry(conn, entry_id, Locale::En).expect("void");
 
     let tb = trial_balance(conn, entity_id, "2026-12-31").expect("tb");
     assert!(
@@ -573,11 +576,13 @@ fn pnl_rejects_inverted_and_invalid_dates() {
 
     assert_eq!(
         profit_and_loss(conn, entity_id, "2026-03-31", "2026-03-01").expect_err("inverted"),
-        Error::Validation("from date must be on or before to".into())
+        Error::Validation(ValidationError::DateRangeInverted)
     );
     assert_eq!(
         profit_and_loss(conn, entity_id, "2026-13-01", "2026-03-31").expect_err("bad date"),
-        Error::Validation("invalid date: 2026-13-01".into())
+        Error::Validation(ValidationError::InvalidDate {
+            value: "2026-13-01".into()
+        })
     );
 }
 
@@ -694,6 +699,7 @@ fn opening_balance_is_equity_not_pnl() {
         account_id(conn, entity_id, "1010"),
         250_000,
         "2026-01-01",
+        Locale::En,
     )
     .expect("opening");
     post_expense(conn, entity_id, "2026-02-01", 1_000);
@@ -722,6 +728,7 @@ fn reports_do_not_leak_across_entities() {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("other")
     .id;
@@ -780,7 +787,7 @@ fn voided_entry_leaves_no_trace_on_pnl_or_balance_sheet() {
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let id = post_expense(conn, entity_id, "2026-03-15", 1_000);
-    void_entry(conn, id).expect("void");
+    void_entry(conn, id, Locale::En).expect("void");
 
     let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl");
     assert_eq!(pnl.total_expenses, 0);
@@ -859,6 +866,7 @@ fn company_chart_synthetic_re_does_not_use_the_posted_re_account() {
             chart_template: ChartTemplate::Company,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity")
     .id;
@@ -1004,7 +1012,7 @@ fn randomized_ledgers_with_voids_keep_the_series_equal_to_the_dashboard() {
         )
         .expect("post random");
         if index % 5 == 0 {
-            void_entry(conn, view.entry.id).expect("void random");
+            void_entry(conn, view.entry.id, Locale::En).expect("void random");
         }
     }
 
@@ -1015,4 +1023,61 @@ fn randomized_ledgers_with_voids_keep_the_series_equal_to_the_dashboard() {
     ] {
         assert_series_matches_dashboard(conn, entity_id, from, to);
     }
+}
+
+#[test]
+fn only_the_synthetic_rows_carry_the_synthetic_marker() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-06-01", 1_000);
+
+    // A year later the expense is a prior-period result, so RE appears.
+    let next_year = balance_sheet(conn, entity_id, "2027-01-31").expect("next year");
+    let retained = line(&next_year.equity.lines, "RE");
+    assert_eq!(retained.synthetic, Some(SyntheticLine::RetainedEarnings));
+    assert_eq!(
+        retained.name, "Retained Earnings (prior periods)",
+        "the English name stays for exports and as a fallback"
+    );
+
+    // In the same year it is the current result, so NI appears.
+    let same_year = balance_sheet(conn, entity_id, "2026-12-31").expect("same year");
+    let net_income = line(&same_year.equity.lines, "NI");
+    assert_eq!(net_income.synthetic, Some(SyntheticLine::NetIncome));
+    assert_eq!(net_income.name, "Net Income (current period)");
+
+    let ledger_rows = same_year
+        .assets
+        .lines
+        .iter()
+        .chain(&same_year.liabilities.lines)
+        .chain(same_year.equity.lines.iter().filter(|l| l.code != "NI"));
+    for row in ledger_rows {
+        assert_eq!(row.synthetic, None, "{} is a real account", row.code);
+    }
+
+    // The trial balance lists the same synthetic rows.
+    let trial = trial_balance(conn, entity_id, "2027-01-31").expect("trial");
+    assert_eq!(
+        line(&trial.lines, "RE").synthetic,
+        Some(SyntheticLine::RetainedEarnings)
+    );
+}
+
+#[test]
+fn a_report_line_serializes_its_marker_as_a_snake_case_code() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "2026-06-01", 1_000);
+
+    let sheet = balance_sheet(conn, entity_id, "2026-12-31").expect("sheet");
+    let json = serde_json::to_value(line(&sheet.equity.lines, "NI")).expect("json");
+
+    assert_eq!(json["synthetic"], "net_income");
+    assert_eq!(json["code"], "NI");
+
+    let checking = serde_json::to_value(&sheet.assets.lines[0]).expect("json");
+    assert_eq!(checking["synthetic"], serde_json::Value::Null);
 }

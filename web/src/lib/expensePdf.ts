@@ -4,6 +4,7 @@ import type { PDFFont, PDFPage } from 'pdf-lib'
 import interRegularUrl from '../assets/fonts/Inter-Regular.ttf?url'
 import interSemiBoldUrl from '../assets/fonts/Inter-SemiBold.ttf?url'
 import type { ReportLine } from './api'
+import { asCommandError, commandErrorMessage, logCommandError } from './commandError'
 import { formatMoney } from './money'
 import { buildSlices, vizHex, type ExpenseSlice } from './expenseSlices'
 import { getLocale, t, type Locale } from './i18n'
@@ -641,7 +642,22 @@ export async function buildExpensePdfBytes(input: ExpensePdfInput): Promise<Uint
   return pdf.save()
 }
 
-export function pdfExportErrorMessage(err: { code?: string; message?: string }): string {
-  if (err.code === 'io' || err.code === 'validation') return t('reports.pdf.error')
-  return err.message || t('reports.pdf.error')
+/** Failures of the save step show the PDF sentence; any other code shows its own copy. */
+export function pdfExportErrorMessage(err: unknown): string {
+  const exportFailureCodes = [
+    'save_location_invalid',
+    'save_failed',
+    'file_data_invalid',
+    'file_too_large',
+  ]
+  const code = asCommandError(err).code
+
+  if (exportFailureCodes.includes(code)) {
+    // The sentence hides the cause; keep it for diagnosis.
+    logCommandError(err)
+
+    return t('reports.pdf.error')
+  }
+
+  return commandErrorMessage(err, 'reports.pdf.error')
 }

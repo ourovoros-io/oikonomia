@@ -4,7 +4,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Account, Entity, RecurringTemplate } from '../lib/api'
+import type { Account, AccountDefaults, Entity, RecurringTemplate } from '../lib/api'
 
 vi.mock('../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/api')>()
@@ -18,6 +18,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       recurringDelete: vi.fn(),
       recurringPost: vi.fn(),
       accountList: vi.fn(),
+      accountDefaults: vi.fn(),
     },
   }
 })
@@ -85,6 +86,17 @@ const payroll = template({
   category_account_id: 'inc1',
 })
 
+const DEFAULTS: AccountDefaults = {
+  category: 'exp1',
+  payment: 'w1',
+  deposit: 'w1',
+  income: 'inc1',
+  bill_category: 'exp1',
+  bills_payable: null,
+  transfer_source: 'w1',
+  transfer_destination: 'w1',
+}
+
 afterEach(() => {
   cleanup()
   resetI18nForTests()
@@ -109,6 +121,7 @@ beforeEach(() => {
     is_voided: false,
   })
   vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
+  vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)
 })
 
 async function renderPage(onBack = vi.fn()) {
@@ -125,11 +138,11 @@ describe('RecurringPage empty state', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Recurring' })).toBeTruthy()
     expect(screen.getAllByRole('heading', { name: 'Recurring' }).length).toBeGreaterThan(0)
     expect(screen.getByRole('heading', { name: 'Templates' })).toBeTruthy()
-    expect(screen.getByText('A lightweight recipe — not a second ledger.')).toBeTruthy()
+    expect(screen.getByText('A lightweight template — not a second ledger.')).toBeTruthy()
     expect(screen.getByText('No recurring templates yet')).toBeTruthy()
     expect(
       screen.getByText(
-        'Save rent, payroll, utilities, or a subscription as a recipe. You post each occurrence when it is due.',
+        'Save rent, payroll, utilities, or a subscription as a template. You post each occurrence when it is due.',
       ),
     ).toBeTruthy()
     expect(screen.getByText('0 templates · local only')).toBeTruthy()
@@ -181,7 +194,7 @@ describe('RecurringPage new template modal', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'New template' })).toBeTruthy()
     })
-    expect(screen.getAllByText('A lightweight recipe — not a second ledger.').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('A lightweight template — not a second ledger.').length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: 'Expense' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Income' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Bill' })).toBeTruthy()
@@ -262,6 +275,41 @@ describe('RecurringPage new template modal', () => {
       cadence: 'weekly',
       day_of_month: null,
     })
+  })
+})
+
+describe('RecurringPage default accounts', () => {
+  test('the form preselects the accounts account_defaults returned', async () => {
+    // Neither default is the first account of its type: only Rust's answer
+    // can pick them.
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'exp2', name: 'Λογαριασμός 5300', account_type: 'expense', code: '5300' }),
+      account({ id: 'w2', name: 'Λογαριασμός 1010', account_type: 'asset', code: '1010' }),
+    ])
+    vi.mocked(api.accountDefaults).mockResolvedValue({
+      ...DEFAULTS,
+      bill_category: 'exp2',
+      payment: 'w2',
+      transfer_source: 'w2',
+      transfer_destination: 'w1',
+    })
+
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Category')).toHaveValue('exp2')
+    })
+    expect(screen.getByLabelText('From account')).toHaveValue('w2')
+    expect(api.accountDefaults).toHaveBeenCalledWith('e1')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('To')).toHaveValue('w1')
+    })
+    expect(screen.getByLabelText('From account')).toHaveValue('w2')
   })
 })
 

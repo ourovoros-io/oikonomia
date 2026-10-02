@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
-import { isTauri, type CommandError } from './tauri'
+import { asCommandError } from './commandError'
+import { isTauri } from './tauri'
+import type { UiText } from './uiText'
 
 export type ChartTemplate = 'personal' | 'company' | 'blank'
 export type AccountType = 'asset' | 'liability' | 'equity' | 'income' | 'expense'
@@ -22,6 +24,22 @@ export type Account = {
   is_active: boolean
   is_system: boolean
   sort_order: number
+}
+
+/**
+ * The default account for each role the entry forms need, chosen by Rust from
+ * the seeded account's template code and type, never from its name. A role is
+ * null only when the book has no active account of the type it needs.
+ */
+export type AccountDefaults = {
+  category: string | null
+  payment: string | null
+  deposit: string | null
+  income: string | null
+  bill_category: string | null
+  bills_payable: string | null
+  transfer_source: string | null
+  transfer_destination: string | null
 }
 
 export type Money = { amount_minor: number }
@@ -51,6 +69,9 @@ export type PostedEntryView = {
   is_voided: boolean
 }
 
+/** Which computed row a report line is; the UI shows the translated label. */
+export type SyntheticLine = 'retained_earnings' | 'net_income'
+
 export type ReportLine = {
   code: string
   name: string
@@ -58,6 +79,8 @@ export type ReportLine = {
   debit_minor: number
   credit_minor: number
   balance_minor: number
+  /** Set on a computed row (retained earnings, net income) that has no account behind it. */
+  synthetic?: SyntheticLine | null
 }
 
 export type TrialBalance = {
@@ -80,7 +103,6 @@ export type PnL = {
 }
 
 export type BalanceSheetSection = {
-  title: string
   lines: ReportLine[]
   total: number
 }
@@ -161,32 +183,6 @@ export type RegisterLine = {
   credit_minor: number
   balance_minor: number
   hidden: boolean
-}
-
-function asCommandError(err: unknown): CommandError {
-  if (typeof err === 'string') {
-    return { code: 'unknown', message: err }
-  }
-  if (err && typeof err === 'object') {
-    const obj = err as Record<string, unknown>
-    // Tauri often wraps payload as { message, code } or { error, ... }
-    if (typeof obj.message === 'string') {
-      return {
-        code: typeof obj.code === 'string' ? obj.code : 'unknown',
-        message: obj.message,
-      }
-    }
-    if (typeof obj.error === 'string') {
-      return { code: 'unknown', message: obj.error }
-    }
-  }
-  if (err instanceof Error) {
-    return { code: 'unknown', message: err.message }
-  }
-  return {
-    code: 'unknown',
-    message: String(err),
-  }
 }
 
 async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -309,6 +305,8 @@ export const api = {
   entityDelete: (id: string) => call<void>('entity_delete', { id }),
 
   accountList: (entityId: string) => call<Account[]>('account_list', { entityId }),
+  accountDefaults: (entityId: string) =>
+    call<AccountDefaults>('account_defaults', { entityId }),
   accountCreate: (input: {
     entity_id: string
     code: string
@@ -539,10 +537,13 @@ export const api = {
     }),
 }
 
+/** Which status line the analyzer shows; the UI words it (see uiText.ts). */
+export type AnalyzerHint = 'ready' | 'models_missing'
+
 export type AnalyzerStatus = {
   ocr_available: boolean
   offline: boolean
-  hint: string
+  hint: AnalyzerHint
 }
 
 export type DocumentSuggestion = {
@@ -559,7 +560,8 @@ export type DocumentSuggestion = {
   wallet_account_id: string | null
   payable_account_id: string | null
   confidence: number
-  notes: string
+  /** One coded note per sentence; the UI words them (see uiText.ts). */
+  notes: UiText[]
 }
 
 export type DocumentMeta = {
@@ -615,7 +617,8 @@ export type CsvImportPreview = {
 export type CsvImportPreviewRow = {
   source_row: number
   duplicate: boolean
-  error: string | null
+  /** Why the row cannot be imported, as a code the UI words with `renderUiText`. */
+  error: UiText | null
   suggested: SimpleEntryInput | null
   signed_amount_minor: number | null
 }

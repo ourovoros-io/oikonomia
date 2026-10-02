@@ -1,6 +1,5 @@
 {
   "app": {
-    "htmlTitle": "Oikonomia",
     "nav": {
       "dashboard": "Übersicht",
       "transactions": "Buchungen",
@@ -15,7 +14,6 @@
     },
     "loading": "Laden…",
     "brand": {
-      "name": "Oikonomia",
       "tagline": "Lokales Journal"
     },
     "book": {
@@ -35,9 +33,6 @@
       "aria": "Tresor sperren",
       "busy": "Sperren…",
       "label": "Sperren"
-    },
-    "logo": {
-      "aria": "Oikonomia"
     },
     "chartTemplate": {
       "personal": "privat",
@@ -72,7 +67,6 @@
     "support": "Brauchen Sie Hilfe? Schreiben Sie an {email}.",
     "update": {
       "button": "Nach Update suchen",
-      "dialogTitle": "Update",
       "checking": {
         "title": "Prüfung",
         "body": "Es wird nach einer neueren Version gesucht."
@@ -84,8 +78,6 @@
       "available": {
         "title": "Ein Update ist verfügbar",
         "version": "Oikonomia {version}",
-        "notesLabel": "Neuigkeiten",
-        "size": "{size}",
         "honesty": "Das ist das einzige Mal, dass Oikonomia sich mit dem Internet verbindet, und nur, um ein Update herunterzuladen.",
         "confirm": "Installieren und neu starten"
       },
@@ -107,7 +99,6 @@
     }
   },
   "quickAdd": {
-    "windowTitle": "Schnellerfassung",
     "loading": "Laden…",
     "locked": {
       "body": "Der Tresor ist gesperrt",
@@ -116,20 +107,14 @@
     "success": {
       "saved": "{kind} {money} gespeichert"
     },
-    "page": {
-      "loading": "Laden"
-    },
     "empty": {
-      "body": "Legen Sie zuerst ein Buch an",
-      "open": "Öffnen"
+      "body": "Legen Sie zuerst ein Buch an"
     },
     "kind": {
       "expense": "Ausgabe",
       "income": "Einnahme",
       "bill": "Rechnung",
       "transfer": "Umbuchung",
-      "expenseShort": "Ausgabe",
-      "incomeShort": "Einnahme",
       "billShort": "Rechn.",
       "transferShort": "Umb."
     },
@@ -148,7 +133,6 @@
       "aria": "Buchungsart"
     },
     "amount": {
-      "placeholder": "0.00",
       "aria": "Betrag ({currency})"
     },
     "accounts": {
@@ -183,8 +167,7 @@
       "paid": "Bezahlt"
     },
     "memo": {
-      "placeholder": "Notiz",
-      "aria": "Notiz"
+      "placeholder": "Notiz"
     },
     "drop": {
       "hint": "Ablegen"
@@ -206,27 +189,23 @@
       "pickWallet": "Bitte Konto wählen",
       "pickPayable": "Bitte Verbindlichkeit wählen",
       "pickDifferent": "Bitte unterschiedliche Konten wählen"
-    },
-    "hidden": {
-      "label": "Ausgeblendet"
     }
   },
   "settings": {
     "header": {
-      "eyebrow": "Arbeitsbereich",
       "title": "Einstellungen",
-      "description": "Bücher, Sicherheit und Vorgaben",
-      "meta": "Nur lokaler Tresor"
+      "description": "Bücher, Sicherheit und Vorgaben"
     },
     "language": {
       "title": "Sprache",
-      "description": "Menüs, Bezeichnungen und Schnellerfassung. Kontonamen und einige Meldungen bleiben auf Englisch.",
+      "description": "Menüs, Bezeichnungen und Schnellerfassung. Neue Bücher und neu erzeugte Buchungen verwenden diese Sprache; Vorhandenes bleibt unverändert.",
       "option": {
         "en": "English",
         "el": "Ελληνικά",
         "fr": "Français",
         "de": "Deutsch"
-      }
+      },
+      "error": "Die Sprache konnte nicht geändert werden."
     },
     "support": {
       "title": "Support",
@@ -311,7 +290,8 @@
         "wouldOverwrite": "Auf diesem Computer gibt es schon einen Tresor. Bestätigen Sie das Ersetzen, um fortzufahren.",
         "notFound": "Sicherungsdatei nicht gefunden.",
         "io": "Die Sicherungsdatei ließ sich nicht lesen oder schreiben.",
-        "generic": "Die Sicherung konnte nicht abgeschlossen werden."
+        "generic": "Die Sicherung konnte nicht abgeschlossen werden.",
+        "restoreGeneric": "Die Sicherung konnte nicht wiederhergestellt werden."
       }
     },
     "entities": {
@@ -326,8 +306,7 @@
       "deleteTitle": "Löschen",
       "deleteConfirm": {
         "title": "Buch löschen?",
-        "body": "„{name}“ und alle Konten und Buchungen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
-        "confirm": "Löschen"
+        "body": "„{name}“ und alle Konten und Buchungen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen."
       },
       "deleteError": "Das Buch konnte nicht gelöscht werden"
     },
@@ -352,46 +331,16 @@
           "description": "Mit leerem Kontenplan beginnen"
         }
       },
-      "cancel": "Abbrechen",
       "submit": "Buch anlegen",
       "busy": "Wird angelegt…"
     }
   },
-  "tray": {
-    "menu": {
-      "open": "Oikonomia öffnen",
-      "quit": "Oikonomia beenden"
-    },
-    "tooltip": "Oikonomia"
-  },
-  "native": {
-    "window": {
-      "mainTitle": "Oikonomia"
-    },
-    "dialog": {
-      "filter": {
-        "backup": "Oikonomia-Sicherung"
-      },
-      "error": {
-        "invalidSave": "ungültiger Speicherort: {error}",
-        "invalidBackup": "ungültiger Sicherungsort: {error}",
-        "invalidFileData": "ungültige Dateidaten: {error}",
-        "readDropped": "die abgelegte Datei ließ sich nicht lesen: {error}",
-        "readDroppedShort": "abgelegte Datei nicht lesbar: {error}",
-        "saveFile": "Datei konnte nicht gespeichert werden: {error}",
-        "bgTask": "Hintergrundaufgabe fehlgeschlagen: {error}"
-      }
-    }
-  },
   "dialog": {
     "confirm": {
-      "default": "Bestätigen",
-      "cancel": "Abbrechen",
-      "busy": "Wird ausgeführt…"
+      "default": "Bestätigen"
     },
     "modal": {
-      "closeAria": "Schließen",
-      "closeTitle": "Schließen"
+      "closeAria": "Schließen"
     }
   },
   "date": {
@@ -491,7 +440,6 @@
       "title": "Legen Sie ein Buch an, um zu starten",
       "body": "Legen Sie unter Einstellungen ein privates oder ein Firmenbuch an. Jedes Buch hat einen eigenen Kontenplan und eigene Berichte."
     },
-    "eyebrow": "Übersicht",
     "period": {
       "month": "Monat",
       "year": "Jahr",
@@ -503,13 +451,8 @@
         "quarter": "Quartal"
       }
     },
-    "meta": {
-      "encrypted": "Verschlüsselter Tresor · nur lokal"
-    },
     "hero": {
       "netLabel": "Saldo in diesem {period}",
-      "body": "Einnahmen minus Ausgaben in diesem {period}. Legen Sie Rechnungen unter Buchungen ab für Offline-OCR, oder buchen Sie von Hand.",
-      "ocr": "Offline-Rechnungsleser",
       "entryCount": "{n} Buchungen in diesem {period}",
       "kept": "Sie haben {percent} % von allem behalten, was hereinkam."
     },
@@ -536,35 +479,14 @@
       },
       "top": { "label": "Größte Ausgabe", "none": "Noch keine Ausgaben" }
     },
-    "flow": {
-      "income": "Einnahmen",
-      "expenses": "Ausgaben",
-      "footnote": "Zufluss gegen Abfluss (Bewegung der Periode). Das Vermögen darunter sind die Bestände von heute."
-    },
-    "metric": {
-      "assets": "Gesamtvermögen",
-      "assetsHint": "Stand heute",
-      "income": "Einnahmen",
-      "expenses": "Ausgaben",
-      "thisMonth": "Dieser Monat",
-      "thisYear": "Dieses Jahr",
-      "net": "Ergebnis",
-      "netHint": "Einnahmen − Ausgaben"
-    },
     "activity": {
       "title": "Letzte Aktivität",
-      "description": "Buchungen in diesem {period}",
-      "loading": "Laden…",
       "empty": "In diesem {period} noch keine Buchungen. Legen Sie eine unter Buchungen an."
     }
   },
   "entry": {
     "kind": {
-      "income": "Einnahme",
-      "expense": "Ausgabe",
-      "transfer": "Umbuchung",
-      "other": "Sonstiges",
-      "bill": "Rechnung"
+      "other": "Sonstiges"
     }
   },
   "common": {
@@ -578,10 +500,7 @@
   },
   "documents": {
     "header": {
-      "eyebrow": "Tresor",
-      "title": "Dokumente",
-      "description": "Jede Datei, die im verschlüsselten Tresor dieses Buchs liegt.",
-      "meta": "Verschlüsselt gespeichert"
+      "title": "Dokumente"
     },
     "empty": {
       "title": "Noch keine Dokumente",
@@ -604,16 +523,14 @@
       "busy": "Speichern…"
     },
     "delete": {
-      "aria": "Dokument löschen",
-      "title": "Löschen"
+      "aria": "Dokument löschen"
     },
     "deleteConfirm": {
       "title": "Dokument löschen?",
       "body": {
         "list": "Die Datei wird dauerhaft aus Ihrem Tresor entfernt. Das lässt sich nicht rückgängig machen. Die Buchungen bleiben unberührt.",
         "detail": "Die Datei wird dauerhaft aus Ihrem Tresor gelöscht. Das lässt sich nicht rückgängig machen. Die Buchung bleibt."
-      },
-      "confirm": "Löschen"
+      }
     },
     "error": {
       "delete": "Das Dokument konnte nicht gelöscht werden",
@@ -637,7 +554,8 @@
       "noFiles": "An dieser Buchung hängt keine Datei.",
       "edit": "Buchung bearbeiten",
       "ref": " · Ref. {reference}",
-      "attachError": "Die Datei konnte nicht angehängt werden"
+      "attachError": "Die Datei konnte nicht angehängt werden",
+      "updateError": "Die Buchung konnte nicht aktualisiert werden"
     }
   },
   "dropzone": {
@@ -656,15 +574,12 @@
   },
   "files": {
     "error": {
-      "read": "Die Datei ließ sich nicht lesen"
+      "read": "Die Datei ließ sich nicht lesen."
     }
   },
   "accounts": {
     "header": {
-      "eyebrow": "Plan",
-      "title": "Konten",
-      "description": "Kontenplan für {name}",
-      "meta": "{n} aktiv"
+      "title": "Konten"
     },
     "add": {
       "close": "Schließen",
@@ -695,8 +610,7 @@
       "name": "Name",
       "namePlaceholder": "Kontoname",
       "type": "Art",
-      "submit": "Konto anlegen",
-      "busy": "Speichern…"
+      "submit": "Konto anlegen"
     },
     "balance": {
       "title": "Saldo setzen — {name}",
@@ -704,11 +618,8 @@
       "description": "Geben Sie an, was wirklich auf dem Konto liegt; die Differenz wird auf Anfangssalden gebucht",
       "ledgerToday": "Saldo im Journal heute:",
       "actual": "Tatsächlicher Saldo ({currency})",
-      "placeholder": "2.500,00",
       "asOf": "Zum",
       "asOfAria": "Saldo zum Stichtag",
-      "cancel": "Abbrechen",
-      "submit": "Saldo setzen",
       "busy": "Wird gebucht…",
       "error": {
         "invalid": "Geben Sie einen gültigen Betrag ein (z. B. 2.500,00 — negativ ist erlaubt)"
@@ -743,9 +654,7 @@
   },
   "reports": {
     "header": {
-      "eyebrow": "Auswertungen",
-      "title": "Berichte",
-      "description": "Gewinn und Verlust, Bilanz und Saldenliste"
+      "title": "Berichte"
     },
     "tab": {
       "pnl": "GuV",
@@ -791,12 +700,9 @@
       "donutDescription": "Anteil der Ausgaben im Zeitraum nach Kategorie"
     },
     "donut": {
-      "empty": "Keine Ausgaben in diesem Zeitraum.",
-      "total": "Summe Ausgaben",
-      "other": "Sonstiges ({n} Kategorien)"
+      "empty": "Keine Ausgaben in diesem Zeitraum."
     },
     "bs": {
-      "title": "Bilanz",
       "asOf": "Zum {date}",
       "emptySection": "Keine Konten unter {section} mit Bewegung.",
       "totalSection": "Summe {section}",
@@ -806,7 +712,6 @@
       "unbalanced": "Differenz von {amount} — prüfen Sie Buchungen außerhalb des Zeitraums."
     },
     "trial": {
-      "title": "Saldenliste",
       "account": "Konto",
       "debit": "Soll",
       "credit": "Haben",
@@ -825,10 +730,7 @@
   "tx": {
     "recurring": "Wiederkehrend",
     "header": {
-      "eyebrow": "Journal",
-      "title": "Bewegungen",
-      "description": "Erfassen Sie Einnahmen, Ausgaben, Rechnungen und Umbuchungen.",
-      "meta": "Offline-OCR · verschlüsselte Dokumente"
+      "title": "Bewegungen"
     },
     "search": {
       "label": "Suchen",
@@ -846,7 +748,7 @@
       "inView": "Angezeigt · {range}",
       "inViewEmpty": "Angezeigt",
       "wholeBook": "Konto- und Suchfilter ändern diese Übersicht nicht.",
-      "invalidRange": "Das Von-Datum muss vor oder auf dem Bis-Datum liegen."
+      "invalidRange": "Das Von-Datum darf nicht nach dem Bis-Datum liegen."
     },
     "form": {
       "titleNew": "Neue Buchung",
@@ -892,9 +794,6 @@
       "payableAccount": "Konto für offene Rechnungen",
       "noLiability": "Keine Konten für Verbindlichkeiten — legen Sie eines an",
       "payableTip": "Tipp: Legen Sie unter Konten eine Verbindlichkeit namens „Offene Rechnungen“ an. Neue persönliche Bücher haben sie schon.",
-      "from": "Von",
-      "to": "Nach",
-      "cancel": "Abbrechen",
       "save": "Buchung speichern",
       "saveChanges": "Änderungen speichern",
       "busy": "Speichern…",
@@ -907,33 +806,19 @@
       }
     },
     "hidden": {
-      "badge": "Ausgeblendet",
-      "action": {
-        "hide": "Ausblenden",
-        "show": "Einblenden"
-      },
-      "aria": {
-        "hide": "Beim Export ausblenden",
-        "show": "Im Export zeigen"
-      }
+      "badge": "Ausgeblendet"
     },
     "export": {
-      "whisper": "Der Export lässt ausgeblendete Zeilen weg.",
-      "empty": {
-        "hidden": "Nichts zu exportieren. Alle Zeilen sind ausgeblendet."
-      }
+      "whisper": "Der Export lässt ausgeblendete Zeilen weg."
     },
     "void": {
       "title": "Buchung löschen?",
       "body": "Die Buchung verschwindet aus Ihrer Liste. In den Büchern bleibt eine Gegenbuchung zur Prüfung (hier sehen Sie sie nicht).",
-      "confirm": "Löschen",
       "error": "Die Buchung konnte nicht gelöscht werden",
-      "aria": "Buchung löschen",
-      "titleAttr": "Löschen"
+      "aria": "Buchung löschen"
     },
     "list": {
       "title": "Alle Buchungen",
-      "description": "{n} gebucht · {currency}",
       "new": "Neue Buchung",
       "meta": {
         "counts": "{posted} gebucht · {hidden} ausgeblendet"
@@ -949,9 +834,6 @@
     },
     "row": {
       "hasDocument": "Mit Dokument"
-    },
-    "entry": {
-      "openingBalance": "Anfangssaldo — {account}"
     },
     "csv": {
       "import": "CSV importieren",
@@ -1002,6 +884,16 @@
         "bill": "Rechnung",
         "transfer": "Umbuchung"
       },
+      "rowProblem": {
+        "invalidDate": "„{value}“ ist kein gültiges Datum.",
+        "invalidAmount": "„{value}“ ist kein gültiger Betrag.",
+        "invalidType": "„{value}“ ist keine bekannte Art.",
+        "missingDate": "Das Datum fehlt.",
+        "missingAmount": "Der Betrag fehlt.",
+        "zeroAmount": "Der Betrag ist null.",
+        "amountOverflow": "Der Betrag ist zu groß.",
+        "unreadable": "Diese Zeile konnte nicht gelesen werden."
+      },
       "duplicate": "Möglicherweise doppelt",
       "postSelected": "{n} ausgewählte buchen"
     }
@@ -1009,12 +901,12 @@
   "recurring": {
     "title": "Wiederkehrend",
     "templates": "Vorlagen",
-    "subtitle": "Ein schlankes Rezept — kein zweites Journal.",
+    "subtitle": "Eine schlanke Vorlage — kein zweites Journal.",
     "whisper": "nur lokal",
     "new": "Neue Vorlage",
     "backToEntries": "Zurück zu den Buchungen",
     "emptyTitle": "Noch keine wiederkehrenden Vorlagen",
-    "emptyBody": "Legen Sie Miete, Gehalt, Nebenkosten oder ein Abo als Rezept an. Jede Fälligkeit buchen Sie selbst.",
+    "emptyBody": "Legen Sie Miete, Gehalt, Nebenkosten oder ein Abo als Vorlage an. Jede Fälligkeit buchen Sie selbst.",
     "templatesCount": "{n} Vorlagen",
     "dueCount": "{n} fällig",
     "due": "Fällig",
@@ -1062,17 +954,7 @@
       "error": "Die Vorlage konnte nicht gebucht werden."
     }
   },
-  "tauri": {
-    "browser": {
-      "vaultRequired": "Tresor-Befehle brauchen die Desktop-App",
-      "cmdRequired": "{cmd} braucht die Desktop-App"
-    }
-  },
   "error": {
-    "backup": {
-      "notOikonomia": "ist keine Oikonomia-Tresorsicherung",
-      "unsupportedVersion": "nicht unterstützte Sicherungsversion {version}"
-    },
     "vaultUninitialized": "Der Tresor wurde noch nicht eingerichtet.",
     "vaultLocked": "Der Tresor ist gesperrt.",
     "invalidPassword": "Dieses Passwort ist falsch.",
@@ -1082,7 +964,6 @@
     "accountWrongEntity": "Dieses Konto gehört nicht zu diesem Buch.",
     "moneyOverflow": "Dieser Betrag ist zu groß.",
     "negativeMoney": "Dieser Betrag darf nicht negativ sein.",
-    "validation": "Diese Eingabe ist ungültig.",
     "io": "Ein Dateivorgang ist fehlgeschlagen.",
     "crypto": "Ein Sicherheitsvorgang ist fehlgeschlagen.",
     "vaultCorrupt": "Die Tresordatei ist beschädigt.",
@@ -1091,16 +972,64 @@
     "notFound": "Dieses Element wurde nicht gefunden.",
     "analysis": "Die Dokumentanalyse ist fehlgeschlagen.",
     "csvParse": "Diese CSV-Datei konnte nicht gelesen werden.",
-    "unknown": "Etwas ist schiefgelaufen."
+    "unknown": "Etwas ist schiefgelaufen.",
+    "passwordTooShort": "Dieses Passwort ist zu kurz. Verwenden Sie mindestens {min} Zeichen.",
+    "nameRequired": "Ein erforderlicher Name oder Code fehlt. Füllen Sie das Feld aus und versuchen Sie es erneut.",
+    "nameTaken": "Der Name „{name}“ wird bereits verwendet. Wählen Sie einen anderen Namen.",
+    "accountCodeTaken": "Ein anderes Konto in diesem Buch verwendet diesen Code bereits. Wählen Sie einen anderen Code.",
+    "systemAccountProtected": "Systemkonten können nicht deaktiviert werden.",
+    "accountInactive": "Das Konto {code} ist inaktiv. Wählen Sie ein aktives Konto.",
+    "accountRequired": "Wählen Sie ein Konto für „{role}“ aus.",
+    "accountRequiredGeneric": "Wählen Sie für jedes Feld, das die Buchung benötigt, ein Konto aus.",
+    "accountWrongType": "Das Konto {code} kann nicht für „{role}“ verwendet werden. Wählen Sie ein anderes Konto.",
+    "accountWrongTypeGeneric": "Der Kontotyp von {code} passt nicht zu dieser Buchung. Wählen Sie ein anderes Konto.",
+    "sameAccount": "Eine Buchung braucht zwei verschiedene Konten. Ändern Sie eines davon.",
+    "amountNotPositive": "Der Betrag muss größer als null sein.",
+    "billStatusRequired": "Wählen Sie einen Status für diese Rechnung: bezahlt, offen oder Bezahlung einer bestehenden offenen Rechnung.",
+    "invalidDate": "„{value}“ ist kein gültiges Datum. Geben Sie ein existierendes Kalenderdatum ein.",
+    "dateRangeInverted": "Das Von-Datum darf nicht nach dem Bis-Datum liegen.",
+    "dateOutOfRange": "Dieses Datum liegt außerhalb des unterstützten Bereichs. Wählen Sie ein Datum näher an heute.",
+    "dayOfMonthInvalid": "Geben Sie einen Tag des Monats von 1 bis 31 ein. Nur monatliche Vorlagen verwenden einen Tag des Monats.",
+    "lockTimeoutTooShort": "Die Zeit bis zur automatischen Sperre muss mindestens {min_secs} Sekunden betragen.",
+    "currencyInvalid": "Geben Sie einen Währungscode aus drei Buchstaben ein, zum Beispiel EUR.",
+    "entryAlreadyVoided": "Diese Buchung wurde bereits gelöscht.",
+    "entryNotPosted": "Nur gebuchte Buchungen können gelöscht werden.",
+    "wrongBook": "Dieses Element gehört zu einem anderen Buch. Wechseln Sie zum richtigen Buch und versuchen Sie es erneut.",
+    "openingBalanceAccountType": "Ein Anfangssaldo lässt sich nur für Vermögens- oder Verbindlichkeitskonten festlegen.",
+    "openingBalanceUnchanged": "Dieses Konto hat bereits diesen Saldo.",
+    "noEquityAccount": "Dieses Buch hat kein Eigenkapitalkonto, gegen das der Anfangssaldo gebucht werden kann. Legen Sie zuerst ein Eigenkapitalkonto an.",
+    "fileEmpty": "Diese Datei ist leer.",
+    "fileTooLarge": "Diese Datei ist zu groß. Das Limit beträgt {max_mb} MB.",
+    "fileTypeUnsupported": "Dieser Dateityp wird nicht unterstützt. Verwenden Sie PDF, PNG, JPEG, WebP oder reinen Text.",
+    "vaultAlreadyInitialized": "Auf diesem Computer existiert bereits ein Tresor.",
+    "validationInternal": "Die Anfrage konnte nicht verarbeitet werden. Versuchen Sie es erneut.",
+    "fileDataInvalid": "Die Datei konnte nicht gelesen werden. Wählen Sie sie erneut aus.",
+    "fileUnreadable": "Die Datei konnte nicht gelesen werden. Prüfen Sie, ob sie noch existiert und Sie sie öffnen können.",
+    "saveLocationInvalid": "Dieser Speicherort kann nicht verwendet werden. Wählen Sie einen anderen.",
+    "saveFailed": "Die Datei konnte nicht gespeichert werden. Prüfen Sie, ob der Speicherort beschreibbar ist, und versuchen Sie es erneut.",
+    "pathNotGranted": "Diese Datei wurde nicht in der App ausgewählt. Wählen Sie sie erneut mit der Dateiauswahl.",
+    "mailClientFailed": "Ihr E-Mail-Programm ließ sich nicht öffnen.",
+    "taskFailed": "Im Hintergrund ist etwas schiefgelaufen. Versuchen Sie es erneut.",
+    "update": "Die Suche nach Updates oder die Installation ist fehlgeschlagen. Versuchen Sie es später erneut.",
+    "role": {
+      "category": "Kategorie (wofür)",
+      "payment": "Bezahlt von",
+      "deposit": "Eingegangen auf",
+      "income": "Art der Einnahme",
+      "bill_category": "Kategorie der Rechnung",
+      "bills_payable": "Konto für offene Rechnungen",
+      "transfer_source": "Umbuchung von",
+      "transfer_destination": "Umbuchung auf"
+    }
   },
   "analyze": {
     "hint": {
       "ready": "Integrierter Offline-Rechnungsleser + OCR — nichts verlässt dieses Gerät.",
-      "missingModels": "Im App-Paket fehlen OCR-Modelle. Text-PDFs nutzt weiterhin der Offline-Rechnungsleser."
+      "missingModels": "Im App-Paket fehlen OCR-Modelle. Text-PDFs werden weiterhin vom Offline-Rechnungsleser gelesen."
     },
     "notes": {
       "noText": "Aus dieser Datei ließ sich kein Text lesen.",
-      "amountCurrency": "Die Betragserkennung geht von Währungen mit 2 Dezimalstellen aus; tragen Sie den Betrag {currency} selbst ein.",
+      "amountCurrency": "Die Betragserkennung geht von Währungen mit 2 Dezimalstellen aus; tragen Sie den Betrag in {currency} selbst ein.",
       "datedFromDoc": "Die Buchung erhält das Datum {date} (aus dem Dokument) und zählt in diesen Monat — ändern Sie das Datum, wenn Sie einen anderen Zeitraum möchten.",
       "addPayable": "Legen Sie unter Verbindlichkeiten ein Konto „Offene Rechnungen“ für unbezahlte Rechnungen an.",
       "pdfBudget": "Das PDF überschreitet das Seiten- oder Größenlimit; füllen Sie die Felder selbst aus.",
@@ -1109,7 +1038,7 @@
       "ocrModelsMissing": "Die mitgelieferten OCR-Modelle fehlen. Nutzen Sie ein Text-PDF oder füllen Sie die Felder selbst aus.",
       "ocrRead": "Mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern.",
       "ocrLittleText": "Die OCR ist durchgelaufen, hat aber wenig Text gefunden — füllen Sie das Formular bei Bedarf selbst aus.",
-      "ocrError": "OCR-Fehler: {error}. Sie können die Felder selbst ausfüllen.",
+      "ocrError": "Die OCR ist fehlgeschlagen. Sie können die Felder trotzdem selbst ausfüllen.",
       "ocrPdfImage": "Eingebettetes PDF-Bild mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern."
     },
     "invoice": {
@@ -1118,65 +1047,13 @@
         "noTotal": "Kein Gesamtbetrag sicher erkannt — tragen Sie den Betrag ein.",
         "income": "Verkaufs- oder Leistungsrechnung erkannt (Einnahme).",
         "utility": "Versorger- oder Stromrechnung erkannt (Ausgabe).",
-        "unpaid": "Als unbezahlt / offener Betrag vermerkt.",
-        "vatExempt": "Die MwSt. steht auf null / steuerfrei."
-      },
-      "merchant": {
-        "naturalGas": "Erdgas",
-        "electricity": "Stromversorger"
-      },
-      "desc": {
-        "invoiceRefMerchant": "Rechnung {ref} — {merchant}",
-        "invoiceRef": "Rechnung {ref}",
-        "invoice": "Rechnung"
+        "unpaid": "Als Kauf auf Rechnung / offener Betrag vermerkt.",
+        "vatExempt": "Die MwSt. scheint null oder steuerfrei zu sein.",
+        "transferDetected": "Überweisungsbeleg erkannt (Ausgabe).",
+        "transferNoAmount": "Der überwiesene Betrag wurde nicht sicher erkannt — tragen Sie den Betrag ein.",
+        "transferFee": "Die Überweisungsgebühr von {fee} steht auf dem Beleg und ist nicht der gebuchte Betrag.",
+        "transferFeeUnstated": "Auf dem Beleg steht eine Überweisungsgebühr; sie ist nicht der gebuchte Betrag."
       }
-    }
-  },
-  "coa": {
-    "personal": {
-      "1000": "Bargeld",
-      "1010": "Girokonto",
-      "1020": "Sparkonto",
-      "1100": "Geldanlagen",
-      "2000": "Kreditkarte",
-      "2050": "Offene Rechnungen",
-      "2100": "Kredite",
-      "3000": "Anfangssalden",
-      "3100": "Eigenkapital",
-      "4000": "Gehalt",
-      "4100": "Freiberuf",
-      "4200": "Zinsen",
-      "4900": "Sonstige Einnahmen",
-      "5000": "Wohnen",
-      "5100": "Lebensmittel",
-      "5200": "Mobilität",
-      "5300": "Nebenkosten",
-      "5350": "Rechnungen und Dienste",
-      "5400": "Gesundheit",
-      "5500": "Abos",
-      "5600": "Freizeit",
-      "5700": "Steuern",
-      "5900": "Sonstiges"
-    },
-    "company": {
-      "1010": "Bank",
-      "1100": "Forderungen",
-      "1500": "Betriebsausstattung",
-      "2000": "Verbindlichkeiten",
-      "2100": "Kreditkarte",
-      "2200": "Kredite",
-      "2300": "Steuerschulden",
-      "3100": "Eigenkapital",
-      "3200": "Gewinnvortrag",
-      "4000": "Umsätze / Leistungen",
-      "5000": "Wareneinsatz",
-      "5100": "Personal",
-      "5200": "Miete",
-      "5300": "Software",
-      "5400": "Werbung",
-      "5500": "Fremdleistungen",
-      "5600": "Reisekosten",
-      "5900": "Sonstige Betriebskosten"
     }
   }
 }

@@ -699,6 +699,7 @@ mod tests {
                 chart_template: crate::domain::ChartTemplate::Personal,
                 fiscal_year_start_month: Some(1),
             },
+            crate::prefs::Locale::En,
         )
         .expect("entity so WAL has pages");
 

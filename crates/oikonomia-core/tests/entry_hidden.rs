@@ -10,6 +10,7 @@ use oikonomia_core::ledger::{
     get_entry, list_accounts, list_entries, post_simple_entry, profit_and_loss,
     profit_and_loss_export, replace_simple_entry, set_entry_hidden, void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -38,6 +39,7 @@ fn create_book(conn: &Connection, name: &str, template: ChartTemplate) -> Book {
             chart_template: template,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");
@@ -143,7 +145,7 @@ fn export_omits_hidden_keeps_visible_posted_and_voided() {
         ),
     )
     .expect("void seed");
-    void_entry(conn, voided.entry.id).expect("void");
+    void_entry(conn, voided.entry.id, Locale::En).expect("void");
 
     let hidden_voided = post_simple_entry(
         conn,
@@ -157,7 +159,7 @@ fn export_omits_hidden_keeps_visible_posted_and_voided() {
         ),
     )
     .expect("hidden-void seed");
-    void_entry(conn, hidden_voided.entry.id).expect("void hidden");
+    void_entry(conn, hidden_voided.entry.id, Locale::En).expect("void hidden");
     set_entry_hidden(conn, hidden_voided.entry.id, true).expect("hide voided");
 
     let listed = list_entries(conn, book.entity_id, &EntryFilter::default()).expect("list");
@@ -287,7 +289,7 @@ fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
     )
     .expect("post");
     set_entry_hidden(conn, view.entry.id, true).expect("hide");
-    let voided = void_entry(conn, view.entry.id).expect("void");
+    let voided = void_entry(conn, view.entry.id, Locale::En).expect("void");
 
     assert!(!export_mentions(conn, book.entity_id, "Secret"));
     assert!(!export_mentions(conn, book.entity_id, "VOID: Secret"));
@@ -558,8 +560,8 @@ fn replacing_hidden_entry_keeps_replacement_hidden_and_omits_from_export() {
         3_100,
     );
     corrected.description = "SecretReplacement".into();
-    let replacement =
-        replace_simple_entry(conn, hidden.entry.id, &corrected).expect("replace hidden");
+    let replacement = replace_simple_entry(conn, hidden.entry.id, &corrected, Locale::En)
+        .expect("replace hidden");
     assert!(
         replacement.entry.hidden,
         "replacement of a hidden entry stays hidden"
@@ -615,8 +617,8 @@ fn replacing_hidden_entry_keeps_replacement_hidden_and_omits_from_export() {
         1_400,
     );
     visible_fix.description = "VisibleReplacement".into();
-    let visible_repl =
-        replace_simple_entry(conn, visible.entry.id, &visible_fix).expect("replace visible");
+    let visible_repl = replace_simple_entry(conn, visible.entry.id, &visible_fix, Locale::En)
+        .expect("replace visible");
     assert!(!visible_repl.entry.hidden);
     assert!(
         export_mentions(conn, book.entity_id, "VisibleReplacement"),

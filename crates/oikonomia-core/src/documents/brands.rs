@@ -5,6 +5,8 @@
 //! lines, and brand tokens that do survive extraction. Matches are
 //! token-bounded to avoid substrings inside unrelated words.
 
+use crate::text::BillKind;
+
 /// What kind of service a recognized bill covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Service {
@@ -15,13 +17,13 @@ pub(crate) enum Service {
 }
 
 impl Service {
-    /// English display label used in suggested descriptions.
-    pub(crate) fn label(self) -> &'static str {
+    /// The bill kind whose suggested title covers this service.
+    pub(crate) const fn bill_kind(self) -> BillKind {
         match self {
-            Self::Electricity => "Electricity",
-            Self::Gas => "Gas",
-            Self::Telecom => "Telecom",
-            Self::Water => "Water",
+            Self::Electricity => BillKind::Electricity,
+            Self::Gas => BillKind::Gas,
+            Self::Telecom => BillKind::Telecom,
+            Self::Water => BillKind::Water,
         }
     }
 }

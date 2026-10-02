@@ -169,4 +169,51 @@ describe('I18nProvider', () => {
       expect(document.documentElement.lang).toBe('fr')
     })
   })
+
+  test('a failed change whose re-read lands after a newer saved change does not undo it', async () => {
+    let finishReRead: (stored: string) => void = () => undefined
+    const reRead = new Promise<string>((resolve) => {
+      finishReRead = resolve
+    })
+
+    vi.mocked(api.getLocale).mockResolvedValueOnce('en').mockReturnValueOnce(reRead)
+    vi.mocked(api.setLocale).mockRejectedValueOnce(new Error('disk full'))
+    vi.mocked(api.setLocale).mockResolvedValueOnce(undefined)
+
+    function FailureProbe() {
+      const { locale, languageChangeFailed } = useI18n()
+      return (
+        <div>
+          <span>{`locale:${locale}`}</span>
+          <span>{`failed:${String(languageChangeFailed)}`}</span>
+        </div>
+      )
+    }
+
+    render(
+      <I18nProvider>
+        <FailureProbe />
+      </I18nProvider>,
+    )
+    await waitFor(() => {
+      expect(api.getLocale).toHaveBeenCalledTimes(1)
+    })
+
+    setLocale('el')
+    await waitFor(() => {
+      expect(api.getLocale).toHaveBeenCalledTimes(2)
+    })
+
+    setLocale('fr')
+    await waitFor(() => {
+      expect(api.setLocale).toHaveBeenCalledWith('fr')
+    })
+
+    finishReRead('en')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(getLocale()).toBe('fr')
+    expect(screen.getByText('locale:fr')).toBeTruthy()
+    expect(screen.getByText('failed:false')).toBeTruthy()
+  })
 })

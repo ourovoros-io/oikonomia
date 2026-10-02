@@ -51,6 +51,10 @@ cargo tauri dev
   reverses it.
 - Idle auto-lock is enforced by the Rust watchdog (`spawn_auto_lock`), not the UI timer.
 - Tray left-click opens the quick-add companion window (`quick-add` label); right-click is the tray menu.
+- The UI never renders raw backend text. Backend text is a code plus
+  parameters that the UI words, or stored text that core wrote (seeded account
+  names, generated descriptions). Accounts are never chosen by name: defaults
+  come from template code and account type.
 - No emojis in UI chrome, code, or commits.
 
 ## Style

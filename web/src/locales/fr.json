@@ -1,6 +1,5 @@
 {
   "app": {
-    "htmlTitle": "Oikonomia",
     "nav": {
       "dashboard": "Tableau de bord",
       "transactions": "Mouvements",
@@ -15,7 +14,6 @@
     },
     "loading": "Chargement…",
     "brand": {
-      "name": "Oikonomia",
       "tagline": "Grand livre local"
     },
     "book": {
@@ -35,9 +33,6 @@
       "aria": "Verrouiller le coffre",
       "busy": "Verrouillage…",
       "label": "Verrouiller"
-    },
-    "logo": {
-      "aria": "Oikonomia"
     },
     "chartTemplate": {
       "personal": "personnel",
@@ -72,7 +67,6 @@
     "support": "Besoin d’aide ? Écrivez à {email}.",
     "update": {
       "button": "Rechercher une mise à jour",
-      "dialogTitle": "Mise à jour",
       "checking": {
         "title": "Vérification",
         "body": "Recherche d’une version plus récente."
@@ -84,8 +78,6 @@
       "available": {
         "title": "Une mise à jour est disponible",
         "version": "Oikonomia {version}",
-        "notesLabel": "Nouveautés",
-        "size": "{size}",
         "honesty": "C’est la seule fois où Oikonomia se connecte à Internet, et uniquement pour télécharger une mise à jour.",
         "confirm": "Installer et redémarrer"
       },
@@ -107,7 +99,6 @@
     }
   },
   "quickAdd": {
-    "windowTitle": "Saisie rapide",
     "loading": "Chargement",
     "locked": {
       "body": "Le coffre est verrouillé",
@@ -116,20 +107,14 @@
     "success": {
       "saved": "Enregistré {kind} {money}"
     },
-    "page": {
-      "loading": "Chargement"
-    },
     "empty": {
-      "body": "Créez d’abord un livre",
-      "open": "Ouvrir"
+      "body": "Créez d’abord un livre"
     },
     "kind": {
       "expense": "Dépense",
       "income": "Recette",
       "bill": "Facture",
       "transfer": "Virement",
-      "expenseShort": "Dépense",
-      "incomeShort": "Recette",
       "billShort": "Fact.",
       "transferShort": "Vir."
     },
@@ -148,7 +133,6 @@
       "aria": "Type d’écriture"
     },
     "amount": {
-      "placeholder": "0.00",
       "aria": "Montant ({currency})"
     },
     "accounts": {
@@ -183,8 +167,7 @@
       "paid": "Payée"
     },
     "memo": {
-      "placeholder": "Note",
-      "aria": "Note"
+      "placeholder": "Note"
     },
     "drop": {
       "hint": "Déposer"
@@ -206,27 +189,23 @@
       "pickWallet": "Choisissez un portefeuille",
       "pickPayable": "Choisissez un compte à payer",
       "pickDifferent": "Choisissez des comptes différents"
-    },
-    "hidden": {
-      "label": "Masquée"
     }
   },
   "settings": {
     "header": {
-      "eyebrow": "Espace de travail",
       "title": "Paramètres",
-      "description": "Livres, sécurité et préférences",
-      "meta": "Coffre local uniquement"
+      "description": "Livres, sécurité et préférences"
     },
     "language": {
       "title": "Langue",
-      "description": "Menus, libellés et Saisie rapide. Les noms de comptes et certains messages restent en anglais.",
+      "description": "Menus, libellés et Saisie rapide. Les nouveaux livres et les nouvelles écritures générées utilisent cette langue ; ce qui existe déjà n’est pas modifié.",
       "option": {
         "en": "English",
         "el": "Ελληνικά",
         "fr": "Français",
         "de": "Deutsch"
-      }
+      },
+      "error": "Impossible de changer la langue."
     },
     "support": {
       "title": "Assistance",
@@ -311,7 +290,8 @@
         "wouldOverwrite": "Un coffre existe déjà sur cet ordinateur. Confirmez le remplacement pour continuer.",
         "notFound": "Fichier de sauvegarde introuvable.",
         "io": "Impossible de lire ou d’écrire le fichier de sauvegarde.",
-        "generic": "Impossible de terminer la sauvegarde."
+        "generic": "Impossible de terminer la sauvegarde.",
+        "restoreGeneric": "Impossible de restaurer la sauvegarde."
       }
     },
     "entities": {
@@ -326,8 +306,7 @@
       "deleteTitle": "Supprimer",
       "deleteConfirm": {
         "title": "Supprimer l’entité ?",
-        "body": "« {name} » et tous ses comptes et mouvements seront définitivement supprimés. Cette action est irréversible.",
-        "confirm": "Supprimer"
+        "body": "« {name} » et tous ses comptes et mouvements seront définitivement supprimés. Cette action est irréversible."
       },
       "deleteError": "Impossible de supprimer l’entité"
     },
@@ -352,46 +331,16 @@
           "description": "Commencez avec un plan comptable vide"
         }
       },
-      "cancel": "Annuler",
       "submit": "Créer l’entité",
       "busy": "Création…"
     }
   },
-  "tray": {
-    "menu": {
-      "open": "Ouvrir Oikonomia",
-      "quit": "Quitter Oikonomia"
-    },
-    "tooltip": "Oikonomia"
-  },
-  "native": {
-    "window": {
-      "mainTitle": "Oikonomia"
-    },
-    "dialog": {
-      "filter": {
-        "backup": "Sauvegarde Oikonomia"
-      },
-      "error": {
-        "invalidSave": "emplacement d’enregistrement non valide : {error}",
-        "invalidBackup": "emplacement de sauvegarde non valide : {error}",
-        "invalidFileData": "données de fichier non valides : {error}",
-        "readDropped": "impossible de lire le fichier déposé : {error}",
-        "readDroppedShort": "impossible de lire le fichier glissé : {error}",
-        "saveFile": "impossible d’enregistrer le fichier : {error}",
-        "bgTask": "échec de la tâche en arrière-plan : {error}"
-      }
-    }
-  },
   "dialog": {
     "confirm": {
-      "default": "Confirmer",
-      "cancel": "Annuler",
-      "busy": "Exécution…"
+      "default": "Confirmer"
     },
     "modal": {
-      "closeAria": "Fermer",
-      "closeTitle": "Fermer"
+      "closeAria": "Fermer"
     }
   },
   "date": {
@@ -491,7 +440,6 @@
       "title": "Créez un livre pour commencer",
       "body": "Ajoutez une entité personnelle ou d’entreprise dans Paramètres. Chaque entité a son propre plan comptable et ses rapports."
     },
-    "eyebrow": "Aperçu",
     "period": {
       "month": "Mois",
       "year": "Année",
@@ -503,13 +451,8 @@
         "quarter": "de ce trimestre"
       }
     },
-    "meta": {
-      "encrypted": "Coffre chiffré · local uniquement"
-    },
     "hero": {
       "netLabel": "Résultat net {period}",
-      "body": "Recettes moins dépenses {period}. Déposez des factures dans Mouvements pour le lecteur OCR hors ligne, ou saisissez les écritures à la main.",
-      "ocr": "Lecteur de factures hors ligne",
       "entryCount": "{n} écritures {period}",
       "kept": "Vous avez conservé {percent} % de tout ce qui est entré."
     },
@@ -536,35 +479,14 @@
       },
       "top": { "label": "Dépense principale", "none": "Aucune dépense pour l’instant" }
     },
-    "flow": {
-      "income": "Recettes",
-      "expenses": "Dépenses",
-      "footnote": "Entrées et sorties d’argent (activité de la période). L’actif ci-dessous indique les soldes à ce jour."
-    },
-    "metric": {
-      "assets": "Total de l’actif",
-      "assetsHint": "À ce jour",
-      "income": "Recettes",
-      "expenses": "Dépenses",
-      "thisMonth": "Ce mois-ci",
-      "thisYear": "Cette année",
-      "net": "Résultat net",
-      "netHint": "Recettes − dépenses"
-    },
     "activity": {
       "title": "Activité récente",
-      "description": "Écritures {period}",
-      "loading": "Chargement…",
       "empty": "Aucune écriture {period}. Saisissez-en une dans Mouvements."
     }
   },
   "entry": {
     "kind": {
-      "income": "recette",
-      "expense": "dépense",
-      "transfer": "virement",
-      "other": "autre",
-      "bill": "facture"
+      "other": "autre"
     }
   },
   "common": {
@@ -578,10 +500,7 @@
   },
   "documents": {
     "header": {
-      "eyebrow": "Coffre",
-      "title": "Documents",
-      "description": "Chaque fichier conservé dans le coffre chiffré de ce livre.",
-      "meta": "Chiffrés sur le disque"
+      "title": "Documents"
     },
     "empty": {
       "title": "Pas encore de documents",
@@ -604,16 +523,14 @@
       "busy": "Enregistrement…"
     },
     "delete": {
-      "aria": "Supprimer le document",
-      "title": "Supprimer"
+      "aria": "Supprimer le document"
     },
     "deleteConfirm": {
       "title": "Supprimer le document ?",
       "body": {
         "list": "Cela retire définitivement le fichier de votre coffre. Irréversible. Les écritures du journal ne changent pas.",
         "detail": "Cela supprime définitivement le fichier de votre coffre. Irréversible. L’écriture, elle, reste."
-      },
-      "confirm": "Supprimer"
+      }
     },
     "error": {
       "delete": "Impossible de supprimer le document",
@@ -637,7 +554,8 @@
       "noFiles": "Aucune pièce jointe sur cette écriture.",
       "edit": "Modifier l’écriture",
       "ref": " · Réf. {reference}",
-      "attachError": "Impossible de joindre le fichier"
+      "attachError": "Impossible de joindre le fichier",
+      "updateError": "Impossible de mettre à jour l’écriture"
     }
   },
   "dropzone": {
@@ -656,15 +574,12 @@
   },
   "files": {
     "error": {
-      "read": "Impossible de lire le fichier"
+      "read": "Impossible de lire le fichier."
     }
   },
   "accounts": {
     "header": {
-      "eyebrow": "Plan",
-      "title": "Comptes",
-      "description": "Plan comptable de {name}",
-      "meta": "{n} actifs"
+      "title": "Comptes"
     },
     "add": {
       "close": "Fermer",
@@ -682,7 +597,7 @@
     },
     "type": {
       "asset": "Actif",
-      "liability": "Passif",
+      "liability": "Dettes",
       "equity": "Capitaux propres",
       "income": "Recettes",
       "expense": "Dépenses"
@@ -695,8 +610,7 @@
       "name": "Nom",
       "namePlaceholder": "Nom du compte",
       "type": "Type",
-      "submit": "Créer le compte",
-      "busy": "Enregistrement…"
+      "submit": "Créer le compte"
     },
     "balance": {
       "title": "Fixer le solde — {name}",
@@ -704,11 +618,8 @@
       "description": "Indiquez ce que le compte détient vraiment ; l’écart va sur Soldes d’ouverture",
       "ledgerToday": "Solde du journal aujourd’hui :",
       "actual": "Solde réel ({currency})",
-      "placeholder": "2.500,00",
       "asOf": "Au",
       "asOfAria": "Solde à la date",
-      "cancel": "Annuler",
-      "submit": "Fixer le solde",
       "busy": "Comptabilisation…",
       "error": {
         "invalid": "Saisissez un montant valable (ex. 2.500,00 — négatif accepté)"
@@ -743,9 +654,7 @@
   },
   "reports": {
     "header": {
-      "eyebrow": "États",
-      "title": "Rapports",
-      "description": "Résultat, bilan et balance"
+      "title": "Rapports"
     },
     "tab": {
       "pnl": "Résultat",
@@ -791,12 +700,9 @@
       "donutDescription": "Part des dépenses de la période par catégorie"
     },
     "donut": {
-      "empty": "Aucune dépense sur cette période.",
-      "total": "Total des dépenses",
-      "other": "Autres ({n} catégories)"
+      "empty": "Aucune dépense sur cette période."
     },
     "bs": {
-      "title": "Bilan",
       "asOf": "Au {date}",
       "emptySection": "Aucun compte {section} n’a de mouvement.",
       "totalSection": "Total {section}",
@@ -806,7 +712,6 @@
       "unbalanced": "Écart de {amount} — vérifiez les écritures hors période."
     },
     "trial": {
-      "title": "Balance",
       "account": "Compte",
       "debit": "Débit",
       "credit": "Crédit",
@@ -814,7 +719,7 @@
     },
     "section": {
       "assets": "Actif",
-      "liabilities": "Passif",
+      "liabilities": "Dettes",
       "equity": "Capitaux propres"
     },
     "synthetic": {
@@ -825,10 +730,7 @@
   "tx": {
     "recurring": "Récurrents",
     "header": {
-      "eyebrow": "Journal",
-      "title": "Mouvements",
-      "description": "Notez les rentrées, les sorties, les factures et les virements.",
-      "meta": "OCR hors ligne · documents chiffrés"
+      "title": "Mouvements"
     },
     "search": {
       "label": "Recherche",
@@ -846,7 +748,7 @@
       "inView": "Affiché · {range}",
       "inViewEmpty": "Affiché",
       "wholeBook": "Les filtres de compte et de recherche ne modifient pas ce résumé.",
-      "invalidRange": "La date Du doit être antérieure ou égale à la date Au."
+      "invalidRange": "La date « Du » doit être antérieure ou égale à la date « Au »."
     },
     "form": {
       "titleNew": "Nouvelle écriture",
@@ -892,9 +794,6 @@
       "payableAccount": "Compte Factures à payer",
       "noLiability": "Aucun compte de passif — ajoutez-en un",
       "payableTip": "Astuce : dans Comptes, ajoutez un passif nommé « Factures à payer ». Les nouveaux livres Personnels l’ont déjà.",
-      "from": "De",
-      "to": "Vers",
-      "cancel": "Annuler",
       "save": "Enregistrer l’écriture",
       "saveChanges": "Enregistrer les modifications",
       "busy": "Enregistrement…",
@@ -907,33 +806,19 @@
       }
     },
     "hidden": {
-      "badge": "Masquée",
-      "action": {
-        "hide": "Masquer",
-        "show": "Afficher"
-      },
-      "aria": {
-        "hide": "Masquer à l’export",
-        "show": "Afficher dans l’export"
-      }
+      "badge": "Masquée"
     },
     "export": {
-      "whisper": "L’export laisse de côté les lignes masquées.",
-      "empty": {
-        "hidden": "Rien à exporter. Toutes les lignes sont masquées."
-      }
+      "whisper": "L’export laisse de côté les lignes masquées."
     },
     "void": {
       "title": "Supprimer l’écriture ?",
       "body": "L’écriture disparaît de votre liste. Une écriture inverse reste dans les livres pour le contrôle (vous ne la verrez pas ici).",
-      "confirm": "Supprimer",
       "error": "Impossible de supprimer l’écriture",
-      "aria": "Supprimer l’écriture",
-      "titleAttr": "Supprimer"
+      "aria": "Supprimer l’écriture"
     },
     "list": {
       "title": "Toutes les écritures",
-      "description": "{n} enregistrées · {currency}",
       "new": "Nouvelle écriture",
       "meta": {
         "counts": "{posted} enregistrées · {hidden} masquées"
@@ -949,9 +834,6 @@
     },
     "row": {
       "hasDocument": "Document joint"
-    },
-    "entry": {
-      "openingBalance": "Solde d’ouverture — {account}"
     },
     "csv": {
       "import": "Importer un CSV",
@@ -1002,6 +884,16 @@
         "bill": "Facture",
         "transfer": "Virement"
       },
+      "rowProblem": {
+        "invalidDate": "« {value} » n’est pas une date valide.",
+        "invalidAmount": "« {value} » n’est pas un montant valide.",
+        "invalidType": "« {value} » n’est pas un type reconnu.",
+        "missingDate": "La date est manquante.",
+        "missingAmount": "Le montant est manquant.",
+        "zeroAmount": "Le montant est nul.",
+        "amountOverflow": "Le montant est trop élevé.",
+        "unreadable": "Cette ligne n’a pas pu être lue."
+      },
       "duplicate": "Doublon probable",
       "postSelected": "Comptabiliser {n} lignes"
     }
@@ -1009,12 +901,12 @@
   "recurring": {
     "title": "Récurrents",
     "templates": "Modèles",
-    "subtitle": "Une petite recette — pas un second journal.",
+    "subtitle": "Un petit modèle — pas un second journal.",
     "whisper": "local seulement",
     "new": "Nouveau modèle",
     "backToEntries": "Retour aux écritures",
     "emptyTitle": "Pas encore de modèles récurrents",
-    "emptyBody": "Enregistrez un loyer, une paie, des charges ou un abonnement comme recette. Vous comptabilisez chaque occurrence le moment venu.",
+    "emptyBody": "Enregistrez un loyer, une paie, des charges ou un abonnement comme modèle. Vous comptabilisez chaque occurrence le moment venu.",
     "templatesCount": "{n} modèles",
     "dueCount": "{n} dus",
     "due": "Dû",
@@ -1062,17 +954,7 @@
       "error": "La comptabilisation du modèle n’a pas abouti."
     }
   },
-  "tauri": {
-    "browser": {
-      "vaultRequired": "Les commandes du coffre demandent l’application de bureau",
-      "cmdRequired": "{cmd} demande l’application de bureau"
-    }
-  },
   "error": {
-    "backup": {
-      "notOikonomia": "ce n’est pas une sauvegarde de coffre Oikonomia",
-      "unsupportedVersion": "version de sauvegarde {version} non prise en charge"
-    },
     "vaultUninitialized": "Le coffre n’a pas encore été configuré.",
     "vaultLocked": "Le coffre est verrouillé.",
     "invalidPassword": "Ce mot de passe est incorrect.",
@@ -1082,7 +964,6 @@
     "accountWrongEntity": "Ce compte n’appartient pas à ce livre.",
     "moneyOverflow": "Ce montant est trop élevé.",
     "negativeMoney": "Ce montant ne peut pas être négatif.",
-    "validation": "Cette saisie n’est pas valide.",
     "io": "Une opération sur un fichier a échoué.",
     "crypto": "Une opération de sécurité a échoué.",
     "vaultCorrupt": "Le fichier du coffre est corrompu.",
@@ -1091,7 +972,55 @@
     "notFound": "Cet élément est introuvable.",
     "analysis": "L’analyse du document a échoué.",
     "csvParse": "Ce fichier CSV n’a pas pu être lu.",
-    "unknown": "Une erreur est survenue."
+    "unknown": "Une erreur est survenue.",
+    "passwordTooShort": "Ce mot de passe est trop court. Utilisez au moins {min} caractères.",
+    "nameRequired": "Un nom ou un code obligatoire est vide. Renseignez-le, puis réessayez.",
+    "nameTaken": "Le nom « {name} » est déjà utilisé. Choisissez un autre nom.",
+    "accountCodeTaken": "Un autre compte de ce livre utilise déjà ce code. Choisissez un autre code.",
+    "systemAccountProtected": "Les comptes système ne peuvent pas être désactivés.",
+    "accountInactive": "Le compte {code} est inactif. Choisissez un compte actif.",
+    "accountRequired": "Choisissez un compte pour « {role} ».",
+    "accountRequiredGeneric": "Choisissez un compte pour chaque champ que requiert l’écriture.",
+    "accountWrongType": "Le compte {code} ne peut pas être utilisé pour « {role} ». Choisissez un autre compte.",
+    "accountWrongTypeGeneric": "Le type du compte {code} ne convient pas à cette écriture. Choisissez un autre compte.",
+    "sameAccount": "Une écriture nécessite deux comptes différents. Changez l’un des deux.",
+    "amountNotPositive": "Le montant doit être supérieur à zéro.",
+    "billStatusRequired": "Choisissez un état pour cette facture : réglée, non réglée ou règlement d’une facture en attente.",
+    "invalidDate": "« {value} » n’est pas une date valide. Saisissez une date réelle du calendrier.",
+    "dateRangeInverted": "La date « Du » doit être antérieure ou égale à la date « Au ».",
+    "dateOutOfRange": "Cette date est hors de la plage prise en charge. Choisissez une date plus proche d’aujourd’hui.",
+    "dayOfMonthInvalid": "Saisissez un jour du mois de 1 à 31. Seuls les modèles mensuels utilisent un jour du mois.",
+    "lockTimeoutTooShort": "Le délai de verrouillage automatique doit être d’au moins {min_secs} secondes.",
+    "currencyInvalid": "Saisissez un code de devise à trois lettres, par exemple EUR.",
+    "entryAlreadyVoided": "Cette écriture a déjà été supprimée.",
+    "entryNotPosted": "Seules les écritures comptabilisées peuvent être supprimées.",
+    "wrongBook": "Cet élément appartient à un autre livre. Passez au bon livre, puis réessayez.",
+    "openingBalanceAccountType": "Un solde d’ouverture ne peut être défini que sur un compte d’actif ou de passif.",
+    "openingBalanceUnchanged": "Ce compte a déjà ce solde.",
+    "noEquityAccount": "Ce livre n’a aucun compte de capitaux propres pour servir de contrepartie au solde d’ouverture. Ajoutez d’abord un compte de capitaux propres.",
+    "fileEmpty": "Ce fichier est vide.",
+    "fileTooLarge": "Ce fichier est trop volumineux. La limite est de {max_mb} Mo.",
+    "fileTypeUnsupported": "Ce type de fichier n’est pas pris en charge. Utilisez un fichier PDF, PNG, JPEG, WebP ou texte brut.",
+    "vaultAlreadyInitialized": "Un coffre existe déjà sur cet ordinateur.",
+    "validationInternal": "Cette demande n’a pas pu être traitée. Réessayez.",
+    "fileDataInvalid": "Impossible de lire ce fichier. Essayez de le choisir à nouveau.",
+    "fileUnreadable": "Impossible de lire ce fichier. Vérifiez qu’il existe toujours et que vous pouvez l’ouvrir.",
+    "saveLocationInvalid": "Impossible d’utiliser cet emplacement. Choisissez-en un autre.",
+    "saveFailed": "Impossible d’enregistrer le fichier. Vérifiez que l’emplacement est accessible en écriture, puis réessayez.",
+    "pathNotGranted": "Ce fichier n’a pas été choisi dans l’application. Choisissez-le à nouveau avec le sélecteur de fichiers.",
+    "mailClientFailed": "Impossible d’ouvrir votre application de messagerie.",
+    "taskFailed": "Un problème est survenu en arrière-plan. Réessayez.",
+    "update": "Impossible de rechercher ou d’installer la mise à jour. Réessayez plus tard.",
+    "role": {
+      "category": "Catégorie (pour quoi)",
+      "payment": "Payé depuis",
+      "deposit": "Reçu sur",
+      "income": "Type de recette",
+      "bill_category": "Catégorie de facture",
+      "bills_payable": "Compte Factures à payer",
+      "transfer_source": "Virement depuis",
+      "transfer_destination": "Virement vers"
+    }
   },
   "analyze": {
     "hint": {
@@ -1100,7 +1029,7 @@
     },
     "notes": {
       "noText": "Impossible d’extraire le texte de ce fichier.",
-      "amountCurrency": "La détection du montant suppose des devises à 2 décimales ; saisissez le montant {currency} à la main.",
+      "amountCurrency": "La détection du montant suppose des devises à 2 décimales ; saisissez le montant en {currency} à la main.",
       "datedFromDoc": "L’écriture portera la date {date} (d’après le document) et comptera dans ce mois — changez la date si vous voulez une autre période.",
       "addPayable": "Ajoutez un compte de passif « Factures à payer » pour les factures non réglées.",
       "pdfBudget": "Le PDF dépasse la limite de pages ou de flux ; remplissez les champs à la main.",
@@ -1108,8 +1037,8 @@
       "ocrPathMissing": "Le chemin des modèles OCR n’est pas défini.",
       "ocrModelsMissing": "Les modèles OCR intégrés sont introuvables. Utilisez un PDF texte ou remplissez les champs à la main.",
       "ocrRead": "Lu avec l’OCR hors ligne intégré. Vérifiez avant d’enregistrer.",
-      "ocrLittleText": "L’OCR a tourné mais a trouvé peu de texte — remplissez le formulaire à la main si besoin.",
-      "ocrError": "Erreur OCR : {error}. Vous pouvez remplir les champs.",
+      "ocrLittleText": "L’OCR s’est exécuté mais a trouvé peu de texte — remplissez le formulaire à la main si besoin.",
+      "ocrError": "L’OCR a échoué. Vous pouvez tout de même remplir les champs.",
       "ocrPdfImage": "Image PDF lue avec l’OCR intégré. Vérifiez avant d’enregistrer."
     },
     "invoice": {
@@ -1118,65 +1047,13 @@
         "noTotal": "Aucun total n’a été trouvé avec certitude — saisissez le montant.",
         "income": "Facture de vente / de prestation détectée (recette).",
         "utility": "Facture d’énergie / de charges détectée (dépense).",
-        "unpaid": "Marqué comme crédit / montant dû.",
-        "vatExempt": "La TVA apparaît nulle / exonérée."
-      },
-      "merchant": {
-        "naturalGas": "Gaz naturel",
-        "electricity": "Fournisseur d’électricité"
-      },
-      "desc": {
-        "invoiceRefMerchant": "Facture {ref} — {merchant}",
-        "invoiceRef": "Facture {ref}",
-        "invoice": "Facture"
+        "unpaid": "Marqué comme achat à crédit / montant dû.",
+        "vatExempt": "La TVA apparaît nulle / exonérée.",
+        "transferDetected": "Reçu de virement bancaire détecté (dépense).",
+        "transferNoAmount": "Le montant du virement n’a pas été trouvé avec certitude — saisissez le montant.",
+        "transferFee": "Les frais de virement de {fee} figurent sur le reçu et ne sont pas le montant enregistré.",
+        "transferFeeUnstated": "Des frais de virement figurent sur le reçu et ne sont pas le montant enregistré."
       }
-    }
-  },
-  "coa": {
-    "personal": {
-      "1000": "Espèces",
-      "1010": "Compte courant",
-      "1020": "Épargne",
-      "1100": "Placements",
-      "2000": "Carte de crédit",
-      "2050": "Factures à payer",
-      "2100": "Emprunts",
-      "3000": "Soldes d’ouverture",
-      "3100": "Capitaux propres",
-      "4000": "Salaire",
-      "4100": "Activité indépendante",
-      "4200": "Intérêts",
-      "4900": "Autres recettes",
-      "5000": "Logement",
-      "5100": "Alimentation",
-      "5200": "Transports",
-      "5300": "Charges",
-      "5350": "Factures et services",
-      "5400": "Santé",
-      "5500": "Abonnements",
-      "5600": "Loisirs",
-      "5700": "Impôts",
-      "5900": "Autres"
-    },
-    "company": {
-      "1010": "Banque",
-      "1100": "Clients",
-      "1500": "Matériel",
-      "2000": "Fournisseurs",
-      "2100": "Carte de crédit",
-      "2200": "Emprunts",
-      "2300": "Impôts à payer",
-      "3100": "Capital",
-      "3200": "Report à nouveau",
-      "4000": "Ventes / Prestations",
-      "5000": "Coût des ventes",
-      "5100": "Salaires",
-      "5200": "Loyer",
-      "5300": "Logiciels",
-      "5400": "Publicité",
-      "5500": "Honoraires",
-      "5600": "Déplacements",
-      "5900": "Autres charges d’exploitation"
     }
   }
 }

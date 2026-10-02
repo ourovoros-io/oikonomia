@@ -45,6 +45,20 @@ pub enum UpdateError {
 }
 
 impl UpdateError {
+    /// Every code [`UpdateError::code`] can return.
+    ///
+    /// The desktop crate checks this list against the codes the UI has copy for.
+    pub const ALL_CODES: &'static [&'static str] = &[
+        "update_install_not_allowed",
+        "update_missing_public_key",
+        "update_network",
+        "update_manifest_signature",
+        "update_manifest_parse",
+        "update_artifact_url",
+        "update_artifact_integrity",
+        "update_invalid_feed_url",
+    ];
+
     /// Stable machine code for desktop [`CommandError`] mapping.
     #[must_use]
     pub fn code(&self) -> &'static str {
@@ -58,5 +72,41 @@ impl UpdateError {
             Self::ArtifactIntegrity => "update_artifact_integrity",
             Self::InvalidFeedUrl => "update_invalid_feed_url",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdateError;
+    use crate::test_macros::listed_variants;
+
+    listed_variants! {
+        units listed_errors for UpdateError {
+            UpdateError::InstallNotAvailable,
+            UpdateError::MissingPublicKey,
+            UpdateError::Network,
+            UpdateError::ManifestSignature,
+            UpdateError::ManifestParse,
+            UpdateError::ArtifactUrl,
+            UpdateError::ArtifactIntegrity,
+            UpdateError::InvalidFeedUrl,
+        }
+    }
+
+    /// Fails unless `ALL_CODES` is the codes of the variants in the
+    /// `listed_errors` list above, in that order, each once. The compiler
+    /// checks that list against the enum with an exhaustive `match`, so a
+    /// variant added to the enum but left out of the list does not compile. It
+    /// does not check the wording of a code or that the UI has copy for it; the
+    /// desktop crate does.
+    #[test]
+    fn all_codes_lists_exactly_the_code_of_every_variant() {
+        let listed = listed_errors::variants();
+        let codes: Vec<&str> = listed.iter().map(UpdateError::code).collect();
+
+        listed_errors::assert_every_position_once(
+            listed.iter().map(listed_errors::position).collect(),
+        );
+        assert_eq!(codes, UpdateError::ALL_CODES);
     }
 }

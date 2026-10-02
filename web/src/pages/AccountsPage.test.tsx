@@ -192,7 +192,23 @@ describe('AccountsPage register drill-in', () => {
     expect(screen.getByText('Hidden')).toBeTruthy()
   })
 
-  test('register load failure shows ErrorBanner', async () => {
+  test('register load failure shows the localized copy for its code in the ErrorBanner', async () => {
+    vi.mocked(api.accountRegister).mockRejectedValue({
+      code: 'not_found',
+      message: 'account 42 not found',
+    })
+    await renderReady()
+
+    await userEvent.click(screen.getByRole('button', { name: /checking register/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('That item could not be found.')
+    })
+    expect(screen.queryByText(/account 42/)).toBeNull()
+  })
+
+  test('register load failure with an unknown code never shows the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.mocked(api.accountRegister).mockRejectedValue({
       code: 'register_load_boom',
       message: 'could not load register',
@@ -202,8 +218,9 @@ describe('AccountsPage register drill-in', () => {
     await userEvent.click(screen.getByRole('button', { name: /checking register/i }))
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('could not load register')
+      expect(screen.getByRole('alert')).toHaveTextContent('Something went wrong.')
     })
+    expect(screen.queryByText('could not load register')).toBeNull()
   })
 
   test('empty register shows accounts.register.empty copy', async () => {

@@ -4,6 +4,6 @@
   "kind": "expense",
   "merchant": "HELIOS TRADING IKE",
   "bill_unpaid": false,
-  "description": "Έμβασμα — HELIOS TRADING IKE",
+  "description": "Bank transfer — HELIOS TRADING IKE",
   "reference": "F000TO0000000001"
 }

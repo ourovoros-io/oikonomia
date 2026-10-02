@@ -6,35 +6,94 @@
 //! amount, never a clock on `Ημερομηνία Αξίας` or the transfer fee. No network.
 
 use super::analyze::{DocumentSuggestion, EntryKindSuggestion};
+use crate::prefs::Locale;
+use crate::text::{
+    BillKind, bank_transfer_description, bill_description, customer_invoice_description,
+    electricity_supplier_merchant, invoice_reference_description, invoice_word,
+    natural_gas_merchant,
+};
+use crate::ui_text::{UiText, UiTextCode};
+
+/// What the invoice reader found in a document.
+pub(crate) struct InvoiceReading {
+    /// The draft fields and the reader's own notes.
+    pub suggestion: DocumentSuggestion,
+    /// The fee a bank transfer receipt shows, in 2-decimal minor units (cents).
+    ///
+    /// It is data, not a note: the note needs the book's currency, which the
+    /// reader does not know, so the analyzer builds it in one place.
+    pub transfer_fee_minor: Option<i64>,
+    /// The words the suggested category is chosen from: the merchant and
+    /// description, always worded in English.
+    ///
+    /// The suggestion's own merchant and description are written in the app's
+    /// language, and the category must not depend on that language, so the
+    /// category is matched against this text instead. Words taken from the
+    /// document itself are the same in it as in the suggestion.
+    pub category_hint: String,
+}
 
 /// Parse extracted document text into a draft suggestion.
 ///
 /// Bank transfer receipts stay [`EntryKindSuggestion::Expense`]. The
 /// posted amount is the capital debit (`Ποσό Χρέωσης Κεφαλαίου` / `Ποσό:`),
 /// not the fee and not a `hh:mm` time.
+///
+/// The returned notes never mention a transfer fee, even when the receipt
+/// shows one: that note needs the book's currency, so
+/// [`analyze_document_bytes`](super::analyze_document_bytes) adds it. Callers
+/// that need the fee use `read_invoice_text`.
 #[must_use]
-pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
+pub fn parse_invoice_text(text: &str, locale: Locale) -> DocumentSuggestion {
+    read_invoice_text(text, locale).suggestion
+}
+
+/// Parse extracted document text, keeping the detected transfer fee as data.
+///
+/// The suggestion is worded in `locale`; the category hint never is.
+pub(crate) fn read_invoice_text(text: &str, locale: Locale) -> InvoiceReading {
+    let mut reading = read_fields(text, locale);
+
+    if locale != Locale::En {
+        reading.category_hint = read_fields(text, Locale::En).category_hint;
+    }
+
+    reading
+}
+
+/// The merchant and description of a suggestion, joined for keyword matching.
+fn category_hint_of(suggestion: &DocumentSuggestion) -> String {
+    format!(
+        "{} {}",
+        suggestion.merchant.as_deref().unwrap_or(""),
+        suggestion.description.as_deref().unwrap_or("")
+    )
+}
+
+/// Read every field, wording the generated text in `locale`.
+fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
     let normalized = normalize(text);
     let lower_full = normalized.to_lowercase();
     if is_bank_transfer_receipt(&fold_greek(&lower_full)) {
-        return parse_bank_transfer(&normalized);
+        return parse_bank_transfer(&normalized, locale);
     }
 
     let amount_minor = find_total_amount(&normalized, &lower_full);
     let entry_date = find_best_date(&normalized);
     let reference = find_invoice_reference(&normalized, &lower_full);
-    let merchant = find_merchant(&normalized, &lower_full);
+    let merchant = find_merchant(&normalized, &lower_full, locale);
     let description = find_description(
         &normalized,
         &lower_full,
         merchant.as_deref(),
         reference.as_deref(),
+        locale,
     );
     let (kind, bill_unpaid) = classify_kind(&lower_full);
 
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
-    DocumentSuggestion {
+    let suggestion = DocumentSuggestion {
         source: super::analyze::AnalyzeSource::Heuristic,
         model: Some("invoice-parser-v1".into()),
         kind,
@@ -49,6 +108,12 @@ pub fn parse_invoice_text(text: &str) -> DocumentSuggestion {
         payable_account_id: None,
         confidence,
         notes: build_notes(amount_minor, kind, bill_unpaid, &lower_full),
+    };
+
+    InvoiceReading {
+        category_hint: category_hint_of(&suggestion),
+        suggestion,
+        transfer_fee_minor: None,
     }
 }
 
@@ -256,20 +321,17 @@ fn is_bank_transfer_receipt(folded: &str) -> bool {
 }
 
 /// Expense fill for a Greek bank `έμβασμα` / other-bank transfer receipt.
-fn parse_bank_transfer(text: &str) -> DocumentSuggestion {
+fn parse_bank_transfer(text: &str, locale: Locale) -> InvoiceReading {
     let amount_minor = find_transfer_principal(text);
     let entry_date = find_transfer_date(text);
     let reference = find_transfer_reference(text);
     let merchant = find_transfer_payee(text);
-    let description = Some(match merchant.as_deref() {
-        Some(payee) => format!("Έμβασμα — {payee}"),
-        None => "Έμβασμα".to_owned(),
-    });
+    let description = Some(bank_transfer_description(locale, merchant.as_deref()));
     let fee_minor = find_transfer_fee(text);
     let kind = EntryKindSuggestion::Expense;
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
-    DocumentSuggestion {
+    let suggestion = DocumentSuggestion {
         source: super::analyze::AnalyzeSource::Heuristic,
         model: Some("invoice-parser-v1".into()),
         kind,
@@ -283,7 +345,13 @@ fn parse_bank_transfer(text: &str) -> DocumentSuggestion {
         wallet_account_id: None,
         payable_account_id: None,
         confidence,
-        notes: build_transfer_notes(amount_minor, fee_minor),
+        notes: build_transfer_notes(amount_minor),
+    };
+
+    InvoiceReading {
+        category_hint: category_hint_of(&suggestion),
+        suggestion,
+        transfer_fee_minor: fee_minor,
     }
 }
 
@@ -497,29 +565,17 @@ fn first_date_on_line(line: &str) -> Option<String> {
     None
 }
 
-fn build_transfer_notes(amount: Option<i64>, fee_minor: Option<i64>) -> String {
-    let mut parts = vec![
-        "Parsed offline with the built-in invoice reader (no internet).".to_owned(),
-        "Detected a bank transfer / εμβασμα receipt (expense).".to_owned(),
+fn build_transfer_notes(amount: Option<i64>) -> Vec<UiText> {
+    let mut notes = vec![
+        UiText::new(UiTextCode::InvoiceParsed),
+        UiText::new(UiTextCode::TransferDetected),
     ];
-    if amount.is_none() {
-        parts.push(
-            "Could not confidently detect the transfer principal — please enter the amount.".into(),
-        );
-    }
-    if let Some(fee) = fee_minor {
-        parts.push(format!(
-            "Transfer fee {} is shown on the receipt and is not the posted amount.",
-            format_minor_comma(fee)
-        ));
-    }
-    parts.join(" ")
-}
 
-fn format_minor_comma(minor: i64) -> String {
-    let whole = minor / 100;
-    let cents = minor.rem_euclid(100);
-    format!("{whole},{cents:02}")
+    if amount.is_none() {
+        notes.push(UiText::new(UiTextCode::TransferNoAmount));
+    }
+
+    notes
 }
 
 fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
@@ -1315,7 +1371,7 @@ fn take_supply_buf(buf: &str) -> Option<String> {
     }
 }
 
-fn find_merchant(text: &str, lower: &str) -> Option<String> {
+fn find_merchant(text: &str, lower: &str, locale: Locale) -> Option<String> {
     // Outgoing sales invoice: the counterparty is the customer. This runs
     // before brand recognition because the issuer's payment footer often
     // names a bank ("PIRAEUS BANK, IBAN …") that must not win.
@@ -1338,10 +1394,10 @@ fn find_merchant(text: &str, lower: &str) -> Option<String> {
             || lower.contains("gas simple")
             || lower.contains("προμήθεια φ.α")
         {
-            return Some("Natural gas".into());
+            return Some(natural_gas_merchant(locale).into());
         }
         if lower.contains("power business") {
-            return Some("Electricity supplier".into());
+            return Some(electricity_supplier_merchant(locale).into());
         }
     }
 
@@ -1433,15 +1489,13 @@ fn find_description(
     lower: &str,
     merchant: Option<&str>,
     reference: Option<&str>,
+    locale: Locale,
 ) -> Option<String> {
     // Outgoing sales invoice: customer-first title.
     if is_sales_invoice(lower)
         && let Some(m) = merchant
     {
-        return Some(match reference {
-            Some(r) => format!("{m} — Invoice {r}"),
-            None => format!("{m} — Invoice"),
-        });
+        return Some(customer_invoice_description(locale, m, reference));
     }
 
     // Recognized biller or utility bill: company-first title with the
@@ -1450,12 +1504,9 @@ fn find_description(
 
     if is_utility_bill(lower) || brand_service.is_some() {
         let service = brand_service.or_else(|| super::brands::classify_service(lower));
-        let label = service.map_or("Utility", super::brands::Service::label);
+        let kind = service.map_or(BillKind::Utility, super::brands::Service::bill_kind);
 
-        return Some(match merchant {
-            Some(m) => format!("{m} — {label} bill"),
-            None => format!("{label} bill"),
-        });
+        return Some(bill_description(locale, kind, merchant));
     }
 
     // Line-item description under Περιγραφή
@@ -1482,14 +1533,11 @@ fn find_description(
         }
     }
 
-    if let (Some(m), Some(r)) = (merchant, reference) {
-        return Some(format!("Invoice {r} — {m}"));
-    }
     if let Some(r) = reference {
-        return Some(format!("Invoice {r}"));
+        return Some(invoice_reference_description(locale, r, merchant));
     }
     if lower.contains("τιμολόγιο") {
-        return Some("Invoice".into());
+        return Some(invoice_word(locale).into());
     }
     merchant.map(ToOwned::to_owned)
 }
@@ -1524,25 +1572,26 @@ fn build_notes(
     kind: EntryKindSuggestion,
     unpaid: bool,
     lower: &str,
-) -> String {
-    let mut parts =
-        vec!["Parsed offline with the built-in invoice reader (no internet).".to_owned()];
+) -> Vec<UiText> {
+    let mut notes = vec![UiText::new(UiTextCode::InvoiceParsed)];
+
     if amount.is_none() {
-        parts.push("Could not confidently detect a total — please enter the amount.".into());
+        notes.push(UiText::new(UiTextCode::InvoiceNoTotal));
     }
     if matches!(kind, EntryKindSuggestion::Income) {
-        parts.push("Detected a sales/service invoice (income).".into());
+        notes.push(UiText::new(UiTextCode::InvoiceIncome));
     }
     if is_utility_bill(lower) {
-        parts.push("Detected a utility / electricity bill (expense).".into());
+        notes.push(UiText::new(UiTextCode::InvoiceUtility));
     }
     if unpaid {
-        parts.push("Marked as credit terms / amount due.".into());
+        notes.push(UiText::new(UiTextCode::InvoiceUnpaid));
     }
     if lower.contains("χωρίς φπα") || lower.contains("0%") {
-        parts.push("VAT appears zero / exempt.".into());
+        notes.push(UiText::new(UiTextCode::InvoiceVatExempt));
     }
-    parts.join(" ")
+
+    notes
 }
 
 #[cfg(test)]
@@ -1562,7 +1611,10 @@ mod tests {
 
     #[test]
     fn greek_service_invoice_total_and_kind() {
-        let s = parse_invoice_text(&corpus_text("synthetic/text/greek_sales_invoice.txt"));
+        let s = parse_invoice_text(
+            &corpus_text("synthetic/text/greek_sales_invoice.txt"),
+            crate::prefs::Locale::En,
+        );
         assert_eq!(s.amount_minor, Some(186_000), "expected €1860.00");
         assert_eq!(s.kind, EntryKindSuggestion::Income);
         assert_eq!(s.entry_date.as_deref(), Some("2026-06-25"));
@@ -1585,7 +1637,7 @@ mod tests {
 Α.Φ.Μ.: 000000000
 Πληρωτέο (€): 200,00
 ";
-        let s = parse_invoice_text(text);
+        let s = parse_invoice_text(text, crate::prefs::Locale::En);
         assert_ne!(s.kind, EntryKindSuggestion::Income, "kind={:?}", s.kind);
     }
 
@@ -1597,7 +1649,10 @@ mod tests {
 
     #[test]
     fn settlement_bill_is_not_automatically_unpaid() {
-        let s = parse_invoice_text(&corpus_text("synthetic/text/dei_settlement.txt"));
+        let s = parse_invoice_text(
+            &corpus_text("synthetic/text/dei_settlement.txt"),
+            crate::prefs::Locale::En,
+        );
         assert!(
             !s.bill_unpaid,
             "εμπρόθεσμο/εκκαθαριστικό/εξόφληση μέσω must not force unpaid"
@@ -1606,7 +1661,10 @@ mod tests {
 
     #[test]
     fn cosmote_pay_via_is_not_unpaid() {
-        let s = parse_invoice_text(&corpus_text("synthetic/text/cosmote_pay_via.txt"));
+        let s = parse_invoice_text(
+            &corpus_text("synthetic/text/cosmote_pay_via.txt"),
+            crate::prefs::Locale::En,
+        );
         assert_eq!(s.kind, EntryKindSuggestion::Bill);
         assert!(
             !s.bill_unpaid,
@@ -1632,12 +1690,18 @@ mod tests {
     #[test]
     fn utility_titles_are_company_first() {
         // Gas bill whose issuer only appears via the MyON portal branding.
-        let gas = parse_invoice_text(&corpus_text("synthetic/text/volton_myon_gas.txt"));
+        let gas = parse_invoice_text(
+            &corpus_text("synthetic/text/volton_myon_gas.txt"),
+            crate::prefs::Locale::En,
+        );
         assert_eq!(gas.merchant.as_deref(), Some("Volton"));
         assert_eq!(gas.description.as_deref(), Some("Volton — Gas bill"));
 
         // Telecom bill: brand implies the service without utility markers.
-        let telecom = parse_invoice_text(&corpus_text("synthetic/text/nova_telecom.txt"));
+        let telecom = parse_invoice_text(
+            &corpus_text("synthetic/text/nova_telecom.txt"),
+            crate::prefs::Locale::En,
+        );
         assert_eq!(telecom.merchant.as_deref(), Some("Nova"));
         assert_eq!(telecom.description.as_deref(), Some("Nova — Telecom bill"));
         assert_eq!(telecom.kind, EntryKindSuggestion::Bill);
@@ -1648,7 +1712,10 @@ mod tests {
         // Every Greek electricity bill mentions ΔΕΔΔΗΕ (grid operator) and a
         // national energy-mix table that includes natural gas; neither may
         // decide the title.
-        let s = parse_invoice_text(&corpus_text("synthetic/text/zenith_supplier_vs_grid.txt"));
+        let s = parse_invoice_text(
+            &corpus_text("synthetic/text/zenith_supplier_vs_grid.txt"),
+            crate::prefs::Locale::En,
+        );
         assert_eq!(s.merchant.as_deref(), Some("ZeniΘ"));
         assert_eq!(s.description.as_deref(), Some("ZeniΘ — Electricity bill"));
     }
@@ -1661,6 +1728,7 @@ mod tests {
              900000000000001 Επί πιστώσειB 51 25/06/2026\n\
              Στοιχεία Πελάτη\nΑ.Φ.Μ.: 000000000\nΕπωνυμία: ACME CONSULTING LTD\n\
              Πληρωτέο (€): 1860,00",
+            crate::prefs::Locale::En,
         );
         assert_eq!(s.kind, EntryKindSuggestion::Income);
         assert_eq!(s.merchant.as_deref(), Some("ACME CONSULTING LTD"));
@@ -1676,13 +1744,17 @@ mod tests {
         let with_bank = parse_invoice_text(
             "Τιμολόγιο Παροχής Υπηρεσιών\nΣτοιχεία Πελάτη\nΕπωνυμία: ACME CONSULTING LTD\n\
              Πληρωτέο (€): 500,00\nPIRAEUS BANK, GREECE, IBAN: GR0000000000000000000000000",
+            crate::prefs::Locale::En,
         );
         assert_eq!(with_bank.merchant.as_deref(), Some("ACME CONSULTING LTD"));
     }
 
     #[test]
     fn zenith_electricity_bill_total() {
-        let s = parse_invoice_text(&corpus_text("synthetic/text/zenith_electricity.txt"));
+        let s = parse_invoice_text(
+            &corpus_text("synthetic/text/zenith_electricity.txt"),
+            crate::prefs::Locale::En,
+        );
         assert_eq!(
             s.amount_minor,
             Some(7_665),
@@ -1717,7 +1789,7 @@ mod tests {
     #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn greek_bank_transfer_receipt_principal_not_fee_or_clock() {
         let text = corpus_text("synthetic/text/greek_bank_embasma.txt");
-        let suggestion = parse_invoice_text(&text);
+        let suggestion = parse_invoice_text(&text, crate::prefs::Locale::El);
         assert_eq!(
             suggestion.amount_minor,
             Some(31_000),
@@ -1733,10 +1805,18 @@ mod tests {
             suggestion.description.as_deref(),
             Some("Έμβασμα — HELIOS TRADING IKE")
         );
-        assert!(
-            suggestion.notes.contains("1,40"),
-            "notes should mention the fee only: {}",
-            suggestion.notes
+        assert_eq!(
+            suggestion.notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::TransferDetected),
+            ],
+            "the fee note needs the book currency, so the analyzer adds it"
+        );
+        assert_eq!(
+            read_invoice_text(&text, crate::prefs::Locale::En).transfer_fee_minor,
+            Some(140),
+            "the fee is returned as integer minor units"
         );
         assert_ne!(suggestion.amount_minor, Some(140));
         assert_ne!(suggestion.amount_minor, Some(700));
@@ -1745,8 +1825,12 @@ mod tests {
             "greek_bank_embasma.txt",
             "text/plain",
             text.as_bytes(),
-            &[],
-            "EUR",
+            &crate::documents::AnalyzeContext {
+                template: crate::domain::ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::El,
+            },
             None,
         );
         let analyzed = via_analyze.expect("analyze text/plain");
@@ -1770,7 +1854,7 @@ mod tests {
 Ονοματεπωνυμο / Επωνυμια Δικαιουχου: HELIOS TRADING IKE
 Κωδικος Συναλλαγης: F000TO0000000001
 ";
-        let suggestion = parse_invoice_text(text);
+        let suggestion = parse_invoice_text(text, crate::prefs::Locale::En);
         assert_eq!(suggestion.amount_minor, Some(31_000));
         assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-27"));
         assert_eq!(suggestion.merchant.as_deref(), Some("HELIOS TRADING IKE"));
@@ -1779,8 +1863,84 @@ mod tests {
     }
 
     #[test]
+    fn a_transfer_without_a_principal_asks_for_the_amount() {
+        let suggestion = parse_invoice_text(
+            "Εμβασμα\nΜεταφορά σε άλλη τράπεζα\n",
+            crate::prefs::Locale::En,
+        );
+
+        assert_eq!(
+            suggestion.notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::TransferDetected),
+                UiText::new(UiTextCode::TransferNoAmount),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_plain_invoice_without_a_total_asks_for_the_amount() {
+        let suggestion = parse_invoice_text("Thank you for your visit", crate::prefs::Locale::En);
+
+        assert_eq!(
+            suggestion.notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::InvoiceNoTotal),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_utility_bill_is_noted_as_one() {
+        let suggestion = parse_invoice_text(
+            &corpus_text("synthetic/text/ngs_gas_bill.txt"),
+            crate::prefs::Locale::En,
+        );
+
+        assert!(
+            suggestion
+                .notes
+                .contains(&UiText::new(UiTextCode::InvoiceUtility)),
+            "{:?}",
+            suggestion.notes
+        );
+    }
+
+    #[test]
+    fn a_sales_invoice_is_noted_as_income() {
+        let notes = build_notes(Some(1000), EntryKindSuggestion::Income, false, "");
+
+        assert_eq!(
+            notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::InvoiceIncome),
+            ]
+        );
+    }
+
+    #[test]
+    fn credit_terms_and_zero_vat_each_add_their_note() {
+        let notes = build_notes(Some(1000), EntryKindSuggestion::Bill, true, "χωρίς φπα");
+
+        assert_eq!(
+            notes,
+            [
+                UiText::new(UiTextCode::InvoiceParsed),
+                UiText::new(UiTextCode::InvoiceUnpaid),
+                UiText::new(UiTextCode::InvoiceVatExempt),
+            ]
+        );
+    }
+
+    #[test]
     fn ngs_gas_bill_payment_total() {
-        let s = parse_invoice_text(&corpus_text("synthetic/text/ngs_gas_bill.txt"));
+        let s = parse_invoice_text(
+            &corpus_text("synthetic/text/ngs_gas_bill.txt"),
+            crate::prefs::Locale::En,
+        );
         assert_eq!(
             s.amount_minor,
             Some(7_253),
@@ -1812,6 +1972,28 @@ mod tests {
             s.reference
         );
     }
+
+    #[test]
+    fn the_category_hint_is_worded_in_english_whatever_the_language() {
+        let text = corpus_text("synthetic/text/dei_settlement.txt");
+        let english = read_invoice_text(&text, crate::prefs::Locale::En);
+
+        for locale in [
+            crate::prefs::Locale::El,
+            crate::prefs::Locale::Fr,
+            crate::prefs::Locale::De,
+        ] {
+            let reading = read_invoice_text(&text, locale);
+
+            assert_eq!(reading.category_hint, english.category_hint, "{locale:?}");
+        }
+
+        assert!(
+            english.category_hint.contains("Electricity bill"),
+            "{:?}",
+            english.category_hint
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1828,7 +2010,7 @@ mod jumbled_extract {
             "/tests/fixtures/ngs_gas_jumbled_extract.txt"
         ))
         .expect("fixture extract");
-        let s = parse_invoice_text(&text);
+        let s = parse_invoice_text(&text, crate::prefs::Locale::En);
         assert_eq!(
             s.amount_minor,
             Some(7_253),
@@ -1883,7 +2065,7 @@ mod jumbled_extract {
             return;
         };
         let text = pdf_extract::extract_text_from_mem(&bytes).expect("pdf text");
-        let s = parse_invoice_text(&text);
+        let s = parse_invoice_text(&text, crate::prefs::Locale::En);
         assert_eq!(
             s.amount_minor,
             Some(7_253),

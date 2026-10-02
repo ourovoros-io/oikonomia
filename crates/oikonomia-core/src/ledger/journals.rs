@@ -6,14 +6,17 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
+use crate::db::fold_case;
 use crate::domain::{
     AccountId, EntityId, EntryStatus, JournalEntry, JournalEntryId, JournalLine, JournalLineId,
     validate_lines_for_post,
 };
-use crate::error::{Error, Result};
+use crate::error::{AccountRole, Error, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, account_balance_as_of, normal_balance};
 use crate::money::Money;
+use crate::prefs::Locale;
+use crate::text::{opening_balance_description, void_description, void_memo};
 use crate::util::{format_date, now_utc_string, parse_date, parse_uuid};
 
 /// One line when posting a journal entry.
@@ -154,8 +157,12 @@ pub struct EntryFilter {
 
 /// Wrap trimmed user text in `%…%`, escaping LIKE wildcards so `%`/`_`
 /// in a search are literals, not patterns.
+///
+/// The text is case-folded here and the searched columns are folded in SQL
+/// with `fold(...)`, so the match ignores case for every letter, not only
+/// ASCII ones.
 fn like_pattern(text: &str) -> String {
-    let escaped = text
+    let escaped = fold_case(text)
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_");
@@ -211,11 +218,11 @@ pub fn list_entries(
               AND (?2 IS NULL OR je.entry_date >= ?2)
               AND (?3 IS NULL OR je.entry_date <= ?3)
               AND (?4 IS NULL
-                   OR je.description LIKE ?4 ESCAPE '\\'
-                   OR je.reference LIKE ?4 ESCAPE '\\'
+                   OR fold(je.description) LIKE ?4 ESCAPE '\\'
+                   OR fold(je.reference) LIKE ?4 ESCAPE '\\'
                    OR EXISTS (
                        SELECT 1 FROM journal_lines jl
-                       WHERE jl.entry_id = je.id AND jl.memo LIKE ?4 ESCAPE '\\'
+                       WHERE jl.entry_id = je.id AND fold(jl.memo) LIKE ?4 ESCAPE '\\'
                    ))
               AND (?5 IS NULL OR EXISTS (
                    SELECT 1 FROM journal_lines jl
@@ -372,10 +379,9 @@ fn insert_posted_entry(
             return Err(Error::AccountWrongEntity);
         }
         if !account.is_active {
-            return Err(Error::Validation(format!(
-                "account {} is inactive",
-                account.code
-            )));
+            return Err(Error::Validation(ValidationError::AccountInactive {
+                code: account.code.clone(),
+            }));
         }
 
         let debit = Money::from_minor(raw.debit_minor)?;
@@ -461,14 +467,12 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
     hidden: bool,
 ) -> Result<PostedEntryView> {
     if input.amount_minor <= 0 {
-        return Err(Error::Validation("amount must be positive".into()));
+        return Err(Error::Validation(ValidationError::AmountNotPositive));
     }
 
     let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
     if debit_account == credit_account {
-        return Err(Error::Validation(
-            "entry needs two different accounts".into(),
-        ));
+        return Err(Error::Validation(ValidationError::SameAccount));
     }
 
     let lines = vec![
@@ -529,51 +533,80 @@ fn simple_entry_sides(
 ) -> Result<(AccountId, AccountId)> {
     use crate::domain::AccountType::{Asset, Expense, Income, Liability};
 
-    let role = |id: Option<AccountId>, role: &str, allowed: &[crate::domain::AccountType]| {
-        let id = id.ok_or_else(|| Error::Validation(format!("{role} account is required")))?;
-        let account = get_account(conn, id)?;
-        if !allowed.contains(&account.account_type) {
-            return Err(Error::Validation(format!(
-                "{role} account {} has the wrong type for this entry",
-                account.code
-            )));
-        }
-        Ok(id)
-    };
+    let role =
+        |id: Option<AccountId>, role: AccountRole, allowed: &[crate::domain::AccountType]| {
+            let id = id.ok_or(Error::Validation(ValidationError::AccountRequired { role }))?;
+            let account = get_account(conn, id)?;
+            if !allowed.contains(&account.account_type) {
+                return Err(Error::Validation(ValidationError::AccountWrongType {
+                    role,
+                    code: account.code.clone(),
+                }));
+            }
+            Ok(id)
+        };
 
     match input.kind {
         SimpleEntryKind::Expense => Ok((
-            role(input.category_account_id, "category", &[Expense])?,
-            role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+            role(input.category_account_id, AccountRole::Category, &[Expense])?,
+            role(
+                input.wallet_account_id,
+                AccountRole::Payment,
+                &[Asset, Liability],
+            )?,
         )),
         SimpleEntryKind::Income => Ok((
-            role(input.wallet_account_id, "deposit", &[Asset])?,
-            role(input.category_account_id, "income", &[Income])?,
+            role(input.wallet_account_id, AccountRole::Deposit, &[Asset])?,
+            role(input.category_account_id, AccountRole::Income, &[Income])?,
         )),
         SimpleEntryKind::Bill => match input.bill_status {
             Some(SimpleBillStatus::Paid) => Ok((
-                role(input.category_account_id, "bill category", &[Expense])?,
-                role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+                role(
+                    input.category_account_id,
+                    AccountRole::BillCategory,
+                    &[Expense],
+                )?,
+                role(
+                    input.wallet_account_id,
+                    AccountRole::Payment,
+                    &[Asset, Liability],
+                )?,
             )),
             Some(SimpleBillStatus::Unpaid) => Ok((
-                role(input.category_account_id, "bill category", &[Expense])?,
-                role(input.payable_account_id, "bills payable", &[Liability])?,
+                role(
+                    input.category_account_id,
+                    AccountRole::BillCategory,
+                    &[Expense],
+                )?,
+                role(
+                    input.payable_account_id,
+                    AccountRole::BillsPayable,
+                    &[Liability],
+                )?,
             )),
             Some(SimpleBillStatus::PayExisting) => Ok((
-                role(input.payable_account_id, "bills payable", &[Liability])?,
-                role(input.wallet_account_id, "payment", &[Asset, Liability])?,
+                role(
+                    input.payable_account_id,
+                    AccountRole::BillsPayable,
+                    &[Liability],
+                )?,
+                role(
+                    input.wallet_account_id,
+                    AccountRole::Payment,
+                    &[Asset, Liability],
+                )?,
             )),
-            None => Err(Error::Validation("bill entries need a bill status".into())),
+            None => Err(Error::Validation(ValidationError::BillStatusRequired)),
         },
         SimpleEntryKind::Transfer => Ok((
             role(
                 input.to_account_id,
-                "transfer destination",
+                AccountRole::TransferDestination,
                 &[Asset, Liability],
             )?,
             role(
                 input.from_account_id,
-                "transfer source",
+                AccountRole::TransferSource,
                 &[Asset, Liability],
             )?,
         )),
@@ -581,6 +614,8 @@ fn simple_entry_sides(
 }
 
 /// Void a posted entry by posting a reverse entry and linking `voided_by`.
+///
+/// The reverse entry's description and memo are written in `locale`.
 ///
 /// The reverse insert and both link updates happen in one transaction.
 /// If the original is hidden, the reverse `VOID:` row inherits that flag so
@@ -590,24 +625,22 @@ fn simple_entry_sides(
 /// # Errors
 ///
 /// Already voided, not found, or DB error.
-pub fn void_entry(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
+pub fn void_entry(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
     let tx = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
-    let result = void_entry_in_tx(&tx, id)?;
+    let result = void_entry_in_tx(&tx, id, locale)?;
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(result)
 }
 
-fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
+fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
     let view = get_entry(conn, id)?;
     if view.is_voided {
-        return Err(Error::Validation("entry is already voided".into()));
+        return Err(Error::Validation(ValidationError::EntryAlreadyVoided));
     }
     if view.entry.status != EntryStatus::Posted {
-        return Err(Error::Validation(
-            "only posted entries can be voided".into(),
-        ));
+        return Err(Error::Validation(ValidationError::EntryNotPosted));
     }
 
     let reverse_lines: Vec<CreateJournalLine> = view
@@ -617,14 +650,14 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult>
             account_id: line.account_id,
             debit_minor: line.credit.amount_minor(),
             credit_minor: line.debit.amount_minor(),
-            memo: Some("Void".into()),
+            memo: Some(void_memo(locale).into()),
         })
         .collect();
 
     let reverse_input = PostJournal {
         entity_id: view.entry.entity_id,
         entry_date: format_date(view.entry.entry_date),
-        description: format!("VOID: {}", view.entry.description),
+        description: void_description(locale, &view.entry.description),
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
@@ -659,6 +692,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult>
 /// trail survives. The UI hides voided pairs, so this reads as an in-place edit.
 /// A hidden original yields a hidden replacement (and a hidden VOID reverse)
 /// so journal CSV omits the whole edit. A visible original stays visible.
+/// The reversing entry's description and memo are written in `locale`.
 ///
 /// # Errors
 ///
@@ -667,6 +701,7 @@ pub fn replace_simple_entry(
     conn: &Connection,
     original_id: JournalEntryId,
     input: &PostSimpleEntry,
+    locale: Locale,
 ) -> Result<PostedEntryView> {
     let tx = conn
         .unchecked_transaction()
@@ -674,12 +709,10 @@ pub fn replace_simple_entry(
 
     let original = get_entry(&tx, original_id)?;
     if original.entry.entity_id != input.entity_id {
-        return Err(Error::Validation(
-            "entry belongs to a different book".into(),
-        ));
+        return Err(Error::Validation(ValidationError::WrongBook));
     }
 
-    void_entry_in_tx(&tx, original_id)?;
+    void_entry_in_tx(&tx, original_id, locale)?;
     let replacement = post_simple_entry_unchecked_hidden(&tx, input, original.entry.hidden)?;
 
     tx.execute(
@@ -700,7 +733,8 @@ pub fn replace_simple_entry(
 ///
 /// The user states what the account actually holds; the gap between that and
 /// the ledger becomes one adjustment entry, so repeating the call converges on
-/// the stated balance instead of stacking duplicates.
+/// the stated balance instead of stacking duplicates. The entry's description
+/// is written in `locale`.
 ///
 /// # Errors
 ///
@@ -711,6 +745,7 @@ pub fn set_account_opening_balance(
     account_id: AccountId,
     target_minor: i64,
     as_of: &str,
+    locale: Locale,
 ) -> Result<PostedEntryView> {
     use crate::domain::AccountType;
 
@@ -718,14 +753,13 @@ pub fn set_account_opening_balance(
     if account.account_type != AccountType::Asset && account.account_type != AccountType::Liability
     {
         return Err(Error::Validation(
-            "opening balances apply to asset or liability accounts".into(),
+            ValidationError::OpeningBalanceAccountType,
         ));
     }
     if !account.is_active {
-        return Err(Error::Validation(format!(
-            "account {} is inactive",
-            account.code
-        )));
+        return Err(Error::Validation(ValidationError::AccountInactive {
+            code: account.code.clone(),
+        }));
     }
 
     let as_of_d = parse_date(as_of)?;
@@ -734,9 +768,7 @@ pub fn set_account_opening_balance(
         .checked_sub(current)
         .ok_or(Error::MoneyOverflow)?;
     if delta == 0 {
-        return Err(Error::Validation(
-            "the account already has this balance".into(),
-        ));
+        return Err(Error::Validation(ValidationError::OpeningBalanceUnchanged));
     }
 
     // Prefer the system Opening Balances account; fall back to any active
@@ -750,11 +782,7 @@ pub fn set_account_opening_balance(
                 .iter()
                 .find(|a| a.account_type == AccountType::Equity && a.is_active)
         })
-        .ok_or_else(|| {
-            Error::Validation(
-                "this book has no equity account to post the opening balance against".into(),
-            )
-        })?;
+        .ok_or(Error::Validation(ValidationError::NoEquityAccount))?;
 
     // A debit-normal account grows by debiting: a positive delta debits the
     // account and credits equity; every other combination flips the sides.
@@ -771,7 +799,7 @@ pub fn set_account_opening_balance(
         &PostJournal {
             entity_id: account.entity_id,
             entry_date: format_date(as_of_d),
-            description: format!("Opening balance — {}", account.name),
+            description: opening_balance_description(locale, &account.name),
             reference: None,
             lines: vec![
                 CreateJournalLine {

@@ -18,9 +18,9 @@ import {
   vaultRestore,
   vaultStatus,
   vaultUnlock,
-  type CommandError,
 } from '../lib/tauri'
-import { backupCommandError, restoreConfirm } from '../lib/vaultBackupUi'
+import { asCommandError, commandErrorMessage } from '../lib/commandError'
+import { restoreCommandError, restoreConfirm } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
 import { Button, ErrorBanner, Field, Input } from './ui'
 
@@ -86,11 +86,12 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
       setUnlocking(true)
       handoffTimer.current = window.setTimeout(() => onUnlocked(next), SUCCESS_BEAT_MS)
     } catch (err) {
-      const cmd = err as CommandError
+      // A rejection can be anything, including nothing.
+      const cmd = asCommandError(err)
       setError(
         cmd.code === 'invalid_password'
           ? t('unlock.incorrectPassword')
-          : cmd.message || t('unlock.unlockFailed'),
+          : commandErrorMessage(cmd, 'unlock.unlockFailed'),
       )
       setPasswordInvalid(true)
       setShaking(true)
@@ -112,7 +113,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setError(backupCommandError(err as CommandError))
+      setError(restoreCommandError(err))
     } finally {
       setRestorePicking(false)
     }
@@ -135,7 +136,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
       setRestorePath(undefined)
       onUnlocked(next)
     } catch (err) {
-      setError(backupCommandError(err as CommandError))
+      setError(restoreCommandError(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {

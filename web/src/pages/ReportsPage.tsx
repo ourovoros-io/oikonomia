@@ -34,8 +34,8 @@ import {
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
-import type { CommandError } from '../lib/tauri'
 import { t } from '../lib/i18n'
+import { reportLineName } from '../lib/uiText'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
@@ -48,14 +48,6 @@ type AppliedQuery = {
   from: string
   to: string
   asOf: string
-}
-
-function sectionTitle(title: string): string {
-  const key = title.toLowerCase()
-  if (key === 'assets') return t('rpt.section.assets')
-  if (key === 'liabilities') return t('rpt.section.liabilities')
-  if (key === 'equity') return t('rpt.section.equity')
-  return title
 }
 
 export function ReportsPage({ entity, onCreateBook }: Props) {
@@ -105,7 +97,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
         suggestedName: suggestedExpensePdfName(data.from, data.to),
       })
     } catch (err) {
-      setError(pdfExportErrorMessage(err as CommandError))
+      setError(pdfExportErrorMessage(err))
     } finally {
       pdfBusyRef.current = false
       setPdfBusy(false)
@@ -152,7 +144,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
           }
         }
       } catch (err) {
-        if (!cancelled) setError(commandErrorMessage(err as CommandError))
+        if (!cancelled) setError(commandErrorMessage(err))
       }
     })()
 
@@ -301,7 +293,7 @@ function LineRow({ line, ccy }: { line: ReportLine; ccy: string }) {
         {/* Fixed code column: a line without a code (current year earnings)
             still starts its name where the others do. */}
         <span className="w-10 shrink-0 text-xs tabular-nums text-[var(--color-muted)]">{line.code}</span>
-        <span className="truncate text-sm text-[var(--color-fg-secondary)]">{line.name}</span>
+        <span className="truncate text-sm text-[var(--color-fg-secondary)]">{reportLineName(line)}</span>
       </div>
       <span className="shrink-0 text-sm tabular-nums text-[var(--color-fg)]">
         {formatMoney(line.balance_minor, ccy)}
@@ -414,18 +406,22 @@ function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string;
       period={t('rpt.asOfPeriod', { date: formatDate(bs.as_of) })}
       ccy={ccy}
     >
-      {([bs.assets, bs.liabilities, bs.equity] as const).map((section) => (
-        <div key={section.title}>
-          <SectionLabel>{section.title}</SectionLabel>
+      {(
+        [
+          { key: 'assets', label: t('rpt.section.assets'), section: bs.assets },
+          { key: 'liabilities', label: t('rpt.section.liabilities'), section: bs.liabilities },
+          { key: 'equity', label: t('rpt.section.equity'), section: bs.equity },
+        ] as const
+      ).map(({ key, label, section }) => (
+        <div key={key}>
+          <SectionLabel>{label}</SectionLabel>
           {section.lines.length === 0 ? (
-            <EmptyLines>
-              {t('rpt.noSectionAccounts', { section: sectionTitle(section.title) })}
-            </EmptyLines>
+            <EmptyLines>{t('rpt.noSectionAccounts', { section: label })}</EmptyLines>
           ) : (
             section.lines.map((l) => <LineRow key={l.code + l.name} line={l} ccy={ccy} />)
           )}
           <TotalRow
-            label={t('rpt.totalSection', { section: sectionTitle(section.title) })}
+            label={t('rpt.totalSection', { section: label })}
             amount={section.total}
             ccy={ccy}
           />
@@ -483,7 +479,7 @@ function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: stri
                   <span className="mr-3 inline-block w-10 text-xs tabular-nums text-[var(--color-muted)]">
                     {l.code}
                   </span>
-                  <span className="text-[var(--color-fg-secondary)]">{l.name}</span>
+                  <span className="text-[var(--color-fg-secondary)]">{reportLineName(l)}</span>
                 </td>
                 <td className="py-1.5 pl-4 text-right tabular-nums text-[var(--color-fg)]">
                   {l.debit_minor ? formatMoney(l.debit_minor, ccy) : '—'}

@@ -4,7 +4,7 @@ use time::Date;
 use time::Month;
 use uuid::Uuid;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 
 /// Parse a UUID string.
 ///
@@ -12,7 +12,18 @@ use crate::error::{Error, Result};
 ///
 /// Returns [`Error::Validation`] on invalid UUID text.
 pub fn parse_uuid(s: &str) -> Result<Uuid> {
-    Uuid::parse_str(s).map_err(|_| Error::Validation(format!("invalid id: {s}")))
+    Uuid::parse_str(s).map_err(|_| {
+        Error::Validation(ValidationError::Internal {
+            detail: format!("invalid id: {s}"),
+        })
+    })
+}
+
+/// The error for text that is not a real calendar date.
+fn invalid_date(text: &str) -> Error {
+    Error::Validation(ValidationError::InvalidDate {
+        value: text.to_owned(),
+    })
 }
 
 /// Format a calendar date as `YYYY-MM-DD`.
@@ -34,24 +45,16 @@ pub fn format_date(date: Date) -> String {
 pub fn parse_date(s: &str) -> Result<Date> {
     let parts: Vec<&str> = s.split('-').collect();
     if parts.len() != 3 {
-        return Err(Error::Validation(format!("invalid date: {s}")));
+        return Err(invalid_date(s));
     }
 
-    let year: i32 = parts[0]
-        .parse()
-        .map_err(|_| Error::Validation(format!("invalid date: {s}")))?;
-    let month_num: u8 = parts[1]
-        .parse()
-        .map_err(|_| Error::Validation(format!("invalid date: {s}")))?;
-    let day: u8 = parts[2]
-        .parse()
-        .map_err(|_| Error::Validation(format!("invalid date: {s}")))?;
+    let year: i32 = parts[0].parse().map_err(|_| invalid_date(s))?;
+    let month_num: u8 = parts[1].parse().map_err(|_| invalid_date(s))?;
+    let day: u8 = parts[2].parse().map_err(|_| invalid_date(s))?;
 
-    let month =
-        Month::try_from(month_num).map_err(|_| Error::Validation(format!("invalid date: {s}")))?;
+    let month = Month::try_from(month_num).map_err(|_| invalid_date(s))?;
 
-    Date::from_calendar_date(year, month, day)
-        .map_err(|_| Error::Validation(format!("invalid date: {s}")))
+    Date::from_calendar_date(year, month, day).map_err(|_| invalid_date(s))
 }
 
 /// ISO `YYYY-MM-DD` (de)serialization for `time::Date` fields crossing IPC.
@@ -122,8 +125,11 @@ mod tests {
         let json = serde_json::to_string(&Dated { date }).unwrap_or_default();
         assert_eq!(json, r#"{"date":"2026-08-10"}"#);
 
-        let back: Result<Dated> =
-            serde_json::from_str(&json).map_err(|e| Error::Validation(e.to_string()));
+        let back: Result<Dated> = serde_json::from_str(&json).map_err(|e| {
+            Error::Validation(ValidationError::Internal {
+                detail: e.to_string(),
+            })
+        });
         assert_eq!(back.map(|d| d.date), Ok(date));
     }
 }

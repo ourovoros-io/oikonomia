@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use time::Date;
 
 use crate::domain::{AccountType, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, normal_balance, parse_account_type};
 use crate::ledger::entities::get_entity;
 use crate::util::{format_date, parse_date};
@@ -86,9 +86,7 @@ pub fn cash_flow_series(
     let from_d = parse_date(from)?;
     let to_d = parse_date(to)?;
     if from_d > to_d {
-        return Err(Error::Validation(
-            "from date must be on or before to".into(),
-        ));
+        return Err(Error::Validation(ValidationError::DateRangeInverted));
     }
     let _ = get_entity(conn, entity_id)?;
 
@@ -158,9 +156,7 @@ pub fn activity_window(
     let to_d = to.map(parse_date).transpose()?;
     if let (Some(start), Some(end)) = (from_d, to_d) {
         if start > end {
-            return Err(Error::Validation(
-                "from date must be on or before to".into(),
-            ));
+            return Err(Error::Validation(ValidationError::DateRangeInverted));
         }
         return Ok((start, end));
     }

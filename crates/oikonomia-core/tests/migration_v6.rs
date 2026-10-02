@@ -7,6 +7,7 @@ use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -41,6 +42,7 @@ fn pre_v6_row_becomes_visible() {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");

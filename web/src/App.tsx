@@ -28,7 +28,6 @@ import {
 } from './lib/tauri'
 import { api, type Entity } from './lib/api'
 import { commandErrorMessage } from './lib/commandError'
-import type { CommandError } from './lib/tauri'
 import { DashboardPage } from './pages/DashboardPage'
 import { TransactionsPage } from './pages/TransactionsPage'
 import { DocumentsPage } from './pages/DocumentsPage'
@@ -134,7 +133,7 @@ export default function App() {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('app.failedBackend'))
+      setError(commandErrorMessage(err, 'app.failedBackend'))
     }
   }, [loadEntities])
 
@@ -204,7 +203,7 @@ export default function App() {
       setEntities([])
       setEntityId(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('app.failedLock'))
+      setError(commandErrorMessage(err, 'app.failedLock'))
     } finally {
       setLocking(false)
     }
@@ -430,7 +429,7 @@ export default function App() {
                       try {
                         await loadEntities()
                       } catch (err) {
-                        setError(commandErrorMessage(err as CommandError))
+                        setError(commandErrorMessage(err, 'app.failedBackend'))
                       }
                     }}
                     onSelectEntity={(id) => {

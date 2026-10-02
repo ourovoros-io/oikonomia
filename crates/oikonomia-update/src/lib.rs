@@ -12,6 +12,8 @@ mod hosts;
 mod machine;
 mod notes;
 mod status;
+#[cfg(test)]
+mod test_macros;
 mod verify;
 
 pub use client::{

@@ -7,12 +7,17 @@
 pub mod coa;
 pub mod csv;
 pub mod db;
+pub mod default_accounts;
 pub mod documents;
 pub mod domain;
 pub mod error;
 pub mod ledger;
 pub mod money;
 pub mod prefs;
+#[cfg(test)]
+mod test_macros;
+pub mod text;
+pub mod ui_text;
 pub mod util;
 pub mod vault;
 

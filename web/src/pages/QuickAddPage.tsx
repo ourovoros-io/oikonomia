@@ -14,6 +14,7 @@ import {
   api,
   todayISO,
   type Account,
+  type AccountDefaults,
   type DocumentSuggestion,
   type Entity,
   type LastRoleAccounts,
@@ -28,7 +29,8 @@ import {
   QUICK_ADD_STEPPER_HEIGHT,
   setQuickAddHeight,
 } from '../lib/quickAddWindow'
-import { isTauri, type CommandError } from '../lib/tauri'
+import { isTauri } from '../lib/tauri'
+import { commandErrorMessage } from '../lib/commandError'
 import { beginExclusive } from '../lib/guards'
 import { HideFromExportControl } from '../components/hiddenUi'
 import { Button } from '../components/ui'
@@ -102,6 +104,7 @@ function roleIdsFromLast(last: LastRoleAccounts): string[] {
 function resolveRoleAccounts(
   kind: EntryKind,
   list: Account[],
+  defaults: AccountDefaults | null,
   last: LastRoleAccounts | undefined,
 ): ReturnType<typeof kindDefaultAccounts> {
   if (last) {
@@ -117,7 +120,7 @@ function resolveRoleAccounts(
       }
     }
   }
-  return kindDefaultAccounts(kind, list)
+  return kindDefaultAccounts(kind, defaults)
 }
 
 function applyRoleState(
@@ -182,6 +185,8 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   const [entities, setEntities] = useState<Entity[]>([])
   const [entityId, setEntityId] = useState<string | null>(null)
   const [accounts, setAccounts] = useState<Account[]>([])
+  // Which account plays which role by default; Rust decides, this only holds it.
+  const [defaults, setDefaults] = useState<AccountDefaults | null>(null)
   const [prefs, setPrefs] = useState<UiPrefs | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -255,42 +260,24 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
-  const walletAccounts = useMemo(
-    () =>
-      accountsOf(accounts, ['asset', 'liability']).filter((a) => {
-        const n = a.name.toLowerCase()
-        if (a.account_type === 'liability') {
-          return (
-            n.includes('card') || n.includes('payable') || n.includes('loan') || n.includes('bill')
-          )
-        }
-        return true
-      }),
-    [accounts],
-  )
+  const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
   const assetWallets = useMemo(
     () => walletAccounts.filter((a) => a.account_type === 'asset'),
     [walletAccounts],
   )
-  const payableAccounts = useMemo(() => {
-    const liab = accountsOf(accounts, ['liability'])
-    const preferred = liab.filter((a) => {
-      const n = a.name.toLowerCase()
-      return n.includes('payable') || n.includes('bill') || n.includes('ap')
-    })
-    return preferred.length > 0 ? preferred : liab
-  }, [accounts])
+  const payableAccounts = useMemo(() => accountsOf(accounts, ['liability']), [accounts])
   const transferAccounts = useMemo(() => accountsOf(accounts, ['asset']), [accounts])
 
   const loadAccountsFor = useCallback(
     async (entId: string, nextKind: EntryKind, uiPrefs: UiPrefs | null) => {
       const gen = ++accountsGenRef.current
-      const list = await api.accountList(entId)
+      const [list, roles] = await Promise.all([api.accountList(entId), api.accountDefaults(entId)])
       if (gen !== accountsGenRef.current) return list
       setAccounts(list)
+      setDefaults(roles)
       const key = lastAccountsMapKey(entId, nextKind)
       const last = uiPrefs?.last_accounts_by_entity_kind[key]
-      applyRoleState(resolveRoleAccounts(nextKind, list, last), roleSetters)
+      applyRoleState(resolveRoleAccounts(nextKind, list, roles, last), roleSetters)
       return list
     },
     [roleSetters],
@@ -325,6 +312,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         if (ents.length === 0) {
           setEntityId(null)
           setAccounts([])
+          setDefaults(null)
           return
         }
         const preferred =
@@ -336,7 +324,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         // Book step only when multiple books exist.
         setStep(ents.length > 1 ? 'entity' : 'kind')
       } catch (err) {
-        if (!cancelled) setError((err as CommandError).message)
+        if (!cancelled) setError(commandErrorMessage(err))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -364,7 +352,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       if (gen !== accountsGenRef.current) return
       rollTo('kind', 1)
     } catch (err) {
-      if (gen === accountsGenRef.current) setError((err as CommandError).message)
+      if (gen === accountsGenRef.current) setError(commandErrorMessage(err))
     }
   }
 
@@ -373,11 +361,11 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     setKind(next)
     if (next !== 'bill') setBillStatus('unpaid')
     if (!entity || !prefs) {
-      applyRoleState(kindDefaultAccounts(next, accounts), roleSetters)
+      applyRoleState(kindDefaultAccounts(next, defaults), roleSetters)
     } else {
       const key = lastAccountsMapKey(entity.id, next)
       const last = prefs.last_accounts_by_entity_kind[key]
-      applyRoleState(resolveRoleAccounts(next, accounts, last), roleSetters)
+      applyRoleState(resolveRoleAccounts(next, accounts, defaults, last), roleSetters)
     }
     rollTo('amount', 1)
   }
@@ -474,7 +462,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         applySuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
         if (analyzeGenRef.current !== gen) return
-        setError((err as CommandError).message || t('quickAdd.couldNotAnalyze'))
+        setError(commandErrorMessage(err, 'quickAdd.couldNotAnalyze'))
         setPendingDoc(null)
         setPendingAnalysis(null)
       } finally {
@@ -505,7 +493,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         applySuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
         if (analyzeGenRef.current !== gen) return
-        setError((err as CommandError).message || t('quickAdd.couldNotAnalyze'))
+        setError(commandErrorMessage(err, 'quickAdd.couldNotAnalyze'))
         setPendingDoc(null)
         setPendingAnalysis(null)
       } finally {
@@ -517,7 +505,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         setDragOver(false)
       }
     },
-    [rollTo, t],
+    [rollTo],
   )
 
   useEffect(() => {
@@ -663,7 +651,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       onBusyChange?.(false)
       onPosted({ kind, amountMinor: minor, currency: entity.base_currency })
     } catch (err) {
-      setError((err as CommandError).message)
+      setError(commandErrorMessage(err))
       setBusy(false)
       busyRef.current = false
     }

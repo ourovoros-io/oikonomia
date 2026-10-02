@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { buildLedger, DEMO_TODAY } from './ledger'
+import { accountDefaults, buildLedger, DEMO_TODAY } from './ledger'
 
 describe('demo ledger', () => {
   const en = buildLedger('en')
@@ -55,6 +55,26 @@ describe('demo ledger', () => {
       expect(entryIds.has(doc.entry_id)).toBe(true)
       expect(doc.created_at).toMatch(/^\d+$/)
       expect(Number(doc.created_at)).toBeLessThanOrEqual(frozen)
+    }
+  })
+
+  test('every default account exists in the chart, with the type its role needs', () => {
+    const roleTypes = {
+      category: 'expense',
+      payment: 'asset',
+      deposit: 'asset',
+      income: 'income',
+      bill_category: 'expense',
+      bills_payable: 'liability',
+      transfer_source: 'asset',
+      transfer_destination: 'asset',
+    } as const
+
+    for (const [role, type] of Object.entries(roleTypes)) {
+      const id = accountDefaults()[role as keyof typeof roleTypes]
+      const found = en.accounts.find((a) => a.id === id)
+
+      expect(found?.account_type, role).toBe(type)
     }
   })
 })

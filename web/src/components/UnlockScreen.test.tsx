@@ -116,13 +116,26 @@ describe('UnlockScreen submit', () => {
   })
 
   test('generic unlock failure shows unlock.unlockFailed banner', async () => {
-    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'unknown', message: '' })
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'brand_new', message: 'sqlcipher: raw detail' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
     await userEvent.type(screen.getByLabelText('Password'), 'secret')
     await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
     await waitFor(() => {
       expect(screen.getByText('Could not unlock the vault.')).toBeTruthy()
     })
+    expect(screen.queryByText(/sqlcipher/)).toBeNull()
+  })
+
+  test('a known failure code shows its own copy instead of the unlock fallback', async () => {
+    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'vault_corrupt', message: 'bad header' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(screen.getByText('The vault file is corrupt.')).toBeTruthy()
+    })
+    expect(screen.queryByText('bad header')).toBeNull()
   })
 })
 
@@ -243,6 +256,35 @@ describe('UnlockScreen restore CommandError banners', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
     await waitFor(() => {
       expect(screen.getByText(text)).toBeTruthy()
+    })
+  })
+})
+
+describe('UnlockScreen restore fallback sentence', () => {
+  test('a vague restore failure says the restore failed, not the backup', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultRestore).mockRejectedValue({ code: 'crypto', message: 'bad tag' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Restore from backup' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Replace local vault?' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not restore the backup.')).toBeTruthy()
+    })
+    expect(screen.queryByText('Could not complete the backup.')).toBeNull()
+  })
+
+  test('a failure choosing the backup file says the restore failed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultPickBackup).mockRejectedValue({ code: 'crypto', message: 'x' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Restore from backup' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not restore the backup.')).toBeTruthy()
     })
   })
 })
@@ -510,5 +552,16 @@ describe('UnlockScreen check for update', () => {
       expect(screen.getByRole('dialog', { name: 'You’re up to date' })).toBeTruthy()
     })
     expect(updateInstall).not.toHaveBeenCalled()
+  })
+
+  test('a rejection of undefined shows the unlock fallback and does not throw', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultUnlock).mockRejectedValue(undefined)
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    await waitFor(() => {
+      expect(screen.getByText('Could not unlock the vault.')).toBeTruthy()
+    })
   })
 })

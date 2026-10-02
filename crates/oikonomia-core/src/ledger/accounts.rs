@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{Account, AccountId, AccountType, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
 use crate::util::parse_uuid;
 
@@ -97,7 +97,9 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
     let code = input.code.trim();
     let name = input.name.trim();
     if code.is_empty() || name.is_empty() {
-        return Err(Error::Validation("code and name are required".into()));
+        return Err(Error::Validation(ValidationError::NameRequired {
+            field: "code and name",
+        }));
     }
 
     // Ensure entity exists.
@@ -133,7 +135,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
     )
     .map_err(|err| {
         if err.to_string().contains("UNIQUE") {
-            Error::Validation("account code already exists for this entity".into())
+            Error::Validation(ValidationError::AccountCodeTaken)
         } else {
             Error::Io(err.to_string())
         }
@@ -151,14 +153,14 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
     let code = input.code.trim();
     let name = input.name.trim();
     if code.is_empty() || name.is_empty() {
-        return Err(Error::Validation("code and name are required".into()));
+        return Err(Error::Validation(ValidationError::NameRequired {
+            field: "code and name",
+        }));
     }
 
     let account = get_account(conn, input.id)?;
     if account.is_system && !input.is_active {
-        return Err(Error::Validation(
-            "system accounts cannot be archived".into(),
-        ));
+        return Err(Error::Validation(ValidationError::SystemAccountProtected));
     }
 
     let n = conn
@@ -178,7 +180,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
         )
         .map_err(|err| {
             if err.to_string().contains("UNIQUE") {
-                Error::Validation("account code already exists for this entity".into())
+                Error::Validation(ValidationError::AccountCodeTaken)
             } else {
                 Error::Io(err.to_string())
             }
@@ -199,9 +201,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
 pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
     let account = get_account(conn, id)?;
     if account.is_system {
-        return Err(Error::Validation(
-            "system accounts cannot be archived".into(),
-        ));
+        return Err(Error::Validation(ValidationError::SystemAccountProtected));
     }
 
     conn.execute(

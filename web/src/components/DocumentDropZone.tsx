@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { FileUp, Loader2, Sparkles } from 'lucide-react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { api, type AnalyzerStatus, type DocumentSuggestion, type PendingDocSource } from '../lib/api'
-import { isTauri, type CommandError } from '../lib/tauri'
+import { api, type AnalyzerHint, type DocumentSuggestion, type PendingDocSource } from '../lib/api'
+import { renderAnalyzerHint } from '../lib/uiText'
+import { isTauri } from '../lib/tauri'
+import { commandErrorMessage } from '../lib/commandError'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { cn } from '../lib/cn'
 import { useI18n } from '../lib/I18nProvider'
@@ -19,20 +21,15 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
   const [dragOver, setDragOver] = useState(false)
   const [busy, setBusy] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
-  const [status, setStatus] = useState<AnalyzerStatus | null>(null)
+  // The analyzer's own hint, or 'unavailable' when its status could not be read.
+  const [hint, setHint] = useState<AnalyzerHint | 'unavailable' | null>(null)
   const busyRef = useRef(false)
 
   useEffect(() => {
     void api
       .documentAnalyzerStatus()
-      .then(setStatus)
-      .catch(() =>
-        setStatus({
-          ocr_available: false,
-          offline: true,
-          hint: t('drop.statusUnavailable'),
-        }),
-      )
+      .then((status) => setHint(status.hint))
+      .catch(() => setHint('unavailable'))
   }, [])
 
   const processFile = useCallback(
@@ -60,7 +57,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         })
         onSuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
-        const msg = (err as CommandError).message || t('drop.analyzeFailed')
+        const msg = commandErrorMessage(err, 'drop.analyzeFailed')
         setLocalError(msg)
         onError(msg)
       } finally {
@@ -82,7 +79,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         const suggestion = await api.documentAnalyzePath({ entityId, path })
         onSuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
-        const msg = (err as CommandError).message || t('drop.analyzeFailed')
+        const msg = commandErrorMessage(err, 'drop.analyzeFailed')
         setLocalError(msg)
         onError(msg)
       } finally {
@@ -91,7 +88,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         setDragOver(false)
       }
     },
-    [disabled, entityId, onError, onSuggestion, t],
+    [disabled, entityId, onError, onSuggestion],
   )
 
   // Tauri webviews often give empty dataTransfer.files on OS file drops.
@@ -208,10 +205,10 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
           <p className="mt-1 text-[13px] leading-snug text-[var(--color-muted)]">{t('drop.body')}</p>
         </div>
       </div>
-      {status ? (
+      {hint ? (
         <p className="pointer-events-none relative mt-3 flex items-start gap-1.5 text-xs leading-snug text-[var(--color-muted)]">
           <Sparkles className="mt-0.5 size-3.5 shrink-0 text-[var(--color-accent)]" />
-          {status.hint}
+          {hint === 'unavailable' ? t('drop.statusUnavailable') : renderAnalyzerHint(hint)}
         </p>
       ) : null}
       {localError ? (

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Download, Eye, FileImage, FileText, FolderOpen, Trash2 } from 'lucide-react'
 import { api, type DocumentMeta, type Entity } from '../lib/api'
 import { commandErrorMessage } from '../lib/commandError'
-import type { CommandError } from '../lib/tauri'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { formatBytes } from '../lib/files'
@@ -47,7 +46,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
       setDocs([])
       return
     }
-    void reload().catch((err) => setError(commandErrorMessage(err as CommandError)))
+    void reload().catch((err) => setError(commandErrorMessage(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id])
 
@@ -60,7 +59,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
       setDeleteId(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError) || t('docs.deleteFailed'))
+      setError(commandErrorMessage(err, 'docs.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -72,7 +71,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
     try {
       await api.documentExport(id)
     } catch (err) {
-      setError(commandErrorMessage(err as CommandError) || t('docs.exportFailed'))
+      setError(commandErrorMessage(err, 'docs.exportFailed'))
     } finally {
       setBusyId(null)
     }

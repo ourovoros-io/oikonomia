@@ -6,11 +6,13 @@
 use oikonomia_core::documents::{attach_document, list_documents};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, UpdateAccount, account_balance,
     create_entity, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
     set_account_opening_balance, trial_balance, update_account, void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -37,6 +39,7 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, Accounts) {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
 
@@ -86,7 +89,8 @@ fn replace_updates_amount_and_hides_original() {
 
     let mut corrected = expense(entity_id, &acc, 3_100);
     corrected.description = "groceries (corrected)".into();
-    let replacement = replace_simple_entry(conn, original.entry.id, &corrected).expect("replace");
+    let replacement =
+        replace_simple_entry(conn, original.entry.id, &corrected, Locale::En).expect("replace");
 
     let visible: Vec<_> = list_entries(conn, entity_id, &EntryFilter::default())
         .expect("list")
@@ -123,9 +127,13 @@ fn replace_moves_documents_to_replacement() {
     )
     .expect("attach");
 
-    let replacement =
-        replace_simple_entry(conn, original.entry.id, &expense(entity_id, &acc, 2_600))
-            .expect("replace");
+    let replacement = replace_simple_entry(
+        conn,
+        original.entry.id,
+        &expense(entity_id, &acc, 2_600),
+        Locale::En,
+    )
+    .expect("replace");
 
     let docs = list_documents(conn, entity_id).expect("docs");
     assert_eq!(docs.len(), 1);
@@ -139,10 +147,15 @@ fn replace_rejects_voided_and_foreign_entries() {
     let (entity_id, acc) = entity_with_accounts(conn);
 
     let voided = post_simple_entry(conn, &expense(entity_id, &acc, 2_500)).expect("post");
-    void_entry(conn, voided.entry.id).expect("void");
+    void_entry(conn, voided.entry.id, Locale::En).expect("void");
     assert!(matches!(
-        replace_simple_entry(conn, voided.entry.id, &expense(entity_id, &acc, 2_600)),
-        Err(Error::Validation(_))
+        replace_simple_entry(
+            conn,
+            voided.entry.id,
+            &expense(entity_id, &acc, 2_600),
+            Locale::En
+        ),
+        Err(Error::Validation(ValidationError::EntryAlreadyVoided))
     ));
 
     let original = post_simple_entry(conn, &expense(entity_id, &acc, 2_500)).expect("post");
@@ -154,13 +167,14 @@ fn replace_rejects_voided_and_foreign_entries() {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("other entity");
     let mut foreign = expense(entity_id, &acc, 2_600);
     foreign.entity_id = other.id;
     assert!(matches!(
-        replace_simple_entry(conn, original.entry.id, &foreign),
-        Err(Error::Validation(_))
+        replace_simple_entry(conn, original.entry.id, &foreign, Locale::En),
+        Err(Error::Validation(ValidationError::WrongBook))
     ));
 }
 
@@ -170,14 +184,16 @@ fn opening_balance_converges_on_the_stated_target() {
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
-    set_account_opening_balance(conn, acc.checking, 250_000, "2026-01-01").expect("set");
+    set_account_opening_balance(conn, acc.checking, 250_000, "2026-01-01", Locale::En)
+        .expect("set");
     assert_eq!(
         account_balance(conn, acc.checking, "2026-01-01").expect("balance"),
         250_000
     );
 
     // Restating the balance posts only the delta, not another full amount.
-    set_account_opening_balance(conn, acc.checking, 300_000, "2026-01-02").expect("restate");
+    set_account_opening_balance(conn, acc.checking, 300_000, "2026-01-02", Locale::En)
+        .expect("restate");
     assert_eq!(
         account_balance(conn, acc.checking, "2026-01-02").expect("balance"),
         300_000
@@ -194,14 +210,16 @@ fn opening_balance_handles_liability_negative_and_no_op_targets() {
     let (_entity_id, acc) = entity_with_accounts(conn);
 
     // Liability: "I owe 500" is a credit-normal balance.
-    set_account_opening_balance(conn, acc.bills_payable, 50_000, "2026-01-01").expect("owe");
+    set_account_opening_balance(conn, acc.bills_payable, 50_000, "2026-01-01", Locale::En)
+        .expect("owe");
     assert_eq!(
         account_balance(conn, acc.bills_payable, "2026-01-01").expect("balance"),
         50_000
     );
 
     // An overdrawn asset target flips the entry sides.
-    set_account_opening_balance(conn, acc.checking, -10_000, "2026-01-01").expect("overdrawn");
+    set_account_opening_balance(conn, acc.checking, -10_000, "2026-01-01", Locale::En)
+        .expect("overdrawn");
     assert_eq!(
         account_balance(conn, acc.checking, "2026-01-01").expect("balance"),
         -10_000
@@ -209,8 +227,8 @@ fn opening_balance_handles_liability_negative_and_no_op_targets() {
 
     // Stating the balance it already has is refused, not silently duplicated.
     assert!(matches!(
-        set_account_opening_balance(conn, acc.bills_payable, 50_000, "2026-01-01"),
-        Err(Error::Validation(_))
+        set_account_opening_balance(conn, acc.bills_payable, 50_000, "2026-01-01", Locale::En),
+        Err(Error::Validation(ValidationError::OpeningBalanceUnchanged))
     ));
 }
 
@@ -236,9 +254,9 @@ fn update_account_cannot_deactivate_system_accounts() {
         },
     )
     .expect_err("system deactivate");
-    assert!(
-        matches!(err, Error::Validation(ref msg) if msg.contains("system accounts cannot be archived")),
-        "{err:?}"
+    assert_eq!(
+        err,
+        Error::Validation(ValidationError::SystemAccountProtected)
     );
     let after = list_accounts(conn, entity_id)
         .expect("reload")

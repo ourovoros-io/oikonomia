@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   backupCommandError,
+  restoreCommandError,
   canBackupVault,
   restoreConfirm,
   vaultBackupAvailability,
@@ -10,6 +11,7 @@ import { resetI18nForTests, t } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   resetI18nForTests()
 })
 
@@ -79,10 +81,58 @@ describe('backupCommandError', () => {
       /not been initialized/i,
     )
     expect(backupCommandError({ code: 'backup_invalid', message: 'backup is invalid: truncated' })).toBe(
-      'backup is invalid: truncated',
+      'That file is not a valid Oikonomia backup.',
     )
     expect(backupCommandError({ code: 'restore_would_overwrite', message: 'x' })).toMatch(/already exists/i)
-    expect(backupCommandError({ code: 'not_found', message: 'file not found' })).toBe('file not found')
-    expect(backupCommandError({ code: 'io', message: 'I/O error: disk' })).toBe('I/O error: disk')
+    expect(backupCommandError({ code: 'not_found', message: 'file not found' })).toBe(
+      'Backup file not found.',
+    )
+    expect(backupCommandError({ code: 'io', message: 'I/O error: disk' })).toBe(
+      'Could not read or write the backup file.',
+    )
+  })
+
+  test('logs the raw cause of a file error, which the sentence hides', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    backupCommandError({ code: 'io', message: 'EACCES /Users/x/backup' })
+
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toContain('EACCES /Users/x/backup')
+  })
+
+  test('a code with its own copy shows that copy, with its parameters', () => {
+    expect(
+      backupCommandError({
+        code: 'file_too_large',
+        message: 'file too large (max 8 MB)',
+        params: { max_mb: '8' },
+      }),
+    ).toBe('That file is too large. The limit is 8 MB.')
+  })
+
+  test('an unknown code shows the backup fallback, never the raw message', () => {
+    const shown = backupCommandError({ code: 'brand_new', message: 'sqlcipher: disk image is malformed' })
+
+    expect(shown).toBe('Could not complete the backup.')
+    expect(shown).not.toContain('sqlcipher')
+  })
+})
+
+describe('restoreCommandError', () => {
+  test('a vague code gets the restore sentence, where backup gets its own', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = { code: 'crypto', message: 'bad tag' }
+
+    expect(restoreCommandError(error)).toBe('Could not restore the backup.')
+    expect(backupCommandError(error)).toBe('Could not complete the backup.')
+  })
+
+  test('shares the specific sentences with backup', () => {
+    for (const code of ['vault_uninitialized', 'backup_invalid', 'restore_would_overwrite', 'not_found']) {
+      expect(restoreCommandError({ code, message: 'x' }), code).toBe(
+        backupCommandError({ code, message: 'x' }),
+      )
+    }
   })
 })

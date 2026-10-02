@@ -171,8 +171,9 @@ describe('SettingsPage', () => {
 
   test('a failed entity create shows the error and does not select a book', async () => {
     vi.mocked(api.entityCreate).mockRejectedValue({
-      code: 'validation',
-      message: 'entity name already exists',
+      code: 'name_taken',
+      message: 'the name "Personal" is already in use',
+      params: { name: 'Personal' },
     })
     const onEntitiesChange = vi.fn(noopAsync)
     const onSelectEntity = vi.fn()
@@ -189,10 +190,32 @@ describe('SettingsPage', () => {
     await userEvent.type(screen.getByLabelText('Name'), 'Personal')
     await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
 
-    expect(await screen.findByText('entity name already exists')).toBeInTheDocument()
+    expect(
+      await screen.findByText('The name \u201cPersonal\u201d is already in use. Choose a different name.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/is already in use$/)).toBeNull()
     expect(api.entityCreate).toHaveBeenCalledTimes(1)
     expect(onEntitiesChange).not.toHaveBeenCalled()
     expect(onSelectEntity).not.toHaveBeenCalled()
+  })
+
+  test('a failed entity create with an unknown code never shows the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.entityCreate).mockRejectedValue({
+      code: 'brand_new',
+      message: 'UNIQUE constraint failed: entities.name',
+    })
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Personal')
+    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+
+    expect(await screen.findByText('Something went wrong.')).toBeInTheDocument()
+    expect(screen.queryByText(/UNIQUE constraint/)).toBeNull()
   })
 
   const appInfo = { name: 'Oikonomia', version: '0.1.0-dev', support_email: 'info@ourovoros.io' }
@@ -427,6 +450,66 @@ describe('SettingsPage vault backup', () => {
     }
   })
 
+  test('a vague restore failure says the restore failed, not the backup', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultPickBackup).mockResolvedValue(BACKUP_PATH)
+    vi.mocked(vaultRestore).mockRejectedValue({ code: 'crypto', message: 'bad tag' })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await expandVaultBackup()
+    await userEvent.click(screen.getByRole('button', { name: /restore from backup/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Replace local vault?' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Replace vault' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not restore the backup.')).toBeTruthy()
+    })
+    expect(screen.queryByText('Could not complete the backup.')).toBeNull()
+  })
+
+  test('a failure choosing the backup file says the restore failed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultPickBackup).mockRejectedValue({ code: 'crypto', message: 'x' })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await expandVaultBackup()
+    await userEvent.click(screen.getByRole('button', { name: /restore from backup/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not restore the backup.')).toBeTruthy()
+    })
+  })
+
+  test('a vague backup failure still says the backup failed', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultBackup).mockRejectedValue({ code: 'crypto', message: 'bad tag' })
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await expandVaultBackup()
+    await userEvent.click(screen.getByRole('button', { name: /backup vault/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not complete the backup.')).toBeTruthy()
+    })
+  })
+
   test('cancelled pick does not restore and does not show confirm', async () => {
     vi.mocked(vaultPickBackup).mockResolvedValue(null)
     render(
@@ -485,6 +568,61 @@ describe('SettingsPage section design', () => {
 
     await userEvent.type(confirm, '3')
     expect(confirm).not.toHaveAttribute('aria-invalid')
+  })
+
+  test('a password change failing with a known code shows that code copy, with its parameters', async () => {
+    vi.mocked(vaultChangePassword).mockRejectedValue({
+      code: 'password_too_short',
+      message: 'password must be at least 12 characters',
+      params: { min: '12' },
+    })
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /master password/i }))
+    await userEvent.type(await screen.findByLabelText('Current password'), 'oldpass')
+    await userEvent.type(screen.getByLabelText('New password'), 'short')
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'short')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    expect(
+      await screen.findByText('That password is too short. Use at least 12 characters.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('password must be at least 12 characters')).toBeNull()
+  })
+
+  test('a password change failing with an unknown code shows the screen fallback, never the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultChangePassword).mockRejectedValue({
+      code: 'brand_new',
+      message: 'sqlcipher: rekey failed',
+    })
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /master password/i }))
+    await userEvent.type(await screen.findByLabelText('Current password'), 'oldpass')
+    await userEvent.type(screen.getByLabelText('New password'), 'newpass12345')
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'newpass12345')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    expect(await screen.findByText('Could not change the password.')).toBeInTheDocument()
+    expect(screen.queryByText(/sqlcipher/)).toBeNull()
+  })
+
+  test('a password change rejected with undefined shows the screen fallback and does not throw', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(vaultChangePassword).mockRejectedValue(undefined)
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /master password/i }))
+    await userEvent.type(await screen.findByLabelText('Current password'), 'oldpass')
+    await userEvent.type(screen.getByLabelText('New password'), 'newpass12345')
+    await userEvent.type(screen.getByLabelText('Confirm new password'), 'newpass12345')
+    await userEvent.click(screen.getByRole('button', { name: /change password/i }))
+
+    expect(await screen.findByText('Could not change the password.')).toBeInTheDocument()
   })
 
   test('an incorrect current password marks that field invalid and describes it', async () => {

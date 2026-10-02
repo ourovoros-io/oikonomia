@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
+import { asCommandError, isMissingIpcCommand } from './commandError'
 import {
   isAvailableUpdate,
-  isMissingIpcCommand,
   parseUpdateCheckResult,
   readDevUnlockUpdatePreview,
   stubUpdateCheckResult,
@@ -23,22 +23,15 @@ export type AppInfo = {
 
 export type CommandError = {
   code: string
+  /** English; for logs only. The UI never shows it. */
   message: string
+  /** Named values for the localized text of `code`. */
+  params?: Record<string, string>
 }
 
 /** True when running inside the Tauri webview (not a plain browser tab). */
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-}
-
-function asCommandError(err: unknown): CommandError {
-  if (err && typeof err === 'object' && 'code' in err && 'message' in err) {
-    return err as CommandError
-  }
-  return {
-    code: 'unknown',
-    message: err instanceof Error ? err.message : String(err),
-  }
 }
 
 export async function vaultStatus(): Promise<VaultStatus> {

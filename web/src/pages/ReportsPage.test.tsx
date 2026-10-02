@@ -84,9 +84,9 @@ beforeEach(() => {
   vi.mocked(api.reportBalanceSheet).mockReset().mockResolvedValue({
     entity_id: 'e1',
     as_of: '2026-08-23',
-    assets: { title: 'assets', lines: [], total: 0 },
-    liabilities: { title: 'liabilities', lines: [], total: 0 },
-    equity: { title: 'equity', lines: [], total: 0 },
+    assets: { lines: [], total: 0 },
+    liabilities: { lines: [], total: 0 },
+    equity: { lines: [], total: 0 },
     total_assets: 0,
     total_liabilities_equity: 0,
   })
@@ -361,7 +361,7 @@ describe('ReportsPage historical dates', () => {
 
     await act(async () => {
       first.reject({
-        code: 'validation',
+        code: 'date_range_inverted',
         message: 'from date must be on or before to',
       })
     })
@@ -438,14 +438,26 @@ describe('ReportsPage historical dates', () => {
 describe('ReportsPage statements', () => {
   test('shows the fetch error instead of a stale statement', async () => {
     vi.mocked(api.reportPnl).mockRejectedValue({
-      code: 'validation',
+      code: 'date_range_inverted',
       message: 'from date must be on or before to',
     })
     render(<ReportsPage entity={entity} />)
     await waitFor(() => {
-      expect(screen.getByRole('alert').textContent).toBe('That input is not valid.')
+      expect(screen.getByRole('alert').textContent).toBe('The From date must be on or before the To date.')
     })
     expect(screen.queryByText('Profit & Loss')).toBeNull()
+  })
+
+  test('a fetch failure with an unknown code never shows the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.reportPnl).mockRejectedValue({
+      code: 'brand_new',
+      message: 'sqlcipher: disk image is malformed',
+    })
+    render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toBe('Something went wrong.')
+    })
   })
 
   test('empty P&L period shows the empty-line copy', async () => {
@@ -472,13 +484,11 @@ describe('ReportsPage statements', () => {
       entity_id: 'e1',
       as_of: todayISO(),
       assets: {
-        title: 'Assets',
         lines: [expense({ code: '1010', name: 'Checking', balance_minor: 100_00 })],
         total: 100_00,
       },
-      liabilities: { title: 'Liabilities', lines: [], total: 0 },
+      liabilities: { lines: [], total: 0 },
       equity: {
-        title: 'Equity',
         lines: [expense({ code: 'NI', name: 'Net Income (current period)', balance_minor: 100_00 })],
         total: 100_00,
       },
@@ -500,9 +510,9 @@ describe('ReportsPage statements', () => {
     const sheet: BalanceSheet = {
       entity_id: 'e1',
       as_of: todayISO(),
-      assets: { title: 'Assets', lines: [], total: 50_00 },
-      liabilities: { title: 'Liabilities', lines: [], total: 0 },
-      equity: { title: 'Equity', lines: [], total: 20_00 },
+      assets: { lines: [], total: 50_00 },
+      liabilities: { lines: [], total: 0 },
+      equity: { lines: [], total: 20_00 },
       total_assets: 50_00,
       total_liabilities_equity: 20_00,
     }
@@ -513,6 +523,28 @@ describe('ReportsPage statements', () => {
     await waitFor(() => {
       expect(screen.getByText(/Out of balance by/)).toBeTruthy()
     })
+  })
+
+  test('balance sheet headings follow the app language, not backend text', async () => {
+    setLocale('el')
+    vi.mocked(api.reportBalanceSheet).mockResolvedValue({
+      entity_id: 'e1',
+      as_of: todayISO(),
+      assets: { lines: [], total: 0 },
+      liabilities: { lines: [], total: 0 },
+      equity: { lines: [], total: 0 },
+      total_assets: 0,
+      total_liabilities_equity: 0,
+    })
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Ισολογισμός' }))
+    await waitFor(() => {
+      expect(screen.getByText('Ενεργητικό')).toBeTruthy()
+    })
+    expect(screen.getByText('Υποχρεώσεις')).toBeTruthy()
+    expect(screen.getByText('Ίδια κεφάλαια')).toBeTruthy()
+    expect(screen.queryByText(/assets|liabilities|equity/i)).toBeNull()
   })
 
   test('trial balance paints debit and credit columns', async () => {
@@ -565,5 +597,91 @@ describe('ReportsPage empty-state CTA', () => {
   test('renders without a CTA when onCreateBook is not supplied', () => {
     render(<ReportsPage entity={null} />)
     expect(screen.queryByRole('button', { name: 'Create a book' })).toBeNull()
+  })
+})
+
+describe('ReportsPage synthetic rows', () => {
+  const retained = expense({
+    code: 'RE',
+    name: 'Retained Earnings (prior periods)',
+    account_type: 'equity',
+    balance_minor: 40_00,
+    synthetic: 'retained_earnings',
+  })
+  const netIncome = expense({
+    code: 'NI',
+    name: 'Net Income (current period)',
+    account_type: 'equity',
+    balance_minor: 60_00,
+    synthetic: 'net_income',
+  })
+
+  test('the balance sheet words the computed rows in the current language', async () => {
+    vi.mocked(api.reportBalanceSheet).mockResolvedValue({
+      entity_id: 'e1',
+      as_of: todayISO(),
+      assets: { lines: [], total: 100_00 },
+      liabilities: { lines: [], total: 0 },
+      equity: { lines: [retained, netIncome], total: 100_00 },
+      total_assets: 100_00,
+      total_liabilities_equity: 100_00,
+    })
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Balance sheet' }))
+    await waitFor(() => {
+      expect(screen.getByText('Net Income (current period)')).toBeTruthy()
+    })
+
+    act(() => setLocale('el'))
+
+    expect(screen.getByText('Αποτελέσματα εις νέο (προηγούμενες περίοδοι)')).toBeTruthy()
+    expect(screen.getByText('Καθαρό αποτέλεσμα (τρέχουσα περίοδος)')).toBeTruthy()
+    expect(screen.queryByText('Net Income (current period)')).toBeNull()
+
+    act(() => setLocale('de'))
+
+    expect(screen.getByText('Gewinnvortrag (frühere Perioden)')).toBeTruthy()
+    expect(screen.getByText('Periodenergebnis (aktuelle Periode)')).toBeTruthy()
+  })
+
+  test('the trial balance words the computed rows too', async () => {
+    vi.mocked(api.reportTrialBalance).mockResolvedValue({
+      entity_id: 'e1',
+      as_of: todayISO(),
+      lines: [retained],
+      total_debits: 0,
+      total_credits: 40_00,
+    })
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Trial balance' }))
+    await waitFor(() => {
+      expect(screen.getByText('Retained Earnings (prior periods)')).toBeTruthy()
+    })
+
+    act(() => setLocale('fr'))
+
+    expect(screen.getByText('Report à nouveau (périodes précédentes)')).toBeTruthy()
+  })
+
+  test('a real account keeps its own name in every language', async () => {
+    vi.mocked(api.reportTrialBalance).mockResolvedValue({
+      entity_id: 'e1',
+      as_of: todayISO(),
+      lines: [expense({ code: '1010', name: 'Checking', account_type: 'asset', balance_minor: 10_00 })],
+      total_debits: 10_00,
+      total_credits: 0,
+    })
+    const user = userEvent.setup()
+    render(<ReportsPage entity={entity} />)
+    await user.click(screen.getByRole('button', { name: 'Trial balance' }))
+    await waitFor(() => {
+      expect(screen.getByText('Checking')).toBeTruthy()
+    })
+
+    act(() => setLocale('el'))
+
+    expect(screen.getByText('Checking')).toBeTruthy()
   })
 })

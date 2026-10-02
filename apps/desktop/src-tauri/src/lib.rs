@@ -13,6 +13,8 @@ mod donations;
 mod error;
 mod nav_guard;
 mod state;
+#[cfg(test)]
+mod test_macros;
 mod tray;
 mod update;
 mod update_exec;
@@ -128,6 +130,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::entity_archive,
         commands::entity_delete,
         commands::account_list,
+        commands::account_defaults,
         commands::account_create,
         commands::account_update,
         commands::account_archive,

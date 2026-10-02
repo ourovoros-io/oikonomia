@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type {
   Account,
+  AccountDefaults,
   CashFlowSeries,
   CsvImportPreview,
   DocumentSuggestion,
@@ -45,6 +46,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       ...actual.api,
       entryList: vi.fn(),
       accountList: vi.fn(),
+      accountDefaults: vi.fn(),
       documentList: vi.fn(),
       getUiPrefs: vi.fn(),
       csvImportPreview: vi.fn(),
@@ -158,7 +160,7 @@ const preview: CsvImportPreview = {
     {
       source_row: 4,
       duplicate: false,
-      error: 'invalid amount',
+      error: { code: 'csv_invalid_amount', params: { value: 'abc' } },
       suggested: null,
       signed_amount_minor: null,
     },
@@ -242,9 +244,20 @@ function documentSuggestion(over: Partial<DocumentSuggestion> = {}): DocumentSug
     wallet_account_id: null,
     payable_account_id: null,
     confidence: 0.4,
-    notes: '',
+    notes: [],
     ...over,
   }
+}
+
+const DEFAULTS: AccountDefaults = {
+  category: 'exp1',
+  payment: 'w1',
+  deposit: 'w1',
+  income: 'inc1',
+  bill_category: 'exp1',
+  bills_payable: null,
+  transfer_source: 'w1',
+  transfer_destination: 'w1',
 }
 
 afterEach(() => {
@@ -256,6 +269,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(api.entryList).mockReset().mockResolvedValue([postedEntry])
   vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
+  vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)
   vi.mocked(api.documentList).mockReset().mockResolvedValue([])
   vi.mocked(api.getUiPrefs).mockReset().mockRejectedValue(new Error('no prefs'))
   vi.mocked(api.csvImportPreview).mockReset().mockResolvedValue(preview)
@@ -470,7 +484,7 @@ describe('TransactionsPage hidden paint', () => {
   test('setHidden reject shows ErrorBanner', async () => {
     vi.mocked(api.entrySetHidden).mockRejectedValue({
       code: 'unknown',
-      message: 'could not hide entry',
+      message: 'sqlite: could not hide entry',
     })
     await renderReady()
     await userEvent.click(screen.getByText('Alpha supermarket'))
@@ -479,8 +493,9 @@ describe('TransactionsPage hidden paint', () => {
     })
     await userEvent.click(screen.getByRole('checkbox', { name: /hide/i }))
     await waitFor(() => {
-      expect(screen.getByText('could not hide entry')).toBeTruthy()
+      expect(screen.getByText('Could not update the entry.')).toBeTruthy()
     })
+    expect(screen.queryByText(/sqlite/)).toBeNull()
   })
 })
 
@@ -652,7 +667,7 @@ describe('TransactionsPage discards unfinished draft', () => {
         amount_minor: 1234,
         description: null,
         reference: null,
-        notes: 'Partial scan — amount only',
+        notes: [{ code: 'ocr_little_text' }],
       }),
     )
 
@@ -662,7 +677,9 @@ describe('TransactionsPage discards unfinished draft', () => {
     expect(screen.getByLabelText('Description')).toHaveValue('')
     expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('12.34')
     expect(screen.getByLabelText('Reference (optional)')).toHaveValue('')
-    expect(screen.getByText('Partial scan — amount only')).toBeTruthy()
+    expect(
+      screen.getByText('OCR ran but found little text — fill the form manually if needed.'),
+    ).toBeTruthy()
     expect(screen.queryByDisplayValue('LEFTOVER DRAFT PAYEE')).toBeNull()
     expect(screen.queryByDisplayValue('99.99')).toBeNull()
     expect(screen.queryByDisplayValue('DRAFT-REF-999')).toBeNull()
@@ -684,7 +701,7 @@ describe('TransactionsPage discards unfinished draft', () => {
     expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('')
     expect(screen.getByLabelText('Reference (optional)')).toHaveValue('')
     expect(screen.queryByDisplayValue('LEFTOVER DRAFT PAYEE')).toBeNull()
-    expect(screen.queryByText('Partial scan — amount only')).toBeNull()
+    expect(screen.queryByText(/OCR ran but found little text/)).toBeNull()
   })
 
   test('startEdit still populates from the posted entry after a discarded draft', async () => {
@@ -723,6 +740,41 @@ describe('TransactionsPage empty-state CTA', () => {
   test('renders without a CTA when onCreateBook is not supplied', () => {
     render(<TransactionsPage entity={null} />)
     expect(screen.queryByRole('button', { name: 'Create a book' })).toBeNull()
+  })
+})
+
+describe('TransactionsPage default accounts', () => {
+  test('New entry preselects the accounts Rust returned, whatever they are called', async () => {
+    // Neither name holds an English word, and the default is not the first
+    // expense account in the list: only Rust's answer can pick it.
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'exp2', name: 'Λογαριασμός 5100', account_type: 'expense', code: '5100' }),
+    ])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, category: 'exp2' })
+
+    render(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'New entry' })
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Category (what for)')).toHaveValue('exp2')
+    })
+    expect(api.accountDefaults).toHaveBeenCalledWith('e1')
+  })
+
+  test('the loaded ledger and defaults are dropped when the book goes away', async () => {
+    const { rerender } = render(
+      <TransactionsPage entity={entity} newEntryIntent={0} onNewEntryIntentHandled={vi.fn()} />,
+    )
+    await waitFor(() => {
+      expect(api.accountDefaults).toHaveBeenCalledTimes(1)
+    })
+
+    rerender(<TransactionsPage entity={null} newEntryIntent={0} onNewEntryIntentHandled={vi.fn()} />)
+
+    // No book, so nothing is fetched again and nothing from the old one stays.
+    expect(api.accountDefaults).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Meals & dining')).toBeNull()
   })
 })
 
@@ -798,7 +850,7 @@ describe('TransactionsPage summary', () => {
   test('an inverted date range draws nothing and says why', async () => {
     vi.mocked(api.cashFlowSeries).mockImplementation(async (_entityId, from, to) => {
       if (from && to) {
-        throw { code: 'validation', message: 'from date must be on or before to' }
+        throw { code: 'date_range_inverted', message: 'from date must be on or before to' }
       }
       return series
     })
@@ -830,6 +882,22 @@ describe('TransactionsPage summary', () => {
       expect(pane?.querySelector('[data-net]')).toHaveTextContent('—')
     })
     expect(pane).toHaveTextContent(commandErrorMessage({ code: 'io', message: 'disk' }))
+  })
+
+  test('a failing summary with an unknown code never shows the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.cashFlowSeries).mockRejectedValue({
+      code: 'brand_new',
+      message: 'sqlcipher: disk image is malformed',
+    })
+    await renderReady()
+
+    const heading = await screen.findByRole('heading', { name: 'In view' })
+    const pane = heading.closest('section')
+    await waitFor(() => {
+      expect(pane).toHaveTextContent('Something went wrong.')
+    })
+    expect(pane).not.toHaveTextContent('sqlcipher')
   })
 })
 

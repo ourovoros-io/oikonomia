@@ -9,6 +9,7 @@ use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity,
     dashboard_summary, list_accounts, list_entries, post_simple_entry, previous_window, void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::{format_date, parse_date};
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -85,7 +86,7 @@ fn seed_august_ledger(conn: &Connection, e: EntityId) {
     mistake.category_account_id = Some(account(conn, e, "5100"));
     mistake.wallet_account_id = Some(account(conn, e, "1010"));
     let voided = post(conn, &mistake);
-    void_entry(conn, voided).expect("void");
+    void_entry(conn, voided, Locale::En).expect("void");
 
     // OCR-style bill posted with a future due date (Aug 13 > "today" Aug 10).
     let mut due_bill = base(e, Bill, "2026-08-13", 7_253);
@@ -116,6 +117,7 @@ fn dashboard_numbers_hand_checked() {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity")
     .id;
@@ -169,6 +171,7 @@ fn probe_book(conn: &Connection, name: &str) -> EntityId {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity")
     .id

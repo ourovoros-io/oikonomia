@@ -3,10 +3,13 @@
 use rusqlite::Connection;
 use rusqlite::OptionalExtension;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 
 /// Default idle lock timeout: 15 minutes.
 pub const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 15 * 60;
+
+/// Shortest idle lock timeout the vault accepts, in seconds.
+pub const MIN_LOCK_TIMEOUT_SECS: u64 = 60;
 
 const KEY_LOCK_TIMEOUT: &str = "lock_timeout_secs";
 
@@ -39,10 +42,10 @@ pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
 ///
 /// Validation or DB errors.
 pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
-    if secs < 60 {
-        return Err(Error::Validation(
-            "lock timeout must be at least 60 seconds".into(),
-        ));
+    if secs < MIN_LOCK_TIMEOUT_SECS {
+        return Err(Error::Validation(ValidationError::LockTimeoutTooShort {
+            min_secs: MIN_LOCK_TIMEOUT_SECS,
+        }));
     }
 
     conn.execute(
@@ -71,9 +74,9 @@ mod tests {
         let err = set_lock_timeout_secs(&conn, 59);
         assert_eq!(
             err,
-            Err(Error::Validation(
-                "lock timeout must be at least 60 seconds".into()
-            ))
+            Err(Error::Validation(ValidationError::LockTimeoutTooShort {
+                min_secs: MIN_LOCK_TIMEOUT_SECS,
+            }))
         );
     }
 

@@ -110,11 +110,14 @@ export function balanceSheet(l: DemoLedger, asOf: string): BalanceSheet {
   // Rust folds undistributed earnings into equity; mirror that so the sheet balances.
   equity.push({
     code: '3900',
-    name: l.lang === 'el' ? 'Αποτελέσματα χρήσης' : 'Current earnings',
+    // The English name Rust sends for this row; the app words it from `synthetic`.
+    name: 'Net Income (current period)',
     account_type: 'equity',
     debit_minor: 0,
     credit_minor: earnings,
     balance_minor: earnings,
+    // Rust marks this computed row, and the app words it from the marker.
+    synthetic: 'net_income',
   })
 
   const total_assets = sum(assets)
@@ -124,9 +127,9 @@ export function balanceSheet(l: DemoLedger, asOf: string): BalanceSheet {
   return {
     entity_id: l.entity.id,
     as_of: asOf,
-    assets: { title: 'Assets', lines: assets, total: total_assets },
-    liabilities: { title: 'Liabilities', lines: liabilities, total: total_liabilities },
-    equity: { title: 'Equity', lines: equity, total: total_equity },
+    assets: { lines: assets, total: total_assets },
+    liabilities: { lines: liabilities, total: total_liabilities },
+    equity: { lines: equity, total: total_equity },
     total_assets,
     total_liabilities_equity: total_liabilities + total_equity,
   }

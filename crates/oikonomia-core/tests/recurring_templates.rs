@@ -4,6 +4,7 @@
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
+use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleBillStatus,
     SimpleEntryKind, UpdateRecurringTemplate, create_entity, create_recurring_template,
@@ -11,6 +12,7 @@ use oikonomia_core::ledger::{
     list_recurring_templates, list_recurring_templates_as_of, post_recurring_template,
     update_recurring_template,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -39,6 +41,7 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");
@@ -275,14 +278,14 @@ fn validation_rejects_empty_name_and_non_positive_amount() {
     nameless.name = "   ".into();
     assert!(matches!(
         create_recurring_template(conn, &nameless),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::NameRequired { .. }))
     ));
 
     let mut zero = monthly_rent(entity_id, &accounts);
     zero.amount_minor = 0;
     assert!(matches!(
         create_recurring_template(conn, &zero),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::AmountNotPositive))
     ));
 }
 
@@ -295,7 +298,7 @@ fn validation_monthly_needs_day_of_month() {
     missing.day_of_month = None;
     assert!(matches!(
         create_recurring_template(conn, &missing),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::DayOfMonthInvalid))
     ));
 
     let mut weekly_with_day = monthly_rent(entity_id, &accounts);
@@ -303,7 +306,7 @@ fn validation_monthly_needs_day_of_month() {
     weekly_with_day.day_of_month = Some(10);
     assert!(matches!(
         create_recurring_template(conn, &weekly_with_day),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::DayOfMonthInvalid))
     ));
 }
 
@@ -316,7 +319,7 @@ fn validation_requires_role_accounts_for_kind() {
     missing_wallet.wallet_account_id = None;
     assert!(matches!(
         create_recurring_template(conn, &missing_wallet),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::AccountRequired { .. }))
     ));
 }
 
@@ -402,6 +405,6 @@ fn post_rejects_non_positive_override_amount() {
         create_recurring_template(conn, &monthly_rent(entity_id, &accounts)).expect("create");
     assert!(matches!(
         post_recurring_template(conn, template.id, None, Some(0)),
-        Err(Error::Validation(_))
+        Err(Error::Validation(ValidationError::AmountNotPositive))
     ));
 }

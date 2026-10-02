@@ -34,6 +34,7 @@ vi.mock('./lib/tauri', () => ({
 vi.mock('./lib/api', () => ({
   api: {
     entityList: vi.fn(),
+    entityCreate: vi.fn(),
     getLockTimeout: vi.fn(async () => 900),
     donationAddresses: vi.fn(async () => []),
     setLockTimeout: vi.fn(),
@@ -215,11 +216,49 @@ describe('App shell', () => {
     // The app-level error box used to be hand-copied markup with no
     // role/aria-live and a stale hex edge; it now reuses ErrorBanner like
     // every other error surface in the app.
-    vi.mocked(api.entityList).mockReset().mockRejectedValue(new Error('backend down'))
+    vi.mocked(api.entityList)
+      .mockReset()
+      .mockRejectedValue({ code: 'vault_locked', message: 'backend down' })
     render(<App />)
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('backend down')
+      expect(screen.getByRole('alert')).toHaveTextContent('The vault is locked.')
     })
+    expect(screen.queryByText('backend down')).toBeNull()
+  })
+
+  test('an unknown backend failure shows the localized fallback, never the raw message', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.entityList)
+      .mockReset()
+      .mockRejectedValue({ code: 'brand_new', message: 'sqlcipher: disk image is malformed' })
+    render(<App />)
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Something went wrong while talking to the app. Restart Oikonomia and try again.',
+      )
+    })
+    expect(screen.queryByText(/sqlcipher/)).toBeNull()
+  })
+
+  test('a failed book refresh after creating a book shows the backend-failure sentence', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.entityCreate).mockReset().mockResolvedValue({ ...entity, id: 'e2', name: 'Work' })
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Work')
+
+    // Created fine, but reloading the list fails with a code the UI has no copy for.
+    vi.mocked(api.entityList).mockRejectedValue({ code: 'brand_new', message: 'sqlcipher: raw detail' })
+    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Something went wrong while talking to the app. Restart Oikonomia and try again.',
+      )
+    })
+    expect(screen.queryByText(/sqlcipher/)).toBeNull()
   })
 
   test('is dark-only: offers no light or dark mode switch', async () => {

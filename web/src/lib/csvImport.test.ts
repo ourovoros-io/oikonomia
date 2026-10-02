@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import type { CsvColumnMapping, CsvImportPreviewRow, SimpleEntryInput } from './api'
+import type { AccountDefaults, CsvColumnMapping, CsvImportPreviewRow, SimpleEntryInput } from './api'
 import {
   applyBulkAccounts,
   csvImportAccountDefaults,
@@ -14,13 +14,18 @@ import {
   previewSubtitle,
   rowSelectable,
 } from './csvImport'
-import type { AccountLike } from './simpleEntry'
 
-const accounts: AccountLike[] = [
-  { id: 'exp1', name: 'Food', account_type: 'expense', is_active: true },
-  { id: 'inc1', name: 'Salary', account_type: 'income', is_active: true },
-  { id: 'w1', name: 'Checking', account_type: 'asset', is_active: true },
-]
+/** What Rust's `account_defaults` returns for a book; the UI never picks these. */
+const defaults: AccountDefaults = {
+  category: 'exp1',
+  payment: 'w1',
+  deposit: 'w1',
+  income: 'inc1',
+  bill_category: 'exp1',
+  bills_payable: null,
+  transfer_source: 'w1',
+  transfer_destination: 'w1',
+}
 
 function suggested(kind: 'expense' | 'income'): SimpleEntryInput {
   return {
@@ -38,6 +43,8 @@ function suggested(kind: 'expense' | 'income'): SimpleEntryInput {
     to_account_id: null,
   }
 }
+
+const INVALID_AMOUNT = { code: 'csv_invalid_amount', params: { value: 'abc' } }
 
 function row(over: Partial<CsvImportPreviewRow> & { suggested?: SimpleEntryInput | null }): CsvImportPreviewRow {
   return {
@@ -60,13 +67,13 @@ describe('defaultChecked', () => {
   })
 
   test('unchecks error rows', () => {
-    expect(defaultChecked(row({ error: 'invalid amount', suggested: null }))).toBe(false)
+    expect(defaultChecked(row({ error: INVALID_AMOUNT, suggested: null }))).toBe(false)
   })
 })
 
 describe('rowSelectable', () => {
   test('junk rows cannot be selected', () => {
-    expect(rowSelectable(row({ error: 'invalid amount', suggested: null }))).toBe(false)
+    expect(rowSelectable(row({ error: INVALID_AMOUNT, suggested: null }))).toBe(false)
     expect(rowSelectable(row({ error: null, suggested: null }))).toBe(false)
     expect(rowSelectable(row({}))).toBe(true)
   })
@@ -88,10 +95,10 @@ describe('previewSubtitle', () => {
 })
 
 describe('csvImportAccountDefaults', () => {
-  test('uses pickDefault when form and last-accounts are empty', () => {
+  test('falls back to the defaults Rust returned when form and last-accounts are empty', () => {
     expect(
       csvImportAccountDefaults({
-        accounts,
+        defaults,
         walletId: '',
         categoryId: '',
         kind: 'expense',
@@ -106,7 +113,7 @@ describe('csvImportAccountDefaults', () => {
   test('prefers last-accounts over form state', () => {
     expect(
       csvImportAccountDefaults({
-        accounts,
+        defaults,
         walletId: 'form-wallet',
         categoryId: 'form-exp',
         kind: 'expense',

@@ -1,0 +1,10 @@
+[
+  "category",
+  "payment",
+  "deposit",
+  "income",
+  "bill_category",
+  "bills_payable",
+  "transfer_source",
+  "transfer_destination"
+]

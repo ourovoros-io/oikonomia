@@ -33,6 +33,7 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 ///
 /// # Errors
 ///
+/// [`CsvError::MissingAmount`] when the cell is empty or only whitespace;
 /// [`CsvError::InvalidAmount`] when the cell is not a number;
 /// [`CsvError::AmountOverflow`] when the magnitude does not fit in `i64`.
 pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
@@ -62,7 +63,7 @@ pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
 fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
     let compact: String = raw.trim().chars().filter(|c| !c.is_whitespace()).collect();
     if compact.is_empty() {
-        return Err(CsvError::InvalidAmount(raw.to_owned()));
+        return Err(CsvError::MissingAmount);
     }
 
     let mut negative = false;
@@ -195,10 +196,8 @@ mod tests {
             parse_signed_minor("abc", 2),
             Err(CsvError::InvalidAmount(_))
         ));
-        assert!(matches!(
-            parse_signed_minor("", 2),
-            Err(CsvError::InvalidAmount(_))
-        ));
+        assert_eq!(parse_signed_minor("", 2), Err(CsvError::MissingAmount));
+        assert_eq!(parse_signed_minor("  ", 2), Err(CsvError::MissingAmount));
         assert!(matches!(
             parse_signed_minor("1.2345", 2),
             Err(CsvError::InvalidAmount(_))

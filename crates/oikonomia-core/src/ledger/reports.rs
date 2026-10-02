@@ -5,13 +5,32 @@ use serde::{Deserialize, Serialize};
 use time::Date;
 
 use crate::domain::{AccountType, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_type_str, normal_balance, parse_account_type, sum_types_as_of,
     sum_types_in_range,
 };
 use crate::ledger::entities::get_entity;
 use crate::util::{format_date, parse_date};
+
+/// A report row the reports compute instead of reading from an account.
+///
+/// Unclosed profit and loss is shown as equity so the balance sheet balances.
+/// The UI words these rows in the user's language; `code` and the English
+/// `name` stay on the line for exports and as a fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyntheticLine {
+    /// Profit and loss of earlier fiscal years not yet closed (code `RE`).
+    RetainedEarnings,
+    /// Profit and loss of the current fiscal year so far (code `NI`).
+    NetIncome,
+}
+
+impl SyntheticLine {
+    /// Every kind. A test checks this list against `web/src/lib/uiTextCodes.json`.
+    pub const ALL: &'static [Self] = &[Self::RetainedEarnings, Self::NetIncome];
+}
 
 /// One line on a trial balance or section report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,6 +47,9 @@ pub struct ReportLine {
     pub credit_minor: i64,
     /// Signed normal balance.
     pub balance_minor: i64,
+    /// Set on a computed row, which has no account behind it; `None` on a real account.
+    #[serde(default)]
+    pub synthetic: Option<SyntheticLine>,
 }
 
 /// Trial balance as of a date.
@@ -72,8 +94,6 @@ pub struct PnL {
 /// Balance sheet section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceSheetSection {
-    /// Section title.
-    pub title: String,
     /// Lines.
     pub lines: Vec<ReportLine>,
     /// Section total.
@@ -248,9 +268,7 @@ fn profit_and_loss_filtered(
     let from_d = parse_date(from)?;
     let to_d = parse_date(to)?;
     if from_d > to_d {
-        return Err(Error::Validation(
-            "from date must be on or before to".into(),
-        ));
+        return Err(Error::Validation(ValidationError::DateRangeInverted));
     }
     let _ = get_entity(conn, entity_id)?;
 
@@ -319,17 +337,14 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
         entity_id,
         as_of: as_of_d,
         assets: BalanceSheetSection {
-            title: "Assets".into(),
             total: total_assets,
             lines: assets_lines,
         },
         liabilities: BalanceSheetSection {
-            title: "Liabilities".into(),
             total: total_liab,
             lines: liab_lines,
         },
         equity: BalanceSheetSection {
-            title: "Equity".into(),
             total: total_equity,
             lines: equity_lines,
         },
@@ -359,9 +374,7 @@ pub fn dashboard_summary(
     let to_d = parse_date(to)?;
     let assets_as_of_d = parse_date(assets_as_of)?;
     if from_d > to_d {
-        return Err(Error::Validation(
-            "from date must be on or before to".into(),
-        ));
+        return Err(Error::Validation(ValidationError::DateRangeInverted));
     }
 
     let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], assets_as_of_d)?;
@@ -663,7 +676,7 @@ fn unclosed_pnl(
     })
 }
 
-fn equity_plug_line(code: &str, name: &str, net: i64) -> ReportLine {
+fn equity_plug_line(code: &str, name: &str, net: i64, synthetic: SyntheticLine) -> ReportLine {
     let (debit_minor, credit_minor) = if net >= 0 {
         (0, net)
     } else {
@@ -676,15 +689,26 @@ fn equity_plug_line(code: &str, name: &str, net: i64) -> ReportLine {
         debit_minor,
         credit_minor,
         balance_minor: net,
+        synthetic: Some(synthetic),
     }
 }
 
 fn retained_earnings_line(prior_net: i64) -> ReportLine {
-    equity_plug_line("RE", "Retained Earnings (prior periods)", prior_net)
+    equity_plug_line(
+        "RE",
+        "Retained Earnings (prior periods)",
+        prior_net,
+        SyntheticLine::RetainedEarnings,
+    )
 }
 
 fn net_income_line(net: i64) -> ReportLine {
-    equity_plug_line("NI", "Net Income (current period)", net)
+    equity_plug_line(
+        "NI",
+        "Net Income (current period)",
+        net,
+        SyntheticLine::NetIncome,
+    )
 }
 
 fn fiscal_year_start(as_of: Date, start_month: u8) -> Date {
@@ -720,12 +744,50 @@ fn map_report_line(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReportLine> {
         debit_minor: debits,
         credit_minor: credits,
         balance_minor: normal_balance(account_type, debits, credits),
+        synthetic: None,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_macros::listed_variants;
+
+    listed_variants! {
+        units listed_lines for SyntheticLine {
+            SyntheticLine::RetainedEarnings,
+            SyntheticLine::NetIncome,
+        }
+    }
+
+    /// Fails unless `SyntheticLine::ALL` is exactly the set of variants in the
+    /// `listed_lines` list above, each once. The compiler checks that list
+    /// against the enum with an exhaustive `match`, so a variant added to the
+    /// enum but left out of the list does not compile. It does not check the
+    /// order of `ALL`, nor that the UI has copy for a line; the shared-fixture
+    /// test in `ui_text` does that.
+    #[test]
+    fn all_lists_every_synthetic_line() {
+        let listed = listed_lines::variants();
+
+        assert_eq!(
+            SyntheticLine::ALL.len(),
+            listed_lines::COUNT,
+            "SyntheticLine::ALL and the listed variants differ in number"
+        );
+        for variant in listed {
+            assert!(
+                SyntheticLine::ALL.contains(&variant),
+                "{variant:?} is missing from SyntheticLine::ALL"
+            );
+        }
+        listed_lines::assert_every_position_once(
+            SyntheticLine::ALL
+                .iter()
+                .map(listed_lines::position)
+                .collect(),
+        );
+    }
 
     #[test]
     fn ratio_bps_rounds_half_away_from_zero() {

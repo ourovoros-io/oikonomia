@@ -1,5 +1,5 @@
 import type { AnalyzerStatus, UiPrefs } from '../../src/lib/api'
-import { buildLedger, type DemoLang } from './ledger'
+import { accountDefaults, buildLedger, type DemoLang } from './ledger'
 import {
   accountBalance,
   accountRegister,
@@ -24,7 +24,7 @@ export function createHandler(lang: DemoLang) {
   const l = buildLedger(lang)
 
   const prefs: UiPrefs = { last_entity_id: l.entity.id, last_accounts_by_entity_kind: {}, locale: lang }
-  const analyzer: AnalyzerStatus = { ocr_available: true, offline: true, hint: '' }
+  const analyzer: AnalyzerStatus = { ocr_available: true, offline: true, hint: 'ready' }
 
   // Set to the command currently being answered so str/opt can name it in a
   // failure, without every call site having to repeat the command string.
@@ -57,6 +57,7 @@ export function createHandler(lang: DemoLang) {
     settings_get_lock_timeout: () => 900,
     entity_list: () => [l.entity],
     account_list: () => l.accounts,
+    account_defaults: () => accountDefaults(),
     entry_list: (a) =>
       entryList(l, { from: opt(a, 'from'), to: opt(a, 'to'), search: opt(a, 'search'), accountId: opt(a, 'accountId') }),
     dashboard_summary_cmd: (a) => dashboardSummary(l, str(a, 'from'), str(a, 'to'), str(a, 'assetsAsOf')),

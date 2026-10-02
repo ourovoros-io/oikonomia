@@ -1,4 +1,4 @@
-import type { CommandError } from './tauri'
+import { asCommandError, commandErrorMessage } from './commandError'
 import { t } from './i18n'
 
 export type VaultBackupAvailability = 'ready' | 'empty' | 'missing'
@@ -68,19 +68,37 @@ export function restoreConfirm(kind: RestoreConfirmKind): {
   }
 }
 
-export function backupCommandError(err: CommandError): string {
-  switch (err.code) {
+/**
+ * Failures of backing up or restoring. A code with its own copy shows that
+ * copy; the generic ones (invalid file, missing file, io) get a sentence about
+ * backups. `fallbackKey` says what was being attempted for any other code, so
+ * a vague failure while restoring does not read as one about making a backup.
+ * Takes `unknown` because a rejection can be anything, including nothing.
+ */
+function vaultCommandError(err: unknown, fallbackKey: string): string {
+  switch (asCommandError(err).code) {
     case 'vault_uninitialized':
       return t('settings.vaultBackup.errUninitialized')
-    case 'backup_invalid':
-      return err.message || t('settings.vaultBackup.errInvalid')
     case 'restore_would_overwrite':
       return t('settings.vaultBackup.errOverwrite')
+    case 'backup_invalid':
+      return t('settings.vaultBackup.errInvalid')
     case 'not_found':
-      return err.message || t('settings.vaultBackup.errNotFound')
+      return t('settings.vaultBackup.errNotFound')
     case 'io':
-      return err.message || t('settings.vaultBackup.errIo')
+      // The shared rule keeps this sentence over the generic file one and logs the cause.
+      return commandErrorMessage(err, 'settings.vaultBackup.errIo')
     default:
-      return err.message || t('settings.vaultBackup.errDefault')
+      return commandErrorMessage(err, fallbackKey)
   }
+}
+
+/** The sentence for a failure while making a backup. */
+export function backupCommandError(err: unknown): string {
+  return vaultCommandError(err, 'settings.vaultBackup.errDefault')
+}
+
+/** The sentence for a failure while restoring a backup, or choosing the file to restore. */
+export function restoreCommandError(err: unknown): string {
+  return vaultCommandError(err, 'settings.vaultBackup.errRestoreDefault')
 }

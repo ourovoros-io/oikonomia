@@ -25,8 +25,8 @@ import {
   vaultPickBackup,
   vaultRestore,
   type AppInfo,
-  type CommandError,
 } from '../lib/tauri'
+import { asCommandError, commandErrorMessage } from '../lib/commandError'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
@@ -43,6 +43,7 @@ import {
 } from '../components/ui'
 import {
   backupCommandError,
+  restoreCommandError,
   canBackupVault,
   restoreConfirm,
   vaultBackupAvailability,
@@ -161,7 +162,7 @@ export function SettingsPage({
   onCreateBookIntentHandled,
   appInfo = null,
 }: Props) {
-  const { t, locale, setLocale } = useI18n()
+  const { t, locale, setLocale, languageChangeFailed } = useI18n()
   const [error, setError] = useState<string | null>(null)
   const errorBannerId = useId()
   const [notice, setNotice] = useState<string | null>(null)
@@ -238,11 +239,6 @@ export function SettingsPage({
     onCreateBookIntentHandled?.()
   }, [createBookIntent, onCreateBookIntentHandled])
 
-  function commandErrorMessage(err: unknown, fallback = ''): string {
-    const cmd = err as CommandError
-    return cmd.message || fallback
-  }
-
   async function onCreate(ev: FormEvent) {
     ev.preventDefault()
     setBusy(true)
@@ -274,7 +270,7 @@ export function SettingsPage({
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
-      setPageError(commandErrorMessage(err, t('settings.deleteFailed')))
+      setPageError(commandErrorMessage(err, 'settings.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -318,11 +314,12 @@ export function SettingsPage({
       setConfirmPassword('')
       setNotice(t('settings.passwordChanged'))
     } catch (err) {
-      const cmd = err as CommandError
+      // A rejection can be anything, including nothing.
+      const cmd = asCommandError(err)
       setPageError(
         cmd.code === 'invalid_password'
           ? t('settings.currentPasswordIncorrect')
-          : cmd.message || t('settings.changePasswordFailed'),
+          : commandErrorMessage(cmd, 'settings.changePasswordFailed'),
         'current',
       )
     } finally {
@@ -349,7 +346,7 @@ export function SettingsPage({
     try {
       await vaultBackup()
     } catch (err) {
-      setPageError(backupCommandError(err as CommandError))
+      setPageError(backupCommandError(err))
     } finally {
       setBackupBusy(false)
     }
@@ -365,7 +362,7 @@ export function SettingsPage({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setPageError(backupCommandError(err as CommandError))
+      setPageError(restoreCommandError(err))
     } finally {
       setRestorePicking(false)
     }
@@ -385,7 +382,7 @@ export function SettingsPage({
       setRestoreOpen(false)
       setRestorePath(undefined)
     } catch (err) {
-      setPageError(backupCommandError(err as CommandError))
+      setPageError(restoreCommandError(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {
@@ -446,6 +443,11 @@ export function SettingsPage({
           onChange={setLocale}
           ariaLabel={t('settings.language.title')}
         />
+        {languageChangeFailed ? (
+          <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">
+            {t('settings.language.error')}
+          </p>
+        ) : null}
       </CollapsibleSection>
 
       {donations.length > 0 ? (

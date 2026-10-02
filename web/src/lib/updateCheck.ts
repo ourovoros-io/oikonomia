@@ -71,13 +71,6 @@ export function parseUpdateCheckResult(value: unknown): ParsedIpcUpdate {
   return { kind: 'failed' }
 }
 
-/** Tauri reports an unregistered command; the FE stub may answer instead. */
-export function isMissingIpcCommand(err: { code: string; message: string }, command: string): boolean {
-  const haystack = `${err.code} ${err.message}`.toLowerCase()
-  const name = command.toLowerCase()
-  return haystack.includes(name) && (haystack.includes('not found') || haystack.includes('unknown'))
-}
-
 function readUnlockUpdateQuery(): string | null {
   if (!import.meta.env.DEV) return null
   if (typeof window === 'undefined') return null

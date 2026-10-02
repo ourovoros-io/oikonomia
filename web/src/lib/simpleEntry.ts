@@ -1,4 +1,4 @@
-import type { SimpleEntryInput } from './api'
+import type { AccountDefaults, SimpleEntryInput } from './api'
 import { t } from './i18n'
 
 export type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
@@ -15,19 +15,6 @@ export function lastAccountsMapKey(entityId: string, kind: EntryKind | string): 
   return `${entityId}:${kind}`
 }
 
-export function pickDefault(
-  accounts: AccountLike[],
-  type: AccountLike['account_type'],
-  nameHints: string[] = [],
-): string {
-  const active = accounts.filter((a) => a.is_active && a.account_type === type)
-  for (const hint of nameHints) {
-    const found = active.find((a) => a.name.toLowerCase().includes(hint.toLowerCase()))
-    if (found) return found.id
-  }
-  return active[0]?.id ?? ''
-}
-
 export function accountsOf(
   accounts: AccountLike[],
   types: AccountLike['account_type'][],
@@ -35,52 +22,51 @@ export function accountsOf(
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
 
-export function kindDefaultAccounts(kind: EntryKind, list: AccountLike[]) {
-  if (kind === 'expense') {
-    return {
-      categoryId: pickDefault(list, 'expense', ['food', 'utilities', 'bills', 'other']),
-      walletId: pickDefault(list, 'asset', ['checking', 'bank', 'cash']),
-      payableId: '',
-      fromId: '',
-      toId: '',
-    }
-  }
-  if (kind === 'income') {
-    return {
-      categoryId: pickDefault(list, 'income', ['salary', 'sales', 'freelance']),
-      walletId: pickDefault(list, 'asset', ['checking', 'bank', 'cash']),
-      payableId: '',
-      fromId: '',
-      toId: '',
-    }
-  }
-  if (kind === 'bill') {
-    return {
-      categoryId: pickDefault(list, 'expense', [
-        'utilities',
-        'bills',
-        'housing',
-        'subscription',
-        'rent',
-      ]),
-      walletId: pickDefault(list, 'asset', ['checking', 'bank', 'cash']),
-      payableId: pickDefault(list, 'liability', [
-        'bills payable',
-        'accounts payable',
-        'payable',
-      ]),
-      fromId: '',
-      toId: '',
-    }
-  }
-  const fromId = pickDefault(list, 'asset', ['checking', 'bank'])
-  const savings = pickDefault(list, 'asset', ['savings', 'cash'])
-  return {
+/** The form fields a kind's default accounts fill, as ids ('' when unset). */
+export type KindDefaultAccounts = {
+  categoryId: string
+  walletId: string
+  payableId: string
+  fromId: string
+  toId: string
+}
+
+/**
+ * Lays the defaults Rust chose for each role out as the fields of one entry
+ * kind. This only routes a role to a form field; which account plays a role is
+ * decided in Rust (`account_defaults`), never here.
+ */
+export function kindDefaultAccounts(
+  kind: EntryKind,
+  defaults: AccountDefaults | null,
+): KindDefaultAccounts {
+  const none: KindDefaultAccounts = {
     categoryId: '',
     walletId: '',
     payableId: '',
-    fromId,
-    toId: savings || pickDefault(list, 'asset', []),
+    fromId: '',
+    toId: '',
+  }
+  if (!defaults) return none
+
+  if (kind === 'expense') {
+    return { ...none, categoryId: defaults.category ?? '', walletId: defaults.payment ?? '' }
+  }
+  if (kind === 'income') {
+    return { ...none, categoryId: defaults.income ?? '', walletId: defaults.deposit ?? '' }
+  }
+  if (kind === 'bill') {
+    return {
+      ...none,
+      categoryId: defaults.bill_category ?? '',
+      walletId: defaults.payment ?? '',
+      payableId: defaults.bills_payable ?? '',
+    }
+  }
+  return {
+    ...none,
+    fromId: defaults.transfer_source ?? '',
+    toId: defaults.transfer_destination ?? '',
   }
 }
 
