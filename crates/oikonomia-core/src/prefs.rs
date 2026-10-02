@@ -210,7 +210,20 @@ pub fn resolve_locale<S: AsRef<str>>(
     })
 }
 
+/// Path of the temporary file a save is staged in before it replaces the
+/// preferences file.
+fn ui_prefs_temporary_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("ui-prefs.json.tmp")
+}
+
 /// Persist preferences.
+///
+/// The JSON is written to a temporary sibling file and renamed over the
+/// target, so a reader (and a crash) sees either the old or the new complete
+/// file, never a truncated one. A stale temporary file left by an earlier
+/// crash is removed first, and a failed write leaves none behind. File modes
+/// are unchanged: the preferences file is not part of the vault and holds
+/// nothing sensitive.
 ///
 /// # Errors
 ///
@@ -223,8 +236,34 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
     let json = serde_json::to_string_pretty(prefs)
         .map_err(|e| Error::Io(format!("could not encode ui prefs: {e}")))?;
 
-    fs::write(ui_prefs_path(data_dir), json)
-        .map_err(|e| Error::Io(format!("could not write ui prefs: {e}")))
+    let temporary = ui_prefs_temporary_path(data_dir);
+    remove_stale_temporary(&temporary);
+
+    let staged = write_synced(&temporary, json.as_bytes())
+        .and_then(|()| fs::rename(&temporary, ui_prefs_path(data_dir)));
+
+    staged.map_err(|e| {
+        remove_stale_temporary(&temporary);
+        Error::Io(format!("could not write ui prefs: {e}"))
+    })
+}
+
+/// Write `bytes` to a new file at `path` and flush them to disk.
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let mut file = fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Remove a leftover temporary file; absence is the normal case.
+fn remove_stale_temporary(path: &Path) {
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => log::warn!("could not remove {}: {err}", path.display()),
+    }
 }
 
 #[cfg(test)]
@@ -444,6 +483,28 @@ mod tests {
             (&["", "fr"], Locale::Fr),
             (&["eleven"], Locale::En),
             (&["\u{1F600}", "\0", "el-"], Locale::El),
+            // Three-letter and longer primary subtags never match a
+            // two-letter language, and "english" is not the "en" tag.
+            (&["ell"], Locale::En),
+            (&["english"], Locale::En),
+            (&["english", "de-DE"], Locale::De),
+            // Only `-` and `_` separate subtags, so a POSIX modifier glues
+            // onto the language and nothing matches.
+            (&["fr@euro"], Locale::En),
+            (&["fr@euro", "de"], Locale::De),
+            (&["C"], Locale::En),
+            (&["POSIX"], Locale::En),
+            (&["zh-Hant-TW"], Locale::En),
+            (&["de-CH-1996"], Locale::De),
+            // The language wins over the region.
+            (&["en-GR"], Locale::En),
+            (&["en-GR", "el"], Locale::En),
+            (&["el-"], Locale::El),
+            (&["   "], Locale::En),
+            (&["\t\n"], Locale::En),
+            (&["fr\u{7}"], Locale::En),
+            (&["e\u{7}l"], Locale::En),
+            (&["\u{7}de", "fr"], Locale::Fr),
         ];
 
         for (tags, expected) in cases {
@@ -635,5 +696,128 @@ mod tests {
                 ..prefs
             }
         );
+    }
+
+    #[test]
+    fn a_whitespace_only_file_is_a_first_run() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        assert!(fs::write(ui_prefs_path(dir.path()), " \n\t ").is_ok());
+        assert_eq!(stored_locale(dir.path()), None);
+    }
+
+    #[test]
+    fn a_null_locale_counts_as_stored_and_is_not_rewritten() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        // Today `null` fails the enum, so the whole file reads as corrupt
+        // and loads as the defaults (English); the key still counts as stored.
+        // Both are pinned here, not endorsed.
+        assert!(fs::write(ui_prefs_path(dir.path()), r#"{"locale": null}"#).is_ok());
+        let before = fs::read_to_string(ui_prefs_path(dir.path())).ok();
+
+        let resolved = resolve_locale(dir.path(), &["el-GR"]);
+        assert_eq!(
+            resolved,
+            Ok(LocaleResolution {
+                locale: Locale::En,
+                newly_stored: false
+            })
+        );
+        assert_eq!(fs::read_to_string(ui_prefs_path(dir.path())).ok(), before);
+    }
+
+    #[test]
+    fn a_wrong_case_locale_counts_as_stored_and_is_not_rewritten() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        // The enum is lowercase-only, so "EL" does not parse: the file loads
+        // as the defaults (English), but the key counts as chosen.
+        assert!(fs::write(ui_prefs_path(dir.path()), r#"{"locale": "EL"}"#).is_ok());
+        let before = fs::read_to_string(ui_prefs_path(dir.path())).ok();
+
+        let resolved = resolve_locale(dir.path(), &["fr-FR"]);
+        assert_eq!(
+            resolved,
+            Ok(LocaleResolution {
+                locale: Locale::En,
+                newly_stored: false
+            })
+        );
+        assert_eq!(fs::read_to_string(ui_prefs_path(dir.path())).ok(), before);
+    }
+
+    #[test]
+    fn a_save_leaves_no_temporary_file_and_the_target_parses() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let prefs = UiPrefs {
+            locale: Locale::De,
+            ..UiPrefs::default()
+        };
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+
+        assert!(!ui_prefs_temporary_path(dir.path()).exists());
+        let text = fs::read_to_string(ui_prefs_path(dir.path())).unwrap_or_default();
+        assert_eq!(serde_json::from_str::<UiPrefs>(&text).ok(), Some(prefs));
+    }
+
+    #[test]
+    fn a_stale_temporary_file_does_not_break_a_save() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        assert!(fs::write(ui_prefs_temporary_path(dir.path()), "{\"locale\": ").is_ok());
+
+        let prefs = UiPrefs {
+            locale: Locale::Fr,
+            ..UiPrefs::default()
+        };
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+
+        assert!(!ui_prefs_temporary_path(dir.path()).exists());
+        assert_eq!(load_ui_prefs(dir.path()), prefs);
+    }
+
+    #[test]
+    fn loading_ignores_a_temporary_file() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        let temporary = ui_prefs_temporary_path(dir.path());
+        assert!(fs::write(&temporary, r#"{"locale": "de"}"#).is_ok());
+        assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
+        assert_eq!(stored_locale(dir.path()), None);
+
+        let prefs = UiPrefs {
+            locale: Locale::El,
+            ..UiPrefs::default()
+        };
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+        assert!(fs::write(&temporary, r#"{"locale": "de"}"#).is_ok());
+        assert_eq!(load_ui_prefs(dir.path()), prefs);
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_temporary_file() {
+        let Ok(dir) = tempdir() else {
+            return;
+        };
+
+        // A directory at the target makes the rename fail after the write.
+        assert!(fs::create_dir(ui_prefs_path(dir.path())).is_ok());
+
+        assert!(save_ui_prefs(dir.path(), &UiPrefs::default()).is_err());
+        assert!(!ui_prefs_temporary_path(dir.path()).exists());
     }
 }

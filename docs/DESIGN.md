@@ -155,7 +155,10 @@ the trust root. See [`release.md`](release.md) for how releases are cut.
   in that file) the webview reports `navigator.languages` to the
   `settings_resolve_locale` command; Rust maps them to a supported language
   (`Locale::from_system_languages`), stores it and returns it, and from then on
-  the system language is never read again, so a stored English stays English.
+  the system language is never read again, so a stored English stays English. On macOS the webview reports only the single
+  most preferred system language, so only that language is considered; if it is
+  not supported the app starts in English and the language can be changed on the
+  first screen.
   The unlock and create-vault screen shows the same language switch as
   Settings, so the first book is seeded in the language the user sees. Text that comes from Rust reaches the
   screen in one of three ways, and the UI never renders raw backend text:

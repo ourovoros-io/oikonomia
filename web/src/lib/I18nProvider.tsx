@@ -95,9 +95,9 @@ async function hydrateLocale(): Promise<Hydrated> {
 }
 
 /**
- * Hydrates locale from Rust (`settings_resolve_locale`, which also stores the
- * system language on a first run) (`settings_get_locale` / `settings_get_ui_prefs`).
- * localStorage is an optimistic mirror only. The Settings language pill calls setLocale.
+ * Hydrates the locale from Rust: `settings_resolve_locale` (which stores the
+ * system language on a first run), falling back to `settings_get_locale`, then
+ * `settings_get_ui_prefs`. localStorage is an optimistic mirror only. The Settings language pill calls setLocale.
  */
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {

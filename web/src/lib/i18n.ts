@@ -562,13 +562,6 @@ export function applyLocale(locale: Locale): void {
   notify()
 }
 
-/** Apply `prefs.locale` (absent/invalid → `en`). */
-export function applyLocaleFromPrefs(prefs: { locale?: unknown } | null | undefined): Locale {
-  const locale = parseLocale(prefs?.locale)
-  applyLocale(locale)
-  return locale
-}
-
 /** Hydrate the optimistic mirror. Missing or invalid → `en`. */
 export function hydrateLocaleFromStorage(): Locale {
   const locale = readCachedLocale() ?? 'en'

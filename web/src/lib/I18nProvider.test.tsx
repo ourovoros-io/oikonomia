@@ -264,6 +264,28 @@ describe('I18nProvider', () => {
       })
     })
 
+    test.each([
+      ['empty', [], ''],
+      ['undefined', undefined, ''],
+    ])(
+      'sends an empty list when navigator.languages is %s and language is missing',
+      async (_name, list, single) => {
+        languages.mockReturnValue(list as unknown as readonly string[])
+        language.mockReturnValue(single)
+        vi.mocked(api.resolveLocale).mockResolvedValue('de')
+        render(
+          <I18nProvider>
+            <Probe />
+          </I18nProvider>,
+        )
+
+        await waitFor(() => {
+          expect(getLocale()).toBe('de')
+        })
+        expect(api.resolveLocale).toHaveBeenCalledWith([])
+      },
+    )
+
     test('a change made before hydration resolves is not overwritten', async () => {
       let finishResolve: (stored: string) => void = () => undefined
       vi.mocked(api.resolveLocale).mockReturnValue(

@@ -85,4 +85,19 @@ describe('UnlockScreen language control', () => {
 
     expect(french).toHaveFocus()
   })
+
+  test.each(['uninitialized', 'locked'] as const)(
+    'in the %s state the password field has focus and the switch follows the form',
+    (status) => {
+      const { container } = render(<UnlockScreen status={status} onUnlocked={() => {}} />)
+
+      expect(screen.getByLabelText(/^Password/)).toHaveFocus()
+
+      const submit = container.querySelector('button[type="submit"]')
+      const group = screen.getByRole('radiogroup', { name: 'Language' })
+      expect(submit).not.toBeNull()
+      const position = submit?.compareDocumentPosition(group) ?? 0
+      expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    },
+  )
 })
