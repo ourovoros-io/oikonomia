@@ -286,13 +286,15 @@ fn company_topic_codes(topic: DocumentTopic) -> &'static [&'static str] {
     match topic {
         DocumentTopic::Utilities
         | DocumentTopic::Bills
-        | DocumentTopic::Housing
         | DocumentTopic::Subscription
         | DocumentTopic::Food
-        | DocumentTopic::Transport
         | DocumentTopic::Health
         | DocumentTopic::Freelance
         | DocumentTopic::Salary => &[],
+        // Rent.
+        DocumentTopic::Housing => &["5200"],
+        // Travel.
+        DocumentTopic::Transport => &["5600"],
         DocumentTopic::Software => &["5300"],
         DocumentTopic::Tax => &["5700"],
         DocumentTopic::OtherExpense => &["5900"],

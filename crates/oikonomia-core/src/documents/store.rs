@@ -468,72 +468,216 @@ pub fn match_income_account(
     )
 }
 
-/// Words in a document's text that point at a topic, in the order topics are tried.
-type TopicKeywords = [(DocumentTopic, &'static [&'static str])];
+/// How a keyword must sit in the text to count as a match.
+///
+/// Matching is on word boundaries, never on bare substrings: a letter or digit
+/// (Unicode-aware, so Greek and accented letters count) directly next to the
+/// keyword on a checked side stops it matching. That is what keeps "tax" out
+/// of "taxi" and "syntax". Inflected forms that a whole-word keyword would
+/// miss are either listed as their own keywords or marked [`Keyword::Prefix`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Keyword {
+    /// The keyword is a whole word: no letter or digit on either side.
+    Word(&'static str),
+    /// The keyword is the stem of a word (`consult` for "consulting"): it must
+    /// start a word, and any letters may follow.
+    Prefix(&'static str),
+    /// A unit that is written glued to a number (`kwh` in "150kwh"): no letter
+    /// before it, so digits are fine, and no letter or digit after it.
+    Unit(&'static str),
+}
 
+impl Keyword {
+    /// The text the keyword looks for.
+    pub(crate) const fn text(self) -> &'static str {
+        match self {
+            Self::Word(text) | Self::Prefix(text) | Self::Unit(text) => text,
+        }
+    }
+
+    /// Whether this keyword occurs in `lowercased_text` under its rule.
+    ///
+    /// The caller lowercases the text; keywords are written in lowercase.
+    pub(crate) fn occurs_in(self, lowercased_text: &str) -> bool {
+        let needle = self.text();
+
+        for (start, _) in lowercased_text.match_indices(needle) {
+            let before = lowercased_text[..start].chars().next_back();
+            let after = lowercased_text[start + needle.len()..].chars().next();
+
+            let starts_a_word = match self {
+                Self::Word(_) | Self::Prefix(_) => !before.is_some_and(char::is_alphanumeric),
+                Self::Unit(_) => !before.is_some_and(char::is_alphabetic),
+            };
+            let ends_a_word = match self {
+                Self::Prefix(_) => true,
+                Self::Word(_) | Self::Unit(_) => !after.is_some_and(char::is_alphanumeric),
+            };
+
+            if starts_a_word && ends_a_word {
+                return true;
+            }
+        }
+
+        false
+    }
+}
+
+/// Words in a document's text that point at a topic, in the order topics are tried.
+type TopicKeywords = [(DocumentTopic, &'static [Keyword])];
+
+use Keyword::{Prefix, Unit, Word};
+
+/// Expense topics in the order they are tried. Bills comes after the specific
+/// topics (a taxi receipt is Transport, a rent invoice is Housing): it is the
+/// topic for a bill or invoice that names nothing more specific.
 const EXPENSE_KEYWORDS: &TopicKeywords = &[
     (
         DocumentTopic::Utilities,
         &[
-            "utilit",
-            "electric",
-            "water",
-            "gas",
-            "power",
-            "dei",
-            "ρεύμα",
-            "kwh",
-            "zenith",
-            "zeniθ",
-            "εκκαθαριστ",
-            "ηλεκτρ",
-            "αέριο",
-            "αεριο",
-            "ngs",
-            "φ.α",
-            "έναντι",
+            Prefix("utilit"),
+            Prefix("electric"),
+            Word("water"),
+            Word("gas"),
+            Word("power"),
+            Word("dei"),
+            Prefix("ρεύμα"),
+            Unit("kwh"),
+            Word("zenith"),
+            Word("zeniθ"),
+            Prefix("εκκαθαριστ"),
+            Prefix("ηλεκτρ"),
+            Prefix("αέριο"),
+            Prefix("αεριο"),
+            Word("ngs"),
+            Word("φ.α"),
+            Prefix("έναντι"),
         ],
     ),
-    (DocumentTopic::Bills, &["bill", "invoice", "receipt"]),
-    (DocumentTopic::Housing, &["rent", "mortgage", "housing"]),
+    (
+        DocumentTopic::Housing,
+        &[
+            Word("rent"),
+            Word("rents"),
+            Word("rental"),
+            Word("rentals"),
+            Word("mortgage"),
+            Word("mortgages"),
+            Word("housing"),
+        ],
+    ),
     (
         DocumentTopic::Subscription,
-        &["netflix", "spotify", "subscription", "saas"],
+        &[
+            Word("netflix"),
+            Word("spotify"),
+            Word("subscription"),
+            Word("subscriptions"),
+            Word("saas"),
+        ],
     ),
     (
         DocumentTopic::Food,
-        &["food", "grocery", "supermarket", "restaurant"],
+        &[
+            Word("food"),
+            Word("foods"),
+            Word("grocery"),
+            Word("groceries"),
+            Word("supermarket"),
+            Word("supermarkets"),
+            Word("restaurant"),
+            Word("restaurants"),
+        ],
     ),
     (
         DocumentTopic::Transport,
-        &["fuel", "uber", "taxi", "transport", "parking"],
+        &[
+            Word("fuel"),
+            Word("uber"),
+            Word("taxi"),
+            Word("taxis"),
+            Word("transport"),
+            Word("transports"),
+            Word("transportation"),
+            Word("parking"),
+        ],
+    ),
+    (
+        DocumentTopic::Bills,
+        &[
+            Word("bill"),
+            Word("bills"),
+            Word("invoice"),
+            Word("invoices"),
+            Word("receipt"),
+            Word("receipts"),
+        ],
     ),
     (
         DocumentTopic::Software,
-        &["software", "github", "aws", "cloud", "security", "program"],
+        &[
+            Word("software"),
+            Word("github"),
+            Word("aws"),
+            Word("cloud"),
+            Word("clouds"),
+            Word("security"),
+            Prefix("program"),
+        ],
     ),
     (
         DocumentTopic::Health,
-        &["pharma", "doctor", "health", "clinic"],
+        &[
+            Prefix("pharma"),
+            Word("doctor"),
+            Word("doctors"),
+            Word("health"),
+            Word("clinic"),
+            Word("clinics"),
+        ],
     ),
-    (DocumentTopic::Tax, &["tax", "vat", "irs"]),
+    (
+        DocumentTopic::Tax,
+        &[
+            Word("tax"),
+            Word("taxes"),
+            Word("taxation"),
+            Word("vat"),
+            Word("irs"),
+        ],
+    ),
 ];
 
 const INCOME_KEYWORDS: &TopicKeywords = &[
     (
         DocumentTopic::Sales,
         &[
-            "sales",
-            "service",
-            "security",
-            "advise",
-            "consult",
-            "παροχ",
-            "τιμολ",
+            Word("sales"),
+            Word("service"),
+            Word("services"),
+            Word("security"),
+            Word("advise"),
+            Word("advised"),
+            Word("advises"),
+            Prefix("consult"),
+            Prefix("παροχ"),
+            Prefix("τιμολ"),
         ],
     ),
-    (DocumentTopic::Freelance, &["freelance", "project"]),
-    (DocumentTopic::Salary, &["salary", "payroll", "wage"]),
+    (
+        DocumentTopic::Freelance,
+        &[Prefix("freelance"), Word("project"), Word("projects")],
+    ),
+    (
+        DocumentTopic::Salary,
+        &[
+            Word("salary"),
+            Word("salaries"),
+            Word("payroll"),
+            Word("wage"),
+            Word("wages"),
+        ],
+    ),
 ];
 
 fn match_account_of_type(
@@ -548,7 +692,7 @@ fn match_account_of_type(
 
     // The first topic the text points at that the chart has an account for.
     for (topic, words) in keywords {
-        if !words.iter().any(|word| hints.contains(*word)) {
+        if !words.iter().any(|word| word.occurs_in(&hints)) {
             continue;
         }
 
@@ -693,14 +837,15 @@ mod tests {
             expense_code(template, &accounts, "vat payment").as_deref(),
             Some("5700")
         );
-        // The company chart has no utilities, bills or housing account.
+        // The company chart has no utilities or bills account.
         assert_eq!(
             expense_code(template, &accounts, "dei electricity").as_deref(),
             Some("5900")
         );
+        // It does have Rent.
         assert_eq!(
             expense_code(template, &accounts, "rent for march").as_deref(),
-            Some("5900")
+            Some("5200")
         );
 
         assert_eq!(
@@ -729,15 +874,16 @@ mod tests {
         ("something unrecognised", "5900"),
     ];
 
-    /// The same for the company chart. Only software, tax and the catch-all
-    /// have a company account; every other topic falls to the catch-all.
+    /// The same for the company chart. Only housing (Rent), transport (Travel),
+    /// software, tax and the catch-all have a company account; every other topic
+    /// falls to the catch-all.
     const COMPANY_EXPENSE_PINS: &[(&str, &str)] = &[
         ("electric", "5900"),
         ("invoice", "5900"),
-        ("rent", "5900"),
+        ("rent", "5200"),
         ("netflix", "5900"),
         ("grocery", "5900"),
-        ("parking", "5900"),
+        ("parking", "5600"),
         ("github", "5300"),
         ("clinic", "5900"),
         ("vat", "5700"),
@@ -781,6 +927,176 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_taxi_document_is_transport_and_not_taxes() {
+        let personal = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        let company = seeded_chart_for_tests(ChartTemplate::Company, false);
+
+        for hints in ["taxi", "Taxi receipt", "uber taxi fare"] {
+            assert_eq!(
+                expense_code(ChartTemplate::Personal, &personal, hints).as_deref(),
+                Some("5200"),
+                "personal chart, {hints:?}",
+            );
+            assert_eq!(
+                expense_code(ChartTemplate::Company, &company, hints).as_deref(),
+                Some("5600"),
+                "company chart, {hints:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn tax_documents_still_resolve_to_taxes_and_syntax_matches_nothing() {
+        let personal = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        let company = seeded_chart_for_tests(ChartTemplate::Company, false);
+
+        for hints in [
+            "tax",
+            "income tax",
+            "VAT/tax return",
+            "property tax",
+            "tax:",
+        ] {
+            for (template, accounts) in [
+                (ChartTemplate::Personal, &personal),
+                (ChartTemplate::Company, &company),
+            ] {
+                assert_eq!(
+                    expense_code(template, accounts, hints).as_deref(),
+                    Some("5700"),
+                    "{template:?}, {hints:?}",
+                );
+            }
+        }
+
+        // "syntax" names no topic, so the catch-all takes it.
+        assert_eq!(
+            expense_code(ChartTemplate::Personal, &personal, "syntax").as_deref(),
+            Some("5900")
+        );
+        assert_eq!(
+            expense_code(ChartTemplate::Company, &company, "syntax").as_deref(),
+            Some("5900")
+        );
+    }
+
+    #[test]
+    fn the_company_chart_files_rent_and_transport_under_its_own_accounts() {
+        let accounts = seeded_chart_for_tests(ChartTemplate::Company, false);
+        let template = ChartTemplate::Company;
+
+        for hints in ["rent for march", "office lease rent", "mortgage", "housing"] {
+            assert_eq!(
+                expense_code(template, &accounts, hints).as_deref(),
+                Some("5200"),
+                "{hints:?}",
+            );
+        }
+        for hints in ["fuel", "parking", "taxi", "train transport", "uber ride"] {
+            assert_eq!(
+                expense_code(template, &accounts, hints).as_deref(),
+                Some("5600"),
+                "{hints:?}",
+            );
+        }
+    }
+
+    /// The first topic of `table` whose keywords occur in `text`.
+    fn first_topic(table: &TopicKeywords, text: &str) -> Option<DocumentTopic> {
+        let lowercased = text.to_lowercase();
+
+        table
+            .iter()
+            .find(|(_, keywords)| {
+                keywords
+                    .iter()
+                    .any(|keyword| keyword.occurs_in(&lowercased))
+            })
+            .map(|(topic, _)| *topic)
+    }
+
+    #[test]
+    fn every_keyword_as_a_whole_word_resolves_to_its_topic() {
+        for table in [EXPENSE_KEYWORDS, INCOME_KEYWORDS] {
+            for (topic, keywords) in table {
+                for keyword in *keywords {
+                    let text = keyword.text();
+
+                    for sentence in [
+                        text.to_string(),
+                        format!("paid the {text} today"),
+                        format!("Ref: {text}, due"),
+                        format!("a/{text}/b"),
+                    ] {
+                        assert_eq!(
+                            first_topic(table, &sentence),
+                            Some(*topic),
+                            "{keyword:?} in {sentence:?}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_keyword_matches_inside_a_longer_unrelated_word() {
+        for table in [EXPENSE_KEYWORDS, INCOME_KEYWORDS] {
+            for (_, keywords) in table {
+                for keyword in *keywords {
+                    let text = keyword.text();
+
+                    match keyword {
+                        Keyword::Word(_) => {
+                            for sentence in [
+                                format!("{text}xyz"),
+                                format!("xyz{text}"),
+                                format!("xyz{text}xyz"),
+                                format!("{text}7"),
+                                format!("7{text}"),
+                            ] {
+                                assert!(
+                                    !keyword.occurs_in(&sentence),
+                                    "{keyword:?} must not match in {sentence:?}",
+                                );
+                            }
+                        }
+                        Keyword::Prefix(_) => {
+                            // A stem matches the start of a longer word, never its middle.
+                            assert!(keyword.occurs_in(&format!("{text}xyz")), "{keyword:?}");
+                            assert!(keyword.occurs_in(&format!("a {text}xyz b")), "{keyword:?}");
+                            assert!(!keyword.occurs_in(&format!("xyz{text}")), "{keyword:?}");
+                            assert!(!keyword.occurs_in(&format!("7{text}")), "{keyword:?}");
+                        }
+                        Keyword::Unit(_) => {
+                            // A unit may follow a number, but not a letter.
+                            assert!(keyword.occurs_in(&format!("150{text}")), "{keyword:?}");
+                            assert!(!keyword.occurs_in(&format!("xyz{text}")), "{keyword:?}");
+                            assert!(!keyword.occurs_in(&format!("{text}xyz")), "{keyword:?}");
+                            assert!(!keyword.occurs_in(&format!("{text}7")), "{keyword:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn words_that_only_contain_a_keyword_name_no_topic() {
+        for text in ["syntax", "taxidermy", "waterloo", "parent", "mortgagee x"] {
+            assert_eq!(first_topic(EXPENSE_KEYWORDS, text), None, "{text:?}");
+        }
+        assert_eq!(
+            first_topic(EXPENSE_KEYWORDS, "taxi"),
+            Some(DocumentTopic::Transport)
+        );
+        assert_eq!(
+            first_topic(EXPENSE_KEYWORDS, "150kWh"),
+            Some(DocumentTopic::Utilities)
+        );
     }
 
     #[test]
