@@ -90,7 +90,7 @@
   "settings.description": "Books, security, and preferences",
   "settings.meta": "Local vault only",
   "settings.language.title": "Language",
-  "settings.language.description": "Menus, labels, and Quick Add.",
+  "settings.language.description": "Menus, labels, and Quick Add. Account names and some messages stay in English.",
   "settings.language.option.en": "English",
   "settings.language.option.el": "Ελληνικά",
   "settings.language.option.fr": "Français",

@@ -220,7 +220,7 @@
     },
     "language": {
       "title": "Langue",
-      "description": "Menus, libellés et Saisie rapide.",
+      "description": "Menus, libellés et Saisie rapide. Les noms de comptes et certains messages restent en anglais.",
       "option": {
         "en": "English",
         "el": "Ελληνικά",

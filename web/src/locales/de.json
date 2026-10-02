@@ -220,7 +220,7 @@
     },
     "language": {
       "title": "Sprache",
-      "description": "Menüs, Bezeichnungen und Schnellerfassung.",
+      "description": "Menüs, Bezeichnungen und Schnellerfassung. Kontonamen und einige Meldungen bleiben auf Englisch.",
       "option": {
         "en": "English",
         "el": "Ελληνικά",
