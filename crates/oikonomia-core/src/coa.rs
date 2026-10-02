@@ -61,15 +61,26 @@ pub fn template_accounts(template: ChartTemplate, locale: Locale) -> Vec<Templat
 
     shapes
         .into_iter()
-        .map(|shape| TemplateAccount {
-            code: shape.code,
-            // A shape without a table entry is a bug a test catches (every
-            // seeded code must be named in every language); the code is a
-            // visible, harmless stand-in rather than an empty name.
-            name: seeded_account_name(template, shape.code, locale).unwrap_or(shape.code),
-            account_type: shape.account_type,
-            is_system: shape.is_system,
-            sort_order: shape.sort_order,
+        .map(|shape| {
+            let name = seeded_account_name(template, shape.code, locale);
+
+            // A shape without a table entry is a bug: a name written into a
+            // book is never renamed. Debug builds and tests stop on it; a
+            // release build falls back to the code, a visible and harmless
+            // stand-in, rather than an empty name.
+            debug_assert!(
+                name.is_some(),
+                "{template:?} account {} has no {locale:?} name in text.rs",
+                shape.code,
+            );
+
+            TemplateAccount {
+                code: shape.code,
+                name: name.unwrap_or(shape.code),
+                account_type: shape.account_type,
+                is_system: shape.is_system,
+                sort_order: shape.sort_order,
+            }
         })
         .collect()
 }

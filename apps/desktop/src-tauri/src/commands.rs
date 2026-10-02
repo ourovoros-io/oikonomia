@@ -167,6 +167,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Exercises the locale helper every ledger-text command calls. The
+    /// commands themselves take a Tauri `State`, which cannot be constructed
+    /// in a unit test, so that each of them reads the language through this
+    /// helper before entering the vault closure is covered by reading the code.
     #[test]
     fn ledger_text_takes_its_language_from_the_stored_preference() {
         let dir = temp_dir("stored-text-locale");
@@ -1383,8 +1387,18 @@ pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) ->
 /// webview: the UI cannot choose the language of ledger text, and it is read
 /// before the vault closure so the plaintext preferences file is not touched
 /// while the vault lock is held.
+///
+/// The read happens under the prefs lock: the preferences file is written
+/// without an atomic rename, so an unlocked read during a language change
+/// could see a partial file, fall back to English and seed a book in the wrong
+/// language for good. The guard drops when this function returns, before the
+/// caller enters the vault closure or awaits.
 fn stored_text_locale(state: &AppState) -> Locale {
-    load_ui_prefs(state.data_dir()).locale
+    let prefs_guard = state.lock_prefs();
+    let locale = load_ui_prefs(state.data_dir()).locale;
+    drop(prefs_guard);
+
+    locale
 }
 
 /// Get the native UI locale. Plaintext preference: readable before unlock so

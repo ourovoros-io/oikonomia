@@ -11,8 +11,9 @@ use oikonomia_core::default_accounts::default_accounts_for_entity;
 use oikonomia_core::documents::parse_invoice_text;
 use oikonomia_core::domain::{Account, AccountId, ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
-    CreateEntity, PostSimpleEntry, SimpleEntryKind, create_entity, get_entry, list_accounts,
-    post_simple_entry, set_account_opening_balance, void_entry,
+    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, get_entry,
+    list_accounts, list_entries, post_simple_entry, replace_simple_entry,
+    set_account_opening_balance, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
@@ -250,7 +251,7 @@ fn a_greek_book_has_greek_names_and_the_same_codes_and_defaults() {
 fn the_opening_balance_description_is_written_in_the_given_language() {
     let expected = [
         (Locale::En, "Opening balance — Checking"),
-        (Locale::El, "Υπόλοιπο έναρξης — Όψεως"),
+        (Locale::El, "Υπόλοιπο έναρξης — Λογαριασμός όψεως"),
         (Locale::Fr, "Solde d'ouverture — Compte courant"),
         (Locale::De, "Anfangssaldo — Girokonto"),
     ];
@@ -274,7 +275,7 @@ fn a_void_is_written_in_the_given_language() {
     let expected = [
         (Locale::En, "VOID: Groceries", "Void"),
         (Locale::El, "ΑΚΥΡΩΣΗ: Groceries", "Ακύρωση"),
-        (Locale::Fr, "ANNULATION: Groceries", "Annulation"),
+        (Locale::Fr, "ANNULATION : Groceries", "Annulation"),
         (Locale::De, "STORNO: Groceries", "Storno"),
     ];
 
@@ -343,8 +344,11 @@ fn changing_the_language_renames_nothing_and_only_new_text_follows_it() {
     let checking = account_by_code(&greek_accounts, "1010");
     let posted = set_account_opening_balance(conn, checking.id, 5_000, "2026-01-01", Locale::En)
         .expect("opening balance");
-    assert_eq!(posted.entry.description, "Opening balance — Όψεως");
-    assert_eq!(checking.name, "Όψεως");
+    assert_eq!(
+        posted.entry.description,
+        "Opening balance — Λογαριασμός όψεως"
+    );
+    assert_eq!(checking.name, "Λογαριασμός όψεως");
 }
 
 #[test]
@@ -358,7 +362,11 @@ fn suggested_invoice_and_utility_descriptions_follow_the_language() {
 
     let expected = [
         (Locale::En, "Invoice", "Volton — Gas bill"),
-        (Locale::El, "Τιμολόγιο", "Volton — Λογαριασμός αερίου"),
+        (
+            Locale::El,
+            "Τιμολόγιο",
+            "Volton — Λογαριασμός φυσικού αερίου",
+        ),
         (Locale::Fr, "Facture", "Volton — Facture de gaz"),
         (Locale::De, "Rechnung", "Volton — Gasrechnung"),
     ];
@@ -383,7 +391,7 @@ fn a_bank_transfer_suggestion_is_in_the_given_language_not_always_greek() {
     let expected = [
         (Locale::En, "Bank transfer — HELIOS TRADING IKE"),
         (Locale::El, "Έμβασμα — HELIOS TRADING IKE"),
-        (Locale::Fr, "Virement — HELIOS TRADING IKE"),
+        (Locale::Fr, "Virement bancaire — HELIOS TRADING IKE"),
         (Locale::De, "Überweisung — HELIOS TRADING IKE"),
     ];
 
@@ -403,6 +411,130 @@ fn generated_text_never_starts_with_a_formula_character() {
             for account in template_accounts(template, locale) {
                 assert!(!account.name.starts_with(['=', '+', '-', '@']));
             }
+        }
+    }
+}
+
+/// An edit voids the original and posts a replacement; the reversing entry is
+/// written in the language the edit happens in, like a plain void.
+#[test]
+fn the_void_inside_an_edit_is_written_in_the_given_language() {
+    let expected = [
+        (Locale::En, "VOID: Groceries", "Void"),
+        (Locale::El, "ΑΚΥΡΩΣΗ: Groceries", "Ακύρωση"),
+        (Locale::Fr, "ANNULATION : Groceries", "Annulation"),
+        (Locale::De, "STORNO: Groceries", "Storno"),
+    ];
+
+    for (locale, description, memo) in expected {
+        let (_dir, vault) = setup_vault();
+        let conn = vault.connection().expect("conn");
+        let entity = new_entity(conn, "Book", ChartTemplate::Personal, locale);
+        let accounts = list_accounts(conn, entity).expect("accounts");
+
+        let expense = PostSimpleEntry {
+            entity_id: entity,
+            kind: SimpleEntryKind::Expense,
+            bill_status: None,
+            entry_date: "2026-02-01".into(),
+            amount_minor: 1_250,
+            description: "Groceries".into(),
+            reference: None,
+            category_account_id: Some(account_by_code(&accounts, "5100").id),
+            wallet_account_id: Some(account_by_code(&accounts, "1010").id),
+            payable_account_id: None,
+            from_account_id: None,
+            to_account_id: None,
+        };
+        let original = post_simple_entry(conn, &expense).expect("post");
+
+        let corrected = PostSimpleEntry {
+            amount_minor: 1_300,
+            ..expense
+        };
+        let replacement =
+            replace_simple_entry(conn, original.entry.id, &corrected, locale).expect("replace");
+
+        let entries = list_entries(conn, entity, &EntryFilter::default()).expect("list");
+        let reversals: Vec<_> = entries
+            .iter()
+            .filter(|view| view.entry.description == description)
+            .collect();
+        assert_eq!(reversals.len(), 1, "{locale:?}: one reversing entry");
+        assert_ne!(reversals[0].entry.id, replacement.entry.id);
+
+        let reverse = get_entry(conn, reversals[0].entry.id).expect("reverse");
+        for line in &reverse.lines {
+            assert_eq!(line.memo.as_deref(), Some(memo), "{locale:?}");
+        }
+    }
+}
+
+/// Unrecognised utility suppliers are named in the app's language.
+#[test]
+fn suggested_merchants_follow_the_language() {
+    let gas = "Λογαριασμός Φυσικού Αερίου\nΚωδικός παροχής 123456\nΠληρωτέο (€): 42,00";
+    let electricity = "Power Business\nkWh 310\nΠληρωτέο (€): 88,00";
+
+    let expected = [
+        (Locale::En, "Natural gas", "Electricity supplier"),
+        (Locale::El, "Φυσικό αέριο", "Πάροχος ηλεκτρικής ενέργειας"),
+        (Locale::Fr, "Gaz naturel", "Fournisseur d'électricité"),
+        (Locale::De, "Erdgas", "Stromversorger"),
+    ];
+
+    for (locale, gas_merchant, electricity_merchant) in expected {
+        let suggestion = parse_invoice_text(gas, locale);
+        assert_eq!(
+            suggestion.merchant.as_deref(),
+            Some(gas_merchant),
+            "{locale:?}"
+        );
+
+        let suggestion = parse_invoice_text(electricity, locale);
+        assert_eq!(
+            suggestion.merchant.as_deref(),
+            Some(electricity_merchant),
+            "{locale:?}"
+        );
+    }
+}
+
+/// The ledger-facing generated text, as written for an account named `Cash`.
+fn generated_ledger_text(locale: Locale) -> Vec<String> {
+    vec![
+        oikonomia_core::text::opening_balance_description(locale, "Cash"),
+        oikonomia_core::text::void_description(locale, "Groceries"),
+        oikonomia_core::text::void_memo(locale).to_owned(),
+        oikonomia_core::text::bank_transfer_description(locale, None),
+    ]
+}
+
+#[test]
+fn generated_text_is_safe_for_spreadsheets_and_the_pdf_font() {
+    use oikonomia_core::text::{BillKind, bill_description};
+
+    for locale in LOCALES {
+        let mut generated = generated_ledger_text(locale);
+        for kind in [
+            BillKind::Electricity,
+            BillKind::Gas,
+            BillKind::Telecom,
+            BillKind::Water,
+            BillKind::Utility,
+        ] {
+            generated.push(bill_description(locale, kind, None));
+        }
+
+        for text in &generated {
+            assert!(
+                !text.starts_with(['=', '+', '-', '@']),
+                "{locale:?}: {text} could be read as a formula"
+            );
+            assert!(
+                !text.contains(['\u{202f}', '\u{a0}']),
+                "{locale:?}: {text} has a narrow or no-break space"
+            );
         }
     }
 }

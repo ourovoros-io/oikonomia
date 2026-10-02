@@ -615,7 +615,7 @@ describe('ReportsPage synthetic rows', () => {
 
     act(() => setLocale('el'))
 
-    expect(screen.getByText('Παρακρατηθέντα κέρδη (προηγούμενες περίοδοι)')).toBeTruthy()
+    expect(screen.getByText('Αποτελέσματα εις νέο (προηγούμενες περίοδοι)')).toBeTruthy()
     expect(screen.getByText('Καθαρό αποτέλεσμα (τρέχουσα περίοδος)')).toBeTruthy()
     expect(screen.queryByText('Net Income (current period)')).toBeNull()
 

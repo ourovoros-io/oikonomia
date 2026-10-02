@@ -54,7 +54,12 @@ const PERSONAL_ACCOUNT_NAMES: &[(&str, Localized)] = &[
     ),
     (
         "1010",
-        Localized::new("Checking", "Όψεως", "Compte courant", "Girokonto"),
+        Localized::new(
+            "Checking",
+            "Λογαριασμός όψεως",
+            "Compte courant",
+            "Girokonto",
+        ),
     ),
     (
         "1020",
@@ -99,7 +104,7 @@ const PERSONAL_ACCOUNT_NAMES: &[(&str, Localized)] = &[
         "3100",
         Localized::new(
             "Owner Equity",
-            "Ίδια κεφάλαια ιδιοκτήτη",
+            "Ίδια κεφάλαια",
             "Capitaux propres",
             "Eigenkapital",
         ),
@@ -114,7 +119,7 @@ const PERSONAL_ACCOUNT_NAMES: &[(&str, Localized)] = &[
             "Freelance",
             "Ελεύθερο επάγγελμα",
             "Activité indépendante",
-            "Freiberuf",
+            "Freiberufliche Tätigkeit",
         ),
     ),
     (
@@ -144,7 +149,7 @@ const PERSONAL_ACCOUNT_NAMES: &[(&str, Localized)] = &[
     ),
     (
         "5300",
-        Localized::new("Utilities", "Κοινόχρηστα", "Charges", "Nebenkosten"),
+        Localized::new("Utilities", "Κοινή ωφέλεια", "Charges", "Nebenkosten"),
     ),
     (
         "5350",
@@ -161,7 +166,7 @@ const PERSONAL_ACCOUNT_NAMES: &[(&str, Localized)] = &[
     ),
     (
         "5500",
-        Localized::new("Subscriptions", "Συνδρομές", "Abonnements", "Abos"),
+        Localized::new("Subscriptions", "Συνδρομές", "Abonnements", "Abonnements"),
     ),
     (
         "5600",
@@ -189,12 +194,7 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
     ("1010", Localized::new("Bank", "Τράπεζα", "Banque", "Bank")),
     (
         "1100",
-        Localized::new(
-            "Accounts Receivable",
-            "Εισπρακτέοι λογαριασμοί",
-            "Clients",
-            "Forderungen",
-        ),
+        Localized::new("Accounts Receivable", "Πελάτες", "Clients", "Forderungen"),
     ),
     (
         "1500",
@@ -204,9 +204,9 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
         "2000",
         Localized::new(
             "Accounts Payable",
-            "Πληρωτέοι λογαριασμοί",
+            "Προμηθευτές",
             "Fournisseurs",
-            "Verbindlichkeiten",
+            "Lieferantenverbindlichkeiten",
         ),
     ),
     (
@@ -227,7 +227,7 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
         Localized::new(
             "Taxes Payable",
             "Φόροι πληρωτέοι",
-            "Impôts à payer",
+            "Dettes fiscales",
             "Steuerschulden",
         ),
     ),
@@ -246,14 +246,14 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
             "Owner Capital",
             "Κεφάλαιο ιδιοκτήτη",
             "Capital",
-            "Eigenkapital",
+            "Kapitaleinlagen",
         ),
     ),
     (
         "3200",
         Localized::new(
             "Retained Earnings",
-            "Παρακρατηθέντα κέρδη",
+            "Αποτελέσματα εις νέο",
             "Report à nouveau",
             "Gewinnvortrag",
         ),
@@ -272,7 +272,7 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
         Localized::new(
             "Other Income",
             "Λοιπά έσοδα",
-            "Autres recettes",
+            "Autres produits",
             "Sonstige Einnahmen",
         ),
     ),
@@ -287,7 +287,7 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
     ),
     (
         "5100",
-        Localized::new("Payroll", "Μισθοδοσία", "Salaires", "Personal"),
+        Localized::new("Payroll", "Μισθοδοσία", "Salaires", "Personalkosten"),
     ),
     ("5200", Localized::new("Rent", "Ενοίκιο", "Loyer", "Miete")),
     (
@@ -296,15 +296,15 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
     ),
     (
         "5400",
-        Localized::new("Marketing", "Προώθηση", "Publicité", "Werbung"),
+        Localized::new("Marketing", "Διαφήμιση και προβολή", "Publicité", "Werbung"),
     ),
     (
         "5500",
         Localized::new(
             "Professional Fees",
-            "Επαγγελματικές αμοιβές",
+            "Αμοιβές τρίτων",
             "Honoraires",
-            "Fremdleistungen",
+            "Rechts- und Beratungskosten",
         ),
     ),
     (
@@ -319,7 +319,7 @@ const COMPANY_ACCOUNT_NAMES: &[(&str, Localized)] = &[
         "5900",
         Localized::new(
             "Other OpEx",
-            "Λοιπά λειτουργικά",
+            "Λοιπά λειτουργικά έξοδα",
             "Autres charges d'exploitation",
             "Sonstige Betriebskosten",
         ),
@@ -348,8 +348,9 @@ pub fn seeded_account_name(
 }
 
 /// Every account code with a name in the table for `template`, in table order.
+#[cfg(test)]
 #[must_use]
-pub fn seeded_account_codes(template: ChartTemplate) -> Vec<&'static str> {
+pub(crate) fn seeded_account_codes(template: ChartTemplate) -> Vec<&'static str> {
     let names = match template {
         ChartTemplate::Blank => return Vec::new(),
         ChartTemplate::Personal => PERSONAL_ACCOUNT_NAMES,
@@ -372,14 +373,16 @@ pub fn opening_balance_description(locale: Locale, account_name: &str) -> String
     format!("{} — {account_name}", OPENING_BALANCE.in_locale(locale))
 }
 
-const VOID_PREFIX: Localized = Localized::new("VOID", "ΑΚΥΡΩΣΗ", "ANNULATION", "STORNO");
+/// The word that opens a void description, with its separator: French puts a
+/// space before the colon. The space is an ordinary one, never U+202F.
+const VOID_PREFIX: Localized = Localized::new("VOID:", "ΑΚΥΡΩΣΗ:", "ANNULATION :", "STORNO:");
 
 const VOID_MEMO: Localized = Localized::new("Void", "Ακύρωση", "Annulation", "Storno");
 
 /// Description of the reversing entry that voids `original_description`.
 #[must_use]
 pub fn void_description(locale: Locale, original_description: &str) -> String {
-    format!("{}: {original_description}", VOID_PREFIX.in_locale(locale))
+    format!("{} {original_description}", VOID_PREFIX.in_locale(locale))
 }
 
 /// Memo on every line of a reversing entry.
@@ -414,7 +417,7 @@ impl BillKind {
             ),
             Self::Gas => Localized::new(
                 "Gas bill",
-                "Λογαριασμός αερίου",
+                "Λογαριασμός φυσικού αερίου",
                 "Facture de gaz",
                 "Gasrechnung",
             ),
@@ -422,7 +425,7 @@ impl BillKind {
                 "Telecom bill",
                 "Λογαριασμός τηλεπικοινωνιών",
                 "Facture télécom",
-                "Telekommunikationsrechnung",
+                "Telefon- und Internetrechnung",
             ),
             Self::Water => Localized::new(
                 "Water bill",
@@ -433,7 +436,7 @@ impl BillKind {
             Self::Utility => Localized::new(
                 "Utility bill",
                 "Λογαριασμός κοινής ωφέλειας",
-                "Facture de charges",
+                "Facture d'énergie",
                 "Versorgerrechnung",
             ),
         }
@@ -490,8 +493,12 @@ pub const fn invoice_word(locale: Locale) -> &'static str {
     INVOICE.in_locale(locale)
 }
 
-const BANK_TRANSFER: Localized =
-    Localized::new("Bank transfer", "Έμβασμα", "Virement", "Überweisung");
+const BANK_TRANSFER: Localized = Localized::new(
+    "Bank transfer",
+    "Έμβασμα",
+    "Virement bancaire",
+    "Überweisung",
+);
 
 /// Suggested description of a bank transfer receipt, naming the payee as the
 /// document spells it.
@@ -525,4 +532,200 @@ pub const fn natural_gas_merchant(locale: Locale) -> &'static str {
 #[must_use]
 pub const fn electricity_supplier_merchant(locale: Locale) -> &'static str {
     ELECTRICITY_SUPPLIER.in_locale(locale)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
+
+    const BILL_KINDS: [BillKind; 5] = [
+        BillKind::Electricity,
+        BillKind::Gas,
+        BillKind::Telecom,
+        BillKind::Water,
+        BillKind::Utility,
+    ];
+
+    /// Every generated form for `locale`, in the order the expectations below
+    /// list them: customer invoice with and without a reference, invoice by
+    /// reference with and without a merchant, the bare invoice word, the bank
+    /// transfer with and without a payee, then for each bill kind the title
+    /// with a merchant and alone.
+    fn forms(locale: Locale) -> Vec<String> {
+        let mut forms = vec![
+            customer_invoice_description(locale, "ACME", Some("42")),
+            customer_invoice_description(locale, "ACME", None),
+            invoice_reference_description(locale, "42", Some("ACME")),
+            invoice_reference_description(locale, "42", None),
+            invoice_word(locale).to_owned(),
+            bank_transfer_description(locale, Some("ACME")),
+            bank_transfer_description(locale, None),
+        ];
+
+        for kind in BILL_KINDS {
+            forms.push(bill_description(locale, kind, Some("ACME")));
+            forms.push(bill_description(locale, kind, None));
+        }
+
+        forms
+    }
+
+    #[test]
+    fn english_forms_are_the_ones_written_before_localization() {
+        assert_eq!(
+            forms(Locale::En),
+            [
+                "ACME — Invoice 42",
+                "ACME — Invoice",
+                "Invoice 42 — ACME",
+                "Invoice 42",
+                "Invoice",
+                "Bank transfer — ACME",
+                "Bank transfer",
+                "ACME — Electricity bill",
+                "Electricity bill",
+                "ACME — Gas bill",
+                "Gas bill",
+                "ACME — Telecom bill",
+                "Telecom bill",
+                "ACME — Water bill",
+                "Water bill",
+                "ACME — Utility bill",
+                "Utility bill",
+            ]
+        );
+    }
+
+    #[test]
+    fn greek_forms_are_exact() {
+        assert_eq!(
+            forms(Locale::El),
+            [
+                "ACME — Τιμολόγιο 42",
+                "ACME — Τιμολόγιο",
+                "Τιμολόγιο 42 — ACME",
+                "Τιμολόγιο 42",
+                "Τιμολόγιο",
+                "Έμβασμα — ACME",
+                "Έμβασμα",
+                "ACME — Λογαριασμός ρεύματος",
+                "Λογαριασμός ρεύματος",
+                "ACME — Λογαριασμός φυσικού αερίου",
+                "Λογαριασμός φυσικού αερίου",
+                "ACME — Λογαριασμός τηλεπικοινωνιών",
+                "Λογαριασμός τηλεπικοινωνιών",
+                "ACME — Λογαριασμός νερού",
+                "Λογαριασμός νερού",
+                "ACME — Λογαριασμός κοινής ωφέλειας",
+                "Λογαριασμός κοινής ωφέλειας",
+            ]
+        );
+    }
+
+    #[test]
+    fn french_forms_are_exact() {
+        assert_eq!(
+            forms(Locale::Fr),
+            [
+                "ACME — Facture 42",
+                "ACME — Facture",
+                "Facture 42 — ACME",
+                "Facture 42",
+                "Facture",
+                "Virement bancaire — ACME",
+                "Virement bancaire",
+                "ACME — Facture d'électricité",
+                "Facture d'électricité",
+                "ACME — Facture de gaz",
+                "Facture de gaz",
+                "ACME — Facture télécom",
+                "Facture télécom",
+                "ACME — Facture d'eau",
+                "Facture d'eau",
+                "ACME — Facture d'énergie",
+                "Facture d'énergie",
+            ]
+        );
+    }
+
+    #[test]
+    fn german_forms_are_exact() {
+        assert_eq!(
+            forms(Locale::De),
+            [
+                "ACME — Rechnung 42",
+                "ACME — Rechnung",
+                "Rechnung 42 — ACME",
+                "Rechnung 42",
+                "Rechnung",
+                "Überweisung — ACME",
+                "Überweisung",
+                "ACME — Stromrechnung",
+                "Stromrechnung",
+                "ACME — Gasrechnung",
+                "Gasrechnung",
+                "ACME — Telefon- und Internetrechnung",
+                "Telefon- und Internetrechnung",
+                "ACME — Wasserrechnung",
+                "Wasserrechnung",
+                "ACME — Versorgerrechnung",
+                "Versorgerrechnung",
+            ]
+        );
+    }
+
+    #[test]
+    fn void_descriptions_and_memos_are_exact() {
+        let expected = [
+            (Locale::En, "VOID: Groceries", "Void"),
+            (Locale::El, "ΑΚΥΡΩΣΗ: Groceries", "Ακύρωση"),
+            (Locale::Fr, "ANNULATION : Groceries", "Annulation"),
+            (Locale::De, "STORNO: Groceries", "Storno"),
+        ];
+
+        for (locale, description, memo) in expected {
+            assert_eq!(void_description(locale, "Groceries"), description);
+            assert_eq!(void_memo(locale), memo);
+        }
+    }
+
+    #[test]
+    fn suggested_merchants_are_exact() {
+        let expected = [
+            (Locale::En, "Natural gas", "Electricity supplier"),
+            (Locale::El, "Φυσικό αέριο", "Πάροχος ηλεκτρικής ενέργειας"),
+            (Locale::Fr, "Gaz naturel", "Fournisseur d'électricité"),
+            (Locale::De, "Erdgas", "Stromversorger"),
+        ];
+
+        for (locale, gas, electricity) in expected {
+            assert_eq!(natural_gas_merchant(locale), gas);
+            assert_eq!(electricity_supplier_merchant(locale), electricity);
+        }
+    }
+
+    #[test]
+    fn generated_text_is_safe_for_spreadsheets_and_the_pdf_font() {
+        for locale in LOCALES {
+            let mut generated = forms(locale);
+            generated.push(opening_balance_description(locale, "Cash"));
+            generated.push(void_description(locale, "Groceries"));
+            generated.push(void_memo(locale).to_owned());
+            generated.push(natural_gas_merchant(locale).to_owned());
+            generated.push(electricity_supplier_merchant(locale).to_owned());
+
+            for text in &generated {
+                assert!(
+                    !text.starts_with(['=', '+', '-', '@']),
+                    "{locale:?}: {text} could be read as a formula"
+                );
+                assert!(
+                    !text.contains(['\u{202f}', '\u{a0}', '\u{2019}']),
+                    "{locale:?}: {text} has a no-break space or typographic apostrophe"
+                );
+            }
+        }
+    }
 }
