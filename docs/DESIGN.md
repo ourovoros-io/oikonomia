@@ -151,9 +151,31 @@ the trust root. See [`release.md`](release.md) for how releases are cut.
 - **i18n.** Four locales: English, Greek, French and German, in
   `web/src/locales`. `en.json` has flat keys; the others are nested.
   `lib/i18n.ts` flattens them and `I18nProvider` supplies `t()`. The chosen
-  language is stored in `ui-prefs.json`. Some text comes from Rust in English
-  (seeded account names, OCR notes, some report rows and error messages) and is
-  shown as it is.
+  language is stored in `ui-prefs.json`. Text that comes from Rust reaches the
+  screen in one of three ways, and the UI never renders raw backend text:
+  - *Transient text* travels as a code plus named parameters, and the UI words
+    it. This covers command errors (`CommandError` in the desktop crate's
+    `error.rs`, built from `ValidationError` and the other core and update
+    errors), analyzer notes and the analyzer status hint (`UiTextCode` in
+    `ui_text.rs`, `AnalyzerHint` in `documents/analyze.rs`), and the computed
+    report rows (`SyntheticLine` in `ledger/reports.rs`). `lib/commandError.ts`
+    and `lib/uiText.ts` map each code to a catalog key. The lists of codes are
+    shared JSON files in `web/src/lib` (`errorCodes.json`,
+    `errorCodeParams.json`, `accountRoles.json`, `uiTextCodes.json`). Rust
+    tests check each file against the enumerations, and `commandError.test.ts`
+    and `uiText.test.ts` check the UI side, so a code added on one side fails a
+    test until the other has it. `noRawErrorMessage.test.ts` fails when a
+    screen reads an error's raw message, and `i18n.catalog.test.ts` checks that
+    every key has a reader, exists in all four languages and has the same
+    placeholders in each.
+  - *Stored text* is written by the Rust core in the app's language when it is
+    created: the account names a chart template seeds, and the descriptions
+    core generates for opening balances and voids. The wording is a table in
+    `crates/oikonomia-core/src/text.rs`, keyed by language. It is not renamed
+    when the language changes later.
+  - *Default accounts* for the entry forms are chosen in Rust by template code
+    and account type (`default_accounts.rs`), never by name, because names are
+    free text.
 - **Design language.** The interface is dark only and is called "Aurora glass":
   an animated colored backdrop (`components/Aurora.tsx`) under translucent panes
   with a hairline edge. Brand color marks chrome and never money; money in and

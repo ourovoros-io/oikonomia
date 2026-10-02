@@ -198,7 +198,7 @@
     },
     "language": {
       "title": "Langue",
-      "description": "Menus, libellés et Saisie rapide. Les noms de comptes et certains messages restent en anglais.",
+      "description": "Menus, libellés et Saisie rapide. Les nouveaux livres reçoivent des noms de comptes dans cette langue ; les livres existants gardent les leurs.",
       "option": {
         "en": "English",
         "el": "Ελληνικά",

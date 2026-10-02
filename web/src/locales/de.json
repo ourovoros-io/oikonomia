@@ -198,7 +198,7 @@
     },
     "language": {
       "title": "Sprache",
-      "description": "Menüs, Bezeichnungen und Schnellerfassung. Kontonamen und einige Meldungen bleiben auf Englisch.",
+      "description": "Menüs, Bezeichnungen und Schnellerfassung. Neue Bücher erhalten Kontonamen in dieser Sprache; vorhandene Bücher behalten ihre.",
       "option": {
         "en": "English",
         "el": "Ελληνικά",

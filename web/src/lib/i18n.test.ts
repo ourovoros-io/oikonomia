@@ -137,7 +137,7 @@ describe('Writer el catalog', () => {
     expect(t('quickAdd.vaultLocked')).toBe('Η θυρίδα είναι κλειδωμένη')
     expect(t('quickAdd.createBookFirst')).toBe('Δημιουργήστε πρώτα βιβλίο')
     expect(t('settings.language.title')).toBe('Γλώσσα')
-    expect(t('settings.language.description')).toBe('Μενού, ετικέτες και Γρήγορη καταχώριση. Τα ονόματα λογαριασμών και ορισμένα μηνύματα παραμένουν στα Αγγλικά.')
+    expect(t('settings.language.description')).toBe('Μενού, ετικέτες και Γρήγορη καταχώριση. Τα νέα βιβλία παίρνουν ονόματα λογαριασμών σε αυτή τη γλώσσα· τα υπάρχοντα βιβλία κρατούν τα δικά τους.')
     expect(t('tx.title')).toBe('Κινήσεις')
     expect(t('acct.addAccount')).toBe('Προσθήκη λογαριασμού')
     expect(t('rpt.title')).toBe('Αναφορές')
