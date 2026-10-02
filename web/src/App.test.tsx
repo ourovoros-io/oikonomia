@@ -35,6 +35,7 @@ vi.mock('./lib/api', () => ({
   api: {
     entityList: vi.fn(),
     getLockTimeout: vi.fn(async () => 900),
+    donationAddresses: vi.fn(async () => []),
     setLockTimeout: vi.fn(),
     getLocale: vi.fn(),
     setLocale: vi.fn(),

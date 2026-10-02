@@ -113,6 +113,23 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 **Does not protect against:** malware while unlocked, keyloggers, memory forensics while the app is open.  
 **Update channel:** a compromised GitHub account cannot ship a malicious update (artifacts are minisign-verified against the baked key), but a compromised signing key can — the signing key is generated offline and stored only in the protected `release` environment (see docs/release.md).
 
+## Donate
+
+Oikonomia is free. If it is useful to you, a donation helps keep it maintained.
+Check the coin and network before sending: crypto transfers cannot be reversed.
+
+| Coin | Network | Address |
+|------|---------|---------|
+| BTC | Bitcoin | `bc1q9gey0j6vvd2nh7eh76tp932r2ttmdj75u55een` |
+| ETH, USDC, USDT | Ethereum | `0x544506F873EF9157E3639B9D0Af13562245baf07` |
+| XMR | Monero | `8ABaPsJS6754dY7YsZLKuHRrYFMtE5BBmi8SwZ7n79ukMAHkN987PZFHPMwaD4QhLegX6MPAjwEup69RbMAEnRcENDdfavg` |
+| DASH | Dash | `XkfYevHXMAFwMcY6nj95oedwxaicTpqbSs` |
+| LTC | Litecoin | `ltc1q2lhxq7crwaam9upc8ks0gmyvtxn9htatfgns33` |
+| SOL, USDC, USDT | Solana | `EZVrqTLW3sTHdFZydoR31Nv3QLnWShfV4riah1otTC26` |
+| ZEC | Zcash (transparent) | `t1MyGx1wXSQRyQZeXJjyKjHKTZEWSyEiBkj` |
+
+The same addresses are shown in the app under Settings, Donate.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Business rules live in Rust

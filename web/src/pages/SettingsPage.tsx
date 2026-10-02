@@ -6,6 +6,7 @@ import {
   Clock,
   Download,
   FileQuestion,
+  HeartHandshake,
   KeyRound,
   Languages,
   LifeBuoy,
@@ -16,7 +17,8 @@ import {
   Upload,
   User,
 } from 'lucide-react'
-import { api, type ChartTemplate, type Entity } from '../lib/api'
+import { DonationAddresses } from '../components/DonationAddresses'
+import { api, type ChartTemplate, type DonationAddress, type Entity } from '../lib/api'
 import {
   vaultBackup,
   vaultChangePassword,
@@ -170,6 +172,7 @@ export function SettingsPage({
   const [showCreate, setShowCreate] = useState(false)
   const [lockMins, setLockMins] = useState(15)
   const [lockBusy, setLockBusy] = useState(false)
+  const [donations, setDonations] = useState<DonationAddress[]>([])
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [oldPassword, setOldPassword] = useState('')
@@ -212,6 +215,13 @@ export function SettingsPage({
       .then((secs) => setLockMins(Math.max(1, Math.round(secs / 60))))
       .catch(() => {
         /* ignore */
+      })
+
+    void api
+      .donationAddresses()
+      .then(setDonations)
+      .catch(() => {
+        /* ignore: the section stays hidden */
       })
   }, [])
 
@@ -437,6 +447,17 @@ export function SettingsPage({
           ariaLabel={t('settings.language.title')}
         />
       </CollapsibleSection>
+
+      {donations.length > 0 ? (
+        <CollapsibleSection
+          title={t('settings.donate.title')}
+          description={t('settings.donate.description')}
+          icon={<HeartHandshake className="size-4" />}
+          tone="muted"
+        >
+          <DonationAddresses addresses={donations} />
+        </CollapsibleSection>
+      ) : null}
 
       {appInfo ? (
         <CollapsibleSection

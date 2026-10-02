@@ -16,6 +16,7 @@ vi.mock('../lib/tauri', () => ({
 vi.mock('../lib/api', () => ({
   api: {
     getLockTimeout: vi.fn(async () => 900),
+    donationAddresses: vi.fn(),
     setLockTimeout: vi.fn(),
     openSupportEmail: vi.fn(),
     entityCreate: vi.fn(),
@@ -51,6 +52,9 @@ beforeEach(() => {
   vi.mocked(vaultPickBackup).mockReset()
   vi.mocked(vaultPickBackup).mockResolvedValue(BACKUP_PATH)
   vi.mocked(api.getLockTimeout).mockReset().mockResolvedValue(900)
+  vi.mocked(api.donationAddresses).mockReset().mockResolvedValue([
+    { coin: 'BTC', network: 'Bitcoin', also_accepts: [], address: 'bc1qexampleexampleexample' },
+  ])
   vi.mocked(api.openSupportEmail).mockReset().mockResolvedValue(undefined)
   vi.mocked(api.entityCreate).mockReset()
   vi.mocked(api.setLockTimeout).mockReset()
@@ -75,6 +79,40 @@ describe('SettingsPage', () => {
     expect(screen.queryByText(/trial/i)).toBeNull()
     expect(screen.queryByRole('button', { name: /import license/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /license agreement/i })).toBeNull()
+  })
+
+  test('Donate section sits after Language and lists the Rust addresses', async () => {
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    // The section appears once the Rust call resolves.
+    await screen.findByRole('heading', { level: 3, name: 'Donate' })
+    const titles = screen.getAllByRole('heading', { level: 3 }).map((el) => el.textContent)
+    expect(titles.slice(0, 2)).toEqual(['Language', 'Donate'])
+
+    await userEvent.click(screen.getByRole('button', { name: /donate/i }))
+    expect(await screen.findByText('bc1qexampleexampleexample')).toBeTruthy()
+  })
+
+  test('Donate section is absent when Rust returns no addresses', async () => {
+    vi.mocked(api.donationAddresses).mockResolvedValue([])
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    // Wait for the call to be made and settled, or the absence check is vacuous.
+    await waitFor(() => expect(api.donationAddresses).toHaveBeenCalled())
+    await vi.mocked(api.donationAddresses).mock.results[0].value
+    await waitFor(() => expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0))
+
+    expect(screen.queryByRole('heading', { name: 'Donate' })).toBeNull()
   })
 
   test('New entity is enabled when the vault already has a book', async () => {

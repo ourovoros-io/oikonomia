@@ -49,6 +49,7 @@ export function createHandler(lang: DemoLang) {
     vault_status: () => 'unlocked',
     vault_touch: () => null,
     app_info: () => ({ name: 'Oikonomia', version: '1.0.0', support_email: 'support@example.com' }),
+    donation_addresses: () => [],
     update_check: () => ({ kind: 'up_to_date' }),
     settings_get_locale: () => lang,
     settings_set_locale: () => null,

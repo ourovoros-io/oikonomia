@@ -422,6 +422,9 @@ export const api = {
   setLockTimeout: (secs: number) => call<void>('settings_set_lock_timeout', { secs }),
   /** Opens the mail client on the support mailbox. Rust builds the mailto; nothing is passed in. */
   openSupportEmail: () => call<void>('open_support_email'),
+  /** Donation addresses from the Rust table. Empty outside Tauri. */
+  donationAddresses: () =>
+    isTauri() ? call<DonationAddress[]>('donation_addresses') : Promise.resolve([]),
   /** Locale is a plaintext pref (Rust side): readable before unlock. */
   getLocale: () => call<Locale>('settings_get_locale'),
   setLocale: (locale: Locale) => call<void>('settings_set_locale', { locale }),
@@ -589,6 +592,14 @@ export type CsvColumnMapping = {
   debit?: string | null
   credit?: string | null
   reference?: string | null
+}
+
+/** One donation address from the Rust table (`donation_addresses`). */
+export type DonationAddress = {
+  coin: 'BTC' | 'ETH' | 'XMR' | 'DASH' | 'LTC' | 'SOL' | 'ZEC'
+  network: string
+  also_accepts: string[]
+  address: string
 }
 
 /** Preview of a bank CSV. Does not write to the ledger. */

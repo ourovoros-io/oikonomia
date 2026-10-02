@@ -21,12 +21,12 @@ signing from that program stay.
 | Licensing code | Deleted outright; no always-allowed stub, no Cargo feature |
 | Donations | Shown in the app (Settings) and in the README |
 | Donation mechanism | Static receiving addresses only; no processor, no network call |
-| Coins | BTC, ETH, XMR, DASH, LTC, SOL; USDC and USDT on Ethereum and Solana |
+| Coins | BTC, ETH, XMR, DASH, LTC, SOL, ZEC; USDC and USDT on Ethereum and Solana |
 | Git history | Published as is, provided the secret scan is clean |
 | Website | Out of scope; reworked separately |
 
 USDC and USDT are tokens on Ethereum and Solana, so they use the ETH and SOL
-addresses. There are six addresses in total.
+addresses. There are seven addresses in total.
 
 The history decision was a recommendation the owner did not explicitly
 confirm. If the secret scan finds anything, or the owner prefers a fresh
@@ -159,8 +159,6 @@ Pre-publication audit:
 
 ### PR 3: donations
 
-Blocked on the owner supplying six addresses.
-
 Data (Rust, desktop crate, new `donations.rs`):
 
 ```rust
@@ -172,7 +170,7 @@ pub(crate) struct DonationAddress {
 }
 ```
 
-`Coin` is an enum of the six base coins. A single `const DONATION_ADDRESSES`
+`Coin` is an enum of the seven coins. A single `const DONATION_ADDRESSES`
 table holds the rows. The ETH and SOL rows carry
 `also_accepts: &["USDC", "USDT"]`. A `donation_addresses` command returns the
 table serialized; it needs no unlocked vault.
@@ -189,9 +187,9 @@ UI:
 
 README:
 
-- A "Donate" section lists the same six rows. A desktop-crate test reads
-  `README.md` and asserts each table address appears in it, so the two cannot
-  drift.
+- A "Donate" section lists the same seven rows. A desktop-crate test reads
+  `README.md` and asserts its Donate table rows equal the Rust table's, in
+  order, label for label, so the two cannot drift.
 - `.github/FUNDING.yml` uses `custom` to link to the README section.
 
 Validation (tests, no new dependencies):
@@ -200,11 +198,13 @@ Validation (tests, no new dependencies):
   expected shape for its coin: prefix, length range, and character set
   (bech32 or base58 for BTC and LTC, `0x` plus 40 hex for ETH, base58 with
   the `4` or `8` prefix and 95 or 106 characters for XMR, `X` prefix base58
-  for DASH, base58 of 32 to 44 characters for SOL).
+  for DASH, base58 of 32 to 44 characters for SOL, base58 of 35
+  characters with prefix `t1` or `t3` for ZEC).
 - No address appears twice.
 
-These are shape checks, not checksum verification. The owner confirms each
-address against their wallet before merge.
+These are format checks, not checksum verification. Checksums are verified
+separately, offline, whenever an address is added or changed, and the owner
+confirms each address against their wallet before merge.
 
 ## Risks
 
@@ -213,7 +213,7 @@ address against their wallet before merge.
 - GPL applies to the bundled binary. Dependencies are all permissive or
   MPL-2.0; `cargo deny` is the gate.
 - A wrong donation address is unrecoverable for the donor. Shape tests catch
-  typos that break the format; only the owner's manual check catches a valid
+  only changes that break the format; only the owner's manual check catches a valid
   address that belongs to someone else.
 - History becomes public with internal planning documents in it. They contain
   business planning, not credentials; the secret scan verifies the second half

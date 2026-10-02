@@ -235,6 +235,15 @@
       "contact": "Support per E-Mail",
       "openFailed": "Ihr E-Mail-Programm ließ sich nicht öffnen. Schreiben Sie an {email}."
     },
+    "donate": {
+      "title": "Spenden",
+      "description": "Oikonomia ist kostenlos und quelloffen. Spenden sind freiwillig.",
+      "warning": "Prüfen Sie Währung und Netzwerk vor dem Senden. Krypto-Überweisungen lassen sich nicht rückgängig machen.",
+      "alsoAccepts": "Akzeptiert auch {tokens}",
+      "copy": "{coin}-Adresse kopieren",
+      "copied": "Kopiert",
+      "copyFailed": "Kopieren fehlgeschlagen. Markieren Sie die Adresse und kopieren Sie sie von Hand."
+    },
     "lock": {
       "title": "Automatische Sperre",
       "description": "Tresor nach einer Weile ohne Aktivität sperren",

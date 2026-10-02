@@ -9,6 +9,7 @@
 mod commands;
 #[cfg(test)]
 mod config_checks;
+mod donations;
 mod error;
 mod nav_guard;
 mod state;
@@ -120,6 +121,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::vault_pick_backup,
         commands::app_info,
         commands::open_support_email,
+        donations::donation_addresses,
         commands::entity_list,
         commands::entity_create,
         commands::entity_update,

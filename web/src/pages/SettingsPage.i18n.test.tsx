@@ -15,6 +15,7 @@ vi.mock('../lib/tauri', () => ({
 vi.mock('../lib/api', () => ({
   api: {
     getLockTimeout: vi.fn(async () => 900),
+    donationAddresses: vi.fn(async () => []),
     getLocale: vi.fn(async () => 'en'),
     setLocale: vi.fn(async () => undefined),
     getUiPrefs: vi.fn(async () => ({ locale: 'en' })),

@@ -235,6 +235,15 @@
       "contact": "Écrire à l'assistance",
       "openFailed": "Impossible d'ouvrir votre application de messagerie. Écrivez à {email}."
     },
+    "donate": {
+      "title": "Faire un don",
+      "description": "Oikonomia est gratuit et open source. Les dons sont facultatifs.",
+      "warning": "Vérifiez la monnaie et le réseau avant l'envoi. Les transferts de cryptomonnaies sont irréversibles.",
+      "alsoAccepts": "Accepte aussi {tokens}",
+      "copy": "Copier l'adresse {coin}",
+      "copied": "Copié",
+      "copyFailed": "Copie impossible. Sélectionnez l'adresse et copiez-la manuellement."
+    },
     "lock": {
       "title": "Verrouillage automatique",
       "description": "Verrouiller le coffre après une période d'inactivité",
