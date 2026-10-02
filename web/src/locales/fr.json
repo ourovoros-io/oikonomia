@@ -597,7 +597,7 @@
     },
     "type": {
       "asset": "Actif",
-      "liability": "Passif",
+      "liability": "Dettes",
       "equity": "Capitaux propres",
       "income": "Recettes",
       "expense": "Dépenses"
