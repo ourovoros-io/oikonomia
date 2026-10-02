@@ -52,16 +52,20 @@ Windows Authenticode is still a placeholder even after HSM secrets exist: replac
 
 Optional: Actions → Release → Run workflow with `dry_run` still requires Environment `release` and does not attach a GitHub Release.
 
-## Promote to the public releases repo
+## Promote the draft to a published release
 
-A tag push builds draft releases in this repo. Once testing is complete, promote the draft release to the public releases repository (`ourovoros-io/oikonomia-releases`):
+A tag push builds a **draft** release in this repo. A draft is visible only to people with write access, and the updater cannot see it: the app reads `releases/latest`, which GitHub resolves to published releases only. Test the signed build from the draft, then promote it:
 
-1. Run the Promote workflow: `gh workflow run promote.yml -f tag=vX.Y.Z` (requires Environment `release` review).
-2. The workflow downloads the draft's artifacts from this repo, assembles and signs `latest.json` with the updater minisign key, verifies the signature with the app's baked public key, then publishes everything to `ourovoros-io/oikonomia-releases`.
-3. The promoted feed carries a single `darwin-aarch64` entry in v1 (macOS only; Windows and Linux updates are not yet supported).
-4. The updater reads `latest.json` and artifacts **only** from the public releases repo.
+1. Dry run first: `gh workflow run promote.yml -f tag=vX.Y.Z -f dry_run=true`. This assembles, signs, and verifies the feed without changing the release.
+2. Promote: `gh workflow run promote.yml -f tag=vX.Y.Z` (uses Environment `release`).
+3. The workflow refuses anything that is not a draft, downloads the draft's artifacts, assembles and signs `latest.json` with the updater minisign key, and verifies the signature with the app's baked public key.
+4. It then deletes every asset outside the tested allow-list (`.app.tar.gz`, its `.sig`, `.dmg`, `latest.json`, `latest.json.sig`), uploads the signed feed, and publishes the draft as the latest release. Publishing is the last step, so a failure leaves a draft to fix, never a half-published release.
+5. The published feed carries a single `darwin-aarch64` entry in v1 (macOS only; Windows and Linux updates are not yet supported).
+
+Installed apps are offered the update as soon as the draft is published. To withdraw a bad release, convert it back to a draft or delete it; apps then see the previous published release again.
 
 ### Secrets
 
-Add to Environment `release`:
-- `RELEASES_REPO_TOKEN`: fine-grained PAT with `contents:write` permission on the public `ourovoros-io/oikonomia-releases` repository.
+Promotion needs only the updater key already on Environment `release` (`TAURI_SIGNING_PRIVATE_KEY`, optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). It publishes with the workflow's own token, so there is no cross-repository access token to manage.
+
+Once this repository is public, add required reviewers to Environment `release` (Settings, Environments): every release and promotion then waits for an explicit approval.

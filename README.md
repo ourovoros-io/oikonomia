@@ -94,8 +94,8 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 - Vault files live under the OS app-data directory for `io.ourovoros.oikonomia`.
 - Offline by design: the app performs **no background network activity**. The
   single network action is the update check you click on the unlock screen; it
-  talks only to GitHub's release hosts (the public
-  `ourovoros-io/oikonomia-releases` repo) and verifies a minisign signature
+  talks only to GitHub's release hosts (this repository's published
+  releases) and verifies a minisign signature
   over both the update manifest and the downloaded artifact before anything is
   installed. The vault and ledger paths (`oikonomia-core`) contain
   no network code at all —

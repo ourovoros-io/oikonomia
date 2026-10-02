@@ -114,7 +114,7 @@ mod tests {
     fn production_allows_github_https_appimage() {
         let policy = HostPolicy::production();
         let url = Url::parse(
-            "https://github.com/ourovoros-io/oikonomia-releases/releases/download/v0.2.0/Oikonomia.AppImage",
+            "https://github.com/ourovoros-io/oikonomia/releases/download/v0.2.0/Oikonomia.AppImage",
         )
         .expect("url");
         assert!(policy.is_allowed_artifact_url(&url));
@@ -124,7 +124,7 @@ mod tests {
     fn production_rejects_deb_even_on_github() {
         let policy = HostPolicy::production();
         let url = Url::parse(
-            "https://github.com/ourovoros-io/oikonomia-releases/releases/download/v0.2.0/oikonomia.deb",
+            "https://github.com/ourovoros-io/oikonomia/releases/download/v0.2.0/oikonomia.deb",
         )
         .expect("url");
         assert!(policy.is_allowed_fetch_url(&url));

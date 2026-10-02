@@ -97,7 +97,7 @@ mod tests {
         let json = assemble_manifest(
             "1.0.0",
             "First release.",
-            "https://github.com/ourovoros-io/oikonomia-releases/releases/download/v1.0.0",
+            "https://github.com/ourovoros-io/oikonomia/releases/download/v1.0.0",
             &artifacts,
         )
         .expect("assemble");
@@ -107,7 +107,7 @@ mod tests {
         let platform = &value["platforms"]["darwin-aarch64"];
         assert_eq!(
             platform["url"],
-            "https://github.com/ourovoros-io/oikonomia-releases/releases/download/v1.0.0/Oikonomia_aarch64.app.tar.gz"
+            "https://github.com/ourovoros-io/oikonomia/releases/download/v1.0.0/Oikonomia_aarch64.app.tar.gz"
         );
         assert_eq!(platform["signature"], "TESTSIG");
         assert_eq!(platform["sha256"], "ab".repeat(32));

@@ -197,6 +197,19 @@ fn production_feed_url_is_https_github() {
 }
 
 #[test]
+fn production_feed_is_the_latest_release_of_this_source_repository() {
+    // Releases are cut in the repository the code lives in. Deriving the
+    // expectation from the manifest's `repository` means a repo move cannot
+    // leave the updater pointing at a feed nobody publishes to.
+    let expected = format!(
+        "{}/releases/latest/download/latest.json",
+        env!("CARGO_PKG_REPOSITORY")
+    );
+
+    assert_eq!(UPDATE_FEED_URL, expected);
+}
+
+#[test]
 fn offline_dns_check_is_failed_no_file_no_exec() {
     let (pk, _sk) = test_keys();
     let cache = cache_dir();
@@ -757,7 +770,7 @@ fn raw_ed25519_hex_is_not_a_minisign_public_key() {
 
 /// Proves the promote lane (`assemble_manifest`) and the client (`perform_check`,
 /// `download_and_verify`) agree on the wire shape: a manifest built the same way
-/// `assemble_feed` builds it for the public releases repo, served over httptest,
+/// `assemble_feed` builds it for a published release, served over httptest,
 /// must check as `Available` and its artifact must download and verify.
 #[test]
 fn promoted_feed_round_trips_through_check_and_download() {

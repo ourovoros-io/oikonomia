@@ -1,13 +1,15 @@
-# Promote a draft release from this repo to the public releases repo.
+# Promote a draft release in this repo to a published one.
 #
-# Manual, reviewed, fail-closed. Steps: download the draft's artifacts,
-# assemble latest.json ourselves (sha256 + per-artifact minisign sigs),
-# sign latest.json with the updater minisign key, verify with the app's
-# baked public key, then publish everything to ourovoros-io/oikonomia-releases.
+# A tag push (release.yml) leaves signed installers in a DRAFT release, which
+# neither the public nor the updater can see. This workflow is the gate that
+# makes it live. Manual, reviewed, fail-closed. Steps: download the draft's
+# artifacts, assemble latest.json ourselves (sha256 + per-artifact minisign
+# sigs), sign latest.json with the updater minisign key, verify with the app's
+# baked public key, strip every asset outside the tested allow-list, upload
+# the signed feed, and only then publish the draft.
 #
 # Needs (Environment `release`):
 #   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-#   RELEASES_REPO_TOKEN  fine-grained PAT, contents:write on the public repo
 name: Promote release
 
 on:
@@ -29,9 +31,12 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     environment: release
+    # Editing and publishing the release needs write access to this repo's
+    # contents; nothing else is granted.
+    permissions:
+      contents: write
     env:
       TAG: ${{ inputs.tag }}
-      PUBLIC_REPO: ourovoros-io/oikonomia-releases
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,11 +45,9 @@ jobs:
       - name: Require promote secrets (fail-closed)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          RELEASES_REPO_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
           missing=()
           [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ] && missing+=(TAURI_SIGNING_PRIVATE_KEY)
-          [ -z "${RELEASES_REPO_TOKEN}" ] && missing+=(RELEASES_REPO_TOKEN)
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Missing required secrets: ${missing[*]}"
             exit 1
@@ -59,6 +62,19 @@ jobs:
       # gh resolves draft releases by tag when authenticated with repo access.
       # If this ever stops matching the draft, list releases via
       # `gh api repos/${GITHUB_REPOSITORY}/releases` and download assets by id.
+      # Refuse anything that is not a draft: re-running against a published
+      # release would rewrite a feed that installed apps already trust.
+      - name: Require the release to be a draft (fail-closed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          is_draft="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)"
+          if [ "${is_draft}" != "true" ]; then
+            echo "::error::release ${TAG} is not a draft (isDraft=${is_draft}); refusing to promote"
+            exit 1
+          fi
+
       - name: Download draft release artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,7 +104,7 @@ jobs:
           printf '%s' "Oikonomia ${TAG}" > notes.txt
           cargo run -p oikonomia-update --bin assemble_feed -- assemble \
             --version "${TAG}" \
-            --base-url "https://github.com/${PUBLIC_REPO}/releases/download/${TAG}" \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
             --dir artifacts --out artifacts/latest.json --notes-file notes.txt \
             "${platforms[@]}"
 
@@ -112,42 +128,51 @@ jobs:
             --manifest artifacts/latest.json --sig artifacts/latest.json.sig \
             --pubkey "${pubkey}"
 
-      - name: Publish to the public releases repo
+      - name: Publish the draft
         if: ${{ inputs.dry_run != true }}
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          # Publish an explicit allow-list only. The draft may also carry
-          # Linux AppImage/.deb (or other) assets that never went through the
-          # smoke-tested darwin feed above; ship exactly what the feed names
-          # and nothing un-vetted.
-          publish=(artifacts/*.app.tar.gz artifacts/*.app.tar.gz.sig artifacts/*.dmg artifacts/latest.json artifacts/latest.json.sig)
 
-          skipped=()
-          for f in artifacts/*; do
-            keep=0
-            for p in "${publish[@]}"; do
-              if [ "$f" = "$p" ]; then
-                keep=1
-                break
-              fi
-            done
-            if [ "$keep" -eq 0 ]; then
-              skipped+=("$f")
+          # Ship an explicit allow-list only. The draft may also carry Linux
+          # AppImage/.deb or Windows assets that never went through the
+          # smoke-tested darwin feed above; remove them so the published
+          # release holds exactly what the feed names and nothing un-vetted.
+          is_published_asset() {
+            case "$1" in
+              *.app.tar.gz | *.app.tar.gz.sig | *.dmg | latest.json | latest.json.sig)
+                return 0
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+          }
+
+          removed=()
+          while IFS= read -r asset; do
+            [ -z "${asset}" ] && continue
+            if ! is_published_asset "${asset}"; then
+              gh release delete-asset "${TAG}" "${asset}" --repo "${GITHUB_REPOSITORY}" --yes
+              removed+=("${asset}")
             fi
-          done
-          if [ "${#skipped[@]}" -gt 0 ]; then
-            echo "::warning::skipping un-published artifacts (not part of the smoke-tested darwin feed): ${skipped[*]}"
+          done < <(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
+
+          if [ "${#removed[@]}" -gt 0 ]; then
+            echo "::warning::removed assets outside the smoke-tested darwin feed: ${removed[*]}"
           fi
 
-          if [ "${#publish[@]}" -eq 0 ]; then
-            echo "::error::no publishable artifacts found (expected .app.tar.gz + .sig, latest.json + .sig)"
-            exit 1
-          fi
+          # Replace tauri-action's latest.json with the one assembled, signed,
+          # and verified above. The draft is still invisible at this point.
+          gh release upload "${TAG}" artifacts/latest.json artifacts/latest.json.sig \
+            --repo "${GITHUB_REPOSITORY}" --clobber
 
-          gh release create "${TAG}" "${publish[@]}" \
-            --repo "${PUBLIC_REPO}" \
+          # Last step on purpose: until here nothing is public, so a failure
+          # above leaves a draft to fix, never a half-published release.
+          gh release edit "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false \
+            --latest \
             --title "Oikonomia ${TAG}" \
             --notes "Signed release. The app verifies the minisign signature of latest.json and of every artifact before installing."
