@@ -11,7 +11,7 @@ export type UiText = {
 }
 
 /**
- * Analyzer note code -> catalog key. Every code Rust can emit is listed in
+ * Coded text -> catalog key: analyzer notes and CSV import row problems. Every code Rust can emit is listed in
  * uiTextCodes.json, and a test fails when the two sides differ.
  */
 export const NOTE_CODE_KEYS: Record<string, string> = {
@@ -37,6 +37,11 @@ export const NOTE_CODE_KEYS: Record<string, string> = {
   transfer_no_amount: 'analyze.invoice.notes.transferNoAmount',
   transfer_fee: 'analyze.invoice.notes.transferFee',
   transfer_fee_unstated: 'analyze.invoice.notes.transferFeeUnstated',
+  csv_invalid_date: 'tx.csv.rowProblem.invalidDate',
+  csv_invalid_amount: 'tx.csv.rowProblem.invalidAmount',
+  csv_zero_amount: 'tx.csv.rowProblem.zeroAmount',
+  csv_amount_overflow: 'tx.csv.rowProblem.amountOverflow',
+  csv_unreadable_row: 'tx.csv.rowProblem.unreadable',
 }
 
 /** Analyzer status hint code -> catalog key. */

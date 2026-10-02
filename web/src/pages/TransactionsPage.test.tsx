@@ -160,7 +160,7 @@ const preview: CsvImportPreview = {
     {
       source_row: 4,
       duplicate: false,
-      error: 'invalid amount',
+      error: { code: 'csv_invalid_amount', params: { value: 'abc' } },
       suggested: null,
       signed_amount_minor: null,
     },

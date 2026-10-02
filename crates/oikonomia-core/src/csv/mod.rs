@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use crate::domain::{AccountId, EntityId};
 use crate::error::Error;
 use crate::ledger::{PostSimpleEntry, PostedEntryView, SimpleEntryKind};
+use crate::ui_text::UiText;
 
 pub use amount::{currency_minor_exponent, parse_signed_minor};
 pub use export::{
@@ -190,8 +191,8 @@ pub enum CsvRowOutcome {
     Invalid {
         /// 1-based CSV record number (the header is record 1).
         source_row: u32,
-        /// English reason.
-        message: String,
+        /// Why the row is unusable, as a code the UI words.
+        reason: UiText,
     },
 }
 
@@ -253,8 +254,9 @@ pub struct CsvImportPreviewRow {
     /// True when date + amount + normalized description matches an active
     /// entry or an earlier parsed row in this file.
     pub duplicate: bool,
-    /// Set when this row cannot be posted as-is.
-    pub error: Option<String>,
+    /// Set when this row cannot be posted as-is: a code the UI words, never
+    /// a sentence.
+    pub error: Option<UiText>,
     /// Suggested simple-form input when `error` is `None`.
     pub suggested: Option<PostSimpleEntry>,
     /// Signed minor units as parsed (negative = Expense).

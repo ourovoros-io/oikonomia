@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// Every note the document analyzer can attach to a suggestion.
+/// Every coded text Rust sends: the notes the document analyzer attaches to a
+/// suggestion, and the reasons a CSV import row cannot be used.
 ///
 /// The `snake_case` spelling is the wire code. The web catalog maps each code
 /// to copy in `web/src/lib/uiText.ts`, and a test pins both lists against
@@ -63,6 +64,16 @@ pub enum UiTextCode {
     /// The receipt shows a transfer fee that cannot be given as a figure,
     /// because the book's currency does not use two decimals.
     TransferFeeUnstated,
+    /// A CSV row's date is not a date. Parameter: `value`, the cell as written.
+    CsvInvalidDate,
+    /// A CSV row's amount is not an amount. Parameter: `value`, the cell as written.
+    CsvInvalidAmount,
+    /// A CSV row's amount is zero.
+    CsvZeroAmount,
+    /// A CSV row's amount is too large to hold.
+    CsvAmountOverflow,
+    /// A CSV row could not be read at all. The cause is logged, not sent.
+    CsvUnreadableRow,
 }
 
 impl UiTextCode {
@@ -92,6 +103,11 @@ impl UiTextCode {
         Self::TransferNoAmount,
         Self::TransferFee,
         Self::TransferFeeUnstated,
+        Self::CsvInvalidDate,
+        Self::CsvInvalidAmount,
+        Self::CsvZeroAmount,
+        Self::CsvAmountOverflow,
+        Self::CsvUnreadableRow,
     ];
 }
 
@@ -227,6 +243,11 @@ mod tests {
             UiTextCode::TransferNoAmount,
             UiTextCode::TransferFee,
             UiTextCode::TransferFeeUnstated,
+            UiTextCode::CsvInvalidDate,
+            UiTextCode::CsvInvalidAmount,
+            UiTextCode::CsvZeroAmount,
+            UiTextCode::CsvAmountOverflow,
+            UiTextCode::CsvUnreadableRow,
         }
     }
 

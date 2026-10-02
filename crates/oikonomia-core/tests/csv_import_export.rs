@@ -14,6 +14,7 @@ use oikonomia_core::ledger::{
     list_entries, post_simple_entry, set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
+use oikonomia_core::ui_text::{UiText, UiTextCode};
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -141,7 +142,18 @@ fn junk_row_rejected_and_batch_rolls_back() {
     let csv = "Date,Description,Amount\n2026-03-15,Groceries,-25.00\nbad-date,Nope,1.00\n";
     let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
     assert!(preview.rows[0].error.is_none());
-    assert!(preview.rows[1].error.is_some());
+    assert_eq!(
+        preview.rows[1].error,
+        Some(UiText::new(UiTextCode::CsvInvalidDate).with_param("value", "bad-date"))
+    );
+
+    assert_eq!(
+        serde_json::to_value(&preview.rows[1].error).expect("json"),
+        serde_json::json!({
+            "code": "csv_invalid_date",
+            "params": { "value": "bad-date" },
+        })
+    );
 
     let good = preview.rows[0].suggested.clone().expect("good row");
     let mut junk = good.clone();

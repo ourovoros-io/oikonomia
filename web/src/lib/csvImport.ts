@@ -7,6 +7,7 @@ import type {
   SimpleEntryInput,
 } from './api'
 import { t } from './i18n'
+import type { UiText } from './uiText'
 
 /** True when preview includes a header row to drive mapping selects. */
 export function previewHasColumnMap(preview: { headers?: string[] | null }): boolean {
@@ -117,7 +118,7 @@ export function mappingReady(mapping: CsvColumnMapping): boolean {
 
 /** Rows that can be posted: no parse error and a suggested simple entry. */
 export function rowSelectable(row: {
-  error: string | null
+  error: UiText | null
   suggested: SimpleEntryInput | null
 }): boolean {
   return !row.error && row.suggested != null

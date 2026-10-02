@@ -44,6 +44,8 @@ function suggested(kind: 'expense' | 'income'): SimpleEntryInput {
   }
 }
 
+const INVALID_AMOUNT = { code: 'csv_invalid_amount', params: { value: 'abc' } }
+
 function row(over: Partial<CsvImportPreviewRow> & { suggested?: SimpleEntryInput | null }): CsvImportPreviewRow {
   return {
     source_row: 2,
@@ -65,13 +67,13 @@ describe('defaultChecked', () => {
   })
 
   test('unchecks error rows', () => {
-    expect(defaultChecked(row({ error: 'invalid amount', suggested: null }))).toBe(false)
+    expect(defaultChecked(row({ error: INVALID_AMOUNT, suggested: null }))).toBe(false)
   })
 })
 
 describe('rowSelectable', () => {
   test('junk rows cannot be selected', () => {
-    expect(rowSelectable(row({ error: 'invalid amount', suggested: null }))).toBe(false)
+    expect(rowSelectable(row({ error: INVALID_AMOUNT, suggested: null }))).toBe(false)
     expect(rowSelectable(row({ error: null, suggested: null }))).toBe(false)
     expect(rowSelectable(row({}))).toBe(true)
   })

@@ -111,13 +111,10 @@ fn preview_row(
     outcome: CsvRowOutcome,
 ) -> CsvImportPreviewRow {
     match outcome {
-        CsvRowOutcome::Invalid {
-            source_row,
-            message,
-        } => CsvImportPreviewRow {
+        CsvRowOutcome::Invalid { source_row, reason } => CsvImportPreviewRow {
             source_row,
             duplicate: false,
-            error: Some(message),
+            error: Some(reason),
             suggested: None,
             signed_amount_minor: None,
         },

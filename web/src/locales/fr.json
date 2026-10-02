@@ -883,6 +883,13 @@
         "bill": "Facture",
         "transfer": "Virement"
       },
+      "rowProblem": {
+        "invalidDate": "« {value} » n’est pas une date valide.",
+        "invalidAmount": "« {value} » n’est pas un montant valide.",
+        "zeroAmount": "Le montant est nul.",
+        "amountOverflow": "Le montant est trop élevé.",
+        "unreadable": "Cette ligne n’a pas pu être lue."
+      },
       "duplicate": "Doublon probable",
       "postSelected": "Comptabiliser {n} lignes"
     }

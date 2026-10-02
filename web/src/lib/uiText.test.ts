@@ -75,6 +75,11 @@ describe('copy for every code', () => {
     expect(placeholders(t(NOTE_CODE_KEYS.transfer_fee_unstated))).toEqual([])
     expect(placeholders(t(NOTE_CODE_KEYS.dated_from_document))).toEqual(['date'])
     expect(placeholders(t(NOTE_CODE_KEYS.amount_assumes_two_decimals))).toEqual(['currency'])
+    expect(placeholders(t(NOTE_CODE_KEYS.csv_invalid_date))).toEqual(['value'])
+    expect(placeholders(t(NOTE_CODE_KEYS.csv_invalid_amount))).toEqual(['value'])
+    expect(placeholders(t(NOTE_CODE_KEYS.csv_zero_amount))).toEqual([])
+    expect(placeholders(t(NOTE_CODE_KEYS.csv_amount_overflow))).toEqual([])
+    expect(placeholders(t(NOTE_CODE_KEYS.csv_unreadable_row))).toEqual([])
   })
 })
 

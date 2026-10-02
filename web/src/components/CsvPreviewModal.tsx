@@ -11,6 +11,7 @@ import {
   rowSelectable,
 } from '../lib/csvImport'
 import { useI18n } from '../lib/I18nProvider'
+import { renderUiText } from '../lib/uiText'
 
 type DraftRow = CsvImportPreview['rows'][number] & { checked: boolean }
 
@@ -248,7 +249,9 @@ export function CsvPreviewModal({
                   </td>
                   <td className="px-3 py-2.5 text-xs">
                     {row.error ? (
-                      <span className="text-[var(--color-danger)]">{row.error}</span>
+                      <span className="text-[var(--color-danger)]">
+                        {renderUiText(row.error) || t('tx.csv.rowProblem.unreadable')}
+                      </span>
                     ) : row.duplicate ? (
                       <span className="text-[var(--color-warning)]">{t('tx.csv.duplicate')}</span>
                     ) : null}

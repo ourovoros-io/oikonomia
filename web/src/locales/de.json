@@ -883,6 +883,13 @@
         "bill": "Rechnung",
         "transfer": "Umbuchung"
       },
+      "rowProblem": {
+        "invalidDate": "„{value}“ ist kein gültiges Datum.",
+        "invalidAmount": "„{value}“ ist kein gültiger Betrag.",
+        "zeroAmount": "Der Betrag ist null.",
+        "amountOverflow": "Der Betrag ist zu groß.",
+        "unreadable": "Diese Zeile konnte nicht gelesen werden."
+      },
       "duplicate": "Möglicherweise doppelt",
       "postSelected": "{n} ausgewählte buchen"
     }

@@ -618,7 +618,8 @@ export type CsvImportPreview = {
 export type CsvImportPreviewRow = {
   source_row: number
   duplicate: boolean
-  error: string | null
+  /** Why the row cannot be imported, as a code the UI words with `renderUiText`. */
+  error: UiText | null
   suggested: SimpleEntryInput | null
   signed_amount_minor: number | null
 }

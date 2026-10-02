@@ -16,6 +16,11 @@ import { stripComments } from './stripComments.testutil'
  * stringifying an error variable) and cannot see an alias or a helper that
  * does the same. It catches the careless slip; code review catches the rest.
  *
+ * A backend field with any other name than `message` is outside its reach,
+ * whatever English text it carries (a CSV row's `error` was one). That is why
+ * such a field must be typed as coded text (`UiText`, a code and its values) and
+ * worded by `renderUiText`, so that a bare string cannot be rendered.
+ *
  * Known forms it does not catch:
  * - `JSON.stringify(err)`
  * - string concatenation with `+`
