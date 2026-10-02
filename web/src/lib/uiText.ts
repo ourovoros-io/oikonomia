@@ -39,6 +39,7 @@ export const NOTE_CODE_KEYS: Record<string, string> = {
   transfer_fee_unstated: 'analyze.invoice.notes.transferFeeUnstated',
   csv_invalid_date: 'tx.csv.rowProblem.invalidDate',
   csv_invalid_amount: 'tx.csv.rowProblem.invalidAmount',
+  csv_invalid_type: 'tx.csv.rowProblem.invalidType',
   csv_missing_date: 'tx.csv.rowProblem.missingDate',
   csv_missing_amount: 'tx.csv.rowProblem.missingAmount',
   csv_zero_amount: 'tx.csv.rowProblem.zeroAmount',

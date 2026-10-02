@@ -542,7 +542,7 @@ describe('ReportsPage statements', () => {
     await waitFor(() => {
       expect(screen.getByText('Ενεργητικό')).toBeTruthy()
     })
-    expect(screen.getByText('Παθητικό')).toBeTruthy()
+    expect(screen.getByText('Υποχρεώσεις')).toBeTruthy()
     expect(screen.getByText('Ίδια κεφάλαια')).toBeTruthy()
     expect(screen.queryByText(/assets|liabilities|equity/i)).toBeNull()
   })

@@ -88,6 +88,9 @@ pub enum CsvError {
     /// A cell is not a supported amount.
     #[error("invalid amount: {0}")]
     InvalidAmount(String),
+    /// A type or direction cell is not one the import recognizes.
+    #[error("invalid type: {0}")]
+    InvalidType(String),
     /// The date cell is empty or only whitespace.
     #[error("date is missing")]
     MissingDate,

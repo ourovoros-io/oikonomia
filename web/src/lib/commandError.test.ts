@@ -253,6 +253,23 @@ describe('command error localization', () => {
     ).toBe('Account 5100 is the wrong type for this entry. Choose a different account.')
   })
 
+  it('treats an account-type error without its account code as no copy', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    for (const locale of LOCALES) {
+      setLocale(locale)
+
+      for (const params of [undefined, { role: 'payment' }, { role: 'mystery' }]) {
+        const error = { code: 'account_wrong_type', message: 'm', params }
+        const unknown = commandErrorMessage(error)
+
+        expect(unknown, locale).not.toContain('{')
+        expect(unknown, locale).toBe(t('error.unknown'))
+        expect(commandErrorMessage(error, 'files.error.read'), locale).toBe(t('files.error.read'))
+      }
+    }
+  })
+
   // The codes whose copy says little; a screen's own sentence says more.
   const VAGUE_CODES = ['io', 'crypto', 'unknown', 'task_failed', 'validation_internal', 'analysis']
 

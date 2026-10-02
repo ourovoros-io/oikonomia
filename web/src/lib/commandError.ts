@@ -145,19 +145,6 @@ const ROLE_FALLBACK_KEYS: Record<string, string> = {
   'error.accountWrongType': 'error.accountWrongTypeGeneric',
 }
 
-/** Copy that names the account role, or the sentence without one when the role has no label. */
-function roleCopy(key: string, fallbackKey: string, params: Record<string, string> | undefined): string {
-  const labelKey = `error.role.${params?.role ?? ''}`
-  const label = t(labelKey)
-
-  if (params?.role && label !== labelKey) {
-    const copy = t(key, { ...params, role: label })
-    if (copy !== key) return copy
-  }
-
-  return t(fallbackKey, params)
-}
-
 /** Every `{name}` the copy under `key` fills in. */
 function placeholdersOf(key: string): string[] {
   return [...t(key).matchAll(/\{(\w+)\}/g)].map((match) => match[1])
@@ -166,6 +153,31 @@ function placeholdersOf(key: string): string[] {
 /** True when the copy under `key` names a value that `params` does not carry. */
 function lacksParams(key: string, params: Record<string, string> | undefined): boolean {
   return placeholdersOf(key).some((name) => params?.[name] === undefined)
+}
+
+/**
+ * Copy that names the account role, or the sentence without one when the role
+ * has no label. Undefined when the copy that would show still asks for a value
+ * `params` does not carry, so no raw `{name}` is ever shown.
+ */
+function roleCopy(
+  key: string,
+  fallbackKey: string,
+  params: Record<string, string> | undefined,
+): string | undefined {
+  const labelKey = `error.role.${params?.role ?? ''}`
+  const label = t(labelKey)
+
+  if (params?.role && label !== labelKey) {
+    const labelled = { ...params, role: label }
+    const copy = t(key, labelled)
+
+    if (copy !== key) return lacksParams(key, labelled) ? undefined : copy
+  }
+
+  const copy = t(fallbackKey, params)
+
+  return lacksParams(fallbackKey, params) ? undefined : copy
 }
 
 /**
@@ -205,13 +217,15 @@ export function commandErrorMessage(err: unknown, fallbackKey?: string): string 
   let copy: string | undefined
   if (key) {
     const roleFallbackKey = keyFor(ROLE_FALLBACK_KEYS, key)
-    const text = roleFallbackKey ? roleCopy(key, roleFallbackKey, cmd.params) : t(key, cmd.params)
-
     // Copy that still asks for a value the error did not carry would show a
     // raw `{name}`, so it counts as no copy.
-    const incomplete = roleFallbackKey === undefined && lacksParams(key, cmd.params)
+    if (roleFallbackKey) {
+      copy = roleCopy(key, roleFallbackKey, cmd.params)
+    } else if (!lacksParams(key, cmd.params)) {
+      const text = t(key, cmd.params)
 
-    if (text !== key && !incomplete) copy = text
+      if (text !== key) copy = text
+    }
   }
 
   if (vague || copy === undefined) logCommandError(cmd)

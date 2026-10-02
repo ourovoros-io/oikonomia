@@ -89,7 +89,13 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         // A newer change owns the outcome; reverting here would undo it.
         if (change !== latestChange.current) return
 
-        applyLocale(await readStoredLocale(storedLocale.current))
+        const stored = await readStoredLocale(storedLocale.current)
+
+        // The re-read took time; a change made meanwhile owns the outcome.
+        if (change !== latestChange.current) return
+
+        storedLocale.current = stored
+        applyLocale(stored)
         setLanguageChangeFailed(true)
       }
     })

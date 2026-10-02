@@ -719,7 +719,7 @@
     },
     "section": {
       "assets": "Ενεργητικό",
-      "liabilities": "Παθητικό",
+      "liabilities": "Υποχρεώσεις",
       "equity": "Ίδια κεφάλαια"
     },
     "synthetic": {
@@ -887,6 +887,7 @@
       "rowProblem": {
         "invalidDate": "Το «{value}» δεν είναι έγκυρη ημερομηνία.",
         "invalidAmount": "Το «{value}» δεν είναι έγκυρο ποσό.",
+        "invalidType": "Το «{value}» δεν είναι αναγνωρισμένος τύπος.",
         "missingDate": "Λείπει η ημερομηνία.",
         "missingAmount": "Λείπει το ποσό.",
         "zeroAmount": "Το ποσό είναι μηδέν.",

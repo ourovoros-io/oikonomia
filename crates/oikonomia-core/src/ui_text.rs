@@ -68,6 +68,9 @@ pub enum UiTextCode {
     CsvInvalidDate,
     /// A CSV row's amount is not an amount. Parameter: `value`, the cell as written.
     CsvInvalidAmount,
+    /// A CSV row's type cell is not a type the import knows. Parameter: `value`,
+    /// the cell as written.
+    CsvInvalidType,
     /// A CSV row's date cell is empty or only whitespace.
     CsvMissingDate,
     /// A CSV row's amount cell is empty or only whitespace.
@@ -109,6 +112,7 @@ impl UiTextCode {
         Self::TransferFeeUnstated,
         Self::CsvInvalidDate,
         Self::CsvInvalidAmount,
+        Self::CsvInvalidType,
         Self::CsvMissingDate,
         Self::CsvMissingAmount,
         Self::CsvZeroAmount,
@@ -251,6 +255,7 @@ mod tests {
             UiTextCode::TransferFeeUnstated,
             UiTextCode::CsvInvalidDate,
             UiTextCode::CsvInvalidAmount,
+            UiTextCode::CsvInvalidType,
             UiTextCode::CsvMissingDate,
             UiTextCode::CsvMissingAmount,
             UiTextCode::CsvZeroAmount,

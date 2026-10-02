@@ -329,6 +329,7 @@
   "tx.csv.duplicate": "Likely duplicate",
   "tx.csv.rowProblem.invalidDate": "\"{value}\" is not a valid date.",
   "tx.csv.rowProblem.invalidAmount": "\"{value}\" is not a valid amount.",
+  "tx.csv.rowProblem.invalidType": "\"{value}\" is not a recognized type.",
   "tx.csv.rowProblem.missingDate": "The date is missing.",
   "tx.csv.rowProblem.missingAmount": "The amount is missing.",
   "tx.csv.rowProblem.zeroAmount": "The amount is zero.",

@@ -77,6 +77,7 @@ describe('copy for every code', () => {
     expect(placeholders(t(NOTE_CODE_KEYS.amount_assumes_two_decimals))).toEqual(['currency'])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_invalid_date))).toEqual(['value'])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_invalid_amount))).toEqual(['value'])
+    expect(placeholders(t(NOTE_CODE_KEYS.csv_invalid_type))).toEqual(['value'])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_missing_date))).toEqual([])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_missing_amount))).toEqual([])
     expect(placeholders(t(NOTE_CODE_KEYS.csv_zero_amount))).toEqual([])

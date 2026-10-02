@@ -887,6 +887,7 @@
       "rowProblem": {
         "invalidDate": "„{value}“ ist kein gültiges Datum.",
         "invalidAmount": "„{value}“ ist kein gültiger Betrag.",
+        "invalidType": "„{value}“ ist keine bekannte Art.",
         "missingDate": "Das Datum fehlt.",
         "missingAmount": "Der Betrag fehlt.",
         "zeroAmount": "Der Betrag ist null.",

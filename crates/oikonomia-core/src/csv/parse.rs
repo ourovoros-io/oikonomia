@@ -400,6 +400,9 @@ fn row_problem(source_row: u32, err: &CsvError) -> UiText {
         CsvError::InvalidAmount(value) => {
             UiText::new(UiTextCode::CsvInvalidAmount).with_param("value", value.as_str())
         }
+        CsvError::InvalidType(value) => {
+            UiText::new(UiTextCode::CsvInvalidType).with_param("value", value.as_str())
+        }
         CsvError::MissingDate => UiText::new(UiTextCode::CsvMissingDate),
         CsvError::MissingAmount => UiText::new(UiTextCode::CsvMissingAmount),
         CsvError::ZeroAmount => UiText::new(UiTextCode::CsvZeroAmount),
@@ -521,7 +524,7 @@ fn apply_direction(signed: i64, raw: &str) -> CsvResult<i64> {
     ) {
         return signed.checked_abs().ok_or(CsvError::AmountOverflow);
     }
-    Err(CsvError::InvalidAmount(raw.trim().to_owned()))
+    Err(CsvError::InvalidType(raw.trim().to_owned()))
 }
 
 fn record_cell(record: &StringRecord, idx: usize) -> &str {
@@ -628,10 +631,10 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_direction_is_a_bad_amount_with_the_cell() {
+    fn an_unknown_type_is_reported_with_the_cell() {
         assert_eq!(
             reason_of_only_row("Date,Description,Amount,Type\n2026-03-15,Y,5.00,sideways\n"),
-            UiText::new(UiTextCode::CsvInvalidAmount).with_param("value", "sideways")
+            UiText::new(UiTextCode::CsvInvalidType).with_param("value", "sideways")
         );
     }
 
