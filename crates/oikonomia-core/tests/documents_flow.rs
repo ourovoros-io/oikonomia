@@ -13,6 +13,7 @@ use oikonomia_core::ledger::{
     SimpleEntryKind, create_entity, delete_entity, list_accounts, list_entities, list_entries,
     post_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -37,6 +38,7 @@ fn setup_named_entity(conn: &Connection, name: &str) -> EntityId {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity")
     .id

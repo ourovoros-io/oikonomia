@@ -10,6 +10,7 @@ use oikonomia_core::ledger::{
     CreateEntity, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity, list_accounts,
     post_simple_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -30,6 +31,7 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");

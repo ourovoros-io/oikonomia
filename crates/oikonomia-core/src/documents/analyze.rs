@@ -15,6 +15,7 @@ use super::store::{match_expense_account, match_income_account};
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
 use crate::domain::{Account, AccountId, ChartTemplate};
 use crate::error::{AccountRole, Result};
+use crate::prefs::Locale;
 use crate::ui_text::{UiText, UiTextCode};
 
 /// Suggested high-level entry kind.
@@ -118,7 +119,23 @@ pub fn analyzer_status(model_dir: Option<&std::path::Path>) -> AnalyzerStatus {
     }
 }
 
+/// The book a document is analyzed for, and the language to suggest in.
+#[derive(Debug, Clone, Copy)]
+pub struct AnalyzeContext<'a> {
+    /// Chart template of the book, which decides the suggested accounts.
+    pub template: ChartTemplate,
+    /// The book's accounts the suggestion may point at.
+    pub accounts: &'a [Account],
+    /// The book's base currency code.
+    pub default_currency: &'a str,
+    /// Language of the suggested description and merchant.
+    pub locale: Locale,
+}
+
 /// Analyze raw file bytes into a draft suggestion (fully offline).
+///
+/// The suggested description and merchant are written in `context.locale`; text taken
+/// from the document itself stays as the document has it.
 ///
 /// # Errors
 ///
@@ -127,11 +144,15 @@ pub fn analyze_document_bytes(
     filename: &str,
     mime_type: &str,
     data: &[u8],
-    template: ChartTemplate,
-    accounts: &[Account],
-    default_currency: &str,
+    context: &AnalyzeContext<'_>,
     model_dir: Option<&std::path::Path>,
 ) -> Result<DocumentSuggestion> {
+    let AnalyzeContext {
+        template,
+        accounts,
+        default_currency,
+        locale,
+    } = *context;
     let mime = mime_type.to_ascii_lowercase();
     let is_image = mime.starts_with("image/");
 
@@ -145,7 +166,7 @@ pub fn analyze_document_bytes(
         if source == AnalyzeSource::None {
             source = AnalyzeSource::Heuristic;
         }
-        let reading = read_invoice_text(body);
+        let reading = read_invoice_text(body, locale);
         let mut s = reading.suggestion;
         if let Some(fee_minor) = reading.transfer_fee_minor {
             s.notes.push(transfer_fee_note(fee_minor, default_currency));
@@ -625,7 +646,7 @@ mod tests {
     #[test]
     fn english_total_line() {
         let text = "Invoice\nSubtotal 10,00\nTOTAL 45,90 EUR\nThank you";
-        let s = parse_invoice_text(text);
+        let s = parse_invoice_text(text, crate::prefs::Locale::En);
         assert_eq!(s.amount_minor, Some(4590));
     }
 
@@ -644,18 +665,24 @@ mod tests {
             "bill.txt",
             "text/plain",
             text,
-            ChartTemplate::Blank,
-            &[],
-            "EUR",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         );
         let jpy = analyze_document_bytes(
             "bill.txt",
             "text/plain",
             text,
-            ChartTemplate::Blank,
-            &[],
-            "JPY",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "JPY",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         );
 
@@ -685,9 +712,12 @@ mod tests {
             "bill.txt",
             "text/plain",
             text,
-            ChartTemplate::Blank,
-            &[],
-            "EUR",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         ));
 
@@ -711,9 +741,12 @@ mod tests {
             "scan.bin",
             "application/octet-stream",
             b"\x00\x01",
-            ChartTemplate::Blank,
-            &[],
-            "EUR",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         ));
 
@@ -726,9 +759,12 @@ mod tests {
             "scan.jpg",
             "image/jpeg",
             b"\xff\xd8",
-            ChartTemplate::Blank,
-            &[],
-            "EUR",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         ));
 
@@ -744,9 +780,12 @@ mod tests {
             "scan.jpg",
             "image/jpeg",
             b"\xff\xd8",
-            ChartTemplate::Blank,
-            &[],
-            "EUR",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             path.as_deref().ok(),
         ));
 
@@ -761,9 +800,12 @@ mod tests {
             "big.pdf",
             "application/pdf",
             &data,
-            ChartTemplate::Blank,
-            &[],
-            "EUR",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         ));
 
@@ -777,9 +819,12 @@ mod tests {
             "bill.txt",
             "text/plain",
             text.as_bytes(),
-            ChartTemplate::Blank,
-            &[],
-            "EUR",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         ));
 
@@ -798,9 +843,12 @@ mod tests {
             "bill.txt",
             "text/plain",
             text.as_bytes(),
-            ChartTemplate::Personal,
-            &accounts,
-            "EUR",
+            &AnalyzeContext {
+                template: ChartTemplate::Personal,
+                accounts: &accounts,
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         );
         assert!(suggestion.is_ok(), "analysis must succeed");
@@ -831,9 +879,12 @@ mod tests {
             "bill.txt",
             "text/plain",
             UNPAID_BILL.as_bytes(),
-            template,
-            accounts,
-            "EUR",
+            &AnalyzeContext {
+                template,
+                accounts,
+                default_currency: "EUR",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         )
         .ok()
@@ -923,9 +974,12 @@ mod tests {
             "embasma.txt",
             "text/plain",
             TRANSFER_RECEIPT.as_bytes(),
-            ChartTemplate::Blank,
-            &[],
-            currency,
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: currency,
+                locale: crate::prefs::Locale::En,
+            },
             None,
         ))
     }
@@ -985,9 +1039,12 @@ mod tests {
             "bill.txt",
             "text/plain",
             b"Invoice\nTOTAL 45,90\nThank you",
-            ChartTemplate::Blank,
-            &[],
-            "JPY",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: "JPY",
+                locale: crate::prefs::Locale::En,
+            },
             None,
         ));
         let codes = codes_of(&notes);

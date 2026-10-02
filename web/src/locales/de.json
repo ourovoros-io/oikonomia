@@ -833,9 +833,6 @@
     "row": {
       "hasDocument": "Mit Dokument"
     },
-    "entry": {
-      "openingBalance": "Anfangssaldo — {account}"
-    },
     "csv": {
       "import": "CSV importieren",
       "export": "CSV exportieren",
@@ -1044,63 +1041,7 @@
         "transferNoAmount": "Der überwiesene Betrag wurde nicht sicher erkannt — tragen Sie den Betrag ein.",
         "transferFee": "Die Überweisungsgebühr von {fee} steht auf dem Beleg und ist nicht der gebuchte Betrag.",
         "transferFeeUnstated": "Auf dem Beleg steht eine Überweisungsgebühr; sie ist nicht der gebuchte Betrag."
-      },
-      "merchant": {
-        "naturalGas": "Erdgas",
-        "electricity": "Stromversorger"
-      },
-      "desc": {
-        "invoiceRefMerchant": "Rechnung {ref} — {merchant}",
-        "invoiceRef": "Rechnung {ref}",
-        "invoice": "Rechnung"
       }
-    }
-  },
-  "coa": {
-    "personal": {
-      "1000": "Bargeld",
-      "1010": "Girokonto",
-      "1020": "Sparkonto",
-      "1100": "Geldanlagen",
-      "2000": "Kreditkarte",
-      "2050": "Offene Rechnungen",
-      "2100": "Kredite",
-      "3000": "Anfangssalden",
-      "3100": "Eigenkapital",
-      "4000": "Gehalt",
-      "4100": "Freiberuf",
-      "4200": "Zinsen",
-      "4900": "Sonstige Einnahmen",
-      "5000": "Wohnen",
-      "5100": "Lebensmittel",
-      "5200": "Mobilität",
-      "5300": "Nebenkosten",
-      "5350": "Rechnungen und Dienste",
-      "5400": "Gesundheit",
-      "5500": "Abos",
-      "5600": "Freizeit",
-      "5700": "Steuern",
-      "5900": "Sonstiges"
-    },
-    "company": {
-      "1010": "Bank",
-      "1100": "Forderungen",
-      "1500": "Betriebsausstattung",
-      "2000": "Verbindlichkeiten",
-      "2100": "Kreditkarte",
-      "2200": "Kredite",
-      "2300": "Steuerschulden",
-      "3100": "Eigenkapital",
-      "3200": "Gewinnvortrag",
-      "4000": "Umsätze / Leistungen",
-      "5000": "Wareneinsatz",
-      "5100": "Personal",
-      "5200": "Miete",
-      "5300": "Software",
-      "5400": "Werbung",
-      "5500": "Fremdleistungen",
-      "5600": "Reisekosten",
-      "5900": "Sonstige Betriebskosten"
     }
   }
 }

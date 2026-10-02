@@ -18,58 +18,7 @@ import de from '../locales/de.json' with { type: 'json' }
  * Later work empties this list, and it must end empty: the final task
  * deletes it together with its exemptions. Do not add keys to it.
  */
-const PENDING_RUST: readonly string[] = [
-  // Chart-of-accounts names: move into the Rust text table (task 6).
-  'coa.personal.1000',
-  'coa.personal.1010',
-  'coa.personal.1020',
-  'coa.personal.1100',
-  'coa.personal.2000',
-  'coa.personal.2050',
-  'coa.personal.2100',
-  'coa.personal.3000',
-  'coa.personal.3100',
-  'coa.personal.4000',
-  'coa.personal.4100',
-  'coa.personal.4200',
-  'coa.personal.4900',
-  'coa.personal.5000',
-  'coa.personal.5100',
-  'coa.personal.5200',
-  'coa.personal.5300',
-  'coa.personal.5350',
-  'coa.personal.5400',
-  'coa.personal.5500',
-  'coa.personal.5600',
-  'coa.personal.5700',
-  'coa.personal.5900',
-  'coa.company.1010',
-  'coa.company.1100',
-  'coa.company.1500',
-  'coa.company.2000',
-  'coa.company.2100',
-  'coa.company.2200',
-  'coa.company.2300',
-  'coa.company.3100',
-  'coa.company.3200',
-  'coa.company.4000',
-  'coa.company.5000',
-  'coa.company.5100',
-  'coa.company.5200',
-  'coa.company.5300',
-  'coa.company.5400',
-  'coa.company.5500',
-  'coa.company.5600',
-  'coa.company.5900',
-
-  // Opening-balance and suggested-description text: move into Rust (task 6).
-  'tx.entry.openingBalance',
-  'analyze.invoice.merchant.naturalGas',
-  'analyze.invoice.merchant.electricity',
-  'analyze.invoice.desc.invoiceRefMerchant',
-  'analyze.invoice.desc.invoiceRef',
-  'analyze.invoice.desc.invoice',
-]
+const PENDING_RUST: readonly string[] = []
 
 /**
  * Keys that production code builds at run time, as template literals. Each

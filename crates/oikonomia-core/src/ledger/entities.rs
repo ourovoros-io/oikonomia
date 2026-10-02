@@ -7,6 +7,7 @@ use crate::coa::template_accounts;
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
+use crate::prefs::Locale;
 use crate::util::{now_utc_string, parse_uuid};
 
 /// Input for creating a new entity.
@@ -68,14 +69,17 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
 
 /// Create entity and seed chart of accounts from template, atomically.
 ///
+/// The seeded account names are written in `locale`, the language the app is
+/// set to now. They are never rewritten if the language changes later.
+///
 /// # Errors
 ///
 /// Validation or DB errors.
-pub fn create_entity(conn: &Connection, input: &CreateEntity) -> Result<Entity> {
+pub fn create_entity(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let tx = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
-    let entity = create_entity_in_tx(&tx, input)?;
+    let entity = create_entity_in_tx(&tx, input, locale)?;
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(entity)
 }
@@ -92,7 +96,7 @@ pub fn count_entities(conn: &Connection) -> Result<u64> {
     u64::try_from(n).map_err(|_| Error::Io("entity count overflow".into()))
 }
 
-fn create_entity_in_tx(conn: &Connection, input: &CreateEntity) -> Result<Entity> {
+fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let name = input.name.trim();
     if name.is_empty() {
         return Err(Error::Validation(ValidationError::NameRequired {
@@ -134,7 +138,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity) -> Result<Entity
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
-    for tmpl in template_accounts(input.chart_template) {
+    for tmpl in template_accounts(input.chart_template, locale) {
         let account = Account {
             id: AccountId::new(),
             entity_id: id,

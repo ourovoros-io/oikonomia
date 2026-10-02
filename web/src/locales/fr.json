@@ -833,9 +833,6 @@
     "row": {
       "hasDocument": "Document joint"
     },
-    "entry": {
-      "openingBalance": "Solde d’ouverture — {account}"
-    },
     "csv": {
       "import": "Importer un CSV",
       "export": "Exporter en CSV",
@@ -1044,63 +1041,7 @@
         "transferNoAmount": "Le montant du virement n’a pas été trouvé avec certitude — saisissez le montant.",
         "transferFee": "Les frais de virement de {fee} figurent sur le reçu et ne sont pas le montant enregistré.",
         "transferFeeUnstated": "Des frais de virement figurent sur le reçu et ne sont pas le montant enregistré."
-      },
-      "merchant": {
-        "naturalGas": "Gaz naturel",
-        "electricity": "Fournisseur d’électricité"
-      },
-      "desc": {
-        "invoiceRefMerchant": "Facture {ref} — {merchant}",
-        "invoiceRef": "Facture {ref}",
-        "invoice": "Facture"
       }
-    }
-  },
-  "coa": {
-    "personal": {
-      "1000": "Espèces",
-      "1010": "Compte courant",
-      "1020": "Épargne",
-      "1100": "Placements",
-      "2000": "Carte de crédit",
-      "2050": "Factures à payer",
-      "2100": "Emprunts",
-      "3000": "Soldes d’ouverture",
-      "3100": "Capitaux propres",
-      "4000": "Salaire",
-      "4100": "Activité indépendante",
-      "4200": "Intérêts",
-      "4900": "Autres recettes",
-      "5000": "Logement",
-      "5100": "Alimentation",
-      "5200": "Transports",
-      "5300": "Charges",
-      "5350": "Factures et services",
-      "5400": "Santé",
-      "5500": "Abonnements",
-      "5600": "Loisirs",
-      "5700": "Impôts",
-      "5900": "Autres"
-    },
-    "company": {
-      "1010": "Banque",
-      "1100": "Clients",
-      "1500": "Matériel",
-      "2000": "Fournisseurs",
-      "2100": "Carte de crédit",
-      "2200": "Emprunts",
-      "2300": "Impôts à payer",
-      "3100": "Capital",
-      "3200": "Report à nouveau",
-      "4000": "Ventes / Prestations",
-      "5000": "Coût des ventes",
-      "5100": "Salaires",
-      "5200": "Loyer",
-      "5300": "Logiciels",
-      "5400": "Publicité",
-      "5500": "Honoraires",
-      "5600": "Déplacements",
-      "5900": "Autres charges d’exploitation"
     }
   }
 }

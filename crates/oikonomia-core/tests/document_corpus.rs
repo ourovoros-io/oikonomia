@@ -10,10 +10,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oikonomia_core::documents::{
-    DocumentSuggestion, EntryKindSuggestion, analyze_document_bytes, analyzer_status,
-    parse_invoice_text,
+    AnalyzeContext, DocumentSuggestion, EntryKindSuggestion, analyze_document_bytes,
+    analyzer_status, parse_invoice_text,
 };
 use oikonomia_core::domain::ChartTemplate;
+use oikonomia_core::prefs::Locale;
 use serde::{Deserialize, Serialize};
 
 const CORPUS_REL: &str = "testdata/documents";
@@ -194,7 +195,7 @@ fn suggest_for(entry: &ManifestEntry, bytes: &[u8]) -> DocumentSuggestion {
     match entry.parser.as_str() {
         "invoice_text" => {
             let text = String::from_utf8_lossy(bytes);
-            parse_invoice_text(&text)
+            parse_invoice_text(&text, Locale::En)
         }
         "analyze_bytes" => {
             let mime = entry.mime.as_deref().unwrap_or("text/plain");
@@ -202,8 +203,19 @@ fn suggest_for(entry: &ManifestEntry, bytes: &[u8]) -> DocumentSuggestion {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("document");
-            analyze_document_bytes(name, mime, bytes, ChartTemplate::Blank, &[], "EUR", None)
-                .expect("analyze")
+            analyze_document_bytes(
+                name,
+                mime,
+                bytes,
+                &AnalyzeContext {
+                    template: ChartTemplate::Blank,
+                    accounts: &[],
+                    default_currency: "EUR",
+                    locale: Locale::En,
+                },
+                None,
+            )
+            .expect("analyze")
         }
         other => unreachable!("id {}: unknown parser {other}", entry.id),
     }
@@ -386,14 +398,17 @@ fn golden_corpus_matches_parser() {
 fn text_mime_analyze_path_matches_invoice_reader() {
     let root = corpus_root();
     let text = fs::read(root.join("synthetic/text/dei_electricity_current.txt")).expect("text");
-    let via_parse = parse_invoice_text(&String::from_utf8_lossy(&text));
+    let via_parse = parse_invoice_text(&String::from_utf8_lossy(&text), Locale::En);
     let via_analyze = analyze_document_bytes(
         "dei_electricity_current.txt",
         "text/plain",
         &text,
-        ChartTemplate::Blank,
-        &[],
-        "EUR",
+        &AnalyzeContext {
+            template: ChartTemplate::Blank,
+            accounts: &[],
+            default_currency: "EUR",
+            locale: Locale::En,
+        },
         None,
     )
     .expect("analyze text/plain");
@@ -405,14 +420,17 @@ fn text_mime_analyze_path_matches_invoice_reader() {
     assert_eq!(via_analyze.bill_unpaid, via_parse.bill_unpaid);
 
     let transfer = fs::read(root.join("synthetic/text/greek_bank_embasma.txt")).expect("transfer");
-    let transfer_parse = parse_invoice_text(&String::from_utf8_lossy(&transfer));
+    let transfer_parse = parse_invoice_text(&String::from_utf8_lossy(&transfer), Locale::En);
     let transfer_analyze = analyze_document_bytes(
         "greek_bank_embasma.txt",
         "text/plain",
         &transfer,
-        ChartTemplate::Blank,
-        &[],
-        "EUR",
+        &AnalyzeContext {
+            template: ChartTemplate::Blank,
+            accounts: &[],
+            default_currency: "EUR",
+            locale: Locale::En,
+        },
         None,
     )
     .expect("analyze transfer text/plain");
@@ -466,9 +484,12 @@ fn jpeg_ocr_smoke() {
         "english_total.jpg",
         "image/jpeg",
         &bytes,
-        ChartTemplate::Blank,
-        &[],
-        "EUR",
+        &AnalyzeContext {
+            template: ChartTemplate::Blank,
+            accounts: &[],
+            default_currency: "EUR",
+            locale: Locale::En,
+        },
         Some(model_dir.as_path()),
     )
     .expect("analyze jpeg");

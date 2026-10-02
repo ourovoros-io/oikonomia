@@ -2,13 +2,15 @@
 
 use crate::domain::{AccountType, ChartTemplate};
 use crate::error::AccountRole;
+use crate::prefs::Locale;
+use crate::text::seeded_account_name;
 
 /// One account row from a template (before IDs are assigned).
 #[derive(Debug, Clone)]
 pub struct TemplateAccount {
     /// Account code.
     pub code: &'static str,
-    /// Display name.
+    /// Display name, in the language the template was seeded in.
     pub name: &'static str,
     /// Classification.
     pub account_type: AccountType,
@@ -18,18 +20,26 @@ pub struct TemplateAccount {
     pub sort_order: i32,
 }
 
-impl TemplateAccount {
-    #[must_use]
+/// The language-independent shape of one seeded account.
+///
+/// The name is not here: it comes from the [`crate::text`] table by code, so
+/// a translation can never change a code, a type, a flag or the order.
+struct AccountShape {
+    code: &'static str,
+    account_type: AccountType,
+    is_system: bool,
+    sort_order: i32,
+}
+
+impl AccountShape {
     const fn new(
         code: &'static str,
-        name: &'static str,
         account_type: AccountType,
         is_system: bool,
         sort_order: i32,
     ) -> Self {
         Self {
             code,
-            name,
             account_type,
             is_system,
             sort_order,
@@ -37,84 +47,89 @@ impl TemplateAccount {
     }
 }
 
-/// Accounts seeded when creating an entity.
+/// Accounts seeded when creating an entity, named in `locale`.
+///
+/// Codes, types, flags and order are the same in every language; only the
+/// names differ. The names are written into the book once, at creation.
 #[must_use]
-pub fn template_accounts(template: ChartTemplate) -> Vec<TemplateAccount> {
-    match template {
+pub fn template_accounts(template: ChartTemplate, locale: Locale) -> Vec<TemplateAccount> {
+    let shapes = match template {
         ChartTemplate::Blank => Vec::new(),
-        ChartTemplate::Personal => personal_template_accounts(),
-        ChartTemplate::Company => company_template_accounts(),
-    }
+        ChartTemplate::Personal => personal_template_shapes(),
+        ChartTemplate::Company => company_template_shapes(),
+    };
+
+    shapes
+        .into_iter()
+        .map(|shape| TemplateAccount {
+            code: shape.code,
+            // A shape without a table entry is a bug a test catches (every
+            // seeded code must be named in every language); the code is a
+            // visible, harmless stand-in rather than an empty name.
+            name: seeded_account_name(template, shape.code, locale).unwrap_or(shape.code),
+            account_type: shape.account_type,
+            is_system: shape.is_system,
+            sort_order: shape.sort_order,
+        })
+        .collect()
 }
 
 /// Household chart: cash and cards, owner equity, salary, and living expenses.
-fn personal_template_accounts() -> Vec<TemplateAccount> {
+fn personal_template_shapes() -> Vec<AccountShape> {
     vec![
-        TemplateAccount::new("1000", "Cash", AccountType::Asset, false, 10),
-        TemplateAccount::new("1010", "Checking", AccountType::Asset, false, 20),
-        TemplateAccount::new("1020", "Savings", AccountType::Asset, false, 30),
-        TemplateAccount::new("1100", "Investments", AccountType::Asset, false, 40),
-        TemplateAccount::new("2000", "Credit Card", AccountType::Liability, false, 50),
-        TemplateAccount::new("2050", "Bills Payable", AccountType::Liability, false, 55),
-        TemplateAccount::new("2100", "Loans", AccountType::Liability, false, 60),
+        AccountShape::new("1000", AccountType::Asset, false, 10),
+        AccountShape::new("1010", AccountType::Asset, false, 20),
+        AccountShape::new("1020", AccountType::Asset, false, 30),
+        AccountShape::new("1100", AccountType::Asset, false, 40),
+        AccountShape::new("2000", AccountType::Liability, false, 50),
+        AccountShape::new("2050", AccountType::Liability, false, 55),
+        AccountShape::new("2100", AccountType::Liability, false, 60),
         // Opening Balances is system-protected so opening-balance posting has a
         // stable contra account that users cannot archive.
-        TemplateAccount::new("3000", "Opening Balances", AccountType::Equity, true, 70),
-        TemplateAccount::new("3100", "Owner Equity", AccountType::Equity, false, 80),
-        TemplateAccount::new("4000", "Salary", AccountType::Income, false, 90),
-        TemplateAccount::new("4100", "Freelance", AccountType::Income, false, 100),
-        TemplateAccount::new("4200", "Interest", AccountType::Income, false, 110),
-        TemplateAccount::new("4900", "Other Income", AccountType::Income, false, 120),
-        TemplateAccount::new("5000", "Housing", AccountType::Expense, false, 130),
-        TemplateAccount::new("5100", "Food", AccountType::Expense, false, 140),
-        TemplateAccount::new("5200", "Transport", AccountType::Expense, false, 150),
-        TemplateAccount::new("5300", "Utilities", AccountType::Expense, false, 160),
-        TemplateAccount::new("5350", "Bills & services", AccountType::Expense, false, 165),
-        TemplateAccount::new("5400", "Health", AccountType::Expense, false, 170),
-        TemplateAccount::new("5500", "Subscriptions", AccountType::Expense, false, 180),
-        TemplateAccount::new("5600", "Entertainment", AccountType::Expense, false, 190),
-        TemplateAccount::new("5700", "Taxes", AccountType::Expense, false, 200),
-        TemplateAccount::new("5900", "Other", AccountType::Expense, false, 210),
+        AccountShape::new("3000", AccountType::Equity, true, 70),
+        AccountShape::new("3100", AccountType::Equity, false, 80),
+        AccountShape::new("4000", AccountType::Income, false, 90),
+        AccountShape::new("4100", AccountType::Income, false, 100),
+        AccountShape::new("4200", AccountType::Income, false, 110),
+        AccountShape::new("4900", AccountType::Income, false, 120),
+        AccountShape::new("5000", AccountType::Expense, false, 130),
+        AccountShape::new("5100", AccountType::Expense, false, 140),
+        AccountShape::new("5200", AccountType::Expense, false, 150),
+        AccountShape::new("5300", AccountType::Expense, false, 160),
+        AccountShape::new("5350", AccountType::Expense, false, 165),
+        AccountShape::new("5400", AccountType::Expense, false, 170),
+        AccountShape::new("5500", AccountType::Expense, false, 180),
+        AccountShape::new("5600", AccountType::Expense, false, 190),
+        AccountShape::new("5700", AccountType::Expense, false, 200),
+        AccountShape::new("5900", AccountType::Expense, false, 210),
     ]
 }
 
 /// Company chart: AR/AP, capital, retained earnings, sales, and operating expenses.
-fn company_template_accounts() -> Vec<TemplateAccount> {
+fn company_template_shapes() -> Vec<AccountShape> {
     vec![
-        TemplateAccount::new("1000", "Cash", AccountType::Asset, false, 10),
-        TemplateAccount::new("1010", "Bank", AccountType::Asset, false, 20),
-        TemplateAccount::new("1100", "Accounts Receivable", AccountType::Asset, false, 30),
-        TemplateAccount::new("1500", "Equipment", AccountType::Asset, false, 40),
-        TemplateAccount::new(
-            "2000",
-            "Accounts Payable",
-            AccountType::Liability,
-            false,
-            50,
-        ),
-        TemplateAccount::new("2100", "Credit Card", AccountType::Liability, false, 60),
-        TemplateAccount::new("2200", "Loans", AccountType::Liability, false, 70),
-        TemplateAccount::new("2300", "Taxes Payable", AccountType::Liability, false, 80),
-        TemplateAccount::new("3000", "Opening Balances", AccountType::Equity, true, 90),
-        TemplateAccount::new("3100", "Owner Capital", AccountType::Equity, false, 100),
-        TemplateAccount::new("3200", "Retained Earnings", AccountType::Equity, false, 110),
-        TemplateAccount::new("4000", "Sales / Services", AccountType::Income, false, 120),
-        TemplateAccount::new("4900", "Other Income", AccountType::Income, false, 130),
-        TemplateAccount::new("5000", "COGS", AccountType::Expense, false, 140),
-        TemplateAccount::new("5100", "Payroll", AccountType::Expense, false, 150),
-        TemplateAccount::new("5200", "Rent", AccountType::Expense, false, 160),
-        TemplateAccount::new("5300", "Software", AccountType::Expense, false, 170),
-        TemplateAccount::new("5400", "Marketing", AccountType::Expense, false, 180),
-        TemplateAccount::new(
-            "5500",
-            "Professional Fees",
-            AccountType::Expense,
-            false,
-            190,
-        ),
-        TemplateAccount::new("5600", "Travel", AccountType::Expense, false, 200),
-        TemplateAccount::new("5700", "Taxes", AccountType::Expense, false, 210),
-        TemplateAccount::new("5900", "Other OpEx", AccountType::Expense, false, 220),
+        AccountShape::new("1000", AccountType::Asset, false, 10),
+        AccountShape::new("1010", AccountType::Asset, false, 20),
+        AccountShape::new("1100", AccountType::Asset, false, 30),
+        AccountShape::new("1500", AccountType::Asset, false, 40),
+        AccountShape::new("2000", AccountType::Liability, false, 50),
+        AccountShape::new("2100", AccountType::Liability, false, 60),
+        AccountShape::new("2200", AccountType::Liability, false, 70),
+        AccountShape::new("2300", AccountType::Liability, false, 80),
+        AccountShape::new("3000", AccountType::Equity, true, 90),
+        AccountShape::new("3100", AccountType::Equity, false, 100),
+        AccountShape::new("3200", AccountType::Equity, false, 110),
+        AccountShape::new("4000", AccountType::Income, false, 120),
+        AccountShape::new("4900", AccountType::Income, false, 130),
+        AccountShape::new("5000", AccountType::Expense, false, 140),
+        AccountShape::new("5100", AccountType::Expense, false, 150),
+        AccountShape::new("5200", AccountType::Expense, false, 160),
+        AccountShape::new("5300", AccountType::Expense, false, 170),
+        AccountShape::new("5400", AccountType::Expense, false, 180),
+        AccountShape::new("5500", AccountType::Expense, false, 190),
+        AccountShape::new("5600", AccountType::Expense, false, 200),
+        AccountShape::new("5700", AccountType::Expense, false, 210),
+        AccountShape::new("5900", AccountType::Expense, false, 220),
     ]
 }
 
@@ -328,7 +343,7 @@ mod tests {
         expected: AccountType,
         what: &str,
     ) {
-        let seeded = template_accounts(template);
+        let seeded = template_accounts(template, Locale::En);
         let found = seeded.iter().find(|account| account.code == code);
 
         assert_eq!(
@@ -408,6 +423,29 @@ mod tests {
                     &[] as &[&str],
                     "{template:?} has no code for {role}",
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn every_seeded_code_is_named_and_every_named_code_is_seeded() {
+        for template in [ChartTemplate::Personal, ChartTemplate::Company] {
+            let seeded: Vec<&str> = template_accounts(template, Locale::En)
+                .iter()
+                .map(|account| account.code)
+                .collect();
+
+            assert_eq!(crate::text::seeded_account_codes(template), seeded);
+        }
+    }
+
+    #[test]
+    fn no_seeded_name_falls_back_to_its_code() {
+        for template in [ChartTemplate::Personal, ChartTemplate::Company] {
+            for locale in [Locale::En, Locale::El, Locale::Fr, Locale::De] {
+                for account in template_accounts(template, locale) {
+                    assert_ne!(account.name, account.code, "{template:?} {locale:?}");
+                }
             }
         }
     }

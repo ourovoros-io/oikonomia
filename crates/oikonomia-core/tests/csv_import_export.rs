@@ -13,6 +13,7 @@ use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts,
     list_entries, post_simple_entry, set_entry_hidden, void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -39,6 +40,7 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, Accounts) {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");
@@ -218,7 +220,7 @@ fn export_round_trips_posted_lines_and_marks_voided() {
         to_account_id: None,
     };
     let view = post_simple_entry(conn, &grocery).expect("post");
-    void_entry(conn, view.entry.id).expect("void");
+    void_entry(conn, view.entry.id, Locale::En).expect("void");
 
     let salary = PostSimpleEntry {
         entity_id,

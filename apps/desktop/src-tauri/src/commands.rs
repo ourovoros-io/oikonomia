@@ -10,9 +10,9 @@ use oikonomia_core::csv::{
 };
 use oikonomia_core::default_accounts::{DefaultAccounts, default_accounts_for_entity};
 use oikonomia_core::documents::{
-    AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, analyze_document_bytes,
-    analyzer_status, attach_document, delete_document, get_document, list_documents,
-    post_simple_entry_with_document, suggest_accounts_for_entity,
+    AnalyzeContext, AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion,
+    analyze_document_bytes, analyzer_status, attach_document, delete_document, get_document,
+    list_documents, post_simple_entry_with_document, suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{
     Account, AccountId, Entity, EntityId, JournalEntryId, RecurringTemplateId,
@@ -132,8 +132,9 @@ pub async fn vault_unlock(
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::require_granted_path;
+    use super::{require_granted_path, stored_text_locale};
     use crate::state::AppState;
+    use oikonomia_core::prefs::{Locale, UiPrefs, save_ui_prefs};
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -163,6 +164,25 @@ mod tests {
             require_granted_path(&state, text).expect("granted path"),
             archive
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ledger_text_takes_its_language_from_the_stored_preference() {
+        let dir = temp_dir("stored-text-locale");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+
+        assert_eq!(stored_text_locale(&state), Locale::En);
+
+        for locale in [Locale::El, Locale::Fr, Locale::De, Locale::En] {
+            let prefs = UiPrefs {
+                locale,
+                ..UiPrefs::default()
+            };
+            save_ui_prefs(&dir, &prefs).expect("save prefs");
+
+            assert_eq!(stored_text_locale(&state), locale);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
@@ -485,9 +505,13 @@ pub async fn entity_create(
     state: State<'_, AppState>,
     input: CreateEntity,
 ) -> CommandResult<Entity> {
+    // The seeded account names are written in the language the app is set to
+    // now. It comes from the stored preference, never from the webview.
+    let locale = stored_text_locale(&state);
+
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
-        create_entity(conn, &input)
+        create_entity(conn, &input, locale)
     })
     .await
 }
@@ -631,9 +655,11 @@ pub async fn account_set_opening_balance(
     target_minor: i64,
     as_of: String,
 ) -> CommandResult<PostedEntryView> {
+    let locale = stored_text_locale(&state);
+
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
-        set_account_opening_balance(conn, account_id, target_minor, &as_of)
+        set_account_opening_balance(conn, account_id, target_minor, &as_of, locale)
     })
     .await
 }
@@ -805,9 +831,11 @@ pub async fn entry_replace_simple(
     original_id: JournalEntryId,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
+    let locale = stored_text_locale(&state);
+
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
-        replace_simple_entry(conn, original_id, &input)
+        replace_simple_entry(conn, original_id, &input, locale)
     })
     .await
 }
@@ -832,9 +860,11 @@ pub async fn entry_void(
     state: State<'_, AppState>,
     id: JournalEntryId,
 ) -> CommandResult<VoidResult> {
+    let locale = stored_text_locale(&state);
+
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
-        void_entry(conn, id)
+        void_entry(conn, id, locale)
     })
     .await
 }
@@ -1347,6 +1377,16 @@ pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) ->
     Ok(())
 }
 
+/// The language that text written into the user's books must be in.
+///
+/// Read from the stored preference on the desktop side, never from the
+/// webview: the UI cannot choose the language of ledger text, and it is read
+/// before the vault closure so the plaintext preferences file is not touched
+/// while the vault lock is held.
+fn stored_text_locale(state: &AppState) -> Locale {
+    load_ui_prefs(state.data_dir()).locale
+}
+
 /// Get the native UI locale. Plaintext preference: readable before unlock so
 /// tray chrome and dialogs match the user's language before a password.
 #[tauri::command]
@@ -1442,10 +1482,13 @@ pub async fn document_analyze(
 
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
+    let locale = stored_text_locale(&state);
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        analyze_readonly(&vault, &model_dir, entity_id, &filename, &mime_type, &data)
+        analyze_readonly(
+            &vault, &model_dir, entity_id, &filename, &mime_type, &data, locale,
+        )
     }))
     .await
 }
@@ -1461,6 +1504,7 @@ pub async fn document_analyze_path(
 
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
+    let locale = stored_text_locale(&state);
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
@@ -1487,7 +1531,9 @@ pub async fn document_analyze_path(
                 format!("could not read dropped file: {e}"),
             )
         })?;
-        analyze_readonly(&vault, &model_dir, entity_id, &filename, &mime, &data)
+        analyze_readonly(
+            &vault, &model_dir, entity_id, &filename, &mime, &data, locale,
+        )
     }))
     .await
 }
@@ -1547,6 +1593,7 @@ fn analyze_readonly(
     filename: &str,
     mime_type: &str,
     data: &[u8],
+    locale: Locale,
 ) -> CommandResult<DocumentSuggestion> {
     let mime = oikonomia_core::documents::resolve_mime(mime_type, filename);
     oikonomia_core::documents::validate_document_file(filename, &mime, data.len() as u64)?;
@@ -1564,9 +1611,12 @@ fn analyze_readonly(
         filename,
         &mime,
         data,
-        entity.chart_template,
-        &accounts,
-        &entity.base_currency,
+        &AnalyzeContext {
+            template: entity.chart_template,
+            accounts: &accounts,
+            default_currency: &entity.base_currency,
+            locale,
+        },
         Some(model_dir),
     )?;
 

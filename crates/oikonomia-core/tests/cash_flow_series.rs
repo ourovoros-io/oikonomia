@@ -11,6 +11,7 @@ use oikonomia_core::ledger::{
     activity_window, cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry,
     set_entry_hidden, void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -33,6 +34,7 @@ fn book(conn: &Connection) -> EntityId {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity")
     .id
@@ -134,7 +136,7 @@ fn totals_match_the_dashboard_for_the_same_window() {
     post(conn, e, "2026-08-06", "1020", "1010", 30_000); // transfer
     post(conn, e, "2026-08-07", "5600", "2000", 4_000); // card expense
     let voided = expense(conn, e, "2026-08-08", 9_999);
-    void_entry(conn, voided).expect("void");
+    void_entry(conn, voided, Locale::En).expect("void");
     post(conn, e, "2026-08-13", "5300", "2050", 7_253); // unpaid bill
     expense(conn, e, "2026-08-20", 1_000);
     income(conn, e, "2026-02-14", 3_000);
@@ -366,8 +368,8 @@ fn voided_entries_and_their_reversals_contribute_nothing() {
     let e = book(conn);
     let spent = expense(conn, e, "2026-08-08", 9_999);
     let earned = income(conn, e, "2026-08-09", 5_000);
-    void_entry(conn, spent).expect("void expense");
-    void_entry(conn, earned).expect("void income");
+    void_entry(conn, spent, Locale::En).expect("void expense");
+    void_entry(conn, earned, Locale::En).expect("void income");
 
     for (from, to) in [("2026-08-01", "2026-08-31"), ("2026-01-01", "2026-12-31")] {
         let s = series(conn, e, from, to);
@@ -411,7 +413,7 @@ fn an_open_window_spans_the_books_active_entries() {
     );
 
     let voided = expense(conn, e, "2026-01-02", 100);
-    void_entry(conn, voided).expect("void");
+    void_entry(conn, voided, Locale::En).expect("void");
     expense(conn, e, "2026-03-05", 100);
     income(conn, e, "2026-08-20", 100);
 

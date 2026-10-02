@@ -14,6 +14,8 @@ use crate::error::{AccountRole, Error, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, account_balance_as_of, normal_balance};
 use crate::money::Money;
+use crate::prefs::Locale;
+use crate::text::{opening_balance_description, void_description, void_memo};
 use crate::util::{format_date, now_utc_string, parse_date, parse_uuid};
 
 /// One line when posting a journal entry.
@@ -608,6 +610,8 @@ fn simple_entry_sides(
 
 /// Void a posted entry by posting a reverse entry and linking `voided_by`.
 ///
+/// The reverse entry's description and memo are written in `locale`.
+///
 /// The reverse insert and both link updates happen in one transaction.
 /// If the original is hidden, the reverse `VOID:` row inherits that flag so
 /// journal CSV omits both. A visible void still exports the original and the
@@ -616,16 +620,16 @@ fn simple_entry_sides(
 /// # Errors
 ///
 /// Already voided, not found, or DB error.
-pub fn void_entry(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
+pub fn void_entry(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
     let tx = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
-    let result = void_entry_in_tx(&tx, id)?;
+    let result = void_entry_in_tx(&tx, id, locale)?;
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(result)
 }
 
-fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult> {
+fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
     let view = get_entry(conn, id)?;
     if view.is_voided {
         return Err(Error::Validation(ValidationError::EntryAlreadyVoided));
@@ -641,14 +645,14 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult>
             account_id: line.account_id,
             debit_minor: line.credit.amount_minor(),
             credit_minor: line.debit.amount_minor(),
-            memo: Some("Void".into()),
+            memo: Some(void_memo(locale).into()),
         })
         .collect();
 
     let reverse_input = PostJournal {
         entity_id: view.entry.entity_id,
         entry_date: format_date(view.entry.entry_date),
-        description: format!("VOID: {}", view.entry.description),
+        description: void_description(locale, &view.entry.description),
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
@@ -683,6 +687,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId) -> Result<VoidResult>
 /// trail survives. The UI hides voided pairs, so this reads as an in-place edit.
 /// A hidden original yields a hidden replacement (and a hidden VOID reverse)
 /// so journal CSV omits the whole edit. A visible original stays visible.
+/// The reversing entry's description and memo are written in `locale`.
 ///
 /// # Errors
 ///
@@ -691,6 +696,7 @@ pub fn replace_simple_entry(
     conn: &Connection,
     original_id: JournalEntryId,
     input: &PostSimpleEntry,
+    locale: Locale,
 ) -> Result<PostedEntryView> {
     let tx = conn
         .unchecked_transaction()
@@ -701,7 +707,7 @@ pub fn replace_simple_entry(
         return Err(Error::Validation(ValidationError::WrongBook));
     }
 
-    void_entry_in_tx(&tx, original_id)?;
+    void_entry_in_tx(&tx, original_id, locale)?;
     let replacement = post_simple_entry_unchecked_hidden(&tx, input, original.entry.hidden)?;
 
     tx.execute(
@@ -722,7 +728,8 @@ pub fn replace_simple_entry(
 ///
 /// The user states what the account actually holds; the gap between that and
 /// the ledger becomes one adjustment entry, so repeating the call converges on
-/// the stated balance instead of stacking duplicates.
+/// the stated balance instead of stacking duplicates. The entry's description
+/// is written in `locale`.
 ///
 /// # Errors
 ///
@@ -733,6 +740,7 @@ pub fn set_account_opening_balance(
     account_id: AccountId,
     target_minor: i64,
     as_of: &str,
+    locale: Locale,
 ) -> Result<PostedEntryView> {
     use crate::domain::AccountType;
 
@@ -786,7 +794,7 @@ pub fn set_account_opening_balance(
         &PostJournal {
             entity_id: account.entity_id,
             entry_date: format_date(as_of_d),
-            description: format!("Opening balance — {}", account.name),
+            description: opening_balance_description(locale, &account.name),
             reference: None,
             lines: vec![
                 CreateJournalLine {

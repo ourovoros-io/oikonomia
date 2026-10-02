@@ -7,6 +7,7 @@ use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, EntryFilter, PostJournal, PostedEntryView, create_entity,
     list_accounts, list_entries, post_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
@@ -27,6 +28,7 @@ fn setup_entity(conn: &Connection) -> EntityId {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity")
     .id

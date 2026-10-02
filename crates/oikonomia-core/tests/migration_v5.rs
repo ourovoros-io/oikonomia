@@ -8,6 +8,7 @@ use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use tempfile::TempDir;
 
@@ -32,6 +33,7 @@ fn v5_rejects_double_sided_journal_line() {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");
@@ -110,6 +112,7 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");

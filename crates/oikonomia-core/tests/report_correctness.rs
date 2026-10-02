@@ -13,6 +13,7 @@ use oikonomia_core::ledger::{
     cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
     set_account_opening_balance, set_entry_hidden, trial_balance, void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
@@ -39,6 +40,7 @@ fn setup_entity_fy(conn: &Connection, fiscal_year_start_month: u8) -> EntityId {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(fiscal_year_start_month),
         },
+        Locale::En,
     )
     .expect("entity")
     .id
@@ -462,7 +464,7 @@ fn voided_entry_leaves_no_trace_in_trial_balance() {
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let entry_id = post_expense(conn, entity_id, "2026-01-15", 1_000);
-    void_entry(conn, entry_id).expect("void");
+    void_entry(conn, entry_id, Locale::En).expect("void");
 
     let tb = trial_balance(conn, entity_id, "2026-12-31").expect("tb");
     assert!(
@@ -697,6 +699,7 @@ fn opening_balance_is_equity_not_pnl() {
         account_id(conn, entity_id, "1010"),
         250_000,
         "2026-01-01",
+        Locale::En,
     )
     .expect("opening");
     post_expense(conn, entity_id, "2026-02-01", 1_000);
@@ -725,6 +728,7 @@ fn reports_do_not_leak_across_entities() {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("other")
     .id;
@@ -783,7 +787,7 @@ fn voided_entry_leaves_no_trace_on_pnl_or_balance_sheet() {
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let id = post_expense(conn, entity_id, "2026-03-15", 1_000);
-    void_entry(conn, id).expect("void");
+    void_entry(conn, id, Locale::En).expect("void");
 
     let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl");
     assert_eq!(pnl.total_expenses, 0);
@@ -862,6 +866,7 @@ fn company_chart_synthetic_re_does_not_use_the_posted_re_account() {
             chart_template: ChartTemplate::Company,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity")
     .id;
@@ -1007,7 +1012,7 @@ fn randomized_ledgers_with_voids_keep_the_series_equal_to_the_dashboard() {
         )
         .expect("post random");
         if index % 5 == 0 {
-            void_entry(conn, view.entry.id).expect("void random");
+            void_entry(conn, view.entry.id, Locale::En).expect("void random");
         }
     }
 

@@ -12,6 +12,7 @@ use oikonomia_core::ledger::{
     list_recurring_templates, list_recurring_templates_as_of, post_recurring_template,
     update_recurring_template,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
@@ -40,6 +41,7 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     )
     .expect("entity");
     let accounts = list_accounts(conn, entity.id).expect("accounts");

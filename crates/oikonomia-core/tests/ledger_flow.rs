@@ -6,6 +6,7 @@ use oikonomia_core::ledger::{
     delete_entity, list_accounts, list_entities, post_entry, profit_and_loss, trial_balance,
     void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use tempfile::tempdir;
 
@@ -31,6 +32,7 @@ fn personal_books_expense_and_reports() {
             chart_template: ChartTemplate::Personal,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     ) else {
         return;
     };
@@ -89,7 +91,7 @@ fn personal_books_expense_and_reports() {
     };
     assert_eq!(bs.total_assets, bs.total_liabilities_equity);
 
-    assert!(void_entry(conn, entry.entry.id).is_ok());
+    assert!(void_entry(conn, entry.entry.id, Locale::En).is_ok());
 
     let Ok(pnl2) = profit_and_loss(conn, entity.id, "2026-01-01", "2026-03-31") else {
         return;
@@ -108,6 +110,7 @@ fn personal_books_expense_and_reports() {
             chart_template: ChartTemplate::Blank,
             fiscal_year_start_month: Some(1),
         },
+        Locale::En,
     );
     assert!(dup.is_err());
 
@@ -137,6 +140,7 @@ fn a_vault_holds_any_number_of_entities() {
                 chart_template: ChartTemplate::Personal,
                 fiscal_year_start_month: None,
             },
+            Locale::En,
         );
         assert!(created.is_ok(), "creating {name} failed: {created:?}");
     }
