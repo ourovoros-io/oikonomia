@@ -166,6 +166,9 @@ Copyright (c) 2026 Ourovoros.io.
 Bundled fonts are under the SIL Open Font License; see `web/public/fonts` and
 `web/src/assets/fonts`.
 
+The bundled OCR models are the unmodified ocrs models by Robert Knight, licensed
+CC BY-SA 4.0; see `apps/desktop/src-tauri/resources/ocr/README.md`.
+
 ## Layout
 
 | Path | Role |
