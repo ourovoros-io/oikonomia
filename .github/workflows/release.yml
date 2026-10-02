@@ -1,4 +1,9 @@
-# Release desktop builds.
+# Build a draft GitHub Release from a version tag.
+#
+# macOS on Apple Silicon is the only published platform: the macos job builds,
+# signs, and notarizes it. The linux job builds an unsigned .deb and AppImage
+# into the same draft to prove the build still works; the Promote workflow
+# removes them before publishing. Windows is not built here.
 #
 # Trigger: version tags `v*` (e.g. v0.1.0). Optional workflow_dispatch with
 # dry_run still requires the GitHub Environment named `release` and never
@@ -6,9 +11,8 @@
 #
 # YAML cannot create Environments. Owner must create `release` in
 # GitHub → Settings → Environments, add required reviewers, then add
-# secrets after Apple Developer + Windows cloud-HSM accounts exist.
-# The updater minisign private key (TAURI_SIGNING_PRIVATE_KEY) also lives
-# there.
+# secrets after the Apple Developer account exists. The updater minisign
+# private key (TAURI_SIGNING_PRIVATE_KEY) also lives there.
 #
 # ---------------------------------------------------------------------------
 # Environment `release` secret *names* (values go in the GitHub UI only)
@@ -29,43 +33,19 @@
 #   APPLE_API_KEY_P8            contents of AuthKey_<id>.p8; written to a runner
 #                               file and exposed as APPLE_API_KEY_PATH (never commit)
 #
-# Windows — Authenticode via cloud HSM only (no Microsoft Store). Provide a
-# complete SSL.com eSigner set *or* a complete DigiCert KeyLocker set.
-# Do not store a raw Authenticode .pfx. Not Azure Trusted Signing.
+# Linux — no signing account; unsigned .deb + .AppImage. The in-app updater
+# feed is macOS only.
 #
-#   SSL.com eSigner (CodeSignTool):
-#     ES_USERNAME
-#     ES_PASSWORD
-#     ES_TOTP_SECRET
-#     ES_CREDENTIAL_ID
-#
-#   DigiCert Software Trust Manager / KeyLocker (smctl):
-#     SM_HOST
-#     SM_API_KEY
-#     SM_CLIENT_CERT_FILE_B64   auth client cert (not the code-signing private key)
-#     SM_CLIENT_CERT_PASSWORD
-#     SM_KEYPAIR_ALIAS          KeyLocker keypair / cert alias used for signing
-#
-# Linux — no paid signing account; unsigned .deb + .AppImage.
-# In-app updater feed is AppImage only; .deb is attached for manual download.
-#
-# Tauri updater (minisign).
+# Tauri updater (minisign), required by both jobs.
 # Official Tauri v2 env names:
 # https://v2.tauri.app/plugin/updater/
 #
 #   TAURI_SIGNING_PRIVATE_KEY           minisign private key for updater artifacts
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  optional password for that key
 #
-# ---------------------------------------------------------------------------
-# NEVER store in GitHub (repo, Actions secrets, or this Environment)
-# ---------------------------------------------------------------------------
-#
-#   - a raw Authenticode .pfx of the Windows code-signing private key
-#
-# The updater minisign private key lives on Environment `release` only
-# (TAURI_SIGNING_PRIVATE_KEY, optional TAURI_SIGNING_PRIVATE_KEY_PASSWORD).
-# GitHub Releases hosts the updater feed; the public key baked into the app
-# is the trust root.
+# The updater minisign private key lives on Environment `release` only. The
+# public key baked into the app is the trust root; GitHub Releases only hosts
+# the files.
 # Jobs fail closed if TAURI_SIGNING_PRIVATE_KEY is empty (never echo it).
 
 name: Release
@@ -202,111 +182,6 @@ jobs:
 
       - name: Smoke-test the bundled app
         run: SMOKE_SKIP_BUILD=1 ./scripts/smoke-macos.sh
-
-  windows:
-    name: windows
-    runs-on: windows-latest
-    environment: release
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Require Windows cloud-HSM secrets (fail-closed)
-        env:
-          ES_USERNAME: ${{ secrets.ES_USERNAME }}
-          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
-          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
-          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
-          SM_HOST: ${{ secrets.SM_HOST }}
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          SM_KEYPAIR_ALIAS: ${{ secrets.SM_KEYPAIR_ALIAS }}
-        shell: pwsh
-        run: |
-          function Test-Secret([string]$Name) {
-            -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))
-          }
-          $esigner = (Test-Secret 'ES_USERNAME') -and (Test-Secret 'ES_PASSWORD') -and (Test-Secret 'ES_TOTP_SECRET') -and (Test-Secret 'ES_CREDENTIAL_ID')
-          $keylocker = (Test-Secret 'SM_HOST') -and (Test-Secret 'SM_API_KEY') -and (Test-Secret 'SM_CLIENT_CERT_FILE_B64') -and (Test-Secret 'SM_CLIENT_CERT_PASSWORD') -and (Test-Secret 'SM_KEYPAIR_ALIAS')
-          if (-not $esigner -and -not $keylocker) {
-            Write-Host '::error::Missing a complete Windows cloud-HSM secret set.'
-            Write-Host 'Need SSL.com eSigner (ES_USERNAME, ES_PASSWORD, ES_TOTP_SECRET, ES_CREDENTIAL_ID)'
-            Write-Host 'or DigiCert KeyLocker (SM_HOST, SM_API_KEY, SM_CLIENT_CERT_FILE_B64, SM_CLIENT_CERT_PASSWORD, SM_KEYPAIR_ALIAS).'
-            Write-Host 'Refusing to publish an unsigned Windows build as if it were signed.'
-            Write-Host 'Do not store a raw Authenticode .pfx. Not Azure Trusted Signing.'
-            exit 1
-          }
-
-      - name: Require Tauri updater signing private key (fail-closed)
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
-            Write-Host '::error::Missing required release environment secret: TAURI_SIGNING_PRIVATE_KEY'
-            Write-Host 'Refusing to publish updater JSON without a signing key.'
-            Write-Host "Add TAURI_SIGNING_PRIVATE_KEY (optional TAURI_SIGNING_PRIVATE_KEY_PASSWORD) to Environment 'release'."
-            Write-Host 'This is the updater minisign key.'
-            exit 1
-          }
-
-      # Placeholder only. Live CodeSignTool / smctl is not invoked here.
-      # signCommand is applied via a runner-local Tauri config overlay so
-      # tauri.conf.json is unchanged. If this script is reached, it still
-      # refuses so an unsigned .exe/.msi is never attached as signed.
-      - name: Write Tauri Windows signCommand overlay (placeholder)
-        shell: pwsh
-        run: |
-          $script = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\windows-cloud-hsm-sign.ps1'
-          $command = 'pwsh -NoProfile -File "' + $script + '" %1'
-          $overlay = @{ bundle = @{ windows = @{ signCommand = $command } } }
-          $path = Join-Path $env:RUNNER_TEMP 'tauri-windows-sign.json'
-          $overlay | ConvertTo-Json -Depth 6 | Set-Content -Path $path -Encoding utf8
-          "TAURI_WINDOWS_SIGN_CONFIG=$path" | Add-Content $env:GITHUB_ENV
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install frontend dependencies
-        working-directory: web
-        run: npm ci
-
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-
-      - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ES_USERNAME: ${{ secrets.ES_USERNAME }}
-          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
-          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
-          ES_CREDENTIAL_ID: ${{ secrets.ES_CREDENTIAL_ID }}
-          SM_HOST: ${{ secrets.SM_HOST }}
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          SM_KEYPAIR_ALIAS: ${{ secrets.SM_KEYPAIR_ALIAS }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          projectPath: apps/desktop/src-tauri
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_TAG && format('Oikonomia {0}', env.RELEASE_TAG) || '' }}
-          releaseBody: Draft build. Test it, then run the Promote workflow to publish.
-          releaseDraft: true
-          prerelease: false
-          uploadUpdaterJson: true
-          uploadUpdaterSignatures: true
-          uploadWorkflowArtifacts: true
-          args: --config ${{ env.TAURI_WINDOWS_SIGN_CONFIG }}
 
   linux:
     name: linux
