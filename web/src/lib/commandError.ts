@@ -158,6 +158,16 @@ function roleCopy(key: string, fallbackKey: string, params: Record<string, strin
   return t(fallbackKey, params)
 }
 
+/** Every `{name}` the copy under `key` fills in. */
+function placeholdersOf(key: string): string[] {
+  return [...t(key).matchAll(/\{(\w+)\}/g)].map((match) => match[1])
+}
+
+/** True when the copy under `key` names a value that `params` does not carry. */
+function lacksParams(key: string, params: Record<string, string> | undefined): boolean {
+  return placeholdersOf(key).some((name) => params?.[name] === undefined)
+}
+
 /**
  * Log the raw error for diagnosis. The sentence the user sees is localized and
  * often vague, so the operating-system detail in `message` is kept here, once,
@@ -181,6 +191,9 @@ export function logCommandError(err: unknown): void {
  * "A file operation failed.". A specific code always shows its own copy. With
  * no `fallbackKey` the code's copy, or the generic one, is shown.
  *
+ * Copy that needs a value the error did not carry is treated as no copy, so a
+ * raw `{name}` is never shown.
+ *
  * Vague, unknown and copy-less errors are logged, so their detail is not lost.
  * User-correctable errors (a name already taken) are not diagnostic and are not.
  */
@@ -194,7 +207,11 @@ export function commandErrorMessage(err: unknown, fallbackKey?: string): string 
     const roleFallbackKey = keyFor(ROLE_FALLBACK_KEYS, key)
     const text = roleFallbackKey ? roleCopy(key, roleFallbackKey, cmd.params) : t(key, cmd.params)
 
-    if (text !== key) copy = text
+    // Copy that still asks for a value the error did not carry would show a
+    // raw `{name}`, so it counts as no copy.
+    const incomplete = roleFallbackKey === undefined && lacksParams(key, cmd.params)
+
+    if (text !== key && !incomplete) copy = text
   }
 
   if (vague || copy === undefined) logCommandError(cmd)

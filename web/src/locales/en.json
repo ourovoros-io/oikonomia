@@ -88,6 +88,7 @@
   "settings.language.option.el": "Ελληνικά",
   "settings.language.option.fr": "Français",
   "settings.language.option.de": "Deutsch",
+  "settings.language.error": "Could not change the language.",
   "settings.support.title": "Support",
   "settings.support.description": "Questions and bug reports: {email}",
   "settings.support.body": "Write to {email} with the app version ({version}) and what you were doing when the problem appeared. Never attach your vault or backup file.",

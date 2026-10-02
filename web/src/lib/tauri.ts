@@ -23,7 +23,7 @@ export type AppInfo = {
 
 export type CommandError = {
   code: string
-  /** English; for logs and as the last-resort text when a code has no copy. */
+  /** English; for logs only. The UI never shows it. */
   message: string
   /** Named values for the localized text of `code`. */
   params?: Record<string, string>

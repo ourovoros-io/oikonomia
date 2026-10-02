@@ -162,7 +162,7 @@ export function SettingsPage({
   onCreateBookIntentHandled,
   appInfo = null,
 }: Props) {
-  const { t, locale, setLocale } = useI18n()
+  const { t, locale, setLocale, languageChangeFailed } = useI18n()
   const [error, setError] = useState<string | null>(null)
   const errorBannerId = useId()
   const [notice, setNotice] = useState<string | null>(null)
@@ -443,6 +443,11 @@ export function SettingsPage({
           onChange={setLocale}
           ariaLabel={t('settings.language.title')}
         />
+        {languageChangeFailed ? (
+          <p role="alert" className="mt-3 text-sm text-[var(--color-danger)]">
+            {t('settings.language.error')}
+          </p>
+        ) : null}
       </CollapsibleSection>
 
       {donations.length > 0 ? (

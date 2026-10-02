@@ -9,7 +9,7 @@ use serde::Serialize;
 /// Error payload returned from Tauri commands.
 ///
 /// The UI shows localized text chosen by `code` and filled in from `params`.
-/// `message` is English, for logs and as a last resort when a code has no copy.
+/// `message` is English, for logs only; the UI never shows it.
 #[derive(Debug, Clone, Serialize)]
 pub struct CommandError {
     /// Stable machine code for UI branching and localized text.
@@ -71,8 +71,8 @@ impl DesktopError {
 impl CommandError {
     /// Build the error for a desktop-only failure.
     ///
-    /// `message` is English and may include the OS error; it is for logs and
-    /// as a fallback, so it is never copied into `params`.
+    /// `message` is English and may include the OS error; it is for logs only,
+    /// so it is never copied into `params`.
     #[must_use]
     pub fn desktop(kind: DesktopError, message: impl Into<String>) -> Self {
         Self {
@@ -85,44 +85,20 @@ impl CommandError {
 
 impl From<CoreError> for CommandError {
     fn from(value: CoreError) -> Self {
-        // A validation error names its own specific code and parameters.
-        if let CoreError::Validation(reason) = &value {
-            return Self {
-                code: reason.code().to_owned(),
-                message: value.to_string(),
-                params: reason
-                    .params()
-                    .into_iter()
-                    .map(|(name, text)| (name.to_owned(), text))
-                    .collect(),
-            };
-        }
-
-        let code = match &value {
-            CoreError::VaultUninitialized => "vault_uninitialized",
-            CoreError::VaultLocked => "vault_locked",
-            CoreError::InvalidPassword => "invalid_password",
-            CoreError::UnbalancedEntry { .. } => "unbalanced_entry",
-            CoreError::TooFewLines => "too_few_lines",
-            CoreError::InvalidLineAmounts => "invalid_line_amounts",
-            CoreError::AccountWrongEntity => "account_wrong_entity",
-            CoreError::MoneyOverflow => "money_overflow",
-            CoreError::NegativeMoney => "negative_money",
-            CoreError::Io(_) => "io",
-            CoreError::Crypto(_) => "crypto",
-            CoreError::VaultCorrupt(_) => "vault_corrupt",
-            CoreError::BackupInvalid(_) => "backup_invalid",
-            CoreError::RestoreWouldOverwrite => "restore_would_overwrite",
-            CoreError::NotFound(_) => "not_found",
-            CoreError::Analysis(_) => "analysis",
-            CoreError::CsvParse(_) => "csv_parse",
-            _ => "unknown",
+        // A validation error also names the values its copy fills in.
+        let params = match &value {
+            CoreError::Validation(reason) => reason
+                .params()
+                .into_iter()
+                .map(|(name, text)| (name.to_owned(), text))
+                .collect(),
+            _ => BTreeMap::new(),
         };
 
         Self {
-            code: code.to_owned(),
+            code: value.code().to_owned(),
             message: value.to_string(),
-            params: BTreeMap::new(),
+            params,
         }
     }
 }
@@ -209,38 +185,11 @@ mod tests {
         );
     }
 
-    /// One value of each core variant except `Validation`, whose codes come
-    /// from [`ValidationError::ALL_CODES`].
-    fn non_validation_core_samples() -> Vec<CoreError> {
-        vec![
-            CoreError::VaultUninitialized,
-            CoreError::VaultLocked,
-            CoreError::InvalidPassword,
-            CoreError::UnbalancedEntry {
-                debits: 100,
-                credits: 50,
-            },
-            CoreError::TooFewLines,
-            CoreError::InvalidLineAmounts,
-            CoreError::AccountWrongEntity,
-            CoreError::MoneyOverflow,
-            CoreError::NegativeMoney,
-            CoreError::Io("x".into()),
-            CoreError::Crypto("x".into()),
-            CoreError::VaultCorrupt("x".into()),
-            CoreError::BackupInvalid("x".into()),
-            CoreError::RestoreWouldOverwrite,
-            CoreError::NotFound("x".into()),
-            CoreError::Analysis("x".into()),
-            CoreError::CsvParse("x".into()),
-        ]
-    }
-
     /// Every code Rust can send to the UI, built from the enumerations.
     fn every_code() -> BTreeSet<String> {
-        let mut codes: BTreeSet<String> = non_validation_core_samples()
-            .into_iter()
-            .map(|sample| CommandError::from(sample).code)
+        let mut codes: BTreeSet<String> = CoreError::ALL_CODES
+            .iter()
+            .map(|code| (*code).to_owned())
             .collect();
 
         codes.extend(
@@ -251,8 +200,9 @@ mod tests {
         codes.extend(DesktopError::ALL.iter().map(|kind| kind.code().to_owned()));
         codes.extend(UpdateError::ALL_CODES.iter().map(|code| (*code).to_owned()));
 
-        // Reached only through the wildcard arm for a variant added to core
-        // after this crate was written.
+        // The catch-all the web layer shows when it meets a code it has no
+        // copy for. No Rust path sends it: core's codes come from an
+        // exhaustive match.
         codes.insert("unknown".to_owned());
 
         codes

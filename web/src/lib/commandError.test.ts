@@ -9,6 +9,7 @@ import {
   fileReadError,
   isMissingIpcCommand,
   logCommandError,
+  WEB_ERROR_KEYS,
 } from './commandError'
 import { flattenMessages, LOCALES, resetI18nForTests, setLocale, t } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
@@ -32,6 +33,13 @@ describe('command error localization', () => {
         expect(flat[key], `${locale} missing ${key}`).toBeTruthy()
       }
     }
+  })
+
+  it('maps no code that errorCodes.json does not list', () => {
+    // The map holds only codes Rust can send. The codes the web layer raises
+    // itself (file_read_failed) live in WEB_ERROR_KEYS and are not in the pin.
+    expect(Object.keys(ERROR_CODE_KEYS).sort()).toEqual([...codes].sort())
+    expect(Object.keys(WEB_ERROR_KEYS)).toEqual(['file_read_failed'])
   })
 
   it('has copy that uses exactly the parameters Rust sends, in every locale', () => {
@@ -90,6 +98,42 @@ describe('command error localization', () => {
     expect(commandErrorMessage({ code: 'unknown', message: 'raw text' }, 'app.failedLock')).toBe(
       'Could not lock the vault.',
     )
+  })
+
+  it('never shows a raw placeholder when a parameter is missing', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    for (const locale of LOCALES) {
+      setLocale(locale)
+
+      const bare = commandErrorMessage({ code: 'name_taken', message: 'raw' })
+      const withFallback = commandErrorMessage(
+        { code: 'name_taken', message: 'raw', params: {} },
+        'settings.deleteFailed',
+      )
+
+      expect(bare, locale).not.toMatch(/\{\w+\}/)
+      expect(withFallback, locale).not.toMatch(/\{\w+\}/)
+      expect(bare, locale).toBe(t('error.unknown'))
+      expect(withFallback, locale).toBe(t('settings.deleteFailed'))
+    }
+
+    // The error is logged, so the missing value is not lost.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('name_taken'))
+  })
+
+  it('falls back for a parameterised code whose params lack the needed name', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    expect(
+      commandErrorMessage({ code: 'password_too_short', message: 'raw', params: { other: '1' } }),
+    ).toBe('Something went wrong.')
+  })
+
+  it('still shows a value that itself looks like a placeholder', () => {
+    expect(
+      commandErrorMessage({ code: 'name_taken', message: 'raw', params: { name: '{a}' } }),
+    ).toContain('{a}')
   })
 
   it('shows the copy for a known code and ignores the screen fallback', () => {

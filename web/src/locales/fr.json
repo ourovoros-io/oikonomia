@@ -204,7 +204,8 @@
         "el": "Ελληνικά",
         "fr": "Français",
         "de": "Deutsch"
-      }
+      },
+      "error": "Impossible de changer la langue."
     },
     "support": {
       "title": "Assistance",

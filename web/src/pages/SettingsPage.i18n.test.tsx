@@ -94,4 +94,67 @@ describe('SettingsPage i18n', () => {
       })
     }
   })
+
+  async function openLanguageSection() {
+    render(
+      <I18nProvider>
+        <SettingsPage entities={[]} onEntitiesChange={async () => {}} onSelectEntity={() => {}} />
+      </I18nProvider>,
+    )
+    await waitFor(() => {
+      expect(api.getLocale).toHaveBeenCalled()
+    })
+    await userEvent.click(screen.getByRole('button', { name: /language/i }))
+  }
+
+  test('a language change that saves switches the interface and shows no error', async () => {
+    await openLanguageSection()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Deutsch' }))
+
+    await waitFor(() => {
+      expect(getLocale()).toBe('de')
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  test('a language change that fails to save goes back to the stored language and says so', async () => {
+    vi.mocked(api.setLocale).mockRejectedValue(new Error('disk full'))
+    await openLanguageSection()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Deutsch' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Could not change the language.')
+    expect(getLocale()).toBe('en')
+    expect(screen.getByRole('radio', { name: 'English' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('radio', { name: 'Deutsch' })).toHaveAttribute('aria-checked', 'false')
+    expect(api.getLocale).toHaveBeenCalledTimes(2)
+  })
+
+  test('the next change that saves clears the error', async () => {
+    vi.mocked(api.setLocale).mockRejectedValueOnce(new Error('disk full'))
+    await openLanguageSection()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Deutsch' }))
+    await screen.findByRole('alert')
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Français' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull()
+    })
+    expect(getLocale()).toBe('fr')
+  })
+
+  test('when the stored language cannot be read either, it goes back to the last known one', async () => {
+    vi.mocked(api.setLocale).mockRejectedValue(new Error('disk full'))
+    await openLanguageSection()
+    vi.mocked(api.getLocale).mockRejectedValue(new Error('backend gone'))
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Deutsch' }))
+
+    await screen.findByRole('alert')
+    expect(getLocale()).toBe('en')
+  })
 })
