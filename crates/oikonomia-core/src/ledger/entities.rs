@@ -283,6 +283,9 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
 }
 
 /// Case-insensitive unique name among non-archived entities.
+///
+/// Case folds for every letter through the `fold` SQL function, which every
+/// vault connection registers; `SQLite`'s `lower()` would fold ASCII only.
 fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) -> Result<()> {
     let count: i64 = match exclude {
         Some(id) => conn
@@ -290,7 +293,7 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
                 "
                 SELECT COUNT(1) FROM entities
                 WHERE archived_at IS NULL
-                  AND lower(name) = lower(?1)
+                  AND fold(name) = fold(?1)
                   AND id != ?2
                 ",
                 rusqlite::params![name, id.0.to_string()],
@@ -302,7 +305,7 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
                 "
                 SELECT COUNT(1) FROM entities
                 WHERE archived_at IS NULL
-                  AND lower(name) = lower(?1)
+                  AND fold(name) = fold(?1)
                 ",
                 [name],
                 |row| row.get(0),

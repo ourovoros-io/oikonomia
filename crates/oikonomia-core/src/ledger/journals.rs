@@ -6,6 +6,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
+use crate::db::fold_case;
 use crate::domain::{
     AccountId, EntityId, EntryStatus, JournalEntry, JournalEntryId, JournalLine, JournalLineId,
     validate_lines_for_post,
@@ -156,8 +157,12 @@ pub struct EntryFilter {
 
 /// Wrap trimmed user text in `%…%`, escaping LIKE wildcards so `%`/`_`
 /// in a search are literals, not patterns.
+///
+/// The text is case-folded here and the searched columns are folded in SQL
+/// with `fold(...)`, so the match ignores case for every letter, not only
+/// ASCII ones.
 fn like_pattern(text: &str) -> String {
-    let escaped = text
+    let escaped = fold_case(text)
         .replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_");
@@ -213,11 +218,11 @@ pub fn list_entries(
               AND (?2 IS NULL OR je.entry_date >= ?2)
               AND (?3 IS NULL OR je.entry_date <= ?3)
               AND (?4 IS NULL
-                   OR je.description LIKE ?4 ESCAPE '\\'
-                   OR je.reference LIKE ?4 ESCAPE '\\'
+                   OR fold(je.description) LIKE ?4 ESCAPE '\\'
+                   OR fold(je.reference) LIKE ?4 ESCAPE '\\'
                    OR EXISTS (
                        SELECT 1 FROM journal_lines jl
-                       WHERE jl.entry_id = je.id AND jl.memo LIKE ?4 ESCAPE '\\'
+                       WHERE jl.entry_id = je.id AND fold(jl.memo) LIKE ?4 ESCAPE '\\'
                    ))
               AND (?5 IS NULL OR EXISTS (
                    SELECT 1 FROM journal_lines jl
