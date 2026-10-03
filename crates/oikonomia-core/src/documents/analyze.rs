@@ -1129,3 +1129,346 @@ mod tests {
         );
     }
 }
+
+/// Crafted PDFs, built in memory with lopdf, for the image and per-page
+/// text paths. Image streams carry placeholder bytes, not real pictures.
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod pdf_fixture_tests {
+    use super::*;
+    use lopdf::content::{Content, Operation};
+    use lopdf::{Dictionary, Document, Object, ObjectId, Stream, dictionary};
+
+    fn image_stream(filter: Object, bytes: &[u8]) -> Stream {
+        Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Image",
+                "Filter" => filter,
+            },
+            bytes.to_vec(),
+        )
+    }
+
+    fn jpeg_stream(bytes: &[u8]) -> Stream {
+        image_stream(Object::Name(b"DCTDecode".to_vec()), bytes)
+    }
+
+    /// Accumulates objects and pages, then saves a minimal PDF with a page
+    /// tree and catalog.
+    struct PdfBuilder {
+        doc: Document,
+        pages_id: ObjectId,
+        kids: Vec<Object>,
+    }
+
+    impl PdfBuilder {
+        fn new() -> Self {
+            let mut doc = Document::with_version("1.5");
+            let pages_id = doc.new_object_id();
+            Self {
+                doc,
+                pages_id,
+                kids: Vec::new(),
+            }
+        }
+
+        fn add(&mut self, object: impl Into<Object>) -> ObjectId {
+            self.doc.add_object(object)
+        }
+
+        fn page(&mut self, mut page: Dictionary) -> &mut Self {
+            page.set("Type", "Page");
+            page.set("Parent", self.pages_id);
+            page.set("MediaBox", vec![0.into(), 0.into(), 200.into(), 200.into()]);
+            let id = self.doc.add_object(page);
+            self.kids.push(id.into());
+            self
+        }
+
+        /// A page whose `/XObject` resources name each given object.
+        fn page_with_xobjects(&mut self, xobjects: &[ObjectId]) -> &mut Self {
+            let mut names = Dictionary::new();
+            for (index, id) in xobjects.iter().enumerate() {
+                names.set(format!("Im{index}"), *id);
+            }
+            self.page(dictionary! { "Resources" => dictionary! { "XObject" => names } })
+        }
+
+        /// A page that shows `text` in a standard font, when `font` is true;
+        /// otherwise the content names a font the page does not define.
+        fn text_page(&mut self, text: &str, font: bool) -> &mut Self {
+            let content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![20.into(), 100.into()]),
+                    Operation::new("Tj", vec![Object::string_literal(text)]),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+            let contents = self.add(Stream::new(
+                Dictionary::new(),
+                content.encode().expect("encode content"),
+            ));
+            let resources = if font {
+                let font_id = self.add(dictionary! {
+                    "Type" => "Font",
+                    "Subtype" => "Type1",
+                    "BaseFont" => "Helvetica",
+                });
+                dictionary! { "Font" => dictionary! { "F1" => font_id } }
+            } else {
+                dictionary! { "Font" => dictionary! { "F1" => 7 } }
+            };
+            self.page(dictionary! { "Contents" => contents, "Resources" => resources })
+        }
+
+        fn build(&mut self) -> Vec<u8> {
+            let count = i64::try_from(self.kids.len()).expect("page count");
+            self.doc.objects.insert(
+                self.pages_id,
+                Object::Dictionary(dictionary! {
+                    "Type" => "Pages",
+                    "Kids" => self.kids.clone(),
+                    "Count" => count,
+                }),
+            );
+            let catalog = self.add(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => self.pages_id,
+            });
+            self.doc.trailer.set("Root", catalog);
+            let mut bytes = Vec::new();
+            self.doc.save_to(&mut bytes).expect("save pdf");
+            bytes
+        }
+    }
+
+    #[test]
+    fn jpeg_from_object_takes_an_inline_or_referenced_dct_image() {
+        let mut doc = Document::with_version("1.5");
+        let inline = Object::Stream(jpeg_stream(b"inline"));
+        assert_eq!(jpeg_from_object(&doc, &inline), Some(b"inline".to_vec()));
+
+        let id = doc.add_object(jpeg_stream(b"referenced"));
+        assert_eq!(
+            jpeg_from_object(&doc, &Object::Reference(id)),
+            Some(b"referenced".to_vec())
+        );
+    }
+
+    #[test]
+    fn jpeg_from_object_ignores_dangling_and_non_stream_objects() {
+        let mut doc = Document::with_version("1.5");
+        let dictionary = doc.add_object(dictionary! { "Subtype" => "Image" });
+        assert_eq!(jpeg_from_object(&doc, &Object::Reference(dictionary)), None);
+        assert_eq!(jpeg_from_object(&doc, &Object::Reference((999, 0))), None);
+        assert_eq!(jpeg_from_object(&doc, &Object::Integer(1)), None);
+        assert_eq!(
+            jpeg_from_object(&doc, &Object::Dictionary(dictionary! {})),
+            None
+        );
+    }
+
+    #[test]
+    fn jpeg_from_object_requires_an_image_subtype_name() {
+        let doc = Document::with_version("1.5");
+        let mut form = jpeg_stream(b"form");
+        form.dict.set("Subtype", "Form");
+        assert_eq!(jpeg_from_object(&doc, &Object::Stream(form)), None);
+
+        let mut string_subtype = jpeg_stream(b"string");
+        string_subtype
+            .dict
+            .set("Subtype", Object::string_literal("Image"));
+        assert_eq!(
+            jpeg_from_object(&doc, &Object::Stream(string_subtype)),
+            None
+        );
+
+        let mut missing = jpeg_stream(b"missing");
+        missing.dict.remove(b"Subtype");
+        assert_eq!(jpeg_from_object(&doc, &Object::Stream(missing)), None);
+    }
+
+    #[test]
+    fn jpeg_from_object_accepts_dct_as_a_name_or_inside_a_filter_array() {
+        let doc = Document::with_version("1.5");
+        let chained = image_stream(
+            vec![
+                Object::Name(b"FlateDecode".to_vec()),
+                Object::Name(b"DCTDecode".to_vec()),
+            ]
+            .into(),
+            b"chained",
+        );
+        assert_eq!(
+            jpeg_from_object(&doc, &Object::Stream(chained)),
+            Some(b"chained".to_vec())
+        );
+
+        let no_dct = image_stream(
+            vec![
+                Object::Name(b"FlateDecode".to_vec()),
+                Object::string_literal("DCTDecode"),
+            ]
+            .into(),
+            b"no-dct",
+        );
+        assert_eq!(jpeg_from_object(&doc, &Object::Stream(no_dct)), None);
+    }
+
+    #[test]
+    fn jpeg_from_object_rejects_other_or_missing_filters() {
+        let doc = Document::with_version("1.5");
+        let flate = image_stream(Object::Name(b"FlateDecode".to_vec()), b"png-ish");
+        assert_eq!(jpeg_from_object(&doc, &Object::Stream(flate)), None);
+
+        let odd = image_stream(Object::Integer(3), b"odd");
+        assert_eq!(jpeg_from_object(&doc, &Object::Stream(odd)), None);
+
+        let mut unfiltered = jpeg_stream(b"raw");
+        unfiltered.dict.remove(b"Filter");
+        assert_eq!(jpeg_from_object(&doc, &Object::Stream(unfiltered)), None);
+    }
+
+    #[test]
+    fn jpeg_from_object_caps_the_stream_size() {
+        let doc = Document::with_version("1.5");
+        let at_cap = Object::Stream(jpeg_stream(&vec![0; MAX_PDF_STREAM_BYTES]));
+        assert_eq!(
+            jpeg_from_object(&doc, &at_cap).map(|bytes| bytes.len()),
+            Some(MAX_PDF_STREAM_BYTES)
+        );
+        let over_cap = Object::Stream(jpeg_stream(&vec![0; MAX_PDF_STREAM_BYTES + 1]));
+        assert_eq!(jpeg_from_object(&doc, &over_cap), None);
+    }
+
+    #[test]
+    fn page_images_win_over_an_earlier_unreferenced_image() {
+        let mut pdf = PdfBuilder::new();
+        pdf.add(jpeg_stream(b"catalog-logo"));
+        let page_image = pdf.add(jpeg_stream(b"page-scan"));
+        let bytes = pdf.page_with_xobjects(&[page_image]).build();
+        assert_eq!(extract_pdf_jpeg_images(&bytes), vec![b"page-scan".to_vec()]);
+    }
+
+    #[test]
+    fn page_images_are_capped_at_two_within_and_across_pages() {
+        let mut pdf = PdfBuilder::new();
+        let ids: Vec<ObjectId> = (0..3)
+            .map(|index| pdf.add(jpeg_stream(format!("one-{index}").as_bytes())))
+            .collect();
+        let bytes = pdf.page_with_xobjects(&ids).build();
+        assert_eq!(extract_pdf_jpeg_images(&bytes).len(), 2);
+
+        let mut pdf = PdfBuilder::new();
+        let first = pdf.add(jpeg_stream(b"first"));
+        let second = pdf.add(jpeg_stream(b"second"));
+        let third = pdf.add(jpeg_stream(b"third"));
+        let bytes = pdf
+            .page_with_xobjects(&[first])
+            .page_with_xobjects(&[second, third])
+            .build();
+        assert_eq!(
+            extract_pdf_jpeg_images(&bytes),
+            vec![b"first".to_vec(), b"second".to_vec()]
+        );
+    }
+
+    #[test]
+    fn referenced_resources_and_xobject_dictionaries_are_followed() {
+        let mut pdf = PdfBuilder::new();
+        let image = pdf.add(jpeg_stream(b"via-refs"));
+        let xobjects = pdf.add(dictionary! { "Im0" => image });
+        let resources = pdf.add(dictionary! { "XObject" => xobjects });
+        let bytes = pdf.page(dictionary! { "Resources" => resources }).build();
+        assert_eq!(extract_pdf_jpeg_images(&bytes), vec![b"via-refs".to_vec()]);
+    }
+
+    #[test]
+    fn without_page_images_the_whole_document_is_scanned_up_to_two() {
+        let mut pdf = PdfBuilder::new();
+        pdf.add(jpeg_stream(b"a"));
+        pdf.add(image_stream(
+            Object::Name(b"FlateDecode".to_vec()),
+            b"not-jpeg",
+        ));
+        pdf.add(jpeg_stream(b"b"));
+        pdf.add(jpeg_stream(b"c"));
+        let bytes = pdf
+            .page(Dictionary::new())
+            .page(dictionary! { "Resources" => 5 })
+            .page(dictionary! { "Resources" => dictionary! {} })
+            .build();
+        assert_eq!(
+            extract_pdf_jpeg_images(&bytes),
+            vec![b"a".to_vec(), b"b".to_vec()]
+        );
+    }
+
+    #[test]
+    fn a_page_image_that_is_not_a_jpeg_falls_back_to_the_document_scan() {
+        let mut pdf = PdfBuilder::new();
+        let png = pdf.add(image_stream(Object::Name(b"FlateDecode".to_vec()), b"png"));
+        pdf.add(jpeg_stream(b"elsewhere"));
+        let bytes = pdf.page_with_xobjects(&[png]).build();
+        assert_eq!(extract_pdf_jpeg_images(&bytes), vec![b"elsewhere".to_vec()]);
+    }
+
+    #[test]
+    fn a_pdf_without_any_jpeg_yields_nothing() {
+        let mut pdf = PdfBuilder::new();
+        let bytes = pdf.text_page("Hello", true).build();
+        assert_eq!(extract_pdf_jpeg_images(&bytes), Vec::<Vec<u8>>::new());
+    }
+
+    #[test]
+    fn per_page_text_joins_the_readable_pages() {
+        let mut pdf = PdfBuilder::new();
+        let bytes = pdf
+            .text_page("Alpha", true)
+            .text_page("Omega", true)
+            .build();
+        let text = pdf_text_per_page(&bytes).expect("text");
+        assert!(text.contains("Alpha"), "{text:?}");
+        assert!(text.contains("Omega"), "{text:?}");
+        assert!(text.find("Alpha") < text.find("Omega"), "page order kept");
+    }
+
+    #[test]
+    fn per_page_text_rejects_non_pdf_bytes() {
+        assert_eq!(pdf_text_per_page(b"not a pdf"), None);
+    }
+
+    #[test]
+    fn a_bad_page_is_skipped_and_the_rest_is_still_read() {
+        let mut pdf = PdfBuilder::new();
+        let bytes = pdf
+            .text_page("Readable", true)
+            .text_page("Broken", false)
+            .build();
+        assert_eq!(pdf_text_whole(&bytes), None, "whole-document pass fails");
+        let text = pdf_text(&bytes).expect("per-page fallback");
+        assert!(text.contains("Readable"), "{text:?}");
+        assert!(!text.contains("Broken"), "{text:?}");
+    }
+
+    #[test]
+    fn a_pdf_whose_every_page_fails_has_no_per_page_text() {
+        let mut pdf = PdfBuilder::new();
+        let bytes = pdf.text_page("Broken", false).build();
+        assert_eq!(pdf_text_per_page(&bytes), None);
+    }
+
+    #[test]
+    fn an_encrypted_pdf_has_no_per_page_text() {
+        let mut pdf = PdfBuilder::new();
+        pdf.text_page("Secret", true);
+        let encrypt = pdf.add(dictionary! { "Filter" => "Standard", "V" => 1, "R" => 2 });
+        pdf.doc.trailer.set("Encrypt", encrypt);
+        let bytes = pdf.build();
+        assert_eq!(pdf_text_per_page(&bytes), None);
+    }
+}
