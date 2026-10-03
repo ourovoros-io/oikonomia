@@ -2075,3 +2075,264 @@ mod jumbled_extract {
         );
     }
 }
+
+/// Characterization tests: they pin what the money, clock and reference
+/// scanners return today, so splitting them into helpers is provably
+/// behaviour-preserving. A surprising expectation here documents current
+/// behaviour; changing it is a separate, deliberate fix.
+#[cfg(test)]
+mod characterization {
+    use super::*;
+
+    fn time_len(text: &str, at: usize) -> Option<usize> {
+        let chars: Vec<char> = text.chars().collect();
+        time_len_at(&chars, at)
+    }
+
+    fn reference(text: &str) -> Option<String> {
+        find_invoice_reference(text, &text.to_lowercase())
+    }
+
+    #[test]
+    fn money_token_empty_blank_and_overlong_are_rejected() {
+        assert_eq!(parse_money_token(""), None);
+        assert_eq!(parse_money_token("   "), None);
+        assert_eq!(parse_money_token("123456789012345"), None);
+        assert_eq!(parse_money_token(" 12,50 "), Some(1_250));
+    }
+
+    #[test]
+    fn money_token_plain_integers_are_whole_units_up_to_five_digits() {
+        assert_eq!(parse_money_token("0"), Some(0));
+        assert_eq!(parse_money_token("5"), Some(500));
+        assert_eq!(parse_money_token("50"), Some(5_000));
+        assert_eq!(parse_money_token("99999"), Some(9_999_900));
+        assert_eq!(parse_money_token("123456"), None, "six digits is an ID");
+    }
+
+    #[test]
+    fn money_token_integers_that_look_like_dates_or_years_are_rejected() {
+        assert_eq!(parse_money_token("08"), None);
+        assert_eq!(parse_money_token("00"), None);
+        assert_eq!(parse_money_token("1900"), None);
+        assert_eq!(parse_money_token("2100"), None);
+        assert_eq!(parse_money_token("1899"), Some(189_900));
+        assert_eq!(parse_money_token("2101"), Some(210_100));
+    }
+
+    #[test]
+    fn money_token_european_and_english_grouping_agree() {
+        assert_eq!(parse_money_token("1.234,56"), Some(123_456));
+        assert_eq!(parse_money_token("1,234.56"), Some(123_456));
+        assert_eq!(parse_money_token("1.234.567,89"), Some(123_456_789));
+        assert_eq!(parse_money_token("1,234,567.89"), Some(123_456_789));
+        assert_eq!(parse_money_token("1.234,5"), Some(123_450));
+        assert_eq!(parse_money_token("1,234.5"), Some(123_450));
+        assert_eq!(parse_money_token("1.2.3,45"), Some(12_345));
+    }
+
+    #[test]
+    fn money_token_single_comma_is_decimal_only_with_one_or_two_digits() {
+        assert_eq!(parse_money_token("12,5"), Some(1_250));
+        assert_eq!(parse_money_token("12,50"), Some(1_250));
+        assert_eq!(parse_money_token("1860,00"), Some(186_000));
+        assert_eq!(
+            parse_money_token("1,234"),
+            Some(123_400),
+            "three digits: grouping"
+        );
+        assert_eq!(parse_money_token("12,345"), Some(1_234_500));
+        assert_eq!(parse_money_token("1,2,3"), Some(12_300));
+        assert_eq!(parse_money_token("1,234,567"), Some(123_456_700));
+        assert_eq!(parse_money_token("50,"), Some(5_000));
+        assert_eq!(parse_money_token(",50"), None);
+    }
+
+    #[test]
+    fn money_token_single_dot_is_decimal_only_with_one_or_two_digits() {
+        assert_eq!(parse_money_token("12.5"), Some(1_250));
+        assert_eq!(parse_money_token("12.50"), Some(1_250));
+        assert_eq!(
+            parse_money_token("1.234"),
+            None,
+            "single dot, three digits: ambiguous"
+        );
+        assert_eq!(parse_money_token("12.345"), None);
+        assert_eq!(parse_money_token("1.234.567"), Some(123_456_700));
+        assert_eq!(parse_money_token("50."), None);
+        assert_eq!(parse_money_token(".50"), None);
+    }
+
+    #[test]
+    fn money_token_long_whole_part_is_an_id() {
+        assert_eq!(parse_money_token("12345678,00"), Some(1_234_567_800));
+        assert_eq!(parse_money_token("123456789,00"), None);
+        assert_eq!(parse_money_token("123.456.789,00"), None);
+    }
+
+    #[test]
+    fn money_token_non_numeric_and_signed_input() {
+        assert_eq!(parse_money_token("abc"), None);
+        assert_eq!(parse_money_token("12,ab"), None);
+        // The line scanner never buffers a sign, so these are unreachable from
+        // documents; they are pinned so a refactor cannot change them silently.
+        assert_eq!(parse_money_token("-5"), Some(-500));
+        assert_eq!(parse_money_token("-1,50"), Some(-50));
+    }
+
+    #[test]
+    fn money_amounts_skip_ids_and_keep_amounts_on_the_same_line() {
+        assert_eq!(money_amounts_on_line("AFM 123456789 total 45,90"), [4_590]);
+        assert_eq!(
+            money_amounts_on_line("1.234,56 and 1,234.56"),
+            [123_456, 123_456]
+        );
+        assert_eq!(money_amounts_on_line("Qty 3 x 12,00"), [300, 1_200]);
+        assert_eq!(money_amounts_on_line("no digits"), [] as [i64; 0]);
+    }
+
+    #[test]
+    fn clock_lengths_for_valid_times() {
+        assert_eq!(time_len("7:00", 0), Some(4));
+        assert_eq!(time_len("07:30", 0), Some(5));
+        assert_eq!(time_len("23:59", 0), Some(5));
+        assert_eq!(time_len("12:30:45", 0), Some(8));
+        assert_eq!(time_len("at 9:15 pm", 3), Some(4));
+        assert_eq!(time_len("x7:00", 1), Some(4));
+    }
+
+    #[test]
+    fn clock_seconds_are_optional_and_bounded() {
+        assert_eq!(time_len("12:30:75", 0), Some(5), "bad seconds leave hh:mm");
+        assert_eq!(time_len("12:30:4", 0), Some(5));
+        assert_eq!(time_len("12:30:45x", 0), Some(8));
+        assert_eq!(time_len("12:30:456", 0), None);
+    }
+
+    #[test]
+    fn clock_rejects_out_of_range_and_malformed_times() {
+        assert_eq!(time_len("24:00", 0), None);
+        assert_eq!(time_len("9:60", 0), None);
+        assert_eq!(time_len("12:301", 0), None);
+        assert_eq!(time_len("12:3", 0), None);
+        assert_eq!(time_len("12:", 0), None);
+        assert_eq!(time_len("12", 0), None);
+        assert_eq!(time_len("1:2a", 0), None);
+        assert_eq!(time_len("123:45", 0), None);
+        assert_eq!(time_len("ab:cd", 0), None);
+        assert_eq!(time_len("\u{663}:00", 0), None, "non-ASCII digit");
+    }
+
+    #[test]
+    fn clock_needs_a_digit_free_left_edge_and_an_in_range_index() {
+        assert_eq!(time_len("17:00", 1), None);
+        assert_eq!(time_len("a", 1), None);
+        assert_eq!(time_len("", 0), None);
+    }
+
+    #[test]
+    fn clock_masking_blanks_only_the_time() {
+        assert_eq!(mask_time_tokens("at 12:30:45 ok"), "at          ok");
+        assert_eq!(mask_time_tokens("24:00"), "24:00");
+        assert_eq!(mask_time_tokens("7:00-19:30"), "    -     ");
+    }
+
+    #[test]
+    fn reference_prefers_a_labelled_supply_code_on_the_same_line() {
+        assert_eq!(
+            reference("Κωδικός Παροχής: NGS000000001\nRF12345678901"),
+            Some("NGS000000001".to_owned())
+        );
+        assert_eq!(
+            reference("κωδικος παροχης SYN12345678"),
+            Some("SYN12345678".to_owned())
+        );
+        assert_eq!(
+            reference("ΗΚΑΣΠ ABC12345678"),
+            Some("ABC12345678".to_owned())
+        );
+    }
+
+    #[test]
+    fn reference_reads_a_supply_code_from_the_next_line() {
+        assert_eq!(
+            reference("Supply number\nSYN12345678\nRF12345678901"),
+            Some("SYN12345678".to_owned())
+        );
+    }
+
+    #[test]
+    fn reference_falls_back_to_a_standalone_ngs_code() {
+        assert_eq!(
+            reference("Supply point\n\nother text\nNGS123456789"),
+            Some("NGS123456789".to_owned())
+        );
+        assert_eq!(
+            reference("ABC12345678\nRF12345678901"),
+            Some("RF12345678901".to_owned()),
+            "an unlabelled non-NGS code is not a reference"
+        );
+    }
+
+    #[test]
+    fn reference_finds_rf_payment_codes() {
+        assert_eq!(
+            reference("Κωδικός πληρωμής rf12345678901"),
+            Some("RF12345678901".to_owned())
+        );
+        assert_eq!(
+            reference("PayRF1234567890 now"),
+            Some("RF1234567890".to_owned()),
+            "glued to neighbouring text"
+        );
+        assert_eq!(reference("RF123"), None, "too short");
+        assert_eq!(
+            reference("RF12345X7890"),
+            None,
+            "letters after RF are not a payment code"
+        );
+    }
+
+    #[test]
+    fn reference_glued_rf_after_non_ascii_text_falls_through() {
+        // The glued-RF scan pairs a byte offset with a char skip, so a Greek
+        // prefix misaligns it and the digit fallback answers instead.
+        assert_eq!(reference("ΚωδRF1234567890"), Some("1234567890".to_owned()));
+    }
+
+    #[test]
+    fn reference_reads_mark_numbers_on_the_label_or_next_line() {
+        assert_eq!(
+            reference("ΜΑΡΚ 400001234567890"),
+            Some("400001234567890".to_owned())
+        );
+        assert_eq!(
+            reference("MARK\n400001234567890"),
+            Some("400001234567890".to_owned())
+        );
+        assert_eq!(reference("Α.Α. 123456"), Some("123456".to_owned()));
+        assert_eq!(reference("MARK\nnothing here"), None);
+    }
+
+    #[test]
+    fn reference_reads_explicit_invoice_labels() {
+        assert_eq!(
+            reference("Invoice number 2026000123"),
+            Some("2026000123".to_owned())
+        );
+        assert_eq!(reference("Αριθμός 654321"), Some("654321".to_owned()));
+        assert_eq!(reference("Your ref 777777"), Some("777777".to_owned()));
+        assert_eq!(reference("Invoice 12345"), None, "too short for an id");
+    }
+
+    #[test]
+    fn reference_falls_back_to_the_longest_ten_plus_digit_run() {
+        assert_eq!(
+            reference("foo 1234567890\nbar 123456789012\nbaz 9876543210"),
+            Some("123456789012".to_owned())
+        );
+        assert_eq!(reference("code 123456789"), None, "nine digits");
+        assert_eq!(reference("Total 45,90"), None);
+        assert_eq!(reference(""), None);
+    }
+}
