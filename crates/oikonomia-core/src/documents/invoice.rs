@@ -972,56 +972,63 @@ fn mask_time_tokens(line: &str) -> String {
     out
 }
 
+/// Length of an `h:mm`, `hh:mm` or `hh:mm:ss` clock starting at `i`.
+///
+/// The clock must not be glued to digits on either side, so `117:00` and
+/// `7:001` are not clocks. Out-of-range seconds leave the `hh:mm` part.
 fn time_len_at(chars: &[char], i: usize) -> Option<usize> {
-    if i > 0 && chars[i - 1].is_ascii_digit() {
+    if i > 0 && digit_at(chars, i - 1) {
         return None;
     }
-    if i >= chars.len() || !chars[i].is_ascii_digit() {
+    if !digit_at(chars, i) {
         return None;
     }
+    let colon = hour_colon_at(chars, i)?;
+    let end = clock_seconds_end(chars, clock_minutes_end(chars, colon + 1)?);
+    if digit_at(chars, end) {
+        return None;
+    }
+    Some(end - i)
+}
 
-    let two_digit_hour = i + 1 < chars.len() && chars[i + 1].is_ascii_digit();
-    let (hour, after_hour) = if two_digit_hour {
-        let hour = chars[i].to_digit(10)? * 10 + chars[i + 1].to_digit(10)?;
-        if hour <= 23 && i + 2 < chars.len() && chars[i + 2] == ':' {
-            (hour, i + 2)
-        } else {
-            (chars[i].to_digit(10)?, i + 1)
-        }
-    } else {
-        (chars[i].to_digit(10)?, i + 1)
-    };
-    if hour > 23 || after_hour >= chars.len() || chars[after_hour] != ':' {
-        return None;
-    }
+fn digit_at(chars: &[char], i: usize) -> bool {
+    chars.get(i).is_some_and(char::is_ascii_digit)
+}
 
-    let minute_at = after_hour + 1;
-    if minute_at + 1 >= chars.len()
-        || !chars[minute_at].is_ascii_digit()
-        || !chars[minute_at + 1].is_ascii_digit()
+/// Value of the two ASCII digits at `at` and `at + 1`.
+fn two_digit_value(chars: &[char], at: usize) -> Option<u32> {
+    let tens = chars.get(at)?.to_digit(10)?;
+    let ones = chars.get(at + 1)?.to_digit(10)?;
+    Some(tens * 10 + ones)
+}
+
+/// Index of the `:` closing an hour that starts at `i`: a two-digit hour up
+/// to 23 when one fits, otherwise a single digit.
+fn hour_colon_at(chars: &[char], i: usize) -> Option<usize> {
+    if let Some(hour) = two_digit_value(chars, i)
+        && hour <= 23
+        && chars.get(i + 2) == Some(&':')
     {
-        return None;
+        return Some(i + 2);
     }
-    let minutes = chars[minute_at].to_digit(10)? * 10 + chars[minute_at + 1].to_digit(10)?;
-    if minutes > 59 {
-        return None;
-    }
+    (chars.get(i + 1) == Some(&':')).then_some(i + 1)
+}
 
-    let mut j = minute_at + 2;
-    if j + 2 < chars.len()
-        && chars[j] == ':'
-        && chars[j + 1].is_ascii_digit()
-        && chars[j + 2].is_ascii_digit()
+/// End of the two-digit minutes (00..=59) starting at `at`.
+fn clock_minutes_end(chars: &[char], at: usize) -> Option<usize> {
+    let minutes = two_digit_value(chars, at)?;
+    (minutes <= 59).then_some(at + 2)
+}
+
+/// End of an optional `:ss` (00..=59) suffix at `at`; `at` when absent.
+fn clock_seconds_end(chars: &[char], at: usize) -> usize {
+    if chars.get(at) == Some(&':')
+        && let Some(seconds) = two_digit_value(chars, at + 1)
+        && seconds <= 59
     {
-        let seconds = chars[j + 1].to_digit(10)? * 10 + chars[j + 2].to_digit(10)?;
-        if seconds <= 59 {
-            j += 3;
-        }
+        return at + 3;
     }
-    if j < chars.len() && chars[j].is_ascii_digit() {
-        return None;
-    }
-    Some(j - i)
+    at
 }
 
 /// Accept amounts that look like currency, not AFM / invoice IDs / ZIPs.
@@ -1050,82 +1057,80 @@ fn money_amounts_on_line(line: &str) -> Vec<i64> {
     out
 }
 
+/// Minor units for a money-looking token such as `1.234,56`, `1,234.56`,
+/// `12,5` or `50`, or `None` when it reads as an ID, a date fragment or noise.
 fn parse_money_token(s: &str) -> Option<i64> {
     let s = s.trim();
     if s.is_empty() || s.len() > 14 {
         return None;
     }
-
-    // Pure long digit strings without decimal are IDs (AFM, MARK, IBAN fragments), not money.
-    let has_decimal = s.contains(',') || s.contains('.');
-    if !has_decimal {
-        // Integers only if short enough to be whole euros (e.g. "50").
-        // Cap at 5 digits so long IDs never become money.
-        if s.len() > 5 {
-            return None;
-        }
-        // Leading-zero numbers (08, 06) are date fragments, not euro amounts.
-        if s.len() > 1 && s.starts_with('0') {
-            return None;
-        }
-        let whole: i64 = s.parse().ok()?;
-        // 4-digit years leak from unmasked date fragments — not money.
-        if (1_900..=2_100).contains(&whole) {
-            return None;
-        }
-        return whole.checked_mul(100);
-    }
-
-    let last_comma = s.rfind(',');
-    let last_dot = s.rfind('.');
-    let normalized = if let (Some(c), Some(d)) = (last_comma, last_dot) {
-        if c > d {
-            // 1.234,56
-            s.replace('.', "").replace(',', ".")
-        } else {
-            // 1,234.56
-            s.replace(',', "")
-        }
-    } else if last_comma.is_some() {
-        let parts: Vec<_> = s.split(',').collect();
-        if parts.len() == 2 && (1..=2).contains(&parts[1].len()) {
-            format!("{}.{}", parts[0].replace('.', ""), parts[1])
-        } else {
-            // thousands commas only
-            s.replace(',', "")
-        }
+    if s.contains(',') || s.contains('.') {
+        decimal_money_minor(&normalize_money_separators(s))
     } else {
-        // dots only: 1860.00 or 1.234.567
-        let parts: Vec<_> = s.split('.').collect();
-        if parts.len() == 2 && (1..=2).contains(&parts[1].len()) {
-            s.to_owned()
-        } else if parts.len() > 2 {
-            // thousand separators: drop dots
-            s.replace('.', "")
-        } else {
-            s.to_owned()
-        }
-    };
+        whole_money_minor(s)
+    }
+}
 
-    let parts: Vec<_> = normalized.split('.').collect();
-    if parts.len() > 2 || parts[0].is_empty() {
+/// A separator-free token is whole units, but only when it is short and does
+/// not look like an ID (AFM, MARK, IBAN fragments), a zero-padded date part
+/// (`08`) or a year leaking from an unmasked date.
+fn whole_money_minor(s: &str) -> Option<i64> {
+    if s.len() > 5 {
         return None;
     }
-    // Whole part too long → ID
-    if parts[0].len() > 8 {
+    if s.len() > 1 && s.starts_with('0') {
+        return None;
+    }
+    let whole: i64 = s.parse().ok()?;
+    if (1_900..=2_100).contains(&whole) {
+        return None;
+    }
+    whole.checked_mul(100)
+}
+
+/// Rewrites grouping and decimal separators into a plain `whole[.frac]`.
+///
+/// With both separators the later one is the decimal mark. A lone comma is
+/// a decimal mark only before one or two digits (`12,5`), otherwise grouping
+/// (`1,234`). Several dots are grouping (`1.234.567`); a lone dot is kept.
+fn normalize_money_separators(s: &str) -> String {
+    match (s.rfind(','), s.rfind('.')) {
+        (Some(comma), Some(dot)) if comma > dot => s.replace('.', "").replace(',', "."),
+        (Some(_), Some(_)) => s.replace(',', ""),
+        (Some(_), None) => {
+            let parts: Vec<_> = s.split(',').collect();
+            if parts.len() == 2 && (1..=2).contains(&parts[1].len()) {
+                format!("{}.{}", parts[0], parts[1])
+            } else {
+                s.replace(',', "")
+            }
+        }
+        (None, Some(_)) if s.matches('.').count() > 1 => s.replace('.', ""),
+        (None, Some(_) | None) => s.to_owned(),
+    }
+}
+
+/// Minor units for a normalized `whole[.frac]` with at most eight whole
+/// digits (longer is an ID) and one or two fraction digits.
+fn decimal_money_minor(normalized: &str) -> Option<i64> {
+    let parts: Vec<_> = normalized.split('.').collect();
+    if parts.len() > 2 || parts[0].is_empty() || parts[0].len() > 8 {
         return None;
     }
     let whole: i64 = parts[0].parse().ok()?;
-    let frac = if parts.len() == 2 {
-        let f = parts[1];
-        if f.is_empty() || f.len() > 2 {
-            return None;
-        }
-        format!("{f:0<2}").parse::<i64>().ok()?
-    } else {
-        0
+    let fraction = match parts.get(1) {
+        Some(fraction) => fraction_minor(fraction)?,
+        None => 0,
     };
-    whole.checked_mul(100)?.checked_add(frac)
+    whole.checked_mul(100)?.checked_add(fraction)
+}
+
+/// `5` is 50 minor units and `05` is 5; empty or longer than two is invalid.
+fn fraction_minor(fraction: &str) -> Option<i64> {
+    if fraction.is_empty() || fraction.len() > 2 {
+        return None;
+    }
+    format!("{fraction:0<2}").parse::<i64>().ok()
 }
 
 fn find_best_date(text: &str) -> Option<String> {
@@ -1197,99 +1202,126 @@ fn parse_eu_date(s: &str) -> Option<String> {
     }
 }
 
+/// Best reference for a document, by source in priority order: a labelled
+/// supply code, a standalone NGS code, an RF payment code, a MARK number, an
+/// explicitly labelled invoice number, then the longest 10+ digit run.
 fn find_invoice_reference(text: &str, lower: &str) -> Option<String> {
+    let _ = lower;
     let lines: Vec<&str> = text.lines().collect();
+    labelled_supply_code(&lines)
+        .or_else(|| standalone_supply_code(&lines))
+        .or_else(|| rf_payment_code(&lines))
+        .or_else(|| labelled_mark_number(&lines))
+        .or_else(|| labelled_invoice_number(&lines))
+        .or_else(|| longest_invoice_digit_run(&lines))
+}
 
-    // Supply / meter codes (e.g. NGS000000001) — value often on the next line in PDF extract.
+/// Supply / meter codes (e.g. NGS000000001) after a supply label; PDF
+/// extraction often puts the value on the next line.
+fn labelled_supply_code(lines: &[&str]) -> Option<String> {
     for (i, line) in lines.iter().enumerate() {
         let l = line.to_lowercase();
-        if l.contains("κωδικός παροχής")
+        let labelled = l.contains("κωδικός παροχής")
             || l.contains("κωδικος παροχης")
             || l.contains("supply")
-            || l.contains("ηκασπ")
-        {
-            for candidate in [*line, lines.get(i + 1).copied().unwrap_or("")] {
-                if let Some(code) = alnum_supply_code(candidate) {
-                    return Some(code);
-                }
-            }
+            || l.contains("ηκασπ");
+        if !labelled {
+            continue;
         }
-    }
-
-    // Standalone supply-style codes (NGS…, etc.) anywhere in the body.
-    for line in &lines {
-        if let Some(code) = alnum_supply_code(line) {
-            let up = code.to_ascii_uppercase();
-            if up.starts_with("NGS") || up.starts_with("ΗΚΑΣ") {
+        for candidate in [*line, lines.get(i + 1).copied().unwrap_or("")] {
+            if let Some(code) = alnum_supply_code(candidate) {
                 return Some(code);
             }
         }
     }
+    None
+}
 
-    // RF payment code on Greek utility bills
-    for line in &lines {
-        for tok in line.split_whitespace() {
-            let t = tok.trim();
-            let up = t.to_ascii_uppercase();
-            if up.len() >= 10
-                && up.starts_with("RF")
-                && up.chars().skip(2).all(|c| c.is_ascii_digit())
-            {
-                return Some(up);
-            }
-        }
-        // PDF extract may glue RF to neighbouring text without spaces.
-        if let Some(idx) = line.to_ascii_uppercase().find("RF") {
-            let slice: String = line
-                .chars()
-                .skip(idx)
-                .take_while(char::is_ascii_alphanumeric)
-                .collect();
-            let up = slice.to_ascii_uppercase();
-            if up.len() >= 10
-                && up.starts_with("RF")
-                && up.chars().skip(2).all(|c| c.is_ascii_digit())
-            {
-                return Some(up);
-            }
-        }
-    }
-    let _ = lower;
+/// Supply-style codes (NGS…) anywhere in the body, without a label.
+fn standalone_supply_code(lines: &[&str]) -> Option<String> {
+    lines.iter().find_map(|line| {
+        let code = alnum_supply_code(line)?;
+        let up = code.to_ascii_uppercase();
+        (up.starts_with("NGS") || up.starts_with("ΗΚΑΣ")).then_some(code)
+    })
+}
 
-    // MARK number on Greek invoices (long digit string near MARK / Α.Α.)
-    for (i, line) in text.lines().enumerate() {
+/// RF payment code on Greek utility bills, as its own token or glued to
+/// neighbouring text by PDF extraction.
+fn rf_payment_code(lines: &[&str]) -> Option<String> {
+    lines
+        .iter()
+        .find_map(|line| rf_payment_token(line).or_else(|| glued_rf_payment_code(line)))
+}
+
+fn rf_payment_token(line: &str) -> Option<String> {
+    line.split_whitespace()
+        .map(|token| token.trim().to_ascii_uppercase())
+        .find(|token| is_rf_payment_code(token))
+}
+
+/// RF code glued to the text before it. The match offset is a byte index
+/// used as a char count, so this only lines up after ASCII text.
+fn glued_rf_payment_code(line: &str) -> Option<String> {
+    let idx = line.to_ascii_uppercase().find("RF")?;
+    let slice: String = line
+        .chars()
+        .skip(idx)
+        .take_while(char::is_ascii_alphanumeric)
+        .collect();
+    let up = slice.to_ascii_uppercase();
+    is_rf_payment_code(&up).then_some(up)
+}
+
+/// `RF` followed by digits, at least ten characters in all.
+fn is_rf_payment_code(up: &str) -> bool {
+    up.len() >= 10 && up.starts_with("RF") && up.chars().skip(2).all(|c| c.is_ascii_digit())
+}
+
+/// MARK number on Greek invoices: a long digit string on a MARK / Α.Α. line
+/// or, failing that, on the line after it.
+fn labelled_mark_number(lines: &[&str]) -> Option<String> {
+    for (i, line) in lines.iter().enumerate() {
         let l = line.to_lowercase();
-        if l.contains("μαρκ") || l.contains("mark") || l.contains("α.α") || l.contains("αα ")
-        {
-            if let Some(n) = long_digit_token(line) {
-                return Some(n);
-            }
-            // sometimes values are on the next line
-            if let Some(next) = text.lines().nth(i + 1)
-                && let Some(n) = long_digit_token(next)
-            {
-                return Some(n);
-            }
+        let labelled =
+            l.contains("μαρκ") || l.contains("mark") || l.contains("α.α") || l.contains("αα ");
+        if !labelled {
+            continue;
         }
-    }
-
-    // Explicit invoice / ref labels
-    for line in text.lines() {
-        let l = line.to_lowercase();
-        if (l.contains("invoice")
-            || l.contains("αρ. παραστατ")
-            || l.contains("αριθμός")
-            || l.contains("number")
-            || l.contains("ref"))
-            && let Some(n) = long_digit_token(line)
+        if let Some(n) = long_digit_token(line) {
+            return Some(n);
+        }
+        if let Some(next) = lines.get(i + 1)
+            && let Some(n) = long_digit_token(next)
         {
             return Some(n);
         }
     }
+    None
+}
 
-    // Fallback: longest digit run that looks like an invoice id (10–20 digits)
+/// Long digit string on a line with an explicit invoice / ref label.
+fn labelled_invoice_number(lines: &[&str]) -> Option<String> {
+    lines.iter().find_map(|line| {
+        let l = line.to_lowercase();
+        let labelled = l.contains("invoice")
+            || l.contains("αρ. παραστατ")
+            || l.contains("αριθμός")
+            || l.contains("number")
+            || l.contains("ref");
+        if labelled {
+            long_digit_token(line)
+        } else {
+            None
+        }
+    })
+}
+
+/// Fallback: the longest digit run that looks like an invoice id (10 to 20
+/// digits); the first one wins a tie.
+fn longest_invoice_digit_run(lines: &[&str]) -> Option<String> {
     let mut best: Option<String> = None;
-    for line in text.lines() {
+    for line in lines {
         if let Some(n) = long_digit_token(line)
             && n.len() >= 10
             && best.as_ref().is_none_or(|b| n.len() > b.len())
