@@ -267,3 +267,128 @@ fn parse_uuid_col(row: &rusqlite::Row<'_>, idx: usize) -> rusqlite::Result<uuid:
         )
     })
 }
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+#[expect(clippy::panic, reason = "tests fail loudly by design")]
+mod tests {
+    use super::*;
+    use crate::vault::Vault;
+    use tempfile::TempDir;
+
+    const PASSWORD: &str = "correct horse battery staple";
+    const ENTITY: &str = "00000000-0000-4000-8000-000000000001";
+    const PARENT: &str = "00000000-0000-4000-8000-0000000000a1";
+    const CHILD: &str = "00000000-0000-4000-8000-0000000000a2";
+
+    /// A fresh vault with one entity and a parent asset account, written
+    /// with foreign keys off so later rows can be deliberately corrupt.
+    fn vault_with_entity() -> (TempDir, Vault) {
+        let dir = TempDir::new().expect("tempdir");
+        let mut vault = Vault::open_path(dir.path()).expect("open");
+        vault.init(PASSWORD).expect("init");
+        let conn = vault.connection().expect("conn");
+        conn.pragma_update(None, "foreign_keys", "OFF")
+            .expect("foreign keys off");
+        conn.execute(
+            "INSERT INTO entities (id, name, base_currency, chart_template, created_at)
+             VALUES (?1, 'Test', 'EUR', 'blank', '2026-01-01T00:00:00Z')",
+            [ENTITY],
+        )
+        .expect("entity");
+        insert_account(conn, PARENT, "1000", "asset", None);
+        (dir, vault)
+    }
+
+    fn insert_account(
+        conn: &Connection,
+        id: &str,
+        code: &str,
+        account_type: &str,
+        parent: Option<&str>,
+    ) {
+        conn.execute(
+            "INSERT INTO accounts (id, entity_id, code, name, account_type, parent_id,
+                                   is_active, is_system, sort_order)
+             VALUES (?1, ?2, ?3, 'Account', ?4, ?5, 1, 0, 10)",
+            rusqlite::params![id, ENTITY, code, account_type, parent],
+        )
+        .expect("account row");
+    }
+
+    fn account_id(raw: &str) -> AccountId {
+        AccountId(parse_uuid(raw).expect("uuid"))
+    }
+
+    fn io_message(result: Result<Account>) -> String {
+        match result {
+            Err(Error::Io(message)) => message,
+            other => panic!("expected an I/O error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_child_row_maps_with_its_parent() {
+        let (_dir, vault) = vault_with_entity();
+        let conn = vault.connection().expect("conn");
+        insert_account(conn, CHILD, "1010", "expense", Some(PARENT));
+
+        let child = get_account(conn, account_id(CHILD)).expect("child");
+        assert_eq!(child.parent_id, Some(account_id(PARENT)));
+        assert_eq!(child.account_type, AccountType::Expense);
+        assert_eq!(child.entity_id, EntityId(parse_uuid(ENTITY).expect("uuid")));
+        assert!(child.is_active);
+        assert!(!child.is_system);
+        assert_eq!(child.sort_order, 10);
+
+        let parent = get_account(conn, account_id(PARENT)).expect("parent");
+        assert_eq!(parent.parent_id, None);
+    }
+
+    #[test]
+    fn an_unknown_account_type_is_a_conversion_error_not_a_panic() {
+        let (_dir, vault) = vault_with_entity();
+        let conn = vault.connection().expect("conn");
+        insert_account(conn, CHILD, "1010", "bogus", None);
+
+        let message = io_message(get_account(conn, account_id(CHILD)));
+        assert!(message.contains("unknown account type: bogus"), "{message}");
+    }
+
+    #[test]
+    fn a_malformed_parent_id_is_a_conversion_error() {
+        let (_dir, vault) = vault_with_entity();
+        let conn = vault.connection().expect("conn");
+        insert_account(conn, CHILD, "1010", "asset", Some("not-a-uuid"));
+
+        let message = io_message(get_account(conn, account_id(CHILD)));
+        assert!(message.contains("index: 5"), "{message}");
+    }
+
+    #[test]
+    fn a_malformed_account_id_is_a_conversion_error() {
+        let (_dir, vault) = vault_with_entity();
+        let conn = vault.connection().expect("conn");
+        insert_account(conn, "not-a-uuid", "1010", "asset", None);
+
+        let entity = EntityId(parse_uuid(ENTITY).expect("uuid"));
+        let Err(Error::Io(message)) = list_accounts(conn, entity) else {
+            panic!("a corrupt id must fail the listing");
+        };
+        assert!(message.contains("index: 0"), "{message}");
+    }
+
+    #[test]
+    fn listing_fails_on_any_corrupt_row_instead_of_skipping_it() {
+        let (_dir, vault) = vault_with_entity();
+        let conn = vault.connection().expect("conn");
+        let entity = EntityId(parse_uuid(ENTITY).expect("uuid"));
+        assert_eq!(list_accounts(conn, entity).expect("clean").len(), 1);
+
+        insert_account(conn, CHILD, "1010", "bogus", None);
+        let Err(Error::Io(message)) = list_accounts(conn, entity) else {
+            panic!("a corrupt row must fail the listing");
+        };
+        assert!(message.contains("unknown account type"), "{message}");
+    }
+}
