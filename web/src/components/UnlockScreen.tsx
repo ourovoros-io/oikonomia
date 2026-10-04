@@ -22,6 +22,7 @@ import {
 import { asCommandError, commandErrorMessage } from '../lib/commandError'
 import { restoreCommandError, restoreConfirm } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
+import { LanguagePill } from './LanguagePill'
 import { Button, ErrorBanner, Field, Input } from './ui'
 
 type Props = {
@@ -38,7 +39,7 @@ const IDLE: UpdateUiState = { kind: 'idle' }
 const SUCCESS_BEAT_MS = 420
 
 export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props) {
-  const { t } = useI18n()
+  const { t, locale, setLocale, languageChangeFailed } = useI18n()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false)
@@ -271,6 +272,17 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
       </div>
 
       <div className="flex shrink-0 flex-col items-center gap-2 px-4 pt-2 pb-6">
+        {/* The first book's account names are written in this language for good. */}
+        <LanguagePill
+          value={locale}
+          onChange={setLocale}
+          ariaLabel={t('settings.language.title')}
+        />
+        {languageChangeFailed ? (
+          <p role="alert" className="text-[12px] text-[var(--color-danger)]">
+            {t('settings.language.error')}
+          </p>
+        ) : null}
         <button
           type="button"
           className="h-6 text-[13px] font-medium text-[var(--color-muted)] outline-none hover:text-[var(--color-fg-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"

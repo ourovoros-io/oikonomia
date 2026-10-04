@@ -425,6 +425,13 @@ export const api = {
     isTauri() ? call<DonationAddress[]>('donation_addresses') : Promise.resolve([]),
   /** Locale is a plaintext pref (Rust side): readable before unlock. */
   getLocale: () => call<Locale>('settings_get_locale'),
+  /**
+   * First run: Rust picks the language from the system's preferred languages
+   * (reported here, never decided here), stores it and returns it. Once a
+   * language is stored it is returned unchanged.
+   */
+  resolveLocale: (systemLanguages: string[]) =>
+    call<Locale>('settings_resolve_locale', { systemLanguages }),
   setLocale: (locale: Locale) => call<void>('settings_set_locale', { locale }),
   /** Full plaintext UI prefs (tray last-used + locale). Safe before unlock. */
   getUiPrefs: () => call<UiPrefs>('settings_get_ui_prefs'),
