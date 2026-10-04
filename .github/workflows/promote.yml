@@ -8,6 +8,11 @@
 # baked public key, strip every asset outside the tested allow-list, upload
 # the signed feed, and only then publish the draft.
 #
+# macOS and Linux are always published. The Windows installer is published
+# only with `publish_windows`, which stays off until it is code-signed. Which
+# file fills which feed entry, and which assets survive, is decided by
+# `oikonomia-update`'s `release_set` module, not by shell patterns here.
+#
 # Needs (Environment `release`):
 #   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 name: Promote release
@@ -23,6 +28,10 @@ on:
         description: Assemble, sign, and verify the feed without publishing
         type: boolean
         default: false
+      publish_windows:
+        description: Publish the Windows installer too (leave off until it is code-signed)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,8 +44,11 @@ jobs:
     # contents; nothing else is granted.
     permissions:
       contents: write
+      # Read the Release workflow's result for the tag.
+      actions: read
     env:
       TAG: ${{ inputs.tag }}
+      WINDOWS_FLAG: ${{ inputs.publish_windows && '--with-windows' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,6 +87,34 @@ jobs:
             exit 1
           fi
 
+      # The Release workflow uploads each installer to the draft before it
+      # smoke-tests it, so a draft can hold installers whose test failed.
+      # Promote only what a fully green Release run produced.
+      - name: Require a green Release run for the tag (fail-closed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The latest run on the tag, whatever started it: a manual run on
+          # the tag uploads to the same draft, so a green tag push followed
+          # by a red manual run must block too.
+          gh run list --repo "${GITHUB_REPOSITORY}" --workflow release.yml \
+            --branch "${TAG}" --limit 1 \
+            --json conclusion,headSha --jq '.[0] // {} | "\(.conclusion | if . == null or . == "" then "unfinished" else . end) \(.headSha // "none")"' > run.txt
+          read -r conclusion run_sha < run.txt
+          if [ "${conclusion}" != "success" ]; then
+            echo "::error::the latest Release run for ${TAG} is '${conclusion}', not 'success'; refusing to promote"
+            exit 1
+          fi
+
+          # The run must have built the commit the tag points at now.
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha > tag-sha.txt
+          tag_sha="$(cat tag-sha.txt)"
+          if [ "${run_sha}" != "${tag_sha}" ]; then
+            echo "::error::the Release run built ${run_sha}, but ${TAG} is ${tag_sha}; refusing to promote"
+            exit 1
+          fi
+
       - name: Download draft release artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -83,30 +123,20 @@ jobs:
           gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" --dir artifacts
           ls -la artifacts
 
-      - name: Assemble latest.json (darwin only)
+      - name: Assemble latest.json
         run: |
           set -euo pipefail
-          shopt -s nullglob
           # tauri-action uploads its own latest.json to the draft; ours is the only one that ships.
           rm -f artifacts/latest.json artifacts/latest.json.sig
-          matches=(artifacts/*.app.tar.gz)
-          if [ "${#matches[@]}" -ne 1 ]; then
-            found="${matches[*]:-}"
-            if [ -z "$found" ]; then
-              found="(no matches)"
-            fi
-            echo "::error::expected exactly one .app.tar.gz, found: $found"
-            exit 1
-          fi
-          aarch64="$(basename "${matches[0]}")"
-          # macos-latest builds arm64 and Tauri 2 omits the arch from macOS bundle names; a second darwin arch will need explicit naming when it exists.
-          platforms=(--platform "darwin-aarch64=${aarch64}")
           printf '%s' "Oikonomia ${TAG}" > notes.txt
+          # Fails when a platform has no artifact or more than one.
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
           cargo run -p oikonomia-update --bin assemble_feed -- assemble \
             --version "${TAG}" \
             --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
             --dir artifacts --out artifacts/latest.json --notes-file notes.txt \
-            "${platforms[@]}"
+            ${WINDOWS_FLAG}
+          cat artifacts/latest.json
 
       - name: Sign latest.json with the updater key
         env:
@@ -128,6 +158,21 @@ jobs:
             --manifest artifacts/latest.json --sig artifacts/latest.json.sig \
             --pubkey "${pubkey}"
 
+      # One line per published file, so anyone can check a download with
+      # `sha256sum --check`. Written after the feed is signed so it covers
+      # latest.json and its signature too. A withheld Windows installer is
+      # not listed.
+      - name: Write SHA256SUMS for the published files
+        run: |
+          set -euo pipefail
+          rm -f artifacts/SHA256SUMS
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
+          cargo run -p oikonomia-update --bin assemble_feed -- checksums \
+            --dir artifacts --out artifacts/SHA256SUMS ${WINDOWS_FLAG}
+          cat artifacts/SHA256SUMS
+          # Prove the file is in the format people will check it with.
+          (cd artifacts && sha256sum --check --strict SHA256SUMS)
+
       - name: Publish the draft
         if: ${{ inputs.dry_run != true }}
         env:
@@ -135,37 +180,32 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Ship an explicit allow-list only. The draft also carries the Linux
-          # AppImage/.deb, which never went through the
-          # smoke-tested darwin feed above; remove them so the published
-          # release holds exactly what the feed names and nothing un-vetted.
-          is_published_asset() {
-            case "$1" in
-              *.app.tar.gz | *.app.tar.gz.sig | *.dmg | latest.json | latest.json.sig)
-                return 0
-                ;;
-              *)
-                return 1
-                ;;
-            esac
-          }
+          # Ship an explicit allow-list only: delete every draft asset the
+          # release set does not publish (a withheld Windows installer, stray
+          # formats), so the release holds what the feed names and no more.
+          # Each list goes through a file, not a process substitution: a
+          # failing command must stop the job here, not leave an empty list
+          # that would publish the draft unfiltered.
+          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' > assets.txt
+          mapfile -t assets < assets.txt
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
+          cargo run --quiet -p oikonomia-update --bin assemble_feed -- \
+            unpublished ${WINDOWS_FLAG} "${assets[@]}" > removed.txt
+          mapfile -t removed < removed.txt
 
-          removed=()
-          while IFS= read -r asset; do
+          for asset in "${removed[@]}"; do
             [ -z "${asset}" ] && continue
-            if ! is_published_asset "${asset}"; then
-              gh release delete-asset "${TAG}" "${asset}" --repo "${GITHUB_REPOSITORY}" --yes
-              removed+=("${asset}")
-            fi
-          done < <(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
+            gh release delete-asset "${TAG}" "${asset}" --repo "${GITHUB_REPOSITORY}" --yes
+          done
 
           if [ "${#removed[@]}" -gt 0 ]; then
-            echo "::warning::removed assets outside the smoke-tested darwin feed: ${removed[*]}"
+            echo "::warning::removed assets outside the published release set: ${removed[*]}"
           fi
 
           # Replace tauri-action's latest.json with the one assembled, signed,
-          # and verified above. The draft is still invisible at this point.
-          gh release upload "${TAG}" artifacts/latest.json artifacts/latest.json.sig \
+          # and verified above, and add the checksum file. The draft is still invisible at this point.
+          gh release upload "${TAG}" \
+            artifacts/latest.json artifacts/latest.json.sig artifacts/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
           # Last step on purpose: until here nothing is public, so a failure

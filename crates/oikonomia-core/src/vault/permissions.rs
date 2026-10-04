@@ -40,11 +40,17 @@ pub(crate) fn create_private_file(path: &Path) -> Result<File> {
 /// Best effort: a filesystem that cannot hold the mode (a FAT stick, a file
 /// owned by someone else) must not make the vault unusable, so a failure is
 /// logged instead of returned.
+#[cfg(unix)]
 pub(crate) fn restrict_to_owner(path: &Path) {
     if let Err(err) = set_owner_only_mode(path) {
         log::warn!("could not restrict {} to its owner: {err}", path.display());
     }
 }
+
+/// Windows has no file modes; the per-user ACL of `AppData` already keeps
+/// other accounts out, so there is nothing to tighten.
+#[cfg(not(unix))]
+pub(crate) fn restrict_to_owner(_path: &Path) {}
 
 #[cfg(unix)]
 fn private_dir_builder() -> DirBuilder {
@@ -89,11 +95,6 @@ fn set_owner_only_mode(path: &Path) -> std::io::Result<()> {
 
     let mode = if path.is_dir() { DIR_MODE } else { FILE_MODE };
     set_permissions(path, Permissions::from_mode(mode))
-}
-
-#[cfg(not(unix))]
-fn set_owner_only_mode(_path: &Path) -> std::io::Result<()> {
-    Ok(())
 }
 
 #[cfg(all(test, unix))]

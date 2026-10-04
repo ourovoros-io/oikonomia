@@ -44,13 +44,16 @@ cargo tauri dev
   `LEFT JOIN ... ON` clause (that pattern silently disables the filters).
 - Vault data is **encrypted at rest**; no plaintext DB on disk. Vault files are
   owner-only (`vault/permissions.rs`).
-- Network exists ONLY on the click-driven update path (`oikonomia-update` + `tauri-plugin-updater` install engine). `oikonomia-core` stays fully offline (`scripts/assert-core-offline.sh`); `deny.toml` wrappers confine every socket-capable crate to that path.
+- Network exists ONLY on the click-driven update path (`oikonomia-update`, which uses `ureq`). `oikonomia-core` stays fully offline (`scripts/assert-core-offline.sh`); `deny.toml` wrappers confine every socket-capable crate to that path.
+- An update is installed the way the running copy was installed (`update_exec.rs` `InstallKind`). A package-managed copy (`.deb`) never writes over itself.
 - Path-taking IPC commands accept only paths the user handed over through a
   native drop or a native dialog (`AppState::grant_paths`).
 - Journal CSV export neutralizes formula-leading cells; `parse_journal_export`
   reverses it.
 - Idle auto-lock is enforced by the Rust watchdog (`spawn_auto_lock`), not the UI timer.
-- Tray left-click opens the quick-add companion window (`quick-add` label); right-click is the tray menu.
+- Tray left-click opens the quick-add companion window (`quick-add` label); right-click is the tray menu. Linux trays report no clicks, so there the menu has a "Quick add" item.
+- One process per user: a second launch on Windows or Linux shows the running app's window and exits (`with_single_instance`).
+- Platform-conditional code is checked by CI on Linux, Windows and macOS runners; the `bundle` job installs and runs the real installers (`scripts/smoke-linux.sh`, `scripts/smoke-windows.ps1`).
 - The UI never renders raw backend text. Backend text is a code plus
   parameters that the UI words, or stored text that core wrote (seeded account
   names, generated descriptions). Accounts are never chosen by name: defaults

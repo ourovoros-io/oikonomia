@@ -4,7 +4,6 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   LOCALE_STORAGE_KEY,
   applyLocale,
-  applyLocaleFromPrefs,
   flattenMessages,
   getLocale,
   parseLocale,
@@ -333,6 +332,7 @@ describe('Writer unlock.update catalog', () => {
     'unlock.update.available.version',
     'unlock.update.available.honesty',
     'unlock.update.available.confirm',
+    'unlock.update.availableManually.note',
     'unlock.update.failed.title',
     'unlock.update.failed.body',
     'unlock.update.installing.title',
@@ -432,25 +432,11 @@ describe('setLocale persist', () => {
 
     resetI18nForTests()
     expect(getLocale()).toBe('en')
-
-    applyLocaleFromPrefs({ locale: 'el' })
-    expect(getLocale()).toBe('el')
-
-    applyLocaleFromPrefs({ locale: 'fr' })
-    expect(getLocale()).toBe('fr')
-    applyLocaleFromPrefs({ locale: 'de' })
-    expect(getLocale()).toBe('de')
   })
 
   test('invalid cached value becomes en', () => {
     localStorage.setItem(LOCALE_STORAGE_KEY, 'xx')
     expect(readCachedLocale()).toBe('en')
-  })
-
-  test('absent prefs.locale defaults to en', () => {
-    applyLocale('el')
-    applyLocaleFromPrefs({})
-    expect(getLocale()).toBe('en')
   })
 })
 

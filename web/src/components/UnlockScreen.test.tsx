@@ -454,6 +454,27 @@ describe('UnlockScreen check for update', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  test('a package-managed copy shows the version and how to get it, with no install button', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'availableManually', version: '0.2.0' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'An update is available' })).toBeTruthy()
+    })
+
+    expect(screen.getByText('Oikonomia 0.2.0')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'This copy was installed from a system package, so it cannot update itself. Download the new package from the Oikonomia releases page and install it the same way.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Install and restart' })).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(updateInstall).not.toHaveBeenCalled()
+  })
+
   test('available renders version + honesty, never notes or size, and install is the only invoke', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.1' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)

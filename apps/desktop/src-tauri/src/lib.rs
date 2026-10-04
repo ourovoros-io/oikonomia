@@ -30,49 +30,51 @@ use tauri::Manager;
 /// Panics if the Tauri runtime fails to start or the vault data dir is unusable.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    with_desktop_plugins(tauri::Builder::default().plugin(nav_guard::plugin()))
-        .setup(|app| {
-            // The bundled .app gets its Dock icon from icon.icns; dev mode runs
-            // the bare binary, so set the icon at runtime as well.
-            macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
+    with_desktop_plugins(
+        with_single_instance(tauri::Builder::default()).plugin(nav_guard::plugin()),
+    )
+    .setup(|app| {
+        // The bundled .app gets its Dock icon from icon.icns; dev mode runs
+        // the bare binary, so set the icon at runtime as well.
+        macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
 
-            let resource_dir = app.path().resource_dir().ok();
-            let ocr_dir = resolve_ocr_model_dir(resource_dir);
-            log::info!("OCR model dir: {}", ocr_dir.display());
+        let resource_dir = app.path().resource_dir().ok();
+        let ocr_dir = resolve_ocr_model_dir(resource_dir);
+        log::info!("OCR model dir: {}", ocr_dir.display());
 
-            let app_state = AppState::new(ocr_dir).expect("failed to open vault data directory");
-            let watchdog = app_state.watchdog_handles();
+        let app_state = AppState::new(ocr_dir).expect("failed to open vault data directory");
+        let watchdog = app_state.watchdog_handles();
 
-            // Native window appearance (scrollbars, controls, title bar) must
-            // match the app, not the OS preference. The UI is dark-only, so a
-            // user who once picked the retired light theme still gets dark
-            // native chrome instead of a light title bar around a dark window.
-            let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
-            app.handle().set_theme(Some(tauri::Theme::Dark));
+        // Native window appearance (scrollbars, controls, title bar) must
+        // match the app, not the OS preference. The UI is dark-only, so a
+        // user who once picked the retired light theme still gets dark
+        // native chrome instead of a light title bar around a dark window.
+        let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
+        app.handle().set_theme(Some(tauri::Theme::Dark));
 
-            tray::init(app, prefs.locale)?;
+        tray::init(app, prefs.locale)?;
 
-            app.manage(app_state);
+        app.manage(app_state);
 
-            // Rust-side idle lock: guarantees the vault locks even if the
-            // webview throttles timers or stalls entirely.
-            state::spawn_auto_lock(app.handle().clone(), watchdog);
+        // Rust-side idle lock: guarantees the vault locks even if the
+        // webview throttles timers or stalls entirely.
+        state::spawn_auto_lock(app.handle().clone(), watchdog);
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+        if cfg!(debug_assertions) {
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )?;
+        }
 
-            Ok(())
-        })
-        .invoke_handler(ipc_commands())
-        .on_window_event(on_window_event)
-        .build(tauri::generate_context!())
-        .expect("failed to start Oikonomia")
-        .run(on_run_event);
+        Ok(())
+    })
+    .invoke_handler(ipc_commands())
+    .on_window_event(on_window_event)
+    .build(tauri::generate_context!())
+    .expect("failed to start Oikonomia")
+    .run(on_run_event);
 }
 
 fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
@@ -86,7 +88,27 @@ fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
     let _ = (app, event);
 }
 
-/// Dialog, window-state, and updater install engine. No `check()` here.
+/// A second launch surfaces the running app's main window and exits.
+///
+/// Registered before every other plugin so the second process stops before
+/// it creates a window or touches the vault directory. Without it, closing
+/// the window to the tray on a desktop that shows no tray (stock GNOME) would
+/// leave the app running with no way back in, and a relaunch would open the
+/// same vault from two processes.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+fn with_single_instance(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder.plugin(tauri_plugin_single_instance::init(
+        |app, _arguments, _working_directory| tray::show_main_window(app),
+    ))
+}
+
+/// macOS routes a second launch to the running app itself (`RunEvent::Reopen`).
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn with_single_instance(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
+    builder
+}
+
+/// Dialog, window-state, and opener. Updates are installed by `update_exec`.
 fn with_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder
         .plugin(tauri_plugin_dialog::init())
@@ -103,8 +125,6 @@ fn with_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<t
         )
         // Used from Rust only (open_support_email); the webview holds no opener permission.
         .plugin(tauri_plugin_opener::init())
-        // Registered only. Install execs the wrapper-verified path; no check API.
-        .plugin(tauri_plugin_updater::Builder::new().build())
 }
 
 /// Every IPC command the webview may invoke; nothing else is reachable.
@@ -166,6 +186,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::settings_set_lock_timeout,
         commands::settings_get_locale,
         commands::settings_set_locale,
+        commands::settings_resolve_locale,
         commands::settings_get_ui_prefs,
         commands::settings_remember_quick_add,
         commands::open_main_window,

@@ -81,6 +81,9 @@
         "honesty": "C’est la seule fois où Oikonomia se connecte à Internet, et uniquement pour télécharger une mise à jour.",
         "confirm": "Installer et redémarrer"
       },
+      "availableManually": {
+        "note": "Cette copie a été installée à partir d’un paquet système ; elle ne peut donc pas se mettre à jour elle-même. Téléchargez le nouveau paquet depuis la page des versions d’Oikonomia et installez-le de la même façon."
+      },
       "failed": {
         "title": "Vérification impossible",
         "body": "Vous restez sur cette version."

@@ -81,6 +81,9 @@
         "honesty": "Das ist das einzige Mal, dass Oikonomia sich mit dem Internet verbindet, und nur, um ein Update herunterzuladen.",
         "confirm": "Installieren und neu starten"
       },
+      "availableManually": {
+        "note": "Diese Kopie wurde aus einem Systempaket installiert und kann sich daher nicht selbst aktualisieren. Laden Sie das neue Paket von der Release-Seite von Oikonomia herunter und installieren Sie es auf dieselbe Weise."
+      },
       "failed": {
         "title": "Prüfung nicht möglich",
         "body": "Sie bleiben bei dieser Version."

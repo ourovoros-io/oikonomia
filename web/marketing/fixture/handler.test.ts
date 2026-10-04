@@ -9,6 +9,7 @@ describe('marketing IPC handler', () => {
 
     expect(h('vault_status')).toBe('unlocked')
     expect(h('settings_get_locale')).toBe('el')
+    expect(h('settings_resolve_locale', { systemLanguages: ['fr-FR'] })).toBe('el')
   })
 
   test('answers dashboard reads with consistent data', () => {

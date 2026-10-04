@@ -73,6 +73,26 @@ fn windows_installer_bundles_the_webview2_runtime_offline() {
 }
 
 #[test]
+fn windows_installs_per_user_so_updates_need_no_elevation() {
+    // `update_exec` starts the new installer as a plain child process. A
+    // per-machine install would need elevation, which that spawn cannot ask
+    // for, and every update would fail.
+    let mode = &config()["bundle"]["windows"]["nsis"]["installMode"];
+    assert_eq!(mode, "currentUser");
+}
+
+#[test]
+fn bundle_targets_are_exactly_the_formats_the_updater_and_release_know() {
+    // No MSI and no RPM: nothing in the update path or the release
+    // workflows handles them, so they must not be built by accident.
+    let targets = &config()["bundle"]["targets"];
+    assert_eq!(
+        targets,
+        &serde_json::json!(["app", "dmg", "deb", "appimage", "nsis"])
+    );
+}
+
+#[test]
 fn bundle_identity_belongs_to_ourovoros() {
     let conf = config();
     assert_eq!(conf["identifier"], "io.ourovoros.oikonomia");
@@ -118,6 +138,49 @@ fn webview_has_no_opener_permission() {
         .collect();
 
     assert!(opener.is_empty(), "webview opener permissions: {opener:?}");
+}
+
+#[test]
+fn the_first_run_language_command_is_registered() {
+    let registrations = include_str!("lib.rs");
+
+    assert!(
+        registrations.contains("commands::settings_resolve_locale,"),
+        "settings_resolve_locale is not in the command list"
+    );
+}
+
+#[test]
+fn an_app_command_needs_no_new_webview_permission() {
+    // App commands registered in the invoke handler are callable by every
+    // window in the capability; the permission list stays exactly as audited.
+    let capabilities: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json"))
+            .expect("capabilities json");
+
+    let permissions: Vec<&str> = capabilities["permissions"]
+        .as_array()
+        .expect("permissions array")
+        .iter()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+
+    assert_eq!(
+        permissions,
+        [
+            "core:default",
+            "core:event:default",
+            "core:window:allow-show",
+            "core:window:allow-hide",
+            "core:window:allow-close",
+            "core:window:allow-set-focus",
+            "core:window:allow-set-size",
+            "core:window:allow-set-position",
+            "core:window:allow-outer-position",
+            "core:window:allow-outer-size",
+            "core:window:allow-is-visible",
+        ]
+    );
 }
 
 #[test]

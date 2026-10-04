@@ -28,12 +28,6 @@ const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
 const MAX_REDIRECTS: u8 = 5;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// OS temp subdirectory used as the updater cache. Never the vault data dir.
-#[must_use]
-pub fn default_updater_cache_dir() -> PathBuf {
-    std::env::temp_dir().join("oikonomia-updater")
-}
-
 /// `{os}-{arch}` used by Tauri static manifests (`linux-x86_64`, `darwin-aarch64`).
 #[must_use]
 pub fn current_updater_platform() -> String {
@@ -42,6 +36,36 @@ pub fn current_updater_platform() -> String {
         other => other,
     };
     format!("{os}-{}", std::env::consts::ARCH)
+}
+
+/// How this copy of the app receives a new version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallRoute {
+    /// The app replaces itself: a macOS bundle, an `AppImage`, or a Windows
+    /// per-user installer.
+    InApp,
+    /// The files belong to the system package manager (a `.deb` install).
+    /// The app may report a newer version but must never write over itself.
+    PackageManager,
+}
+
+/// What the platform installer did with a verified artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallHandoff {
+    /// The new version is on disk in place of the old one; restart into it.
+    Replaced,
+    /// A separate installer process is running from the artifact and will
+    /// replace the app once this process exits. The artifact must stay.
+    InstallerStarted,
+}
+
+/// Result of [`crate::UpdateMachine::install`] from a legal state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallOutcome {
+    /// Download, verification, or the installer failed; nothing was replaced.
+    Failed,
+    /// The installer ran; the caller restarts or exits as the handoff says.
+    Installed(InstallHandoff),
 }
 
 /// Inputs for one check or install. The webview cannot supply a URL or pubkey.
@@ -54,6 +78,7 @@ pub struct ClientConfig {
     timeout: Duration,
     cache_dir: PathBuf,
     host_policy: HostPolicy,
+    install_route: InstallRoute,
 }
 
 impl ClientConfig {
@@ -64,13 +89,18 @@ impl ClientConfig {
     /// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or invalid,
     /// [`UpdateError::InvalidFeedUrl`] when the feed constant does not parse, or
     /// [`UpdateError::ManifestParse`] when `current_version` is not `SemVer`.
-    pub fn production(public_key: &str, current_version: &str, cache_dir: PathBuf) -> Result<Self> {
+    pub fn production(
+        public_key: &str,
+        current_version: &str,
+        cache_dir: PathBuf,
+        install_route: InstallRoute,
+    ) -> Result<Self> {
         let feed_url = Url::parse(UPDATE_FEED_URL).map_err(|_| UpdateError::InvalidFeedUrl)?;
         let host_policy = HostPolicy::production();
         if !host_policy.is_allowed_fetch_url(&feed_url) {
             return Err(UpdateError::ArtifactUrl);
         }
-        Self::new(
+        let config = Self::new(
             feed_url,
             public_key,
             current_version,
@@ -78,7 +108,11 @@ impl ClientConfig {
             cache_dir,
             host_policy,
             DEFAULT_TIMEOUT,
-        )
+        )?;
+        Ok(Self {
+            install_route,
+            ..config
+        })
     }
 
     fn new(
@@ -102,10 +136,13 @@ impl ClientConfig {
             timeout,
             cache_dir,
             host_policy,
+            install_route: InstallRoute::InApp,
         })
     }
 
-    /// Directory where artifacts are written. Callers must not pass the vault data dir.
+    /// Directory where artifacts are written. Callers pass a directory under
+    /// the user's own cache location: never the vault data dir, and never a
+    /// directory other accounts can write to.
     #[must_use]
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
@@ -133,6 +170,13 @@ impl ClientConfig {
             timeout,
         )
     }
+
+    pub(crate) fn with_install_route(self, install_route: InstallRoute) -> Self {
+        Self {
+            install_route,
+            ..self
+        }
+    }
 }
 
 /// Artifact metadata taken only after the detached manifest signature verifies.
@@ -145,16 +189,26 @@ pub struct VerifiedOffer {
     artifact_url: Url,
     artifact_signature: String,
     sha256: [u8; 32],
+    install_route: InstallRoute,
 }
 
 impl VerifiedOffer {
-    /// Version and notes for [`UpdateStatus::Available`].
+    /// The status this offer puts the machine in: installable in-app, or
+    /// only reported when the package manager owns the files.
     #[must_use]
     pub fn status(&self) -> UpdateStatus {
-        UpdateStatus::Available {
-            version: self.version.clone(),
-            notes: self.notes.clone(),
+        let version = self.version.clone();
+        let notes = self.notes.clone();
+        match self.install_route {
+            InstallRoute::InApp => UpdateStatus::Available { version, notes },
+            InstallRoute::PackageManager => UpdateStatus::AvailableManually { version, notes },
         }
+    }
+
+    /// How this copy of the app may take the offer.
+    #[must_use]
+    pub fn install_route(&self) -> InstallRoute {
+        self.install_route
     }
 }
 
@@ -276,6 +330,7 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
         artifact_url,
         artifact_signature: signature.to_owned(),
         sha256,
+        install_route: config.install_route,
     })
 }
 
@@ -287,13 +342,16 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
 ///
 /// Returns [`UpdateError::ArtifactIntegrity`] or [`UpdateError::Network`] / [`UpdateError::ArtifactUrl`].
 pub fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
-    if let Err(err) = std::fs::create_dir_all(&config.cache_dir) {
+    if let Err(err) = prepare_cache_dir(&config.cache_dir) {
         log::warn!("updater cache create failed: {err}");
         return Err(UpdateError::Network);
     }
-    let dest = config
-        .cache_dir
-        .join(format!("artifact-{}", to_hex(&offer.sha256)));
+    purge_cache(&config.cache_dir);
+    let dest = config.cache_dir.join(format!(
+        "{}-{}",
+        to_hex(&offer.sha256),
+        artifact_file_name(&offer.artifact_url)
+    ));
     match download_and_verify_inner(config, offer, &dest) {
         Ok(()) => Ok(dest),
         Err(err) => {
@@ -327,11 +385,104 @@ fn download_and_verify_inner(
     }
     verify_minisign(&config.public_key, &bytes, &offer.artifact_signature)
         .map_err(|_| UpdateError::ArtifactIntegrity)?;
-    std::fs::write(dest, &bytes).map_err(|err| {
+    write_new_private_file(dest, &bytes).map_err(|err| {
         log::warn!("updater artifact write failed: {err}");
         UpdateError::Network
     })?;
     Ok(())
+}
+
+/// Creates the cache directory for this user only.
+///
+/// The verified artifact is read back from here by path and then run, so
+/// nobody else may be able to swap it in between. On Unix the directory is
+/// forced to mode `0700`; that fails, and the install with it, when the
+/// directory belongs to another account. The caller passes a directory under
+/// the user's own cache location, never a shared temporary directory.
+fn prepare_cache_dir(cache_dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(cache_dir)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(cache_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    Ok(())
+}
+
+/// Writes `bytes` to a file that must not exist yet. `create_new` refuses an
+/// existing path, a symbolic link included, so the write cannot be
+/// redirected to a file outside the cache.
+pub(crate) fn write_new_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// Local file name for a downloaded artifact: the last segment of its URL,
+/// reduced to ASCII letters, digits, `.`, `-` and `_`.
+///
+/// The extension has to survive the download. The installers choose their
+/// action from it, and Windows will not start a program whose name has no
+/// extension.
+fn artifact_file_name(url: &Url) -> String {
+    const MAX_NAME_CHARS: usize = 96;
+
+    let segment = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or("");
+
+    let mut name = String::new();
+    for ch in segment.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+            name.push(ch);
+        } else {
+            name.push('_');
+        }
+    }
+
+    // Keep the tail: that is where the extension lives.
+    let excess = name.len().saturating_sub(MAX_NAME_CHARS);
+    let name = name.split_off(excess);
+    let name = name.trim_start_matches('.');
+
+    if name.is_empty() {
+        "artifact".to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// Removes files left by earlier installs. Best effort: an installer that is
+/// still running keeps its file, which the next download clears.
+///
+/// Symbolic links are removed too, never followed: `file_type` describes the
+/// entry itself.
+fn purge_cache(cache_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if !is_directory {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 /// Removes `path` if it exists. Used after a failed install or after exec.
@@ -463,5 +614,5 @@ pub trait ArtifactInstaller {
     /// # Errors
     ///
     /// Returns an [`UpdateError`] when the platform installer cannot run.
-    fn install(&self, artifact: &Path) -> Result<()>;
+    fn install(&self, artifact: &Path) -> Result<InstallHandoff>;
 }

@@ -37,20 +37,35 @@ Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 - Dashboard: month, quarter, or year income, expenses, and assets, with savings and spending arcs and a cash-flow chart; every empty page offers a first-run "create a book" CTA
 - Cash-flow chart on the Transactions page
 - Documents page: every stored file in the book, with an in-app viewer and export
-- Closing the window hides the app to the tray; window size and position are remembered
+- Closing the window hides the app to the tray; launching it again brings the window back; window size and position are remembered
 - Settings: optional donation addresses with copy buttons
 - Master password must be at least 12 characters
-- Tray quick-add window: left-click the tray to post a simple entry or drop a document without opening the full app
-- Signed, click-driven update check on the unlock screen (minisign-verified, talks only to GitHub's release hosts)
+- Tray quick-add window: left-click the tray (on Linux, choose "Quick add" in the tray menu) to post a simple entry or drop a document without opening the full app
+- Signed, click-driven update check on the unlock screen (minisign-verified, talks only to GitHub's release hosts); every build except the `.deb` updates in place, and the `.deb` only reports a newer version
 - Dark-only "Aurora glass" UI; locale money formatting
-- UI language: English, Ελληνικά, Français, and Deutsch; switch in Settings; persists across relaunch; the interface, error messages, and the names seeded into new books follow the selected language
+- UI language: English, Ελληνικά, Français, and Deutsch; the first launch follows the system language when it is one of these four, switchable on the first screen and in Settings; persists across relaunch; the interface, error messages, and the names seeded into new books follow the selected language
 
 ## Install
 
-No release has been published yet. The first release will appear on the
-repository's Releases page for macOS on Apple Silicon (macOS 12 or later).
-Windows and Linux builds will not be published; you can build them from source
-(see [Develop](#develop)). The in-app updater is macOS-only for now.
+No release has been published yet. Releases appear on this repository's
+Releases page, each with a `SHA256SUMS` file so you can check what you
+downloaded.
+
+| Platform | File | Updates |
+|----------|------|---------|
+| macOS on Apple Silicon (12 or later) | `.dmg` | In the app |
+| Linux x86_64 | `.AppImage` | In the app |
+| Linux x86_64, Debian and Ubuntu | `.deb` | The app tells you when a newer version exists; install the new `.deb` over the old one |
+| Windows 10 and 11, x86_64 | `-setup.exe` | In the app |
+
+The Windows installer is built and tested with every release but is not yet
+published: it has no code-signing certificate, so Windows would show its
+unknown-publisher warning. Until then, build it from source
+(see [Develop](#develop)).
+
+On Linux the tray icon needs a desktop that shows one (KDE, or GNOME with the
+AppIndicator extension). Without it the app works the same; reach quick-add by
+launching the app, which brings the window back.
 
 ## Support
 
@@ -64,7 +79,8 @@ Security reports: see [SECURITY.md](SECURITY.md).
 
 - Rust stable (the workspace declares 1.94 as its minimum; CI tracks the latest stable)
 - Node 22.22.2 or newer on 22.x, 24.15 or newer, or 26 or newer
-- [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode CLT on macOS)
+- [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode CLT on macOS; the WebKitGTK packages on Linux; the MSVC build tools on Windows)
+- On Windows, [Strawberry Perl](https://strawberryperl.com/) ahead of any other `perl` on `PATH`: the vault's SQLCipher builds OpenSSL from source, and the `perl` that ships with Git Bash lacks the modules that build needs
 - Tauri CLI: `cargo install tauri-cli --version "^2" --locked`
 - cargo-deny: `cargo install cargo-deny --locked`
 
@@ -84,7 +100,7 @@ cargo test -p oikonomia-core        # or: make test
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Dependency policy: network crates are banned everywhere except the signed
-# update path (crates/oikonomia-update, tauri-plugin-updater)
+# update path (crates/oikonomia-update)
 cargo deny check
 
 # Frontend
@@ -119,7 +135,8 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
   if you accept an update, its download, both started by a click. They talk only
   to GitHub's release hosts (this repository's published releases) and verify a
   minisign signature over both the update manifest and the downloaded artifact
-  before anything is installed.
+  before anything is installed. The `.deb` build checks for a newer version but
+  never downloads or installs one.
 - The vault and ledger paths (`oikonomia-core`) contain no network code at all;
   `scripts/assert-core-offline.sh` and `cargo deny check` enforce this in CI.
 - Every webview is pinned to the app's own origin (`nav_guard`), and the CSP
@@ -182,5 +199,5 @@ the author's model card declares as CC BY-SA 4.0; see `apps/desktop/src-tauri/re
 
 ## Not yet supported
 
-Budgets, invoicing, multi-currency, recovery key, published Windows and Linux
-builds, App Sandbox.
+Budgets, invoicing, multi-currency, recovery key, a code-signed Windows
+installer, Linux on ARM, App Sandbox.

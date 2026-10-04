@@ -337,6 +337,8 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
         restrict_to_owner(path);
     }
 
+    silence_sqlcipher_log(&conn)?;
+
     // SQLCipher 4.5+ ships with this off. On, it locks and wipes its key and
     // page buffers instead of leaving plaintext in freed heap or swap. The
     // flag is process-global and can only be turned on, so set it before the
@@ -370,6 +372,33 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     Ok(conn)
 }
 
+/// Turn off `SQLCipher`'s own log on Windows, before memory security is on.
+///
+/// With memory security on, `SQLCipher` locks every allocation in RAM. Windows
+/// allows a process only a small locked set, so the lock soon fails, and
+/// `SQLCipher` logs a warning for each failure. On Windows that log line is
+/// built with `SQLite`'s allocator, which tries to lock the new buffer, fails,
+/// and logs again: endless recursion that overflows the stack the first time
+/// a vault is created. With the log off, a failed lock is ignored, and the
+/// buffers are still wiped when freed.
+///
+/// Other platforms write the log without allocating (`fprintf`, or the system
+/// log on macOS), so they keep it.
+#[cfg(windows)]
+fn silence_sqlcipher_log(conn: &Connection) -> Result<()> {
+    conn.pragma_update(None, "cipher_log_level", "NONE")
+        .map_err(|err| Error::Crypto(err.to_string()))
+}
+
+#[cfg(not(windows))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "same signature as the Windows version, which can fail"
+)]
+fn silence_sqlcipher_log(_conn: &Connection) -> Result<()> {
+    Ok(())
+}
+
 fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
 
@@ -377,11 +406,20 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     file.write_all(bytes)
         .map_err(|err| Error::Io(err.to_string()))?;
     file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
-    if let Some(parent) = path.parent() {
-        let dir = fs::File::open(parent).map_err(|err| Error::Io(err.to_string()))?;
+    sync_parent_dir(path);
+    Ok(())
+}
+
+/// Flush the directory entry of `path` so a rename or create survives a crash.
+///
+/// Best effort: Windows cannot open a directory as a file, and the file's own
+/// `sync_all` above already made the contents durable there.
+fn sync_parent_dir(path: &Path) {
+    if let Some(parent) = path.parent()
+        && let Ok(dir) = fs::File::open(parent)
+    {
         let _ = dir.sync_all();
     }
-    Ok(())
 }
 
 fn remove_vault_db_sidecars(db_path: &Path) {
