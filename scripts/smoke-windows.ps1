@@ -44,13 +44,34 @@ $root = Split-Path $PSScriptRoot -Parent
 $out = Join-Path $root 'target\smoke'
 New-Item -ItemType Directory -Force -Path $out | Out-Null
 
+# What a failure needs to be understood from the log alone: is the app still
+# running, what windows does it have, and did Windows record a crash.
+function Show-AppState {
+    Write-Host '-- app processes:'
+    Get-Process -Name $ProcessName -ErrorAction SilentlyContinue |
+        Format-Table Id, MainWindowHandle, MainWindowTitle, StartTime -AutoSize | Out-String | Write-Host
+    Write-Host '-- recent application crashes:'
+    Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Application Error' } `
+        -MaxEvents 3 -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.TimeCreated.ToString('o'); $_.Message } | Out-String | Write-Host
+}
+
 function Fail([string]$message) {
-    Write-Error "smoke FAILED: $message"
+    Show-AppState
+    Write-Host "smoke FAILED: $message"
     exit 1
 }
 
+trap {
+    Write-Host "smoke FAILED on an unexpected error: $_"
+    Show-AppState
+    exit 1
+}
+
+# PowerShell unrolls a returned array, so one process comes back as a bare
+# object: callers that count or index wrap the call in @( ).
 function Get-App {
-    @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)
+    Get-Process -Name $ProcessName -ErrorAction SilentlyContinue
 }
 
 function Get-AppWindow {
@@ -144,32 +165,33 @@ if ([System.Text.Encoding]::ASCII.GetString($head) -eq 'SQLite format 3') {
     Fail 'the app wrote a plaintext database'
 }
 Start-Sleep -Seconds 5
+if ($null -eq (Get-AppWindow)) { Fail 'the app window is gone after creating the vault' }
 Save-WindowShot (Get-AppWindow) (Join-Path $out 'windows-unlocked.png') | Out-Null
 
 Write-Host '== single instance'
 $second = Start-Process -FilePath $exe -PassThru
 if (-not $second.WaitForExit(30000)) { Fail 'a second launch kept running' }
-$count = (Get-App).Count
+$count = @(Get-App).Count
 if ($count -ne 1) { Fail "expected one process after a second launch, found $count" }
 
 Write-Host '== close hides, relaunch shows'
 (Get-AppWindow).CloseMainWindow() | Out-Null
 Wait-Until 'the window is hidden after close' { $null -eq (Get-AppWindow) }
-if ((Get-App).Count -ne 1) { Fail 'the app quit when its window was closed' }
+if (@(Get-App).Count -ne 1) { Fail 'the app quit when its window was closed' }
 
 $reopen = Start-Process -FilePath $exe -PassThru
 if (-not $reopen.WaitForExit(30000)) { Fail 'the reopening launch kept running' }
 Wait-Until 'the hidden window is shown again' { $null -ne (Get-AppWindow) }
-if ((Get-App).Count -ne 1) { Fail 'reopening left more than one process' }
+if (@(Get-App).Count -ne 1) { Fail 'reopening left more than one process' }
 
 Write-Host '== update handoff'
-$before = (Get-App)[0].Id
+$before = @(Get-App)[0].Id
 Start-Process -FilePath $installer -ArgumentList $UpdateArguments -Wait
 Wait-Until 'the installer starts the new copy' {
     $window = Get-AppWindow
     $null -ne $window -and $window.Id -ne $before
 }
-if ((Get-App).Count -ne 1) { Fail 'the update left more than one process' }
+if (@(Get-App).Count -ne 1) { Fail 'the update left more than one process' }
 Start-Sleep -Seconds 10
 $colours = Save-WindowShot (Get-AppWindow) (Join-Path $out 'windows-after-update.png')
 Write-Host "updated window drawn with $colours distinct colours"

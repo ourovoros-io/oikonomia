@@ -200,6 +200,9 @@ jobs:
   smoke-linux:
     name: smoke (${{ matrix.os }})
     needs: bundle
+    # `bundle` is a matrix; a red Windows leg must not skip the Linux smoke.
+    # If the Linux leg itself failed, the download step below fails instead.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
