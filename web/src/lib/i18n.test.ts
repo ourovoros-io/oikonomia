@@ -332,6 +332,7 @@ describe('Writer unlock.update catalog', () => {
     'unlock.update.available.version',
     'unlock.update.available.honesty',
     'unlock.update.available.confirm',
+    'unlock.update.availableManually.note',
     'unlock.update.failed.title',
     'unlock.update.failed.body',
     'unlock.update.installing.title',

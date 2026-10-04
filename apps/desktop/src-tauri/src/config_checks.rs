@@ -73,6 +73,26 @@ fn windows_installer_bundles_the_webview2_runtime_offline() {
 }
 
 #[test]
+fn windows_installs_per_user_so_updates_need_no_elevation() {
+    // `update_exec` starts the new installer as a plain child process. A
+    // per-machine install would need elevation, which that spawn cannot ask
+    // for, and every update would fail.
+    let mode = &config()["bundle"]["windows"]["nsis"]["installMode"];
+    assert_eq!(mode, "currentUser");
+}
+
+#[test]
+fn bundle_targets_are_exactly_the_formats_the_updater_and_release_know() {
+    // No MSI and no RPM: nothing in the update path or the release
+    // workflows handles them, so they must not be built by accident.
+    let targets = &config()["bundle"]["targets"];
+    assert_eq!(
+        targets,
+        &serde_json::json!(["app", "dmg", "deb", "appimage", "nsis"])
+    );
+}
+
+#[test]
 fn bundle_identity_belongs_to_ourovoros() {
     let conf = config();
     assert_eq!(conf["identifier"], "io.ourovoros.oikonomia");

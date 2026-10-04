@@ -6,12 +6,17 @@
  * size, URL) are dropped so they cannot leak into the UI.
  */
 
-export type UpdateCheckKind = 'upToDate' | 'available' | 'failed'
+export type UpdateCheckKind = 'upToDate' | 'available' | 'availableManually' | 'failed'
 
-/** Result of `update_check`. `available` carries only the version string. */
+/**
+ * Result of `update_check`. `available` carries only the version string.
+ * `availableManually` is a newer version this copy must not install itself:
+ * the system package manager owns its files (a `.deb` install).
+ */
 export type UpdateCheckResult =
   | { kind: 'upToDate' }
   | { kind: 'available'; version: string }
+  | { kind: 'availableManually'; version: string }
   | { kind: 'failed' }
 
 /** The only state from which `update_install` may be invoked. */
@@ -68,6 +73,13 @@ export function parseUpdateCheckResult(value: unknown): ParsedIpcUpdate {
     const version = record.version.trim()
     if (version) return { kind: 'available', version }
   }
+  if (
+    (kind === 'available_manually' || kind === 'availableManually') &&
+    typeof record.version === 'string'
+  ) {
+    const version = record.version.trim()
+    if (version) return { kind: 'availableManually', version }
+  }
   return { kind: 'failed' }
 }
 
@@ -96,6 +108,8 @@ export function readDevUnlockUpdatePreview(): UpdateUiState | null {
       return { kind: 'upToDate' }
     case 'available':
       return { kind: 'available', version: DEV_PREVIEW_VERSION }
+    case 'manual':
+      return { kind: 'availableManually', version: DEV_PREVIEW_VERSION }
     case 'failed':
       return { kind: 'failed' }
     case 'installing':
@@ -114,7 +128,7 @@ export function stubUpdateCheckResult(): UpdateCheckResult {
   if (preview?.kind === 'upToDate' || preview?.kind === 'failed') {
     return preview
   }
-  if (preview?.kind === 'available') {
+  if (preview?.kind === 'available' || preview?.kind === 'availableManually') {
     return preview
   }
   return { kind: 'upToDate' }
