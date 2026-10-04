@@ -280,6 +280,7 @@ jobs:
           args: --bundles deb,appimage
 
       - name: Smoke-test the bundled app
+        timeout-minutes: 15
         run: ./scripts/smoke-linux.sh
 
   windows:
@@ -342,4 +343,5 @@ jobs:
 
       - name: Smoke-test the bundled app
         shell: pwsh
+        timeout-minutes: 15
         run: ./scripts/smoke-windows.ps1

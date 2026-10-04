@@ -122,7 +122,8 @@ $roamingVault = Join-Path $env:APPDATA 'ourovoros\oikonomia'
 Remove-Item -Recurse -Force $localVault, $roamingVault -ErrorAction SilentlyContinue
 
 Write-Host '== install'
-Start-Process -FilePath $installer -ArgumentList '/S' -Wait
+$install = Start-Process -FilePath $installer -ArgumentList '/S' -PassThru
+if (-not $install.WaitForExit(180000)) { Fail 'the silent install did not finish' }
 $installDir = Join-Path $env:LOCALAPPDATA $WindowTitle
 $exe = Join-Path $installDir "$ProcessName.exe"
 if (-not (Test-Path $exe)) {
@@ -186,7 +187,10 @@ if (@(Get-App).Count -ne 1) { Fail 'reopening left more than one process' }
 
 Write-Host '== update handoff'
 $before = @(Get-App)[0].Id
-Start-Process -FilePath $installer -ArgumentList $UpdateArguments -Wait
+# No -Wait: it waits for every descendant too, and with /R the installer
+# starts the app, which keeps running.
+$update = Start-Process -FilePath $installer -ArgumentList $UpdateArguments -PassThru
+if (-not $update.WaitForExit(180000)) { Fail 'the update installer did not finish' }
 Wait-Until 'the installer starts the new copy' {
     $window = Get-AppWindow
     $null -ne $window -and $window.Id -ne $before
