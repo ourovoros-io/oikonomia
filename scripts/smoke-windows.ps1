@@ -1,5 +1,6 @@
 # Smoke-test the BUNDLED Windows app: install the NSIS installer, then prove
 #   - the installed app starts and draws a real window;
+#   - typing a password creates the encrypted vault;
 #   - the vault directory is in local AppData, not roaming;
 #   - a second launch exits and leaves one process (single instance);
 #   - closing the window hides it and keeps the app alive;
@@ -13,6 +14,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -34,6 +36,7 @@ $WindowTitle = 'Oikonomia'
 $WaitSeconds = 90
 # A blank webview is one flat colour; the real unlock screen has thousands.
 $MinDistinctColours = 64
+$Password = 'correct horse battery staple'
 # Must stay identical to NSIS_UPDATE_ARGS in apps/desktop/src-tauri/src/update_exec.rs.
 $UpdateArguments = @('/P', '/UPDATE', '/R')
 
@@ -119,6 +122,29 @@ if ($colours -lt $MinDistinctColours) {
 Write-Host '== vault location'
 if (-not (Test-Path $localVault)) { Fail "no vault directory at $localVault" }
 if (Test-Path $roamingVault) { Fail "the vault directory was created in roaming AppData: $roamingVault" }
+
+Write-Host '== create a vault'
+# The real first-run screen: the password field has focus, Tab moves to the
+# confirmation, Enter submits.
+[SmokeWindow]::SetForegroundWindow((Get-AppWindow).MainWindowHandle) | Out-Null
+Start-Sleep -Seconds 1
+[System.Windows.Forms.SendKeys]::SendWait($Password)
+[System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+[System.Windows.Forms.SendKeys]::SendWait($Password)
+[System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+$vaultDb = Join-Path $localVault 'data\vault.db'
+$vaultHeader = Join-Path $localVault 'data\vault.header.json'
+Wait-Until 'the app creates the encrypted vault' { (Test-Path $vaultDb) -and (Test-Path $vaultHeader) }
+# SQLCipher leaves no readable SQLite header; a plaintext database starts with it.
+$stream = [System.IO.File]::Open($vaultDb, 'Open', 'Read', 'ReadWrite')
+$head = New-Object byte[] 15
+$stream.Read($head, 0, 15) | Out-Null
+$stream.Dispose()
+if ([System.Text.Encoding]::ASCII.GetString($head) -eq 'SQLite format 3') {
+    Fail 'the app wrote a plaintext database'
+}
+Start-Sleep -Seconds 5
+Save-WindowShot (Get-AppWindow) (Join-Path $out 'windows-unlocked.png') | Out-Null
 
 Write-Host '== single instance'
 $second = Start-Process -FilePath $exe -PassThru

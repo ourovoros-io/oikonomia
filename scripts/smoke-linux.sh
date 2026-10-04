@@ -4,6 +4,7 @@
 # For each one it proves, on a desktop with no system tray (the stock GNOME
 # case):
 #   - the app starts and draws a real window;
+#   - typing a password creates the encrypted vault, owner-only;
 #   - a second launch exits and leaves one process (single instance);
 #   - closing the window hides it and keeps the app alive;
 #   - launching again brings the hidden window back;
@@ -29,6 +30,7 @@ readonly WAIT_SECONDS=60
 readonly LAUNCH_TIMEOUT=120
 # A blank webview is one flat colour; the real unlock screen has thousands.
 readonly MIN_DISTINCT_COLOURS=64
+readonly PASSWORD='correct horse battery staple'
 
 out="target/smoke"
 mkdir -p "$out"
@@ -96,6 +98,27 @@ smoke() {
   local mode
   mode="$(stat -c '%a' "$vault_dir")"
   [ "$mode" = "700" ] || fail "$name vault directory mode is $mode, expected 700"
+
+  # Create a vault through the real first-run screen: the password field has
+  # focus, Tab moves to the confirmation, Enter submits.
+  xdotool windowactivate --sync "$window"
+  xdotool type --delay 40 "$PASSWORD"
+  xdotool key Tab
+  xdotool type --delay 40 "$PASSWORD"
+  xdotool key Return
+  vault_is_created() { [ -f "$vault_dir/vault.db" ] && [ -f "$vault_dir/vault.header.json" ]; }
+  wait_until "$name creates the encrypted vault" vault_is_created
+  local file
+  for file in vault.db vault.header.json; do
+    mode="$(stat -c '%a' "$vault_dir/$file")"
+    [ "$mode" = "600" ] || fail "$name $file mode is $mode, expected 600"
+  done
+  # SQLCipher leaves no readable SQLite header; a plaintext database starts with it.
+  if head -c 15 "$vault_dir/vault.db" | grep -q 'SQLite format 3'; then
+    fail "$name wrote a plaintext database"
+  fi
+  sleep 5
+  import -window "$window" "$out/$name-unlocked.png"
 
   timeout "$LAUNCH_TIMEOUT" "$@" >"$out/$name-second.log" 2>&1 \
     || fail "$name: a second launch did not exit cleanly"
