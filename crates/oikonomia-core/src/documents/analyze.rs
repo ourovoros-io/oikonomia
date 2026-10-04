@@ -635,6 +635,234 @@ mod tests {
         );
     }
 
+    /// How an image is attached to the one-page test PDF.
+    #[derive(Clone, Copy)]
+    enum ImagePlacement {
+        /// In the page's `/Resources /XObject` dictionary, by reference.
+        PageXObject,
+        /// The same, with resources and `XObject` dictionaries held by
+        /// reference instead of inline.
+        PageXObjectByReference,
+        /// In the file but not named by any page.
+        Unreferenced,
+    }
+
+    /// A one-page PDF holding `images`, each `(filter, bytes)`.
+    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
+    fn pdf_with_images(placement: ImagePlacement, images: &[(lopdf::Object, &[u8])]) -> Vec<u8> {
+        use lopdf::{Document, Object, Stream, dictionary};
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+
+        let mut xobjects = lopdf::Dictionary::new();
+        for (index, (filter, bytes)) in images.iter().enumerate() {
+            let image = Stream::new(
+                dictionary! {
+                    "Type" => "XObject",
+                    "Subtype" => "Image",
+                    "Filter" => filter.clone(),
+                },
+                bytes.to_vec(),
+            );
+            let image_id = doc.add_object(image);
+            xobjects.set(format!("Im{index}"), image_id);
+        }
+
+        let resources = match placement {
+            ImagePlacement::PageXObject => dictionary! { "XObject" => xobjects },
+            ImagePlacement::PageXObjectByReference => {
+                let xobjects_id = doc.add_object(xobjects);
+                dictionary! { "XObject" => xobjects_id }
+            }
+            ImagePlacement::Unreferenced => lopdf::Dictionary::new(),
+        };
+        let resources = match placement {
+            ImagePlacement::PageXObjectByReference => Object::Reference(doc.add_object(resources)),
+            ImagePlacement::PageXObject | ImagePlacement::Unreferenced => {
+                Object::Dictionary(resources)
+            }
+        };
+
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Resources" => resources,
+            "MediaBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialize test pdf");
+        bytes
+    }
+
+    fn dct() -> lopdf::Object {
+        lopdf::Object::Name(b"DCTDecode".to_vec())
+    }
+
+    fn flate() -> lopdf::Object {
+        lopdf::Object::Name(b"FlateDecode".to_vec())
+    }
+
+    #[test]
+    fn jpeg_images_are_read_from_the_page_resources() {
+        for placement in [
+            ImagePlacement::PageXObject,
+            ImagePlacement::PageXObjectByReference,
+        ] {
+            let pdf = pdf_with_images(placement, &[(dct(), b"jpeg-one")]);
+
+            assert_eq!(extract_pdf_jpeg_images(&pdf), [b"jpeg-one".to_vec()]);
+        }
+    }
+
+    #[test]
+    fn a_jpeg_filter_inside_a_filter_array_counts() {
+        let filters = lopdf::Object::Array(vec![flate(), dct()]);
+        let pdf = pdf_with_images(ImagePlacement::PageXObject, &[(filters, b"jpeg-in-array")]);
+
+        assert_eq!(extract_pdf_jpeg_images(&pdf), [b"jpeg-in-array".to_vec()]);
+    }
+
+    #[test]
+    fn images_that_are_not_jpeg_are_skipped() {
+        let only_flate = lopdf::Object::Array(vec![flate()]);
+        let pdf = pdf_with_images(
+            ImagePlacement::PageXObject,
+            &[
+                (flate(), b"raw-pixels"),
+                (only_flate, b"more-pixels"),
+                (lopdf::Object::Integer(7), b"odd-filter"),
+                (dct(), b"the-jpeg"),
+            ],
+        );
+
+        assert_eq!(extract_pdf_jpeg_images(&pdf), [b"the-jpeg".to_vec()]);
+    }
+
+    #[test]
+    fn at_most_two_page_images_are_taken() {
+        let pdf = pdf_with_images(
+            ImagePlacement::PageXObject,
+            &[(dct(), b"a"), (dct(), b"b"), (dct(), b"c")],
+        );
+
+        assert_eq!(extract_pdf_jpeg_images(&pdf).len(), 2);
+    }
+
+    #[test]
+    fn images_no_page_names_are_found_by_scanning_the_file() {
+        let pdf = pdf_with_images(
+            ImagePlacement::Unreferenced,
+            &[
+                (dct(), b"a"),
+                (flate(), b"not-jpeg"),
+                (dct(), b"b"),
+                (dct(), b"c"),
+            ],
+        );
+
+        let mut found = extract_pdf_jpeg_images(&pdf);
+        found.sort();
+
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().all(|jpeg| jpeg.len() == 1));
+    }
+
+    #[test]
+    fn an_oversized_jpeg_stream_is_refused() {
+        let stream = lopdf::Stream::new(
+            lopdf::dictionary! { "Subtype" => "Image", "Filter" => "DCTDecode" },
+            vec![0; MAX_PDF_STREAM_BYTES + 1],
+        );
+        let doc = lopdf::Document::with_version("1.5");
+
+        assert_eq!(jpeg_from_object(&doc, &lopdf::Object::Stream(stream)), None);
+    }
+
+    #[test]
+    fn objects_that_are_not_image_streams_yield_no_jpeg() {
+        let doc = lopdf::Document::with_version("1.5");
+        let no_subtype = lopdf::Stream::new(
+            lopdf::dictionary! { "Filter" => "DCTDecode" },
+            b"x".to_vec(),
+        );
+        let form = lopdf::Stream::new(
+            lopdf::dictionary! { "Subtype" => "Form", "Filter" => "DCTDecode" },
+            b"x".to_vec(),
+        );
+        let no_filter =
+            lopdf::Stream::new(lopdf::dictionary! { "Subtype" => "Image" }, b"x".to_vec());
+
+        for object in [
+            lopdf::Object::Integer(1),
+            lopdf::Object::Reference((99, 0)),
+            lopdf::Object::Stream(no_subtype),
+            lopdf::Object::Stream(form),
+            lopdf::Object::Stream(no_filter),
+        ] {
+            assert_eq!(jpeg_from_object(&doc, &object), None, "{object:?}");
+        }
+    }
+
+    #[test]
+    fn a_pdf_with_only_an_image_has_no_text_and_asks_for_ocr() {
+        let pdf = pdf_with_images(ImagePlacement::PageXObject, &[(dct(), b"jpeg")]);
+
+        let text = extract_text("scan.pdf", "application/pdf", &pdf);
+
+        assert_eq!(text, None);
+        assert!(should_ocr_pdf_images(text.as_deref()));
+    }
+
+    #[test]
+    fn image_ocr_is_skipped_without_usable_models() {
+        let pdf = pdf_with_images(ImagePlacement::PageXObject, &[(dct(), b"jpeg")]);
+        let empty_dir = std::env::temp_dir();
+        let mut source = AnalyzeSource::Heuristic;
+        let mut label = None;
+        let mut note = None;
+
+        for model_dir in [None, Some(empty_dir.as_path())] {
+            let text = ocr_pdf_embedded_images(&pdf, model_dir, &mut source, &mut label, &mut note);
+
+            assert_eq!(text, None);
+        }
+        assert_eq!(source, AnalyzeSource::Heuristic);
+        assert_eq!(label, None);
+        assert!(note.is_none());
+    }
+
+    #[test]
+    fn page_by_page_extraction_reads_the_synthetic_invoice() {
+        let pdf = include_bytes!("../../testdata/documents/synthetic/pdf/english_total.pdf");
+
+        let text = pdf_text_per_page(pdf).unwrap_or_default();
+
+        assert!(text.contains("45"), "unexpected text: {text:?}");
+        assert_eq!(pdf_text_per_page(b"not a pdf"), None);
+    }
+
+    #[test]
+    fn page_by_page_extraction_of_a_page_without_text_is_empty_not_missing() {
+        let pdf = pdf_with_images(ImagePlacement::PageXObject, &[(dct(), b"jpeg")]);
+
+        assert_eq!(
+            pdf_text_per_page(&pdf).map(|text| text.trim().to_owned()),
+            Some(String::new())
+        );
+    }
+
     #[test]
     fn short_or_missing_pdf_text_triggers_image_ocr() {
         assert!(should_ocr_pdf_images(None));
