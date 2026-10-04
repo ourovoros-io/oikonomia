@@ -309,6 +309,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn csv_extension_is_added_only_when_missing() {
+        let cases = [
+            ("books/journal.csv", "books/journal.csv"),
+            ("books/journal.CSV", "books/journal.CSV"),
+            ("books/journal", "books/journal.csv"),
+            ("books/journal.txt", "books/journal.txt.csv"),
+            ("journal", "journal.csv"),
+            ("my.books/2026", "my.books/2026.csv"),
+            // No file name at all: fall back to a default one.
+            ("", "journal.csv"),
+            ("..", "journal.csv"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(
+                ensure_csv_path(PathBuf::from(input)),
+                PathBuf::from(want),
+                "input {input:?}"
+            );
+        }
+    }
+
+    #[test]
     fn formula_triggers_get_a_literal_text_prefix() {
         let cases = [
             ("=SUM(A1)", "'=SUM(A1)"),

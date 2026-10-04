@@ -429,43 +429,47 @@ fn run_auto_lock_loop(
 /// Resolve OCR model directory for dev and packaged builds.
 #[must_use]
 pub fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
-    // 1) Tauri resource dir (packaged). The bundle keeps the `resources/ocr/*`
-    //    path from tauri.conf.json, so on macOS the models sit in
-    //    Contents/Resources/resources/ocr. Without this the lookup fell through
-    //    to the compile-time dev path below, which exists only on the machine
-    //    that built the app.
-    if let Some(dir) = resource_dir {
-        let bundled = dir.join("resources").join("ocr");
-        if bundled.join("text-detection.rten").is_file() {
-            return bundled;
-        }
-        let candidate = dir.join("ocr");
-        if candidate.join("text-detection.rten").is_file() {
-            return candidate;
-        }
-        // Sometimes resources land flat under resource_dir
-        if dir.join("text-detection.rten").is_file() {
-            return dir;
-        }
-    }
-
-    // 2) Dev layout: apps/desktop/src-tauri/resources/ocr
+    // Dev layout: apps/desktop/src-tauri/resources/ocr. Also the answer when
+    // no candidate holds the models, so the caller always gets a path.
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ocr");
-    if dev.join("text-detection.rten").is_file() {
-        return dev;
-    }
+    let beside_executable = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("resources/ocr")));
 
-    // 3) Fallback next to executable
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(parent) = exe.parent()
-    {
-        let near = parent.join("resources/ocr");
-        if near.join("text-detection.rten").is_file() {
-            return near;
-        }
-    }
+    let candidates = ocr_model_dir_candidates(resource_dir, &dev, beside_executable);
+    first_dir_with_models(candidates).unwrap_or(dev)
+}
 
-    dev
+/// Where the OCR models may be, most specific first.
+///
+/// The Tauri resource directory (packaged) comes first. The bundle keeps the
+/// `resources/ocr/*` path from tauri.conf.json, so on macOS the models sit
+/// in Contents/Resources/resources/ocr; without that entry the lookup fell
+/// through to the compile-time dev path, which exists only on the machine
+/// that built the app. Some bundles put resources under `ocr` or flat.
+fn ocr_model_dir_candidates(
+    resource_dir: Option<PathBuf>,
+    dev: &Path,
+    beside_executable: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(dir) = resource_dir {
+        candidates.push(dir.join("resources").join("ocr"));
+        candidates.push(dir.join("ocr"));
+        candidates.push(dir);
+    }
+    candidates.push(dev.to_path_buf());
+    candidates.extend(beside_executable);
+
+    candidates
+}
+
+/// The first directory that holds the text-detection model.
+fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    candidates
+        .into_iter()
+        .find(|dir| dir.join("text-detection.rten").is_file())
 }
 
 #[cfg(test)]
@@ -503,6 +507,68 @@ mod tests {
 
         assert_eq!(resolve_ocr_model_dir(Some(resource_dir.clone())), models);
         let _ = fs::remove_dir_all(&resource_dir);
+    }
+
+    #[test]
+    fn ocr_model_candidates_put_the_packaged_layouts_before_the_dev_tree() {
+        let resources = std::path::PathBuf::from("bundle");
+        let dev = std::path::PathBuf::from("dev");
+        let beside = std::path::PathBuf::from("beside");
+
+        assert_eq!(
+            super::ocr_model_dir_candidates(Some(resources.clone()), &dev, Some(beside.clone())),
+            [
+                resources.join("resources").join("ocr"),
+                resources.join("ocr"),
+                resources,
+                dev.clone(),
+                beside,
+            ]
+        );
+        assert_eq!(
+            super::ocr_model_dir_candidates(None, &dev, None),
+            std::slice::from_ref(&dev)
+        );
+    }
+
+    #[test]
+    fn the_first_directory_holding_the_model_wins() {
+        let (_state, dir) = test_state("ocr-pick");
+        let empty = dir.join("empty");
+        let first = dir.join("first");
+        let second = dir.join("second");
+        for holder in [&first, &second] {
+            fs::create_dir_all(holder).expect("dir");
+            fs::write(holder.join("text-detection.rten"), b"model").expect("model");
+        }
+        fs::create_dir_all(&empty).expect("dir");
+        // A directory named like the model is not the model.
+        let decoy = dir.join("decoy");
+        fs::create_dir_all(decoy.join("text-detection.rten")).expect("decoy");
+
+        let picked =
+            super::first_dir_with_models(vec![empty.clone(), decoy.clone(), first.clone(), second]);
+
+        assert_eq!(picked, Some(first));
+        assert_eq!(super::first_dir_with_models(vec![empty, decoy]), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn packaged_ocr_models_under_ocr_or_flat_are_found() {
+        for layout in ["ocr", ""] {
+            let (_state, resource_dir) = test_state("ocr-layout");
+            let models = resource_dir.join(layout);
+            fs::create_dir_all(&models).expect("models dir");
+            fs::write(models.join("text-detection.rten"), b"model").expect("write model");
+
+            assert_eq!(
+                resolve_ocr_model_dir(Some(resource_dir.clone())),
+                models,
+                "layout {layout:?}"
+            );
+            let _ = fs::remove_dir_all(&resource_dir);
+        }
     }
 
     #[test]

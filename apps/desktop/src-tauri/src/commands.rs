@@ -468,6 +468,33 @@ mod app_info_tests {
     use super::{SUPPORT_EMAIL, app_info, percent_encode, support_mailto};
 
     #[test]
+    fn backup_extension_is_added_only_when_missing() {
+        use super::with_backup_extension;
+        use std::path::PathBuf;
+
+        let cases = [
+            ("books/2026.oikonomia-backup", "books/2026.oikonomia-backup"),
+            ("books/2026", "books/2026.oikonomia-backup"),
+            ("books/2026.zip", "books/2026.zip.oikonomia-backup"),
+            // The extension is matched exactly; another case is another extension.
+            (
+                "2026.OIKONOMIA-BACKUP",
+                "2026.OIKONOMIA-BACKUP.oikonomia-backup",
+            ),
+            ("2026", "2026.oikonomia-backup"),
+            // No file name at all: fall back to a default one.
+            ("", "oikonomia.oikonomia-backup"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(
+                with_backup_extension(PathBuf::from(input)),
+                PathBuf::from(want),
+                "input {input:?}"
+            );
+        }
+    }
+
+    #[test]
     fn app_info_carries_the_support_address_but_never_a_url() {
         let json = serde_json::to_value(app_info()).expect("serialize");
         assert_eq!(json["support_email"], "info@ourovoros.io");
