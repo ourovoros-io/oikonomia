@@ -11,10 +11,27 @@ use crate::update_exec::{InstallKind, VerifiedPathInstaller};
 use crate::update_key::UPDATER_PUBLIC_KEY;
 use oikonomia_update::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, UpdateMachine,
-    UpdateStatus, default_updater_cache_dir, perform_check,
+    UpdateStatus, perform_check,
 };
+use std::path::PathBuf;
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{Manager, State};
+
+/// Where a downloaded update waits to be installed: a directory of its own
+/// under this user's cache location.
+///
+/// Not the system temporary directory. On Linux that is shared by every
+/// account, and whoever creates the directory first could swap the verified
+/// file before it is installed. Not the vault data directory either.
+fn updater_cache_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
+    let cache = app.path().app_cache_dir().map_err(|err| {
+        CommandError::desktop(
+            DesktopError::TaskFailed,
+            format!("no cache directory for updates: {err}"),
+        )
+    })?;
+    Ok(cache.join("updater"))
+}
 
 /// User-clicked check from unlock. Fetches `latest.json` plus a detached
 /// `latest.json.sig`, verifies with the baked minisign key, allow-lists the
@@ -22,7 +39,11 @@ use tauri::State;
 ///
 /// HTTP is `ureq` on the blocking pool so the async runtime is not stalled.
 #[tauri::command]
-pub async fn update_check(state: State<'_, AppState>) -> CommandResult<UpdateStatus> {
+pub async fn update_check(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> CommandResult<UpdateStatus> {
+    let cache = updater_cache_dir(&app)?;
     let machine = state.update_machine();
     {
         let mut guard = crate::state::lock_update(&machine);
@@ -30,7 +51,6 @@ pub async fn update_check(state: State<'_, AppState>) -> CommandResult<UpdateSta
     }
 
     let version = env!("CARGO_PKG_VERSION").to_owned();
-    let cache = default_updater_cache_dir();
 
     let outcome = match tauri::async_runtime::spawn_blocking(move || {
         let route = InstallKind::detect().route();
@@ -71,9 +91,9 @@ pub async fn update_install(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<UpdateStatus> {
+    let cache = updater_cache_dir(&app)?;
     let machine = state.update_machine();
     let version = env!("CARGO_PKG_VERSION").to_owned();
-    let cache = default_updater_cache_dir();
 
     let outcome = match tauri::async_runtime::spawn_blocking(move || {
         let kind = InstallKind::detect();
@@ -121,7 +141,7 @@ mod tests {
     use crate::update_key::UPDATER_PUBLIC_KEY;
     use oikonomia_update::{
         ArtifactInstaller, ClientConfig, InstallHandoff, InstallRoute, UpdateError, UpdateMachine,
-        UpdateStatus, default_updater_cache_dir, parse_public_key,
+        UpdateStatus, parse_public_key,
     };
     use std::path::Path;
     use std::sync::Mutex;
@@ -201,7 +221,7 @@ mod tests {
         let config = ClientConfig::production(
             UPDATER_PUBLIC_KEY,
             env!("CARGO_PKG_VERSION"),
-            default_updater_cache_dir(),
+            std::env::temp_dir().join("oiko-update-never-written"),
             InstallRoute::InApp,
         )
         .expect("production config");

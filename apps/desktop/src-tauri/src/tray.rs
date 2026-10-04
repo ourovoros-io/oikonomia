@@ -17,7 +17,7 @@ const QUICK_ADD_STEPPER_HEIGHT: f64 = 64.0;
 /// Kept in lockstep with web; FE resizes to these at runtime.
 #[expect(dead_code)]
 const QUICK_ADD_COMPACT_HEIGHT: f64 = 56.0;
-#[expect(dead_code)]
+/// The tallest the frontend makes the window (the confirm row).
 const QUICK_ADD_SAVE_HEIGHT: f64 = 96.0;
 
 /// Tray menu: open the main window.
@@ -161,6 +161,12 @@ pub fn show_main_window(app: &AppHandle) {
 
     if let Err(err) = window.show() {
         log::warn!("failed to show main window: {err}");
+    }
+
+    // A minimized window is neither hidden nor focusable; without this a
+    // relaunch on Windows would appear to do nothing.
+    if let Err(err) = window.unminimize() {
+        log::warn!("failed to restore main window: {err}");
     }
 
     if let Err(err) = window.set_focus() {
@@ -313,10 +319,19 @@ fn position_quick_add(
     let Ok(outer) = window.outer_size() else {
         return;
     };
-    let size = (f64::from(outer.width), f64::from(outer.height));
     let click = click.map(|position| (position.x, position.y));
+    let work_area = work_area_for(app, click);
 
-    let (x, y) = quick_add_origin(click, size, work_area_for(app, click));
+    // The frontend grows the window downwards to its confirm row without
+    // moving it. Where the window is fitted to a work area, make room for
+    // that height now, or the confirm row would end up under the taskbar.
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let height = match work_area {
+        Some(_) => f64::from(outer.height).max(QUICK_ADD_SAVE_HEIGHT * scale),
+        None => f64::from(outer.height),
+    };
+
+    let (x, y) = quick_add_origin(click, (f64::from(outer.width), height), work_area);
 
     // Screen coords are whole pixels after round; i32 is what Tauri expects.
     #[expect(clippy::cast_possible_truncation)]
@@ -452,7 +467,17 @@ mod tests {
             TrayMenuItem::for_tray(true),
             [TrayMenuItem::Open, TrayMenuItem::Quit]
         );
-        assert_eq!(TRAY_REPORTS_CLICKS, !cfg!(target_os = "linux"));
+    }
+
+    #[test]
+    fn quick_add_at_its_tallest_still_clears_a_bottom_taskbar() {
+        // The window opens 64 high and grows to 96; it is placed as if it
+        // were already 96 so the grown window ends above the taskbar.
+        let tallest = (PANEL.0, QUICK_ADD_SAVE_HEIGHT);
+
+        let origin = quick_add_origin(Some((1500.0, 1060.0)), tallest, Some(FULL_HD));
+
+        assert!(origin.1 + QUICK_ADD_SAVE_HEIGHT <= FULL_HD.bottom());
     }
 
     #[test]

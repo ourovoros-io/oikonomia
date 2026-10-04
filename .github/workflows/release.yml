@@ -341,4 +341,5 @@ jobs:
           args: --bundles nsis
 
       - name: Smoke-test the bundled app
+        shell: pwsh
         run: ./scripts/smoke-windows.ps1

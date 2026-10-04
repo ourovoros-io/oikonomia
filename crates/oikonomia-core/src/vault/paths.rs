@@ -86,7 +86,14 @@ mod tests {
             "vault must not live under roaming AppData: {}",
             data_dir.display()
         );
-        assert!(data_dir.ends_with("ourovoros/oikonomia/data"));
+        let local = directories::BaseDirs::new()
+            .expect("base dirs must be resolvable")
+            .data_local_dir()
+            .to_path_buf();
+        assert_eq!(
+            data_dir,
+            local.join("ourovoros").join("oikonomia").join("data")
+        );
     }
 
     #[test]
@@ -94,7 +101,12 @@ mod tests {
     #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn linux_data_dir_is_the_xdg_data_directory() {
         let data_dir = default_data_dir().expect("app-data dir must be resolvable");
+        let xdg_data = directories::BaseDirs::new()
+            .expect("base dirs must be resolvable")
+            .data_local_dir()
+            .to_path_buf();
 
-        assert!(data_dir.ends_with("oikonomia"));
+        // `$XDG_DATA_HOME/oikonomia`, by default `~/.local/share/oikonomia`.
+        assert_eq!(data_dir, xdg_data.join("oikonomia"));
     }
 }

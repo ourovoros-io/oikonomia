@@ -28,12 +28,6 @@ const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
 const MAX_REDIRECTS: u8 = 5;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// OS temp subdirectory used as the updater cache. Never the vault data dir.
-#[must_use]
-pub fn default_updater_cache_dir() -> PathBuf {
-    std::env::temp_dir().join("oikonomia-updater")
-}
-
 /// `{os}-{arch}` used by Tauri static manifests (`linux-x86_64`, `darwin-aarch64`).
 #[must_use]
 pub fn current_updater_platform() -> String {
@@ -146,7 +140,9 @@ impl ClientConfig {
         })
     }
 
-    /// Directory where artifacts are written. Callers must not pass the vault data dir.
+    /// Directory where artifacts are written. Callers pass a directory under
+    /// the user's own cache location: never the vault data dir, and never a
+    /// directory other accounts can write to.
     #[must_use]
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
@@ -346,7 +342,7 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
 ///
 /// Returns [`UpdateError::ArtifactIntegrity`] or [`UpdateError::Network`] / [`UpdateError::ArtifactUrl`].
 pub fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
-    if let Err(err) = std::fs::create_dir_all(&config.cache_dir) {
+    if let Err(err) = prepare_cache_dir(&config.cache_dir) {
         log::warn!("updater cache create failed: {err}");
         return Err(UpdateError::Network);
     }
@@ -389,11 +385,52 @@ fn download_and_verify_inner(
     }
     verify_minisign(&config.public_key, &bytes, &offer.artifact_signature)
         .map_err(|_| UpdateError::ArtifactIntegrity)?;
-    std::fs::write(dest, &bytes).map_err(|err| {
+    write_new_private_file(dest, &bytes).map_err(|err| {
         log::warn!("updater artifact write failed: {err}");
         UpdateError::Network
     })?;
     Ok(())
+}
+
+/// Creates the cache directory for this user only.
+///
+/// The verified artifact is read back from here by path and then run, so
+/// nobody else may be able to swap it in between. On Unix the directory is
+/// forced to mode `0700`; that fails, and the install with it, when the
+/// directory belongs to another account. The caller passes a directory under
+/// the user's own cache location, never a shared temporary directory.
+fn prepare_cache_dir(cache_dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(cache_dir)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(cache_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    Ok(())
+}
+
+/// Writes `bytes` to a file that must not exist yet. `create_new` refuses an
+/// existing path, a symbolic link included, so the write cannot be
+/// redirected to a file outside the cache.
+fn write_new_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 /// Local file name for a downloaded artifact: the last segment of its URL,
@@ -433,14 +470,17 @@ fn artifact_file_name(url: &Url) -> String {
 
 /// Removes files left by earlier installs. Best effort: an installer that is
 /// still running keeps its file, which the next download clears.
+///
+/// Symbolic links are removed too, never followed: `file_type` describes the
+/// entry itself.
 fn purge_cache(cache_dir: &Path) {
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return;
     };
     for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            let _ = std::fs::remove_file(path);
+        let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+        if !is_directory {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
 }

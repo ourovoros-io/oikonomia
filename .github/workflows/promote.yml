@@ -44,6 +44,8 @@ jobs:
     # contents; nothing else is granted.
     permissions:
       contents: write
+      # Read the Release workflow's result for the tag.
+      actions: read
     env:
       TAG: ${{ inputs.tag }}
       WINDOWS_FLAG: ${{ inputs.publish_windows && '--with-windows' || '' }}
@@ -82,6 +84,23 @@ jobs:
           is_draft="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq .isDraft)"
           if [ "${is_draft}" != "true" ]; then
             echo "::error::release ${TAG} is not a draft (isDraft=${is_draft}); refusing to promote"
+            exit 1
+          fi
+
+      # The Release workflow uploads each installer to the draft before it
+      # smoke-tests it, so a draft can hold installers whose test failed.
+      # Promote only what a fully green Release run produced.
+      - name: Require a green Release run for the tag (fail-closed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh run list --repo "${GITHUB_REPOSITORY}" --workflow release.yml \
+            --branch "${TAG}" --event push --limit 1 \
+            --json conclusion --jq '.[0].conclusion // "none"' > conclusion.txt
+          conclusion="$(cat conclusion.txt)"
+          if [ "${conclusion}" != "success" ]; then
+            echo "::error::the latest Release run for ${TAG} is '${conclusion}', not 'success'; refusing to promote"
             exit 1
           fi
 

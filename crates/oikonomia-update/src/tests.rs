@@ -870,6 +870,49 @@ fn a_running_installer_keeps_its_artifact_and_the_next_download_clears_it() {
     assert_eq!(leftover_files(&cache), vec![fresh]);
 }
 
+#[cfg(unix)]
+#[test]
+fn cache_is_private_and_a_planted_link_cannot_redirect_the_download() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let config = serve_newer_release(
+        &server,
+        &pk,
+        &sk,
+        "/Oikonomia.AppImage",
+        b"appimage",
+        cache.clone(),
+    );
+    let mut machine = UpdateMachine::new();
+    machine.check(&config);
+    let offer = machine.require_available().expect("offer").clone();
+
+    // Someone planted a link where the artifact will be written, pointing
+    // at a file outside the cache, and loosened the directory.
+    let outside = cache_dir().join("victim");
+    let first = download_and_verify(&config, &offer).expect("first download");
+    let planted = first.clone();
+    std::fs::remove_file(&first).expect("clear");
+    std::os::unix::fs::symlink(&outside, &planted).expect("plant link");
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o777)).expect("loosen");
+
+    let path = download_and_verify(&config, &offer).expect("download");
+
+    assert!(!outside.exists(), "the download followed the planted link");
+    let metadata = std::fs::symlink_metadata(&path).expect("metadata");
+    assert!(metadata.file_type().is_file());
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    assert_eq!(std::fs::read(&path).expect("read"), b"appimage");
+    let cache_mode = std::fs::metadata(&cache)
+        .expect("cache")
+        .permissions()
+        .mode();
+    assert_eq!(cache_mode & 0o777, 0o700);
+}
+
 #[test]
 fn package_managed_copy_reports_the_version_and_refuses_to_install() {
     let (pk, sk) = test_keys();

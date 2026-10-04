@@ -19,8 +19,8 @@ mod verify;
 
 pub use client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
-    UPDATE_FEED_URL, VerifiedOffer, current_updater_platform, default_updater_cache_dir,
-    delete_artifact, download_and_verify, perform_check,
+    UPDATE_FEED_URL, VerifiedOffer, current_updater_platform, delete_artifact, download_and_verify,
+    perform_check,
 };
 pub use error::{Result, UpdateError};
 pub use feed::{FeedArtifact, assemble_manifest};

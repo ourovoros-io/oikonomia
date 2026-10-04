@@ -24,6 +24,9 @@ fi
 readonly WINDOW_TITLE='^Oikonomia$'
 readonly PROCESS_NAME='oikonomia'
 readonly WAIT_SECONDS=60
+# How long a second launch may take to hand over and exit. Generous because
+# the AppImage unpacks itself on every launch here.
+readonly LAUNCH_TIMEOUT=120
 # A blank webview is one flat colour; the real unlock screen has thousands.
 readonly MIN_DISTINCT_COLOURS=64
 
@@ -94,7 +97,7 @@ smoke() {
   mode="$(stat -c '%a' "$vault_dir")"
   [ "$mode" = "700" ] || fail "$name vault directory mode is $mode, expected 700"
 
-  timeout 30 "$@" >"$out/$name-second.log" 2>&1 \
+  timeout "$LAUNCH_TIMEOUT" "$@" >"$out/$name-second.log" 2>&1 \
     || fail "$name: a second launch did not exit cleanly"
   [ "$(process_count)" -eq 1 ] \
     || fail "$name: expected one process after a second launch, found $(process_count)"
@@ -103,7 +106,7 @@ smoke() {
   wait_until "$name hides its window on close" window_is_hidden
   [ "$(process_count)" -eq 1 ] || fail "$name quit when its window was closed"
 
-  timeout 30 "$@" >"$out/$name-reopen.log" 2>&1 \
+  timeout "$LAUNCH_TIMEOUT" "$@" >"$out/$name-reopen.log" 2>&1 \
     || fail "$name: the reopening launch did not exit cleanly"
   wait_until "$name shows its hidden window again" window_is_visible
   [ "$(process_count)" -eq 1 ] \

@@ -144,8 +144,12 @@ Wait-Until 'the installer starts the new copy' {
     $null -ne $window -and $window.Id -ne $before
 }
 if ((Get-App).Count -ne 1) { Fail 'the update left more than one process' }
-Start-Sleep -Seconds 8
-Save-WindowShot (Get-AppWindow) (Join-Path $out 'windows-after-update.png') | Out-Null
+Start-Sleep -Seconds 10
+$colours = Save-WindowShot (Get-AppWindow) (Join-Path $out 'windows-after-update.png')
+Write-Host "updated window drawn with $colours distinct colours"
+if ($colours -lt $MinDistinctColours) {
+    Fail "the updated app drew a blank window ($colours colours); see target\smoke\windows-after-update.png"
+}
 
 Get-App | Stop-Process -Force
 Write-Host 'smoke ok: the installed app starts, draws, stays single, comes back from hidden, and updates in place'

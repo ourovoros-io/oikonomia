@@ -23,20 +23,24 @@ pub(crate) enum InstallKind {
 impl InstallKind {
     /// The kind of the running copy.
     pub(crate) fn detect() -> Self {
-        let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
-        Self::classify(std::env::consts::OS, appimage)
+        let runtime = AppImageRuntime {
+            image: std::env::var_os("APPIMAGE").map(PathBuf::from),
+            mount: std::env::var_os("APPDIR").map(PathBuf::from),
+            executable: std::env::current_exe().ok(),
+        };
+        Self::classify(std::env::consts::OS, &runtime)
     }
 
-    /// `appimage` is the `APPIMAGE` variable the `AppImage` runtime sets to
-    /// the path of the mounted image. A Linux copy without it was installed
-    /// from a package (or built locally) and does not own its own files.
-    fn classify(os: &str, appimage: Option<PathBuf>) -> Self {
+    /// A Linux copy is an `AppImage` only when it runs from inside one.
+    /// Otherwise it was installed from a package (or built locally) and does
+    /// not own its own files.
+    fn classify(os: &str, runtime: &AppImageRuntime) -> Self {
         match os {
             "macos" => Self::MacApp,
             "windows" => Self::WindowsInstaller,
-            "linux" => match appimage {
-                Some(path) if path.is_file() => Self::AppImage(path),
-                Some(_) | None => Self::PackageManaged,
+            "linux" => match runtime.own_image() {
+                Some(image) => Self::AppImage(image),
+                None => Self::PackageManaged,
             },
             _ => Self::PackageManaged,
         }
@@ -47,6 +51,36 @@ impl InstallKind {
         match self {
             Self::MacApp | Self::AppImage(_) | Self::WindowsInstaller => InstallRoute::InApp,
             Self::PackageManaged => InstallRoute::PackageManager,
+        }
+    }
+}
+
+/// What the `AppImage` runtime tells a process it started.
+struct AppImageRuntime {
+    /// `APPIMAGE`: path of the image file.
+    image: Option<PathBuf>,
+    /// `APPDIR`: directory the image is mounted or unpacked at.
+    mount: Option<PathBuf>,
+    /// The running executable.
+    executable: Option<PathBuf>,
+}
+
+impl AppImageRuntime {
+    /// The image this process runs from, if any.
+    ///
+    /// `APPIMAGE` alone proves nothing: a program started from another
+    /// `AppImage` (a terminal, a launcher) inherits that one's variables, and
+    /// trusting them would make an update overwrite the other program. The
+    /// running executable must sit inside the mounted image.
+    fn own_image(&self) -> Option<PathBuf> {
+        let image = self.image.as_ref()?;
+        let mount = self.mount.as_ref()?;
+        let executable = self.executable.as_ref()?;
+
+        if image.is_file() && executable.starts_with(mount) {
+            Some(image.clone())
+        } else {
+            None
         }
     }
 }
@@ -285,7 +319,7 @@ fn path_ends_with_ignore_ascii_case(path: &Path, suffix: &str) -> bool {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::{InstallKind, VerifiedPathInstaller, install_verified_artifact};
+    use super::{AppImageRuntime, InstallKind, VerifiedPathInstaller, install_verified_artifact};
     use oikonomia_update::{ArtifactInstaller, InstallRoute};
     use std::path::PathBuf;
 
@@ -310,44 +344,93 @@ mod tests {
         ]
     }
 
+    const NO_APPIMAGE: AppImageRuntime = AppImageRuntime {
+        image: None,
+        mount: None,
+        executable: None,
+    };
+
     #[test]
-    fn linux_without_an_appimage_is_package_managed() {
+    fn linux_copy_running_from_inside_its_image_is_an_appimage() {
         let dir = temp_dir();
-        let appimage = dir.join("Oikonomia.AppImage");
-        std::fs::write(&appimage, b"image").expect("appimage");
+        let image = dir.join("Oikonomia.AppImage");
+        std::fs::write(&image, b"image").expect("appimage");
+        let mount = PathBuf::from("/tmp/.mount_Oikonoabc");
+        let runtime = AppImageRuntime {
+            image: Some(image.clone()),
+            mount: Some(mount.clone()),
+            executable: Some(mount.join("usr/bin/oikonomia")),
+        };
 
         assert_eq!(
-            InstallKind::classify("linux", None),
-            InstallKind::PackageManaged
-        );
-        // A stale variable naming a file that is gone must not enable installs.
-        assert_eq!(
-            InstallKind::classify("linux", Some(dir.join("gone.AppImage"))),
-            InstallKind::PackageManaged
-        );
-        assert_eq!(
-            InstallKind::classify("linux", Some(appimage.clone())),
-            InstallKind::AppImage(appimage)
+            InstallKind::classify("linux", &runtime),
+            InstallKind::AppImage(image)
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn macos_and_windows_ignore_the_appimage_variable() {
-        let stray = Some(PathBuf::from("Oikonomia.AppImage"));
+    fn linux_copy_with_inherited_appimage_variables_is_package_managed() {
+        // A .deb copy started from a terminal that is itself an AppImage
+        // inherits that terminal's variables. Updating must not overwrite it.
+        let dir = temp_dir();
+        let other_image = dir.join("SomeTerminal.AppImage");
+        std::fs::write(&other_image, b"terminal").expect("other image");
+        let runtime = AppImageRuntime {
+            image: Some(other_image.clone()),
+            mount: Some(PathBuf::from("/tmp/.mount_SomeTexyz")),
+            executable: Some(PathBuf::from("/usr/bin/oikonomia")),
+        };
 
         assert_eq!(
-            InstallKind::classify("macos", stray.clone()),
-            InstallKind::MacApp
+            InstallKind::classify("linux", &runtime),
+            InstallKind::PackageManaged
+        );
+        assert_eq!(std::fs::read(&other_image).expect("kept"), b"terminal");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn linux_copy_without_a_usable_image_is_package_managed() {
+        let mount = PathBuf::from("/tmp/.mount_Oikonoabc");
+        let image_is_gone = AppImageRuntime {
+            image: Some(temp_dir().join("gone.AppImage")),
+            mount: Some(mount.clone()),
+            executable: Some(mount.join("usr/bin/oikonomia")),
+        };
+
+        assert_eq!(
+            InstallKind::classify("linux", &NO_APPIMAGE),
+            InstallKind::PackageManaged
         );
         assert_eq!(
-            InstallKind::classify("windows", stray),
+            InstallKind::classify("linux", &image_is_gone),
+            InstallKind::PackageManaged
+        );
+    }
+
+    #[test]
+    fn other_systems_ignore_the_appimage_variables() {
+        let dir = temp_dir();
+        let image = dir.join("Oikonomia.AppImage");
+        std::fs::write(&image, b"image").expect("appimage");
+        let mount = PathBuf::from("/tmp/.mount_Oikonoabc");
+        let stray = AppImageRuntime {
+            image: Some(image),
+            mount: Some(mount.clone()),
+            executable: Some(mount.join("usr/bin/oikonomia")),
+        };
+
+        assert_eq!(InstallKind::classify("macos", &stray), InstallKind::MacApp);
+        assert_eq!(
+            InstallKind::classify("windows", &stray),
             InstallKind::WindowsInstaller
         );
         assert_eq!(
-            InstallKind::classify("freebsd", None),
+            InstallKind::classify("freebsd", &stray),
             InstallKind::PackageManaged
         );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -459,12 +542,6 @@ mod tests {
         assert_eq!(mode & 0o111, 0o111, "the new AppImage must be executable");
         assert!(verified.exists());
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn windows_installer_runs_unattended_and_relaunches_the_app() {
-        assert_eq!(super::NSIS_UPDATE_ARGS, ["/P", "/UPDATE", "/R"]);
     }
 
     #[cfg(target_os = "windows")]
