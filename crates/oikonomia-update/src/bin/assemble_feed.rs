@@ -17,19 +17,28 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let result = match args.first().map(String::as_str) {
-        Some("assemble") => run_assemble(&args[1..]),
-        Some("verify") => run_verify(&args[1..]),
-        Some("unpublished") => run_unpublished(&args[1..]),
-        Some("checksums") => run_checksums(&args[1..]),
-        _ => Err(USAGE.to_owned()),
-    };
-    match result {
+
+    match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             let _ = writeln!(std::io::stderr(), "{message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Runs the subcommand named by the first argument.
+fn run(args: &[String]) -> Result<(), String> {
+    let Some((command, rest)) = args.split_first() else {
+        return Err(USAGE.to_owned());
+    };
+
+    match command.as_str() {
+        "assemble" => run_assemble(rest),
+        "verify" => run_verify(rest),
+        "unpublished" => run_unpublished(rest),
+        "checksums" => run_checksums(rest),
+        _ => Err(USAGE.to_owned()),
     }
 }
 
@@ -146,16 +155,24 @@ fn run_checksums(args: &[String]) -> Result<(), String> {
 
 /// Prints, one per line, the given asset names that the release must not keep.
 fn run_unpublished(args: &[String]) -> Result<(), String> {
-    let windows = windows_build(args);
     let mut stdout = std::io::stdout();
 
-    for name in args.iter().filter(|arg| *arg != WITH_WINDOWS) {
-        if !is_published_asset(name, windows) {
-            writeln!(stdout, "{name}").map_err(|e| e.to_string())?;
-        }
+    for name in unpublished_assets(args) {
+        writeln!(stdout, "{name}").map_err(|e| e.to_string())?;
     }
 
     Ok(())
+}
+
+/// The asset names among `args` that the release must not keep.
+fn unpublished_assets(args: &[String]) -> Vec<&str> {
+    let windows = windows_build(args);
+
+    args.iter()
+        .map(String::as_str)
+        .filter(|arg| *arg != WITH_WINDOWS)
+        .filter(|name| !is_published_asset(name, windows))
+        .collect()
 }
 
 fn run_verify(args: &[String]) -> Result<(), String> {
@@ -169,4 +186,290 @@ fn run_verify(args: &[String]) -> Result<(), String> {
     oikonomia_update::verify_manifest_bytes(&key, &body, &signature)
         .map_err(|e| format!("verify: {e}"))?;
     writeln!(std::io::stdout(), "manifest signature ok").map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod tests {
+    use super::{USAGE, run, sha256_hex, unpublished_assets};
+    use minisign::KeyPair;
+    use std::io::Cursor;
+    use std::path::{Path, PathBuf};
+
+    const DMG: &str = "Oikonomia_0.2.0_aarch64.dmg";
+    const MAC: &str = "Oikonomia.app.tar.gz";
+    const APPIMAGE: &str = "Oikonomia_0.2.0_amd64.AppImage";
+    const DEB: &str = "Oikonomia_0.2.0_amd64.deb";
+    const SETUP: &str = "Oikonomia_0.2.0_x64-setup.exe";
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    fn text(path: &Path) -> &str {
+        path.to_str().expect("utf-8 temp path")
+    }
+
+    /// A draft's artifacts: each feed artifact with a `.sig` beside it.
+    fn draft() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for name in [MAC, APPIMAGE, SETUP] {
+            std::fs::write(dir.path().join(name), format!("bytes of {name}")).expect("artifact");
+            std::fs::write(
+                dir.path().join(format!("{name}.sig")),
+                format!("  signature of {name}\n"),
+            )
+            .expect("signature");
+        }
+        for name in [DMG, DEB, "stray.msi"] {
+            std::fs::write(dir.path().join(name), format!("bytes of {name}")).expect("download");
+        }
+        dir
+    }
+
+    fn assemble(dir: &Path, out: &Path, extra: &[&str]) -> Result<(), String> {
+        let mut list = vec![
+            "assemble",
+            "--version",
+            "v0.2.0",
+            "--base-url",
+            "https://github.com/o/r/releases/download/v0.2.0/",
+            "--dir",
+            text(dir),
+            "--out",
+            text(out),
+        ];
+        list.extend_from_slice(extra);
+        run(&args(&list))
+    }
+
+    fn manifest(out: &Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(out).expect("manifest written")).expect("json")
+    }
+
+    #[test]
+    fn assemble_writes_a_feed_entry_per_published_platform() {
+        let draft = draft();
+        let out = draft.path().join("out").with_extension("json");
+
+        assemble(draft.path(), &out, &[]).expect("assemble");
+
+        let manifest = manifest(&out);
+        assert_eq!(manifest["version"], "0.2.0");
+        assert_eq!(manifest["notes"], "");
+        let platforms = manifest["platforms"].as_object().expect("platforms");
+        let keys: Vec<&String> = platforms.keys().collect();
+        assert_eq!(keys, ["darwin-aarch64", "linux-x86_64"]);
+
+        let linux = &platforms["linux-x86_64"];
+        assert_eq!(
+            linux["url"],
+            format!("https://github.com/o/r/releases/download/v0.2.0/{APPIMAGE}")
+        );
+        assert_eq!(linux["signature"], format!("signature of {APPIMAGE}"));
+        assert_eq!(
+            linux["sha256"],
+            sha256_hex(format!("bytes of {APPIMAGE}").as_bytes())
+        );
+    }
+
+    #[test]
+    fn assemble_adds_windows_and_notes_when_asked() {
+        let draft = draft();
+        let out = draft.path().join("latest-out.json");
+        let notes = draft.path().join("notes.txt");
+        std::fs::write(&notes, "  First release.\n").expect("notes");
+
+        assemble(
+            draft.path(),
+            &out,
+            &["--with-windows", "--notes-file", text(&notes)],
+        )
+        .expect("assemble");
+
+        let manifest = manifest(&out);
+        assert_eq!(manifest["notes"], "First release.");
+        assert_eq!(
+            manifest["platforms"]["windows-x86_64"]["url"],
+            format!("https://github.com/o/r/releases/download/v0.2.0/{SETUP}")
+        );
+    }
+
+    #[test]
+    fn assemble_stops_when_an_artifact_or_its_signature_is_missing() {
+        let draft = draft();
+        let out = draft.path().join("latest-out.json");
+
+        std::fs::remove_file(draft.path().join(format!("{APPIMAGE}.sig"))).expect("remove sig");
+        let err = assemble(draft.path(), &out, &[]).expect_err("missing signature");
+        assert!(err.contains(&format!("{APPIMAGE}.sig")), "{err}");
+
+        std::fs::remove_file(draft.path().join(APPIMAGE)).expect("remove artifact");
+        let err = assemble(draft.path(), &out, &[]).expect_err("missing artifact");
+        assert_eq!(err, "no .AppImage file for linux-x86_64");
+
+        assert!(!out.exists(), "a failed assemble must not write a feed");
+    }
+
+    #[test]
+    fn assemble_reports_unreadable_inputs() {
+        let draft = draft();
+        let out = draft.path().join("latest-out.json");
+
+        let err = assemble(&draft.path().join("no-such-dir"), &out, &[]).expect_err("no dir");
+        assert!(err.contains("no-such-dir"), "{err}");
+
+        let err = assemble(draft.path(), &out, &["--notes-file", "no-such-notes.txt"])
+            .expect_err("no notes");
+        assert!(err.starts_with("notes:"), "{err}");
+    }
+
+    #[test]
+    fn missing_flags_and_unknown_commands_print_the_usage() {
+        let incomplete = [
+            vec![],
+            vec!["launch"],
+            vec!["assemble", "--version", "v1"],
+            vec!["assemble", "--version"],
+            vec!["verify", "--manifest", "latest.json"],
+            vec!["checksums", "--dir", "."],
+        ];
+
+        for list in incomplete {
+            assert_eq!(run(&args(&list)), Err(USAGE.to_owned()), "{list:?}");
+        }
+    }
+
+    #[test]
+    fn checksums_list_published_files_and_match_their_bytes() {
+        let draft = draft();
+        let out = draft.path().join("SHA256SUMS");
+
+        run(&args(&[
+            "checksums",
+            "--dir",
+            text(draft.path()),
+            "--out",
+            text(&out),
+        ]))
+        .expect("checksums");
+
+        let written = std::fs::read_to_string(&out).expect("read");
+        let names: Vec<&str> = written
+            .lines()
+            .map(|line| line.split_once("  ").expect("two-space separator").1)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                MAC,
+                &format!("{MAC}.sig"),
+                DMG,
+                APPIMAGE,
+                &format!("{APPIMAGE}.sig"),
+                DEB,
+            ]
+        );
+        for line in written.lines() {
+            let (hash, name) = line.split_once("  ").expect("separator");
+            let bytes = std::fs::read(draft.path().join(name)).expect("listed file exists");
+            assert_eq!(hash, sha256_hex(&bytes), "{name}");
+        }
+
+        // Running again must not list the checksum file itself.
+        run(&args(&[
+            "checksums",
+            "--dir",
+            text(draft.path()),
+            "--out",
+            text(&out),
+        ]))
+        .expect("second run");
+        assert_eq!(std::fs::read_to_string(&out).expect("read"), written);
+    }
+
+    #[test]
+    fn checksums_refuse_a_directory_with_nothing_to_publish() {
+        let empty = tempfile::tempdir().expect("temp dir");
+        std::fs::write(empty.path().join("stray.msi"), b"x").expect("stray");
+        let out = empty.path().join("SHA256SUMS");
+
+        let err = run(&args(&[
+            "checksums",
+            "--dir",
+            text(empty.path()),
+            "--out",
+            text(&out),
+        ]))
+        .expect_err("nothing to list");
+
+        assert!(err.ends_with("no published files to checksum"), "{err}");
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn unpublished_names_what_the_release_must_drop() {
+        let assets = args(&[MAC, SETUP, "stray.msi", "latest.json", DEB]);
+        assert_eq!(unpublished_assets(&assets), [SETUP, "stray.msi"]);
+
+        let with_windows = args(&["--with-windows", MAC, SETUP, "stray.msi"]);
+        assert_eq!(unpublished_assets(&with_windows), ["stray.msi"]);
+    }
+
+    /// A manifest, its detached signature and the public key that made it.
+    fn signed_manifest(dir: &Path) -> (PathBuf, PathBuf, String) {
+        let KeyPair { pk, sk } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let body = br#"{"version":"0.2.0"}"#;
+        let signature = minisign::sign(None, &sk, Cursor::new(body), None, None).expect("sign");
+
+        let manifest = dir.join("latest.json");
+        let sig = dir.join("latest.json.sig");
+        std::fs::write(&manifest, body).expect("manifest");
+        std::fs::write(&sig, signature.into_string()).expect("signature");
+        (manifest, sig, pk.to_box().expect("public box").to_string())
+    }
+
+    fn verify(manifest: &Path, sig: &Path, pubkey: &str) -> Result<(), String> {
+        run(&args(&[
+            "verify",
+            "--manifest",
+            text(manifest),
+            "--sig",
+            text(sig),
+            "--pubkey",
+            pubkey,
+        ]))
+    }
+
+    #[test]
+    fn verify_accepts_a_manifest_signed_with_the_given_key() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (manifest, sig, pubkey) = signed_manifest(dir.path());
+
+        assert_eq!(verify(&manifest, &sig, &pubkey), Ok(()));
+    }
+
+    #[test]
+    fn verify_rejects_a_changed_manifest_another_key_and_bad_inputs() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (manifest, sig, pubkey) = signed_manifest(dir.path());
+        let other = tempfile::tempdir().expect("temp dir");
+        let (_, _, other_pubkey) = signed_manifest(other.path());
+
+        let err = verify(&manifest, &sig, &other_pubkey).expect_err("another key");
+        assert!(err.starts_with("verify:"), "{err}");
+
+        let err = verify(&manifest, &sig, "not a key").expect_err("bad key");
+        assert!(err.starts_with("pubkey:"), "{err}");
+
+        let err = verify(&manifest, &dir.path().join("gone.sig"), &pubkey).expect_err("no sig");
+        assert!(err.contains("gone.sig"), "{err}");
+
+        std::fs::write(&manifest, br#"{"version":"9.9.9"}"#).expect("tamper");
+        let err = verify(&manifest, &sig, &pubkey).expect_err("tampered");
+        assert!(err.starts_with("verify:"), "{err}");
+
+        let err = verify(&dir.path().join("gone.json"), &sig, &pubkey).expect_err("no manifest");
+        assert!(err.contains("gone.json"), "{err}");
+    }
 }
