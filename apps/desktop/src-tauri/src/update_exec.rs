@@ -243,39 +243,71 @@ fn spawn_windows_installer(artifact: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Replaces the app bundle that holds `current` with the one in `artifact`.
+///
+/// The archive is unpacked next to the bundle, never inside it: the bundle
+/// is about to be moved away. The old bundle is set aside first and put back
+/// if the new one cannot take its place, so a failed update leaves the
+/// installed app as it was.
 #[cfg(target_os = "macos")]
 fn extract_macos_app_archive(artifact: &Path, current: &Path) -> Result<()> {
-    let extract_root = current
-        .parent()
-        .ok_or(UpdateError::ArtifactIntegrity)?
-        .join(".oikonomia-update-extract");
+    let bundle = macos_app_bundle_path(current)?;
+    let applications = bundle.parent().ok_or(UpdateError::ArtifactIntegrity)?;
+    let extract_root = applications.join(".oikonomia-update-extract");
+    let previous = applications.join(".oikonomia-update-previous.app");
+
     let _ = std::fs::remove_dir_all(&extract_root);
-    std::fs::create_dir_all(&extract_root).map_err(|_| UpdateError::ArtifactIntegrity)?;
+    let _ = std::fs::remove_dir_all(&previous);
+
+    let result = unpack_app_bundle(artifact, &extract_root)
+        .and_then(|new_app| swap_app_bundle(&new_app, &bundle, &previous));
+
+    let _ = std::fs::remove_dir_all(&extract_root);
+    result
+}
+
+/// Unpacks `artifact` into `extract_root` and returns the app bundle in it.
+#[cfg(target_os = "macos")]
+fn unpack_app_bundle(artifact: &Path, extract_root: &Path) -> Result<PathBuf> {
+    std::fs::create_dir_all(extract_root).map_err(|_| UpdateError::ArtifactIntegrity)?;
+
     let status = Command::new("tar")
         .arg("-xzf")
         .arg(artifact)
         .arg("-C")
-        .arg(&extract_root)
+        .arg(extract_root)
         .status()
         .map_err(|err| {
             log::warn!("macos tar extract failed: {err}");
             UpdateError::ArtifactIntegrity
         })?;
     if !status.success() {
-        let _ = std::fs::remove_dir_all(&extract_root);
         return Err(UpdateError::ArtifactIntegrity);
     }
-    let new_app = first_app_bundle(&extract_root).ok_or(UpdateError::ArtifactIntegrity)?;
-    let dest = macos_app_bundle_path(current)?;
-    if dest.exists() {
-        std::fs::remove_dir_all(&dest).map_err(|_| UpdateError::ArtifactIntegrity)?;
-    }
-    let move_result = std::fs::rename(&new_app, &dest);
-    let _ = std::fs::remove_dir_all(&extract_root);
-    move_result.map_err(|err| {
-        log::warn!("macos app replace failed: {err}");
+
+    first_app_bundle(extract_root).ok_or(UpdateError::ArtifactIntegrity)
+}
+
+/// Moves `bundle` aside to `previous`, moves `new_app` into its place, and
+/// deletes the old one. If the new bundle cannot be moved in, the old one is
+/// moved back.
+#[cfg(target_os = "macos")]
+fn swap_app_bundle(new_app: &Path, bundle: &Path, previous: &Path) -> Result<()> {
+    std::fs::rename(bundle, previous).map_err(|err| {
+        log::warn!("macos app set-aside failed: {err}");
         UpdateError::ArtifactIntegrity
-    })
+    })?;
+
+    if let Err(err) = std::fs::rename(new_app, bundle) {
+        log::warn!("macos app replace failed: {err}");
+        if let Err(err) = std::fs::rename(previous, bundle) {
+            log::error!("macos app restore failed: {err}");
+        }
+        return Err(UpdateError::ArtifactIntegrity);
+    }
+
+    let _ = std::fs::remove_dir_all(previous);
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -293,20 +325,17 @@ fn first_app_bundle(root: &Path) -> Option<PathBuf> {
     None
 }
 
+/// The `.app` bundle that contains `executable`
+/// (`Oikonomia.app/Contents/MacOS/oikonomia`).
+///
+/// A binary outside any bundle (a development build) has nothing that may
+/// be replaced, so that is an error, not a guess at some other directory.
 #[cfg(target_os = "macos")]
 fn macos_app_bundle_path(executable: &Path) -> Result<PathBuf> {
-    let mut path = executable.to_path_buf();
-    for _ in 0..3 {
-        if path.extension().and_then(|ext| ext.to_str()) == Some("app") {
-            return Ok(path);
-        }
-        match path.parent() {
-            Some(parent) => path = parent.to_path_buf(),
-            None => break,
-        }
-    }
     executable
-        .parent()
+        .ancestors()
+        .skip(1)
+        .find(|dir| dir.extension().is_some_and(|ext| ext == "app"))
         .map(Path::to_path_buf)
         .ok_or(UpdateError::ArtifactIntegrity)
 }
@@ -591,6 +620,140 @@ mod tests {
             assert_eq!(err.code(), "update_artifact_integrity", "{kind:?}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An installed app bundle whose executable holds `marker`, and the
+    /// path of that executable.
+    #[cfg(target_os = "macos")]
+    fn installed_app(root: &std::path::Path, marker: &[u8]) -> PathBuf {
+        let executable = root
+            .join("Oikonomia.app")
+            .join("Contents")
+            .join("MacOS")
+            .join("oikonomia");
+        std::fs::create_dir_all(executable.parent().expect("parent")).expect("bundle dirs");
+        std::fs::write(&executable, marker).expect("executable");
+        executable
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_update_replaces_the_installed_bundle_with_the_archived_one() {
+        use oikonomia_update::InstallHandoff;
+
+        let dir = temp_dir();
+        let applications = dir.join("Applications");
+        let current = installed_app(&applications, b"old version");
+        std::fs::write(
+            applications
+                .join("Oikonomia.app")
+                .join("Contents")
+                .join("stale.txt"),
+            b"left by the old version",
+        )
+        .expect("stale file");
+
+        let staging = dir.join("staging");
+        installed_app(&staging, b"new version");
+        let archive = dir.join("abc-Oikonomia.app.tar.gz");
+        let status = std::process::Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&staging)
+            .arg("Oikonomia.app")
+            .status()
+            .expect("tar");
+        assert!(status.success());
+
+        let handoff =
+            super::extract_macos_app_archive(&archive, &current).map(|()| InstallHandoff::Replaced);
+
+        assert_eq!(handoff.ok(), Some(InstallHandoff::Replaced));
+        assert_eq!(std::fs::read(&current).expect("installed"), b"new version");
+        assert!(
+            !applications
+                .join("Oikonomia.app")
+                .join("Contents")
+                .join("stale.txt")
+                .exists(),
+            "files of the old version must not survive"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(&applications)
+            .expect("read")
+            .flatten()
+            .map(|entry| entry.file_name())
+            .collect();
+        assert_eq!(leftovers, ["Oikonomia.app"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_update_keeps_the_installed_app_when_the_archive_is_bad() {
+        let dir = temp_dir();
+        let applications = dir.join("Applications");
+        let current = installed_app(&applications, b"old version");
+
+        let not_an_archive = dir.join("abc-Oikonomia.app.tar.gz");
+        std::fs::write(&not_an_archive, b"garbage").expect("write");
+        assert!(super::extract_macos_app_archive(&not_an_archive, &current).is_err());
+
+        // A valid archive that holds no app bundle.
+        let staging = dir.join("staging");
+        std::fs::create_dir_all(&staging).expect("staging");
+        std::fs::write(staging.join("readme.txt"), b"no app here").expect("file");
+        let no_app = dir.join("def-Oikonomia.app.tar.gz");
+        let status = std::process::Command::new("tar")
+            .arg("-czf")
+            .arg(&no_app)
+            .arg("-C")
+            .arg(&staging)
+            .arg("readme.txt")
+            .status()
+            .expect("tar");
+        assert!(status.success());
+        assert!(super::extract_macos_app_archive(&no_app, &current).is_err());
+
+        assert_eq!(
+            std::fs::read(&current).expect("still installed"),
+            b"old version"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_update_outside_a_bundle_replaces_nothing() {
+        let dir = temp_dir();
+        let bare = dir.join("target").join("debug").join("oikonomia");
+        std::fs::create_dir_all(bare.parent().expect("parent")).expect("dirs");
+        std::fs::write(&bare, b"dev build").expect("binary");
+        let archive = dir.join("abc-Oikonomia.app.tar.gz");
+        std::fs::write(&archive, b"irrelevant").expect("archive");
+
+        assert!(super::extract_macos_app_archive(&archive, &bare).is_err());
+
+        assert_eq!(std::fs::read(&bare).expect("untouched"), b"dev build");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_bundle_path_is_found_from_the_executable_inside_it() {
+        let inside = PathBuf::from("/Applications/Oikonomia.app/Contents/MacOS/oikonomia");
+        assert_eq!(
+            super::macos_app_bundle_path(&inside).ok(),
+            Some(PathBuf::from("/Applications/Oikonomia.app"))
+        );
+
+        // A bare binary (cargo run) has no bundle; no directory may be replaced.
+        let bare = PathBuf::from("/work/target/debug/oikonomia");
+        assert!(super::macos_app_bundle_path(&bare).is_err());
+
+        // The executable's own name does not count as the bundle.
+        let odd = PathBuf::from("/work/tool.app");
+        assert!(super::macos_app_bundle_path(&odd).is_err());
     }
 
     #[cfg(target_os = "linux")]
