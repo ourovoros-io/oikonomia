@@ -72,12 +72,20 @@ impl AppImageRuntime {
     /// `AppImage` (a terminal, a launcher) inherits that one's variables, and
     /// trusting them would make an update overwrite the other program. The
     /// running executable must sit inside the mounted image.
+    ///
+    /// Both paths are resolved first: the executable path the system reports
+    /// has its links resolved, the mount variable may not, and comparing the
+    /// two unresolved would turn updates off wherever `/tmp` is a link. A
+    /// mount that is empty or the filesystem root would contain every
+    /// executable, so it proves nothing and is refused.
     fn own_image(&self) -> Option<PathBuf> {
         let image = self.image.as_ref()?;
-        let mount = self.mount.as_ref()?;
-        let executable = self.executable.as_ref()?;
+        let mount = self.mount.as_ref()?.canonicalize().ok()?;
+        let executable = self.executable.as_ref()?.canonicalize().ok()?;
 
-        if image.is_file() && executable.starts_with(mount) {
+        let mount_is_a_real_directory = mount.parent().is_some();
+
+        if image.is_file() && mount_is_a_real_directory && executable.starts_with(&mount) {
             Some(image.clone())
         } else {
             None
@@ -350,53 +358,122 @@ mod tests {
         executable: None,
     };
 
-    #[test]
-    fn linux_copy_running_from_inside_its_image_is_an_appimage() {
+    /// A directory laid out like a mounted image, with the app's executable
+    /// in it, and the image file next to it.
+    struct MountedImage {
+        dir: PathBuf,
+        image: PathBuf,
+        mount: PathBuf,
+        executable: PathBuf,
+    }
+
+    fn mounted_image() -> MountedImage {
         let dir = temp_dir();
         let image = dir.join("Oikonomia.AppImage");
-        std::fs::write(&image, b"image").expect("appimage");
-        let mount = PathBuf::from("/tmp/.mount_Oikonoabc");
+        let mount = dir.join(".mount_Oikonoabc");
+        let executable = mount.join("usr").join("bin").join("oikonomia");
+        std::fs::write(&image, b"image").expect("image");
+        std::fs::create_dir_all(executable.parent().expect("parent")).expect("mount");
+        std::fs::write(&executable, b"exe").expect("executable");
+        MountedImage {
+            dir,
+            image,
+            mount,
+            executable,
+        }
+    }
+
+    #[test]
+    fn linux_copy_running_from_inside_its_image_is_an_appimage() {
+        let mounted = mounted_image();
         let runtime = AppImageRuntime {
-            image: Some(image.clone()),
-            mount: Some(mount.clone()),
-            executable: Some(mount.join("usr/bin/oikonomia")),
+            image: Some(mounted.image.clone()),
+            mount: Some(mounted.mount.clone()),
+            executable: Some(mounted.executable.clone()),
         };
 
         assert_eq!(
             InstallKind::classify("linux", &runtime),
-            InstallKind::AppImage(image)
+            InstallKind::AppImage(mounted.image.clone())
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&mounted.dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn appimage_is_recognised_when_the_mount_is_named_through_a_link() {
+        // `/tmp` is a link on some systems: the runtime names the mount by
+        // the link, the system reports the executable by its real path.
+        let mounted = mounted_image();
+        let link = mounted.dir.join("link-to-mount");
+        std::os::unix::fs::symlink(&mounted.mount, &link).expect("link");
+        let runtime = AppImageRuntime {
+            image: Some(mounted.image.clone()),
+            mount: Some(link),
+            executable: Some(mounted.executable.clone()),
+        };
+
+        assert_eq!(
+            InstallKind::classify("linux", &runtime),
+            InstallKind::AppImage(mounted.image.clone())
+        );
+        let _ = std::fs::remove_dir_all(&mounted.dir);
     }
 
     #[test]
     fn linux_copy_with_inherited_appimage_variables_is_package_managed() {
         // A .deb copy started from a terminal that is itself an AppImage
         // inherits that terminal's variables. Updating must not overwrite it.
-        let dir = temp_dir();
-        let other_image = dir.join("SomeTerminal.AppImage");
-        std::fs::write(&other_image, b"terminal").expect("other image");
+        let terminal = mounted_image();
+        let installed = temp_dir().join("oikonomia");
+        std::fs::write(&installed, b"exe").expect("installed copy");
         let runtime = AppImageRuntime {
-            image: Some(other_image.clone()),
-            mount: Some(PathBuf::from("/tmp/.mount_SomeTexyz")),
-            executable: Some(PathBuf::from("/usr/bin/oikonomia")),
+            image: Some(terminal.image.clone()),
+            mount: Some(terminal.mount.clone()),
+            executable: Some(installed),
         };
 
         assert_eq!(
             InstallKind::classify("linux", &runtime),
             InstallKind::PackageManaged
         );
-        assert_eq!(std::fs::read(&other_image).expect("kept"), b"terminal");
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(std::fs::read(&terminal.image).expect("kept"), b"image");
+        let _ = std::fs::remove_dir_all(&terminal.dir);
+    }
+
+    #[test]
+    fn a_mount_that_would_contain_every_executable_proves_nothing() {
+        let mounted = mounted_image();
+        let root = mounted
+            .executable
+            .ancestors()
+            .last()
+            .expect("root")
+            .to_path_buf();
+
+        for mount in [root, PathBuf::new()] {
+            let runtime = AppImageRuntime {
+                image: Some(mounted.image.clone()),
+                mount: Some(mount.clone()),
+                executable: Some(mounted.executable.clone()),
+            };
+
+            assert_eq!(
+                InstallKind::classify("linux", &runtime),
+                InstallKind::PackageManaged,
+                "mount {mount:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&mounted.dir);
     }
 
     #[test]
     fn linux_copy_without_a_usable_image_is_package_managed() {
-        let mount = PathBuf::from("/tmp/.mount_Oikonoabc");
+        let mounted = mounted_image();
         let image_is_gone = AppImageRuntime {
-            image: Some(temp_dir().join("gone.AppImage")),
-            mount: Some(mount.clone()),
-            executable: Some(mount.join("usr/bin/oikonomia")),
+            image: Some(mounted.dir.join("gone.AppImage")),
+            mount: Some(mounted.mount.clone()),
+            executable: Some(mounted.executable.clone()),
         };
 
         assert_eq!(
@@ -407,18 +484,16 @@ mod tests {
             InstallKind::classify("linux", &image_is_gone),
             InstallKind::PackageManaged
         );
+        let _ = std::fs::remove_dir_all(&mounted.dir);
     }
 
     #[test]
     fn other_systems_ignore_the_appimage_variables() {
-        let dir = temp_dir();
-        let image = dir.join("Oikonomia.AppImage");
-        std::fs::write(&image, b"image").expect("appimage");
-        let mount = PathBuf::from("/tmp/.mount_Oikonoabc");
+        let mounted = mounted_image();
         let stray = AppImageRuntime {
-            image: Some(image),
-            mount: Some(mount.clone()),
-            executable: Some(mount.join("usr/bin/oikonomia")),
+            image: Some(mounted.image.clone()),
+            mount: Some(mounted.mount.clone()),
+            executable: Some(mounted.executable.clone()),
         };
 
         assert_eq!(InstallKind::classify("macos", &stray), InstallKind::MacApp);
@@ -430,7 +505,7 @@ mod tests {
             InstallKind::classify("freebsd", &stray),
             InstallKind::PackageManaged
         );
-        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&mounted.dir);
     }
 
     #[test]

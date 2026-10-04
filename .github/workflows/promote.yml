@@ -95,12 +95,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # The latest run on the tag, whatever started it: a manual run on
+          # the tag uploads to the same draft, so a green tag push followed
+          # by a red manual run must block too.
           gh run list --repo "${GITHUB_REPOSITORY}" --workflow release.yml \
-            --branch "${TAG}" --event push --limit 1 \
-            --json conclusion --jq '.[0].conclusion // "none"' > conclusion.txt
-          conclusion="$(cat conclusion.txt)"
+            --branch "${TAG}" --limit 1 \
+            --json conclusion,headSha --jq '.[0] // {} | "\(.conclusion // "none") \(.headSha // "none")"' > run.txt
+          read -r conclusion run_sha < run.txt
           if [ "${conclusion}" != "success" ]; then
             echo "::error::the latest Release run for ${TAG} is '${conclusion}', not 'success'; refusing to promote"
+            exit 1
+          fi
+
+          # The run must have built the commit the tag points at now.
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha > tag-sha.txt
+          tag_sha="$(cat tag-sha.txt)"
+          if [ "${run_sha}" != "${tag_sha}" ]; then
+            echo "::error::the Release run built ${run_sha}, but ${TAG} is ${tag_sha}; refusing to promote"
             exit 1
           fi
 

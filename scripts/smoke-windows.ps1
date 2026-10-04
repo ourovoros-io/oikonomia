@@ -10,6 +10,15 @@
 #
 # Screenshots land in target\smoke\ for a human to look at.
 
+# CI only. This script deletes the vault directory of the account it runs
+# as, installs the app, and leaves a throwaway vault behind. On a machine
+# with a real vault that would destroy it.
+if (-not $env:CI -and $env:SMOKE_DESTROYS_MY_VAULT -ne 'yes') {
+    Write-Host 'refusing to run outside CI: this script DELETES the Oikonomia vault of this Windows account.'
+    Write-Host 'On a throwaway machine, set SMOKE_DESTROYS_MY_VAULT=yes to run it anyway.'
+    exit 2
+}
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -156,7 +165,11 @@ Start-Sleep -Seconds 1
 [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
 $vaultDb = Join-Path $localVault 'data\vault.db'
 $vaultHeader = Join-Path $localVault 'data\vault.header.json'
-Wait-Until 'the app creates the encrypted vault' { (Test-Path $vaultDb) -and (Test-Path $vaultHeader) }
+Wait-Until 'the app creates the encrypted vault' {
+    (Test-Path $vaultHeader) -and (Test-Path $vaultDb) -and ((Get-Item $vaultDb).Length -gt 0)
+}
+# Let the first pages reach the file before reading its header.
+Start-Sleep -Seconds 5
 # SQLCipher leaves no readable SQLite header; a plaintext database starts with it.
 $stream = [System.IO.File]::Open($vaultDb, 'Open', 'Read', 'ReadWrite')
 $head = New-Object byte[] 15
@@ -165,7 +178,6 @@ $stream.Dispose()
 if ([System.Text.Encoding]::ASCII.GetString($head) -eq 'SQLite format 3') {
     Fail 'the app wrote a plaintext database'
 }
-Start-Sleep -Seconds 5
 if ($null -eq (Get-AppWindow)) { Fail 'the app window is gone after creating the vault' }
 Save-WindowShot (Get-AppWindow) (Join-Path $out 'windows-unlocked.png') | Out-Null
 

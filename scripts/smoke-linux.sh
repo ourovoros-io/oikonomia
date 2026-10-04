@@ -15,6 +15,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# CI only. The vault it creates is in a private directory, but the script
+# also installs and removes the system package and kills any running copy.
+if [ -z "${CI:-}" ] && [ "${SMOKE_ALLOW_LOCAL:-}" != "yes" ]; then
+  echo "refusing to run outside CI: this script installs and removes the oikonomia package" >&2
+  echo "and kills any running copy. Set SMOKE_ALLOW_LOCAL=yes to run it anyway." >&2
+  exit 2
+fi
+
 if [ -z "${SMOKE_INNER:-}" ]; then
   # Re-run inside a private D-Bus session (the single-instance check uses the
   # session bus) and a virtual display.
@@ -106,8 +114,10 @@ smoke() {
   xdotool key Tab
   xdotool type --delay 40 "$PASSWORD"
   xdotool key Return
-  vault_is_created() { [ -f "$vault_dir/vault.db" ] && [ -f "$vault_dir/vault.header.json" ]; }
+  vault_is_created() { [ -s "$vault_dir/vault.db" ] && [ -f "$vault_dir/vault.header.json" ]; }
   wait_until "$name creates the encrypted vault" vault_is_created
+  # Let the first pages reach the file before reading its header.
+  sleep 5
   local file
   for file in vault.db vault.header.json; do
     mode="$(stat -c '%a' "$vault_dir/$file")"
@@ -117,7 +127,6 @@ smoke() {
   if head -c 15 "$vault_dir/vault.db" | grep -q 'SQLite format 3'; then
     fail "$name wrote a plaintext database"
   fi
-  sleep 5
   import -window "$window" "$out/$name-unlocked.png"
 
   timeout "$LAUNCH_TIMEOUT" "$@" >"$out/$name-second.log" 2>&1 \

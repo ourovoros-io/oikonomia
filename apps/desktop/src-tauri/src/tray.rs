@@ -310,6 +310,16 @@ fn work_area_for(app: &AppHandle, click: Option<(f64, f64)>) -> Option<WorkArea>
     })
 }
 
+/// Height to place the quick-add window by, in physical pixels: its current
+/// height, or its tallest state when it is being fitted to a work area.
+fn placement_height(current: f64, scale: f64, fitted_to_work_area: bool) -> f64 {
+    if fitted_to_work_area {
+        current.max(QUICK_ADD_SAVE_HEIGHT * scale)
+    } else {
+        current
+    }
+}
+
 /// Place the quick-add window next to the tray click, on screen.
 fn position_quick_add(
     app: &AppHandle,
@@ -326,10 +336,7 @@ fn position_quick_add(
     // moving it. Where the window is fitted to a work area, make room for
     // that height now, or the confirm row would end up under the taskbar.
     let scale = window.scale_factor().unwrap_or(1.0);
-    let height = match work_area {
-        Some(_) => f64::from(outer.height).max(QUICK_ADD_SAVE_HEIGHT * scale),
-        None => f64::from(outer.height),
-    };
+    let height = placement_height(f64::from(outer.height), scale, work_area.is_some());
 
     let (x, y) = quick_add_origin(click, (f64::from(outer.width), height), work_area);
 
@@ -470,14 +477,27 @@ mod tests {
     }
 
     #[test]
-    fn quick_add_at_its_tallest_still_clears_a_bottom_taskbar() {
-        // The window opens 64 high and grows to 96; it is placed as if it
-        // were already 96 so the grown window ends above the taskbar.
-        let tallest = (PANEL.0, QUICK_ADD_SAVE_HEIGHT);
+    fn quick_add_is_placed_by_its_tallest_state_so_it_clears_the_taskbar() {
+        // The window opens 64 high and the frontend grows it to 96 without
+        // moving it. Placed by its opening height it would end under a
+        // bottom taskbar once grown.
+        let opening = QUICK_ADD_STEPPER_HEIGHT;
+        let height = placement_height(opening, 1.0, true);
+        assert_eq!(height, QUICK_ADD_SAVE_HEIGHT);
 
-        let origin = quick_add_origin(Some((1500.0, 1060.0)), tallest, Some(FULL_HD));
-
+        let origin = quick_add_origin(Some((1500.0, 1060.0)), (PANEL.0, height), Some(FULL_HD));
         assert!(origin.1 + QUICK_ADD_SAVE_HEIGHT <= FULL_HD.bottom());
+
+        let by_opening_height =
+            quick_add_origin(Some((1500.0, 1060.0)), (PANEL.0, opening), Some(FULL_HD));
+        assert!(by_opening_height.1 + QUICK_ADD_SAVE_HEIGHT > FULL_HD.bottom());
+    }
+
+    #[test]
+    fn placement_height_scales_with_the_display_and_is_unchanged_without_a_work_area() {
+        assert_eq!(placement_height(128.0, 2.0, true), 192.0);
+        assert_eq!(placement_height(240.0, 2.0, true), 240.0);
+        assert_eq!(placement_height(64.0, 2.0, false), 64.0);
     }
 
     #[test]

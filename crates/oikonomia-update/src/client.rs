@@ -415,7 +415,7 @@ fn prepare_cache_dir(cache_dir: &Path) -> std::io::Result<()> {
 /// Writes `bytes` to a file that must not exist yet. `create_new` refuses an
 /// existing path, a symbolic link included, so the write cannot be
 /// redirected to a file outside the cache.
-fn write_new_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_new_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
 
     let mut options = std::fs::OpenOptions::new();

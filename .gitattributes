@@ -12,6 +12,9 @@
 *.icns binary
 *.rten binary
 *.woff2 binary
+*.woff binary
+*.ttf binary
+*.otf binary
 
 # Upstream licence text, kept byte for byte as published (CRLF).
 web/public/fonts/OFL-IBMPlexMono.txt -text
