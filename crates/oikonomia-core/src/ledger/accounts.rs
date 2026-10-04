@@ -213,6 +213,9 @@ pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
 }
 
 fn map_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
+    let id = parse_uuid_col(row, 0)?;
+    let entity_id = parse_uuid_col(row, 1)?;
+
     let type_text: String = row.get(4)?;
     let account_type = parse_account_type(&type_text).map_err(|err| invalid_text(4, &err))?;
 
@@ -223,8 +226,8 @@ fn map_account(row: &rusqlite::Row<'_>) -> rusqlite::Result<Account> {
         .map_err(|err| invalid_text(5, &err))?;
 
     Ok(Account {
-        id: AccountId(parse_uuid_col(row, 0)?),
-        entity_id: EntityId(parse_uuid_col(row, 1)?),
+        id: AccountId(id),
+        entity_id: EntityId(entity_id),
         code: row.get(2)?,
         name: row.get(3)?,
         account_type,
@@ -334,21 +337,25 @@ mod tests {
 
     #[test]
     fn a_corrupt_row_fails_the_query_instead_of_yielding_a_wrong_account() {
+        // Each row, and the index of the first column that is wrong in it.
         let corrupt_rows = [
-            ("not-a-uuid", "asset", None),
-            (ACCOUNT, "treasure", None),
-            (ACCOUNT, "asset", Some("not-a-uuid")),
+            ("not-a-uuid", "asset", None, 0),
+            (ACCOUNT, "treasure", None, 4),
+            (ACCOUNT, "asset", Some("not-a-uuid"), 5),
+            ("not-a-uuid", "treasure", Some("not-a-uuid"), 0),
         ];
 
-        for (id, account_type, parent) in corrupt_rows {
+        for (id, account_type, parent, column) in corrupt_rows {
             let conn = accounts_table();
             insert(&conn, id, account_type, parent, 0);
 
-            let result = list_accounts(&conn, entity());
+            let err = list_accounts(&conn, entity())
+                .expect_err("a corrupt row must not be accepted")
+                .to_string();
 
             assert!(
-                result.is_err(),
-                "row ({id}, {account_type}, {parent:?}) was accepted: {result:?}"
+                err.contains(&format!("index: {column}")),
+                "row ({id}, {account_type}, {parent:?}): {err}"
             );
         }
     }

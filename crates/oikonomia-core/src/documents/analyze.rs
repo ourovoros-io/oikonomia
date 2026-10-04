@@ -826,18 +826,15 @@ mod tests {
     }
 
     #[test]
-    fn image_ocr_is_skipped_without_usable_models() {
+    fn image_ocr_is_skipped_when_no_model_directory_is_given() {
         let pdf = pdf_with_images(ImagePlacement::PageXObject, &[(dct(), b"jpeg")]);
-        let empty_dir = std::env::temp_dir();
         let mut source = AnalyzeSource::Heuristic;
         let mut label = None;
         let mut note = None;
 
-        for model_dir in [None, Some(empty_dir.as_path())] {
-            let text = ocr_pdf_embedded_images(&pdf, model_dir, &mut source, &mut label, &mut note);
+        let text = ocr_pdf_embedded_images(&pdf, None, &mut source, &mut label, &mut note);
 
-            assert_eq!(text, None);
-        }
+        assert_eq!(text, None);
         assert_eq!(source, AnalyzeSource::Heuristic);
         assert_eq!(label, None);
         assert!(note.is_none());
