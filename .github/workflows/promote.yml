@@ -8,6 +8,11 @@
 # baked public key, strip every asset outside the tested allow-list, upload
 # the signed feed, and only then publish the draft.
 #
+# macOS and Linux are always published. The Windows installer is published
+# only with `publish_windows`, which stays off until it is code-signed. Which
+# file fills which feed entry, and which assets survive, is decided by
+# `oikonomia-update`'s `release_set` module, not by shell patterns here.
+#
 # Needs (Environment `release`):
 #   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 name: Promote release
@@ -21,6 +26,10 @@ on:
         type: string
       dry_run:
         description: Assemble, sign, and verify the feed without publishing
+        type: boolean
+        default: false
+      publish_windows:
+        description: Publish the Windows installer too (leave off until it is code-signed)
         type: boolean
         default: false
 
@@ -37,6 +46,7 @@ jobs:
       contents: write
     env:
       TAG: ${{ inputs.tag }}
+      WINDOWS_FLAG: ${{ inputs.publish_windows && '--with-windows' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,30 +93,20 @@ jobs:
           gh release download "${TAG}" --repo "${GITHUB_REPOSITORY}" --dir artifacts
           ls -la artifacts
 
-      - name: Assemble latest.json (darwin only)
+      - name: Assemble latest.json
         run: |
           set -euo pipefail
-          shopt -s nullglob
           # tauri-action uploads its own latest.json to the draft; ours is the only one that ships.
           rm -f artifacts/latest.json artifacts/latest.json.sig
-          matches=(artifacts/*.app.tar.gz)
-          if [ "${#matches[@]}" -ne 1 ]; then
-            found="${matches[*]:-}"
-            if [ -z "$found" ]; then
-              found="(no matches)"
-            fi
-            echo "::error::expected exactly one .app.tar.gz, found: $found"
-            exit 1
-          fi
-          aarch64="$(basename "${matches[0]}")"
-          # macos-latest builds arm64 and Tauri 2 omits the arch from macOS bundle names; a second darwin arch will need explicit naming when it exists.
-          platforms=(--platform "darwin-aarch64=${aarch64}")
           printf '%s' "Oikonomia ${TAG}" > notes.txt
+          # Fails when a platform has no artifact or more than one.
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
           cargo run -p oikonomia-update --bin assemble_feed -- assemble \
             --version "${TAG}" \
             --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
             --dir artifacts --out artifacts/latest.json --notes-file notes.txt \
-            "${platforms[@]}"
+            ${WINDOWS_FLAG}
+          cat artifacts/latest.json
 
       - name: Sign latest.json with the updater key
         env:
@@ -135,32 +135,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Ship an explicit allow-list only. The draft also carries the Linux
-          # AppImage/.deb, which never went through the
-          # smoke-tested darwin feed above; remove them so the published
-          # release holds exactly what the feed names and nothing un-vetted.
-          is_published_asset() {
-            case "$1" in
-              *.app.tar.gz | *.app.tar.gz.sig | *.dmg | latest.json | latest.json.sig)
-                return 0
-                ;;
-              *)
-                return 1
-                ;;
-            esac
-          }
+          # Ship an explicit allow-list only: delete every draft asset the
+          # release set does not publish (a withheld Windows installer, stray
+          # formats), so the release holds what the feed names and no more.
+          # Each list goes through a file, not a process substitution: a
+          # failing command must stop the job here, not leave an empty list
+          # that would publish the draft unfiltered.
+          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' > assets.txt
+          mapfile -t assets < assets.txt
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
+          cargo run --quiet -p oikonomia-update --bin assemble_feed -- \
+            unpublished ${WINDOWS_FLAG} "${assets[@]}" > removed.txt
+          mapfile -t removed < removed.txt
 
-          removed=()
-          while IFS= read -r asset; do
+          for asset in "${removed[@]}"; do
             [ -z "${asset}" ] && continue
-            if ! is_published_asset "${asset}"; then
-              gh release delete-asset "${TAG}" "${asset}" --repo "${GITHUB_REPOSITORY}" --yes
-              removed+=("${asset}")
-            fi
-          done < <(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')
+            gh release delete-asset "${TAG}" "${asset}" --repo "${GITHUB_REPOSITORY}" --yes
+          done
 
           if [ "${#removed[@]}" -gt 0 ]; then
-            echo "::warning::removed assets outside the smoke-tested darwin feed: ${removed[*]}"
+            echo "::warning::removed assets outside the published release set: ${removed[*]}"
           fi
 
           # Replace tauri-action's latest.json with the one assembled, signed,

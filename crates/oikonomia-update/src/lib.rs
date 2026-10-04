@@ -11,6 +11,7 @@ pub mod feed;
 mod hosts;
 mod machine;
 mod notes;
+pub mod release_set;
 mod status;
 #[cfg(test)]
 mod test_macros;
@@ -26,6 +27,7 @@ pub use feed::{FeedArtifact, assemble_manifest};
 pub use hosts::HostPolicy;
 pub use machine::UpdateMachine;
 pub use notes::sanitize_notes;
+pub use release_set::{ReleaseSetError, WindowsBuild, feed_entries, is_published_asset};
 pub use status::UpdateStatus;
 pub use verify::{parse_public_key, verify_manifest_bytes};
 

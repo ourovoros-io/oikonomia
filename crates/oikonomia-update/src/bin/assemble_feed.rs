@@ -1,13 +1,17 @@
 //! Promote-lane CLI: assemble and verify `latest.json`.
 //!
 //! `assemble` scans an artifact directory; `verify` checks a manifest and its
-//! detached minisign signature with the client's own verifier code.
+//! detached minisign signature with the client's own verifier code;
+//! `unpublished` lists the draft assets that must not be published.
 
-use oikonomia_update::{FeedArtifact, assemble_manifest, parse_public_key};
+use oikonomia_update::{
+    FeedArtifact, WindowsBuild, assemble_manifest, feed_entries, is_published_asset,
+    parse_public_key,
+};
 use sha2::{Digest, Sha256};
 use std::fmt::Write as FmtWrite;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -15,6 +19,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("assemble") => run_assemble(&args[1..]),
         Some("verify") => run_verify(&args[1..]),
+        Some("unpublished") => run_unpublished(&args[1..]),
         _ => Err(USAGE.to_owned()),
     };
     match result {
@@ -28,27 +33,40 @@ fn main() -> ExitCode {
 
 const USAGE: &str = "usage:
   assemble_feed assemble --version <v> --base-url <url> --dir <artifact-dir> \
-    --out <latest.json> [--notes-file <path>] --platform <key>=<file> [--platform ...]
-  assemble_feed verify --manifest <latest.json> --sig <latest.json.sig> --pubkey <minisign-pubkey>";
+    --out <latest.json> [--notes-file <path>] [--with-windows]
+  assemble_feed verify --manifest <latest.json> --sig <latest.json.sig> --pubkey <minisign-pubkey>
+  assemble_feed unpublished [--with-windows] <asset-name>...";
+
+const WITH_WINDOWS: &str = "--with-windows";
+
+fn windows_build(args: &[String]) -> WindowsBuild {
+    if args.iter().any(|arg| arg == WITH_WINDOWS) {
+        WindowsBuild::Published
+    } else {
+        WindowsBuild::Withheld
+    }
+}
+
+/// File names directly inside `dir`, sorted so the output is reproducible.
+fn file_names_in(dir: &Path) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
+        if let Some(name) = entry.file_name().to_str() {
+            names.push(name.to_owned());
+        }
+    }
+    names.sort();
+
+    Ok(names)
+}
 
 fn flag_value(args: &[String], name: &str) -> Option<String> {
     args.iter()
         .position(|a| a == name)
         .and_then(|i| args.get(i + 1).cloned())
-}
-
-fn flag_values(args: &[String], name: &str) -> Vec<String> {
-    let mut values = Vec::new();
-    let mut index = 0;
-    while index < args.len() {
-        if args[index] == name && index + 1 < args.len() {
-            values.push(args[index + 1].clone());
-            index += 2;
-        } else {
-            index += 1;
-        }
-    }
-    values
 }
 
 fn run_assemble(args: &[String]) -> Result<(), String> {
@@ -61,11 +79,12 @@ fn run_assemble(args: &[String]) -> Result<(), String> {
         None => String::new(),
     };
 
+    let names = file_names_in(&dir)?;
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let entries = feed_entries(&names, windows_build(args)).map_err(|e| e.to_string())?;
+
     let mut artifacts = Vec::new();
-    for mapping in flag_values(args, "--platform") {
-        let (platform, file_name) = mapping
-            .split_once('=')
-            .ok_or_else(|| format!("bad --platform mapping: {mapping}"))?;
+    for (platform, file_name) in entries {
         let file = dir.join(file_name);
         let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         let signature_path = dir.join(format!("{file_name}.sig"));
@@ -90,6 +109,20 @@ fn run_assemble(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("assemble: {e}"))?;
     std::fs::write(&out, manifest).map_err(|e| format!("{}: {e}", out.display()))?;
     writeln!(std::io::stdout(), "wrote {}", out.display()).map_err(|e| e.to_string())
+}
+
+/// Prints, one per line, the given asset names that the release must not keep.
+fn run_unpublished(args: &[String]) -> Result<(), String> {
+    let windows = windows_build(args);
+    let mut stdout = std::io::stdout();
+
+    for name in args.iter().filter(|arg| *arg != WITH_WINDOWS) {
+        if !is_published_asset(name, windows) {
+            writeln!(stdout, "{name}").map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(())
 }
 
 fn run_verify(args: &[String]) -> Result<(), String> {
