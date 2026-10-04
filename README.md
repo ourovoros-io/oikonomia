@@ -41,20 +41,21 @@ Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 - Settings: optional donation addresses with copy buttons
 - Master password must be at least 12 characters
 - Tray quick-add window: left-click the tray (on Linux, choose "Quick add" in the tray menu) to post a simple entry or drop a document without opening the full app
-- Signed, click-driven update check on the unlock screen (minisign-verified, talks only to GitHub's release hosts)
+- Signed, click-driven update check on the unlock screen (minisign-verified, talks only to GitHub's release hosts); every build except the `.deb` updates in place, and the `.deb` only reports a newer version
 - Dark-only "Aurora glass" UI; locale money formatting
 - UI language: English, Ελληνικά, Français, and Deutsch; the first launch follows the system language when it is one of these four, switchable on the first screen and in Settings; persists across relaunch; the interface, error messages, and the names seeded into new books follow the selected language
 
 ## Install
 
-No release has been published yet. Releases will appear on the repository's
-Releases page.
+No release has been published yet. Releases appear on this repository's
+Releases page, each with a `SHA256SUMS` file so you can check what you
+downloaded.
 
 | Platform | File | Updates |
 |----------|------|---------|
 | macOS on Apple Silicon (12 or later) | `.dmg` | In the app |
 | Linux x86_64 | `.AppImage` | In the app |
-| Linux x86_64, Debian and Ubuntu | `.deb` | The app tells you when a newer version exists; install the new `.deb` yourself |
+| Linux x86_64, Debian and Ubuntu | `.deb` | The app tells you when a newer version exists; install the new `.deb` over the old one |
 | Windows 10 and 11, x86_64 | `-setup.exe` | In the app |
 
 The Windows installer is built and tested with every release but is not yet
@@ -134,7 +135,8 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
   if you accept an update, its download, both started by a click. They talk only
   to GitHub's release hosts (this repository's published releases) and verify a
   minisign signature over both the update manifest and the downloaded artifact
-  before anything is installed.
+  before anything is installed. The `.deb` build checks for a newer version but
+  never downloads or installs one.
 - The vault and ledger paths (`oikonomia-core`) contain no network code at all;
   `scripts/assert-core-offline.sh` and `cargo deny check` enforce this in CI.
 - Every webview is pinned to the app's own origin (`nav_guard`), and the CSP
