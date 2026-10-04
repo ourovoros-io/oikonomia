@@ -377,11 +377,20 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     file.write_all(bytes)
         .map_err(|err| Error::Io(err.to_string()))?;
     file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
-    if let Some(parent) = path.parent() {
-        let dir = fs::File::open(parent).map_err(|err| Error::Io(err.to_string()))?;
+    sync_parent_dir(path);
+    Ok(())
+}
+
+/// Flush the directory entry of `path` so a rename or create survives a crash.
+///
+/// Best effort: Windows cannot open a directory as a file, and the file's own
+/// `sync_all` above already made the contents durable there.
+fn sync_parent_dir(path: &Path) {
+    if let Some(parent) = path.parent()
+        && let Ok(dir) = fs::File::open(parent)
+    {
         let _ = dir.sync_all();
     }
-    Ok(())
 }
 
 fn remove_vault_db_sidecars(db_path: &Path) {
