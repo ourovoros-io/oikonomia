@@ -44,6 +44,36 @@ pub fn current_updater_platform() -> String {
     format!("{os}-{}", std::env::consts::ARCH)
 }
 
+/// How this copy of the app receives a new version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallRoute {
+    /// The app replaces itself: a macOS bundle, an `AppImage`, or a Windows
+    /// per-user installer.
+    InApp,
+    /// The files belong to the system package manager (a `.deb` install).
+    /// The app may report a newer version but must never write over itself.
+    PackageManager,
+}
+
+/// What the platform installer did with a verified artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallHandoff {
+    /// The new version is on disk in place of the old one; restart into it.
+    Replaced,
+    /// A separate installer process is running from the artifact and will
+    /// replace the app once this process exits. The artifact must stay.
+    InstallerStarted,
+}
+
+/// Result of [`crate::UpdateMachine::install`] from a legal state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallOutcome {
+    /// Download, verification, or the installer failed; nothing was replaced.
+    Failed,
+    /// The installer ran; the caller restarts or exits as the handoff says.
+    Installed(InstallHandoff),
+}
+
 /// Inputs for one check or install. The webview cannot supply a URL or pubkey.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
@@ -54,6 +84,7 @@ pub struct ClientConfig {
     timeout: Duration,
     cache_dir: PathBuf,
     host_policy: HostPolicy,
+    install_route: InstallRoute,
 }
 
 impl ClientConfig {
@@ -64,13 +95,18 @@ impl ClientConfig {
     /// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or invalid,
     /// [`UpdateError::InvalidFeedUrl`] when the feed constant does not parse, or
     /// [`UpdateError::ManifestParse`] when `current_version` is not `SemVer`.
-    pub fn production(public_key: &str, current_version: &str, cache_dir: PathBuf) -> Result<Self> {
+    pub fn production(
+        public_key: &str,
+        current_version: &str,
+        cache_dir: PathBuf,
+        install_route: InstallRoute,
+    ) -> Result<Self> {
         let feed_url = Url::parse(UPDATE_FEED_URL).map_err(|_| UpdateError::InvalidFeedUrl)?;
         let host_policy = HostPolicy::production();
         if !host_policy.is_allowed_fetch_url(&feed_url) {
             return Err(UpdateError::ArtifactUrl);
         }
-        Self::new(
+        let config = Self::new(
             feed_url,
             public_key,
             current_version,
@@ -78,7 +114,11 @@ impl ClientConfig {
             cache_dir,
             host_policy,
             DEFAULT_TIMEOUT,
-        )
+        )?;
+        Ok(Self {
+            install_route,
+            ..config
+        })
     }
 
     fn new(
@@ -102,6 +142,7 @@ impl ClientConfig {
             timeout,
             cache_dir,
             host_policy,
+            install_route: InstallRoute::InApp,
         })
     }
 
@@ -133,6 +174,13 @@ impl ClientConfig {
             timeout,
         )
     }
+
+    pub(crate) fn with_install_route(self, install_route: InstallRoute) -> Self {
+        Self {
+            install_route,
+            ..self
+        }
+    }
 }
 
 /// Artifact metadata taken only after the detached manifest signature verifies.
@@ -145,16 +193,26 @@ pub struct VerifiedOffer {
     artifact_url: Url,
     artifact_signature: String,
     sha256: [u8; 32],
+    install_route: InstallRoute,
 }
 
 impl VerifiedOffer {
-    /// Version and notes for [`UpdateStatus::Available`].
+    /// The status this offer puts the machine in: installable in-app, or
+    /// only reported when the package manager owns the files.
     #[must_use]
     pub fn status(&self) -> UpdateStatus {
-        UpdateStatus::Available {
-            version: self.version.clone(),
-            notes: self.notes.clone(),
+        let version = self.version.clone();
+        let notes = self.notes.clone();
+        match self.install_route {
+            InstallRoute::InApp => UpdateStatus::Available { version, notes },
+            InstallRoute::PackageManager => UpdateStatus::AvailableManually { version, notes },
         }
+    }
+
+    /// How this copy of the app may take the offer.
+    #[must_use]
+    pub fn install_route(&self) -> InstallRoute {
+        self.install_route
     }
 }
 
@@ -276,6 +334,7 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
         artifact_url,
         artifact_signature: signature.to_owned(),
         sha256,
+        install_route: config.install_route,
     })
 }
 
@@ -291,9 +350,12 @@ pub fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Resu
         log::warn!("updater cache create failed: {err}");
         return Err(UpdateError::Network);
     }
-    let dest = config
-        .cache_dir
-        .join(format!("artifact-{}", to_hex(&offer.sha256)));
+    purge_cache(&config.cache_dir);
+    let dest = config.cache_dir.join(format!(
+        "{}-{}",
+        to_hex(&offer.sha256),
+        artifact_file_name(&offer.artifact_url)
+    ));
     match download_and_verify_inner(config, offer, &dest) {
         Ok(()) => Ok(dest),
         Err(err) => {
@@ -332,6 +394,55 @@ fn download_and_verify_inner(
         UpdateError::Network
     })?;
     Ok(())
+}
+
+/// Local file name for a downloaded artifact: the last segment of its URL,
+/// reduced to ASCII letters, digits, `.`, `-` and `_`.
+///
+/// The extension has to survive the download. The installers choose their
+/// action from it, and Windows will not start a program whose name has no
+/// extension.
+fn artifact_file_name(url: &Url) -> String {
+    const MAX_NAME_CHARS: usize = 96;
+
+    let segment = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or("");
+
+    let mut name = String::new();
+    for ch in segment.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
+            name.push(ch);
+        } else {
+            name.push('_');
+        }
+    }
+
+    // Keep the tail: that is where the extension lives.
+    let excess = name.len().saturating_sub(MAX_NAME_CHARS);
+    let name = name.split_off(excess);
+    let name = name.trim_start_matches('.');
+
+    if name.is_empty() {
+        "artifact".to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// Removes files left by earlier installs. Best effort: an installer that is
+/// still running keeps its file, which the next download clears.
+fn purge_cache(cache_dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 /// Removes `path` if it exists. Used after a failed install or after exec.
@@ -463,5 +574,5 @@ pub trait ArtifactInstaller {
     /// # Errors
     ///
     /// Returns an [`UpdateError`] when the platform installer cannot run.
-    fn install(&self, artifact: &Path) -> Result<()>;
+    fn install(&self, artifact: &Path) -> Result<InstallHandoff>;
 }

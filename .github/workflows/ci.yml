@@ -21,9 +21,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,11 +75,17 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
 
+      # The cargo steps below keep each runner's default shell on purpose. On
+      # Windows that is PowerShell, which finds Strawberry Perl; Git Bash would
+      # put its own perl first, and that perl lacks the modules the vendored
+      # OpenSSL build (SQLCipher) needs.
+
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # tauri-build requires the frontendDist directory (web/dist) to exist at
       # compile time; CI compiles the shell crate without bundling a frontend.
       - name: Create frontend dist placeholder
+        shell: bash
         run: mkdir -p web/dist
 
       # Formatting does not depend on the platform; one runner is enough.

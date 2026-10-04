@@ -5,7 +5,8 @@
 
 use crate::UPDATE_FEED_URL;
 use crate::client::{
-    ArtifactInstaller, CheckOutcome, ClientConfig, download_and_verify, perform_check,
+    ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
+    download_and_verify, perform_check,
 };
 use crate::error::UpdateError;
 use crate::feed::{FeedArtifact, assemble_manifest};
@@ -29,29 +30,70 @@ struct SpyInstaller {
     calls: Arc<AtomicUsize>,
     last_path: Mutex<Option<PathBuf>>,
     fail: bool,
+    handoff: InstallHandoff,
 }
 
 impl ArtifactInstaller for SpyInstaller {
-    fn install(&self, artifact: &Path) -> crate::Result<()> {
+    fn install(&self, artifact: &Path) -> crate::Result<InstallHandoff> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         let mut last = self.last_path.lock().expect("spy path");
         *last = Some(artifact.to_path_buf());
         if self.fail {
             return Err(UpdateError::ArtifactIntegrity);
         }
-        Ok(())
+        Ok(self.handoff)
     }
 }
 
 fn spy(fail: bool) -> (SpyInstaller, Arc<AtomicUsize>) {
+    spy_with_handoff(fail, InstallHandoff::Replaced)
+}
+
+fn spy_with_handoff(fail: bool, handoff: InstallHandoff) -> (SpyInstaller, Arc<AtomicUsize>) {
     let calls = Arc::new(AtomicUsize::new(0));
     (
         SpyInstaller {
             calls: Arc::clone(&calls),
             last_path: Mutex::new(None),
             fail,
+            handoff,
         },
         calls,
+    )
+}
+
+/// Serves a signed manifest offering `payload` at `artifact_path` as 0.2.0
+/// and returns a config for an app at 0.1.0.
+fn serve_newer_release(
+    server: &Server,
+    public_key: &str,
+    secret_key: &SecretKey,
+    artifact_path: &'static str,
+    payload: &'static [u8],
+    cache: PathBuf,
+) -> ClientConfig {
+    let artifact = server_url(server, artifact_path);
+    let body = static_manifest(
+        "0.2.0",
+        "ok",
+        artifact.as_str(),
+        &sign(secret_key, payload),
+        &sha256_hex(payload),
+    );
+    let sig = sign(secret_key, body.as_bytes());
+    serve_signed_manifest(server, &body, &sig);
+    server.expect(
+        Expectation::matching(request::method_path("GET", artifact_path))
+            .times(0..)
+            .respond_with(status_code(200).body(payload)),
+    );
+    config(
+        server,
+        "/latest.json",
+        public_key,
+        "0.1.0",
+        cache,
+        Duration::from_secs(2),
     )
 }
 
@@ -531,8 +573,9 @@ fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
         machine.check(&config),
         UpdateStatus::Available { .. }
     ));
-    let status = machine.install(&config, &installer).expect("legal");
-    assert_eq!(status, UpdateStatus::Failed);
+    let outcome = machine.install(&config, &installer).expect("legal");
+    assert_eq!(outcome, InstallOutcome::Failed);
+    assert_eq!(machine.status(), UpdateStatus::Failed);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
@@ -573,8 +616,9 @@ fn artifact_sig_mismatch_deletes_partial_and_does_not_exec() {
         machine.check(&config),
         UpdateStatus::Available { .. }
     ));
-    let status = machine.install(&config, &installer).expect("legal");
-    assert_eq!(status, UpdateStatus::Failed);
+    let outcome = machine.install(&config, &installer).expect("legal");
+    assert_eq!(outcome, InstallOutcome::Failed);
+    assert_eq!(machine.status(), UpdateStatus::Failed);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
@@ -708,8 +752,8 @@ fn successful_install_calls_exec_once() {
     let (installer, calls) = spy(false);
     let mut machine = UpdateMachine::new();
     machine.check(&config);
-    let status = machine.install(&config, &installer).expect("legal");
-    assert!(matches!(status, UpdateStatus::Available { .. }));
+    let outcome = machine.install(&config, &installer).expect("legal");
+    assert_eq!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let exec_path = installer
         .last_path
@@ -722,6 +766,141 @@ fn successful_install_calls_exec_once() {
         "exec path must be the wrapper-verified cache file, got {}",
         exec_path.display()
     );
+    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn downloaded_artifact_keeps_the_file_extension_of_its_url() {
+    // The installers pick their action from the extension, and Windows will
+    // not start a program whose file name has none.
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let config = serve_newer_release(
+        &server,
+        &pk,
+        &sk,
+        "/Oikonomia_0.2.0_x64-setup.exe",
+        b"installer",
+        cache.clone(),
+    );
+    let (installer, _calls) = spy(false);
+    let mut machine = UpdateMachine::new();
+    machine.check(&config);
+    machine.install(&config, &installer).expect("legal");
+
+    let exec_path = installer
+        .last_path
+        .lock()
+        .expect("path")
+        .clone()
+        .expect("installer received a path");
+    let name = exec_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("file name");
+    assert!(
+        name.ends_with("-Oikonomia_0.2.0_x64-setup.exe"),
+        "unexpected artifact name {name}"
+    );
+    assert_eq!(exec_path.parent(), Some(cache.as_path()));
+}
+
+#[test]
+fn artifact_name_from_a_hostile_url_cannot_leave_the_cache_directory() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    // The last URL segment decodes to `..\..\evil name.exe`.
+    let config = serve_newer_release(
+        &server,
+        &pk,
+        &sk,
+        "/dir/..%5C..%5Cevil%20name.exe",
+        b"installer",
+        cache.clone(),
+    );
+    let mut machine = UpdateMachine::new();
+    machine.check(&config);
+    let offer = machine.require_available().expect("offer").clone();
+    let path = download_and_verify(&config, &offer).expect("download");
+
+    assert_eq!(path.parent(), Some(cache.as_path()));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("file name");
+    assert!(
+        name.chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_'),
+        "unexpected artifact name {name}"
+    );
+    assert_eq!(path.extension().and_then(|ext| ext.to_str()), Some("exe"));
+}
+
+#[test]
+fn a_running_installer_keeps_its_artifact_and_the_next_download_clears_it() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let config = serve_newer_release(
+        &server,
+        &pk,
+        &sk,
+        "/Oikonomia-setup.exe",
+        b"installer",
+        cache.clone(),
+    );
+    let (installer, _calls) = spy_with_handoff(false, InstallHandoff::InstallerStarted);
+    let mut machine = UpdateMachine::new();
+    machine.check(&config);
+
+    let outcome = machine.install(&config, &installer).expect("legal");
+
+    assert_eq!(
+        outcome,
+        InstallOutcome::Installed(InstallHandoff::InstallerStarted)
+    );
+    assert_eq!(leftover_files(&cache).len(), 1);
+
+    let stale = cache.join("stale-from-an-earlier-install.exe");
+    std::fs::write(&stale, b"old").expect("stale file");
+    let offer = machine.require_available().expect("offer").clone();
+    let fresh = download_and_verify(&config, &offer).expect("download");
+    assert_eq!(leftover_files(&cache), vec![fresh]);
+}
+
+#[test]
+fn package_managed_copy_reports_the_version_and_refuses_to_install() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let config = serve_newer_release(
+        &server,
+        &pk,
+        &sk,
+        "/Oikonomia.AppImage",
+        b"appimage",
+        cache.clone(),
+    )
+    .with_install_route(InstallRoute::PackageManager);
+    let (installer, calls) = spy(false);
+    let mut machine = UpdateMachine::new();
+
+    let status = machine.check(&config);
+
+    assert_eq!(
+        status,
+        UpdateStatus::AvailableManually {
+            version: "0.2.0".into(),
+            notes: "ok".into(),
+        }
+    );
+    let err = machine
+        .install(&config, &installer)
+        .expect_err("a package-managed copy must not install");
+    assert_eq!(err.code(), "update_install_not_allowed");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
 }
 

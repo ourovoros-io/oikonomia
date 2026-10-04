@@ -7,11 +7,11 @@
 
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
-use crate::update_exec::VerifiedPathInstaller;
+use crate::update_exec::{InstallKind, VerifiedPathInstaller};
 use crate::update_key::UPDATER_PUBLIC_KEY;
 use oikonomia_update::{
-    ArtifactInstaller, CheckOutcome, ClientConfig, UpdateMachine, UpdateStatus,
-    default_updater_cache_dir, perform_check,
+    ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, UpdateMachine,
+    UpdateStatus, default_updater_cache_dir, perform_check,
 };
 use std::sync::Mutex;
 use tauri::State;
@@ -33,7 +33,8 @@ pub async fn update_check(state: State<'_, AppState>) -> CommandResult<UpdateSta
     let cache = default_updater_cache_dir();
 
     let outcome = match tauri::async_runtime::spawn_blocking(move || {
-        let config = match ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache) {
+        let route = InstallKind::detect().route();
+        let config = match ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, route) {
             Ok(config) => config,
             Err(err) => {
                 log::warn!("update check config failed: {err}");
@@ -60,7 +61,9 @@ pub async fn update_check(state: State<'_, AppState>) -> CommandResult<UpdateSta
 
 /// Install is only legal from [`UpdateStatus::Available`]. Downloads outside the
 /// vault data dir, verifies hash and signature, then execs that verified path.
-/// Then `app.restart()` from Rust.
+/// A copy replaced in place restarts into the new version. On Windows the
+/// installer process replaces the files, so the app exits and the installer
+/// starts the new version.
 ///
 /// From Idle / Failed / Checking this is a typed hard error, not a silent no-op.
 #[tauri::command]
@@ -72,13 +75,14 @@ pub async fn update_install(
     let version = env!("CARGO_PKG_VERSION").to_owned();
     let cache = default_updater_cache_dir();
 
-    let status = match tauri::async_runtime::spawn_blocking(move || {
-        let config = ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache)?;
-        install_available_update(&machine, config, &VerifiedPathInstaller)
+    let outcome = match tauri::async_runtime::spawn_blocking(move || {
+        let kind = InstallKind::detect();
+        let config = ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, kind.route())?;
+        install_available_update(&machine, config, &VerifiedPathInstaller::new(kind))
     })
     .await
     {
-        Ok(Ok(status)) => status,
+        Ok(Ok(outcome)) => outcome,
         Ok(Err(err)) => return Err(CommandError::from(err)),
         Err(err) => {
             return Err(CommandError::desktop(
@@ -88,10 +92,14 @@ pub async fn update_install(
         }
     };
 
-    if matches!(status, UpdateStatus::Failed) {
-        return Ok(UpdateStatus::Failed);
+    match outcome {
+        InstallOutcome::Failed => Ok(UpdateStatus::Failed),
+        InstallOutcome::Installed(InstallHandoff::Replaced) => app.restart(),
+        InstallOutcome::Installed(InstallHandoff::InstallerStarted) => {
+            app.exit(0);
+            Ok(UpdateStatus::Idle)
+        }
     }
-    app.restart()
 }
 
 /// Shared install path used by IPC. Download → verify on disk → exec that path.
@@ -101,7 +109,7 @@ fn install_available_update(
     machine: &Mutex<UpdateMachine>,
     config: ClientConfig,
     installer: &impl ArtifactInstaller,
-) -> oikonomia_update::Result<UpdateStatus> {
+) -> oikonomia_update::Result<InstallOutcome> {
     let mut guard = crate::state::lock_update(machine);
     guard.install(&config, installer)
 }
@@ -112,8 +120,8 @@ mod tests {
     use super::install_available_update;
     use crate::update_key::UPDATER_PUBLIC_KEY;
     use oikonomia_update::{
-        ArtifactInstaller, ClientConfig, UpdateError, UpdateMachine, UpdateStatus,
-        default_updater_cache_dir, parse_public_key,
+        ArtifactInstaller, ClientConfig, InstallHandoff, InstallRoute, UpdateError, UpdateMachine,
+        UpdateStatus, default_updater_cache_dir, parse_public_key,
     };
     use std::path::Path;
     use std::sync::Mutex;
@@ -124,7 +132,7 @@ mod tests {
     }
 
     impl ArtifactInstaller for SpyInstaller {
-        fn install(&self, _artifact: &Path) -> oikonomia_update::Result<()> {
+        fn install(&self, _artifact: &Path) -> oikonomia_update::Result<InstallHandoff> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Err(UpdateError::ArtifactIntegrity)
         }
@@ -194,6 +202,7 @@ mod tests {
             UPDATER_PUBLIC_KEY,
             env!("CARGO_PKG_VERSION"),
             default_updater_cache_dir(),
+            InstallRoute::InApp,
         )
         .expect("production config");
         let installer = SpyInstaller {

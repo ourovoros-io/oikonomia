@@ -1,8 +1,8 @@
 //! Session state machine for unlock-screen update check / install.
 
 use crate::client::{
-    ArtifactInstaller, CheckOutcome, ClientConfig, VerifiedOffer, delete_artifact,
-    download_and_verify, perform_check,
+    ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
+    VerifiedOffer, delete_artifact, download_and_verify, perform_check,
 };
 use crate::error::{Result, UpdateError};
 use crate::status::UpdateStatus;
@@ -43,7 +43,12 @@ impl UpdateMachine {
             }
             CheckOutcome::Available(offer) => {
                 self.status = offer.status();
-                self.offer = Some(offer);
+                // Only an offer this copy may install is kept, so `install`
+                // cannot reach a package-managed copy even through a bug.
+                self.offer = match offer.install_route() {
+                    InstallRoute::InApp => Some(offer),
+                    InstallRoute::PackageManager => None,
+                };
             }
             CheckOutcome::Failed => {
                 self.status = UpdateStatus::Failed;
@@ -64,7 +69,8 @@ impl UpdateMachine {
     ///
     /// # Errors
     ///
-    /// Returns [`UpdateError::InstallNotAvailable`] from Idle, Checking, `UpToDate`, or Failed.
+    /// Returns [`UpdateError::InstallNotAvailable`] from Idle, Checking, `UpToDate`,
+    /// `AvailableManually`, or Failed.
     pub fn require_available(&self) -> Result<&VerifiedOffer> {
         let UpdateStatus::Available { .. } = &self.status else {
             return Err(UpdateError::InstallNotAvailable);
@@ -85,6 +91,8 @@ impl UpdateMachine {
     ///
     /// Illegal state is a hard error. Hash/sig/network failure becomes Failed
     /// (and the partial file is deleted). `installer` is not called on verify failure.
+    /// The artifact is deleted afterwards unless an installer process is still
+    /// running from it.
     ///
     /// # Errors
     ///
@@ -93,26 +101,29 @@ impl UpdateMachine {
         &mut self,
         config: &ClientConfig,
         installer: &impl ArtifactInstaller,
-    ) -> Result<UpdateStatus> {
+    ) -> Result<InstallOutcome> {
         let offer = self.require_available()?.clone();
         let path = match download_and_verify(config, &offer) {
             Ok(path) => path,
             Err(err) => {
                 log::warn!("update install verify failed: {err}");
                 self.fail();
-                return Ok(UpdateStatus::Failed);
+                return Ok(InstallOutcome::Failed);
             }
         };
         match installer.install(&path) {
-            Ok(()) => {
+            Ok(InstallHandoff::Replaced) => {
                 delete_artifact(&path);
-                Ok(self.status())
+                Ok(InstallOutcome::Installed(InstallHandoff::Replaced))
+            }
+            Ok(InstallHandoff::InstallerStarted) => {
+                Ok(InstallOutcome::Installed(InstallHandoff::InstallerStarted))
             }
             Err(err) => {
                 log::warn!("update install exec failed: {err}");
                 delete_artifact(&path);
                 self.fail();
-                Ok(UpdateStatus::Failed)
+                Ok(InstallOutcome::Failed)
             }
         }
     }
