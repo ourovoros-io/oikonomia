@@ -3,11 +3,12 @@
 //! `assemble` scans an artifact directory; `verify` checks a manifest and its
 //! detached minisign signature with the client's own verifier code;
 //! `unpublished` lists the draft assets that must not be published;
+//! `fixed-copies` writes the version-free copies the website links to;
 //! `checksums` writes the release's `SHA256SUMS` file.
 
 use oikonomia_update::{
     FeedArtifact, WindowsBuild, assemble_manifest, checksum_line, checksummed_assets, feed_entries,
-    is_published_asset, parse_public_key,
+    fixed_name_copies, is_published_asset, parse_public_key,
 };
 use sha2::{Digest, Sha256};
 use std::fmt::Write as FmtWrite;
@@ -38,6 +39,7 @@ fn run(args: &[String]) -> Result<(), String> {
         "verify" => run_verify(rest),
         "unpublished" => run_unpublished(rest),
         "checksums" => run_checksums(rest),
+        "fixed-copies" => run_fixed_copies(rest),
         _ => Err(USAGE.to_owned()),
     }
 }
@@ -47,7 +49,8 @@ const USAGE: &str = "usage:
     --out <latest.json> [--notes-file <path>] [--with-windows]
   assemble_feed verify --manifest <latest.json> --sig <latest.json.sig> --pubkey <minisign-pubkey>
   assemble_feed unpublished [--with-windows] <asset-name>...
-  assemble_feed checksums --dir <artifact-dir> --out <SHA256SUMS> [--with-windows]";
+  assemble_feed checksums --dir <artifact-dir> --out <SHA256SUMS> [--with-windows]
+  assemble_feed fixed-copies --dir <artifact-dir> [--with-windows]";
 
 const WITH_WINDOWS: &str = "--with-windows";
 
@@ -151,6 +154,28 @@ fn run_checksums(args: &[String]) -> Result<(), String> {
 
     std::fs::write(&out, contents).map_err(|e| format!("{}: {e}", out.display()))?;
     writeln!(std::io::stdout(), "wrote {}", out.display()).map_err(|e| e.to_string())
+}
+
+/// Copies each versioned download in `--dir` to its version-free name and
+/// prints the fixed names, one per line. Fails when any source is missing or
+/// ambiguous, so a release never publishes without every site link.
+fn run_fixed_copies(args: &[String]) -> Result<(), String> {
+    let dir = PathBuf::from(flag_value(args, "--dir").ok_or(USAGE)?);
+
+    let names = file_names_in(&dir)?;
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let copies = fixed_name_copies(&names, windows_build(args)).map_err(|e| e.to_string())?;
+
+    let mut stdout = std::io::stdout();
+    for (source, fixed) in copies {
+        let from = dir.join(source);
+        let to = dir.join(fixed);
+        std::fs::copy(&from, &to)
+            .map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))?;
+        writeln!(stdout, "{fixed}").map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 /// Prints, one per line, the given asset names that the release must not keep.
@@ -405,6 +430,62 @@ mod tests {
 
         assert!(err.ends_with("no published files to checksum"), "{err}");
         assert!(!out.exists());
+    }
+
+    #[test]
+    fn fixed_copies_match_their_sources_and_are_checksummed() {
+        let draft = draft();
+        let dir = text(draft.path());
+
+        run(&args(&["fixed-copies", "--dir", dir])).expect("fixed copies");
+
+        for (fixed, source) in [
+            ("Oikonomia-macos-arm64.dmg", DMG),
+            ("Oikonomia-linux-x86_64.AppImage", APPIMAGE),
+            ("Oikonomia-linux-amd64.deb", DEB),
+        ] {
+            assert_eq!(
+                std::fs::read(draft.path().join(fixed)).expect("copy written"),
+                std::fs::read(draft.path().join(source)).expect("source"),
+                "{fixed}"
+            );
+        }
+        assert!(
+            !draft
+                .path()
+                .join("Oikonomia-windows-x64-setup.exe")
+                .exists()
+        );
+
+        // A second run, as after an interrupted promotion, still works.
+        run(&args(&["fixed-copies", "--dir", dir, "--with-windows"])).expect("rerun");
+        assert_eq!(
+            std::fs::read(draft.path().join("Oikonomia-windows-x64-setup.exe")).expect("copy"),
+            std::fs::read(draft.path().join(SETUP)).expect("source")
+        );
+
+        let out = draft.path().join("SHA256SUMS");
+        run(&args(&["checksums", "--dir", dir, "--out", text(&out)])).expect("checksums");
+        let written = std::fs::read_to_string(&out).expect("read");
+        assert!(
+            written.contains("  Oikonomia-macos-arm64.dmg\n"),
+            "{written}"
+        );
+        assert!(
+            !written.contains("Oikonomia-windows-x64-setup.exe"),
+            "{written}"
+        );
+    }
+
+    #[test]
+    fn fixed_copies_stop_when_a_source_is_missing() {
+        let draft = draft();
+        std::fs::remove_file(draft.path().join(DEB)).expect("remove deb");
+
+        let err = run(&args(&["fixed-copies", "--dir", text(draft.path())])).expect_err("no deb");
+
+        assert_eq!(err, "no .deb file for linux-deb");
+        assert!(!draft.path().join("Oikonomia-linux-amd64.deb").exists());
     }
 
     #[test]

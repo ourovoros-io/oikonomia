@@ -5,8 +5,10 @@
 # makes it live. Manual, reviewed, fail-closed. Steps: download the draft's
 # artifacts, assemble latest.json ourselves (sha256 + per-artifact minisign
 # sigs), sign latest.json with the updater minisign key, verify with the app's
-# baked public key, strip every asset outside the tested allow-list, upload
-# the signed feed, and only then publish the draft.
+# baked public key, make the version-free copies getoikonomia.app links to,
+# write SHA256SUMS, strip every asset outside the tested allow-list, upload
+# the signed feed, the checksums and the copies, and only then publish the
+# draft.
 #
 # macOS and Linux are always published. The Windows installer is published
 # only with `publish_windows`, which stays off until it is code-signed. Which
@@ -158,6 +160,29 @@ jobs:
             --manifest artifacts/latest.json --sig artifacts/latest.json.sig \
             --pubkey "${pubkey}"
 
+      # Version-free copies for getoikonomia.app, which links to
+      # releases/latest/download/<fixed name>. Made only after the feed is
+      # signed and verified, so they are copies of exactly the files the feed
+      # and the checksums vouch for. Fails if any source is missing or
+      # ambiguous. The Windows copy exists only with publish_windows.
+      - name: Make the version-free download copies
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
+          cargo run --quiet -p oikonomia-update --bin assemble_feed -- fixed-copies \
+            --dir artifacts ${WINDOWS_FLAG} > fixed.txt
+          cat fixed.txt
+          expected=4
+          [ -z "${WINDOWS_FLAG}" ] && expected=3
+          count="$(grep -c . fixed.txt || true)"
+          if [ "${count}" != "${expected}" ]; then
+            echo "::error::expected ${expected} version-free copies, made ${count}"
+            exit 1
+          fi
+          while IFS= read -r name; do
+            test -s "artifacts/${name}" || { echo "::error::artifacts/${name} is missing or empty"; exit 1; }
+          done < fixed.txt
+
       # One line per published file, so anyone can check a download with
       # `sha256sum --check`. Written after the feed is signed so it covers
       # latest.json and its signature too. A withheld Windows installer is
@@ -203,10 +228,25 @@ jobs:
           fi
 
           # Replace tauri-action's latest.json with the one assembled, signed,
-          # and verified above, and add the checksum file. The draft is still invisible at this point.
-          gh release upload "${TAG}" \
-            artifacts/latest.json artifacts/latest.json.sig artifacts/SHA256SUMS \
+          # and verified above, and add the checksum file and the version-free
+          # copies. The draft is still invisible at this point.
+          mapfile -t fixed < fixed.txt
+          uploads=(artifacts/latest.json artifacts/latest.json.sig artifacts/SHA256SUMS)
+          for name in "${fixed[@]}"; do
+            uploads+=("artifacts/${name}")
+          done
+          gh release upload "${TAG}" "${uploads[@]}" \
             --repo "${GITHUB_REPOSITORY}" --clobber
+
+          # Every file the site links to must be on the draft before it goes
+          # public; a missing one would be a dead download link.
+          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' > published.txt
+          for name in latest.json latest.json.sig SHA256SUMS "${fixed[@]}"; do
+            if ! grep -Fqx -- "${name}" published.txt; then
+              echo "::error::${name} is not on the draft after upload; refusing to publish"
+              exit 1
+            fi
+          done
 
           # Last step on purpose: until here nothing is public, so a failure
           # above leaves a draft to fix, never a half-published release.
