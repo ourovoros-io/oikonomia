@@ -127,8 +127,8 @@ those, the webview can call only the Tauri built-ins that
 ## Updates and the network
 
 `oikonomia-core` has no network dependencies, and `deny.toml` bans the HTTP, TLS,
-socket and websocket crates it lists everywhere except under `oikonomia-update`
-and the Tauri updater plugin, so the network is confined to the update path.
+socket and websocket crates it lists everywhere except under `oikonomia-update`,
+so the network is confined to the update path.
 
 When the user clicks to check, `oikonomia-update` fetches `latest.json` and its
 detached signature from the project's GitHub releases, verifies the signature
@@ -136,9 +136,35 @@ with a minisign public key compiled into the app, and compares versions. Every
 URL, redirects included, must be HTTPS on an allow-listed GitHub host
 (`hosts.rs`). The webview cannot supply a feed URL or key. Installing downloads
 the artifact, checks its hash and minisign signature against the signed
-manifest, installs it over the current app and restarts.
+manifest, and installs it the way the running copy was installed
+(`update_exec.rs`): a macOS bundle and a Linux AppImage are replaced in place
+and restarted; on Windows the new installer runs unattended while the app
+exits, then starts the new version. A copy the system package manager owns
+(a `.deb`) is only told that a newer version exists; the update machine never
+keeps an installable offer for it.
 Nothing checks for updates at startup. GitHub is only a host; the signing key is
 the trust root. See [`release.md`](release.md) for how releases are cut.
+
+## Platforms
+
+The same code ships on macOS, Linux and Windows. The differences are few and
+each lives in one place:
+
+- **Vault location and file modes.** `vault/paths.rs` uses the machine-local
+  data directory (on Windows, local rather than roaming AppData, because a
+  roaming profile can replace a live database with a stale copy).
+  `vault/permissions.rs` sets owner-only modes on Unix; Windows relies on the
+  per-user ACL of AppData.
+- **One process.** Closing the window hides it. macOS routes a second launch
+  to the running app; on Windows and Linux `tauri-plugin-single-instance`
+  does, so a relaunch shows the hidden window instead of opening the vault
+  twice. This is also the way back in on a Linux desktop that shows no tray.
+- **Tray.** Linux trays report no clicks, so "Quick add" is a menu item there
+  (`tray.rs`). The quick-add window is placed inside the monitor's work area.
+- **Installers.** `.dmg`, `.AppImage`, `.deb`, and a per-user NSIS installer
+  that carries the WebView2 runtime so installing never needs the network.
+  `scripts/smoke-linux.sh` and `scripts/smoke-windows.ps1` install and run
+  the real installers in CI.
 
 ## The interface
 

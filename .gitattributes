@@ -1,0 +1,20 @@
+# Line endings are LF on every platform. Without this, Git for Windows
+# rewrites text files to CRLF on checkout, and it judges "text" by content:
+# the small PDF fixture below looks like text to it, the rewrite shifts the
+# PDF's byte offsets, and the document tests then fail on Windows only.
+* text=auto eol=lf
+
+# Never text, whatever their bytes look like.
+*.pdf binary
+*.jpg binary
+*.png binary
+*.ico binary
+*.icns binary
+*.rten binary
+*.woff2 binary
+*.woff binary
+*.ttf binary
+*.otf binary
+
+# Upstream licence text, kept byte for byte as published (CRLF).
+web/public/fonts/OFL-IBMPlexMono.txt -text

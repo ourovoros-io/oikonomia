@@ -74,6 +74,7 @@
   "unlock.update.available.version": "Oikonomia {version}",
   "unlock.update.available.honesty": "This is the only time Oikonomia connects to the internet, and only to download an update.",
   "unlock.update.available.confirm": "Install and restart",
+  "unlock.update.availableManually.note": "This copy was installed from a system package, so it cannot update itself. Download the new package from the Oikonomia releases page and install it the same way.",
   "unlock.update.failed.title": "Couldn’t check",
   "unlock.update.failed.body": "Nothing was changed. You can try again later.",
   "unlock.update.installing.title": "Installing",

@@ -23,6 +23,14 @@ pub enum UpdateStatus {
         /// Release notes, HTML-stripped and escaped. Plain text only.
         notes: String,
     },
+    /// Manifest verified and a newer version exists, but the system package
+    /// manager owns this install. The app reports it and never installs it.
+    AvailableManually {
+        /// Remote `SemVer` from the signed manifest.
+        version: String,
+        /// Release notes, HTML-stripped and escaped. Plain text only.
+        notes: String,
+    },
     /// Check or install failed. Unlock and export stay usable.
     Failed,
 }

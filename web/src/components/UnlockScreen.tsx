@@ -375,6 +375,11 @@ function UnlockUpdateDialog({
             {t('unlock.update.available.honesty')}
           </p>
         ) : null}
+        {state.kind === 'availableManually' ? (
+          <p className="mt-4 text-[13px] leading-5 font-normal text-[var(--color-muted)]">
+            {t('unlock.update.availableManually.note')}
+          </p>
+        ) : null}
         {state.kind === 'installing' ? (
           <div
             className="mt-6 h-1 overflow-hidden rounded-full bg-white/10"
@@ -431,6 +436,12 @@ function dialogCopy(
           { kind: 'secondary', label: t('unlock.update.cancel') },
           { kind: 'primary', label: t('unlock.update.available.confirm') },
         ],
+      }
+    case 'availableManually':
+      return {
+        title: t('unlock.update.available.title'),
+        body: t('unlock.update.available.version', { version: state.version }),
+        actions: [{ kind: 'secondary', label: t('unlock.update.close') }],
       }
     case 'failed':
       return {

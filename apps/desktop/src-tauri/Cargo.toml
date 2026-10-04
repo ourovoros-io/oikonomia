@@ -21,7 +21,6 @@ serde_json = { workspace = true }
 oikonomia-core = { workspace = true }
 oikonomia-update = { path = "../../../crates/oikonomia-update" }
 macos-dock-icon = { path = "../../../crates/macos-dock-icon" }
-tauri-plugin-updater = "2.10.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
@@ -34,6 +33,13 @@ tauri-plugin-window-state = "2"
 tauri-plugin-opener = "2"
 log = "0.4"
 thiserror = { workspace = true }
+
+# Windows and Linux start a new process every time the app is launched. A
+# second launch must surface the first one's window (which may be hidden in
+# the tray) instead of opening the vault twice. macOS already routes a second
+# launch to the running app, so it does not need the plugin.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2.5.2"
 
 [lints]
 workspace = true

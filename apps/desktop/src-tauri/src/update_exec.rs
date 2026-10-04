@@ -1,81 +1,179 @@
 //! Exec the already-verified updater artifact. No HTTP. No plugin `check`.
 
-use oikonomia_update::{ArtifactInstaller, Result, UpdateError};
+use oikonomia_update::{ArtifactInstaller, InstallHandoff, InstallRoute, Result, UpdateError};
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::process::Command;
 
-/// Installs by execing the local verified file. Never fetches `latest.json`.
-pub(crate) struct VerifiedPathInstaller;
+/// How this copy of the app got onto the machine, which decides how (and
+/// whether) it may replace itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InstallKind {
+    /// A macOS `.app` bundle, replaced from a `.app.tar.gz`.
+    MacApp,
+    /// A Linux `AppImage` at this path, replaced by the new `AppImage`.
+    AppImage(PathBuf),
+    /// A Windows per-user install, replaced by running the new installer.
+    WindowsInstaller,
+    /// Files owned by the system package manager (a `.deb`), or a build run
+    /// straight from a source tree. Never replaced by the app.
+    PackageManaged,
+}
 
-impl ArtifactInstaller for VerifiedPathInstaller {
-    fn install(&self, artifact: &Path) -> Result<()> {
-        exec_verified_artifact(artifact)
+impl InstallKind {
+    /// The kind of the running copy.
+    pub(crate) fn detect() -> Self {
+        let runtime = AppImageRuntime {
+            image: std::env::var_os("APPIMAGE").map(PathBuf::from),
+            mount: std::env::var_os("APPDIR").map(PathBuf::from),
+            executable: std::env::current_exe().ok(),
+        };
+        Self::classify(std::env::consts::OS, &runtime)
+    }
+
+    /// A Linux copy is an `AppImage` only when it runs from inside one.
+    /// Otherwise it was installed from a package (or built locally) and does
+    /// not own its own files.
+    fn classify(os: &str, runtime: &AppImageRuntime) -> Self {
+        match os {
+            "macos" => Self::MacApp,
+            "windows" => Self::WindowsInstaller,
+            "linux" => match runtime.own_image() {
+                Some(image) => Self::AppImage(image),
+                None => Self::PackageManaged,
+            },
+            _ => Self::PackageManaged,
+        }
+    }
+
+    /// Whether the update machine may offer an in-app install.
+    pub(crate) fn route(&self) -> InstallRoute {
+        match self {
+            Self::MacApp | Self::AppImage(_) | Self::WindowsInstaller => InstallRoute::InApp,
+            Self::PackageManaged => InstallRoute::PackageManager,
+        }
     }
 }
 
-/// Runs the platform installer on `artifact`. The path must already be verified.
+/// What the `AppImage` runtime tells a process it started.
+struct AppImageRuntime {
+    /// `APPIMAGE`: path of the image file.
+    image: Option<PathBuf>,
+    /// `APPDIR`: directory the image is mounted or unpacked at.
+    mount: Option<PathBuf>,
+    /// The running executable.
+    executable: Option<PathBuf>,
+}
+
+impl AppImageRuntime {
+    /// The image this process runs from, if any.
+    ///
+    /// `APPIMAGE` alone proves nothing: a program started from another
+    /// `AppImage` (a terminal, a launcher) inherits that one's variables, and
+    /// trusting them would make an update overwrite the other program. The
+    /// running executable must sit inside the mounted image.
+    ///
+    /// Both paths are resolved first: the executable path the system reports
+    /// has its links resolved, the mount variable may not, and comparing the
+    /// two unresolved would turn updates off wherever `/tmp` is a link. A
+    /// mount that is empty or the filesystem root would contain every
+    /// executable, so it proves nothing and is refused.
+    fn own_image(&self) -> Option<PathBuf> {
+        let image = self.image.as_ref()?;
+        let mount = self.mount.as_ref()?.canonicalize().ok()?;
+        let executable = self.executable.as_ref()?.canonicalize().ok()?;
+
+        let mount_is_a_real_directory = mount.parent().is_some();
+
+        if image.is_file() && mount_is_a_real_directory && executable.starts_with(&mount) {
+            Some(image.clone())
+        } else {
+            None
+        }
+    }
+}
+
+/// Installs by execing the local verified file. Never fetches `latest.json`.
+pub(crate) struct VerifiedPathInstaller {
+    kind: InstallKind,
+}
+
+impl VerifiedPathInstaller {
+    /// Installer for a copy of the given kind.
+    pub(crate) fn new(kind: InstallKind) -> Self {
+        Self { kind }
+    }
+}
+
+impl ArtifactInstaller for VerifiedPathInstaller {
+    fn install(&self, artifact: &Path) -> Result<InstallHandoff> {
+        install_verified_artifact(&self.kind, artifact)
+    }
+}
+
+/// Runs the installer that matches `kind` on `artifact`. The path must
+/// already be verified.
 ///
 /// # Errors
 ///
-/// Returns [`UpdateError::ArtifactUrl`] for `.deb` and
-/// [`UpdateError::ArtifactIntegrity`] when the file is missing or exec fails.
-pub(crate) fn exec_verified_artifact(artifact: &Path) -> Result<()> {
-    if path_ends_with_ignore_ascii_case(artifact, ".deb") {
+/// Returns [`UpdateError::InstallNotAvailable`] for a package-managed copy,
+/// [`UpdateError::ArtifactUrl`] when the artifact is not the file type this
+/// kind installs, and [`UpdateError::ArtifactIntegrity`] when the file is
+/// missing or the installer fails.
+pub(crate) fn install_verified_artifact(
+    kind: &InstallKind,
+    artifact: &Path,
+) -> Result<InstallHandoff> {
+    let expected_suffix = match kind {
+        InstallKind::MacApp => ".app.tar.gz",
+        InstallKind::AppImage(_) => ".appimage",
+        InstallKind::WindowsInstaller => ".exe",
+        InstallKind::PackageManaged => return Err(UpdateError::InstallNotAvailable),
+    };
+    if !path_ends_with_ignore_ascii_case(artifact, expected_suffix) {
         return Err(UpdateError::ArtifactUrl);
     }
     if !artifact.is_file() {
         return Err(UpdateError::ArtifactIntegrity);
     }
-    exec_verified_artifact_on_target(artifact, &current_install_target()?)
+
+    run_platform_installer(kind, artifact)
 }
 
-/// Same as [`exec_verified_artifact`] with an explicit current-install path (tests).
-pub(crate) fn exec_verified_artifact_on_target(artifact: &Path, current: &Path) -> Result<()> {
-    if path_ends_with_ignore_ascii_case(artifact, ".deb") {
-        return Err(UpdateError::ArtifactUrl);
-    }
-    if !artifact.is_file() {
-        return Err(UpdateError::ArtifactIntegrity);
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        replace_linux_appimage(artifact, current)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let _ = current;
-        spawn_windows_installer(artifact)
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        install_macos_from_path(artifact, current)
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    {
-        let _ = current;
-        Err(UpdateError::ArtifactIntegrity)
-    }
+#[cfg(target_os = "linux")]
+fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
+    let InstallKind::AppImage(current) = kind else {
+        return Err(UpdateError::InstallNotAvailable);
+    };
+    replace_linux_appimage(artifact, current)?;
+    Ok(InstallHandoff::Replaced)
 }
 
-fn current_install_target() -> Result<PathBuf> {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(appimage) = std::env::var("APPIMAGE") {
-            let path = PathBuf::from(appimage);
-            if path.is_file() {
-                return Ok(path);
-            }
-        }
-    }
-    std::env::current_exe().map_err(|err| {
+#[cfg(target_os = "windows")]
+fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
+    let InstallKind::WindowsInstaller = kind else {
+        return Err(UpdateError::InstallNotAvailable);
+    };
+    spawn_windows_installer(artifact)?;
+    Ok(InstallHandoff::InstallerStarted)
+}
+
+#[cfg(target_os = "macos")]
+fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
+    let InstallKind::MacApp = kind else {
+        return Err(UpdateError::InstallNotAvailable);
+    };
+    let current = std::env::current_exe().map_err(|err| {
         log::warn!("current exe path failed: {err}");
         UpdateError::ArtifactIntegrity
-    })
+    })?;
+    extract_macos_app_archive(artifact, &current)?;
+    Ok(InstallHandoff::Replaced)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn run_platform_installer(_kind: &InstallKind, _artifact: &Path) -> Result<InstallHandoff> {
+    Err(UpdateError::InstallNotAvailable)
 }
 
 #[cfg(target_os = "linux")]
@@ -123,48 +221,26 @@ fn replace_linux_appimage(verified: &Path, current: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Flags for the NSIS installer Tauri builds: `/P` shows progress only and
+/// asks nothing, `/UPDATE` keeps the existing install's choices, and `/R`
+/// starts the new version when the install finishes.
+#[cfg(target_os = "windows")]
+const NSIS_UPDATE_ARGS: [&str; 3] = ["/P", "/UPDATE", "/R"];
+
+/// Starts the installer and returns at once. The installer replaces files the
+/// running app holds open, so the caller must exit, not restart. The install
+/// is per user (`bundle.windows.nsis.installMode`), so it needs no elevation
+/// and a plain process spawn is enough.
 #[cfg(target_os = "windows")]
 fn spawn_windows_installer(artifact: &Path) -> Result<()> {
-    let extension = artifact
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .unwrap_or("");
-    let mut command = if extension.eq_ignore_ascii_case("msi") {
-        let mut msiexec = Command::new("msiexec");
-        msiexec.arg("/i").arg(artifact);
-        msiexec
-    } else {
-        Command::new(artifact)
-    };
-    command.spawn().map_err(|err| {
-        log::warn!("windows installer spawn failed: {err}");
-        UpdateError::ArtifactIntegrity
-    })?;
+    Command::new(artifact)
+        .args(NSIS_UPDATE_ARGS)
+        .spawn()
+        .map_err(|err| {
+            log::warn!("windows installer spawn failed: {err}");
+            UpdateError::ArtifactIntegrity
+        })?;
     Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn install_macos_from_path(artifact: &Path, current: &Path) -> Result<()> {
-    let name = artifact
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
-    if name.ends_with(".tar.gz")
-        || artifact
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("tgz"))
-    {
-        return extract_macos_app_archive(artifact, current);
-    }
-    let status = Command::new("open").arg(artifact).status().map_err(|err| {
-        log::warn!("macos open failed: {err}");
-        UpdateError::ArtifactIntegrity
-    })?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(UpdateError::ArtifactIntegrity)
-    }
 }
 
 #[cfg(target_os = "macos")]
@@ -251,12 +327,11 @@ fn path_ends_with_ignore_ascii_case(path: &Path, suffix: &str) -> bool {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    #[cfg(target_os = "linux")]
-    use super::exec_verified_artifact_on_target;
-    use super::{VerifiedPathInstaller, exec_verified_artifact};
-    use oikonomia_update::ArtifactInstaller;
+    use super::{AppImageRuntime, InstallKind, VerifiedPathInstaller, install_verified_artifact};
+    use oikonomia_update::{ArtifactInstaller, InstallRoute};
+    use std::path::PathBuf;
 
-    fn temp_dir() -> std::path::PathBuf {
+    fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "oiko-update-exec-{}-{}",
             std::process::id(),
@@ -269,37 +344,302 @@ mod tests {
         dir
     }
 
+    fn installable_kinds() -> [InstallKind; 3] {
+        [
+            InstallKind::MacApp,
+            InstallKind::AppImage(PathBuf::from("Oikonomia.AppImage")),
+            InstallKind::WindowsInstaller,
+        ]
+    }
+
+    const NO_APPIMAGE: AppImageRuntime = AppImageRuntime {
+        image: None,
+        mount: None,
+        executable: None,
+    };
+
+    /// A directory laid out like a mounted image, with the app's executable
+    /// in it, and the image file next to it.
+    struct MountedImage {
+        dir: PathBuf,
+        image: PathBuf,
+        mount: PathBuf,
+        executable: PathBuf,
+    }
+
+    fn mounted_image() -> MountedImage {
+        let dir = temp_dir();
+        let image = dir.join("Oikonomia.AppImage");
+        let mount = dir.join(".mount_Oikonoabc");
+        let executable = mount.join("usr").join("bin").join("oikonomia");
+        std::fs::write(&image, b"image").expect("image");
+        std::fs::create_dir_all(executable.parent().expect("parent")).expect("mount");
+        std::fs::write(&executable, b"exe").expect("executable");
+        MountedImage {
+            dir,
+            image,
+            mount,
+            executable,
+        }
+    }
+
     #[test]
-    fn exec_rejects_deb_without_running_it() {
+    fn linux_copy_running_from_inside_its_image_is_an_appimage() {
+        let mounted = mounted_image();
+        let runtime = AppImageRuntime {
+            image: Some(mounted.image.clone()),
+            mount: Some(mounted.mount.clone()),
+            executable: Some(mounted.executable.clone()),
+        };
+
+        assert_eq!(
+            InstallKind::classify("linux", &runtime),
+            InstallKind::AppImage(mounted.image.clone())
+        );
+        let _ = std::fs::remove_dir_all(&mounted.dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn appimage_is_recognised_when_the_mount_is_named_through_a_link() {
+        // `/tmp` is a link on some systems: the runtime names the mount by
+        // the link, the system reports the executable by its real path.
+        let mounted = mounted_image();
+        let link = mounted.dir.join("link-to-mount");
+        std::os::unix::fs::symlink(&mounted.mount, &link).expect("link");
+        let runtime = AppImageRuntime {
+            image: Some(mounted.image.clone()),
+            mount: Some(link),
+            executable: Some(mounted.executable.clone()),
+        };
+
+        assert_eq!(
+            InstallKind::classify("linux", &runtime),
+            InstallKind::AppImage(mounted.image.clone())
+        );
+        let _ = std::fs::remove_dir_all(&mounted.dir);
+    }
+
+    #[test]
+    fn linux_copy_with_inherited_appimage_variables_is_package_managed() {
+        // A .deb copy started from a terminal that is itself an AppImage
+        // inherits that terminal's variables. Updating must not overwrite it.
+        let terminal = mounted_image();
+        let installed = temp_dir().join("oikonomia");
+        std::fs::write(&installed, b"exe").expect("installed copy");
+        let runtime = AppImageRuntime {
+            image: Some(terminal.image.clone()),
+            mount: Some(terminal.mount.clone()),
+            executable: Some(installed),
+        };
+
+        assert_eq!(
+            InstallKind::classify("linux", &runtime),
+            InstallKind::PackageManaged
+        );
+        assert_eq!(std::fs::read(&terminal.image).expect("kept"), b"image");
+        let _ = std::fs::remove_dir_all(&terminal.dir);
+    }
+
+    #[test]
+    fn a_mount_that_would_contain_every_executable_proves_nothing() {
+        let mounted = mounted_image();
+        let root = mounted
+            .executable
+            .ancestors()
+            .last()
+            .expect("root")
+            .to_path_buf();
+
+        for mount in [root, PathBuf::new()] {
+            let runtime = AppImageRuntime {
+                image: Some(mounted.image.clone()),
+                mount: Some(mount.clone()),
+                executable: Some(mounted.executable.clone()),
+            };
+
+            assert_eq!(
+                InstallKind::classify("linux", &runtime),
+                InstallKind::PackageManaged,
+                "mount {mount:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&mounted.dir);
+    }
+
+    #[test]
+    fn linux_copy_without_a_usable_image_is_package_managed() {
+        let mounted = mounted_image();
+        let image_is_gone = AppImageRuntime {
+            image: Some(mounted.dir.join("gone.AppImage")),
+            mount: Some(mounted.mount.clone()),
+            executable: Some(mounted.executable.clone()),
+        };
+
+        assert_eq!(
+            InstallKind::classify("linux", &NO_APPIMAGE),
+            InstallKind::PackageManaged
+        );
+        assert_eq!(
+            InstallKind::classify("linux", &image_is_gone),
+            InstallKind::PackageManaged
+        );
+        let _ = std::fs::remove_dir_all(&mounted.dir);
+    }
+
+    #[test]
+    fn other_systems_ignore_the_appimage_variables() {
+        let mounted = mounted_image();
+        let stray = AppImageRuntime {
+            image: Some(mounted.image.clone()),
+            mount: Some(mounted.mount.clone()),
+            executable: Some(mounted.executable.clone()),
+        };
+
+        assert_eq!(InstallKind::classify("macos", &stray), InstallKind::MacApp);
+        assert_eq!(
+            InstallKind::classify("windows", &stray),
+            InstallKind::WindowsInstaller
+        );
+        assert_eq!(
+            InstallKind::classify("freebsd", &stray),
+            InstallKind::PackageManaged
+        );
+        let _ = std::fs::remove_dir_all(&mounted.dir);
+    }
+
+    #[test]
+    fn only_a_package_managed_copy_is_routed_to_the_package_manager() {
+        for kind in installable_kinds() {
+            assert_eq!(kind.route(), InstallRoute::InApp, "{kind:?}");
+        }
+        assert_eq!(
+            InstallKind::PackageManaged.route(),
+            InstallRoute::PackageManager
+        );
+    }
+
+    #[test]
+    fn package_managed_copy_never_runs_an_artifact() {
+        let dir = temp_dir();
+        for name in ["Oikonomia.AppImage", "oikonomia.deb", "setup.exe"] {
+            let artifact = dir.join(name);
+            std::fs::write(&artifact, b"payload").expect("write");
+
+            let err = VerifiedPathInstaller::new(InstallKind::PackageManaged)
+                .install(&artifact)
+                .expect_err("package-managed copies do not self-install");
+
+            assert_eq!(err.code(), "update_install_not_allowed");
+            assert_eq!(std::fs::read(&artifact).expect("kept"), b"payload");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_kind_rejects_a_deb_without_running_it() {
         let dir = temp_dir();
         let deb = dir.join("oikonomia.deb");
         std::fs::write(&deb, b"not-an-installer").expect("write");
-        let err = VerifiedPathInstaller
-            .install(&deb)
-            .expect_err("deb must be rejected");
-        assert_eq!(err.code(), "update_artifact_url");
+
+        for kind in installable_kinds() {
+            let err = install_verified_artifact(&kind, &deb).expect_err("deb must be rejected");
+            assert_eq!(err.code(), "update_artifact_url", "{kind:?}");
+        }
+
         assert_eq!(std::fs::read(&deb).expect("kept"), b"not-an-installer");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn exec_rejects_missing_file() {
-        let missing = std::env::temp_dir().join("oiko-missing-artifact-no-such-file");
-        let err = exec_verified_artifact(&missing).expect_err("missing");
-        assert_eq!(err.code(), "update_artifact_integrity");
+    fn each_kind_accepts_only_its_own_file_type() {
+        let dir = temp_dir();
+        let wrong_for = [
+            (InstallKind::MacApp, "Oikonomia-setup.exe"),
+            (
+                InstallKind::AppImage(dir.join("current.AppImage")),
+                "Oikonomia.app.tar.gz",
+            ),
+            (InstallKind::WindowsInstaller, "Oikonomia.AppImage"),
+        ];
+
+        for (kind, name) in wrong_for {
+            let artifact = dir.join(name);
+            std::fs::write(&artifact, b"payload").expect("write");
+
+            let err = install_verified_artifact(&kind, &artifact).expect_err("wrong file type");
+
+            assert_eq!(err.code(), "update_artifact_url", "{kind:?} given {name}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_artifact_is_an_integrity_failure() {
+        let dir = temp_dir();
+        let cases = [
+            (InstallKind::MacApp, "gone.app.tar.gz"),
+            (
+                InstallKind::AppImage(dir.join("current.AppImage")),
+                "gone.AppImage",
+            ),
+            (InstallKind::WindowsInstaller, "gone.exe"),
+        ];
+
+        for (kind, name) in cases {
+            let err = install_verified_artifact(&kind, &dir.join(name)).expect_err("missing");
+            assert_eq!(err.code(), "update_artifact_integrity", "{kind:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_replace_writes_verified_bytes_onto_current() {
+        use oikonomia_update::InstallHandoff;
+        use std::os::unix::fs::PermissionsExt;
+
         let dir = temp_dir();
         let current = dir.join("Oikonomia.AppImage");
-        let verified = dir.join("verified.AppImage");
+        let verified = dir.join("abc-Oikonomia_0.2.0_amd64.AppImage");
         std::fs::write(&current, b"old-appimage").expect("current");
         std::fs::write(&verified, b"new-verified").expect("verified");
-        exec_verified_artifact_on_target(&verified, &current).expect("replace");
+
+        let handoff = install_verified_artifact(&InstallKind::AppImage(current.clone()), &verified)
+            .expect("replace");
+
+        assert_eq!(handoff, InstallHandoff::Replaced);
         assert_eq!(std::fs::read(&current).expect("read"), b"new-verified");
+        let mode = std::fs::metadata(&current)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111, "the new AppImage must be executable");
         assert!(verified.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_install_hands_off_to_the_installer_process() {
+        use oikonomia_update::InstallHandoff;
+
+        // `whoami.exe` ignores the installer flags and exits; it stands in
+        // for the installer so the spawn itself is exercised.
+        let dir = temp_dir();
+        let system_root = std::env::var("SYSTEMROOT").expect("SYSTEMROOT");
+        let stand_in = dir.join("abc-Oikonomia_0.2.0_x64-setup.exe");
+        std::fs::copy(
+            PathBuf::from(system_root)
+                .join("System32")
+                .join("whoami.exe"),
+            &stand_in,
+        )
+        .expect("copy stand-in");
+
+        let handoff =
+            install_verified_artifact(&InstallKind::WindowsInstaller, &stand_in).expect("spawn");
+
+        assert_eq!(handoff, InstallHandoff::InstallerStarted);
     }
 }
