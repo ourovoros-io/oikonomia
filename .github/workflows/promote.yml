@@ -100,7 +100,7 @@ jobs:
           # by a red manual run must block too.
           gh run list --repo "${GITHUB_REPOSITORY}" --workflow release.yml \
             --branch "${TAG}" --limit 1 \
-            --json conclusion,headSha --jq '.[0] // {} | "\(.conclusion // "none") \(.headSha // "none")"' > run.txt
+            --json conclusion,headSha --jq '.[0] // {} | "\(.conclusion | if . == null or . == "" then "unfinished" else . end) \(.headSha // "none")"' > run.txt
           read -r conclusion run_sha < run.txt
           if [ "${conclusion}" != "success" ]; then
             echo "::error::the latest Release run for ${TAG} is '${conclusion}', not 'success'; refusing to promote"
