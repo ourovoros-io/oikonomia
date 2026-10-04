@@ -54,6 +54,8 @@ Tauri app updates are signed with minisign.
 4. The Release workflow runs on that tag and uses Environment `release`.
 5. The workflow leaves a draft release. Download and test the build from the draft, then promote it (next section). The `latest.json` that tauri-action uploads is discarded; promotion assembles and signs the real one.
 
+After the build, the macOS job checks the app with `codesign --verify --deep --strict`, requires a Developer ID Application authority, the team in `APPLE_TEAM_ID` and the hardened runtime, and requires `spctl` to report it notarized and `xcrun stapler validate` to pass. Tauri does not notarize the disk image, so the job notarizes it with the same App Store Connect key, staples it, checks it with `spctl` and `stapler`, and replaces the copy on the draft. Any failed check fails the release.
+
 Until the Apple secrets are present, the macOS job **fails closed**: it will not publish an unsigned Mac build as if it were signed, and the Linux and Windows jobs, which run after it, do not start. Every job **fails closed** if `TAURI_SIGNING_PRIVATE_KEY` is empty, so no installer reaches the draft without its updater signature. macOS uses Tauri's official `APPLE_*` environment variables once those secrets are set.
 
 Optional: Actions → Release → Run workflow with `dry_run` still requires Environment `release` and does not attach a GitHub Release. Start it from `main`: the environment accepts deployments only from `main` and `v*` tags.
@@ -66,7 +68,21 @@ A tag push builds a **draft** release in this repo. A draft is visible only to p
 2. Promote: `gh workflow run promote.yml -f tag=vX.Y.Z` (uses Environment `release`).
 3. The workflow refuses anything that is not a draft, downloads the draft's artifacts, assembles and signs `latest.json` with the updater minisign key, and verifies the signature with the app's baked public key.
 4. It then deletes every asset the release set does not publish, uploads the signed feed, and publishes the draft as the latest release. Publishing is the last step, so a failure leaves a draft to fix, never a half-published release.
-5. The published release holds the `.dmg`, `.app.tar.gz`, `.AppImage` and `.deb` with their signatures, plus `latest.json` and its signature, and a `SHA256SUMS` file listing every one of them (`sha256sum --check SHA256SUMS`). The feed has a `darwin-aarch64` and a `linux-x86_64` entry. With `-f publish_windows=true` it also holds the `-setup.exe` and a `windows-x86_64` entry.
+5. The published release holds the `.dmg`, `.app.tar.gz`, `.AppImage` and `.deb` with their signatures, plus `latest.json` and its signature, the version-free copies below, and a `SHA256SUMS` file listing every one of them (`sha256sum --check SHA256SUMS`). The feed has a `darwin-aarch64` and a `linux-x86_64` entry. With `-f publish_windows=true` it also holds the `-setup.exe` and a `windows-x86_64` entry.
+
+### Version-free download names
+
+getoikonomia.app links to `https://github.com/ourovoros-io/oikonomia/releases/latest/download/<name>`, so every published release carries a copy of each download under a name without the version:
+
+| Site link | File |
+| --- | --- |
+| `/download/macos` | `Oikonomia-macos-arm64.dmg` |
+| `/download/windows` | `Oikonomia-windows-x64-setup.exe` (only with `publish_windows=true`) |
+| `/download/linux-appimage` | `Oikonomia-linux-x86_64.AppImage` |
+| `/download/linux-deb` | `Oikonomia-linux-amd64.deb` |
+| `/download/checksums` | `SHA256SUMS` |
+
+Promotion makes the copies after the feed is signed and verified, lists them in `SHA256SUMS`, uploads them with the feed, checks every one is on the draft, and only then publishes. A missing source file stops the promotion. The names are constants in `release_set.rs`, pinned by a test; change them only together with the site. The feed keeps naming the versioned files.
 
 Which file fills which feed entry, and which assets survive, is decided by `crates/oikonomia-update/src/release_set.rs` and covered by its tests. Promotion stops if a platform has no artifact or more than one.
 
