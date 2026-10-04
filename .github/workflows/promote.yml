@@ -158,6 +158,21 @@ jobs:
             --manifest artifacts/latest.json --sig artifacts/latest.json.sig \
             --pubkey "${pubkey}"
 
+      # One line per published file, so anyone can check a download with
+      # `sha256sum --check`. Written after the feed is signed so it covers
+      # latest.json and its signature too. A withheld Windows installer is
+      # not listed.
+      - name: Write SHA256SUMS for the published files
+        run: |
+          set -euo pipefail
+          rm -f artifacts/SHA256SUMS
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
+          cargo run -p oikonomia-update --bin assemble_feed -- checksums \
+            --dir artifacts --out artifacts/SHA256SUMS ${WINDOWS_FLAG}
+          cat artifacts/SHA256SUMS
+          # Prove the file is in the format people will check it with.
+          (cd artifacts && sha256sum --check --strict SHA256SUMS)
+
       - name: Publish the draft
         if: ${{ inputs.dry_run != true }}
         env:
@@ -188,8 +203,9 @@ jobs:
           fi
 
           # Replace tauri-action's latest.json with the one assembled, signed,
-          # and verified above. The draft is still invisible at this point.
-          gh release upload "${TAG}" artifacts/latest.json artifacts/latest.json.sig \
+          # and verified above, and add the checksum file. The draft is still invisible at this point.
+          gh release upload "${TAG}" \
+            artifacts/latest.json artifacts/latest.json.sig artifacts/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
           # Last step on purpose: until here nothing is public, so a failure

@@ -66,7 +66,7 @@ A tag push builds a **draft** release in this repo. A draft is visible only to p
 2. Promote: `gh workflow run promote.yml -f tag=vX.Y.Z` (uses Environment `release`).
 3. The workflow refuses anything that is not a draft, downloads the draft's artifacts, assembles and signs `latest.json` with the updater minisign key, and verifies the signature with the app's baked public key.
 4. It then deletes every asset the release set does not publish, uploads the signed feed, and publishes the draft as the latest release. Publishing is the last step, so a failure leaves a draft to fix, never a half-published release.
-5. The published release holds the `.dmg`, `.app.tar.gz`, `.AppImage` and `.deb` with their signatures, plus `latest.json` and its signature. The feed has a `darwin-aarch64` and a `linux-x86_64` entry. With `-f publish_windows=true` it also holds the `-setup.exe` and a `windows-x86_64` entry.
+5. The published release holds the `.dmg`, `.app.tar.gz`, `.AppImage` and `.deb` with their signatures, plus `latest.json` and its signature, and a `SHA256SUMS` file listing every one of them (`sha256sum --check SHA256SUMS`). The feed has a `darwin-aarch64` and a `linux-x86_64` entry. With `-f publish_windows=true` it also holds the `-setup.exe` and a `windows-x86_64` entry.
 
 Which file fills which feed entry, and which assets survive, is decided by `crates/oikonomia-update/src/release_set.rs` and covered by its tests. Promotion stops if a platform has no artifact or more than one.
 

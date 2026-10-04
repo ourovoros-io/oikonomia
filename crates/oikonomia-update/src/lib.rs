@@ -27,7 +27,10 @@ pub use feed::{FeedArtifact, assemble_manifest};
 pub use hosts::HostPolicy;
 pub use machine::UpdateMachine;
 pub use notes::sanitize_notes;
-pub use release_set::{ReleaseSetError, WindowsBuild, feed_entries, is_published_asset};
+pub use release_set::{
+    CHECKSUMS_FILE, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets, feed_entries,
+    is_published_asset,
+};
 pub use status::UpdateStatus;
 pub use verify::{parse_public_key, verify_manifest_bytes};
 

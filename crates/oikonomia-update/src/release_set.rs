@@ -70,6 +70,11 @@ const MANUAL_DOWNLOAD_SUFFIXES: [&str; 2] = [".dmg", ".deb"];
 
 const FEED_FILES: [&str; 2] = ["latest.json", "latest.json.sig"];
 
+/// Name of the checksum file published with every release: one
+/// `<sha256>  <file name>` line per published file, the format
+/// `sha256sum --check` reads.
+pub const CHECKSUMS_FILE: &str = "SHA256SUMS";
+
 fn platforms(windows: WindowsBuild) -> Vec<FeedPlatform> {
     match windows {
         WindowsBuild::Withheld => vec![MACOS, LINUX],
@@ -120,12 +125,33 @@ pub fn feed_entries<'a>(
     Ok(entries)
 }
 
+/// The files [`CHECKSUMS_FILE`] lists: every published file except the
+/// checksum file itself, sorted by name so the file is reproducible.
+#[must_use]
+pub fn checksummed_assets<'a>(file_names: &[&'a str], windows: WindowsBuild) -> Vec<&'a str> {
+    let mut listed = Vec::new();
+    for name in file_names {
+        if *name != CHECKSUMS_FILE && is_published_asset(name, windows) {
+            listed.push(*name);
+        }
+    }
+    listed.sort_unstable();
+    listed
+}
+
+/// One line of [`CHECKSUMS_FILE`], newline included.
+#[must_use]
+pub fn checksum_line(sha256_hex: &str, file_name: &str) -> String {
+    format!("{sha256_hex}  {file_name}\n")
+}
+
 /// True when `file_name` belongs in the published release: a feed artifact,
-/// a manual download, the signature of either, or the feed itself. Everything else
+/// a manual download, the signature of either, the feed itself, or the
+/// checksum file. Everything else
 /// in the draft is deleted before publishing.
 #[must_use]
 pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
-    if FEED_FILES.contains(&file_name) {
+    if FEED_FILES.contains(&file_name) || file_name == CHECKSUMS_FILE {
         return true;
     }
 
@@ -150,7 +176,10 @@ pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::{ReleaseSetError, WindowsBuild, feed_entries, is_published_asset};
+    use super::{
+        CHECKSUMS_FILE, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets,
+        feed_entries, is_published_asset,
+    };
     use crate::client::current_updater_platform;
 
     /// What tauri-action leaves in a draft for one tag.
@@ -285,6 +314,48 @@ mod tests {
                 "Oikonomia_0.2.0_x64-setup.exe.sig",
                 "SHA256SUMS.txt",
             ]
+        );
+    }
+
+    #[test]
+    fn checksum_file_is_published_and_lists_every_other_published_file() {
+        let mut release = DRAFT.to_vec();
+        release.push(CHECKSUMS_FILE);
+
+        assert!(is_published_asset(CHECKSUMS_FILE, WindowsBuild::Withheld));
+
+        let listed = checksummed_assets(&release, WindowsBuild::Withheld);
+        let mut expected: Vec<&str> = release
+            .iter()
+            .copied()
+            .filter(|name| is_published_asset(name, WindowsBuild::Withheld))
+            .filter(|name| *name != CHECKSUMS_FILE)
+            .collect();
+        expected.sort_unstable();
+
+        assert_eq!(listed, expected);
+        assert!(listed.contains(&"Oikonomia_0.2.0_amd64.deb"));
+        assert!(listed.contains(&"latest.json"));
+        assert!(!listed.contains(&CHECKSUMS_FILE));
+    }
+
+    #[test]
+    fn checksum_file_never_lists_a_withheld_or_stray_file() {
+        let listed = checksummed_assets(&DRAFT, WindowsBuild::Withheld);
+
+        assert!(!listed.iter().any(|name| name.contains("setup.exe")));
+        assert!(!listed.contains(&"SHA256SUMS.txt"));
+
+        let with_windows = checksummed_assets(&DRAFT, WindowsBuild::Published);
+        assert!(with_windows.contains(&"Oikonomia_0.2.0_x64-setup.exe"));
+    }
+
+    #[test]
+    fn checksum_lines_use_the_format_sha256sum_checks() {
+        // Two spaces between hash and name: text mode in `sha256sum --check`.
+        assert_eq!(
+            checksum_line(&"ab".repeat(32), "Oikonomia_0.2.0_amd64.deb"),
+            format!("{}  Oikonomia_0.2.0_amd64.deb\n", "ab".repeat(32))
         );
     }
 

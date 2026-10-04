@@ -2,11 +2,12 @@
 //!
 //! `assemble` scans an artifact directory; `verify` checks a manifest and its
 //! detached minisign signature with the client's own verifier code;
-//! `unpublished` lists the draft assets that must not be published.
+//! `unpublished` lists the draft assets that must not be published;
+//! `checksums` writes the release's `SHA256SUMS` file.
 
 use oikonomia_update::{
-    FeedArtifact, WindowsBuild, assemble_manifest, feed_entries, is_published_asset,
-    parse_public_key,
+    FeedArtifact, WindowsBuild, assemble_manifest, checksum_line, checksummed_assets, feed_entries,
+    is_published_asset, parse_public_key,
 };
 use sha2::{Digest, Sha256};
 use std::fmt::Write as FmtWrite;
@@ -20,6 +21,7 @@ fn main() -> ExitCode {
         Some("assemble") => run_assemble(&args[1..]),
         Some("verify") => run_verify(&args[1..]),
         Some("unpublished") => run_unpublished(&args[1..]),
+        Some("checksums") => run_checksums(&args[1..]),
         _ => Err(USAGE.to_owned()),
     };
     match result {
@@ -35,7 +37,8 @@ const USAGE: &str = "usage:
   assemble_feed assemble --version <v> --base-url <url> --dir <artifact-dir> \
     --out <latest.json> [--notes-file <path>] [--with-windows]
   assemble_feed verify --manifest <latest.json> --sig <latest.json.sig> --pubkey <minisign-pubkey>
-  assemble_feed unpublished [--with-windows] <asset-name>...";
+  assemble_feed unpublished [--with-windows] <asset-name>...
+  assemble_feed checksums --dir <artifact-dir> --out <SHA256SUMS> [--with-windows]";
 
 const WITH_WINDOWS: &str = "--with-windows";
 
@@ -90,13 +93,7 @@ fn run_assemble(args: &[String]) -> Result<(), String> {
         let signature_path = dir.join(format!("{file_name}.sig"));
         let signature = std::fs::read_to_string(&signature_path)
             .map_err(|e| format!("{}: {e}", signature_path.display()))?;
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        let digest = hasher.finalize();
-        let mut sha256_hex = String::with_capacity(64);
-        for byte in digest {
-            let _ = write!(sha256_hex, "{byte:02x}");
-        }
+        let sha256_hex = sha256_hex(&bytes);
         artifacts.push(FeedArtifact {
             platform: platform.to_owned(),
             file_name: file_name.to_owned(),
@@ -108,6 +105,42 @@ fn run_assemble(args: &[String]) -> Result<(), String> {
     let manifest = assemble_manifest(&version, notes.trim(), &base_url, &artifacts)
         .map_err(|e| format!("assemble: {e}"))?;
     std::fs::write(&out, manifest).map_err(|e| format!("{}: {e}", out.display()))?;
+    writeln!(std::io::stdout(), "wrote {}", out.display()).map_err(|e| e.to_string())
+}
+
+/// Lowercase hex SHA-256 of `bytes`.
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
+/// Writes the checksum file for the published files in `--dir`.
+fn run_checksums(args: &[String]) -> Result<(), String> {
+    let dir = PathBuf::from(flag_value(args, "--dir").ok_or(USAGE)?);
+    let out = PathBuf::from(flag_value(args, "--out").ok_or(USAGE)?);
+
+    let names = file_names_in(&dir)?;
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    let listed = checksummed_assets(&names, windows_build(args));
+    if listed.is_empty() {
+        return Err(format!("{}: no published files to checksum", dir.display()));
+    }
+
+    let mut contents = String::new();
+    for name in listed {
+        let file = dir.join(name);
+        let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        contents.push_str(&checksum_line(&sha256_hex(&bytes), name));
+    }
+
+    std::fs::write(&out, contents).map_err(|e| format!("{}: {e}", out.display()))?;
     writeln!(std::io::stdout(), "wrote {}", out.display()).map_err(|e| e.to_string())
 }
 
