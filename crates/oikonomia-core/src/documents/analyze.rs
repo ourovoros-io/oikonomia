@@ -7,6 +7,11 @@
 
 use std::path::Path;
 
+// The PDF object model comes from pdf-extract's re-export, never from a
+// lopdf dependency of our own: the documents parsed here are handed to
+// pdf-extract, so both must be the same lopdf. With two declarations a
+// version bump of one stops the build (the types no longer match).
+use pdf_extract as lopdf;
 use serde::{Deserialize, Serialize};
 
 use super::invoice::read_invoice_text;
