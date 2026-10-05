@@ -840,6 +840,99 @@ mod tests {
         assert!(note.is_none());
     }
 
+    /// A PDF with one page per entry of `pages`: `(text, readable)`. A
+    /// readable page shows its text in a standard font; the other names a
+    /// font that is not a font object, which makes pdf-extract fail on it.
+    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
+    fn pdf_with_text_pages(pages: &[(&str, bool)]) -> Vec<u8> {
+        use lopdf::content::{Content, Operation};
+        use lopdf::{Document, Object, Stream, dictionary};
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let mut kids: Vec<Object> = Vec::new();
+
+        for (text, readable) in pages {
+            let content = Content {
+                operations: vec![
+                    Operation::new("BT", vec![]),
+                    Operation::new("Tf", vec!["F1".into(), 12.into()]),
+                    Operation::new("Td", vec![20.into(), 100.into()]),
+                    Operation::new("Tj", vec![Object::string_literal(*text)]),
+                    Operation::new("ET", vec![]),
+                ],
+            };
+            let contents = doc.add_object(Stream::new(
+                lopdf::Dictionary::new(),
+                content.encode().expect("encode page content"),
+            ));
+            let font: Object = if *readable {
+                doc.add_object(dictionary! {
+                    "Type" => "Font",
+                    "Subtype" => "Type1",
+                    "BaseFont" => "Helvetica",
+                })
+                .into()
+            } else {
+                7.into()
+            };
+            let page_id = doc.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "Contents" => contents,
+                "Resources" => dictionary! { "Font" => dictionary! { "F1" => font } },
+                "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
+            });
+            kids.push(page_id.into());
+        }
+
+        let count = i64::try_from(kids.len()).expect("page count");
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).expect("serialize test pdf");
+        bytes
+    }
+
+    #[test]
+    fn page_by_page_extraction_joins_the_pages_in_order() {
+        let pdf = pdf_with_text_pages(&[("Alpha", true), ("Omega", true)]);
+
+        let text = pdf_text_per_page(&pdf).unwrap_or_default();
+
+        let (alpha, omega) = (text.find("Alpha"), text.find("Omega"));
+        assert!(
+            alpha.is_some() && alpha < omega,
+            "unexpected text: {text:?}"
+        );
+    }
+
+    #[test]
+    fn a_page_that_cannot_be_read_does_not_blank_the_rest() {
+        let pdf = pdf_with_text_pages(&[("Readable", true), ("Broken", false)]);
+
+        // The whole-document pass gives up on this file; the fallback reads
+        // the page it can.
+        assert_eq!(pdf_text_whole(&pdf), None);
+        let text = pdf_text(&pdf).unwrap_or_default();
+
+        assert!(text.contains("Readable"), "unexpected text: {text:?}");
+        assert!(!text.contains("Broken"), "unexpected text: {text:?}");
+    }
+
+    #[test]
+    fn a_pdf_with_no_readable_page_has_no_text() {
+        let pdf = pdf_with_text_pages(&[("Broken", false)]);
+
+        assert_eq!(pdf_text_per_page(&pdf), None);
+        assert_eq!(pdf_text(&pdf), None);
+    }
+
     #[test]
     fn page_by_page_extraction_reads_the_synthetic_invoice() {
         let pdf = include_bytes!("../../testdata/documents/synthetic/pdf/english_total.pdf");
