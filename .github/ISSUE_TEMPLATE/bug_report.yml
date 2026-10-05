@@ -1,0 +1,57 @@
+name: Bug report
+description: Something in Oikonomia does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste vault contents, account numbers, passwords or other private data. Security problems go to the address in SECURITY.md, not here.
+  - type: input
+    id: version
+    attributes:
+      label: Oikonomia version
+      description: Shown under Settings, Support, or the release you downloaded (for example 0.1.0).
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Operating system and package
+      description: Which download you installed. Updates work differently for each.
+      options:
+        - macOS (Apple Silicon, .dmg)
+        - Windows x64 (setup .exe)
+        - Linux x86_64 (AppImage)
+        - Linux x86_64 (.deb)
+        - Built from source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: Operating system version
+      description: For example macOS 15.6, Windows 11 24H2, Ubuntu 24.04.
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or logs
+      description: Remove anything private before pasting.
+      render: text

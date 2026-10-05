@@ -75,6 +75,113 @@ const FEED_FILES: [&str; 2] = ["latest.json", "latest.json.sig"];
 /// `sha256sum --check` reads.
 pub const CHECKSUMS_FILE: &str = "SHA256SUMS";
 
+/// Version-free copy of the macOS disk image. getoikonomia.app links to
+/// `releases/latest/download/<name>`, so these names are a contract with the
+/// site and must not change without it.
+pub const FIXED_MACOS_DMG: &str = "Oikonomia-macos-arm64.dmg";
+/// Version-free copy of the Windows installer, published only with Windows.
+pub const FIXED_WINDOWS_SETUP: &str = "Oikonomia-windows-x64-setup.exe";
+/// Version-free copy of the Linux `AppImage`.
+pub const FIXED_LINUX_APPIMAGE: &str = "Oikonomia-linux-x86_64.AppImage";
+/// Version-free copy of the Debian package.
+pub const FIXED_LINUX_DEB: &str = "Oikonomia-linux-amd64.deb";
+
+/// One version-free copy: the fixed name, which platform it is for, and the
+/// suffix of the versioned file it copies.
+struct FixedCopy {
+    name: &'static str,
+    platform: &'static str,
+    suffix: &'static str,
+}
+
+const FIXED_COPIES: [FixedCopy; 4] = [
+    FixedCopy {
+        name: FIXED_MACOS_DMG,
+        platform: "macos",
+        suffix: ".dmg",
+    },
+    FixedCopy {
+        name: FIXED_LINUX_APPIMAGE,
+        platform: "linux-appimage",
+        suffix: ".AppImage",
+    },
+    FixedCopy {
+        name: FIXED_LINUX_DEB,
+        platform: "linux-deb",
+        suffix: ".deb",
+    },
+    FixedCopy {
+        name: FIXED_WINDOWS_SETUP,
+        platform: "windows",
+        suffix: "-setup.exe",
+    },
+];
+
+/// True for one of the version-free copy names, whatever the Windows choice.
+#[must_use]
+pub fn is_fixed_name(file_name: &str) -> bool {
+    FIXED_COPIES.iter().any(|copy| copy.name == file_name)
+}
+
+/// The version-free names a release publishes, in a stable order.
+#[must_use]
+pub fn fixed_names(windows: WindowsBuild) -> Vec<&'static str> {
+    FIXED_COPIES
+        .iter()
+        .filter(|copy| copy.platform != "windows" || windows == WindowsBuild::Published)
+        .map(|copy| copy.name)
+        .collect()
+}
+
+/// The `(versioned source, fixed name)` pairs to copy before publishing.
+///
+/// Each fixed name needs exactly one versioned file among `file_names`.
+/// Fixed names already present (from an earlier, interrupted promotion) are
+/// never treated as a source.
+///
+/// # Errors
+///
+/// [`ReleaseSetError::Missing`] or [`ReleaseSetError::Ambiguous`] when a
+/// fixed name has no source or more than one.
+pub fn fixed_name_copies<'a>(
+    file_names: &[&'a str],
+    windows: WindowsBuild,
+) -> Result<Vec<(&'a str, &'static str)>, ReleaseSetError> {
+    let mut copies = Vec::new();
+
+    for copy in &FIXED_COPIES {
+        if copy.platform == "windows" && windows == WindowsBuild::Withheld {
+            continue;
+        }
+
+        let mut candidates = Vec::new();
+        for name in file_names {
+            if !is_fixed_name(name) && name.ends_with(copy.suffix) {
+                candidates.push(*name);
+            }
+        }
+
+        match candidates.as_slice() {
+            [] => {
+                return Err(ReleaseSetError::Missing {
+                    platform: copy.platform,
+                    suffix: copy.suffix,
+                });
+            }
+            [only] => copies.push((*only, copy.name)),
+            _ => {
+                return Err(ReleaseSetError::Ambiguous {
+                    platform: copy.platform,
+                    suffix: copy.suffix,
+                    found: candidates.join(", "),
+                });
+            }
+        }
+    }
+
+    Ok(copies)
+}
+
 fn platforms(windows: WindowsBuild) -> Vec<FeedPlatform> {
     match windows {
         WindowsBuild::Withheld => vec![MACOS, LINUX],
@@ -99,7 +206,7 @@ pub fn feed_entries<'a>(
     for platform in platforms(windows) {
         let mut candidates = Vec::new();
         for name in file_names {
-            if name.ends_with(platform.suffix) {
+            if !is_fixed_name(name) && name.ends_with(platform.suffix) {
                 candidates.push(*name);
             }
         }
@@ -146,13 +253,22 @@ pub fn checksum_line(sha256_hex: &str, file_name: &str) -> String {
 }
 
 /// True when `file_name` belongs in the published release: a feed artifact,
-/// a manual download, the signature of either, the feed itself, or the
-/// checksum file. Everything else
+/// a manual download, the signature of either, the feed itself, the
+/// checksum file, or a version-free copy. Everything else
 /// in the draft is deleted before publishing.
 #[must_use]
 pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
     if FEED_FILES.contains(&file_name) || file_name == CHECKSUMS_FILE {
         return true;
+    }
+
+    // Decided by name, not suffix: the Windows copy ends in `-setup.exe` too,
+    // and a fixed name never has a detached signature.
+    if is_fixed_name(file_name) {
+        return fixed_names(windows).contains(&file_name);
+    }
+    if file_name.strip_suffix(".sig").is_some_and(is_fixed_name) {
+        return false;
     }
 
     // A detached signature is published exactly when its file is.
@@ -177,8 +293,9 @@ pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{
-        CHECKSUMS_FILE, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets,
-        feed_entries, is_published_asset,
+        CHECKSUMS_FILE, FIXED_LINUX_APPIMAGE, FIXED_LINUX_DEB, FIXED_MACOS_DMG,
+        FIXED_WINDOWS_SETUP, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets,
+        feed_entries, fixed_name_copies, fixed_names, is_published_asset,
     };
     use crate::client::current_updater_platform;
 
@@ -372,5 +489,109 @@ mod tests {
                 "{name} must not be published"
             );
         }
+    }
+
+    #[test]
+    fn fixed_names_match_the_site_download_links() {
+        // getoikonomia.app (worker/index.ts) redirects to
+        // releases/latest/download/<name> with exactly these names.
+        assert_eq!(FIXED_MACOS_DMG, "Oikonomia-macos-arm64.dmg");
+        assert_eq!(FIXED_WINDOWS_SETUP, "Oikonomia-windows-x64-setup.exe");
+        assert_eq!(FIXED_LINUX_APPIMAGE, "Oikonomia-linux-x86_64.AppImage");
+        assert_eq!(FIXED_LINUX_DEB, "Oikonomia-linux-amd64.deb");
+        assert_eq!(CHECKSUMS_FILE, "SHA256SUMS");
+    }
+
+    #[test]
+    fn fixed_copies_come_from_the_versioned_files() {
+        let copies = fixed_name_copies(&DRAFT, WindowsBuild::Withheld).expect("copies");
+
+        assert_eq!(
+            copies,
+            [
+                ("Oikonomia_0.2.0_aarch64.dmg", FIXED_MACOS_DMG),
+                ("Oikonomia_0.2.0_amd64.AppImage", FIXED_LINUX_APPIMAGE),
+                ("Oikonomia_0.2.0_amd64.deb", FIXED_LINUX_DEB),
+            ]
+        );
+
+        let with_windows = fixed_name_copies(&DRAFT, WindowsBuild::Published).expect("copies");
+        assert_eq!(
+            with_windows.last(),
+            Some(&("Oikonomia_0.2.0_x64-setup.exe", FIXED_WINDOWS_SETUP))
+        );
+        assert_eq!(with_windows.len(), 4);
+    }
+
+    #[test]
+    fn a_missing_source_for_a_fixed_copy_stops_the_promotion() {
+        let without_deb: Vec<&str> = DRAFT
+            .iter()
+            .copied()
+            .filter(|name| !name.contains(".deb"))
+            .collect();
+
+        assert_eq!(
+            fixed_name_copies(&without_deb, WindowsBuild::Withheld),
+            Err(ReleaseSetError::Missing {
+                platform: "linux-deb",
+                suffix: ".deb",
+            })
+        );
+    }
+
+    #[test]
+    fn copies_left_by_an_interrupted_promotion_are_not_sources_or_feed_artifacts() {
+        let mut rerun = DRAFT.to_vec();
+        rerun.extend([
+            FIXED_MACOS_DMG,
+            FIXED_LINUX_APPIMAGE,
+            FIXED_LINUX_DEB,
+            FIXED_WINDOWS_SETUP,
+        ]);
+
+        assert_eq!(
+            fixed_name_copies(&rerun, WindowsBuild::Published).expect("copies"),
+            fixed_name_copies(&DRAFT, WindowsBuild::Published).expect("copies")
+        );
+        assert_eq!(
+            feed_entries(&rerun, WindowsBuild::Published).expect("entries"),
+            feed_entries(&DRAFT, WindowsBuild::Published).expect("entries")
+        );
+    }
+
+    #[test]
+    fn fixed_windows_copy_is_published_only_with_windows() {
+        assert_eq!(
+            fixed_names(WindowsBuild::Withheld),
+            [FIXED_MACOS_DMG, FIXED_LINUX_APPIMAGE, FIXED_LINUX_DEB]
+        );
+        assert!(!is_published_asset(
+            FIXED_WINDOWS_SETUP,
+            WindowsBuild::Withheld
+        ));
+        assert!(is_published_asset(
+            FIXED_WINDOWS_SETUP,
+            WindowsBuild::Published
+        ));
+        for name in fixed_names(WindowsBuild::Withheld) {
+            assert!(is_published_asset(name, WindowsBuild::Withheld), "{name}");
+        }
+    }
+
+    #[test]
+    fn fixed_copies_carry_no_signature_and_are_checksummed() {
+        let sig = format!("{FIXED_LINUX_APPIMAGE}.sig");
+        assert!(!is_published_asset(&sig, WindowsBuild::Published));
+
+        let mut release = DRAFT.to_vec();
+        release.extend(fixed_names(WindowsBuild::Withheld));
+        release.push(FIXED_WINDOWS_SETUP);
+        let listed = checksummed_assets(&release, WindowsBuild::Withheld);
+
+        for name in fixed_names(WindowsBuild::Withheld) {
+            assert!(listed.contains(&name), "{name} missing from SHA256SUMS");
+        }
+        assert!(!listed.contains(&FIXED_WINDOWS_SETUP));
     }
 }

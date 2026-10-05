@@ -1,6 +1,8 @@
 # Build a draft GitHub Release from a version tag.
 #
-# The macos job builds, signs, and notarizes the Apple Silicon app. The linux
+# The macos job builds, signs, and notarizes the Apple Silicon app, checks
+# the signature with codesign, spctl and stapler, and notarizes and staples
+# the disk image; any failed check fails the release. The linux
 # job builds the .deb and the AppImage and smoke-tests both. The windows job
 # builds the NSIS installer and smoke-tests it; it is not code-signed yet, so
 # the Promote workflow withholds it from the published release unless asked.
@@ -185,6 +187,94 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
+
+      # Tauri notarizes and staples the .app and signs the .dmg with the same
+      # identity, but does not notarize the .dmg. This step proves the app is
+      # Developer ID signed by this team, hardened, notarized and stapled, then
+      # notarizes and staples the .dmg and replaces the copy tauri-action put
+      # on the draft. Any failed check fails the job, so an unsigned or
+      # unnotarized Mac build never stays on a draft that looks complete.
+      - name: Verify app signature, notarize and staple the disk image (fail-closed)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          bundle="target/release/bundle"
+          app="${bundle}/macos/Oikonomia.app"
+          shopt -s nullglob
+          dmgs=("${bundle}"/dmg/*.dmg)
+          if [ ! -d "${app}" ]; then
+            echo "::error::${app} is missing"
+            exit 1
+          fi
+          if [ "${#dmgs[@]}" -ne 1 ]; then
+            echo "::error::expected one .dmg in ${bundle}/dmg, found ${#dmgs[@]}"
+            exit 1
+          fi
+          dmg="${dmgs[0]}"
+
+          # The app.
+          codesign --verify --deep --strict --verbose=2 "${app}"
+          codesign --display --verbose=2 "${app}" 2> app-signature.txt
+          cat app-signature.txt
+          if ! grep -q '^Authority=Developer ID Application: ' app-signature.txt; then
+            echo "::error::the app is not signed with a Developer ID Application certificate"
+            exit 1
+          fi
+          if ! grep -Fqx "TeamIdentifier=${APPLE_TEAM_ID}" app-signature.txt; then
+            echo "::error::the app is not signed by team APPLE_TEAM_ID"
+            exit 1
+          fi
+          if ! grep -q '^CodeDirectory .*flags=.*runtime' app-signature.txt; then
+            echo "::error::the app is not signed with the hardened runtime"
+            exit 1
+          fi
+          spctl --assess --type exec --verbose=2 "${app}" 2>&1 | tee app-gatekeeper.txt
+          if ! grep -q 'source=Notarized Developer ID' app-gatekeeper.txt; then
+            echo "::error::Gatekeeper does not see the app as notarized"
+            exit 1
+          fi
+          xcrun stapler validate "${app}"
+
+          # The disk image.
+          codesign --verify --strict --verbose=2 "${dmg}"
+          if ! xcrun notarytool submit "${dmg}" \
+              --key "${APPLE_API_KEY_PATH}" \
+              --key-id "${APPLE_API_KEY}" \
+              --issuer "${APPLE_API_ISSUER}" \
+              --wait --timeout 1h --output-format json > notary.json; then
+            cat notary.json
+            echo "::error::notarytool could not notarize ${dmg}"
+            exit 1
+          fi
+          cat notary.json
+          status="$(python3 -c 'import json; print(json.load(open("notary.json")).get("status", ""))')"
+          if [ "${status}" != "Accepted" ]; then
+            echo "::error::notarization of ${dmg} ended '${status}', not 'Accepted'"
+            exit 1
+          fi
+          xcrun stapler staple "${dmg}"
+          xcrun stapler validate "${dmg}"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "${dmg}" 2>&1 | tee dmg-gatekeeper.txt
+          if ! grep -q 'source=Notarized Developer ID' dmg-gatekeeper.txt; then
+            echo "::error::Gatekeeper does not see the disk image as notarized"
+            exit 1
+          fi
+
+          # Replace the unstapled disk image on the draft. Refuse if the draft
+          # holds it under another name: promotion would publish the old one.
+          if [ -n "${RELEASE_TAG}" ]; then
+            name="$(basename "${dmg}")"
+            gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" \
+              --json assets --jq '.assets[].name' > draft-assets.txt
+            if ! grep -Fqx -- "${name}" draft-assets.txt; then
+              echo "::error::the draft for ${RELEASE_TAG} has no asset named ${name}"
+              exit 1
+            fi
+            gh release upload "${RELEASE_TAG}" "${dmg}" --repo "${GITHUB_REPOSITORY}" --clobber
+          fi
 
       - name: Smoke-test the bundled app
         run: SMOKE_SKIP_BUILD=1 ./scripts/smoke-macos.sh
