@@ -83,6 +83,9 @@ const BRANDS: &[(&str, &str, Option<Service>)] = &[
 /// [`TERM`](weight::TERM), and [`SERVICE_KEYWORDS`] says how a tie ends.
 ///
 /// The four values are 1 to 4, the smallest whole numbers in that order.
+/// Which keyword got which level is not recorded. One test needs `MENTION`
+/// to be above zero (`one_keyword_decides_when_it_is_the_only_one`); no test
+/// fails when any other level is lowered to 1.
 mod weight {
     /// A word that bills of other services also print.
     pub(super) const MENTION: u32 = 1;

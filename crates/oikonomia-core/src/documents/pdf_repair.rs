@@ -49,7 +49,8 @@ const OBJECT_KEYWORD: &[u8] = b"obj";
 /// How many `startxref` and `/Prev` pointers are examined. Each one belongs
 /// to one incremental update of the file, and real documents have a handful.
 ///
-/// The reason for 256 in particular is not recorded.
+/// The reason for 256 in particular is not recorded. The tests need at
+/// least two.
 const MAX_XREF_POINTERS: usize = 256;
 
 /// How many table entries one repair rewrites. A statement or invoice has

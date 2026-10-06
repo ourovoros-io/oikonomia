@@ -553,7 +553,8 @@ const MIN_PDF_TEXT_CHARS: usize = 8;
 /// Most embedded JPEG images of one PDF that are tried with OCR. Each try
 /// runs the OCR models once, so this bounds how long a scanned PDF takes.
 ///
-/// The reason for 2 in particular is not recorded.
+/// The reason for 2 in particular is not recorded;
+/// `at_most_two_page_images_are_taken` pins it.
 const MAX_PDF_OCR_IMAGES: usize = 2;
 
 /// Whether a PDF with this trimmed text layer is taken as a scan: no text,
@@ -1066,16 +1067,13 @@ mod tests {
     }
 
     #[test]
-    fn no_more_page_images_are_taken_than_ocr_will_try() {
+    fn at_most_two_page_images_are_taken() {
         let pdf = pdf_with_images(
             ImagePlacement::PageXObject,
             &[(dct(), b"a"), (dct(), b"b"), (dct(), b"c")],
         );
 
-        assert_eq!(
-            extract_pdf_jpeg_images(&loaded(&pdf)).len(),
-            MAX_PDF_OCR_IMAGES
-        );
+        assert_eq!(extract_pdf_jpeg_images(&loaded(&pdf)).len(), 2);
     }
 
     #[test]
@@ -1093,7 +1091,7 @@ mod tests {
         let mut found = extract_pdf_jpeg_images(&loaded(&pdf));
         found.sort();
 
-        assert_eq!(found.len(), MAX_PDF_OCR_IMAGES);
+        assert_eq!(found.len(), 2);
         assert!(found.iter().all(|jpeg| jpeg.len() == 1));
     }
 

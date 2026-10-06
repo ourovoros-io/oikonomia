@@ -381,13 +381,22 @@ const MID_GREY: u8 = 128;
 
 /// Mean grey level under which an image is taken as light text on a dark
 /// ground and inverted.
+///
+/// The reason for 90 is not recorded. No test depends on it: the corpus
+/// image is read with inversion never applied and with it always applied.
 const DARK_IMAGE_MEAN: u8 = 90;
 
 /// How much the distance of a pixel from mid-grey is multiplied by.
+///
+/// The reason for 1.35 is not recorded. No test depends on it: the corpus
+/// image is read at 1.0, which is no stretch, and at 3.0.
 const CONTRAST_GAIN: f32 = 1.35;
 
 /// Exponent applied after the contrast stretch. Under 1, so midtones get
 /// lighter.
+///
+/// The reason for 0.92 is not recorded. The corpus image is read the same
+/// at 1.0, which is no gamma, and is not read at 0.5.
 const MIDTONE_GAMMA: f32 = 0.92;
 
 /// Raises the contrast of a greyscale image and returns it as RGB.
@@ -458,12 +467,13 @@ fn run_ocr_on_rgb(image: &RgbImage) -> Result<String> {
 }
 
 /// Most characters of a recognized line that is dropped as noise: a line of
-/// one character is a speck or a rule, not text.
+/// one character is a speck or a rule, not text. No test depends on it.
 const NOISE_LINE_CHARS: usize = 1;
 
 /// Most characters of a first-pass reading that is not returned as it is.
 ///
-/// The same number as `MIN_PDF_TEXT_CHARS` in the analyzer.
+/// The same number as `MIN_PDF_TEXT_CHARS` in the analyzer. The reason for 8
+/// is not recorded, and no test depends on it.
 const SPARSE_TEXT_CHARS: usize = 8;
 
 /// Reads the text of a prepared image.

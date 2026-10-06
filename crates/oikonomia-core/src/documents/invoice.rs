@@ -732,12 +732,17 @@ const EXECUTION_DATE_LABELS: &[&str] = &["εκτελεσ", "execution"];
 const TRANSFER_DATE_LABELS: &[&str] = &["ημερομην", "date", "συναλλαγ"];
 
 /// Fewest characters of a payee, issuer or customer name.
+///
+/// The reason for 3 is not recorded, and no test pins it.
 const MIN_NAME_CHARS: usize = 3;
 
 /// Lengths of a transfer transaction code.
+///
+/// The code on the corpus receipt has 16 characters. The reasons for 10 and
+/// 24 are not recorded, and no test pins either.
 const TRANSFER_CODE_CHARS: RangeInclusive<usize> = 10..=24;
 
-/// Length of the shortest IBAN (Norway's).
+/// Length of the shortest IBAN (Norway's). No test pins it.
 const MIN_IBAN_CHARS: usize = 15;
 
 /// Whether a folded line is a fee or charges line.
@@ -1549,10 +1554,13 @@ const MINOR_PER_EURO: i64 = 100;
 
 /// The amounts taken as money: 0,50 to 10 000 000,00, in minor units.
 ///
-/// Every stage that picks an amount ignores a number outside this band. The
-/// upper bound keeps out identifiers that survived the token rules. The
-/// lower bound keeps out unit prices and per-unit rates, which are well
-/// under a euro, at the cost of not reading a real total or fee under 0,50.
+/// Every stage that picks an amount ignores a number outside this band. Its
+/// purpose is to keep out numbers that are not currency amounts, at the cost
+/// of not reading a real total or fee under 0,50.
+///
+/// The reasons for these two bounds in particular are not recorded. Tests
+/// pin 1,40 and 1 234 567,89 as inside and 0,40 as outside; none reaches the
+/// upper bound.
 const PLAUSIBLE_MONEY_MINOR: RangeInclusive<i64> = 50..=1_000_000_000;
 
 /// Whether `minor` is not a whole number of euros.
@@ -1661,6 +1669,8 @@ const MAX_MONEY_TOKEN_CHARS: usize = 14;
 /// A longer run of digits is an identifier (a tax number, a MARK number, a
 /// piece of an IBAN), so a whole amount of 100 000 euros or more is read
 /// only when it is written with a separator.
+/// `a_money_token_is_read_by_the_separator_table` pins both sides: `99999`
+/// is money and `123456` is not.
 const MAX_BARE_EURO_DIGITS: usize = 5;
 
 /// Whole-euro figures that are taken as years, not money.
@@ -1668,11 +1678,13 @@ const MAX_BARE_EURO_DIGITS: usize = 5;
 /// A date that the masks did not recognize leaves its year behind as a token
 /// of its own. The price is that a total of exactly 1900 to 2100 euros is
 /// read only when it is written with decimals (`2026,00`).
+/// `a_whole_amount_that_looks_like_a_year_needs_decimals` pins both ends.
 const YEAR_LIKE_EUROS: RangeInclusive<i64> = 1_900..=2_100;
 
 /// Most digits of the whole part of a token with separators, after the
 /// thousands marks are removed. Eight digits reach 99 999 999,99, which is
-/// already above [`PLAUSIBLE_MONEY_MINOR`].
+/// already above [`PLAUSIBLE_MONEY_MINOR`]; the table test pins that nine
+/// are refused (`123456789,00`).
 const MAX_WHOLE_PART_DIGITS: usize = 8;
 
 /// Most digits of a fraction. Three or more after a lone separator make a
@@ -1876,7 +1888,8 @@ const DATE_LABELS: &[&str] = &["ημερομην", "date", "εκδοσ", "ληξ
 /// A day-first token with a year outside this range is not a date, so it is
 /// not blanked either and its numbers can be read as money. An ISO-shaped
 /// token is blanked by its shape whatever its year, and is then not a date.
-/// The reason for 1990 as the start is not recorded.
+///
+/// The reason for these two years is not recorded, and no test pins either.
 const DOCUMENT_YEARS: RangeInclusive<i32> = 1990..=2100;
 
 /// What a two-digit year is counted from: `26` is 2026.
@@ -1994,9 +2007,15 @@ fn find_invoice_reference(text: &str) -> Option<String> {
 const SUPPLY_CODE_LABELS: &[&str] = &["κωδικος παροχης", "supply", "ηκασπ"];
 
 /// Lengths of an alphanumeric supply code.
+///
+/// The codes in the tests have 10 and 12 characters. The reasons for 8 and
+/// 24 are not recorded, and no test pins either.
 const SUPPLY_CODE_CHARS: RangeInclusive<usize> = 8..=24;
 
 /// Fewest characters of an RF payment code, the `RF` included.
+///
+/// `reference_finds_an_rf_payment_code_as_a_token` pins that nine are too
+/// few. The reason for 10 is not recorded.
 const MIN_RF_CODE_CHARS: usize = 10;
 
 /// The supply or meter code beside the first supply label that has one
@@ -2095,6 +2114,9 @@ fn labelled_reference_number(lines: &[&str]) -> Option<String> {
 }
 
 /// Fewest digits of a reference that no label names.
+///
+/// `reference_falls_back_to_the_longest_run_of_ten_or_more_digits` pins that
+/// nine are too few. The reason for 10 is not recorded.
 const MIN_UNLABELLED_REFERENCE_DIGITS: usize = 10;
 
 /// The longest run of digits anywhere that can be an unlabelled reference:
@@ -2114,7 +2136,12 @@ fn longest_reference_number(lines: &[&str]) -> Option<String> {
     longest
 }
 
-/// Lengths of a run of digits that can be a reference.
+/// Lengths of a run of digits that can be a reference. A MARK number has 15.
+///
+/// Both ends are pinned: five digits are too few
+/// (`reference_reads_a_number_next_to_an_invoice_label`) and twenty-one too
+/// many (`reference_falls_back_to_the_longest_run_of_ten_or_more_digits`).
+/// The reasons for 6 and 20 are not recorded.
 const REFERENCE_DIGITS: RangeInclusive<usize> = 6..=20;
 
 /// The longest run of digits on `line` whose length is in
@@ -2268,9 +2295,13 @@ fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Option<String
 }
 
 /// Lengths of a line that can stand in for the merchant's name.
+///
+/// The reasons for 5 and 80 are not recorded, and no test pins either.
 const MERCHANT_LINE_CHARS: RangeInclusive<usize> = 5..=80;
 
 /// Fewest characters of an unlabelled line taken as the customer's name.
+///
+/// The reason for 5 is not recorded, and no test pins it.
 const MIN_CUSTOMER_LINE_CHARS: usize = 5;
 
 /// Markers of a natural gas bill whose supplier is not a known brand.
@@ -2363,6 +2394,8 @@ fn value_after_colon(line: &str) -> Option<String> {
 }
 
 /// Fewest letters and spaces of a line-item description.
+///
+/// The reason for 4 is not recorded, and no test pins it.
 const MIN_DESCRIPTION_CHARS: usize = 4;
 
 /// The description to suggest. The first of these that applies:
