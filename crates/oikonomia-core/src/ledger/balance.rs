@@ -1,15 +1,65 @@
-//! Account balance helpers.
-
-use rusqlite::Connection;
-use time::Date;
+//! Balances: which entries count, how a balance is signed, and how amounts
+//! are added up.
+//!
+//! # Active entries
+//!
+//! Every balance and report counts *active* entries only: posted, not voided,
+//! and not the reversing entry of a void. [`ACTIVE_ENTRY_PREDICATE`] is that
+//! rule as SQL, and every query in the ledger that totals amounts embeds it
+//! instead of spelling the rule again.
+//!
+//! # Sign
+//!
+//! The journal stores a debit and a credit amount per line, both
+//! non-negative. A balance is signed towards the normal side of the account's
+//! type: debits minus credits for assets and expenses, credits minus debits
+//! for liabilities, equity and income ([`normal_balance`]). A negative balance
+//! is therefore an account on the other side of where its type usually sits,
+//! such as an overdrawn bank account.
+//!
+//! # Arithmetic
+//!
+//! Amounts are added and subtracted through [`add_minor`], [`subtract_minor`]
+//! and [`sum_minor`], which return [`Error::MoneyOverflow`] where plain `i64`
+//! arithmetic would wrap or panic.
+//!
+//! The module also owns the text an account type is stored as
+//! ([`account_type_str`], [`parse_account_type`]), because the queries here
+//! filter on it.
 
 use crate::db::corrupt_column;
 use crate::domain::{AccountId, AccountType, EntityId};
 use crate::error::{Error, Result};
-use crate::util::format_date;
+use crate::ledger::accounts::get_account;
+use crate::util::{format_date, parse_date};
+use rusqlite::Connection;
+use time::Date;
 
-/// Returns the signed normal balance for an account type given raw debit and
-/// credit totals.
+/// SQL predicate on `journal_entries je` that selects the active entries:
+/// posted, not voided, and not the reversing entry of a void.
+///
+/// The status test is part of the predicate so that a query cannot use the
+/// void test and forget it.
+///
+/// A void posts a reversing entry and links the pair both ways through
+/// `voided_by_entry_id`, so the first void test alone excludes both. The
+/// `NOT EXISTS` test is for a vault whose voids linked only the original to
+/// its reversal: there the reversal has no link of its own and is recognised
+/// as the target of the original's.
+pub(crate) const ACTIVE_ENTRY_PREDICATE: &str = "
+    je.status = 'posted'
+    AND je.voided_by_entry_id IS NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM journal_entries je_void
+        WHERE je_void.voided_by_entry_id = je.id
+    )
+";
+
+/// Returns a balance signed towards the normal side of `account_type`.
+///
+/// `debits` and `credits` are totals in minor units. The result is
+/// `debits - credits` for an asset or expense account and `credits - debits`
+/// for a liability, equity or income account.
 ///
 /// # Errors
 ///
@@ -53,48 +103,43 @@ pub(crate) fn sum_minor(amounts: impl IntoIterator<Item = i64>) -> Result<i64> {
     amounts.into_iter().try_fold(0_i64, add_minor)
 }
 
-/// SQL predicate on `journal_entries je`: posted entries that are not voided
-/// and are not void-reversals.
+/// Returns the balance of one account through `as_of` (`YYYY-MM-DD`,
+/// inclusive), signed towards the normal side of the account's type.
 ///
-/// The status test is part of the predicate so that a query cannot use the
-/// void test and forget it.
-///
-/// A void posts a reverse entry and sets `voided_by` on the original. Newer voids
-/// also mark the reverse; older data may only mark the original — so we exclude
-/// any entry that is the target of another entry's `voided_by_entry_id`.
-pub(crate) const ACTIVE_ENTRY_PREDICATE: &str = "
-    je.status = 'posted'
-    AND je.voided_by_entry_id IS NULL
-    AND NOT EXISTS (
-        SELECT 1 FROM journal_entries je_void
-        WHERE je_void.voided_by_entry_id = je.id
-    )
-";
-
-/// Balance of one account as of an ISO date string, resolving the account's
-/// normal-balance side internally. Convenience wrapper for the IPC layer.
+/// This is [`account_balance_as_of`] for a caller that has only the account's
+/// id and the date as text; it looks the account's type up first.
 ///
 /// # Errors
 ///
-/// Unknown account, invalid date, or DB errors.
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`Error::VaultCorrupt`] when the stored account does not parse.
+/// - [`ValidationError::InvalidDate`](crate::error::ValidationError::InvalidDate)
+///   when `as_of` is not a date.
+/// - The errors of [`account_balance_as_of`].
 pub fn account_balance(conn: &Connection, account_id: AccountId, as_of: &str) -> Result<i64> {
-    let account = crate::ledger::accounts::get_account(conn, account_id)?;
-    let as_of_d = crate::util::parse_date(as_of)?;
-    account_balance_as_of(conn, account_id, account.account_type, as_of_d)
+    let account = get_account(conn, account_id)?;
+    let as_of = parse_date(as_of)?;
+
+    account_balance_as_of(conn, account_id, account.account_type, as_of)
 }
 
-/// Balance of one account as of `as_of` (inclusive), posted entries only.
+/// Returns the balance of one account through `as_of` (inclusive), counting
+/// active entries only.
+///
+/// `account_type` decides the sign, as in [`normal_balance`]; it is the
+/// caller's to pass so that a caller that already holds the account does not
+/// pay for a second lookup. An unknown `account_id` has no lines and gives 0.
 ///
 /// # Errors
 ///
-/// [`Error::Io`] from the underlying query.
+/// [`Error::Io`] when the query fails, which includes a debit or credit total
+/// that overflows `i64` inside `SQLite`'s `SUM`.
 pub fn account_balance_as_of(
     conn: &Connection,
     account_id: AccountId,
     account_type: AccountType,
     as_of: Date,
 ) -> Result<i64> {
-    let as_of_s = format_date(as_of);
     let sql = format!(
         "
         SELECT
@@ -110,7 +155,7 @@ pub fn account_balance_as_of(
     let (debits, credits): (i64, i64) = conn
         .query_row(
             &sql,
-            rusqlite::params![account_id.0.to_string(), as_of_s],
+            rusqlite::params![account_id.0.to_string(), format_date(as_of)],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|err| Error::Io(err.to_string()))?;
@@ -118,35 +163,50 @@ pub fn account_balance_as_of(
     normal_balance(account_type, debits, credits)
 }
 
-/// Sum normal balances for all accounts of given types for an entity as of date.
+/// Sums the balances of every account of an entity whose type is in `types`,
+/// through `as_of` (inclusive), counting active entries only.
+///
+/// Each type's balance is signed towards its own normal side before the
+/// types are added, so mixing debit-normal and credit-normal types in one
+/// call adds figures of opposite meaning.
+///
+/// # Errors
+///
+/// - [`Error::MoneyOverflow`] when the total over the types does not fit in
+///   `i64`.
+/// - [`Error::Io`] when a query fails, which includes a total of one type that
+///   overflows `i64` inside `SQLite`'s `SUM`.
 pub(crate) fn sum_types_as_of(
     conn: &Connection,
     entity_id: EntityId,
     types: &[AccountType],
     as_of: Date,
 ) -> Result<i64> {
+    let sql = format!(
+        "
+        SELECT
+            COALESCE(SUM(jl.debit_minor), 0),
+            COALESCE(SUM(jl.credit_minor), 0)
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        JOIN accounts a ON a.id = jl.account_id
+        WHERE a.entity_id = ?1
+          AND a.account_type = ?2
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND je.entry_date <= ?3
+        "
+    );
+
     let mut total = 0_i64;
     for account_type in types {
-        let type_s = account_type_str(*account_type);
-        let as_of_s = format_date(as_of);
-        let sql = format!(
-            "
-            SELECT
-                COALESCE(SUM(jl.debit_minor), 0),
-                COALESCE(SUM(jl.credit_minor), 0)
-            FROM journal_lines jl
-            JOIN journal_entries je ON je.id = jl.entry_id
-            JOIN accounts a ON a.id = jl.account_id
-            WHERE a.entity_id = ?1
-              AND a.account_type = ?2
-              AND {ACTIVE_ENTRY_PREDICATE}
-              AND je.entry_date <= ?3
-            "
-        );
         let (debits, credits): (i64, i64) = conn
             .query_row(
                 &sql,
-                rusqlite::params![entity_id.0.to_string(), type_s, as_of_s],
+                rusqlite::params![
+                    entity_id.0.to_string(),
+                    account_type_str(*account_type),
+                    format_date(as_of),
+                ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|err| Error::Io(err.to_string()))?;
@@ -156,7 +216,19 @@ pub(crate) fn sum_types_as_of(
     Ok(total)
 }
 
-/// Sum activity in date range (inclusive) for account types (for P&L).
+/// Sums the activity of every account of an entity whose type is in `types`,
+/// between `from` and `to` (both inclusive), counting active entries only.
+///
+/// Signs are as in [`sum_types_as_of`]. Profit and loss figures come from
+/// here: income and expense accounts are read over a window, never as of a
+/// date.
+///
+/// # Errors
+///
+/// - [`Error::MoneyOverflow`] when the total over the types does not fit in
+///   `i64`.
+/// - [`Error::Io`] when a query fails, which includes a total of one type that
+///   overflows `i64` inside `SQLite`'s `SUM`.
 pub(crate) fn sum_types_in_range(
     conn: &Connection,
     entity_id: EntityId,
@@ -164,30 +236,33 @@ pub(crate) fn sum_types_in_range(
     from: Date,
     to: Date,
 ) -> Result<i64> {
+    let sql = format!(
+        "
+        SELECT
+            COALESCE(SUM(jl.debit_minor), 0),
+            COALESCE(SUM(jl.credit_minor), 0)
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        JOIN accounts a ON a.id = jl.account_id
+        WHERE a.entity_id = ?1
+          AND a.account_type = ?2
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND je.entry_date >= ?3
+          AND je.entry_date <= ?4
+        "
+    );
+
     let mut total = 0_i64;
     for account_type in types {
-        let type_s = account_type_str(*account_type);
-        let from_s = format_date(from);
-        let to_s = format_date(to);
-        let sql = format!(
-            "
-            SELECT
-                COALESCE(SUM(jl.debit_minor), 0),
-                COALESCE(SUM(jl.credit_minor), 0)
-            FROM journal_lines jl
-            JOIN journal_entries je ON je.id = jl.entry_id
-            JOIN accounts a ON a.id = jl.account_id
-            WHERE a.entity_id = ?1
-              AND a.account_type = ?2
-              AND {ACTIVE_ENTRY_PREDICATE}
-              AND je.entry_date >= ?3
-              AND je.entry_date <= ?4
-            "
-        );
         let (debits, credits): (i64, i64) = conn
             .query_row(
                 &sql,
-                rusqlite::params![entity_id.0.to_string(), type_s, from_s, to_s],
+                rusqlite::params![
+                    entity_id.0.to_string(),
+                    account_type_str(*account_type),
+                    format_date(from),
+                    format_date(to),
+                ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|err| Error::Io(err.to_string()))?;
@@ -197,9 +272,12 @@ pub(crate) fn sum_types_in_range(
     Ok(total)
 }
 
-/// Persist `AccountType` as the stable on-disk string.
-pub(crate) fn account_type_str(t: AccountType) -> &'static str {
-    match t {
+/// Returns the text `account_type` is stored as in `accounts.account_type`.
+///
+/// The five strings are part of the vault format: changing one would make
+/// every existing vault unreadable by [`parse_account_type`].
+pub(crate) fn account_type_str(account_type: AccountType) -> &'static str {
+    match account_type {
         AccountType::Asset => "asset",
         AccountType::Liability => "liability",
         AccountType::Equity => "equity",
@@ -208,9 +286,14 @@ pub(crate) fn account_type_str(t: AccountType) -> &'static str {
     }
 }
 
-/// Parse the on-disk account-type string written by [`account_type_str`].
-pub(crate) fn parse_account_type(s: &str) -> Result<AccountType> {
-    match s {
+/// Parses the text [`account_type_str`] writes.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming `accounts.account_type` when `stored` is
+/// none of the five strings.
+pub(crate) fn parse_account_type(stored: &str) -> Result<AccountType> {
+    match stored {
         "asset" => Ok(AccountType::Asset),
         "liability" => Ok(AccountType::Liability),
         "equity" => Ok(AccountType::Equity),

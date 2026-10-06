@@ -1,48 +1,75 @@
-//! Chart of accounts CRUD.
+//! The chart of accounts: creating, reading, changing and archiving accounts.
+//!
+//! An account belongs to one entity and has a code that is unique within it;
+//! the schema's `UNIQUE (entity_id, code)` enforces that, and a write that
+//! violates it is reported as [`ValidationError::AccountCodeTaken`]. The
+//! account's type is fixed when it is created. [`update_account`] cannot
+//! change it, because the type decides the sign of every balance the account
+//! has ever been reported with.
+//!
+//! An account is never deleted on its own, only with its whole entity, so no
+//! journal line can lose its account. [`archive_account`] clears `is_active`
+//! instead: the account stays in the
+//! chart and in every report, and posting a new entry to it is refused by the
+//! journal. System accounts, which the chart template marks, cannot be
+//! archived.
+//!
+//! Each function writes with a single statement, so none opens a transaction.
 
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-
-use crate::db::{read_column, stored_uuid};
+use crate::db::{collect_rows, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 
-/// Create account input.
+/// Input for [`create_account`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAccount {
-    /// Owning entity.
+    /// Entity whose chart the account joins. It must exist and not be archived.
     pub entity_id: EntityId,
-    /// Code (unique per entity).
+    /// Code the chart lists the account under, unique within the entity.
+    /// Surrounding whitespace is trimmed; an empty code is refused.
     pub code: String,
-    /// Display name.
+    /// Name shown to the user. Surrounding whitespace is trimmed; an empty
+    /// name is refused.
     pub name: String,
-    /// Classification.
+    /// Type of the account. It cannot be changed after creation.
     pub account_type: AccountType,
-    /// Sort order (optional).
+    /// Position in the chart, lowest first; accounts that share a position are
+    /// ordered by code. `None` stores 500.
     pub sort_order: Option<i32>,
 }
 
-/// Update account input.
+/// Input for [`update_account`]. Every field replaces the stored value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateAccount {
-    /// Account id.
+    /// Account to change.
     pub id: AccountId,
-    /// New code.
+    /// Code to store, unique within the account's entity. Surrounding
+    /// whitespace is trimmed; an empty code is refused.
     pub code: String,
-    /// New name.
+    /// Name to store. Surrounding whitespace is trimmed; an empty name is
+    /// refused.
     pub name: String,
-    /// Active flag.
+    /// Whether new entries may post to the account. `false` archives it and
+    /// `true` brings an archived account back.
     pub is_active: bool,
-    /// Sort order.
+    /// Position in the chart, lowest first.
     pub sort_order: i32,
 }
 
-/// List accounts for an entity (active and inactive), ordered by sort then code.
+/// Lists every account of an entity, archived ones included, by sort order
+/// and then by code.
+///
+/// An entity that does not exist has no accounts and gives an empty list.
 ///
 /// # Errors
 ///
-/// DB errors.
+/// - [`Error::VaultCorrupt`] for a stored account whose id, entity, type or
+///   parent does not parse. The whole list fails: an account left out would
+///   be missing from every report built on it.
+/// - [`Error::Io`] on database errors.
 pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
     let mut stmt = conn
         .prepare(
@@ -60,18 +87,17 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
         .query_map([entity_id.0.to_string()], |row| Ok(map_account(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row.map_err(|err| Error::Io(err.to_string()))??);
-    }
-    Ok(out)
+    collect_rows(rows)
 }
 
-/// Get one account.
+/// Returns one account, archived or not.
 ///
 /// # Errors
 ///
-/// Not found or DB error.
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`Error::VaultCorrupt`] for a stored account whose id, entity, type or
+///   parent does not parse.
+/// - [`Error::Io`] on database errors.
 pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
     conn.query_row(
         "
@@ -88,7 +114,9 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
     })?
 }
 
-/// Creates a user account.
+/// Adds an account to an entity's chart.
+///
+/// The account is active, has no parent and is not a system account.
 ///
 /// # Errors
 ///
@@ -96,6 +124,8 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
 /// - [`Error::NotFound`] for an unknown or archived entity.
 /// - [`ValidationError::AccountCodeTaken`] when the entity already has an
 ///   account with this code.
+/// - [`Error::VaultCorrupt`] when the account does not parse on being read
+///   back.
 /// - [`Error::Io`] on database errors.
 pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Account> {
     let code = input.code.trim();
@@ -106,7 +136,9 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
         }));
     }
 
-    // Ensure entity exists.
+    // An archived entity counts as missing here, as it does when an entity
+    // is renamed. The reads accept one; the `entities` module doc lists
+    // which operation does which.
     let exists: i64 = conn
         .query_row(
             "SELECT COUNT(1) FROM entities WHERE id = ?1 AND archived_at IS NULL",
@@ -119,7 +151,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
     }
 
     let id = AccountId::new();
-    let sort = input.sort_order.unwrap_or(500);
+    let sort_order = input.sort_order.unwrap_or(DEFAULT_SORT_ORDER);
 
     conn.execute(
         "
@@ -134,13 +166,99 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
             code,
             name,
             account_type_str(input.account_type),
-            sort,
+            sort_order,
         ],
     )
     .map_err(|err| account_write_error(&err))?;
 
     get_account(conn, id)
 }
+
+/// Replaces the code, name, active flag and sort order of an account.
+///
+/// The type, the entity and the system flag are not part of the input and
+/// stay as they are.
+///
+/// # Errors
+///
+/// - [`ValidationError::NameRequired`] for an empty code or name.
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`ValidationError::SystemAccountProtected`] when deactivating a system
+///   account.
+/// - [`ValidationError::AccountCodeTaken`] when the entity already has
+///   another account with this code.
+/// - [`Error::VaultCorrupt`] when the stored account does not parse.
+/// - [`Error::Io`] on database errors.
+pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Account> {
+    let code = input.code.trim();
+    let name = input.name.trim();
+    if code.is_empty() || name.is_empty() {
+        return Err(Error::Validation(ValidationError::NameRequired {
+            field: "code and name",
+        }));
+    }
+
+    let account = get_account(conn, input.id)?;
+    if account.is_system && !input.is_active {
+        return Err(Error::Validation(ValidationError::SystemAccountProtected));
+    }
+
+    let updated = conn
+        .execute(
+            "
+            UPDATE accounts
+            SET code = ?1, name = ?2, is_active = ?3, sort_order = ?4
+            WHERE id = ?5
+            ",
+            rusqlite::params![
+                code,
+                name,
+                i32::from(input.is_active),
+                input.sort_order,
+                input.id.0.to_string(),
+            ],
+        )
+        .map_err(|err| account_write_error(&err))?;
+
+    if updated == 0 {
+        return Err(Error::NotFound("account".into()));
+    }
+
+    get_account(conn, input.id)
+}
+
+/// Archives an account: clears its active flag and keeps the account and its
+/// entries.
+///
+/// Archiving an account that is already archived succeeds and changes
+/// nothing.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`ValidationError::SystemAccountProtected`] for a system account.
+/// - [`Error::VaultCorrupt`] when the stored account does not parse.
+/// - [`Error::Io`] on database errors.
+pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
+    let account = get_account(conn, id)?;
+    if account.is_system {
+        return Err(Error::Validation(ValidationError::SystemAccountProtected));
+    }
+
+    conn.execute(
+        "UPDATE accounts SET is_active = 0 WHERE id = ?1",
+        [id.0.to_string()],
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
+    Ok(())
+}
+
+/// Sort order of an account created without one.
+///
+/// The chart templates give their accounts lower numbers, so an account
+/// created without a position is listed after the seeded ones, by code among
+/// the others created the same way.
+const DEFAULT_SORT_ORDER: i32 = 500;
 
 /// Classifies a failed write to `accounts`.
 ///
@@ -158,81 +276,17 @@ fn account_write_error(err: &rusqlite::Error) -> Error {
     }
 }
 
-/// Updates account fields (not type / system flag).
-///
-/// # Errors
-///
-/// - [`ValidationError::NameRequired`] for an empty code or name.
-/// - [`Error::NotFound`] for an unknown account.
-/// - [`ValidationError::SystemAccountProtected`] when deactivating a system
-///   account.
-/// - [`ValidationError::AccountCodeTaken`] when the entity already has
-///   another account with this code.
-/// - [`Error::Io`] on database errors.
-pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Account> {
-    let code = input.code.trim();
-    let name = input.name.trim();
-    if code.is_empty() || name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
-            field: "code and name",
-        }));
-    }
-
-    let account = get_account(conn, input.id)?;
-    if account.is_system && !input.is_active {
-        return Err(Error::Validation(ValidationError::SystemAccountProtected));
-    }
-
-    let n = conn
-        .execute(
-            "
-            UPDATE accounts
-            SET code = ?1, name = ?2, is_active = ?3, sort_order = ?4
-            WHERE id = ?5
-            ",
-            rusqlite::params![
-                code,
-                name,
-                i32::from(input.is_active),
-                input.sort_order,
-                input.id.0.to_string(),
-            ],
-        )
-        .map_err(|err| account_write_error(&err))?;
-
-    if n == 0 {
-        return Err(Error::NotFound("account".into()));
-    }
-
-    get_account(conn, input.id)
-}
-
-/// Soft-deactivates an account. Every system account is refused.
-///
-/// # Errors
-///
-/// - [`Error::NotFound`] for an unknown account.
-/// - [`ValidationError::SystemAccountProtected`] for a system account.
-/// - [`Error::Io`] on database errors.
-pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
-    let account = get_account(conn, id)?;
-    if account.is_system {
-        return Err(Error::Validation(ValidationError::SystemAccountProtected));
-    }
-
-    conn.execute(
-        "UPDATE accounts SET is_active = 0 WHERE id = ?1",
-        [id.0.to_string()],
-    )
-    .map_err(|err| Error::Io(err.to_string()))?;
-    Ok(())
-}
-
 /// Maps a row selected as `id, entity_id, code, name, account_type, parent_id,
 /// is_active, is_system, sort_order`.
 ///
-/// A stored id or type that does not parse fails the query naming the column
-/// instead of returning a half-read account.
+/// A sort order outside `i32` reads as 0: it only orders the chart, and
+/// refusing the row for it would take the account out of every report.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when the id, the entity, the
+/// type or the parent does not parse, or a column has the wrong storage
+/// class. No half-read account is returned.
 fn map_account(row: &rusqlite::Row<'_>) -> Result<Account> {
     let id = stored_uuid("accounts.id", &read_column::<String>(row, 0)?)?;
     let entity_id = stored_uuid("accounts.entity_id", &read_column::<String>(row, 1)?)?;
@@ -285,6 +339,8 @@ mod tests {
         conn
     }
 
+    /// Writes an archived system account `1000 Cash` of [`ENTITY`] with the
+    /// given id, stored type, parent and sort order, valid or not.
     fn insert(conn: &Connection, id: &str, account_type: &str, parent: Option<&str>, sort: i64) {
         conn.execute(
             "INSERT INTO accounts (id, entity_id, code, name, account_type, parent_id,
@@ -295,6 +351,7 @@ mod tests {
         .expect("insert row");
     }
 
+    /// The id of the one entity these tests use.
     fn entity() -> EntityId {
         EntityId(parse_uuid(ENTITY).expect("entity id"))
     }
@@ -322,6 +379,7 @@ mod tests {
         conn
     }
 
+    /// Input for an asset account `Cash` under `code`, with no sort order.
     fn new_account(code: &str) -> CreateAccount {
         CreateAccount {
             entity_id: entity(),
@@ -332,6 +390,7 @@ mod tests {
         }
     }
 
+    /// Input that changes only the code of `account`, leaving it active.
     fn renumbered(account: &Account, code: &str) -> UpdateAccount {
         UpdateAccount {
             id: account.id,

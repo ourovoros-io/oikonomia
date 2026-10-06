@@ -1,4 +1,87 @@
-//! Persistence and queries for double-entry books.
+//! The double-entry ledger: entities, their charts of accounts, the journal,
+//! recurring templates, reports, and the settings stored beside them.
+//!
+//! Every function that reads or writes the books takes the connection of an
+//! unlocked vault. The submodules are private and their public items are
+//! re-exported from here:
+//!
+//! - `entities`: the separate sets of books a vault holds.
+//! - `accounts`: the chart of accounts of an entity.
+//! - `journals`: posting, listing, voiding and correcting entries, and the
+//!   register of one account.
+//! - `balance`: the sign of a balance, the active-entry rule, and checked
+//!   arithmetic on amounts.
+//! - `reports`: trial balance, profit and loss, balance sheet, dashboard.
+//! - `cash_flow`: income and expenses over time.
+//! - `recurring`: entry templates with a schedule.
+//! - `settings`: settings kept in the vault.
+//!
+//! # Invariants
+//!
+//! The module enforces these, and a change to it must keep them:
+//!
+//! - **Amounts are integer minor units**, in `i64`. No amount, total or ratio
+//!   is computed in floating point.
+//! - **A posted entry balances.** It has at least two lines, each line is a
+//!   debit or a credit and never both, and its debits add up to its credits.
+//!   One function writes entries and checks this first; the schema repeats
+//!   the rule for a single line as a `CHECK`.
+//! - **Accounting rules are decided here, not in the UI.** The simple entry
+//!   form sends an amount and accounts named by role, and
+//!   [`post_simple_entry`] decides which is debited.
+//! - **A write of several rows is atomic.** See [Transactions](#transactions).
+//! - **A report filters entries inside its subquery**, never in the `ON`
+//!   clause of a `LEFT JOIN`, where the filter would have no effect.
+//! - **A stored value that does not parse is a corrupt vault.** A function
+//!   that maps a stored row reports it as
+//!   [`Error::VaultCorrupt`](crate::error::Error::VaultCorrupt) and fails,
+//!   instead of leaving the row out or returning it half-read. Two values are
+//!   tolerated because nothing is computed from them: an account's sort order
+//!   outside `i32` reads as 0, and so does an entry count outside `usize`.
+//!   The reports are the gap: they select accounts by type and so never map
+//!   an account whose stored type is unknown. The `reports` module doc says
+//!   what they rely on instead.
+//!
+//! # Active entries and voids
+//!
+//! A posted entry is never changed or deleted to take it back. Voiding it
+//! ([`void_entry`]) posts a reversing entry, with every debit and credit
+//! swapped, and links the two: the original's `voided_by_entry_id` names the
+//! reversal and the reversal's names the original. An entry with that link in
+//! either direction is voided.
+//!
+//! An *active* entry is one that is posted and is neither voided nor the
+//! reversal of a void. Every balance and every report counts active entries
+//! only, so a voided pair adds nothing anywhere, although both entries stay
+//! in the journal and [`list_entries`] still returns them, marked as voided.
+//!
+//! # Hidden entries
+//!
+//! The hidden flag ([`set_entry_hidden`]) keeps an entry out of what leaves
+//! the app. It changes exactly two outputs: the journal CSV export and
+//! [`profit_and_loss_export`] leave hidden entries out. Everything shown
+//! inside the app counts them: the entry list, the register, the dashboard,
+//! the cash flow series and every other report. The reversal of a hidden
+//! entry and the replacement of one are hidden too. The flag is not a second
+//! layer of encryption.
+//!
+//! # Transactions
+//!
+//! A public function that writes more than one row opens a transaction and
+//! commits it, so a failure part-way leaves nothing behind. Functions take a
+//! shared `&Connection`, so the transaction is rusqlite's
+//! `unchecked_transaction`. Opening a second one inside it fails at run
+//! time; rusqlite documents that it does and leaves the error unspecified
+//! (<https://docs.rs/rusqlite/0.40.2/rusqlite/struct.Connection.html#method.unchecked_transaction>).
+//! Such a function can therefore not be called from inside another
+//! transaction.
+//!
+//! The work is for that reason in a helper that takes the connection and
+//! opens nothing: the caller owns the transaction. A private helper that does
+//! the work of one public function carries that function's name with `_in_tx`
+//! added. A `pub(crate)` one, which another module can compose with writes of
+//! its own, such as posting an entry together with its document, is named
+//! `_unchecked`.
 //!
 //! # Overflow
 //!
