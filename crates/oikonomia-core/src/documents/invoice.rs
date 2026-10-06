@@ -191,7 +191,10 @@ fn replace_eur_token(text: &str) -> String {
 ///
 /// Two joins are made, each inside one line:
 ///
-/// - a separator and the digits after it: `72, 53` becomes `72,53`;
+/// - a separator and the digits after it: `72, 53` becomes `72,53`. Once a
+///   number has a separator, a later one joins across a space only after a
+///   group of three digits (`1.234, 56`), so the full stop in
+///   `45,90. 3 items` ends the amount;
 /// - space-grouped thousands: `1 234,56` becomes `1234,56`.
 ///
 /// A thousands join needs a prefix that can be one: one to three digits
@@ -232,7 +235,9 @@ fn collapse_spaced_decimals_on_line(line: &str) -> String {
 /// Appends the number starting at `start` to `out` with its inner spaces
 /// removed, and returns the index after it.
 fn push_spaced_number(numbers: &[char], start: usize, out: &mut String) -> usize {
-    let mut may_group_thousands = starts_own_token(numbers, start);
+    let may_group_thousands = starts_own_token(numbers, start);
+    let mut has_separator = false;
+    // Digits since the start of the number, the last join or the last separator.
     let mut group_digits = 0_usize;
     let mut index = start;
 
@@ -241,11 +246,15 @@ fn push_spaced_number(numbers: &[char], start: usize, out: &mut String) -> usize
             out.push(current);
             group_digits += 1;
             index += 1;
-        } else if let Some(next_digit) = digit_after_separator(numbers, index) {
+        } else if let Some(next_digit) = digit_after_separator(numbers, index)
+            && (next_digit == index + 1 || !has_separator || group_digits == 3)
+        {
             out.push(current);
-            may_group_thousands = false;
+            has_separator = true;
+            group_digits = 0;
             index = next_digit;
-        } else if may_group_thousands
+        } else if !has_separator
+            && may_group_thousands
             && (1..=3).contains(&group_digits)
             && is_thousands_group(numbers, index)
         {
@@ -1174,6 +1183,9 @@ fn mask_percent_tokens(line: &str) -> String {
 fn percent_len_at(chars: &[char], index: usize) -> Option<usize> {
     let is_number_char = |c: &char| c.is_ascii_digit() || matches!(c, ',' | '.');
 
+    // Digits right after a separator are not masked here even when no number
+    // precedes it ("Φ.Π.Α.24%"): the money tokenizer reads them as ".24",
+    // which is not an amount.
     let continues_a_number = index
         .checked_sub(1)
         .and_then(|before| chars.get(before))
@@ -1263,8 +1275,10 @@ struct SeparatorRoles {
 
 /// Decides which separator of `token` is the decimal mark.
 ///
-/// Returns `None` for one separator followed by four or more digits, which
-/// is neither a fraction of a cent nor a thousands group.
+/// Returns `None` when no reading fits: one kind of separator whose last
+/// occurrence is followed by four or more digits, or which appears several
+/// times with one or two digits after the last; and a token with no
+/// separator at all.
 fn separator_roles(token: &str) -> Option<SeparatorRoles> {
     let lone = |mark: char, other: char| {
         let (_, tail) = token.rsplit_once(mark)?;
@@ -2649,6 +2663,15 @@ mod jumbled_extract {
         );
         assert_eq!(read("Amount due: 45.").amount_minor, Some(4_500));
         assert_eq!(read("Amount due: 45,").amount_minor, Some(4_500));
+        // A number after the full stop belongs to the next sentence.
+        assert_eq!(read("TOTAL 45,90. 3 items").amount_minor, Some(4_590));
+        assert_eq!(
+            read("Amount due: 1.234,56. 2 pages").amount_minor,
+            Some(123_456)
+        );
+        // A spaced decimal after a thousands group is still one amount.
+        assert_eq!(read("Amount due: 1.234, 56").amount_minor, Some(123_456));
+        assert_eq!(read("Amount due: 72, 53").amount_minor, Some(7_253));
     }
 
     #[test]
@@ -2719,6 +2742,8 @@ mod jumbled_extract {
             read("Amount due (VAT 24 %) 124,00\nNet 100,00").amount_minor,
             Some(12_400)
         );
+        // A rate glued to an abbreviation is still a rate.
+        assert_eq!(read("Total 5,00 (Φ.Π.Α.24%)").amount_minor, Some(500));
         // The rate itself is never the amount.
         assert_eq!(read("Amount due incl. 24% VAT").amount_minor, None);
         assert_eq!(read("Total 13,5% VAT").amount_minor, None);
