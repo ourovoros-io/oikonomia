@@ -2974,6 +2974,7 @@ dependencies = [
  "base64 0.23.1",
  "csv",
  "directories",
+ "flate2",
  "image",
  "log",
  "ocrs",
@@ -2986,8 +2987,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "time",
- "tracing",
  "uuid",
+ "weezl",
  "zeroize",
 ]
 
