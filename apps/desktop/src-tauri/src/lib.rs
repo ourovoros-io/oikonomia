@@ -1,10 +1,7 @@
 //! Tauri application entry: thin IPC over `oikonomia-core`.
 
 // Tauri commands take `State<'_, T>` by value (framework convention).
-// Shell startup uses expect/process::exit via the Tauri runtime.
 #![allow(clippy::needless_pass_by_value)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::exit)]
 
 mod commands;
 #[cfg(test)]
@@ -12,6 +9,7 @@ mod config_checks;
 mod donations;
 mod error;
 mod nav_guard;
+mod startup;
 mod state;
 #[cfg(test)]
 mod test_macros;
@@ -20,61 +18,107 @@ mod update;
 mod update_exec;
 mod update_key;
 
+use startup::StartupError;
 use state::{AppState, resolve_ocr_model_dir};
 use tauri::Manager;
 
 /// Start the desktop application.
 ///
+/// A start that fails once the runtime is up (a damaged vault header, an
+/// unreadable data directory) is reported in a native message and ends with a
+/// failure exit code (the `startup` module).
+///
 /// # Panics
 ///
-/// Panics if the Tauri runtime fails to start or the vault data dir is unusable.
+/// Panics if the Tauri runtime itself cannot be built.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    with_desktop_plugins(
+    let builder = with_desktop_plugins(
         with_single_instance(tauri::Builder::default()).plugin(nav_guard::plugin()),
     )
     .setup(|app| {
-        // The bundled .app gets its Dock icon from icon.icns; dev mode runs
-        // the bare binary, so set the icon at runtime as well.
-        macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
-
-        let resource_dir = app.path().resource_dir().ok();
-        let ocr_dir = resolve_ocr_model_dir(resource_dir);
-        log::info!("OCR model dir: {}", ocr_dir.display());
-
-        let app_state = AppState::new(ocr_dir).expect("failed to open vault data directory");
-        let watchdog = app_state.watchdog_handles();
-
-        // Native window appearance (scrollbars, controls, title bar) must
-        // match the app, not the OS preference. The UI is dark-only, so a
-        // user who once picked the retired light theme still gets dark
-        // native chrome instead of a light title bar around a dark window.
-        let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
-        app.handle().set_theme(Some(tauri::Theme::Dark));
-
-        tray::init(app, prefs.locale)?;
-
-        app.manage(app_state);
-
-        // Rust-side idle lock: guarantees the vault locks even if the
-        // webview throttles timers or stalls entirely.
-        state::spawn_auto_lock(app.handle().clone(), watchdog);
-
-        if cfg!(debug_assertions) {
-            app.handle().plugin(
-                tauri_plugin_log::Builder::default()
-                    .level(log::LevelFilter::Info)
-                    .build(),
-            )?;
+        // Never an `Err` from here: Tauri panics on one. A failed start is
+        // shown to the user instead, and the app exits when they dismiss it.
+        if let Err(failure) = start(app) {
+            startup::report_and_exit(app, &failure);
         }
-
         Ok(())
     })
     .invoke_handler(ipc_commands())
-    .on_window_event(on_window_event)
-    .build(tauri::generate_context!())
-    .expect("failed to start Oikonomia")
-    .run(on_run_event);
+    .on_window_event(on_window_event);
+
+    #[expect(
+        clippy::expect_used,
+        reason = "without a runtime there is no window or dialog to report through, \
+                  so the panic message is the report"
+    )]
+    let app = builder
+        .build(tauri::generate_context!())
+        .expect("failed to start Oikonomia");
+
+    app.run(on_run_event);
+}
+
+/// Sets up the state, the tray and the idle watchdog.
+fn start(app: &mut tauri::App) -> Result<(), StartupError> {
+    // The bundled .app gets its Dock icon from icon.icns; dev mode runs
+    // the bare binary, so set the icon at runtime as well.
+    macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
+
+    // First, so that the log lines of the steps below reach it.
+    register_debug_logger(app)?;
+
+    let resource_dir = app.path().resource_dir().ok();
+    let ocr_dir = resolve_ocr_model_dir(resource_dir);
+    log::info!("OCR model dir: {}", ocr_dir.display());
+
+    let app_state = startup::open_app_state(ocr_dir)?;
+    let watchdog = app_state.watchdog_handles();
+
+    // Native window appearance (scrollbars, controls, title bar) must
+    // match the app, not the OS preference. The UI is dark-only, so a
+    // user who once picked the retired light theme still gets dark
+    // native chrome instead of a light title bar around a dark window.
+    app.handle().set_theme(Some(tauri::Theme::Dark));
+
+    // The tray menu is worded in the stored language; the webview applies
+    // its own copy of the preference later.
+    let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
+    tray::init(app, prefs.locale).map_err(StartupError::Shell)?;
+
+    // Rust-side idle lock: guarantees the vault locks even if the
+    // webview throttles timers or stalls entirely. Started before the state
+    // is managed, so no command can reach the vault without it running.
+    state::spawn_auto_lock(app.handle().clone(), watchdog).map_err(StartupError::Watchdog)?;
+
+    app.manage(app_state);
+
+    Ok(())
+}
+
+/// Registers the logger, in a debug build only.
+///
+/// A release build registers none, so there every `log::` call in the shell
+/// and in the crates it links does nothing. That includes the warnings that
+/// say why an update install or a start failed: a release build keeps no
+/// record of them.
+///
+/// It stays that way here because turning it on is a privacy decision. The
+/// plugin's default targets are standard output and a file in the app's log
+/// directory, and the log lines carry file paths and operating-system error
+/// text, so a release build that logged would write those to the user's disk.
+fn register_debug_logger(app: &tauri::App) -> Result<(), StartupError> {
+    if !cfg!(debug_assertions) {
+        return Ok(());
+    }
+
+    app.handle()
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
+        .map_err(StartupError::Shell)
 }
 
 fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {

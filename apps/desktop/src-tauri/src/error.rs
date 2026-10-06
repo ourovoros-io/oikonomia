@@ -9,7 +9,11 @@ use serde::Serialize;
 /// Error payload returned from Tauri commands.
 ///
 /// The UI shows localized text chosen by `code` and filled in from `params`.
-/// `message` is English, for logs only; the UI never shows it.
+///
+/// `message` is English diagnostic text that the UI never shows. Rust does
+/// not log it, and a release build has no logger in any case. It crosses IPC
+/// with the rest of the error, where the frontend may write it to the webview
+/// console (`logCommandError` in `web/src/lib/commandError.ts`).
 #[derive(Debug, Clone, Serialize)]
 pub struct CommandError {
     /// Stable machine code for UI branching and localized text.
@@ -71,8 +75,8 @@ impl DesktopError {
 impl CommandError {
     /// Build the error for a desktop-only failure.
     ///
-    /// `message` is English and may include the OS error; it is for logs only,
-    /// so it is never copied into `params`.
+    /// `message` is English and may include the OS error. The UI must not
+    /// show it, so it is never copied into `params`.
     #[must_use]
     pub fn desktop(kind: DesktopError, message: impl Into<String>) -> Self {
         Self {
