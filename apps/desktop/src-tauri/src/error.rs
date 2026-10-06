@@ -200,6 +200,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use oikonomia_core::Error as CoreError;
+    use oikonomia_core::csv::CsvError;
     use oikonomia_core::error::{
         AccountRole, BackupDefect, Resource, ValidationError, VaultCorruption,
     };
@@ -279,6 +280,7 @@ mod tests {
                 .iter()
                 .map(|code| (*code).to_owned()),
         );
+        codes.extend(CsvError::ALL_CODES.iter().map(|code| (*code).to_owned()));
         codes.extend(DesktopError::ALL.iter().map(|kind| kind.code().to_owned()));
         codes.extend(UpdateError::ALL_CODES.iter().map(|code| (*code).to_owned()));
 
@@ -490,7 +492,6 @@ mod tests {
                 },
                 CoreParams::DiagnosticText,
             ),
-            (CoreError::CsvParse(text()), CoreParams::DiagnosticText),
         ]
     }
 

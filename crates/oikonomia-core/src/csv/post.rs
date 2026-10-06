@@ -41,7 +41,7 @@ use crate::ledger::{
 ///   `accounts` does not exist.
 /// - [`Error::AccountWrongEntity`] when a role account belongs to another
 ///   entity.
-/// - [`Error::CsvParse`] for a problem with the file as a whole, as
+/// - [`Error::Csv`] for a problem with the file as a whole, as
 ///   [`parse_bank_csv`] lists them. A bad row is not an error; it is a row
 ///   of the preview with `error` set.
 /// - [`Error::Database`] on database errors.
@@ -63,7 +63,7 @@ pub fn preview_bank_csv(
 /// # Errors
 ///
 /// - [`Error::Io`] when `path` cannot be read or is not a regular file.
-/// - [`Error::CsvParse`] when the file is larger than
+/// - [`Error::Csv`] when the file is larger than
 ///   [`MAX_CSV_BYTES`](crate::csv::MAX_CSV_BYTES) or is not UTF-8.
 /// - Every error of [`preview_bank_csv`].
 pub fn preview_bank_csv_file(

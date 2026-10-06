@@ -790,11 +790,18 @@ mod tests {
         produced
     }
 
+    /// The fixture also lists the codes of the crate's other error enums,
+    /// whose own tests check them, so only the validation codes are compared.
     #[test]
     fn the_params_fixture_lists_exactly_the_params_rust_sends() {
+        let produced = produced_params();
+        let pinned: BTreeMap<String, Vec<String>> = pinned_params()
+            .into_iter()
+            .filter(|(code, _)| ValidationError::ALL_CODES.contains(&code.as_str()))
+            .collect();
+
         assert_eq!(
-            pinned_params(),
-            produced_params(),
+            pinned, produced,
             "errorCodeParams.json and ValidationError::params differ"
         );
     }

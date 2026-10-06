@@ -38,6 +38,7 @@
 //! of variants such as [`Error::Io`], and not as a
 //! [`source`](std::error::Error::source): no variant has one.
 
+use crate::csv::CsvError;
 use std::fmt::Display;
 use thiserror::Error;
 
@@ -193,10 +194,10 @@ pub enum Error {
         detail: String,
     },
 
-    /// A bank CSV or journal CSV could not be read, or the journal export
-    /// could not be written; the text says why.
-    #[error("{0}")]
-    CsvParse(String),
+    /// A bank CSV or a journal CSV could not be read; the reason carries its
+    /// own code and the values the UI fills into its wording.
+    #[error(transparent)]
+    Csv(#[from] CsvError),
 }
 
 impl Error {
@@ -225,7 +226,6 @@ impl Error {
         "restore_would_overwrite",
         "not_found",
         "analysis",
-        "csv_parse",
     ];
 
     /// Returns the stable `snake_case` identifier the UI maps to localized
@@ -270,7 +270,7 @@ impl Error {
             Self::RestoreWouldOverwrite => "restore_would_overwrite",
             Self::NotFound(_) => "not_found",
             Self::Analysis { .. } => "analysis",
-            Self::CsvParse(_) => "csv_parse",
+            Self::Csv(reason) => reason.code(),
         }
     }
 }
@@ -321,6 +321,7 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::{BackupDefect, Error, Resource, ValidationError, VaultCorruption};
+    use crate::csv::CsvError;
     use oikonomia_test_support::listed_variants;
 
     /// One value of every variant, in the order of the enum.
@@ -367,7 +368,7 @@ mod tests {
                 operation: "x",
                 detail: "x".into(),
             },
-            Error::CsvParse("x".into()),
+            Error::Csv(CsvError::Empty),
         ]
     }
 
@@ -393,7 +394,7 @@ mod tests {
             Error::RestoreWouldOverwrite,
             Error::NotFound(_),
             Error::Analysis { .. },
-            Error::CsvParse(_),
+            Error::Csv(_),
         }
     }
 
@@ -408,7 +409,7 @@ mod tests {
         let samples = every_variant();
         let codes: Vec<&str> = samples
             .iter()
-            .filter(|sample| !matches!(sample, Error::Validation(_)))
+            .filter(|sample| !matches!(sample, Error::Validation(_) | Error::Csv(_)))
             .map(Error::code)
             .collect();
 
@@ -424,6 +425,11 @@ mod tests {
             Error::Validation(ValidationError::SameAccount).code(),
             "same_account"
         );
+    }
+
+    #[test]
+    fn a_csv_error_gives_its_own_code() {
+        assert_eq!(Error::from(CsvError::Empty).code(), "csv_empty");
     }
 
     #[test]

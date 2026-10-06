@@ -29,6 +29,13 @@ afterEach(() => {
  * them, and an entry here that Rust stops sending fails the test below.
  */
 const UNWORDED_PARAMS: Record<string, string[]> = {
+  csv_invalid_amount: ['value'],
+  csv_invalid_date: ['value'],
+  csv_invalid_integer: ['value'],
+  csv_invalid_mapping: ['column', 'problem'],
+  csv_invalid_status: ['value'],
+  csv_invalid_type: ['value'],
+  csv_missing_column: ['column'],
   name_required: ['field'],
 }
 

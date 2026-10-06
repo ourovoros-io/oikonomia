@@ -105,7 +105,7 @@ pub fn default_journal_export_file_name(entity_name: &str) -> String {
 ///
 /// - [`Error::NotFound`] when the entity does not exist.
 /// - [`Error::Database`] on database errors.
-/// - [`Error::CsvParse`] when the CSV writer reports an error.
+/// - [`Error::Serialization`] when the CSV writer reports an error.
 pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<String> {
     let _entity = get_entity(conn, entity_id)?;
     let mut statement = conn
@@ -152,7 +152,7 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
                 CREDIT_MINOR_COLUMN,
                 "status",
             ])
-            .map_err(|err| Error::CsvParse(err.to_string()))?;
+            .map_err(|err| Error::serialization("encode journal csv", err))?;
 
         while let Some(row) = rows.next().database("read journal for export")? {
             let date: String = row.get(0).database("read journal export row")?;
@@ -179,11 +179,11 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
                     &credit.to_string(),
                     status.as_str(),
                 ])
-                .map_err(|err| Error::CsvParse(err.to_string()))?;
+                .map_err(|err| Error::serialization("encode journal csv", err))?;
         }
         writer
             .flush()
-            .map_err(|err| Error::CsvParse(err.to_string()))?;
+            .map_err(|err| Error::serialization("encode journal csv", err))?;
     }
 
     // Every cell came from a `String`, so this cannot fail; the conversion
@@ -244,10 +244,10 @@ pub fn ensure_csv_path(path: PathBuf) -> PathBuf {
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] in every case: the text is empty, the header row or
-/// a record cannot be read, one of the eight columns is missing, a `status`
-/// cell is neither `posted` nor `voided`, or a `debit_minor` or
-/// `credit_minor` cell is not an integer.
+/// [`Error::Csv`] in every case, with the [`CsvError`] that says which: the
+/// text is empty, the header row or a record cannot be read, one of the
+/// eight columns is missing, a `status` cell is neither `posted` nor
+/// `voided`, or a `debit_minor` or `credit_minor` cell is not an integer.
 pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -261,7 +261,9 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
 
     let headers = reader
         .headers()
-        .map_err(|err| Error::CsvParse(err.to_string()))?
+        .map_err(|err| CsvError::Malformed {
+            detail: err.to_string(),
+        })?
         .clone();
     let date_column = require_column(&headers, "date")?;
     let description_column = require_column(&headers, "description")?;
@@ -274,7 +276,9 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
 
     let mut lines = Vec::new();
     for record in reader.records() {
-        let record = record.map_err(|err| Error::CsvParse(err.to_string()))?;
+        let record = record.map_err(|err| CsvError::Malformed {
+            detail: err.to_string(),
+        })?;
         let cell = |column: usize| record.get(column).unwrap_or("");
 
         let reference = restore_formula(cell(reference_column).trim());
@@ -282,7 +286,7 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
             "posted" => JournalCsvStatus::Posted,
             "voided" => JournalCsvStatus::Voided,
             other => {
-                return Err(Error::CsvParse(format!("unknown journal status: {other}")));
+                return Err(CsvError::InvalidStatus(other.to_owned()).into());
             }
         };
         lines.push(JournalCsvLine {
@@ -360,24 +364,25 @@ fn sanitize_file_stem(name: &str) -> String {
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] naming the column when the export has none.
-fn require_column(headers: &StringRecord, name: &str) -> Result<usize> {
+/// [`Error::Csv`] with [`CsvError::MissingColumn`] naming the column when the
+/// export has none.
+fn require_column(headers: &StringRecord, name: &'static str) -> Result<usize> {
     headers
         .iter()
         .position(|header| header.eq_ignore_ascii_case(name))
-        .ok_or_else(|| Error::CsvParse(format!("journal CSV is missing column {name}")))
+        .ok_or(Error::Csv(CsvError::MissingColumn { column: name }))
 }
 
 /// Parses a `debit_minor` or `credit_minor` cell.
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] carrying the cell when it is not an integer that
-/// fits an `i64`.
+/// [`Error::Csv`] with [`CsvError::InvalidInteger`] carrying the cell when it
+/// is not an integer that fits an `i64`.
 fn parse_minor_units(raw: &str) -> Result<i64> {
     raw.trim()
         .parse()
-        .map_err(|_| Error::CsvParse(format!("invalid integer: {raw}")))
+        .map_err(|_| CsvError::InvalidInteger(raw.to_owned()).into())
 }
 
 #[cfg(test)]
