@@ -5,13 +5,28 @@
 //! new contents visible, so a crash leaves either the old file or the new
 //! one. The sibling sits in the destination's directory because a rename is
 //! only atomic within one filesystem.
+//!
+//! Two kinds of removal are kept apart by name. `remove_*` returns the
+//! error, for a step whose failure must stop the caller. `discard_*` logs
+//! it, for cleanup on a path that is already returning an error or that
+//! leaves nothing worse than a stale file behind.
+//!
+//! Every write here creates its file through `vault::permissions`, so a
+//! file this module creates is owner-only before its first byte is written.
+//!
+//! `local_iso_date` is here as well: the backup and the export, the two
+//! callers outside the vault proper, both stamp their default file name
+//! with it.
 
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use time::OffsetDateTime;
+
 use crate::error::{Error, Result};
-use crate::vault::paths::{db_sidecar_paths, with_appended};
+use crate::util::format_date;
+use crate::vault::paths::{STAGED_SUFFIX, db_sidecar_paths, with_appended};
 use crate::vault::permissions::create_private_file;
 
 /// Returns `path` with `suffix` appended to its file name.
@@ -46,15 +61,15 @@ pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Replaces `dest` with an owner-only file holding `bytes`.
 ///
-/// The bytes go to `dest` + `.tmp` first and are renamed into place, so a
-/// reader of `dest` never sees a partial file, and a failure leaves whatever
-/// `dest` held before.
+/// The bytes go to `dest` + [`STAGED_SUFFIX`] first and are renamed into
+/// place, so a reader of `dest` never sees a partial file, and a failure
+/// leaves whatever `dest` held before.
 ///
 /// # Errors
 ///
 /// [`Error::Io`] when `dest` has no file name or the write or rename fails.
 pub(crate) fn replace_private_file(dest: &Path, bytes: &[u8]) -> Result<()> {
-    let staged = sibling_path(dest, ".tmp")?;
+    let staged = sibling_path(dest, STAGED_SUFFIX)?;
 
     let replaced = write_private_file(&staged, bytes).and_then(|()| rename_synced(&staged, dest));
     if replaced.is_err() {
@@ -133,9 +148,11 @@ pub(crate) fn remove_files_if_present(paths: &[&Path]) -> Result<()> {
     Ok(())
 }
 
-/// Removes a leftover file on a path that has no error to return it through:
-/// cleanup after a failure that is already being reported, or of a stale
-/// file the next write truncates anyway. A failure is logged.
+/// Removes a leftover file, logging a failure instead of returning it.
+///
+/// For a caller with no error to return it through: cleanup after a failure
+/// that is already being reported, or of a stale file the next write
+/// truncates anyway.
 pub(crate) fn discard_file(path: &Path) {
     if let Err(err) = remove_file_if_present(path) {
         log::warn!("could not remove {}: {err}", path.display());
@@ -149,6 +166,19 @@ pub(crate) fn discard_database_files(db_path: &Path) {
     for sidecar in db_sidecar_paths(db_path) {
         discard_file(&sidecar);
     }
+}
+
+/// Returns today's date as `YYYY-MM-DD`, for the default names of backup and
+/// export files.
+///
+/// The date is the local one, so a file saved late in the evening carries
+/// the day the user sees on the clock. `time` refuses to read the local
+/// offset where doing so is unsound (`OffsetDateTime::now_local` returns
+/// `IndeterminateOffset`, on Linux in a process with more than one thread);
+/// the UTC date is used then.
+pub(crate) fn local_iso_date() -> String {
+    let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    format_date(now.date())
 }
 
 #[cfg(test)]
