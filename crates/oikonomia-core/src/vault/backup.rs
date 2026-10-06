@@ -66,7 +66,7 @@ use crate::vault::files::{
 };
 use crate::vault::header::VaultHeader;
 use crate::vault::paths::{
-    RestorePaths, backup_snapshot_db_path, db_sidecar_paths, vault_init_header_path,
+    RestorePaths, STAGED_SUFFIX, backup_snapshot_db_path, db_sidecar_paths, vault_init_header_path,
 };
 
 /// Unencrypted magic. Identifies the file; contains no secrets.
@@ -400,7 +400,7 @@ fn is_plaintext_sqlite(path: &Path) -> Result<bool> {
 }
 
 fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> Result<()> {
-    let tmp = sibling_path(dest, ".tmp")?;
+    let tmp = sibling_path(dest, STAGED_SUFFIX)?;
     let result = (|| {
         if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::create_dir_all(parent).map_err(|err| Error::Io(err.to_string()))?;
