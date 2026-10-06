@@ -193,7 +193,8 @@ jobs:
       # tauriScript is set in every job: projectPath has no package.json, and
       # without it the action runs `npm install -g @tauri-apps/cli@v2`, so an
       # unpinned CLI would build the release and hold the signing keys. This
-      # is the CLI `npm ci` installed from web/package-lock.json.
+      # is the CLI `npm ci` installed from web/package-lock.json. Everything
+      # after `--` in args goes to cargo.
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -217,6 +218,7 @@ jobs:
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
+          args: -- --locked
 
       # Tauri notarizes and staples the .app and signs the .dmg with the same
       # identity, but does not notarize the .dmg. This step proves the app is
@@ -397,7 +399,7 @@ jobs:
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
-          args: --bundles deb,appimage
+          args: --bundles deb,appimage -- --locked
 
       - name: Smoke-test the bundled app
         timeout-minutes: 15
@@ -471,7 +473,7 @@ jobs:
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
-          args: --bundles nsis
+          args: --bundles nsis -- --locked
 
       # The installer is the Windows updater artifact: the app downloads it,
       # checks its sha256 and this .sig against the baked public key, then
@@ -494,7 +496,7 @@ jobs:
             exit 1
           }
           $pubkey = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).plugins.updater.pubkey
-          cargo run --quiet -p oikonomia-update --bin assemble_feed -- verify --manifest $installer --sig $sig --pubkey $pubkey
+          cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- verify --manifest $installer --sig $sig --pubkey $pubkey
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error::the updater signature of $installer does not verify with plugins.updater.pubkey"
             exit 1

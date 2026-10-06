@@ -95,11 +95,12 @@ jobs:
       - if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
 
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      - run: cargo test --workspace
+      # No --all-targets: it would stop cargo running the doctests.
+      - run: cargo test --workspace --locked
 
-      - run: cargo build -p oikonomia
+      - run: cargo build -p oikonomia --locked
 
   # Builds the real installers: the .deb and AppImage on Linux, the NSIS
   # installer on Windows. Windows runs its installer here; the Linux ones run
@@ -161,11 +162,12 @@ jobs:
       # build; Git Bash would put its own, incomplete perl first.
       # The Tauri CLI is the one `npm ci` installed from web/package-lock.json,
       # started through node so one command line works in both shells.
+      # Everything after `--` goes to cargo.
       - name: Build the installers (Linux)
         if: runner.os == 'Linux'
         run: |
           printf '{"bundle": {"createUpdaterArtifacts": false}}' > "${RUNNER_TEMP}/smoke-config.json"
-          node web/node_modules/@tauri-apps/cli/tauri.js build --bundles deb,appimage --config "${RUNNER_TEMP}/smoke-config.json"
+          node web/node_modules/@tauri-apps/cli/tauri.js build --bundles deb,appimage --config "${RUNNER_TEMP}/smoke-config.json" -- --locked
 
       - name: Build the installers (Windows)
         if: runner.os == 'Windows'
@@ -173,7 +175,7 @@ jobs:
         run: |
           $config = Join-Path $env:RUNNER_TEMP 'smoke-config.json'
           '{"bundle": {"createUpdaterArtifacts": false}}' | Set-Content -Path $config -Encoding ascii
-          node web/node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $config
+          node web/node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $config -- --locked
 
       - name: Smoke-test the installed app (Windows)
         if: runner.os == 'Windows'

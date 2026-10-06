@@ -178,7 +178,7 @@ jobs:
           printf '%s' "Oikonomia ${TAG}" > notes.txt
           # Fails when a platform has no artifact or more than one.
           # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
-          cargo run -p oikonomia-update --bin assemble_feed -- assemble \
+          cargo run --locked -p oikonomia-update --bin assemble_feed -- assemble \
             --version "${TAG}" \
             --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" \
             --dir artifacts --out artifacts/latest.json --notes-file notes.txt \
@@ -200,7 +200,7 @@ jobs:
       - name: Verify the signed manifest with the app's baked public key
         run: |
           pubkey="$(python3 -c 'import json;print(json.load(open("apps/desktop/src-tauri/tauri.conf.json"))["plugins"]["updater"]["pubkey"])')"
-          cargo run -p oikonomia-update --bin assemble_feed -- verify \
+          cargo run --locked -p oikonomia-update --bin assemble_feed -- verify \
             --manifest artifacts/latest.json --sig artifacts/latest.json.sig \
             --pubkey "${pubkey}"
 
@@ -215,7 +215,7 @@ jobs:
           set -euo pipefail
           pubkey="$(python3 -c 'import json;print(json.load(open("apps/desktop/src-tauri/tauri.conf.json"))["plugins"]["updater"]["pubkey"])')"
           # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
-          cargo run --quiet -p oikonomia-update --bin assemble_feed -- verify-feed \
+          cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- verify-feed \
             --manifest artifacts/latest.json --dir artifacts --pubkey "${pubkey}" \
             ${WINDOWS_FLAG}
 
@@ -230,10 +230,10 @@ jobs:
         run: |
           set -euo pipefail
           # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
-          cargo run --quiet -p oikonomia-update --bin assemble_feed -- fixed-names \
+          cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- fixed-names \
             ${WINDOWS_FLAG} > expected-fixed.txt
           # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
-          cargo run --quiet -p oikonomia-update --bin assemble_feed -- fixed-copies \
+          cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- fixed-copies \
             --dir artifacts ${WINDOWS_FLAG} > fixed.txt
           cat fixed.txt
           if ! diff -u expected-fixed.txt fixed.txt; then
@@ -253,7 +253,7 @@ jobs:
           set -euo pipefail
           rm -f artifacts/SHA256SUMS
           # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
-          cargo run -p oikonomia-update --bin assemble_feed -- checksums \
+          cargo run --locked -p oikonomia-update --bin assemble_feed -- checksums \
             --dir artifacts --out artifacts/SHA256SUMS ${WINDOWS_FLAG}
           cat artifacts/SHA256SUMS
           # Prove the file is in the format people will check it with.
@@ -282,7 +282,7 @@ jobs:
           gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' > assets.txt
           mapfile -t assets < assets.txt
           # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
-          cargo run --quiet -p oikonomia-update --bin assemble_feed -- \
+          cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- \
             unpublished ${WINDOWS_FLAG} "${assets[@]}" > removed.txt
           mapfile -t removed < removed.txt
 
