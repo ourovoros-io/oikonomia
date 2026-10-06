@@ -162,7 +162,9 @@ each lives in one place:
 - **Tray.** Linux trays report no clicks, so "Quick add" is a menu item there
   (`tray.rs`). The quick-add window is placed inside the monitor's work area.
 - **Installers.** `.dmg`, `.AppImage`, `.deb`, and a per-user NSIS installer
-  that carries the WebView2 runtime so installing never needs the network.
+  that embeds the WebView2 bootstrapper. Windows 11 includes the runtime and
+  Windows 10 receives it through Windows Update; the bootstrapper downloads
+  it only when it is missing.
   `scripts/smoke-linux.sh` and `scripts/smoke-windows.ps1` install and run
   the real installers in CI.
 
