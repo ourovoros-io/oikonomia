@@ -153,20 +153,7 @@ pub fn save_document(
             created,
         ],
     )
-    .map_err(|err| {
-        let text = err.to_string();
-        if matches!(
-            err.sqlite_error_code(),
-            Some(rusqlite::ErrorCode::ConstraintViolation)
-        ) && text.contains("UNIQUE")
-        {
-            Error::Validation(ValidationError::NameTaken {
-                name: name.to_owned(),
-            })
-        } else {
-            Error::Io(text)
-        }
-    })?;
+    .map_err(|err| document_insert_error(&err, name))?;
 
     let entry_description = entry.entry.description;
 
@@ -180,6 +167,27 @@ pub fn save_document(
         created_at: created,
         entry_description,
     })
+}
+
+/// Maps a failed insert into `documents` to the error the caller sees.
+///
+/// The table's one `UNIQUE` constraint is `(entity_id, filename)`, so a
+/// unique violation means the name is taken. Any other failure, a primary
+/// key clash included, is a database error.
+fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
+    let unique_violation = matches!(
+        err,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+    );
+
+    if unique_violation {
+        Error::Validation(ValidationError::NameTaken {
+            name: name.to_owned(),
+        })
+    } else {
+        Error::Io(err.to_string())
+    }
 }
 
 /// Validate and store a document linked to an existing entry (no OCR —
@@ -761,6 +769,51 @@ mod tests {
         );
         assert!(validate_document_file("  ", "application/pdf", 1_000).is_err());
         assert!(validate_document_file("a.exe", "application/x-msdownload", 1_000).is_err());
+    }
+
+    /// The error of inserting `(id, filename)` twice into a table with the
+    /// constraints of `documents`, differing only where `second` differs.
+    fn clash_error(first: (&str, &str), second: (&str, &str)) -> Option<rusqlite::Error> {
+        let conn = Connection::open_in_memory().ok()?;
+        conn.execute_batch(
+            "CREATE TABLE documents (
+                id TEXT PRIMARY KEY NOT NULL,
+                entity_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                UNIQUE (entity_id, filename)
+            );",
+        )
+        .ok()?;
+
+        let insert = "INSERT INTO documents (id, entity_id, filename) VALUES (?1, 'book', ?2)";
+        conn.execute(insert, [first.0, first.1]).ok()?;
+        conn.execute(insert, [second.0, second.1]).err()
+    }
+
+    #[test]
+    fn a_filename_clash_on_insert_is_a_taken_name() {
+        let err = clash_error(("id-1", "bill.pdf"), ("id-2", "bill.pdf"));
+        assert!(err.is_some(), "the second insert must fail");
+        let Some(err) = err else { return };
+
+        assert_eq!(
+            document_insert_error(&err, "bill.pdf"),
+            Error::Validation(ValidationError::NameTaken {
+                name: "bill.pdf".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_primary_key_clash_on_insert_is_not_a_taken_name() {
+        let err = clash_error(("id-1", "bill.pdf"), ("id-1", "other.pdf"));
+        assert!(err.is_some(), "the second insert must fail");
+        let Some(err) = err else { return };
+
+        assert!(
+            matches!(document_insert_error(&err, "other.pdf"), Error::Io(_)),
+            "{err}"
+        );
     }
 
     /// Code of the expense account suggested for `hints`.
