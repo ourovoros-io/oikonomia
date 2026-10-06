@@ -22,7 +22,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine;
 use zeroize::Zeroizing;
 
-use crate::error::{Error, Result};
+use crate::error::{CryptoContext, Error, Result};
 use crate::vault::header::{KEY_LEN, SALT_LEN, VaultHeader};
 
 /// 32-byte `SQLCipher` raw key, zeroized on drop.
@@ -82,7 +82,7 @@ pub(super) fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKe
 
     let salt = decode_salt(header)?;
     let params = Params::new(header.m_cost, header.t_cost, header.p_cost, Some(KEY_LEN))
-        .map_err(|err| Error::Crypto(err.to_string()))?;
+        .crypto("set key derivation parameters")?;
 
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     // Hash straight into the wiping wrapper. Filling a plain array and
@@ -91,7 +91,7 @@ pub(super) fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKe
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
     argon2
         .hash_password_into(password.as_bytes(), &salt, key.as_mut_slice())
-        .map_err(|err| Error::Crypto(err.to_string()))?;
+        .crypto("derive vault key")?;
 
     Ok(key)
 }

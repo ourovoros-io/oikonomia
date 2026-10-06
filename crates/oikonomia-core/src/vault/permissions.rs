@@ -16,7 +16,7 @@
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::path::Path;
 
-use crate::error::{Error, Result};
+use crate::error::{IoContext, Result};
 
 /// Mode of the data directory: owner may list, enter and write.
 #[cfg(unix)]
@@ -32,12 +32,12 @@ const FILE_MODE: u32 = 0o600;
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when the directory cannot be created, including when `dir`
+/// [`Error::Io`](crate::Error::Io) when the directory cannot be created, including when `dir`
 /// exists and is not a directory.
 pub(crate) fn create_private_dir(dir: &Path) -> Result<()> {
     private_dir_builder()
         .create(dir)
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .io("create private directory")?;
     restrict_to_owner(dir);
     Ok(())
 }
@@ -47,11 +47,11 @@ pub(crate) fn create_private_dir(dir: &Path) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when the file cannot be created or opened for writing.
+/// [`Error::Io`](crate::Error::Io) when the file cannot be created or opened for writing.
 pub(crate) fn create_private_file(path: &Path) -> Result<File> {
     let file = private_file_options()
         .open(path)
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .io("create private file")?;
 
     // The creation mode does not apply to a stale file left by a crash.
     restrict_to_owner(path);

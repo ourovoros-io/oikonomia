@@ -42,7 +42,12 @@ pub(crate) const STAGED_SUFFIX: &str = ".tmp";
 pub fn default_data_dir() -> Result<PathBuf> {
     directories::ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .map(|dirs| dirs.data_local_dir().to_path_buf())
-        .ok_or_else(|| Error::Io("could not resolve application data directory".into()))
+        .ok_or_else(|| {
+            Error::io(
+                "resolve application data directory",
+                "the operating system names no home directory",
+            )
+        })
 }
 
 /// Returns the path of the encrypted `SQLCipher` database, `vault.db`.

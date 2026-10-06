@@ -112,7 +112,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use crate::error::{Error, Result};
+use crate::error::{DatabaseContext, Error, IoContext, Result};
 use crate::vault::files::{
     discard_database_files, discard_file, local_iso_date, remove_files_if_present,
     rename_if_present, rename_synced, sibling_path, sync_parent_dir,
@@ -275,9 +275,10 @@ impl Vault {
     ///   lists.
     /// - [`Error::Io`] when `dest` has no file name, or a file cannot be
     ///   read, created, written or renamed. For an unlocked vault also when
-    ///   the data directory path is not UTF-8, the snapshot fails, or the
-    ///   snapshot comes out as a plaintext database; no archive is written
-    ///   in that last case.
+    ///   the data directory path is not UTF-8.
+    /// - [`Error::Database`] when the snapshot of an unlocked vault fails.
+    /// - [`Error::Crypto`] when that snapshot comes out as a plaintext
+    ///   database; no archive is written then.
     /// - [`Error::BackupInvalid`] when a file becomes shorter while it is
     ///   being copied.
     pub fn backup_to(&self, dest: &Path) -> Result<()> {
@@ -370,9 +371,10 @@ fn swap_in_unpacked_pair(paths: &RestorePaths) -> Result<()> {
     if let Err(err) = replace_live_pair(paths) {
         return Err(match undo_swap(paths) {
             Ok(()) => err,
-            Err(undo_err) => Error::Io(format!(
-                "{err}; putting the previous vault files back also failed: {undo_err}"
-            )),
+            Err(undo_err) => Error::io(
+                "put previous vault files back",
+                format_args!("{undo_err}; the restore had failed with: {err}"),
+            ),
         });
     }
 
@@ -391,7 +393,7 @@ fn replace_live_pair(paths: &RestorePaths) -> Result<()> {
     rename_if_present(&paths.wal, &paths.old_wal)?;
     rename_if_present(&paths.db, &paths.old_db)?;
 
-    fs::rename(&paths.unpacked_db, &paths.db).map_err(|err| Error::Io(err.to_string()))?;
+    fs::rename(&paths.unpacked_db, &paths.db).io("move restored database into place")?;
     rename_synced(&paths.verified_header, &paths.header)
 }
 
@@ -449,7 +451,7 @@ fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
     let wal_len = match fs::metadata(&wal_path) {
         Ok(metadata) => metadata.len(),
         Err(err) if err.kind() == io::ErrorKind::NotFound => 0,
-        Err(err) => return Err(Error::Io(err.to_string())),
+        Err(err) => return Err(Error::io("inspect write-ahead log", err)),
     };
 
     if wal_len > 0 {
@@ -497,12 +499,13 @@ fn backup_from_open_connection(conn: &Connection, data_dir: &Path, dest: &Path) 
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when `dest` is not UTF-8, cannot be created, the statement
-/// fails, or the copy starts with the plaintext `SQLite` magic.
+/// [`Error::Io`] when `dest` is not UTF-8 or cannot be created;
+/// [`Error::Database`] when the statement fails; [`Error::Crypto`] when the
+/// copy starts with the plaintext `SQLite` magic.
 fn vacuum_into_encrypted(conn: &Connection, dest: &Path) -> Result<()> {
     let path = dest
         .to_str()
-        .ok_or_else(|| Error::Io("backup snapshot path is not UTF-8".into()))?;
+        .ok_or_else(|| Error::io("name backup snapshot", "the path is not UTF-8"))?;
     let escaped = path.replace('\'', "''");
 
     // SQLite would create the snapshot under the umask, leaving a copy of the
@@ -512,10 +515,11 @@ fn vacuum_into_encrypted(conn: &Connection, dest: &Path) -> Result<()> {
     drop(create_private_file(dest)?);
 
     conn.execute(&format!("VACUUM INTO '{escaped}'"), [])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("snapshot vault database")?;
     if is_plaintext_sqlite(dest)? {
-        return Err(Error::Io(
-            "online backup produced a plaintext database".into(),
+        return Err(Error::crypto(
+            "snapshot vault database",
+            "the snapshot is not encrypted",
         ));
     }
     Ok(())
@@ -527,11 +531,11 @@ fn is_plaintext_sqlite(path: &Path) -> Result<bool> {
     const SQLITE_MAGIC: &[u8; 6] = b"SQLite";
 
     let mut magic = [0u8; SQLITE_MAGIC.len()];
-    let mut file = File::open(path).map_err(|err| Error::Io(err.to_string()))?;
+    let mut file = File::open(path).io("open backup snapshot")?;
     match file.read_exact(&mut magic) {
         Ok(()) => Ok(&magic == SQLITE_MAGIC),
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(err) => Err(Error::Io(err.to_string())),
+        Err(err) => Err(Error::io("read backup snapshot", err)),
     }
 }
 
@@ -547,21 +551,17 @@ fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> 
     let result = (|| {
         let parent = dest.parent().filter(|dir| !dir.as_os_str().is_empty());
         if let Some(parent) = parent {
-            fs::create_dir_all(parent).map_err(|err| Error::Io(err.to_string()))?;
+            fs::create_dir_all(parent).io("create backup directory")?;
         }
 
         let mut archive = create_private_file(&staged)?;
-        archive
-            .write_all(MAGIC)
-            .map_err(|err| Error::Io(err.to_string()))?;
+        archive.write_all(MAGIC).io("write backup archive")?;
         archive
             .write_all(&FORMAT_VERSION.to_le_bytes())
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .io("write backup archive")?;
         write_member_from_path(&mut archive, MEMBER_HEADER, header_path)?;
         write_member_from_path(&mut archive, MEMBER_DB, db_path)?;
-        archive
-            .sync_all()
-            .map_err(|err| Error::Io(err.to_string()))?;
+        archive.sync_all().io("sync backup archive")?;
         drop(archive);
 
         rename_synced(&staged, dest)
@@ -585,7 +585,7 @@ fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> 
 /// [`Error::Io`] when it cannot be opened or read, or a destination cannot
 /// be written.
 fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path) -> Result<()> {
-    let mut input = File::open(archive).map_err(|err| Error::Io(err.to_string()))?;
+    let mut input = File::open(archive).io("open backup archive")?;
     let mut magic = [0u8; 8];
     read_exact_or_truncated(&mut input, &mut magic)?;
     if &magic != MAGIC {
@@ -650,7 +650,7 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
     match input.read(&mut extra) {
         Ok(0) => Ok(()),
         Ok(_) => Err(Error::BackupInvalid("backup has trailing data".into())),
-        Err(err) => Err(Error::Io(err.to_string())),
+        Err(err) => Err(Error::io("read backup archive", err)),
     }
 }
 
@@ -668,11 +668,8 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
 /// [`Error::BackupInvalid`], from [`copy_exact`], when the file became
 /// shorter after its size was read.
 fn write_member_from_path(archive: &mut impl Write, name: &str, path: &Path) -> Result<()> {
-    let mut source = File::open(path).map_err(|err| Error::Io(err.to_string()))?;
-    let len = source
-        .metadata()
-        .map_err(|err| Error::Io(err.to_string()))?
-        .len();
+    let mut source = File::open(path).io("open vault file for backup")?;
+    let len = source.metadata().io("inspect vault file for backup")?.len();
     if len == 0 {
         return Err(Error::VaultCorrupt(format!("{name} is empty")));
     }
@@ -694,13 +691,11 @@ fn write_member_prefix(archive: &mut impl Write, name: &str, len: u64) -> Result
         .map_err(|_| Error::BackupInvalid("member name too long".into()))?;
     archive
         .write_all(&name_len.to_le_bytes())
-        .map_err(|err| Error::Io(err.to_string()))?;
-    archive
-        .write_all(name_bytes)
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .io("write backup archive")?;
+    archive.write_all(name_bytes).io("write backup archive")?;
     archive
         .write_all(&len.to_le_bytes())
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .io("write backup archive")?;
     Ok(())
 }
 
@@ -709,7 +704,7 @@ fn write_member_prefix(archive: &mut impl Write, name: &str, len: u64) -> Result
 fn write_exact_member(input: &mut impl Read, dest: &Path, len: u64) -> Result<()> {
     let mut file = create_private_file(dest)?;
     copy_exact(input, &mut file, len)?;
-    file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
+    file.sync_all().io("sync restored file")?;
     Ok(())
 }
 
@@ -727,25 +722,25 @@ fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Resu
         // `usize` to `u64` and back only fails on a platform where one does
         // not fit the other; it is reported instead of truncated.
         let capacity = u64::try_from(buffer.len())
-            .map_err(|_| Error::Io("backup copy length overflow".into()))?;
+            .map_err(|_| Error::io("copy backup member", "length does not fit this platform"))?;
         let wanted = usize::try_from(remaining.min(capacity))
-            .map_err(|_| Error::Io("backup copy length overflow".into()))?;
+            .map_err(|_| Error::io("copy backup member", "length does not fit this platform"))?;
         let read = match reader.read(&mut buffer[..wanted]) {
             Ok(0) => return Err(Error::BackupInvalid("backup is truncated".into())),
             Ok(read) => read,
             Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                 return Err(Error::BackupInvalid("backup is truncated".into()));
             }
-            Err(err) => return Err(Error::Io(err.to_string())),
+            Err(err) => return Err(Error::io("read backup member", err)),
         };
         writer
             .write_all(&buffer[..read])
-            .map_err(|err| Error::Io(err.to_string()))?;
-        let copied =
-            u64::try_from(read).map_err(|_| Error::Io("backup copy length overflow".into()))?;
+            .io("write backup member")?;
+        let copied = u64::try_from(read)
+            .map_err(|_| Error::io("copy backup member", "length does not fit this platform"))?;
         remaining = remaining
             .checked_sub(copied)
-            .ok_or_else(|| Error::Io("backup copy length overflow".into()))?;
+            .ok_or_else(|| Error::io("copy backup member", "length does not fit this platform"))?;
     }
     Ok(())
 }
@@ -790,7 +785,7 @@ fn read_optional_u16_le(reader: &mut impl Read) -> Result<Option<u16>> {
             Ok(Some(u16::from_le_bytes(bytes)))
         }
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
-        Err(err) => Err(Error::Io(err.to_string())),
+        Err(err) => Err(Error::io("read backup archive", err)),
     }
 }
 
@@ -819,7 +814,7 @@ fn read_exact_or_truncated(reader: &mut impl Read, buffer: &mut [u8]) -> Result<
         if err.kind() == io::ErrorKind::UnexpectedEof {
             Error::BackupInvalid("backup is truncated".into())
         } else {
-            Error::Io(err.to_string())
+            Error::io("read backup archive", err)
         }
     })
 }
@@ -832,7 +827,8 @@ fn encode_members(members: &[(&str, &[u8])]) -> Result<Vec<u8>> {
     archive.extend_from_slice(MAGIC);
     archive.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
     for (name, data) in members {
-        let len = u64::try_from(data.len()).map_err(|_| Error::Io("member too large".into()))?;
+        let len = u64::try_from(data.len())
+            .map_err(|_| Error::io("encode backup member", "member too large"))?;
         write_member_prefix(&mut archive, name, len)?;
         archive.extend_from_slice(data);
     }
