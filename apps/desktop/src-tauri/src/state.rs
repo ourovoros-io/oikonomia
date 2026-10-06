@@ -176,10 +176,27 @@ impl AppState {
     }
 }
 
+/// Seconds since `UNIX_EPOCH` by the wall clock; zero for a clock set before it.
+///
+/// Idle time is measured on the wall clock on purpose. A monotonic clock does
+/// not count the time the machine sleeps (`std::time::Instant` is
+/// `CLOCK_MONOTONIC` on Linux and `CLOCK_UPTIME_RAW` on macOS), and a session
+/// left open over a sleep has to lock when the machine wakes. The price is
+/// that the wall clock can be set back, which [`idle_secs`] accounts for.
 fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+        .map_or(0, |since_epoch| since_epoch.as_secs())
+}
+
+/// Seconds since the last activity, or `None` when the clock reads earlier
+/// than that activity.
+///
+/// `None` means the clock was set back and the real idle time is unknown.
+/// Clamping it to zero would restart the idle period at every backward step
+/// and postpone the lock, so callers treat it as idle for long enough.
+const fn idle_secs(now_secs: u64, last_activity_secs: u64) -> Option<u64> {
+    now_secs.checked_sub(last_activity_secs)
 }
 
 /// The vault behind its mutex, with the watchdog state derived from it.
@@ -505,12 +522,26 @@ pub fn lock_update(machine: &Mutex<UpdateMachine>) -> std::sync::MutexGuard<'_, 
 
 /// Lock iff the vault is unlocked and idle time has reached the timeout.
 ///
+/// `idle_secs` is `None` when the idle time is unknown because the clock was
+/// set back ([`idle_secs`]); an unlocked vault is then locked at once.
+///
 /// Pure predicate for the idle watchdog. Tests cover the four launch cases
 /// without sleeping the 5s loop or constructing an `AppHandle`.
 #[must_use]
-pub const fn should_auto_lock(idle_secs: u64, timeout_secs: u64, status: VaultStatus) -> bool {
+pub const fn should_auto_lock(
+    idle_secs: Option<u64>,
+    timeout_secs: u64,
+    status: VaultStatus,
+) -> bool {
     // `matches!` is const; derived `PartialEq` on `VaultStatus` is not.
-    matches!(status, VaultStatus::Unlocked) && idle_secs >= timeout_secs
+    if !matches!(status, VaultStatus::Unlocked) {
+        return false;
+    }
+
+    match idle_secs {
+        Some(idle_secs) => idle_secs >= timeout_secs,
+        None => true,
+    }
 }
 
 /// Whether a watchdog tick that just locked should emit `vault-locked`.
@@ -588,7 +619,7 @@ fn lock_if_idle(vault: &GatedVault, last_activity: &AtomicU64) -> bool {
     // Sampled with the vault held, so the decision uses the activity and the
     // timeout as they are once every earlier vault operation has finished,
     // not as they were before this thread waited for the mutex.
-    let idle = now_secs().saturating_sub(last_activity.load(Ordering::Relaxed));
+    let idle = idle_secs(now_secs(), last_activity.load(Ordering::Relaxed));
     let timeout = vault.lock_timeout_secs.load(Ordering::Relaxed);
 
     let lock_now = should_auto_lock(idle, timeout, guard.status());
@@ -648,8 +679,8 @@ fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{
-        AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, resolve_ocr_model_dir, run_auto_lock_loop,
-        should_auto_lock, should_emit_vault_locked,
+        AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, idle_secs, resolve_ocr_model_dir,
+        run_auto_lock_loop, should_auto_lock, should_emit_vault_locked,
     };
     use oikonomia_core::ledger::set_lock_timeout_secs;
     use oikonomia_core::vault::VaultStatus;
@@ -764,8 +795,8 @@ mod tests {
 
     #[test]
     fn auto_lock_when_unlocked_and_idle_meets_timeout() {
-        assert!(should_auto_lock(60, 60, VaultStatus::Unlocked));
-        assert!(should_auto_lock(61, 60, VaultStatus::Unlocked));
+        assert!(should_auto_lock(Some(60), 60, VaultStatus::Unlocked));
+        assert!(should_auto_lock(Some(61), 60, VaultStatus::Unlocked));
         assert!(
             should_emit_vault_locked(true),
             "a successful idle lock would emit vault-locked"
@@ -774,24 +805,58 @@ mod tests {
 
     #[test]
     fn no_auto_lock_when_idle_below_timeout() {
-        assert!(!should_auto_lock(59, 60, VaultStatus::Unlocked));
+        assert!(!should_auto_lock(Some(59), 60, VaultStatus::Unlocked));
         assert!(!should_emit_vault_locked(false));
     }
 
     #[test]
     fn no_auto_lock_after_activity_resets_idle() {
-        assert!(!should_auto_lock(0, 60, VaultStatus::Unlocked));
+        assert!(!should_auto_lock(Some(0), 60, VaultStatus::Unlocked));
         assert!(!should_emit_vault_locked(false));
     }
 
     #[test]
     fn no_auto_lock_when_already_locked() {
-        assert!(!should_auto_lock(120, 60, VaultStatus::Locked));
-        assert!(!should_auto_lock(120, 60, VaultStatus::Uninitialized));
+        assert!(!should_auto_lock(Some(120), 60, VaultStatus::Locked));
+        assert!(!should_auto_lock(Some(120), 60, VaultStatus::Uninitialized));
+        assert!(!should_auto_lock(None, 60, VaultStatus::Locked));
         assert!(
             !should_emit_vault_locked(false),
             "already locked must not emit vault-locked"
         );
+    }
+
+    #[test]
+    fn a_clock_set_back_before_the_last_activity_locks_at_once() {
+        assert_eq!(idle_secs(100, 40), Some(60));
+        assert_eq!(idle_secs(100, 100), Some(0));
+        assert_eq!(idle_secs(99, 100), None);
+        // A clock before the epoch reads as zero.
+        assert_eq!(idle_secs(0, 1_700_000_000), None);
+
+        assert!(should_auto_lock(None, 60, VaultStatus::Unlocked));
+        assert!(should_auto_lock(None, u64::MAX, VaultStatus::Unlocked));
+    }
+
+    #[test]
+    fn watchdog_locks_an_unlocked_vault_whose_last_activity_is_in_the_future() {
+        let (state, dir) = test_state("clock");
+        init_locked_vault(&state);
+        let handles = state.watchdog_handles();
+        let vault = Arc::clone(&handles.vault);
+        let (join, emits) = spawn_watchdog(&state, Duration::from_millis(20));
+
+        // What the watchdog sees after the clock is set back: the last
+        // activity lies ahead of now.
+        handles.last_activity.store(u64::MAX, Ordering::Relaxed);
+        vault.lock().unlock(TEST_PASSWORD).expect("unlock");
+
+        // The bound only fails the test if no lock ever comes.
+        let locked = emits.recv_timeout(Duration::from_secs(5));
+        shutdown_watchdog(&vault, join);
+        locked.expect("activity in the future must lock at once");
+        assert_eq!(vault.lock().status(), VaultStatus::Locked);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
