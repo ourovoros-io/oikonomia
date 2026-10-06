@@ -13,7 +13,9 @@ use crate::domain::{
 };
 use crate::error::{AccountRole, Error, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
-use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, account_balance_as_of, normal_balance};
+use crate::ledger::balance::{
+    ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
+};
 use crate::money::Money;
 use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
@@ -825,7 +827,10 @@ pub fn set_account_opening_balance(
 ///
 /// # Errors
 ///
-/// Not found or DB error.
+/// [`Error::NotFound`] for an unknown account; [`Error::Validation`] for a
+/// malformed date; [`Error::MoneyOverflow`] when the running balance does not
+/// fit in `i64`; [`Error::VaultCorrupt`] for a stored id or date that does not
+/// parse; database errors as [`Error::Io`].
 pub fn account_register(
     conn: &Connection,
     account_id: AccountId,
@@ -855,7 +860,7 @@ pub fn account_register(
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|err| Error::Io(err.to_string()))?;
-        normal_balance(account.account_type, prior.0, prior.1)
+        normal_balance(account.account_type, prior.0, prior.1)?
     } else {
         0
     };
@@ -900,8 +905,8 @@ pub fn account_register(
             row.map_err(|err| Error::Io(err.to_string()))?;
         let entry_id = JournalEntryId(stored_uuid("journal_entries.id", &id_s)?);
         let entry_date = stored_date("journal_entries.entry_date", &date_s)?;
-        let delta = normal_balance(account.account_type, debit, credit);
-        running = running.saturating_add(delta);
+        let delta = normal_balance(account.account_type, debit, credit)?;
+        running = add_minor(running, delta)?;
         result.push(RegisterLine {
             entry_id,
             entry_date,

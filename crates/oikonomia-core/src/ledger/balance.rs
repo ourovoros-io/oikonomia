@@ -8,14 +8,47 @@ use crate::domain::{AccountId, AccountType, EntityId};
 use crate::error::{Error, Result};
 use crate::util::format_date;
 
-/// Signed normal balance for an account type given raw debit/credit totals.
-#[must_use]
-pub fn normal_balance(account_type: AccountType, debits: i64, credits: i64) -> i64 {
+/// Returns the signed normal balance for an account type given raw debit and
+/// credit totals.
+///
+/// # Errors
+///
+/// [`Error::MoneyOverflow`] when the difference does not fit in `i64`. Totals
+/// read from the journal are never negative, so their difference always fits;
+/// the check covers a caller that passes a negative total.
+pub fn normal_balance(account_type: AccountType, debits: i64, credits: i64) -> Result<i64> {
     if account_type.is_debit_normal() {
-        debits.saturating_sub(credits)
+        subtract_minor(debits, credits)
     } else {
-        credits.saturating_sub(debits)
+        subtract_minor(credits, debits)
     }
+}
+
+/// Adds two signed amounts in minor units.
+///
+/// # Errors
+///
+/// [`Error::MoneyOverflow`] when the sum does not fit in `i64`.
+pub(crate) fn add_minor(left: i64, right: i64) -> Result<i64> {
+    left.checked_add(right).ok_or(Error::MoneyOverflow)
+}
+
+/// Subtracts `right` from `left`, both signed amounts in minor units.
+///
+/// # Errors
+///
+/// [`Error::MoneyOverflow`] when the difference does not fit in `i64`.
+pub(crate) fn subtract_minor(left: i64, right: i64) -> Result<i64> {
+    left.checked_sub(right).ok_or(Error::MoneyOverflow)
+}
+
+/// Adds up signed amounts in minor units.
+///
+/// # Errors
+///
+/// [`Error::MoneyOverflow`] when a running sum does not fit in `i64`.
+pub(crate) fn sum_minor(amounts: impl IntoIterator<Item = i64>) -> Result<i64> {
+    amounts.into_iter().try_fold(0_i64, add_minor)
 }
 
 /// Posted entries that are not voided and are not void-reversals.
@@ -47,7 +80,7 @@ pub fn account_balance(conn: &Connection, account_id: AccountId, as_of: &str) ->
 ///
 /// # Errors
 ///
-/// Returns DB errors from the underlying query.
+/// [`Error::Io`] from the underlying query.
 pub fn account_balance_as_of(
     conn: &Connection,
     account_id: AccountId,
@@ -76,7 +109,7 @@ pub fn account_balance_as_of(
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    Ok(normal_balance(account_type, debits, credits))
+    normal_balance(account_type, debits, credits)
 }
 
 /// Sum normal balances for all accounts of given types for an entity as of date.
@@ -113,7 +146,7 @@ pub(crate) fn sum_types_as_of(
             )
             .map_err(|err| Error::Io(err.to_string()))?;
 
-        total = total.saturating_add(normal_balance(*account_type, debits, credits));
+        total = add_minor(total, normal_balance(*account_type, debits, credits)?)?;
     }
     Ok(total)
 }
@@ -155,7 +188,7 @@ pub(crate) fn sum_types_in_range(
             )
             .map_err(|err| Error::Io(err.to_string()))?;
 
-        total = total.saturating_add(normal_balance(*account_type, debits, credits));
+        total = add_minor(total, normal_balance(*account_type, debits, credits)?)?;
     }
     Ok(total)
 }
@@ -183,5 +216,43 @@ pub(crate) fn parse_account_type(s: &str) -> Result<AccountType> {
             "accounts.account_type",
             format_args!("unknown account type: {other}"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_balance_follows_the_normal_side_of_the_account_type() {
+        assert_eq!(normal_balance(AccountType::Asset, 700, 200), Ok(500));
+        assert_eq!(normal_balance(AccountType::Expense, 200, 700), Ok(-500));
+        assert_eq!(normal_balance(AccountType::Liability, 200, 700), Ok(500));
+        assert_eq!(normal_balance(AccountType::Income, 700, 200), Ok(-500));
+    }
+
+    #[test]
+    fn normal_balance_refuses_a_difference_that_does_not_fit() {
+        assert_eq!(
+            normal_balance(AccountType::Asset, i64::MIN, 1),
+            Err(Error::MoneyOverflow)
+        );
+        assert_eq!(
+            normal_balance(AccountType::Income, i64::MIN, 1),
+            Err(Error::MoneyOverflow)
+        );
+        assert_eq!(
+            normal_balance(AccountType::Asset, i64::MAX, 0),
+            Ok(i64::MAX)
+        );
+    }
+
+    #[test]
+    fn sums_refuse_a_total_that_does_not_fit() {
+        assert_eq!(sum_minor([i64::MAX, -1, 1]), Ok(i64::MAX));
+        assert_eq!(sum_minor([i64::MAX, 1]), Err(Error::MoneyOverflow));
+        assert_eq!(sum_minor([i64::MIN, -1]), Err(Error::MoneyOverflow));
+        assert_eq!(sum_minor([]), Ok(0));
+        assert_eq!(subtract_minor(i64::MIN, 1), Err(Error::MoneyOverflow));
     }
 }
