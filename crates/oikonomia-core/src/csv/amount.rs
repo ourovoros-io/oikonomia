@@ -65,7 +65,10 @@
 //!
 //! With `exponent` 3 a three-digit tail is always the fraction, so `12,345`
 //! is 12.345 and never twelve thousand. With `exponent` 0 no digit may
-//! follow a decimal mark, so `1234.56` is rejected.
+//! follow a decimal mark, so `1234.56` is rejected. With `exponent` 4 (`CLF`,
+//! `UYW`) a three-digit tail is a grouping like anywhere else: `1.234` is
+//! one thousand two hundred and thirty-four units, `0.125` is rejected, and
+//! a fraction of three digits has to be written with its fourth, `0.1250`.
 //!
 //! There is no exponent notation and no percent sign. Zero is a valid
 //! result here; the row parser is what refuses a zero amount.
@@ -607,7 +610,9 @@ mod tests {
         let letters = || 'A'..='Z';
         let mut by_digits: [Vec<String>; 5] = Default::default();
         for code in letters()
-            .flat_map(|a| letters().flat_map(move |b| letters().map(move |c| [a, b, c])))
+            .flat_map(|first| {
+                letters().flat_map(move |second| letters().map(move |third| [first, second, third]))
+            })
             .map(String::from_iter)
         {
             let digits = currency_minor_exponent(&code);
@@ -628,6 +633,13 @@ mod tests {
         assert_eq!(by_digits[3], ["BHD", "JOD", "KWD", "LYD", "OMR", "TND"]);
         assert_eq!(by_digits[4], ["CLF", "UYW"]);
         assert!(by_digits[1].is_empty() && by_digits[2].is_empty());
+    }
+
+    #[test]
+    fn a_three_digit_tail_is_a_grouping_in_a_four_decimal_currency() {
+        assert_eq!(parse_signed_minor("1.234", 4).unwrap(), 12_340_000);
+        assert_invalid_amount("0.125", 4);
+        assert_eq!(parse_signed_minor("0.1250", 4).unwrap(), 1_250);
     }
 
     #[test]
