@@ -86,8 +86,8 @@ pub(crate) async fn update_check(
 
 /// Logs `error` under `context`, with its cause when it has one.
 ///
-/// The update crate logs no failure of its own; this is where one is
-/// recorded. The message of an [`UpdateError`] leaves the cause out, and the
+/// The update crate does not log how a check or an install ended; this is
+/// where a failure is recorded. The message of an [`UpdateError`] leaves the cause out, and the
 /// webview is sent only the code, so without the cause here a cache failure
 /// would nowhere say which operation the system refused.
 fn log_failure(context: &str, error: &UpdateError) {
@@ -266,6 +266,8 @@ pub(crate) async fn update_install(
     };
 
     match outcome {
+        // Built from the outcome, not read back from the machine: a check may
+        // have begun since, and its `Checking` is not the answer to this install.
         InstallOutcome::Failed(error) => Ok(UpdateStatus::Failed {
             code: Some(error.code().to_owned()),
         }),
@@ -442,6 +444,10 @@ mod tests {
         assert_eq!(status.ok(), Some(UpdateStatus::UpToDate));
     }
 
+    // `PendingInstall`'s drop guard has no test here: reaching it needs a
+    // machine that holds an offer, and a `VerifiedOffer` comes only from a
+    // check against a feed. The update crate tests what the guard calls
+    // (`an_install_that_dies_leaves_a_usable_machine`).
     #[test]
     fn install_helper_from_idle_is_hard_error_and_does_not_exec() {
         let machine = Mutex::new(UpdateMachine::new());

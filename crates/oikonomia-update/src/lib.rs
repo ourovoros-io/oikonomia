@@ -63,7 +63,8 @@
 //!    the artifact's file name.
 //! 3. Looks for a file under that name, which an earlier attempt at the same
 //!    release may have left. It is read only if it is a regular file, not a
-//!    link, and on Unix one that grants nothing to group or others. When its
+//!    link, and on Unix one that belongs to the owner of the cache directory
+//!    and grants nothing to group or others. When its
 //!    bytes pass the checks of steps 5 and 6, the install continues at
 //!    step 8 with that file and downloads nothing.
 //! 4. Checks the artifact URL against the allow-list again and downloads the
@@ -72,9 +73,10 @@
 //! 6. Verifies the artifact's minisign signature over the same bytes.
 //! 7. Writes the bytes to a new file in the cache directory, created with
 //!    `create_new` and, on Unix, mode `0600`, and renames it to the
-//!    artifact's name. The rename replaces what step 3 found and did not
-//!    use, a planted symbolic link included: the link is removed, never
-//!    written through.
+//!    artifact's name. The rename replaces a file or a link that step 3
+//!    found and did not use: a planted symbolic link is removed, never
+//!    written through. A directory at that name is not replaced, and the
+//!    install fails here.
 //! 8. Hands the path to the caller's [`ArtifactInstaller`].
 //! 9. Deletes the file, unless the installer reports a separate installer
 //!    process that is still running from it.
@@ -83,8 +85,10 @@
 //! removed, and the install ends as [`InstallOutcome::Failed`], which holds
 //! the [`UpdateError`].
 //!
-//! Neither function logs a failure. The caller has the error and decides
-//! what to record of it.
+//! Neither function logs its outcome. The caller has the error and decides
+//! what to record of it. The one thing logged here is the transport error of
+//! a request that got no response: [`UpdateError::Network`] does not carry
+//! it, so it would be lost where it is dropped.
 //!
 //! # Host allow-list
 //!

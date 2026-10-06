@@ -31,10 +31,17 @@
 //! artifact a still-running or crashed installer was started from. That file
 //! is not trusted for being there. It is read back and put through the same
 //! two checks as a download, and only bytes that pass are handed to the
-//! installer, without a second download. Anything else at that name is
-//! replaced by the verified download: the bytes go to a new private file
-//! beside it, which is then renamed over it. The rename replaces the entry
-//! itself, so a planted link is removed, not written through.
+//! installer, without a second download. Any other file or link at that
+//! name is replaced by the verified download: the bytes go to a new private
+//! file beside it, which is then renamed over it. The rename replaces the
+//! entry itself, so a planted link is removed, not written through. A
+//! directory at that name is not replaced, and the install fails with
+//! [`UpdateError::CacheIo`]; this crate creates none there.
+//!
+//! On Windows the file found there can be the installer a previous attempt
+//! started, still running. It passes the checks and is started again; what
+//! two runs of the installer do to each other is the installer's concern
+//! and is not tested here.
 
 use crate::error::{FeedRefusal, Result, UpdateError};
 use crate::hosts::HostPolicy;
@@ -342,7 +349,10 @@ pub trait ArtifactInstaller {
 /// Blocks on the network for up to the feed deadline per request. A failure
 /// is an outcome, [`CheckOutcome::Failed`], because the caller's state
 /// machine has to be told of it like any other end of a check. It holds the
-/// error and is not logged here; the caller decides what to record.
+/// error, and the outcome is not logged here; the caller decides what to
+/// record. One thing is logged in this crate: the transport error of a
+/// request that got no response, which [`UpdateError::Network`] does not
+/// carry and which would otherwise be lost where it is dropped.
 #[must_use]
 pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
     perform_check_inner(config).unwrap_or_else(CheckOutcome::Failed)
@@ -360,8 +370,9 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
 /// download or check leaves no file and `installer` is not called. The
 /// artifact is deleted afterwards unless an installer process is still
 /// running from it. A failure is returned in [`InstallOutcome::Failed`] with
-/// its error, whether it came from this crate or from `installer`, and is
-/// not logged here.
+/// its error, whether it came from this crate or from `installer`. As with
+/// [`perform_check`], the outcome is not logged here; only the transport
+/// error of a request that got no response is.
 #[must_use]
 pub fn install_offer(
     config: &ClientConfig,
@@ -391,11 +402,15 @@ pub fn install_offer(
 /// Runs the checks an installed copy makes on a feed whose signature has
 /// verified, for each of `platforms`, and downloads nothing.
 ///
-/// For the release lane, before a feed is published: a feed this accepts is
-/// one a copy on each of those platforms accepts at steps 4 to 7 of the
-/// check, and one it refuses would be refused by every such copy after
-/// publication. It reads the feed through the client's own parser, version
-/// rule and entry checks, with the host allow-list the application ships
+/// For the release lane, before a feed is published. These are the checks
+/// of a feed's content in the check sequence: the parse of step 4, the
+/// version parse of step 5, and steps 6 and 7 for each platform. The version
+/// is parsed and not compared, since the release lane has no running version
+/// to compare it with. A feed this refuses would be refused, after
+/// publication, by every copy on the named platform that is older than the
+/// feed's version; a copy that is not older stops at step 5 and never reads
+/// its entry. The feed is read through the client's own parser, version
+/// parser and entry check, with the host allow-list the application ships
 /// with, so the two cannot disagree.
 ///
 /// `manifest` is the body of `latest.json`. Its detached signature is not
@@ -532,7 +547,7 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 /// A file an earlier attempt left under the artifact's name is used as it is
 /// when its bytes pass the digest and signature checks; nothing is
 /// downloaded then. Otherwise the artifact is downloaded, checked, and
-/// written in place of whatever is at that name.
+/// written in place of the file or link at that name.
 ///
 /// Downloaded bytes are held in memory until both checks pass and only then
 /// written, so a failed download or a failed check leaves no file: a
@@ -543,7 +558,7 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 ///
 /// Returns [`UpdateError::CacheIo`] when the cache directory cannot be
 /// created or made private, or the file cannot be written or moved to its
-/// name; [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect
+/// name, as when a directory is at that name; [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect
 /// from it, is off the allow-list; [`UpdateError::Network`] when the
 /// download fails or the server answers 204;
 /// [`UpdateError::ResponseTooLarge`] when the artifact exceeds
@@ -843,9 +858,10 @@ fn checked_artifact(host_policy: &HostPolicy, entry: &RawPlatform) -> Result<Che
 ///
 /// The file is trusted for nothing but its bytes passing the checks a
 /// download passes. It must also be a file this crate could have written: a
-/// regular file, not a link, that on Unix no other account may read or
-/// write. A link is refused even to the right bytes, because the installer
-/// is given the path, and what a link points at can change after the check.
+/// regular file, not a link, that on Unix belongs to the owner of the cache
+/// directory and grants nothing to group or others. A link is refused even
+/// to the right bytes, because the installer is given the path, and what a
+/// link points at can change after the check.
 ///
 /// Every reason the file cannot be used reads as `false`, a failure to read
 /// it included: the caller then downloads the artifact and replaces the
@@ -856,24 +872,33 @@ fn holds_verified_artifact(config: &ClientConfig, offer: &VerifiedOffer, path: &
 }
 
 /// Reads the file at `path` when it is a regular file of at most `max_bytes`
-/// that, on Unix, grants nothing to group or others.
+/// that, on Unix, belongs to the owner of the directory it is in and grants
+/// nothing to group or others.
 ///
 /// Returns `None` when there is no such file, when it is anything else (a
-/// link, a directory, a larger or more widely permitted file), or when it
-/// cannot be read.
+/// link, a directory, a larger file, one of another owner or one more widely
+/// permitted), or when it cannot be read.
 ///
-/// The kind and the mode are those of the entry itself, never of a link's
-/// target. They are read before the file is opened, so they describe the
-/// file that is read only as long as nobody else can change the directory in
-/// between; the cache directory is the user's alone for that reason.
+/// The kind, the owner and the mode are those of the entry itself, never of
+/// a link's target. They are read before the file is opened, so they
+/// describe the file that is read only as long as nobody else can change the
+/// directory in between; the cache directory is the user's alone for that
+/// reason.
 fn read_private_file(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
-    if !metadata.file_type().is_file() || !grants_only_the_owner(&metadata) {
+    let directory = std::fs::metadata(path.parent()?).ok()?;
+    if !metadata.file_type().is_file() || !is_private_to_owner_of(&metadata, &directory) {
         return None;
     }
 
-    // One byte past the limit is enough to tell a file that is too large.
-    let limit = u64::try_from(max_bytes).map_or(u64::MAX, |max| max.saturating_add(1));
+    // The size is asked first so that a file that is too large is not read
+    // at all, and counted again while reading in case it grows. One byte
+    // past the limit is enough to tell.
+    let max_length = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    if metadata.len() > max_length {
+        return None;
+    }
+    let limit = max_length.saturating_add(1);
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .ok()?
@@ -884,23 +909,29 @@ fn read_private_file(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
     (bytes.len() <= max_bytes).then_some(bytes)
 }
 
-/// Returns whether the permissions in `metadata` leave group and others with
-/// no access.
+/// Returns whether the file `metadata` describes belongs to the owner of
+/// the directory `directory` describes and leaves group and others with no
+/// access.
+///
+/// The mode alone would not do: a file of another account at mode `0600`
+/// can be rewritten by that account after it has been verified. The cache
+/// directory is the reference because its mode was set a moment ago, which
+/// the system allows only its owner, or root.
 #[cfg(unix)]
 #[expect(
     clippy::verbose_bit_mask,
     reason = "the mask is the group and other permission bits, as chmod writes them"
 )]
-fn grants_only_the_owner(metadata: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt;
+fn is_private_to_owner_of(metadata: &std::fs::Metadata, directory: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
 
-    metadata.permissions().mode() & 0o077 == 0
+    metadata.uid() == directory.uid() && metadata.mode() & 0o077 == 0
 }
 
-/// Returns true: there are no Unix permissions to read here, and the
+/// Returns true: there are no Unix owner and mode to read here, and the
 /// caller's choice of cache directory is what keeps other accounts out.
 #[cfg(not(unix))]
-fn grants_only_the_owner(_metadata: &std::fs::Metadata) -> bool {
+fn is_private_to_owner_of(_metadata: &std::fs::Metadata, _directory: &std::fs::Metadata) -> bool {
     true
 }
 
@@ -922,29 +953,33 @@ fn verify_artifact(config: &ClientConfig, offer: &VerifiedOffer, bytes: &[u8]) -
         .map_err(|_| UpdateError::ArtifactIntegrity)
 }
 
-/// Writes `bytes` to `destination` in place of whatever is there.
+/// Writes `bytes` to `destination` in place of the file or link there.
 ///
 /// The bytes go to a new private file beside `destination`, which is then
 /// renamed to it. A file an earlier attempt left at `destination` is
 /// replaced, and so is a planted symbolic link: the rename replaces the
 /// directory entry and never writes through it. The file at `destination` is
-/// therefore always one [`write_new_private_file`] created.
+/// therefore always one [`write_new_private_file`] created. A directory at
+/// `destination` is not replaced; the rename fails.
 ///
-/// The staging name carries the process id, so a staging file that could not
-/// be removed after an earlier run does not stand in the way of this one.
-/// The staging file is removed when the write or the rename fails.
+/// The staging name carries the process id, which keeps two running copies
+/// apart. Whatever is already under that name, left by an earlier attempt,
+/// is removed first; if it cannot be, the write fails. The staging file is
+/// removed when the write or the rename fails.
 ///
 /// # Errors
 ///
 /// Returns the I/O error of creating, writing or syncing the staging file, or
-/// of the rename. On Windows the rename fails while another process has
-/// `destination` open, as a running installer has its own file.
+/// of the rename. Whether the system replaces a `destination` that is in
+/// use, as a running installer's own file is on Windows, is the system's
+/// decision and is not tested here; its refusal is this error.
 fn replace_with_private_file(destination: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let staging = {
         let mut name = destination.as_os_str().to_owned();
         name.push(format!(".{}.partial", std::process::id()));
         PathBuf::from(name)
     };
+    delete_artifact(&staging);
 
     let replaced = write_new_private_file(&staging, bytes)
         .and_then(|()| std::fs::rename(&staging, destination));
@@ -1208,7 +1243,9 @@ fn read_capped(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_feed_as_client, replace_with_private_file, write_new_private_file};
+    use super::{
+        check_feed_as_client, read_private_file, replace_with_private_file, write_new_private_file,
+    };
     use crate::error::{FeedRefusal, UpdateError};
     use crate::feed::{FeedArtifact, assemble_manifest};
 
@@ -1267,6 +1304,80 @@ mod tests {
             ),
             "{refusal:?}"
         );
+    }
+
+    #[test]
+    fn the_client_checks_refuse_an_entry_without_a_signature_or_a_digest() {
+        let entry = |signature: &str, sha256: &str| {
+            format!(
+                r#"{{"version":"0.2.0","platforms":{{"linux-x86_64":{{
+                    "url":"https://github.com/o/r/releases/download/v0.2.0/a.AppImage",
+                    "signature":"{signature}","sha256":"{sha256}"}}}}}}"#
+            )
+        };
+
+        let unsigned =
+            check_feed_as_client(entry(" ", &"ab".repeat(32)).as_bytes(), &["linux-x86_64"])
+                .expect_err("empty signature");
+        let undigested =
+            check_feed_as_client(entry("signature", "abc").as_bytes(), &["linux-x86_64"])
+                .expect_err("short digest");
+
+        assert!(
+            matches!(
+                unsigned,
+                FeedRefusal::Entry {
+                    source: UpdateError::ManifestSignature,
+                    ..
+                }
+            ),
+            "{unsigned:?}"
+        );
+        assert!(
+            matches!(
+                undigested,
+                FeedRefusal::Entry {
+                    source: UpdateError::ArtifactIntegrity,
+                    ..
+                }
+            ),
+            "{undigested:?}"
+        );
+    }
+
+    #[test]
+    fn a_private_file_is_read_back_only_within_the_size_limit() {
+        let cache = tempfile::tempdir().expect("temporary directory");
+        let path = cache.path().join("artifact.AppImage");
+        write_new_private_file(&path, b"four").expect("file");
+
+        assert_eq!(read_private_file(&path, 4), Some(b"four".to_vec()));
+        assert_eq!(read_private_file(&path, 3), None);
+    }
+
+    #[test]
+    fn a_directory_or_a_missing_path_is_not_read_back_as_a_file() {
+        let cache = tempfile::tempdir().expect("temporary directory");
+        let directory = cache.path().join("a-directory");
+        std::fs::create_dir(&directory).expect("directory");
+
+        assert_eq!(read_private_file(&directory, 16), None);
+        assert_eq!(read_private_file(&cache.path().join("absent"), 16), None);
+    }
+
+    #[test]
+    fn replacing_clears_a_staging_file_an_earlier_attempt_left() {
+        let cache = tempfile::tempdir().expect("temporary directory");
+        let path = cache.path().join("artifact.AppImage");
+        let staging = cache
+            .path()
+            .join(format!("artifact.AppImage.{}.partial", std::process::id()));
+        std::fs::write(&staging, b"half written").expect("stale staging file");
+
+        replace_with_private_file(&path, b"verified").expect("replace");
+
+        assert_eq!(std::fs::read(&path).expect("read"), b"verified");
+        assert!(!staging.exists());
     }
 
     #[test]

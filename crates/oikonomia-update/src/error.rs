@@ -7,7 +7,7 @@
 //!
 //! A failed check or install hands its error to the caller inside the
 //! outcome: [`perform_check`] in [`CheckOutcome::Failed`] and
-//! [`install_offer`] in [`InstallOutcome::Failed`]. Nothing in this crate logs
+//! [`install_offer`] in [`InstallOutcome::Failed`]. This crate does not log
 //! it. The desktop crate logs it and gives it to the [`UpdateMachine`], which
 //! keeps the code for the [`UpdateStatus`] the webview is shown. The other
 //! errors are returned as errors: from building a [`ClientConfig`], from

@@ -100,9 +100,66 @@ fn a_leftover_holding_other_bytes_is_replaced_by_the_verified_download() {
     assert_eq!(leftover_files(cache.path()), vec![destination]);
 }
 
+#[test]
+fn a_leftover_that_is_not_the_artifact_is_removed_when_the_download_fails() {
+    let (public_key, secret_key) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let body = static_manifest(
+        "0.2.0",
+        "ok",
+        server_url(&server, "/Oikonomia.AppImage").as_str(),
+        &sign(&secret_key, PAYLOAD),
+        &sha256_hex(PAYLOAD),
+    );
+    serve_signed_manifest(&server, &body, &sign(&secret_key, body.as_bytes()));
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/Oikonomia.AppImage"))
+            .respond_with(status_code(503)),
+    );
+    let config = config(
+        &server,
+        "/latest.json",
+        &public_key,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+    let destination = cache
+        .path()
+        .join(format!("{}-Oikonomia.AppImage", sha256_hex(PAYLOAD)));
+    write_new_private_file(&destination, b"not the artifact").expect("leftover");
+    let offer = available_offer(&config);
+
+    let err = download_and_verify(&config, &offer).expect_err("no download");
+
+    assert_eq!(err.code(), "update_network");
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn a_directory_under_the_name_of_the_artifact_fails_the_install_as_a_cache_error() {
+    let (public_key, secret_key) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (config, destination) =
+        serve_release_downloaded(&server, (&public_key, &secret_key), cache.path(), 1);
+    std::fs::create_dir(&destination).expect("directory");
+    std::fs::write(destination.join("inside"), b"x").expect("file inside");
+    let offer = available_offer(&config);
+
+    let err = download_and_verify(&config, &offer).expect_err("a directory is in the way");
+
+    assert_eq!(err.code(), "update_cache_io");
+    assert_eq!(leftover_files(cache.path()), vec![destination]);
+}
+
+// A leftover owned by another account is refused as well, by the owner
+// comparison in `is_private_to_owner_of`. No test plants one: changing a
+// file's owner takes root.
 #[cfg(unix)]
 #[test]
-fn a_leftover_other_accounts_could_have_written_is_not_reused() {
+fn a_leftover_that_group_or_others_may_write_is_not_reused() {
     use std::os::unix::fs::PermissionsExt;
 
     let (public_key, secret_key) = test_keys();
