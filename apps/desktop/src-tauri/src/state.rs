@@ -139,12 +139,19 @@ impl AppState {
         }
     }
 
-    /// True when `path` resolves to a granted path.
+    /// The granted path that `path` resolves to, or `None` if it resolves to
+    /// nothing the user handed over.
+    ///
+    /// The result is the resolved path that was compared, and it is the one
+    /// to open. Opening `path` itself would resolve its links a second time,
+    /// and a link changed in between would lead to a file that was never
+    /// checked.
     #[must_use]
-    pub fn path_is_granted(&self, path: &Path) -> bool {
+    pub fn granted_path(&self, path: &Path) -> Option<PathBuf> {
+        let canonical = path.canonicalize().ok()?;
         let granted = self.lock_granted_paths();
-        path.canonicalize()
-            .is_ok_and(|canonical| granted.contains(&canonical))
+
+        granted.contains(&canonical).then_some(canonical)
     }
 
     fn lock_granted_paths(&self) -> std::sync::MutexGuard<'_, HashSet<PathBuf>> {
@@ -829,13 +836,18 @@ mod tests {
         fs::create_dir_all(dir.join("sub")).expect("subdir");
         let indirect = dir.join("sub").join("..").join("picked.csv");
 
-        assert!(!state.path_is_granted(&picked), "nothing granted yet");
+        assert_eq!(state.granted_path(&picked), None, "nothing granted yet");
 
         state.grant_paths([picked.clone()]);
 
-        assert!(state.path_is_granted(&picked));
-        assert!(state.path_is_granted(&indirect), "same file through ..");
-        assert!(!state.path_is_granted(&dir.join("other.csv")));
+        let resolved = picked.canonicalize().expect("canonical");
+        assert_eq!(state.granted_path(&picked), Some(resolved.clone()));
+        assert_eq!(
+            state.granted_path(&indirect),
+            Some(resolved),
+            "same file through .."
+        );
+        assert_eq!(state.granted_path(&dir.join("other.csv")), None);
         let _ = fs::remove_dir_all(&dir);
     }
 

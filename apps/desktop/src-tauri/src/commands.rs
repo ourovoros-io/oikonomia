@@ -115,7 +115,7 @@ pub async fn vault_unlock(
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::{require_granted_path, stored_text_locale};
+    use super::{dropped_file_name, require_granted_path, stored_text_locale};
     use crate::state::AppState;
     use oikonomia_core::prefs::{Locale, UiPrefs, save_ui_prefs};
 
@@ -145,8 +145,29 @@ mod tests {
         state.grant_paths([archive.clone()]);
         assert_eq!(
             require_granted_path(&state, text).expect("granted path"),
-            archive
+            archive.canonicalize().expect("canonical")
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_granted_path_comes_back_resolved_so_the_checked_file_is_the_opened_file() {
+        let dir = temp_dir("path-resolved");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        let real = dir.join("statement-2026.csv");
+        std::fs::write(&real, b"date,amount\n").expect("write");
+        let link = dir.join("link.csv");
+        std::os::unix::fs::symlink(&real, &link).expect("link");
+        state.grant_paths([link.clone()]);
+        let named = link.to_str().expect("utf-8 path");
+
+        let accepted = require_granted_path(&state, named).expect("granted");
+
+        assert_eq!(accepted, real.canonicalize().expect("canonical"));
+        // The document keeps the name it was dropped under.
+        assert_eq!(dropped_file_name(named), "link.csv");
+        assert_eq!(dropped_file_name(""), "document");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -262,9 +283,12 @@ pub async fn vault_backup(
 ///
 /// `path` is the archive to unpack. When `path` is `None`, a native open
 /// dialog chooses the file (the in-app path). A concrete path is accepted only
-/// if [`vault_pick_backup`] returned it, so the webview cannot name arbitrary
-/// files. Decrypt is not performed; the owner unlocks afterwards with the
-/// existing master password.
+/// if the user granted it ([`AppState::grant_paths`]), so the webview cannot
+/// name arbitrary files. The grant is not tied to this command: besides the
+/// path [`vault_pick_backup`] returned, any file the user dropped on a window
+/// or picked for a CSV import passes the check, and is then rejected only if
+/// it is not a backup archive. Decrypt is not performed; the owner unlocks
+/// afterwards with the existing master password.
 ///
 /// Existing vault files are not overwritten unless `replace` is `true`.
 /// An uninitialized data directory accepts `replace: false`.
@@ -789,18 +813,13 @@ pub async fn entry_post_simple_with_document_path(
     path: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
+    let filename = dropped_file_name(&path);
     let path = require_granted_path(&state, &path)?;
 
     let vault = state.vault();
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("document")
-            .to_owned();
-
         // Reject oversized/unsupported files from metadata alone before reading.
         let meta = std::fs::metadata(&path).map_err(|e| {
             CommandError::desktop(
@@ -1546,6 +1565,7 @@ pub async fn document_analyze_path(
     entity_id: EntityId,
     path: String,
 ) -> CommandResult<DocumentSuggestion> {
+    let filename = dropped_file_name(&path);
     let path = require_granted_path(&state, &path)?;
 
     let vault = state.vault();
@@ -1554,12 +1574,6 @@ pub async fn document_analyze_path(
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("document")
-            .to_owned();
-
         // Reject oversized/unsupported drops from metadata alone — a stray
         // 10 GB drop must not be read into memory before failing the size cap.
         let meta = std::fs::metadata(&path).map_err(|e| {
@@ -1586,16 +1600,29 @@ pub async fn document_analyze_path(
 
 /// Accept a webview-supplied path only if the user handed it to the app
 /// through a native drop or dialog ([`AppState::grant_paths`]).
+///
+/// Returns the resolved path that was checked, which is the one to open
+/// ([`AppState::granted_path`]).
 fn require_granted_path(state: &AppState, path: &str) -> CommandResult<PathBuf> {
-    let path = PathBuf::from(path);
-    if state.path_is_granted(&path) {
-        Ok(path)
-    } else {
-        Err(CommandError::desktop(
+    state.granted_path(Path::new(path)).ok_or_else(|| {
+        CommandError::desktop(
             DesktopError::PathNotGranted,
             "file path was not chosen through the app",
-        ))
-    }
+        )
+    })
+}
+
+/// The name a dropped document is stored and typed under: the last component
+/// of the path as the user dropped it.
+///
+/// Taken before the path is resolved, because a dropped link keeps its own
+/// name and extension while the file it points to may be named anything.
+fn dropped_file_name(dropped_path: &str) -> String {
+    Path::new(dropped_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("document")
+        .to_owned()
 }
 
 /// Run vault work on the blocking pool: no command ever waits for the vault
