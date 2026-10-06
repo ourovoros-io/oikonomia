@@ -31,6 +31,11 @@ pub enum UpdateError {
     #[error("update manifest is not valid json")]
     ManifestParse,
 
+    /// A newer version is published, but the manifest lists no artifact for
+    /// the platform this copy runs on.
+    #[error("update feed has no artifact for this platform")]
+    MissingPlatform,
+
     /// Artifact URL is not https or not on the GitHub allow-list (or is a `.deb`).
     #[error("update artifact url is not allow-listed")]
     ArtifactUrl,
@@ -54,12 +59,13 @@ impl UpdateError {
         "update_network",
         "update_manifest_signature",
         "update_manifest_parse",
+        "update_missing_platform",
         "update_artifact_url",
         "update_artifact_integrity",
         "update_invalid_feed_url",
     ];
 
-    /// Stable machine code for desktop [`CommandError`] mapping.
+    /// Returns the stable machine code the desktop crate sends to the UI for this error.
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
@@ -68,6 +74,7 @@ impl UpdateError {
             Self::Network => "update_network",
             Self::ManifestSignature => "update_manifest_signature",
             Self::ManifestParse => "update_manifest_parse",
+            Self::MissingPlatform => "update_missing_platform",
             Self::ArtifactUrl => "update_artifact_url",
             Self::ArtifactIntegrity => "update_artifact_integrity",
             Self::InvalidFeedUrl => "update_invalid_feed_url",
@@ -87,6 +94,7 @@ mod tests {
             UpdateError::Network,
             UpdateError::ManifestSignature,
             UpdateError::ManifestParse,
+            UpdateError::MissingPlatform,
             UpdateError::ArtifactUrl,
             UpdateError::ArtifactIntegrity,
             UpdateError::InvalidFeedUrl,

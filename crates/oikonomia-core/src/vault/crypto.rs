@@ -2,7 +2,7 @@
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use super::header::{KEY_LEN, SALT_LEN, VaultHeader};
 use crate::error::{Error, Result};
@@ -29,11 +29,16 @@ pub fn decode_salt(header: &VaultHeader) -> Result<[u8; SALT_LEN]> {
     Ok(salt)
 }
 
-/// Derive a `SQLCipher` key from the master password and header params.
+/// Derives the `SQLCipher` key from the master password and the header's
+/// KDF parameters.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Crypto`] if Argon2 parameters are invalid or hashing fails.
+/// [`Error::VaultCorrupt`] when the header cannot be used: an unknown KDF, a
+/// key length other than [`KEY_LEN`], Argon2 costs outside the accepted
+/// range, or a salt that does not decode to [`SALT_LEN`] bytes.
+/// [`Error::Crypto`] when Argon2 itself rejects the parameters or fails to
+/// hash.
 pub fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKey> {
     if header.kdf != "argon2id" {
         return Err(Error::VaultCorrupt(format!(
@@ -58,16 +63,15 @@ pub fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKey> {
         .map_err(|err| Error::Crypto(err.to_string()))?;
 
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut key = [0u8; KEY_LEN];
-
+    // Hash straight into the wiping wrapper. Filling a plain array and
+    // moving it in afterwards would copy the key and leave the original
+    // stack slot unwiped.
+    let mut key = Zeroizing::new([0u8; KEY_LEN]);
     argon2
-        .hash_password_into(password.as_bytes(), &salt, &mut key)
-        .map_err(|err| {
-            key.zeroize();
-            Error::Crypto(err.to_string())
-        })?;
+        .hash_password_into(password.as_bytes(), &salt, key.as_mut_slice())
+        .map_err(|err| Error::Crypto(err.to_string()))?;
 
-    Ok(Zeroizing::new(key))
+    Ok(key)
 }
 
 /// Format a raw key for `SQLCipher` `PRAGMA key = "x'…'"`.
