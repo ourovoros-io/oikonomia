@@ -94,18 +94,23 @@ pub fn utc_today() -> Date {
     time::OffsetDateTime::now_utc().date()
 }
 
-/// Current UTC timestamp as RFC3339-ish SQL text.
+/// Returns the current instant as `unix:` followed by whole seconds since the
+/// Unix epoch, for example `unix:1791244800`.
+///
+/// The text is stored in `created_at` columns as an ordering key; it is never
+/// an accounting date. Comparing two such texts agrees with time order only
+/// while both have the same number of digits: ten digits cover 2001-09-09 to
+/// 2286-11-20 (`10^9` to `10^10 - 1` seconds). A clock set before 1970 gives
+/// a negative count (`unix:-5`), which sorts before every ten-digit value but
+/// not in time order among other negative ones.
+///
+/// The resolution is one second, so the text does not order two rows written
+/// within the same second.
 #[must_use]
 pub fn now_utc_string() -> String {
-    // time crate without clock feature — use std for wall clock.
-    use std::time::{SystemTime, UNIX_EPOCH};
+    let seconds = time::OffsetDateTime::now_utc().unix_timestamp();
 
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-
-    // Enough for ordering; not used for accounting dates.
-    format!("unix:{secs}")
+    format!("unix:{seconds}")
 }
 
 #[cfg(test)]
@@ -130,7 +135,17 @@ mod tests {
                 detail: e.to_string(),
             })
         });
-        assert_eq!(back.map(|d| d.date), Ok(date));
+        assert_eq!(back.map(|dated| dated.date), Ok(date));
+    }
+
+    #[test]
+    fn the_timestamp_text_is_the_clock_in_whole_unix_seconds() {
+        let before = time::OffsetDateTime::now_utc().unix_timestamp();
+        let text = now_utc_string();
+        let after = time::OffsetDateTime::now_utc().unix_timestamp();
+
+        let seconds: i64 = text.strip_prefix("unix:").unwrap().parse().unwrap();
+        assert!((before..=after).contains(&seconds), "{text}");
     }
 }
 
