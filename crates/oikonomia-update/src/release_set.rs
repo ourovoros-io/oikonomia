@@ -201,6 +201,39 @@ pub fn feed_platform_keys(windows: WindowsBuild) -> Vec<&'static str> {
         .collect()
 }
 
+/// One installer the update client can be asked to download.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdaterArtifactKind {
+    /// Feed key, for example `windows-x86_64`.
+    pub platform: &'static str,
+    /// File-name suffix of the artifact that key installs.
+    pub suffix: &'static str,
+}
+
+/// Every artifact a client downloads, Windows included.
+///
+/// Promotion can withhold Windows, but the Windows release job still builds
+/// the installer. The size gate has to recognize it there, before a feed
+/// exists.
+#[must_use]
+pub const fn updater_artifact_kinds() -> &'static [UpdaterArtifactKind] {
+    const KINDS: [UpdaterArtifactKind; 3] = [
+        UpdaterArtifactKind {
+            platform: MACOS.key,
+            suffix: MACOS.suffix,
+        },
+        UpdaterArtifactKind {
+            platform: LINUX.key,
+            suffix: LINUX.suffix,
+        },
+        UpdaterArtifactKind {
+            platform: WINDOWS.key,
+            suffix: WINDOWS.suffix,
+        },
+    ];
+    &KINDS
+}
+
 /// The `(platform key, file name)` pairs for `latest.json`.
 ///
 /// Every platform in the set needs exactly one artifact among `file_names`.
@@ -305,8 +338,9 @@ pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
 mod tests {
     use super::{
         CHECKSUMS_FILE, FIXED_LINUX_APPIMAGE, FIXED_LINUX_DEB, FIXED_MACOS_DMG,
-        FIXED_WINDOWS_SETUP, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets,
-        feed_entries, feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
+        FIXED_WINDOWS_SETUP, ReleaseSetError, UpdaterArtifactKind, WindowsBuild, checksum_line,
+        checksummed_assets, feed_entries, feed_platform_keys, fixed_name_copies, fixed_names,
+        is_published_asset, updater_artifact_kinds,
     };
     use crate::client::current_updater_platform;
 
@@ -348,6 +382,37 @@ mod tests {
             Some(&("windows-x86_64", "Oikonomia_0.2.0_x64-setup.exe"))
         );
         assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn updater_artifact_kinds_are_the_feed_suffixes_including_windows() {
+        assert_eq!(
+            updater_artifact_kinds(),
+            &[
+                UpdaterArtifactKind {
+                    platform: "darwin-aarch64",
+                    suffix: ".app.tar.gz",
+                },
+                UpdaterArtifactKind {
+                    platform: "linux-x86_64",
+                    suffix: ".AppImage",
+                },
+                UpdaterArtifactKind {
+                    platform: "windows-x86_64",
+                    suffix: "-setup.exe",
+                },
+            ]
+        );
+
+        let entries = feed_entries(&DRAFT, WindowsBuild::Published).expect("entries");
+        for (key, name) in entries {
+            assert!(
+                updater_artifact_kinds()
+                    .iter()
+                    .any(|kind| { kind.platform == key && name.ends_with(kind.suffix) }),
+                "{key} {name}"
+            );
+        }
     }
 
     #[test]

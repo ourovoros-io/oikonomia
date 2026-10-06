@@ -1083,9 +1083,15 @@ mod tests {
             let gate_state = shared.gate.lock_state();
             let unlock = scope.spawn(move || shared.acquire().unlock(TEST_PASSWORD));
 
-            wait_until("the unlock's guard reaches its gate update", || {
-                shared.gate.follow_entries.load(Ordering::SeqCst) > entries_before
-            });
+            // Every guard's drop calls `follow`, which then blocks on the
+            // gate state this thread holds, so the count must go up before
+            // the unlock thread can end. If it ends first, the unlock never
+            // reached its gate update.
+            wait_while_running(
+                "the unlock's guard reaches its gate update",
+                &unlock,
+                || shared.gate.follow_entries.load(Ordering::SeqCst) > entries_before,
+            );
             // The vault is unlocked and its gate update is pending. Anyone
             // who could take the vault now could get their update in first.
             let vault_is_held = matches!(shared.vault.try_lock(), Err(TryLockError::WouldBlock));
@@ -1106,16 +1112,25 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Waits until `condition`, which another thread makes true, holds. The
-    /// deadline only turns an event that never comes into a failure instead
-    /// of a hung test. It is long because some waits include a key derivation,
-    /// which takes several seconds in a debug build on a loaded CI runner.
-    fn wait_until(what: &str, condition: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(60);
+    /// Waits until `condition`, which `worker` makes true, holds.
+    ///
+    /// The outcome does not depend on how fast `worker` runs. The unlock
+    /// it waits on derives a key, which can take many seconds on a loaded
+    /// CI runner, so a short deadline failed a correct run. Instead, `worker`
+    /// ending first is the failure. The long deadline is only there so a
+    /// deadlock fails the test instead of hanging it. Sleeping between
+    /// checks leaves the CPU to `worker` rather than spinning against it.
+    fn wait_while_running<T>(
+        what: &str,
+        worker: &std::thread::ScopedJoinHandle<'_, T>,
+        condition: impl Fn() -> bool,
+    ) {
+        let hang = Instant::now() + Duration::from_secs(300);
 
         while !condition() {
-            assert!(Instant::now() < deadline, "timed out waiting until {what}");
-            std::thread::yield_now();
+            assert!(!worker.is_finished(), "the worker ended before {what}");
+            assert!(Instant::now() < hang, "deadlocked waiting until {what}");
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
     #[test]
