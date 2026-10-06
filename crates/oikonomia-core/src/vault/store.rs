@@ -65,8 +65,11 @@ pub enum VaultStatus {
 pub struct Vault {
     /// Directory that holds the vault files.
     data_dir: PathBuf,
-    /// Published header, or `None` while no vault exists. Kept equal to
-    /// `vault.header.json`: whatever replaces the file replaces this too.
+    /// Published header, or `None` while no vault exists.
+    ///
+    /// Every method of this type that replaces `vault.header.json` replaces
+    /// this as well, before anything after the rename can fail. The one
+    /// exception is a restore whose reload fails; see `Vault::restore_from`.
     header: Option<VaultHeader>,
     /// Open connection, present exactly while the vault is unlocked.
     conn: Option<Connection>,
@@ -251,9 +254,10 @@ impl Vault {
         }
     }
 
-    /// Recovery path for a password change that died between rekey and rename:
-    /// the database is already under the staged header's key, so accept that
-    /// header and promote it to be the real one.
+    /// Unlocks with the staged header and publishes it, recovering a
+    /// password change that died between the rekey and the rename.
+    ///
+    /// In that state the database is already under the staged header's key.
     ///
     /// Called only after the real header's key failed to decrypt the
     /// database. No staged header, or one that is not a header (a crash can
@@ -294,13 +298,17 @@ impl Vault {
     /// # Key material after a lock
     ///
     /// Closing the connection makes `SQLCipher` free its key and page
-    /// buffers, which it wipes first.[^wipe] The copies this crate made, the
+    /// buffers, which it wipes first.[^wipe] The copies this crate owns, the
     /// derived key and its hex form, are `zeroize::Zeroizing` values that
-    /// were wiped when [`Vault::unlock`] returned. The password is only
-    /// borrowed by this type; wiping it is up to the caller that owns it.
+    /// were dropped, and so wiped, before [`Vault::unlock`] returned. The
+    /// password is only borrowed by this type; wiping it is up to the caller
+    /// that owns it.
     ///
-    /// One copy is outside the control of both. To set the key, the hex form
-    /// is passed to `rusqlite::Connection::pragma_update`, which assembles
+    /// Two things are not covered. The key is a 32-byte array that is
+    /// returned and moved by value, and a move may leave a copy in a stack
+    /// frame that no destructor wipes.
+    /// And one heap copy is outside this crate's control. To set the key,
+    /// the hex form is passed to `rusqlite::Connection::pragma_update`, which assembles
     /// the `PRAGMA key` statement in a plain `String` (`Sql::buf`, in
     /// rusqlite 0.40 `src/pragma.rs`) and frees it without wiping it. That
     /// text can stay in freed heap memory after a lock, until the allocator
@@ -514,14 +522,14 @@ fn key_check_error(err: &rusqlite::Error) -> Error {
 /// [`Error::Crypto`] or [`Error::Io`] for everything else.
 fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connection> {
     if !create {
-        let meta = fs::metadata(path).map_err(|err| {
+        let metadata = fs::metadata(path).map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 Error::VaultCorrupt("vault database is missing".into())
             } else {
                 Error::Io(err.to_string())
             }
         })?;
-        if meta.len() == 0 {
+        if metadata.len() == 0 {
             return Err(Error::VaultCorrupt("vault database is empty".into()));
         }
     }

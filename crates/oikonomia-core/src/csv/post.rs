@@ -123,10 +123,10 @@ pub fn post_import_rows(
     }
     let _entity = get_entity(conn, entity_id)?;
 
-    let tx = conn
+    let transaction = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
-    let mut seen = load_active_keys(&tx, entity_id)?;
+    let mut seen = load_active_keys(&transaction, entity_id)?;
     let mut posted: Vec<PostedEntryView> = Vec::new();
     let mut skipped_duplicate_count = 0u32;
 
@@ -136,12 +136,14 @@ pub fn post_import_rows(
             skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
             continue;
         }
-        let view = post_simple_entry_unchecked(&tx, row)?;
+        let view = post_simple_entry_unchecked(&transaction, row)?;
         seen.insert(key);
         posted.push(view);
     }
 
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|err| Error::Io(err.to_string()))?;
     Ok(CsvImportPostResult {
         posted,
         skipped_duplicate_count,
@@ -179,7 +181,7 @@ impl DedupeKey {
 /// reports the text came from, empty for in-memory text.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the import source is passed beside the parsed inputs; tracked for the API pass"
+    reason = "the import source is passed beside the five inputs of the public preview"
 )]
 fn preview_bank_csv_named(
     conn: &Connection,

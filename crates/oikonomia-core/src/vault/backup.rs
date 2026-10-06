@@ -2,8 +2,15 @@
 //!
 //! The archive is not a second encryption layer: it stores `vault.db` and
 //! `vault.header.json` as ciphertext. The master password is never stored.
-//! `vault.header.json.tmp` is crash-recovery state for password change, not a
-//! source of truth, and is omitted.
+//! `vault.header.json.tmp`, the header staged by a password change, is never
+//! packed.
+//!
+//! That leaves one gap. If a password change crashed after the rekey and
+//! before the staged header was published, the staged header is the one
+//! whose key fits the database, and a backup of the locked vault taken
+//! before the next unlock packs the published header instead. No password
+//! opens such an archive. Unlocking once publishes the staged header and
+//! closes the gap; nothing here checks for it.
 //!
 //! An unlocked vault is snapshotted with `VACUUM INTO` so WAL is folded
 //! without closing the session. A locked vault is copied file by file, which
@@ -167,6 +174,8 @@ pub fn default_backup_file_name() -> String {
 ///   leave out.
 /// - [`Error::Io`] when `dest` has no file name, or a file cannot be read,
 ///   created, written or renamed.
+/// - [`Error::BackupInvalid`] when a vault file becomes shorter while it is
+///   being copied.
 pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     let db_path = vault_db_path(data_dir);
@@ -228,8 +237,10 @@ pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Resu
 }
 
 /// Settles a restore that a crash interrupted, by the rules in the module
-/// doc: undoes a swap that did not commit, finishes one that did, and
-/// removes a half-unpacked archive. Does nothing when no restore files exist.
+/// doc.
+///
+/// Undoes a swap that did not commit, finishes one that did, and removes a
+/// half-unpacked archive. Does nothing when no restore files exist.
 ///
 /// # Errors
 ///
@@ -267,6 +278,8 @@ impl Vault {
     ///   the data directory path is not UTF-8, the snapshot fails, or the
     ///   snapshot comes out as a plaintext database; no archive is written
     ///   in that last case.
+    /// - [`Error::BackupInvalid`] when a file becomes shorter while it is
+    ///   being copied.
     pub fn backup_to(&self, dest: &Path) -> Result<()> {
         match self.connection() {
             Ok(conn) => backup_from_open_connection(conn, self.data_dir(), dest),
@@ -275,18 +288,20 @@ impl Vault {
         }
     }
 
-    /// Locks the vault, unpacks `archive` into its data directory and
+    /// Closes the connection, unpacks `archive` into the data directory and
     /// reloads the header, leaving the vault locked.
     ///
-    /// The vault is locked before anything is checked, so it is locked
-    /// afterwards whether the restore succeeded or not.
+    /// The connection is closed before anything is checked, so the vault is
+    /// not unlocked afterwards whether the restore succeeded or not.
     ///
     /// # Errors
     ///
     /// Everything [`restore_from_path`] returns; the vault files are then as
     /// that function leaves them. After the files were replaced,
     /// [`Error::VaultCorrupt`] or [`Error::Io`] when the restored header
-    /// cannot be loaded, as [`Vault::open_path`] reports it.
+    /// cannot be loaded, as [`Vault::open_path`] reports it. This handle
+    /// then still holds the header of the vault that was replaced, and a
+    /// new handle has to be opened.
     pub fn restore_from(&mut self, archive: &Path, replace: bool) -> Result<()> {
         self.lock();
         let data_dir = self.data_dir().to_path_buf();
@@ -381,9 +396,11 @@ fn replace_live_pair(paths: &RestorePaths) -> Result<()> {
 }
 
 /// Puts the previous pair back while `restore-new` still marks the swap as
-/// uncommitted. Every step is a no-op when repeated, and `restore-new` is
-/// removed only after the previous pair is back, so an interrupted undo is
-/// simply run again.
+/// uncommitted.
+///
+/// Every step is a no-op when repeated, and `restore-new` is removed only
+/// after the previous pair is back, so an interrupted undo is simply run
+/// again.
 fn undo_swap(paths: &RestorePaths) -> Result<()> {
     // With the unpacked database gone, `vault.db` is the new one. Renaming it
     // back, instead of removing it, restores the condition this test reads:
@@ -430,7 +447,7 @@ fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
 fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
     let [wal_path, _shm_path] = db_sidecar_paths(db_path);
     let wal_len = match fs::metadata(&wal_path) {
-        Ok(meta) => meta.len(),
+        Ok(metadata) => metadata.len(),
         Err(err) if err.kind() == io::ErrorKind::NotFound => 0,
         Err(err) => return Err(Error::Io(err.to_string())),
     };
@@ -596,16 +613,18 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
         match name.as_str() {
             MEMBER_HEADER => {
                 if saw_header {
-                    return Err(Error::BackupInvalid(
-                        "backup has duplicate vault.header.json".into(),
-                    ));
+                    return Err(Error::BackupInvalid(format!(
+                        "backup has duplicate {MEMBER_HEADER}"
+                    )));
                 }
                 write_exact_member(&mut input, header_dest, len)?;
                 saw_header = true;
             }
             MEMBER_DB => {
                 if saw_db {
-                    return Err(Error::BackupInvalid("backup has duplicate vault.db".into()));
+                    return Err(Error::BackupInvalid(format!(
+                        "backup has duplicate {MEMBER_DB}"
+                    )));
                 }
                 write_exact_member(&mut input, db_dest, len)?;
                 saw_db = true;
@@ -617,12 +636,14 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
     }
 
     if !saw_header {
-        return Err(Error::BackupInvalid(
-            "backup is missing vault.header.json".into(),
-        ));
+        return Err(Error::BackupInvalid(format!(
+            "backup is missing {MEMBER_HEADER}"
+        )));
     }
     if !saw_db {
-        return Err(Error::BackupInvalid("backup is missing vault.db".into()));
+        return Err(Error::BackupInvalid(format!(
+            "backup is missing {MEMBER_DB}"
+        )));
     }
 
     let mut extra = [0u8; 1];
@@ -644,6 +665,8 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
 /// [`Error::VaultCorrupt`] when the file is empty: the reader rejects an
 /// empty member, so the archive would not restore. [`Error::Io`] when the
 /// file cannot be read or the archive cannot be written.
+/// [`Error::BackupInvalid`], from [`copy_exact`], when the file became
+/// shorter after its size was read.
 fn write_member_from_path(archive: &mut impl Write, name: &str, path: &Path) -> Result<()> {
     let mut source = File::open(path).map_err(|err| Error::Io(err.to_string()))?;
     let len = source
@@ -801,18 +824,19 @@ fn read_exact_or_truncated(reader: &mut impl Read, buffer: &mut [u8]) -> Result<
     })
 }
 
-/// Encode an archive from named members. Test helper for truncated/incomplete cases.
+/// Encodes an archive from named members, for tests of truncated and
+/// incomplete archives.
 #[cfg(test)]
 fn encode_members(members: &[(&str, &[u8])]) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    out.extend_from_slice(MAGIC);
-    out.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+    let mut archive = Vec::new();
+    archive.extend_from_slice(MAGIC);
+    archive.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
     for (name, data) in members {
         let len = u64::try_from(data.len()).map_err(|_| Error::Io("member too large".into()))?;
-        write_member_prefix(&mut out, name, len)?;
-        out.extend_from_slice(data);
+        write_member_prefix(&mut archive, name, len)?;
+        archive.extend_from_slice(data);
     }
-    Ok(out)
+    Ok(archive)
 }
 
 #[cfg(test)]
@@ -1620,7 +1644,7 @@ mod tests {
         assert!(name.ends_with(&suffix), "{name}");
         let date = name
             .strip_prefix(prefix)
-            .and_then(|s| s.strip_suffix(suffix.as_str()))
+            .and_then(|dated| dated.strip_suffix(suffix.as_str()))
             .expect("dated backup name");
         crate::util::parse_date(date).expect("YYYY-MM-DD");
         assert_eq!(date, local_iso_date());

@@ -349,7 +349,8 @@ pub struct CsvImportPostResult {
     pub skipped_duplicate_count: u32,
 }
 
-/// Trim, collapse Unicode whitespace to a single ASCII space, then lowercase.
+/// Returns `raw` trimmed, with each run of Unicode whitespace as one ASCII
+/// space, in lowercase.
 ///
 /// This is the **only** description transform used for duplicate detection.
 /// Case folding is Unicode lowercase (`str::to_lowercase`), not a locale-
@@ -358,17 +359,21 @@ pub struct CsvImportPostResult {
 #[must_use]
 pub fn normalize_description(raw: &str) -> String {
     let mut words = raw.split_whitespace().map(str::to_lowercase);
-    let Some(mut out) = words.next() else {
+    let Some(mut normalized) = words.next() else {
         return String::new();
     };
     for word in words {
-        out.push(' ');
-        out.push_str(&word);
+        normalized.push(' ');
+        normalized.push_str(&word);
     }
-    out
+    normalized
 }
 
-/// Map one parsed bank row onto a simple journal entry using the import role accounts.
+/// Returns the simple entry suggested for a parsed bank row, with the role
+/// accounts of the import filled in.
+///
+/// The category is the expense or the income account, by the kind the sign
+/// gave the row. An import never produces a bill or a transfer.
 pub(crate) fn suggested_entry(
     entity_id: EntityId,
     row: &ParsedBankRow,

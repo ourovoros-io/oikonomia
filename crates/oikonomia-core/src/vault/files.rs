@@ -148,9 +148,11 @@ pub(crate) fn remove_files_if_present(paths: &[&Path]) -> Result<()> {
     Ok(())
 }
 
-/// Removes a leftover file on a path that has no error to return it through:
-/// cleanup after a failure that is already being reported, or of a stale
-/// file the next write truncates anyway. A failure is logged.
+/// Removes a leftover file, logging a failure instead of returning it.
+///
+/// For a caller with no error to return it through: cleanup after a failure
+/// that is already being reported, or of a stale file the next write
+/// truncates anyway.
 pub(crate) fn discard_file(path: &Path) {
     if let Err(err) = remove_file_if_present(path) {
         log::warn!("could not remove {}: {err}", path.display());

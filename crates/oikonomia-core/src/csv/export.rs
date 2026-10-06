@@ -478,7 +478,7 @@ mod tests {
         assert_eq!(
             std::path::Path::new(&acme)
                 .extension()
-                .and_then(|e| e.to_str()),
+                .and_then(|extension| extension.to_str()),
             Some("csv")
         );
         let name = default_journal_export_file_name("!!!");
@@ -486,7 +486,7 @@ mod tests {
         assert_eq!(
             std::path::Path::new(&name)
                 .extension()
-                .and_then(|e| e.to_str()),
+                .and_then(|extension| extension.to_str()),
             Some("csv")
         );
     }

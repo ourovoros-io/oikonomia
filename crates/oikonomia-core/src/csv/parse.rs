@@ -105,11 +105,11 @@ pub struct ParsedBankCsv {
 /// - [`Error::CsvParse`] when the file is larger than [`MAX_CSV_BYTES`] or is
 ///   not valid UTF-8.
 pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
-    let meta = fs::metadata(path).map_err(|err| Error::Io(err.to_string()))?;
-    if !meta.is_file() {
+    let metadata = fs::metadata(path).map_err(|err| Error::Io(err.to_string()))?;
+    if !metadata.is_file() {
         return Err(Error::Io(format!("not a file: {}", path.display())));
     }
-    if meta.len() > MAX_CSV_BYTES {
+    if metadata.len() > MAX_CSV_BYTES {
         return Err(CsvError::TooLarge.into());
     }
     let bytes = fs::read(path).map_err(|err| Error::Io(err.to_string()))?;

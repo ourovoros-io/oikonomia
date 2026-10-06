@@ -10,9 +10,11 @@
 //! costs only inside a fixed range before it runs Argon2. A header asking
 //! for more memory than that is reported as corrupt instead of being obeyed.
 //!
-//! Key material lives in [`zeroize::Zeroizing`] from the moment it is
-//! produced and is never copied out of it by this module. The one copy that
-//! escapes is described on [`key_to_sqlcipher_pragma`].
+//! Key material is produced inside [`zeroize::Zeroizing`], which wipes the
+//! value it owns when dropped. That does not reach copies a move leaves
+//! behind: the key is a 32-byte array returned by value, and the compiler
+//! may copy it between stack frames. The heap copy that escapes through
+//! rusqlite is described on [`key_to_sqlcipher_pragma`].
 
 use std::fmt::Write;
 

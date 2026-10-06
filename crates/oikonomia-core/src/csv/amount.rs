@@ -78,11 +78,15 @@ use crate::csv::CsvError;
 /// The code is trimmed and compared without regard to ASCII case.
 ///
 /// This is the one exponent table of the crate: CSV import and the document
-/// analyzer both read it. It lists the codes whose exponent is not 2, as
-/// given in ISO 4217 list one (published 2026-09-17): `CLP`, `ISK`, `JPY`,
-/// `KRW` and `VND` have no minor unit; `BHD`, `IQD`, `JOD`, `KWD`, `LYD`,
-/// `OMR` and `TND` have three decimals. Every other code, known or not,
-/// gets 2 (EUR, USD).
+/// analyzer both read it. It knows twelve codes whose exponent is not 2:
+/// `CLP`, `ISK`, `JPY`, `KRW` and `VND` have no minor unit; `BHD`, `IQD`,
+/// `JOD`, `KWD`, `LYD`, `OMR` and `TND` have three decimals. Every other
+/// code, known or not, gets 2 (EUR, USD).
+///
+/// The table is not all of ISO 4217. Other currencies without a minor unit
+/// (`XOF`, `XAF`, `PYG`, `UGX`, `RWF` among them) and the four-decimal `CLF`
+/// are read with two decimals, so a book in one of them has its amounts off
+/// by a power of ten.
 #[must_use]
 pub fn currency_minor_exponent(code: &str) -> u8 {
     let code = code.trim().to_ascii_uppercase();
@@ -138,21 +142,21 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// [`CsvError::AmountOverflow`] when the magnitude does not fit in `i64`.
 pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
     let (negative, digits) = prepare_amount(raw)?;
-    let (int_digits, frac_digits) =
+    let (integer_digits, fraction_digits) =
         split_decimal(&digits, exponent).ok_or_else(|| CsvError::InvalidAmount(raw.to_owned()))?;
 
     // Checked before the fraction is padded: the padding zeros would turn a
     // bare `.` or `,` into a zero amount.
-    if int_digits.is_empty() && frac_digits.is_empty() {
+    if integer_digits.is_empty() && fraction_digits.is_empty() {
         return Err(CsvError::InvalidAmount(raw.to_owned()));
     }
 
-    let mut frac = frac_digits.to_owned();
-    while frac.len() < usize::from(exponent) {
-        frac.push('0');
+    let mut fraction = fraction_digits.to_owned();
+    while fraction.len() < usize::from(exponent) {
+        fraction.push('0');
     }
 
-    let combined = format!("{int_digits}{frac}");
+    let combined = format!("{integer_digits}{fraction}");
     let magnitude: i64 = match combined.parse() {
         Ok(value) => value,
         Err(_) => return Err(CsvError::AmountOverflow),
@@ -253,8 +257,8 @@ fn strip_sign(text: &str) -> (bool, &str) {
 /// Drops a three-letter code from the front, and one from the back of what
 /// is left.
 ///
-/// A cell that is nothing but three letters is kept, so it is reported as an
-/// invalid amount instead of an empty one.
+/// A cell that is nothing but three letters is returned as it is. It has no
+/// digits, so the caller rejects it as an invalid amount either way.
 fn strip_letter_code(text: &str) -> &str {
     let Some((code, rest)) = split_leading_letter_code(text) else {
         return strip_trailing_letter_code(text);
@@ -299,9 +303,8 @@ fn is_letter_code(text: &str) -> bool {
     text.len() == 3 && text.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
-/// Splits an all-ASCII body of digits, `.` and `,` into integer digits and
-/// fraction digits, or returns `None` when the separators do not form an
-/// amount.
+/// Splits a body of digits, `.` and `,` into integer and fraction digits,
+/// or returns `None` when the separators do not form an amount.
 ///
 /// The last separator is the decimal mark unless it is followed by exactly
 /// three digits in a currency without three decimals; then the whole body
@@ -331,8 +334,11 @@ fn split_decimal(body: &str, exponent: u8) -> Option<(String, &str)> {
 }
 
 /// Returns the digits of `grouped` when it is a thousands grouping on
-/// `separator`: a first group of one to three digits with no leading zero,
-/// then groups of exactly three digits. Any other separator makes it `None`.
+/// `separator`, and `None` otherwise.
+///
+/// A grouping is a first group of one to three digits with no leading zero,
+/// then groups of exactly three digits. The other separator anywhere in it
+/// makes it `None`.
 fn grouped_digits(grouped: &str, separator: &str) -> Option<String> {
     let all_digits = |group: &str| group.bytes().all(|byte| byte.is_ascii_digit());
 
