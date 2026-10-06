@@ -309,6 +309,14 @@ fn spawn_windows_installer(artifact: &Path) -> Result<()> {
 #[cfg(target_os = "macos")]
 const PREVIOUS_BUNDLE: &str = ".oikonomia-update-previous.app";
 
+/// The `tar` that ships with macOS, named by its full path.
+///
+/// A bare `tar` is looked up through the `PATH` the app inherited, so
+/// whichever directory comes first there would choose the program that
+/// unpacks the update over the installed app.
+#[cfg(target_os = "macos")]
+const MACOS_TAR: &str = "/usr/bin/tar";
+
 /// Replaces the app bundle that holds `current` with the one in `artifact`.
 ///
 /// The archive is unpacked next to the bundle, never inside it: the bundle
@@ -359,7 +367,7 @@ fn extract_macos_app_archive(artifact: &Path, current: &Path) -> Result<()> {
 fn unpack_app_bundle(artifact: &Path, extract_root: &Path, executable: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(extract_root).map_err(|_| UpdateError::ArtifactIntegrity)?;
 
-    let status = Command::new("tar")
+    let status = Command::new(MACOS_TAR)
         .arg("-xzf")
         .arg(artifact)
         .arg("-C")
