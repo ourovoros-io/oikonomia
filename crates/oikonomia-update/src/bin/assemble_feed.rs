@@ -1,53 +1,37 @@
-//! Promote-lane CLI: assemble and verify `latest.json`.
+//! Release-lane command line: builds and checks what a release publishes.
 //!
-//! `assemble` scans an artifact directory; `verify` checks a manifest and its
-//! detached minisign signature with the client's own verifier code;
-//! `verify-feed` checks every artifact a feed names against its hash and
-//! its minisign signature, as the app does before installing;
-//! `unpublished` lists the draft assets that must not be published;
-//! `fixed-copies` writes the version-free copies the website links to;
-//! `fixed-names` prints the version-free names a release must carry;
-//! `checksums` writes the release's `SHA256SUMS` file.
+//! The promote workflow runs this instead of doing the same work in shell, so
+//! that the rules for a release live in tested Rust (`release_set`, `feed`,
+//! `verify`) and the feed is checked before publication by the code that
+//! will read it in the application. Each subcommand does one step:
+//!
+//! - `assemble` writes `latest.json` from the artifacts in a directory;
+//! - `verify` checks a file against a detached minisign signature;
+//! - `verify-feed` checks every artifact a feed names against its hash and
+//!   its minisign signature, as the app does before installing;
+//! - `unpublished` lists the draft assets that must not be published;
+//! - `fixed-copies` writes the version-free copies the website links to;
+//! - `fixed-names` prints the version-free names a release must carry;
+//! - `checksums` writes the release's `SHA256SUMS` file.
+//!
+//! A subcommand prints its result to standard output and nothing else, so a
+//! workflow can read it line by line. A failure prints one line to standard
+//! error and exits with status 1.
 
 use oikonomia_update::{
-    FeedArtifact, UpdateError, WindowsBuild, assemble_manifest, checksum_line, checksummed_assets,
-    feed_entries, feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
-    sha256_hex, verify_signature,
+    FeedArtifact, ReleaseSetError, UpdateError, WindowsBuild, assemble_manifest, checksum_line,
+    checksummed_assets, feed_entries, feed_platform_keys, fixed_name_copies, fixed_names,
+    is_published_asset, sha256_hex, verify_signature,
 };
+use serde::Deserialize;
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use thiserror::Error;
 
-fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-
-    match run(&args) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            let _ = writeln!(std::io::stderr(), "{message}");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-/// Runs the subcommand named by the first argument.
-fn run(args: &[String]) -> Result<(), String> {
-    let Some((command, rest)) = args.split_first() else {
-        return Err(USAGE.to_owned());
-    };
-
-    match command.as_str() {
-        "assemble" => run_assemble(rest),
-        "verify" => run_verify(rest),
-        "verify-feed" => run_verify_feed(rest),
-        "unpublished" => run_unpublished(rest),
-        "checksums" => run_checksums(rest),
-        "fixed-copies" => run_fixed_copies(rest),
-        "fixed-names" => run_fixed_names(rest),
-        _ => Err(USAGE.to_owned()),
-    }
-}
-
+/// What the tool prints when it is called with arguments it cannot use.
 const USAGE: &str = "usage:
   assemble_feed assemble --version <v> --base-url <url> --dir <artifact-dir> \
     --out <latest.json> [--notes-file <path>] [--with-windows]
@@ -59,114 +43,450 @@ const USAGE: &str = "usage:
   assemble_feed fixed-copies --dir <artifact-dir> [--with-windows]
   assemble_feed fixed-names [--with-windows]";
 
+/// The flag that includes the Windows installer in the release.
 const WITH_WINDOWS: &str = "--with-windows";
 
-fn windows_build(args: &[String]) -> WindowsBuild {
-    if args.iter().any(|arg| arg == WITH_WINDOWS) {
-        WindowsBuild::Published
-    } else {
-        WindowsBuild::Withheld
-    }
+/// Why a subcommand failed.
+///
+/// A variant's message leaves out the cause it wraps; [`describe`] appends
+/// the causes when the error is printed.
+#[derive(Debug, Error)]
+enum CliError {
+    /// The subcommand is unknown, or a flag is missing or has no value.
+    #[error("{}", USAGE)]
+    Usage,
+
+    /// A file or directory could not be read, written or copied.
+    #[error("cannot {action} {}", path.display())]
+    Io {
+        /// What was being done, as a verb: `read`, `write`, `list`.
+        action: &'static str,
+        /// The file or directory it was done to.
+        path: PathBuf,
+        /// The error the system gave.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A file could not be copied to its version-free name.
+    #[error("cannot copy {} to {}", from.display(), to.display())]
+    Copy {
+        /// The versioned file.
+        from: PathBuf,
+        /// The version-free name it was to be copied to.
+        to: PathBuf,
+        /// The error the system gave.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A result line could not be written to standard output.
+    #[error("cannot write to standard output")]
+    Output(#[source] std::io::Error),
+
+    /// A file name in an artifact directory is not UTF-8. It could be neither
+    /// matched against the release set nor written into a checksum file, so
+    /// it is refused instead of being left out.
+    #[error("file name in {} is not UTF-8: {}", directory.display(), name.to_string_lossy())]
+    FileNameNotUtf8 {
+        /// The directory that was being listed.
+        directory: PathBuf,
+        /// The name as the system gave it.
+        name: OsString,
+    },
+
+    /// A feed file is not the JSON the client reads.
+    #[error("cannot parse {}", path.display())]
+    Feed {
+        /// The feed file.
+        path: PathBuf,
+        /// What the parser objected to.
+        #[source]
+        source: serde_json::Error,
+    },
+
+    /// A feed holds other platforms than the release publishes.
+    #[error("feed platforms are {found:?}, this release publishes {wanted:?}")]
+    FeedPlatforms {
+        /// The platform keys in the feed, sorted.
+        found: Vec<String>,
+        /// The platform keys the release publishes, sorted.
+        wanted: Vec<&'static str>,
+    },
+
+    /// A feed entry's URL does not end in a usable file name.
+    #[error("{platform}: no file name in {url}")]
+    NoFileName {
+        /// The platform key of the entry.
+        platform: String,
+        /// The URL the entry gives.
+        url: String,
+    },
+
+    /// An artifact does not have the SHA-256 its feed entry states.
+    #[error("{platform}: {file_name} does not match the sha256 in the feed")]
+    DigestMismatch {
+        /// The platform key of the entry.
+        platform: String,
+        /// The artifact that was hashed.
+        file_name: String,
+    },
+
+    /// An artifact's signature in the feed does not verify with the key.
+    #[error("{platform}: the signature of {file_name} does not verify with the public key")]
+    SignatureMismatch {
+        /// The platform key of the entry.
+        platform: String,
+        /// The artifact that was checked.
+        file_name: String,
+    },
+
+    /// A directory holds no file the release publishes.
+    #[error("{}: no published files to checksum", directory.display())]
+    NothingToChecksum {
+        /// The directory that was listed.
+        directory: PathBuf,
+    },
+
+    /// The draft does not hold the files the release needs.
+    #[error(transparent)]
+    ReleaseSet(#[from] ReleaseSetError),
+
+    /// The update library refused a key, a signature or a feed input.
+    #[error(transparent)]
+    Update(#[from] UpdateError),
 }
 
-/// File names directly inside `dir`, sorted so the output is reproducible.
-fn file_names_in(dir: &Path) -> Result<Vec<String>, String> {
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+impl CliError {
+    /// Returns a closure that wraps an I/O error from doing `action` to `path`.
+    fn io(action: &'static str, path: &Path) -> impl FnOnce(std::io::Error) -> Self {
+        let path = path.to_path_buf();
 
-    let mut names = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
-        if let Some(name) = entry.file_name().to_str() {
-            names.push(name.to_owned());
+        move |source| Self::Io {
+            action,
+            path,
+            source,
         }
     }
-    names.sort();
-
-    Ok(names)
 }
 
-fn flag_value(args: &[String], name: &str) -> Option<String> {
-    args.iter()
-        .position(|a| a == name)
-        .and_then(|i| args.get(i + 1).cloned())
+/// The result of a subcommand.
+type CliResult<T> = Result<T, CliError>;
+
+/// The part of `latest.json` that `verify-feed` reads.
+#[derive(Debug, Deserialize)]
+struct Feed {
+    /// The artifact of each platform, by platform key.
+    platforms: BTreeMap<String, FeedEntry>,
 }
 
-fn run_assemble(args: &[String]) -> Result<(), String> {
-    let version = flag_value(args, "--version").ok_or(USAGE)?;
-    let base_url = flag_value(args, "--base-url").ok_or(USAGE)?;
-    let dir = PathBuf::from(flag_value(args, "--dir").ok_or(USAGE)?);
-    let out = PathBuf::from(flag_value(args, "--out").ok_or(USAGE)?);
-    let notes = match flag_value(args, "--notes-file") {
-        Some(path) => std::fs::read_to_string(&path).map_err(|e| format!("notes: {e}"))?,
+/// One platform's artifact as the feed describes it.
+#[derive(Debug, Deserialize)]
+struct FeedEntry {
+    /// Where the app downloads the artifact from.
+    url: String,
+    /// The minisign signature over the artifact.
+    signature: String,
+    /// The hex SHA-256 of the artifact.
+    sha256: String,
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            // `writeln!`, not `eprintln!`, which the workspace's `print_stderr`
+            // lint forbids; a failed write to stderr has nowhere to be reported.
+            let _ = writeln!(std::io::stderr(), "{}", describe(&error));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Runs the subcommand named by the first argument.
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] for no subcommand or an unknown one, and
+/// otherwise whatever the subcommand returns.
+fn run(args: &[String]) -> CliResult<()> {
+    let Some((command, rest)) = args.split_first() else {
+        return Err(CliError::Usage);
+    };
+
+    match command.as_str() {
+        "assemble" => run_assemble(rest),
+        "verify" => run_verify(rest),
+        "verify-feed" => run_verify_feed(rest),
+        "unpublished" => run_unpublished(rest),
+        "checksums" => run_checksums(rest),
+        "fixed-copies" => run_fixed_copies(rest),
+        "fixed-names" => run_fixed_names(rest),
+        _ => Err(CliError::Usage),
+    }
+}
+
+/// Returns `error` and the causes behind it as one line, outermost first.
+fn describe(error: &CliError) -> String {
+    let mut line = error.to_string();
+    let mut cause = std::error::Error::source(error);
+
+    while let Some(error) = cause {
+        line.push_str(": ");
+        line.push_str(&error.to_string());
+        cause = error.source();
+    }
+
+    line
+}
+
+/// Writes `feed` entries for the artifacts in `--dir` to `--out`.
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] for a file
+/// that cannot be read or written, [`CliError::ReleaseSet`] when a platform
+/// has no artifact or several, and [`CliError::Update`] when the version or
+/// an artifact is not fit for a feed.
+fn run_assemble(args: &[String]) -> CliResult<()> {
+    let version = required_flag(args, "--version")?;
+    let base_url = required_flag(args, "--base-url")?;
+    let directory = Path::new(required_flag(args, "--dir")?);
+    let out = Path::new(required_flag(args, "--out")?);
+    let notes = match optional_flag(args, "--notes-file")? {
+        Some(path) => {
+            let path = Path::new(path);
+            std::fs::read_to_string(path).map_err(CliError::io("read", path))?
+        }
         None => String::new(),
     };
 
-    let names = file_names_in(&dir)?;
+    let names = file_names_in(directory)?;
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
-    let entries = feed_entries(&names, windows_build(args)).map_err(|e| e.to_string())?;
+    let artifacts = feed_entries(&names, windows_build(args))?
+        .into_iter()
+        .map(|(platform, file_name)| feed_artifact(directory, platform, file_name))
+        .collect::<CliResult<Vec<_>>>()?;
 
-    let mut artifacts = Vec::new();
-    for (platform, file_name) in entries {
-        let file = dir.join(file_name);
-        let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-        let signature_path = dir.join(format!("{file_name}.sig"));
-        let signature = std::fs::read_to_string(&signature_path)
-            .map_err(|e| format!("{}: {e}", signature_path.display()))?;
-        let sha256_hex = sha256_hex(&bytes);
-        artifacts.push(FeedArtifact {
-            platform: platform.to_owned(),
-            file_name: file_name.to_owned(),
-            signature: signature.trim().to_owned(),
-            sha256_hex,
+    let manifest = assemble_manifest(version, notes.trim(), base_url, &artifacts)?;
+    std::fs::write(out, manifest).map_err(CliError::io("write", out))?;
+    print_line(format_args!("wrote {}", out.display()))
+}
+
+/// Reads the artifact `file_name` and the `.sig` beside it in `directory`
+/// into the feed entry for `platform`.
+///
+/// # Errors
+///
+/// Returns [`CliError::Io`] when either file cannot be read.
+fn feed_artifact(directory: &Path, platform: &str, file_name: &str) -> CliResult<FeedArtifact> {
+    let artifact_path = directory.join(file_name);
+    let bytes = std::fs::read(&artifact_path).map_err(CliError::io("read", &artifact_path))?;
+
+    let signature_path = directory.join(format!("{file_name}.sig"));
+    let signature =
+        std::fs::read_to_string(&signature_path).map_err(CliError::io("read", &signature_path))?;
+
+    Ok(FeedArtifact {
+        platform: platform.to_owned(),
+        file_name: file_name.to_owned(),
+        signature: signature.trim().to_owned(),
+        sha256_hex: sha256_hex(&bytes),
+    })
+}
+
+/// Checks the file at `--manifest` against the detached signature at `--sig`
+/// with the key `--pubkey`.
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] for a file
+/// that cannot be read, and [`CliError::Update`] when the key is not a
+/// minisign key or the signature does not verify.
+fn run_verify(args: &[String]) -> CliResult<()> {
+    let manifest = Path::new(required_flag(args, "--manifest")?);
+    let signature_path = Path::new(required_flag(args, "--sig")?);
+    let public_key = required_flag(args, "--pubkey")?;
+
+    let body = std::fs::read(manifest).map_err(CliError::io("read", manifest))?;
+    let signature =
+        std::fs::read_to_string(signature_path).map_err(CliError::io("read", signature_path))?;
+
+    verify_signature(public_key, &body, &signature)?;
+    print_line("manifest signature ok")
+}
+
+/// Checks a feed against the files in `--dir` the way the app will: the feed
+/// holds exactly the platforms this release publishes, and every file it
+/// names hashes to its `sha256` and carries a minisign signature that
+/// verifies with `--pubkey`, the key baked into the app. Run before anything
+/// is public, so a feed whose artifact the app would refuse never ships.
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] or
+/// [`CliError::Feed`] for a feed that cannot be read or parsed,
+/// [`CliError::FeedPlatforms`] when its platforms are not the published
+/// ones, and whatever [`verify_feed_entry`] returns for the first entry that
+/// fails.
+fn run_verify_feed(args: &[String]) -> CliResult<()> {
+    let manifest = Path::new(required_flag(args, "--manifest")?);
+    let directory = Path::new(required_flag(args, "--dir")?);
+    let public_key = required_flag(args, "--pubkey")?;
+
+    let body = std::fs::read(manifest).map_err(CliError::io("read", manifest))?;
+    let feed: Feed = serde_json::from_slice(&body).map_err(|source| CliError::Feed {
+        path: manifest.to_path_buf(),
+        source,
+    })?;
+
+    let wanted = {
+        let mut wanted = feed_platform_keys(windows_build(args));
+        wanted.sort_unstable();
+        wanted
+    };
+    // A `BTreeMap` yields its keys sorted, as `wanted` is.
+    if !feed.platforms.keys().eq(wanted.iter()) {
+        return Err(CliError::FeedPlatforms {
+            found: feed.platforms.into_keys().collect(),
+            wanted,
         });
     }
 
-    let manifest = assemble_manifest(&version, notes.trim(), &base_url, &artifacts)
-        .map_err(|e| format!("assemble: {e}"))?;
-    std::fs::write(&out, manifest).map_err(|e| format!("{}: {e}", out.display()))?;
-    writeln!(std::io::stdout(), "wrote {}", out.display()).map_err(|e| e.to_string())
+    for (platform, entry) in &feed.platforms {
+        let file_name = verify_feed_entry(platform, entry, directory, public_key)?;
+        print_line(format_args!(
+            "{platform}: {file_name} hash and signature ok"
+        ))?;
+    }
+
+    Ok(())
 }
 
-/// Writes the checksum file for the published files in `--dir`.
-fn run_checksums(args: &[String]) -> Result<(), String> {
-    let dir = PathBuf::from(flag_value(args, "--dir").ok_or(USAGE)?);
-    let out = PathBuf::from(flag_value(args, "--out").ok_or(USAGE)?);
+/// Checks the artifact one feed entry names against the entry's digest and
+/// signature, and returns the artifact's file name.
+///
+/// # Errors
+///
+/// Returns [`CliError::NoFileName`] when the entry's URL names no file,
+/// [`CliError::Io`] when the file cannot be read,
+/// [`CliError::DigestMismatch`] or [`CliError::SignatureMismatch`] when the
+/// file is not the one the entry describes, and [`CliError::Update`] when
+/// `public_key` is not a minisign key.
+fn verify_feed_entry<'a>(
+    platform: &str,
+    entry: &'a FeedEntry,
+    directory: &Path,
+    public_key: &str,
+) -> CliResult<&'a str> {
+    // The name is joined to `directory`, so it must stay inside it.
+    let file_name = entry
+        .url
+        .rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty() && *name != ".." && !name.contains('\\'))
+        .ok_or_else(|| CliError::NoFileName {
+            platform: platform.to_owned(),
+            url: entry.url.clone(),
+        })?;
+    let artifact_path = directory.join(file_name);
+    let bytes = std::fs::read(&artifact_path).map_err(CliError::io("read", &artifact_path))?;
 
-    let names = file_names_in(&dir)?;
+    if !sha256_hex(&bytes).eq_ignore_ascii_case(&entry.sha256) {
+        return Err(CliError::DigestMismatch {
+            platform: platform.to_owned(),
+            file_name: file_name.to_owned(),
+        });
+    }
+
+    match verify_signature(public_key, &bytes, &entry.signature) {
+        Ok(()) => Ok(file_name),
+        // A key that is not a key is the caller's mistake, not this artifact's.
+        Err(error @ UpdateError::MissingPublicKey) => Err(error.into()),
+        Err(_) => Err(CliError::SignatureMismatch {
+            platform: platform.to_owned(),
+            file_name: file_name.to_owned(),
+        }),
+    }
+}
+
+/// Prints, one per line, the given asset names that the release must not keep.
+///
+/// # Errors
+///
+/// Returns [`CliError::Output`] when standard output cannot be written.
+fn run_unpublished(args: &[String]) -> CliResult<()> {
+    unpublished_assets(args)
+        .into_iter()
+        .try_for_each(print_line)
+}
+
+/// Returns the asset names among `args` that the release must not keep.
+fn unpublished_assets(args: &[String]) -> Vec<&str> {
+    let windows = windows_build(args);
+
+    args.iter()
+        .map(String::as_str)
+        .filter(|argument| *argument != WITH_WINDOWS)
+        .filter(|name| !is_published_asset(name, windows))
+        .collect()
+}
+
+/// Writes the checksum file for the published files in `--dir` to `--out`.
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] for a file
+/// that cannot be read or written, and [`CliError::NothingToChecksum`] when
+/// the directory holds no published file.
+fn run_checksums(args: &[String]) -> CliResult<()> {
+    let directory = Path::new(required_flag(args, "--dir")?);
+    let out = Path::new(required_flag(args, "--out")?);
+
+    let names = file_names_in(directory)?;
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
     let listed = checksummed_assets(&names, windows_build(args));
     if listed.is_empty() {
-        return Err(format!("{}: no published files to checksum", dir.display()));
+        return Err(CliError::NothingToChecksum {
+            directory: directory.to_path_buf(),
+        });
     }
 
-    let mut contents = String::new();
-    for name in listed {
-        let file = dir.join(name);
-        let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-        contents.push_str(&checksum_line(&sha256_hex(&bytes), name));
-    }
+    let contents = listed
+        .into_iter()
+        .map(|name| {
+            let path = directory.join(name);
+            let bytes = std::fs::read(&path).map_err(CliError::io("read", &path))?;
+            Ok(checksum_line(&sha256_hex(&bytes), name))
+        })
+        .collect::<CliResult<String>>()?;
 
-    std::fs::write(&out, contents).map_err(|e| format!("{}: {e}", out.display()))?;
-    writeln!(std::io::stdout(), "wrote {}", out.display()).map_err(|e| e.to_string())
+    std::fs::write(out, contents).map_err(CliError::io("write", out))?;
+    print_line(format_args!("wrote {}", out.display()))
 }
 
 /// Copies each versioned download in `--dir` to its version-free name and
 /// prints the fixed names, one per line. Fails when any source is missing or
 /// ambiguous, so a release never publishes without every site link.
-fn run_fixed_copies(args: &[String]) -> Result<(), String> {
-    let dir = PathBuf::from(flag_value(args, "--dir").ok_or(USAGE)?);
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] when the
+/// directory cannot be listed, [`CliError::ReleaseSet`] when a download has
+/// no source or several, and [`CliError::Copy`] when a copy fails.
+fn run_fixed_copies(args: &[String]) -> CliResult<()> {
+    let directory = Path::new(required_flag(args, "--dir")?);
 
-    let names = file_names_in(&dir)?;
+    let names = file_names_in(directory)?;
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
-    let copies = fixed_name_copies(&names, windows_build(args)).map_err(|e| e.to_string())?;
 
-    let mut stdout = std::io::stdout();
-    for (source, fixed) in copies {
-        let from = dir.join(source);
-        let to = dir.join(fixed);
-        std::fs::copy(&from, &to)
-            .map_err(|e| format!("{} -> {}: {e}", from.display(), to.display()))?;
-        writeln!(stdout, "{fixed}").map_err(|e| e.to_string())?;
+    for (source, fixed) in fixed_name_copies(&names, windows_build(args))? {
+        let from = directory.join(source);
+        let to = directory.join(fixed);
+        std::fs::copy(&from, &to).map_err(|source| CliError::Copy { from, to, source })?;
+        print_line(fixed)?;
     }
 
     Ok(())
@@ -175,124 +495,103 @@ fn run_fixed_copies(args: &[String]) -> Result<(), String> {
 /// Prints, one per line, the version-free names the release must carry. The
 /// workflow compares what it made and what the draft holds against this list,
 /// so the names live in `release_set` only.
-fn run_fixed_names(args: &[String]) -> Result<(), String> {
-    let mut stdout = std::io::stdout();
-    for name in fixed_names(windows_build(args)) {
-        writeln!(stdout, "{name}").map_err(|e| e.to_string())?;
-    }
-    Ok(())
+///
+/// # Errors
+///
+/// Returns [`CliError::Output`] when standard output cannot be written.
+fn run_fixed_names(args: &[String]) -> CliResult<()> {
+    fixed_names(windows_build(args))
+        .into_iter()
+        .try_for_each(print_line)
 }
 
-/// Prints, one per line, the given asset names that the release must not keep.
-fn run_unpublished(args: &[String]) -> Result<(), String> {
-    let mut stdout = std::io::stdout();
-
-    for name in unpublished_assets(args) {
-        writeln!(stdout, "{name}").map_err(|e| e.to_string())?;
+/// Returns the Windows choice the arguments make: published when
+/// [`WITH_WINDOWS`] is among them, withheld otherwise.
+fn windows_build(args: &[String]) -> WindowsBuild {
+    if args.iter().any(|argument| argument == WITH_WINDOWS) {
+        WindowsBuild::Published
+    } else {
+        WindowsBuild::Withheld
     }
-
-    Ok(())
 }
 
-/// The asset names among `args` that the release must not keep.
-fn unpublished_assets(args: &[String]) -> Vec<&str> {
-    let windows = windows_build(args);
-
-    args.iter()
-        .map(String::as_str)
-        .filter(|arg| *arg != WITH_WINDOWS)
-        .filter(|name| !is_published_asset(name, windows))
-        .collect()
+/// Returns the value that follows the flag `name`.
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] when the flag is absent, is the last
+/// argument, or is followed by another flag.
+fn required_flag<'a>(args: &'a [String], name: &str) -> CliResult<&'a str> {
+    optional_flag(args, name)?.ok_or(CliError::Usage)
 }
 
-fn run_verify(args: &[String]) -> Result<(), String> {
-    let manifest = flag_value(args, "--manifest").ok_or(USAGE)?;
-    let sig = flag_value(args, "--sig").ok_or(USAGE)?;
-    let pubkey = flag_value(args, "--pubkey").ok_or(USAGE)?;
+/// Returns the value that follows the flag `name`, or `None` when the flag is
+/// not given.
+///
+/// A value that begins with `--` is taken for the next flag: `--out
+/// --with-windows` is a missing value, not a file named `--with-windows`.
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] when the flag is the last argument or is
+/// followed by another flag.
+fn optional_flag<'a>(args: &'a [String], name: &str) -> CliResult<Option<&'a str>> {
+    let Some(position) = args.iter().position(|argument| argument == name) else {
+        return Ok(None);
+    };
 
-    let body = std::fs::read(&manifest).map_err(|e| format!("{manifest}: {e}"))?;
-    let signature = std::fs::read_to_string(&sig).map_err(|e| format!("{sig}: {e}"))?;
-    verify_signature(&pubkey, &body, &signature).map_err(|e| match e {
-        UpdateError::MissingPublicKey => format!("pubkey: {e}"),
-        _ => format!("verify: {e}"),
-    })?;
-    writeln!(std::io::stdout(), "manifest signature ok").map_err(|e| e.to_string())
+    match args.get(position + 1) {
+        Some(value) if !value.starts_with("--") => Ok(Some(value)),
+        Some(_) | None => Err(CliError::Usage),
+    }
 }
 
-/// Checks a feed against the files in `--dir` the way the app will: the feed
-/// holds exactly the platforms this release publishes, and every file it
-/// names hashes to its `sha256` and carries a minisign signature that
-/// verifies with `--pubkey`, the key baked into the app. Run before anything
-/// is public, so a feed whose artifact the app would refuse never ships.
-fn run_verify_feed(args: &[String]) -> Result<(), String> {
-    let manifest = PathBuf::from(flag_value(args, "--manifest").ok_or(USAGE)?);
-    let dir = PathBuf::from(flag_value(args, "--dir").ok_or(USAGE)?);
-    let pubkey = flag_value(args, "--pubkey").ok_or(USAGE)?;
-    // Checked before any file is read, so a bad key is reported as one.
-    if let Err(e @ UpdateError::MissingPublicKey) = verify_signature(&pubkey, &[], "") {
-        return Err(format!("pubkey: {e}"));
-    }
+/// Returns the names of the entries directly inside `directory`, sorted so
+/// the output is reproducible.
+///
+/// # Errors
+///
+/// Returns [`CliError::Io`] when the directory cannot be listed and
+/// [`CliError::FileNameNotUtf8`] for a name that is not UTF-8.
+fn file_names_in(directory: &Path) -> CliResult<Vec<String>> {
+    let mut names = std::fs::read_dir(directory)
+        .map_err(CliError::io("list", directory))?
+        .map(|entry| {
+            let entry = entry.map_err(CliError::io("list", directory))?;
+            utf8_file_name(entry.file_name(), directory)
+        })
+        .collect::<CliResult<Vec<String>>>()?;
+    names.sort();
 
-    let body = std::fs::read(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
-    let feed: serde_json::Value =
-        serde_json::from_slice(&body).map_err(|e| format!("{}: {e}", manifest.display()))?;
-    let platforms = feed
-        .get("platforms")
-        .and_then(serde_json::Value::as_object)
-        .ok_or_else(|| format!("{}: no platforms object", manifest.display()))?;
-
-    let expected = feed_platform_keys(windows_build(args));
-    let mut found: Vec<&str> = platforms.keys().map(String::as_str).collect();
-    found.sort_unstable();
-    let mut wanted = expected.clone();
-    wanted.sort_unstable();
-    if found != wanted {
-        return Err(format!(
-            "feed platforms are {found:?}, this release publishes {wanted:?}"
-        ));
-    }
-
-    let mut stdout = std::io::stdout();
-    for platform in expected {
-        let entry = platforms
-            .get(platform)
-            .ok_or_else(|| format!("{platform}: missing from the feed"))?;
-        let field = |name: &str| {
-            entry
-                .get(name)
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| format!("{platform}: no {name}"))
-        };
-        let url = field("url")?;
-        let signature = field("signature")?;
-        let sha256 = field("sha256")?;
-
-        let file_name = url
-            .rsplit('/')
-            .next()
-            .filter(|name| !name.is_empty() && *name != ".." && !name.contains('\\'))
-            .ok_or_else(|| format!("{platform}: no file name in {url}"))?;
-        let file = dir.join(file_name);
-        let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
-
-        if !sha256_hex(&bytes).eq_ignore_ascii_case(sha256) {
-            return Err(format!(
-                "{platform}: {file_name} does not match the sha256 in the feed"
-            ));
-        }
-        verify_signature(&pubkey, &bytes, signature).map_err(|_| {
-            format!("{platform}: the signature of {file_name} does not verify with the public key")
-        })?;
-        writeln!(stdout, "{platform}: {file_name} hash and signature ok")
-            .map_err(|e| e.to_string())?;
-    }
-
-    Ok(())
+    Ok(names)
 }
 
+/// Returns `name` as text.
+///
+/// # Errors
+///
+/// Returns [`CliError::FileNameNotUtf8`], naming `directory`, when `name` is
+/// not UTF-8.
+fn utf8_file_name(name: OsString, directory: &Path) -> CliResult<String> {
+    name.into_string()
+        .map_err(|name| CliError::FileNameNotUtf8 {
+            directory: directory.to_path_buf(),
+            name,
+        })
+}
+
+/// Writes `line` and a newline to standard output.
+///
+/// # Errors
+///
+/// Returns [`CliError::Output`] when the write fails, as it does when the
+/// reader of a pipe has gone away.
+fn print_line(line: impl std::fmt::Display) -> CliResult<()> {
+    writeln!(std::io::stdout(), "{line}").map_err(CliError::Output)
+}
 #[cfg(test)]
 mod tests {
-    use super::{USAGE, run, unpublished_assets};
+    use super::{CliError, USAGE, describe, run, unpublished_assets, utf8_file_name};
     use base64::Engine;
     use minisign::KeyPair;
     use oikonomia_update::sha256_hex;
@@ -307,6 +606,11 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    /// Runs the tool and returns a failure as the line it would print.
+    fn run_text(list: &[&str]) -> Result<(), String> {
+        run(&args(list)).map_err(|error| describe(&error))
     }
 
     fn text(path: &Path) -> &str {
@@ -343,7 +647,7 @@ mod tests {
             text(out),
         ];
         list.extend_from_slice(extra);
-        run(&args(&list))
+        run_text(&list)
     }
 
     fn manifest(out: &Path) -> serde_json::Value {
@@ -424,7 +728,7 @@ mod tests {
 
         let err = assemble(draft.path(), &out, &["--notes-file", "no-such-notes.txt"])
             .expect_err("no notes");
-        assert!(err.starts_with("notes:"), "{err}");
+        assert!(err.starts_with("cannot read no-such-notes.txt: "), "{err}");
     }
 
     #[test]
@@ -437,10 +741,34 @@ mod tests {
             vec!["verify", "--manifest", "latest.json"],
             vec!["checksums", "--dir", "."],
             vec!["verify-feed", "--manifest", "latest.json", "--dir", "."],
+            // A flag is not a value: `--out` has none here.
+            vec!["checksums", "--dir", ".", "--out", "--with-windows"],
+            vec![
+                "assemble",
+                "--version",
+                "--base-url",
+                "u",
+                "--dir",
+                ".",
+                "--out",
+                "o",
+            ],
+            vec![
+                "assemble",
+                "--version",
+                "v1",
+                "--base-url",
+                "u",
+                "--dir",
+                ".",
+                "--out",
+                "o",
+                "--notes-file",
+            ],
         ];
 
         for list in incomplete {
-            assert_eq!(run(&args(&list)), Err(USAGE.to_owned()), "{list:?}");
+            assert_eq!(run_text(&list), Err(USAGE.to_owned()), "{list:?}");
         }
     }
 
@@ -449,13 +777,13 @@ mod tests {
         let draft = draft();
         let out = draft.path().join("SHA256SUMS");
 
-        run(&args(&[
+        run_text(&[
             "checksums",
             "--dir",
             text(draft.path()),
             "--out",
             text(&out),
-        ]))
+        ])
         .expect("checksums");
 
         let written = std::fs::read_to_string(&out).expect("read");
@@ -481,13 +809,13 @@ mod tests {
         }
 
         // Running again must not list the checksum file itself.
-        run(&args(&[
+        run_text(&[
             "checksums",
             "--dir",
             text(draft.path()),
             "--out",
             text(&out),
-        ]))
+        ])
         .expect("second run");
         assert_eq!(std::fs::read_to_string(&out).expect("read"), written);
     }
@@ -498,13 +826,13 @@ mod tests {
         std::fs::write(empty.path().join("stray.msi"), b"x").expect("stray");
         let out = empty.path().join("SHA256SUMS");
 
-        let err = run(&args(&[
+        let err = run_text(&[
             "checksums",
             "--dir",
             text(empty.path()),
             "--out",
             text(&out),
-        ]))
+        ])
         .expect_err("nothing to list");
 
         assert!(err.ends_with("no published files to checksum"), "{err}");
@@ -516,7 +844,7 @@ mod tests {
         let draft = draft();
         let dir = text(draft.path());
 
-        run(&args(&["fixed-copies", "--dir", dir])).expect("fixed copies");
+        run_text(&["fixed-copies", "--dir", dir]).expect("fixed copies");
 
         for (fixed, source) in [
             ("Oikonomia-macos-arm64.dmg", DMG),
@@ -537,14 +865,14 @@ mod tests {
         );
 
         // A second run, as after an interrupted promotion, still works.
-        run(&args(&["fixed-copies", "--dir", dir, "--with-windows"])).expect("rerun");
+        run_text(&["fixed-copies", "--dir", dir, "--with-windows"]).expect("rerun");
         assert_eq!(
             std::fs::read(draft.path().join("Oikonomia-windows-x64-setup.exe")).expect("copy"),
             std::fs::read(draft.path().join(SETUP)).expect("source")
         );
 
         let out = draft.path().join("SHA256SUMS");
-        run(&args(&["checksums", "--dir", dir, "--out", text(&out)])).expect("checksums");
+        run_text(&["checksums", "--dir", dir, "--out", text(&out)]).expect("checksums");
         let written = std::fs::read_to_string(&out).expect("read");
         assert!(
             written.contains("  Oikonomia-macos-arm64.dmg\n"),
@@ -561,7 +889,7 @@ mod tests {
         let draft = draft();
         std::fs::remove_file(draft.path().join(DEB)).expect("remove deb");
 
-        let err = run(&args(&["fixed-copies", "--dir", text(draft.path())])).expect_err("no deb");
+        let err = run_text(&["fixed-copies", "--dir", text(draft.path())]).expect_err("no deb");
 
         assert_eq!(err, "no .deb file for linux-deb");
         assert!(!draft.path().join("Oikonomia-linux-amd64.deb").exists());
@@ -590,7 +918,7 @@ mod tests {
     }
 
     fn verify(manifest: &Path, sig: &Path, pubkey: &str) -> Result<(), String> {
-        run(&args(&[
+        run_text(&[
             "verify",
             "--manifest",
             text(manifest),
@@ -598,7 +926,7 @@ mod tests {
             text(sig),
             "--pubkey",
             pubkey,
-        ]))
+        ])
     }
 
     #[test]
@@ -617,17 +945,17 @@ mod tests {
         let (_, _, other_pubkey) = signed_manifest(other.path());
 
         let err = verify(&manifest, &sig, &other_pubkey).expect_err("another key");
-        assert!(err.starts_with("verify:"), "{err}");
+        assert_eq!(err, "update manifest signature is invalid");
 
         let err = verify(&manifest, &sig, "not a key").expect_err("bad key");
-        assert!(err.starts_with("pubkey:"), "{err}");
+        assert_eq!(err, "updater public key is missing or invalid");
 
         let err = verify(&manifest, &dir.path().join("gone.sig"), &pubkey).expect_err("no sig");
         assert!(err.contains("gone.sig"), "{err}");
 
         std::fs::write(&manifest, br#"{"version":"9.9.9"}"#).expect("tamper");
         let err = verify(&manifest, &sig, &pubkey).expect_err("tampered");
-        assert!(err.starts_with("verify:"), "{err}");
+        assert_eq!(err, "update manifest signature is invalid");
 
         let err = verify(&dir.path().join("gone.json"), &sig, &pubkey).expect_err("no manifest");
         assert!(err.contains("gone.json"), "{err}");
@@ -635,8 +963,8 @@ mod tests {
 
     #[test]
     fn fixed_names_runs_with_and_without_windows() {
-        assert_eq!(run(&args(&["fixed-names"])), Ok(()));
-        assert_eq!(run(&args(&["fixed-names", "--with-windows"])), Ok(()));
+        assert_eq!(run_text(&["fixed-names"]), Ok(()));
+        assert_eq!(run_text(&["fixed-names", "--with-windows"]), Ok(()));
     }
 
     /// A draft whose feed artifacts carry real signatures, written the way
@@ -676,7 +1004,7 @@ mod tests {
             pubkey,
         ];
         list.extend_from_slice(extra);
-        run(&args(&list))
+        run_text(&list)
     }
 
     #[test]
@@ -757,7 +1085,79 @@ mod tests {
             format!("windows-x86_64: the signature of {SETUP} does not verify with the public key")
         );
 
-        let err = verify_feed(draft.path(), &feed, "not a key", &[]).expect_err("bad key");
-        assert!(err.starts_with("pubkey:"), "{err}");
+        let err = verify_feed(draft.path(), &feed, "not a key", &["--with-windows"])
+            .expect_err("bad key");
+        assert_eq!(err, "updater public key is missing or invalid");
+    }
+
+    #[test]
+    fn a_failure_is_printed_with_its_cause() {
+        let missing = Path::new("no-such-file.json");
+        let error = CliError::io("read", missing)(std::io::Error::other("disk on fire"));
+
+        assert_eq!(error.to_string(), "cannot read no-such-file.json");
+        assert_eq!(
+            describe(&error),
+            "cannot read no-such-file.json: disk on fire"
+        );
+    }
+
+    #[test]
+    fn verify_feed_refuses_a_feed_that_is_not_the_json_the_client_reads() {
+        let draft = draft();
+        let feed = draft.path().join("latest.json");
+        std::fs::write(&feed, br#"{"version":"0.2.0"}"#).expect("feed");
+
+        let err = verify_feed(draft.path(), &feed, "any key", &[]).expect_err("no platforms");
+
+        assert!(
+            err.starts_with(&format!("cannot parse {}: ", feed.display())),
+            "{err}"
+        );
+        assert!(err.contains("platforms"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_name_that_is_not_utf8_is_an_error_not_a_skipped_file() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let name = std::ffi::OsString::from_vec(vec![b'a', 0xff, b'.', b'd', b'e', b'b']);
+
+        let error = utf8_file_name(name, Path::new("artifacts")).expect_err("not UTF-8");
+
+        assert_eq!(
+            error.to_string(),
+            "file name in artifacts is not UTF-8: a\u{fffd}.deb"
+        );
+        assert_eq!(
+            utf8_file_name("Oikonomia.deb".into(), Path::new("artifacts")).expect("UTF-8"),
+            "Oikonomia.deb"
+        );
+    }
+
+    // macOS refuses to create a file whose name is not UTF-8, so the listing
+    // itself can only be exercised on Linux.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn checksums_refuse_a_directory_holding_a_name_that_is_not_utf8() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let draft = draft();
+        let name = std::ffi::OsString::from_vec(vec![b'a', 0xff, b'.', b'd', b'e', b'b']);
+        std::fs::write(draft.path().join(name), b"x").expect("file");
+        let out = draft.path().join("SHA256SUMS");
+
+        let err = run_text(&[
+            "checksums",
+            "--dir",
+            text(draft.path()),
+            "--out",
+            text(&out),
+        ])
+        .expect_err("a name that is not UTF-8");
+
+        assert!(err.contains("is not UTF-8"), "{err}");
+        assert!(!out.exists());
     }
 }
