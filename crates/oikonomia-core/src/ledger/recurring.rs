@@ -8,9 +8,10 @@ use super::journals::{
     PostSimpleEntry, PostedEntryView, SimpleBillStatus, SimpleEntryKind, ensure_simple_entry_roles,
     post_simple_entry_unchecked,
 };
+use crate::db::{corrupt_column, read_column, stored_date, stored_uuid};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{Error, Result, ValidationError};
-use crate::util::{format_date, now_utc_string, parse_date, parse_uuid, utc_today};
+use crate::util::{format_date, now_utc_string, parse_date, utc_today};
 
 /// How often a template produces the next occurrence.
 ///
@@ -190,12 +191,12 @@ pub fn list_recurring_templates_as_of(
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let rows = stmt
-        .query_map([entity_id.0.to_string()], map_template_row)
+        .query_map([entity_id.0.to_string()], |row| Ok(map_template_row(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut out = Vec::new();
     for row in rows {
-        let stored = row.map_err(|err| Error::Io(err.to_string()))?;
+        let stored = row.map_err(|err| Error::Io(err.to_string()))??;
         out.push(stored.into_view(today));
     }
     Ok(out)
@@ -712,75 +713,71 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
         WHERE id = ?1
         ",
         [id.0.to_string()],
-        map_template_row,
+        |row| Ok(map_template_row(row)),
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound("recurring template".into()),
         other => Error::Io(other.to_string()),
-    })
+    })?
 }
 
-fn map_template_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredTemplate> {
-    let id = RecurringTemplateId(
-        parse_uuid(&row.get::<_, String>(0)?).map_err(|e| sql_conversion_error(0, &e))?,
-    );
-    let entity_id =
-        EntityId(parse_uuid(&row.get::<_, String>(1)?).map_err(|e| sql_conversion_error(1, &e))?);
-    let kind = parse_kind(&row.get::<_, String>(3)?).map_err(|e| sql_conversion_error(3, &e))?;
-    let cadence =
-        parse_cadence(&row.get::<_, String>(5)?).map_err(|e| sql_conversion_error(5, &e))?;
-    let day_raw: Option<i64> = row.get(6)?;
-    let day_of_month = day_raw
-        .map(|n| u8::try_from(n).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(6, n)))
+/// Maps a row selected as `id, entity_id, name, kind, amount_minor, cadence,
+/// day_of_month`, the five role account ids, then `memo, next_date, bill_status`.
+fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
+    let id = stored_uuid("recurring_templates.id", &read_column::<String>(row, 0)?)?;
+    let entity_id = stored_uuid(
+        "recurring_templates.entity_id",
+        &read_column::<String>(row, 1)?,
+    )?;
+    let kind = parse_kind(&read_column::<String>(row, 3)?)?;
+    let cadence = parse_cadence(&read_column::<String>(row, 5)?)?;
+    let day_of_month = read_column::<Option<i64>>(row, 6)?
+        .map(stored_day_of_month)
         .transpose()?;
-    let next_date =
-        parse_date(&row.get::<_, String>(13)?).map_err(|e| sql_conversion_error(13, &e))?;
-    let bill_raw: Option<String> = row.get(14)?;
-    let bill_status = bill_raw
-        .map(|s| parse_bill_status(&s).map_err(|e| sql_conversion_error(14, &e)))
+    let next_date = stored_date(
+        "recurring_templates.next_date",
+        &read_column::<String>(row, 13)?,
+    )?;
+    let bill_status = read_column::<Option<String>>(row, 14)?
+        .map(|text| parse_bill_status(&text))
         .transpose()?;
 
     Ok(StoredTemplate {
-        id,
-        entity_id,
-        name: row.get(2)?,
+        id: RecurringTemplateId(id),
+        entity_id: EntityId(entity_id),
+        name: read_column(row, 2)?,
         kind,
         bill_status,
-        amount_minor: row.get(4)?,
+        amount_minor: read_column(row, 4)?,
         cadence,
         day_of_month,
-        category_account_id: opt_account_from_row(row, 7)?,
-        wallet_account_id: opt_account_from_row(row, 8)?,
-        payable_account_id: opt_account_from_row(row, 9)?,
-        from_account_id: opt_account_from_row(row, 10)?,
-        to_account_id: opt_account_from_row(row, 11)?,
-        memo: row.get(12)?,
+        category_account_id: stored_account(row, 7, "recurring_templates.category_account_id")?,
+        wallet_account_id: stored_account(row, 8, "recurring_templates.wallet_account_id")?,
+        payable_account_id: stored_account(row, 9, "recurring_templates.payable_account_id")?,
+        from_account_id: stored_account(row, 10, "recurring_templates.from_account_id")?,
+        to_account_id: stored_account(row, 11, "recurring_templates.to_account_id")?,
+        memo: read_column(row, 12)?,
         next_date,
     })
 }
 
-fn opt_account_from_row(
-    row: &rusqlite::Row<'_>,
-    idx: usize,
-) -> rusqlite::Result<Option<AccountId>> {
-    let raw: Option<String> = row.get(idx)?;
-    match raw {
-        None => Ok(None),
-        Some(s) => parse_uuid(&s)
-            .map(|id| Some(AccountId(id)))
-            .map_err(|e| sql_conversion_error(idx, &e)),
-    }
+fn stored_day_of_month(stored: i64) -> Result<u8> {
+    u8::try_from(stored).map_err(|_| {
+        corrupt_column(
+            "recurring_templates.day_of_month",
+            format_args!("not a day of the month: {stored}"),
+        )
+    })
 }
 
-fn sql_conversion_error(col: usize, err: &Error) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        col,
-        rusqlite::types::Type::Text,
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            err.to_string(),
-        )),
-    )
+fn stored_account(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+    column: &str,
+) -> Result<Option<AccountId>> {
+    read_column::<Option<String>>(row, index)?
+        .map(|text| stored_uuid(column, &text).map(AccountId))
+        .transpose()
 }
 
 fn opt_account(id: Option<AccountId>) -> Option<String> {
@@ -802,9 +799,10 @@ fn parse_kind(s: &str) -> Result<SimpleEntryKind> {
         "income" => Ok(SimpleEntryKind::Income),
         "bill" => Ok(SimpleEntryKind::Bill),
         "transfer" => Ok(SimpleEntryKind::Transfer),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown recurring kind: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "recurring_templates.kind",
+            format_args!("unknown recurring kind: {other}"),
+        )),
     }
 }
 
@@ -821,9 +819,10 @@ fn parse_cadence(s: &str) -> Result<RecurringCadence> {
         "monthly" => Ok(RecurringCadence::Monthly),
         "weekly" => Ok(RecurringCadence::Weekly),
         "yearly" => Ok(RecurringCadence::Yearly),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown recurring cadence: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "recurring_templates.cadence",
+            format_args!("unknown recurring cadence: {other}"),
+        )),
     }
 }
 
@@ -840,9 +839,10 @@ fn parse_bill_status(s: &str) -> Result<SimpleBillStatus> {
         "paid" => Ok(SimpleBillStatus::Paid),
         "unpaid" => Ok(SimpleBillStatus::Unpaid),
         "pay_existing" => Ok(SimpleBillStatus::PayExisting),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown recurring bill_status: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "recurring_templates.bill_status",
+            format_args!("unknown recurring bill_status: {other}"),
+        )),
     }
 }
 

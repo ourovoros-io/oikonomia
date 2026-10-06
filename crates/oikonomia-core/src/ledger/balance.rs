@@ -3,6 +3,7 @@
 use rusqlite::Connection;
 use time::Date;
 
+use crate::db::corrupt_column;
 use crate::domain::{AccountId, AccountType, EntityId};
 use crate::error::{Error, Result};
 use crate::util::format_date;
@@ -178,8 +179,9 @@ pub(crate) fn parse_account_type(s: &str) -> Result<AccountType> {
         "equity" => Ok(AccountType::Equity),
         "income" => Ok(AccountType::Income),
         "expense" => Ok(AccountType::Expense),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown account type: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "accounts.account_type",
+            format_args!("unknown account type: {other}"),
+        )),
     }
 }

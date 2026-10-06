@@ -4,6 +4,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
+use crate::db::read_column;
 use crate::domain::{AccountType, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{
@@ -580,13 +581,13 @@ fn account_activity_lines(
                 format_date(to),
                 account_type.map(account_type_str),
             ],
-            map_report_line,
+            |row| Ok(map_report_line(row)),
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut lines = Vec::new();
     for row in rows {
-        lines.push(row.map_err(|err| Error::Io(err.to_string()))?);
+        lines.push(row.map_err(|err| Error::Io(err.to_string()))??);
     }
     Ok(lines)
 }
@@ -727,19 +728,15 @@ fn fiscal_year_start(as_of: Date, start_month: u8) -> Date {
     }
 }
 
-fn map_report_line(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReportLine> {
-    let type_s: String = row.get(2)?;
-    let account_type = parse_account_type(&type_s).map_err(|e| {
-        rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            e.to_string(),
-        )))
-    })?;
-    let debits: i64 = row.get(3)?;
-    let credits: i64 = row.get(4)?;
+/// Maps a row selected as `code, name, account_type, debits, credits`.
+fn map_report_line(row: &rusqlite::Row<'_>) -> Result<ReportLine> {
+    let account_type = parse_account_type(&read_column::<String>(row, 2)?)?;
+    let debits: i64 = read_column(row, 3)?;
+    let credits: i64 = read_column(row, 4)?;
+
     Ok(ReportLine {
-        code: row.get(0)?,
-        name: row.get(1)?,
+        code: read_column(row, 0)?,
+        name: read_column(row, 1)?,
         account_type,
         debit_minor: debits,
         credit_minor: credits,

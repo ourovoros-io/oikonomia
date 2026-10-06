@@ -4,11 +4,12 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::coa::template_accounts;
+use crate::db::{corrupt_column, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
-use crate::util::{now_utc_string, parse_uuid};
+use crate::util::now_utc_string;
 
 /// Input for creating a new entity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,10 +42,14 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let rows = stmt
-        .query_map([], map_entity)
+        .query_map([], |row| Ok(map_entity(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    collect_rows(rows)
+    let mut entities = Vec::new();
+    for row in rows {
+        entities.push(row.map_err(|err| Error::Io(err.to_string()))??);
+    }
+    Ok(entities)
 }
 
 /// Fetch one entity by id.
@@ -59,12 +64,12 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
         FROM entities WHERE id = ?1
         ",
         [id.0.to_string()],
-        map_entity,
+        |row| Ok(map_entity(row)),
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound("entity".into()),
         other => Error::Io(other.to_string()),
-    })
+    })?
 }
 
 /// Create entity and seed chart of accounts from template, atomically.
@@ -346,34 +351,27 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
     Ok(())
 }
 
-fn map_entity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entity> {
-    let id_s: String = row.get(0)?;
-    let id = parse_uuid(&id_s).map_err(|e| sql_conversion_error(0, &e))?;
-    let template_s: String = row.get(4)?;
-    let template = parse_chart_template(&template_s).map_err(|e| sql_conversion_error(4, &e))?;
-    let month_raw: i64 = row.get(3)?;
-    let month = u8::try_from(month_raw)
-        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(3, month_raw))?;
+/// Maps a row selected as `id, name, base_currency, fiscal_year_start_month,
+/// chart_template`.
+fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
+    let id = stored_uuid("entities.id", &read_column::<String>(row, 0)?)?;
+    let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
+
+    let stored_month: i64 = read_column(row, 3)?;
+    let fiscal_year_start_month = u8::try_from(stored_month).map_err(|_| {
+        corrupt_column(
+            "entities.fiscal_year_start_month",
+            format_args!("not a month: {stored_month}"),
+        )
+    })?;
 
     Ok(Entity {
         id: EntityId(id),
-        name: row.get(1)?,
-        base_currency: row.get(2)?,
-        fiscal_year_start_month: month,
-        chart_template: template,
+        name: read_column(row, 1)?,
+        base_currency: read_column(row, 2)?,
+        fiscal_year_start_month,
+        chart_template,
     })
-}
-
-/// Map a domain error to rusqlite's row-conversion failure for column `col`.
-fn sql_conversion_error(col: usize, err: &Error) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        col,
-        rusqlite::types::Type::Text,
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            err.to_string(),
-        )),
-    )
 }
 
 /// Persist `ChartTemplate` as the stable on-disk string.
@@ -391,19 +389,9 @@ fn parse_chart_template(s: &str) -> Result<ChartTemplate> {
         "personal" => Ok(ChartTemplate::Personal),
         "company" => Ok(ChartTemplate::Company),
         "blank" => Ok(ChartTemplate::Blank),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown chart template: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "entities.chart_template",
+            format_args!("unknown chart template: {other}"),
+        )),
     }
-}
-
-fn collect_rows<T, E>(rows: impl Iterator<Item = std::result::Result<T, E>>) -> Result<Vec<T>>
-where
-    E: std::fmt::Display,
-{
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row.map_err(|err| Error::Io(err.to_string()))?);
-    }
-    Ok(out)
 }

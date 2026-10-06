@@ -5,6 +5,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
+use crate::db::stored_date;
 use crate::domain::{AccountType, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, normal_balance, parse_account_type};
@@ -252,7 +253,7 @@ fn daily_activity(
     for row in rows {
         let (date_text, type_text, debits, credits) =
             row.map_err(|err| Error::Io(err.to_string()))?;
-        let date = parse_date(&date_text)?;
+        let date = stored_date("journal_entries.entry_date", &date_text)?;
         let account_type = parse_account_type(&type_text)?;
         let amount = normal_balance(account_type, debits, credits);
 
@@ -295,8 +296,9 @@ fn active_entry_bounds(
         })
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    Ok((
-        earliest.as_deref().map(parse_date).transpose()?,
-        latest.as_deref().map(parse_date).transpose()?,
-    ))
+    let stored_bound = |text: Option<String>| {
+        text.map(|text| stored_date("journal_entries.entry_date", &text))
+            .transpose()
+    };
+    Ok((stored_bound(earliest)?, stored_bound(latest)?))
 }
