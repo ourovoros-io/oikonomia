@@ -1,25 +1,69 @@
 //! Non-secret UI preferences stored as plaintext JSON in the data directory.
 //!
-//! Kept outside the encrypted vault on purpose: the tray menu and window
-//! chrome must be built in the user's locale before any password has been
-//! entered. Nothing stored here is sensitive.
+//! # Why outside the vault
 //!
-//! There is no theme preference: the app is dark-only, so a `"theme"` key in
-//! a file written by an older build is ignored on load.
+//! The file `ui-prefs.json` is kept outside the encrypted vault on purpose:
+//! the tray menu and window chrome must be built in the user's language
+//! before any password has been entered. It holds the app language and the
+//! ids of the book and accounts last used in quick add; no name, amount or
+//! other ledger content.
+//!
+//! # What is stored
+//!
+//! [`UiPrefs`] is the whole file. Its [`Locale`] is the app language, which
+//! is more than a display setting: it also decides the language of text core
+//! writes into books (see [`Locale`]).
+//!
+//! # Reading and writing
+//!
+//! - [`load_ui_prefs`] never fails. A missing or undecodable file gives the
+//!   defaults, because a damaged preferences file must not stop the app from
+//!   starting.
+//! - [`save_ui_prefs`] writes a temporary file and renames it over the
+//!   target, so a reader sees the old file or the new one, complete.
+//! - A change is a load, an edit and a save. Nothing here locks, so two
+//!   writers can lose each other's change; callers that change the file
+//!   serialise themselves with a lock of their own.
+//!
+//! # The first run
+//!
+//! [`resolve_locale`] picks the language from the system's preferred
+//! languages once, when the file has no `locale` key, and stores it. After
+//! that the stored value wins, so a user who chose English on a Greek system
+//! stays in English. [`stored_locale`] is how "never chosen" is told from
+//! "chose English", which the default value of the field cannot express.
+//!
+//! # Compatibility
+//!
+//! Builds of different ages share the file, so [`UiPrefs`] ignores unknown
+//! keys and defaults missing ones. There is no theme preference: the app is
+//! dark-only, so a `"theme"` key written by an older build is one of the
+//! ignored keys.
 
+use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
-use crate::error::{Error, Result};
-
-/// Native UI locale (tray, dialogs). Webview i18n is separate.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The language of the app.
+///
+/// One stored value governs three things:
+///
+/// - the native UI the desktop shell builds itself: the tray menu, native
+///   window titles and file-dialog filters;
+/// - the web UI, which asks the shell for this value at startup and uses it
+///   as its language;
+/// - text that core writes into a book and that stays there: seeded account
+///   names and generated descriptions ([`crate::text`]). That text keeps the
+///   language it was written in when this value changes later.
+///
+/// Serialized as the lowercase two-letter code (`"en"`, `"el"`, `"fr"`,
+/// `"de"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Locale {
-    /// English (the default).
+    /// English, the default.
     #[default]
     En,
     /// Greek.
@@ -30,11 +74,16 @@ pub enum Locale {
     De,
 }
 
-/// Most system language tags considered when picking the first-run language.
+/// The number of system language tags read when picking the first-run
+/// language; later tags are ignored.
 const MAX_SYSTEM_LANGUAGES: usize = 16;
 
-/// Longest system language tag considered, in characters. BCP 47 tags in
-/// practice stay well below this; anything longer is not a language tag.
+/// The longest system language tag considered, in characters; a longer one
+/// is skipped.
+///
+/// 35 is the smallest buffer RFC 5646 (section 4.4.1) recommends for a
+/// language tag. A longer tag can be valid; it is skipped here so that the
+/// work per tag stays bounded whatever the system reports.
 const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
 
 impl Locale {
@@ -104,8 +153,12 @@ impl Locale {
     }
 }
 
-/// Last role-account picks for a single entity+kind tray post.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// The accounts last used for one kind of quick-add entry in one entity.
+///
+/// Each field is an account id as text, or `None` when that kind of entry
+/// does not use the field or nothing was remembered. The ids are not checked
+/// here; an account may have been archived or removed since.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LastRoleAccounts {
     /// The expense or income category last posted to.
@@ -120,7 +173,7 @@ pub struct LastRoleAccounts {
     pub to_account_id: Option<String>,
 }
 
-/// Non-secret UI preferences.
+/// The contents of the preferences file.
 ///
 /// Older and newer builds share one file, so loading is forgiving in three
 /// ways: a key this build does not know is ignored, a missing key takes its
@@ -130,15 +183,16 @@ pub struct LastRoleAccounts {
 ///
 /// Saving writes only the fields below, so a key or a locale value this build
 /// could not read is not carried over to the saved file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiPrefs {
-    /// Native locale for tray menu, window titles, and file-dialog filters.
+    /// The app language; see [`Locale`] for what it governs.
     #[serde(deserialize_with = "known_locale_or_default")]
     pub locale: Locale,
-    /// Last entity used in the tray quick-add panel.
+    /// The id of the entity last used in quick add, as text.
     pub last_entity_id: Option<String>,
-    /// Map key: `"{entity_id}:{kind}"` (kind = expense|income|bill|transfer).
+    /// The accounts last used in quick add, keyed by entity and entry kind
+    /// with the key [`last_accounts_key`] builds.
     pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
 }
 
@@ -171,22 +225,37 @@ where
     }
 }
 
-/// Build the map key for last-used accounts.
+/// Returns the key of [`UiPrefs::last_accounts_by_entity_kind`] for an entity
+/// and an entry kind: `"{entity_id}:{kind}"`.
+///
+/// Neither part is checked. The desktop shell passes the entity's id and the
+/// entry kind as the UI names it.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::prefs::last_accounts_key;
+///
+/// assert_eq!(last_accounts_key("ent-1", "expense"), "ent-1:expense");
+/// ```
 #[must_use]
 pub fn last_accounts_key(entity_id: &str, kind: &str) -> String {
     format!("{entity_id}:{kind}")
 }
 
-/// Path of the preferences file inside the app data directory.
+/// Returns the path of the preferences file, `ui-prefs.json` in `data_dir`.
 #[must_use]
 pub fn ui_prefs_path(data_dir: &Path) -> PathBuf {
     data_dir.join("ui-prefs.json")
 }
 
-/// Load preferences.
+/// Returns the stored preferences, or the defaults when there are none to
+/// read.
 ///
-/// A missing or unreadable file yields the defaults: a corrupt preferences
-/// file must never block startup, it just costs the saved choices.
+/// A file that is missing or cannot be read gives the defaults silently. A
+/// file that is not a [`UiPrefs`] gives the defaults too, with a warning in
+/// the log. Nothing is an error: a damaged preferences file must not stop
+/// the app from starting, it only costs the saved choices.
 #[must_use]
 pub fn load_ui_prefs(data_dir: &Path) -> UiPrefs {
     let path = ui_prefs_path(data_dir);
@@ -233,12 +302,14 @@ pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
 ///
 /// This loads the file, changes the one field and saves the result with
 /// [`save_ui_prefs`], which replaces the file by renaming a temporary one over
-/// it. Callers hold the prefs lock so that no other writer saves between the
-/// load and the save.
+/// it. Nothing here locks: a caller that can race another writer must hold a
+/// lock of its own across the call, or a save made between this
+/// load and this save is lost.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the file cannot be written.
+/// Returns [`Error::Io`] when the data directory cannot be created or the
+/// file cannot be written, as [`save_ui_prefs`] does.
 pub fn store_locale(data_dir: &Path, locale: Locale) -> Result<()> {
     let mut prefs = load_ui_prefs(data_dir);
     prefs.locale = locale;
@@ -246,28 +317,32 @@ pub fn store_locale(data_dir: &Path, locale: Locale) -> Result<()> {
     save_ui_prefs(data_dir, &prefs)
 }
 
-/// Outcome of [`resolve_locale`].
+/// What [`resolve_locale`] found or decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocaleResolution {
     /// The language the app uses from now on.
     pub locale: Locale,
-    /// True when this call chose and stored it, so native text needs a refresh.
+    /// `true` when this call chose the language and stored it, so native text
+    /// built from the earlier default needs a refresh.
     pub newly_stored: bool,
 }
 
-/// The app language, choosing it from the system on the very first run.
+/// Returns the app language, choosing it from the system on the very first
+/// run.
 ///
 /// When a locale is already stored it is returned unchanged and nothing is
 /// written: the system language is consulted once per installation, so a user
 /// who chose English on a Greek system stays in English. Otherwise the
 /// language is mapped from `system_languages`, stored, and returned.
 ///
-/// Callers hold the prefs lock so the check and the write cannot interleave
+/// Nothing here locks: a caller holds its own lock across the call so that
+/// the check and the write cannot interleave
 /// with a language change.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the chosen locale cannot be written.
+/// Returns [`Error::Io`] when a language is chosen and cannot be stored. A
+/// call that finds a stored language writes nothing and cannot fail.
 pub fn resolve_locale<S: AsRef<str>>(
     data_dir: &Path,
     system_languages: &[S],
@@ -288,31 +363,27 @@ pub fn resolve_locale<S: AsRef<str>>(
     })
 }
 
-/// Path of the temporary file a save is staged in before it replaces the
-/// preferences file.
-fn ui_prefs_temporary_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("ui-prefs.json.tmp")
-}
-
-/// Persist preferences.
+/// Writes `prefs` as the preferences file, replacing the one that is there.
 ///
-/// The JSON is written to a temporary sibling file and renamed over the
-/// target, so a reader (and a crash) sees either the old or the new complete
-/// file, never a truncated one. A stale temporary file left by an earlier
-/// crash is removed first, and a failed write leaves none behind. File modes
-/// are unchanged: the preferences file is not part of the vault and holds
-/// nothing sensitive.
+/// The JSON is written to a temporary sibling file, flushed to disk, and
+/// renamed over the target, so a reader (and a crash) sees either the old or
+/// the new complete file, never a truncated one. A temporary file left by an
+/// earlier crash is removed first, and a failed write leaves none behind.
+///
+/// The file gets the process's default permissions, not the owner-only mode
+/// of vault files: it is not part of the vault.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the data directory cannot be created or the
-/// file cannot be written.
+/// Returns [`Error::Io`], with the cause in its text, when the data directory
+/// cannot be created, the preferences cannot be encoded as JSON, or the
+/// temporary file cannot be written or renamed into place.
 pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
     fs::create_dir_all(data_dir)
-        .map_err(|e| Error::Io(format!("could not create data directory: {e}")))?;
+        .map_err(|err| Error::Io(format!("could not create data directory: {err}")))?;
 
     let json = serde_json::to_string_pretty(prefs)
-        .map_err(|e| Error::Io(format!("could not encode ui prefs: {e}")))?;
+        .map_err(|err| Error::Io(format!("could not encode ui prefs: {err}")))?;
 
     let temporary = ui_prefs_temporary_path(data_dir);
     remove_stale_temporary(&temporary);
@@ -320,13 +391,20 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
     let staged = write_synced(&temporary, json.as_bytes())
         .and_then(|()| fs::rename(&temporary, ui_prefs_path(data_dir)));
 
-    staged.map_err(|e| {
+    staged.map_err(|err| {
         remove_stale_temporary(&temporary);
-        Error::Io(format!("could not write ui prefs: {e}"))
+        Error::Io(format!("could not write ui prefs: {err}"))
     })
 }
 
-/// Write `bytes` to a new file at `path` and flush them to disk.
+/// Returns the path of the temporary file a save is staged in before it
+/// replaces the preferences file.
+fn ui_prefs_temporary_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("ui-prefs.json.tmp")
+}
+
+/// Writes `bytes` to a new file at `path`, truncating one that exists, and
+/// flushes them to disk.
 fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
 
@@ -335,7 +413,8 @@ fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Remove a leftover temporary file; absence is the normal case.
+/// Removes a leftover temporary file, logging a failure other than the file
+/// not being there, which is the normal case.
 fn remove_stale_temporary(path: &Path) {
     match fs::remove_file(path) {
         Ok(()) => {}
