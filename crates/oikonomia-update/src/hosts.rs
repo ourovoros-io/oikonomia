@@ -1,4 +1,15 @@
 //! Allow-list for every URL this crate fetches.
+//!
+//! The allow-list is not what makes an update trustworthy; the signature
+//! over the feed and over the artifact is. It limits where the app will
+//! connect at all. Without it a redirect, or a manifest signed by mistake
+//! with a wrong URL, could send the request, which names the running version
+//! and platform, to a host that has nothing to do with the release. With it
+//! the only hosts ever contacted are the ones GitHub serves release assets
+//! from, and only over https.
+//!
+//! The client asks [`HostPolicy::is_allowed_fetch_url`] before every request,
+//! including each hop of a redirect it follows.
 
 use url::Url;
 
@@ -11,90 +22,89 @@ const PRODUCTION_HOSTS: &[&str] = &[
     "release-assets.githubusercontent.com",
 ];
 
-/// Which hosts (and schemes) a check/install may contact.
+/// The schemes and hosts a check or an install may contact.
 #[derive(Debug, Clone)]
 pub(crate) struct HostPolicy {
+    /// Whether plain `http` is accepted beside `https`. Only the test policy
+    /// sets it, for servers on the loopback interface.
     allow_http: bool,
+    /// The host names a URL may have, compared exactly: a subdomain of a
+    /// listed host is not allowed unless it is listed itself.
     hosts: Vec<String>,
 }
 
 impl HostPolicy {
-    /// Production: https only, GitHub release hosts only.
+    /// Returns the policy the application ships with: https only, and only
+    /// the hosts GitHub serves release assets from.
     #[must_use]
     pub(crate) fn production() -> Self {
-        let mut hosts = Vec::new();
-        for host in PRODUCTION_HOSTS {
-            hosts.push((*host).to_owned());
-        }
         Self {
             allow_http: false,
-            hosts,
+            hosts: PRODUCTION_HOSTS
+                .iter()
+                .map(|host| (*host).to_owned())
+                .collect(),
         }
     }
 
-    /// True when `url` may be fetched (manifest, detached sig, or artifact).
+    /// Returns whether `url` may be requested: the feed, its detached
+    /// signature, an artifact, or a redirect from any of them.
     #[must_use]
     pub(crate) fn is_allowed_fetch_url(&self, url: &Url) -> bool {
-        let scheme_ok = url.scheme() == "https" || (self.allow_http && url.scheme() == "http");
-        if !scheme_ok {
-            return false;
-        }
-        let Some(host) = url.host_str() else {
-            return false;
-        };
-        for allowed in &self.hosts {
-            if allowed == host {
-                return true;
-            }
-        }
-        false
+        let scheme_allowed = url.scheme() == "https" || (self.allow_http && url.scheme() == "http");
+
+        scheme_allowed
+            && url
+                .host_str()
+                .is_some_and(|host| self.hosts.iter().any(|allowed| allowed == host))
     }
 
-    /// Artifact URLs must pass [`Self::is_allowed_fetch_url`] and must not be `.deb`.
+    /// Returns whether `url` may be offered as the artifact to install: it
+    /// must pass [`Self::is_allowed_fetch_url`] and must not be a `.deb`.
     ///
-    /// Linux in-app updates are `AppImage` only; `.deb` stays a manual download.
+    /// A Debian package is installed by the system package manager, never by
+    /// the app, so a manifest that offers one for in-app install is refused.
+    /// On Linux the in-app artifact is the `AppImage`.
     #[must_use]
     pub(crate) fn is_allowed_artifact_url(&self, url: &Url) -> bool {
-        if !self.is_allowed_fetch_url(url) {
-            return false;
-        }
-        let path = url.path();
-        if path_ends_with_ignore_ascii_case(path, ".deb") {
-            return false;
-        }
-        true
+        self.is_allowed_fetch_url(url) && !ends_with_ignore_ascii_case(url.path(), ".deb")
     }
-}
-
-fn path_ends_with_ignore_ascii_case(path: &str, suffix: &str) -> bool {
-    let path = path.as_bytes();
-    let suffix = suffix.as_bytes();
-    if path.len() < suffix.len() {
-        return false;
-    }
-    let start = path.len() - suffix.len();
-    path[start..].eq_ignore_ascii_case(suffix)
 }
 
 #[cfg(test)]
 impl HostPolicy {
-    /// Local httptest servers. Never used by the desktop production constructor.
+    /// Returns a policy for local test servers: `http` is accepted, and only
+    /// `hosts` may be contacted.
+    ///
+    /// Compiled for tests only, so a release build has no way to accept
+    /// plain `http` or a host outside [`PRODUCTION_HOSTS`].
     #[must_use]
     pub(crate) fn test_http_hosts(hosts: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        let mut allowed = Vec::new();
-        for host in hosts {
-            allowed.push(host.into());
-        }
         Self {
             allow_http: true,
-            hosts: allowed,
+            hosts: hosts.into_iter().map(Into::into).collect(),
         }
     }
 }
 
+/// Returns whether `text` ends with `suffix`, comparing ASCII letters without
+/// regard to case.
+///
+/// Compares bytes, so no string is sliced and a multi-byte character near
+/// the end of `text` cannot cause a panic.
+fn ends_with_ignore_ascii_case(text: &str, suffix: &str) -> bool {
+    let text = text.as_bytes();
+    let suffix = suffix.as_bytes();
+
+    text.len()
+        .checked_sub(suffix.len())
+        .and_then(|start| text.get(start..))
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::HostPolicy;
+    use super::{HostPolicy, ends_with_ignore_ascii_case};
     use url::Url;
 
     #[test]
@@ -107,6 +117,20 @@ mod tests {
         assert!(!policy.is_allowed_artifact_url(&file));
         assert!(!policy.is_allowed_fetch_url(&http));
         assert!(!policy.is_allowed_artifact_url(&other));
+    }
+
+    #[test]
+    fn production_rejects_a_subdomain_and_a_lookalike_of_an_allowed_host() {
+        let policy = HostPolicy::production();
+
+        for url in [
+            "https://evil.github.com/payload",
+            "https://github.com.evil.example/payload",
+            "https://notgithub.com/payload",
+        ] {
+            let url = Url::parse(url).expect("url");
+            assert!(!policy.is_allowed_fetch_url(&url), "{url}");
+        }
     }
 
     #[test]
@@ -128,6 +152,10 @@ mod tests {
         .expect("url");
         assert!(policy.is_allowed_fetch_url(&url));
         assert!(!policy.is_allowed_artifact_url(&url));
+
+        let shouting =
+            Url::parse("https://github.com/o/r/releases/download/v1/OIKONOMIA.DEB").expect("url");
+        assert!(!policy.is_allowed_artifact_url(&shouting));
     }
 
     #[test]
@@ -154,5 +182,15 @@ mod tests {
         let other = Url::parse("https://evil.example/payload").expect("url");
         assert!(!policy.is_allowed_fetch_url(&other));
         assert!(!policy.is_allowed_artifact_url(&other));
+    }
+
+    #[test]
+    fn suffix_comparison_handles_short_and_multi_byte_text() {
+        assert!(ends_with_ignore_ascii_case("a.DeB", ".deb"));
+        assert!(!ends_with_ignore_ascii_case("deb", ".deb"));
+        assert!(!ends_with_ignore_ascii_case("", ".deb"));
+        // The last four bytes start inside the two-byte `é`.
+        assert!(!ends_with_ignore_ascii_case("\u{e9}deb", ".deb"));
+        assert!(ends_with_ignore_ascii_case("\u{e9}.deb", ".deb"));
     }
 }
