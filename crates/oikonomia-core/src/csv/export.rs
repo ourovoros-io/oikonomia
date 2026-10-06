@@ -30,8 +30,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::csv::CsvError;
+use crate::db::read_column;
 use crate::domain::EntityId;
-use crate::error::{DatabaseContext, Error, Result};
+use crate::error::{DatabaseContext, Error, Result, SerializationContext};
 use crate::ledger::get_entity;
 use crate::vault::files::{local_iso_date, replace_private_file};
 
@@ -105,6 +106,7 @@ pub fn default_journal_export_file_name(entity_name: &str) -> String {
 ///
 /// - [`Error::NotFound`] when the entity does not exist.
 /// - [`Error::Database`] on database errors.
+/// - [`Error::VaultCorrupt`] for a stored value of the wrong kind.
 /// - [`Error::Serialization`] when the CSV writer reports an error.
 pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<String> {
     let _entity = get_entity(conn, entity_id)?;
@@ -152,17 +154,17 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
                 CREDIT_MINOR_COLUMN,
                 "status",
             ])
-            .map_err(|err| Error::serialization("encode journal csv", err))?;
+            .serialization("encode journal CSV")?;
 
         while let Some(row) = rows.next().database("read journal for export")? {
-            let date: String = row.get(0).database("read journal export row")?;
-            let description: String = row.get(1).database("read journal export row")?;
-            let reference: Option<String> = row.get(2).database("read journal export row")?;
-            let code: String = row.get(3).database("read journal export row")?;
-            let name: String = row.get(4).database("read journal export row")?;
-            let debit: i64 = row.get(5).database("read journal export row")?;
-            let credit: i64 = row.get(6).database("read journal export row")?;
-            let status: String = row.get(7).database("read journal export row")?;
+            let date: String = read_column(row, 0)?;
+            let description: String = read_column(row, 1)?;
+            let reference: Option<String> = read_column(row, 2)?;
+            let code: String = read_column(row, 3)?;
+            let name: String = read_column(row, 4)?;
+            let debit: i64 = read_column(row, 5)?;
+            let credit: i64 = read_column(row, 6)?;
+            let status: String = read_column(row, 7)?;
 
             let description = neutralize_formula(&description);
             let reference = neutralize_formula(reference.as_deref().unwrap_or(""));
@@ -179,11 +181,11 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
                     &credit.to_string(),
                     status.as_str(),
                 ])
-                .map_err(|err| Error::serialization("encode journal csv", err))?;
+                .serialization("encode journal CSV")?;
         }
         writer
             .flush()
-            .map_err(|err| Error::serialization("encode journal csv", err))?;
+            .map_err(|err| Error::serialization("encode journal CSV", err))?;
     }
 
     // Every cell came from a `String`, so this cannot fail; the conversion

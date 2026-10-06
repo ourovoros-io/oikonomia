@@ -9,16 +9,18 @@
 //! serde_json::to_string(&prefs).serialization("encode preferences")?;
 //! ```
 //!
-//! [`DatabaseContext`], [`IoContext`] and [`SerializationContext`] are each
-//! implemented for one foreign error type only, so the compiler refuses
-//! `.io(..)` on a `rusqlite` result: a database failure cannot be filed under
-//! the code for a file failure by mistake. [`CryptoContext`] and
+//! [`DatabaseContext`] and [`IoContext`] are each implemented for one foreign
+//! error type only, and [`SerializationContext`] for the two encoders the
+//! crate uses, so the compiler refuses `.io(..)` on a `rusqlite` result: a
+//! database failure cannot be filed under the code for a file failure by
+//! mistake. [`CryptoContext`] and
 //! [`AnalysisContext`] take any error, because the failures they describe come
 //! from several libraries (Argon2 and `SQLCipher`; the image decoder and the
 //! OCR engine) and are told apart by where they happen, not by their type.
 //!
-//! The operation is a lowercase phrase with no trailing period that reads
-//! after "cannot", such as `"open vault database"`.
+//! The operation is a phrase with no trailing period that reads after
+//! "cannot", such as `"open vault database"`. It is lowercase apart from an
+//! acronym, which keeps its capitals (`"read CSV file"`, `"run OCR engine"`).
 
 use crate::error::{Error, Result};
 use std::fmt::Display;
@@ -55,7 +57,8 @@ impl<T> IoContext<T> for std::io::Result<T> {
     }
 }
 
-/// Turns a `serde_json` failure into [`Error::Serialization`].
+/// Turns a `serde_json` or `csv` encoding failure into
+/// [`Error::Serialization`].
 pub(crate) trait SerializationContext<T> {
     /// Reports the failure as an encoding or decoding failure during
     /// `operation`.
@@ -67,6 +70,12 @@ pub(crate) trait SerializationContext<T> {
 }
 
 impl<T> SerializationContext<T> for serde_json::Result<T> {
+    fn serialization(self, operation: &'static str) -> Result<T> {
+        self.map_err(|err| Error::serialization(operation, err))
+    }
+}
+
+impl<T> SerializationContext<T> for csv::Result<T> {
     fn serialization(self, operation: &'static str) -> Result<T> {
         self.map_err(|err| Error::serialization(operation, err))
     }
@@ -120,11 +129,14 @@ mod tests {
 
         let err = failed.database("read schema version").expect_err("failed");
 
-        assert_eq!(err.code(), "database");
         assert_eq!(
-            err.to_string(),
-            "read schema version: Query returned no rows"
+            err,
+            Error::Database {
+                operation: "read schema version",
+                detail: rusqlite::Error::QueryReturnedNoRows.to_string(),
+            }
         );
+        assert_eq!(err.code(), "database");
     }
 
     #[test]

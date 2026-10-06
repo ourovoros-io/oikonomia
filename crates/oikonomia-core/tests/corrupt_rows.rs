@@ -8,6 +8,7 @@ mod common;
 
 use std::fmt::Debug;
 
+use oikonomia_core::csv::export_journal_csv;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
@@ -244,4 +245,15 @@ fn a_sound_book_still_reads_back() {
     let templates = list_recurring_templates(conn, book.entity_id).expect("templates");
     let template = get_recurring_template(conn, templates[0].id).expect("template");
     assert_eq!(template.name, "Rent");
+}
+
+#[test]
+fn a_value_of_the_wrong_kind_is_corrupt_in_the_journal_export() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    // A blob where the application only ever writes text.
+    damage(conn, "UPDATE journal_entries SET description = x'00ff'");
+
+    assert_corrupt(export_journal_csv(conn, book.entity_id), "description");
 }
