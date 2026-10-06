@@ -14,7 +14,7 @@ use crate::state::{AppState, PathGrants, VaultGuard};
 use base64::Engine;
 use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
-use rusqlite::Connection;
+use oikonomia_core::vault::Connection;
 use std::path::{Path, PathBuf};
 use tauri::State;
 use tauri_plugin_dialog::FilePath;
