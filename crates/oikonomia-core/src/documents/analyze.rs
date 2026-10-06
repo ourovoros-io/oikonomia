@@ -441,23 +441,38 @@ fn read_pdf_text(data: &[u8], model_dir: Option<&Path>) -> ExtractedText {
         .map(|text| text.trim().to_owned())
         .filter(|text| !text.is_empty());
 
-    if should_ocr_pdf_images(text.as_deref())
-        && let Some(document) = &pdf.document
-        && let Some(OcrOutcome::Read(ocr_text)) =
-            ocr_pdf_images(&extract_pdf_jpeg_images(document), model_dir)
-    {
-        return ExtractedText::Read {
-            text: ocr_text,
-            origin: TextOrigin::PdfImageOcr,
-        };
-    }
+    // A PDF with a text layer is not a scan: its images are left alone.
+    let jpegs = match &pdf.document {
+        Some(document) if should_ocr_pdf_images(text.as_deref()) => {
+            extract_pdf_jpeg_images(document)
+        }
+        _ => Vec::new(),
+    };
+    pdf_text_or_image_text(text, &jpegs, model_dir)
+}
 
-    match text {
-        Some(text) => ExtractedText::Read {
+/// Chooses between the text layer of a PDF and the OCR of its images.
+///
+/// Text read from an image wins. Otherwise whatever text layer there is
+/// stands, however short. With neither, the reason OCR gave nothing is
+/// reported the way it is for an image file; a PDF with no image to read
+/// simply has no text.
+fn pdf_text_or_image_text(
+    text: Option<String>,
+    jpegs: &[Vec<u8>],
+    model_dir: Option<&Path>,
+) -> ExtractedText {
+    match (ocr_pdf_images(jpegs, model_dir), text) {
+        (Some(OcrOutcome::Read(text)), _) => ExtractedText::Read {
+            text,
+            origin: TextOrigin::PdfImageOcr,
+        },
+        (_, Some(text)) => ExtractedText::Read {
             text,
             origin: TextOrigin::DocumentText,
         },
-        None => ExtractedText::Unread(UiTextCode::NoTextExtracted),
+        (Some(failure), None) => failure.into_extracted(TextOrigin::PdfImageOcr),
+        (None, None) => ExtractedText::Unread(UiTextCode::NoTextExtracted),
     }
 }
 
@@ -1334,6 +1349,10 @@ mod tests {
     }
 
     fn analyze_pdf_notes(pdf: &[u8]) -> Vec<UiText> {
+        analyze_pdf_notes_with_models(pdf, None)
+    }
+
+    fn analyze_pdf_notes_with_models(pdf: &[u8], model_dir: Option<&Path>) -> Vec<UiText> {
         notes_of(analyze_document_bytes(
             "document.pdf",
             "application/pdf",
@@ -1344,8 +1363,59 @@ mod tests {
                 default_currency: "EUR",
                 locale: crate::prefs::Locale::En,
             },
-            None,
+            model_dir,
         ))
+    }
+
+    #[test]
+    fn a_scanned_pdf_without_a_model_directory_says_the_path_is_missing() {
+        let scan = pdf_with_images(ImagePlacement::PageXObject, &[(dct(), b"jpeg")]);
+
+        assert_eq!(
+            analyze_pdf_notes(&scan),
+            [UiText::new(UiTextCode::OcrPathMissing)]
+        );
+    }
+
+    #[test]
+    fn a_scanned_pdf_with_an_empty_model_directory_says_the_models_are_missing() {
+        let scan = pdf_with_images(ImagePlacement::PageXObject, &[(dct(), b"jpeg")]);
+        let dir = tempfile::tempdir();
+        assert!(dir.is_ok(), "the temporary directory must be created");
+        let Ok(dir) = dir else { return };
+
+        assert_eq!(
+            analyze_pdf_notes_with_models(&scan, Some(dir.path())),
+            [UiText::new(UiTextCode::OcrModelsMissing)]
+        );
+    }
+
+    #[test]
+    fn a_pdf_with_neither_text_nor_images_says_no_text_was_found() {
+        let empty = pdf_with_images(ImagePlacement::PageXObject, &[]);
+
+        assert_eq!(
+            analyze_pdf_notes(&empty),
+            [UiText::new(UiTextCode::NoTextExtracted)]
+        );
+    }
+
+    #[test]
+    fn the_text_layer_of_a_pdf_is_kept_when_its_images_cannot_be_read() {
+        let pdf = pdf_with_text_pages(&[("Paid", true)]);
+        let jpegs = [b"jpeg".to_vec()];
+
+        assert_eq!(
+            pdf_text_or_image_text(Some("Paid".into()), &jpegs, None),
+            ExtractedText::Read {
+                text: "Paid".into(),
+                origin: TextOrigin::DocumentText
+            }
+        );
+        assert_eq!(
+            codes_of(&analyze_pdf_notes(&pdf)).first(),
+            Some(&UiTextCode::ParsedFromDocumentText)
+        );
     }
 
     #[test]
