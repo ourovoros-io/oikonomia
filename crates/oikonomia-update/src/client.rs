@@ -28,8 +28,11 @@ pub(crate) const MAX_MANIFEST_BYTES: usize = 1_048_576;
 /// Bounds the detached feed signature held in memory.
 pub(crate) const MAX_SIGNATURE_BYTES: usize = 16_384;
 
-/// Bounds the artifact held in memory while it is verified.
-pub(crate) const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
+/// Artifact body cap, shared with the release size gate.
+///
+/// Defined once as [`crate::MAX_ARTIFACT_BYTES`]. The artifact download and
+/// `check_artifact_file` both read that constant.
+pub(crate) use crate::artifact_limit::MAX_ARTIFACT_BYTES;
 
 /// Bounds how many redirects one fetch follows before it is given up.
 pub(crate) const MAX_REDIRECTS: u8 = 5;
