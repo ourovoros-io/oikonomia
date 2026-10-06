@@ -274,18 +274,14 @@ mod tests {
 
     #[test]
     fn missing_file_yields_defaults() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
     }
 
     #[test]
     fn corrupt_file_yields_defaults() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         assert!(fs::write(ui_prefs_path(dir.path()), "not json").is_ok());
         assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
@@ -293,9 +289,7 @@ mod tests {
 
     #[test]
     fn unknown_fields_are_tolerated() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let json = r#"{ "theme": "light", "future_field": 42 }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
@@ -304,9 +298,7 @@ mod tests {
 
     #[test]
     fn last_used_round_trips() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let mut last_accounts = BTreeMap::new();
         last_accounts.insert(
@@ -331,9 +323,7 @@ mod tests {
 
     #[test]
     fn missing_last_used_fields_default() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let json = r#"{ "theme": "light" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
@@ -345,9 +335,7 @@ mod tests {
 
     #[test]
     fn prefs_file_from_the_paid_build_still_loads() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         // Written by builds that had a trial; the key is now unknown.
         let json = r#"{
@@ -369,9 +357,7 @@ mod tests {
 
     #[test]
     fn locale_round_trips_el() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
             locale: Locale::El,
@@ -384,9 +370,7 @@ mod tests {
 
     #[test]
     fn locale_round_trips_fr() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
             locale: Locale::Fr,
@@ -399,9 +383,7 @@ mod tests {
 
     #[test]
     fn locale_round_trips_de() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
             locale: Locale::De,
@@ -414,9 +396,7 @@ mod tests {
 
     #[test]
     fn missing_locale_defaults_to_en() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let json = r#"{ "theme": "light" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
@@ -426,9 +406,7 @@ mod tests {
 
     #[test]
     fn unknown_locale_field_is_ignored() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let json = r#"{ "theme": "light", "locale": "el", "future_field": 42 }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
@@ -443,9 +421,7 @@ mod tests {
 
     #[test]
     fn retired_theme_key_still_loads() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         // Builds before the dark-only redesign wrote a "theme" key. It must
         // load as an ignored field, never make the file read as corrupt.
@@ -538,9 +514,7 @@ mod tests {
 
     #[test]
     fn first_run_resolves_stores_and_then_never_changes() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         assert_eq!(stored_locale(dir.path()), None);
 
@@ -555,7 +529,7 @@ mod tests {
         assert_eq!(load_ui_prefs(dir.path()).locale, Locale::El);
         assert_eq!(stored_locale(dir.path()), Some(Locale::El));
 
-        let written = fs::read_to_string(ui_prefs_path(dir.path())).ok();
+        let written = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
         let again = resolve_locale(dir.path(), &["fr-FR"]);
         assert_eq!(
             again,
@@ -564,17 +538,18 @@ mod tests {
                 newly_stored: false
             })
         );
-        assert_eq!(fs::read_to_string(ui_prefs_path(dir.path())).ok(), written);
+        assert_eq!(
+            fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
+            written
+        );
     }
 
     #[test]
     fn a_stored_english_choice_is_not_replaced_by_the_system_language() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         assert!(fs::write(ui_prefs_path(dir.path()), r#"{ "locale": "en" }"#).is_ok());
-        let before = fs::read_to_string(ui_prefs_path(dir.path())).ok();
+        let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
 
         let resolved = resolve_locale(dir.path(), &["el-GR"]);
         assert_eq!(
@@ -584,19 +559,20 @@ mod tests {
                 newly_stored: false
             })
         );
-        assert_eq!(fs::read_to_string(ui_prefs_path(dir.path())).ok(), before);
+        assert_eq!(
+            fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
+            before
+        );
     }
 
     #[test]
     fn an_unreadable_stored_locale_value_still_counts_as_chosen() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         // Today this loads as English; it must not be treated as a first run.
         let json = r#"{ "locale": "klingon", "last_entity_id": "ent-1" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
-        let before = fs::read_to_string(ui_prefs_path(dir.path())).ok();
+        let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
 
         let resolved = resolve_locale(dir.path(), &["el-GR"]);
         assert_eq!(
@@ -606,14 +582,15 @@ mod tests {
                 newly_stored: false
             })
         );
-        assert_eq!(fs::read_to_string(ui_prefs_path(dir.path())).ok(), before);
+        assert_eq!(
+            fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
+            before
+        );
     }
 
     #[test]
     fn a_file_without_a_locale_key_is_a_first_run_that_keeps_other_prefs() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let mut last_accounts = BTreeMap::new();
         last_accounts.insert(
@@ -654,9 +631,7 @@ mod tests {
     #[test]
     fn empty_and_corrupt_files_are_a_first_run() {
         for content in ["", "not json", "[1, 2]", "null", "{\"locale\": "] {
-            let Ok(dir) = tempdir() else {
-                return;
-            };
+            let dir = tempdir().unwrap();
 
             assert!(fs::write(ui_prefs_path(dir.path()), content).is_ok());
             assert_eq!(stored_locale(dir.path()), None, "{content:?}");
@@ -677,9 +652,7 @@ mod tests {
 
     #[test]
     fn store_locale_replaces_only_the_locale() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
             locale: Locale::En,
@@ -700,9 +673,7 @@ mod tests {
 
     #[test]
     fn a_whitespace_only_file_is_a_first_run() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         assert!(fs::write(ui_prefs_path(dir.path()), " \n\t ").is_ok());
         assert_eq!(stored_locale(dir.path()), None);
@@ -710,15 +681,13 @@ mod tests {
 
     #[test]
     fn a_null_locale_counts_as_stored_and_is_not_rewritten() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         // Today `null` fails the enum, so the whole file reads as corrupt
         // and loads as the defaults (English); the key still counts as stored.
         // Both are pinned here, not endorsed.
         assert!(fs::write(ui_prefs_path(dir.path()), r#"{"locale": null}"#).is_ok());
-        let before = fs::read_to_string(ui_prefs_path(dir.path())).ok();
+        let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
 
         let resolved = resolve_locale(dir.path(), &["el-GR"]);
         assert_eq!(
@@ -728,19 +697,20 @@ mod tests {
                 newly_stored: false
             })
         );
-        assert_eq!(fs::read_to_string(ui_prefs_path(dir.path())).ok(), before);
+        assert_eq!(
+            fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
+            before
+        );
     }
 
     #[test]
     fn a_wrong_case_locale_counts_as_stored_and_is_not_rewritten() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         // The enum is lowercase-only, so "EL" does not parse: the file loads
         // as the defaults (English), but the key counts as chosen.
         assert!(fs::write(ui_prefs_path(dir.path()), r#"{"locale": "EL"}"#).is_ok());
-        let before = fs::read_to_string(ui_prefs_path(dir.path())).ok();
+        let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
 
         let resolved = resolve_locale(dir.path(), &["fr-FR"]);
         assert_eq!(
@@ -750,14 +720,15 @@ mod tests {
                 newly_stored: false
             })
         );
-        assert_eq!(fs::read_to_string(ui_prefs_path(dir.path())).ok(), before);
+        assert_eq!(
+            fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
+            before
+        );
     }
 
     #[test]
     fn a_save_leaves_no_temporary_file_and_the_target_parses() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
             locale: Locale::De,
@@ -766,15 +737,13 @@ mod tests {
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
 
         assert!(!ui_prefs_temporary_path(dir.path()).exists());
-        let text = fs::read_to_string(ui_prefs_path(dir.path())).unwrap_or_default();
+        let text = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
         assert_eq!(serde_json::from_str::<UiPrefs>(&text).ok(), Some(prefs));
     }
 
     #[test]
     fn a_stale_temporary_file_does_not_break_a_save() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         assert!(fs::write(ui_prefs_temporary_path(dir.path()), "{\"locale\": ").is_ok());
 
@@ -790,9 +759,7 @@ mod tests {
 
     #[test]
     fn loading_ignores_a_temporary_file() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         let temporary = ui_prefs_temporary_path(dir.path());
         assert!(fs::write(&temporary, r#"{"locale": "de"}"#).is_ok());
@@ -810,9 +777,7 @@ mod tests {
 
     #[test]
     fn a_failed_write_leaves_no_temporary_file() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().unwrap();
 
         // A directory at the target makes the rename fail after the write.
         assert!(fs::create_dir(ui_prefs_path(dir.path())).is_ok());

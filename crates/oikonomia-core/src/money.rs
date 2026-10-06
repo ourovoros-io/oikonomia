@@ -92,13 +92,8 @@ mod tests {
 
     #[test]
     fn add_and_sub() {
-        let a = Money::from_minor(100);
-        let b = Money::from_minor(40);
-        assert!(a.is_ok());
-        assert!(b.is_ok());
-
-        let a = a.unwrap_or(Money::ZERO);
-        let b = b.unwrap_or(Money::ZERO);
+        let a = Money::from_minor(100).unwrap();
+        let b = Money::from_minor(40).unwrap();
 
         assert_eq!(a.checked_add(b).map(Money::amount_minor), Ok(140));
         assert_eq!(a.checked_sub(b).map(Money::amount_minor), Ok(60));

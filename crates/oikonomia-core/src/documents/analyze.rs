@@ -1042,7 +1042,7 @@ mod tests {
     fn page_by_page_extraction_joins_the_pages_in_order() {
         let pdf = pdf_with_text_pages(&[("Alpha", true), ("Omega", true)]);
 
-        let text = pdf_text_per_page(&loaded(&pdf)).unwrap_or_default();
+        let text = pdf_text_per_page(&loaded(&pdf)).unwrap();
 
         let (alpha, omega) = (text.find("Alpha"), text.find("Omega"));
         assert!(
@@ -1058,7 +1058,7 @@ mod tests {
         // The whole-document pass gives up on this file; the fallback reads
         // the page it can.
         assert_eq!(pdf_text_whole(&loaded(&pdf)), None);
-        let text = pdf_text(&loaded(&pdf)).unwrap_or_default();
+        let text = pdf_text(&loaded(&pdf)).unwrap();
 
         assert!(text.contains("Readable"), "unexpected text: {text:?}");
         assert!(!text.contains("Broken"), "unexpected text: {text:?}");
@@ -1076,7 +1076,7 @@ mod tests {
     fn page_by_page_extraction_reads_the_synthetic_invoice() {
         let pdf = include_bytes!("../../testdata/documents/synthetic/pdf/english_total.pdf");
 
-        let text = pdf_text_per_page(&loaded(pdf)).unwrap_or_default();
+        let text = pdf_text_per_page(&loaded(pdf)).unwrap();
 
         assert!(text.contains("45"), "unexpected text: {text:?}");
     }
@@ -1387,8 +1387,7 @@ mod tests {
     fn a_scanned_pdf_with_an_empty_model_directory_says_the_models_are_missing() {
         let scan = pdf_with_images(ImagePlacement::PageXObject, &[(dct(), b"jpeg")]);
         let dir = tempfile::tempdir();
-        assert!(dir.is_ok(), "the temporary directory must be created");
-        let Ok(dir) = dir else { return };
+        let dir = dir.expect("the temporary directory must be created");
 
         assert_eq!(
             analyze_pdf_notes_with_models(&scan, Some(dir.path())),
@@ -1486,8 +1485,7 @@ mod tests {
             },
             None,
         );
-        assert!(suggestion.is_ok(), "analysis must succeed");
-        let Ok(suggestion) = suggestion else { return };
+        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(
             code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -1546,7 +1544,7 @@ mod tests {
 
             let suggestion = analyze_unpaid_bill(template, &accounts);
             assert!(suggestion.is_some(), "{template:?}: analysis must succeed");
-            let Some(suggestion) = suggestion else { return };
+            let suggestion = suggestion.unwrap();
 
             assert_eq!(
                 code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -1569,8 +1567,7 @@ mod tests {
         });
 
         let suggestion = analyze_unpaid_bill(ChartTemplate::Blank, &accounts);
-        assert!(suggestion.is_some(), "analysis must succeed");
-        let Some(suggestion) = suggestion else { return };
+        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(
             code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -1589,8 +1586,7 @@ mod tests {
         accounts.retain(|account| account.account_type != AccountType::Liability);
 
         let suggestion = analyze_unpaid_bill(ChartTemplate::Blank, &accounts);
-        assert!(suggestion.is_some(), "analysis must succeed");
-        let Some(suggestion) = suggestion else { return };
+        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(suggestion.payable_account_id, None);
         assert!(
@@ -1696,8 +1692,7 @@ mod tests {
         assert_eq!(analyzer_status(None).hint, AnalyzerHint::ModelsMissing);
 
         let dir = tempfile::tempdir();
-        assert!(dir.is_ok(), "the temporary directory must be created");
-        let Ok(dir) = dir else { return };
+        let dir = dir.expect("the temporary directory must be created");
         assert_eq!(
             analyzer_status(Some(dir.path())).hint,
             AnalyzerHint::ModelsMissing

@@ -142,8 +142,8 @@ mod tests {
     use super::*;
 
     fn journal_line(debit: i64, credit: i64) -> JournalLine {
-        let debit = Money::from_minor(debit).unwrap_or(Money::ZERO);
-        let credit = Money::from_minor(credit).unwrap_or(Money::ZERO);
+        let debit = Money::from_minor(debit).unwrap();
+        let credit = Money::from_minor(credit).unwrap();
 
         JournalLine {
             id: JournalLineId::new(),

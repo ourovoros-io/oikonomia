@@ -811,8 +811,7 @@ mod tests {
     #[test]
     fn a_filename_clash_on_insert_is_a_taken_name() {
         let err = clash_error(("id-1", "bill.pdf"), ("id-2", "bill.pdf"));
-        assert!(err.is_some(), "the second insert must fail");
-        let Some(err) = err else { return };
+        let err = err.expect("the second insert must fail");
 
         assert_eq!(
             document_insert_error(&err, "bill.pdf"),
@@ -825,8 +824,7 @@ mod tests {
     #[test]
     fn a_primary_key_clash_on_insert_is_not_a_taken_name() {
         let err = clash_error(("id-1", "bill.pdf"), ("id-1", "other.pdf"));
-        assert!(err.is_some(), "the second insert must fail");
-        let Some(err) = err else { return };
+        let err = err.expect("the second insert must fail");
 
         assert!(
             matches!(document_insert_error(&err, "other.pdf"), Error::Io(_)),

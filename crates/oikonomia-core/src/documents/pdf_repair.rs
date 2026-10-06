@@ -425,7 +425,7 @@ mod tests {
               xref\n0 1\n0000000000 65535 f \n\
               trailer\n<</Prev 0000007>>\nstartxref\n0000007\n%%EOF";
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
 
         assert_eq!(
             repaired.len(),
@@ -450,7 +450,7 @@ mod tests {
 
         assert_eq!(&data[19..26], b"1 0 obj", "test fixture geometry");
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
         assert!(!repaired.is_empty(), "repair must apply");
 
         let text = String::from_utf8_lossy(&repaired);
@@ -492,7 +492,7 @@ mod tests {
         assert_eq!(&data[25..32], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[40..44], b"xref", "test fixture geometry");
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
 
         let text = String::from_utf8_lossy(&repaired);
         assert!(text.contains("0000000025 00000 n"), "entry patched: {text}");
@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(&data[20..27], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[35..39], b"xref", "test fixture geometry");
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
 
         let text = String::from_utf8_lossy(&repaired);
         assert!(text.contains("0000000020 00000 n"), "entry patched: {text}");
@@ -552,7 +552,9 @@ mod tests {
     /// The offsets a table of 20-byte entries holds, in order.
     fn entry_offsets(data: &[u8], entries: usize) -> Vec<usize> {
         let text = String::from_utf8_lossy(data);
-        let table = text.find("xref\n").unwrap_or_default();
+        let table = text
+            .find("xref\n")
+            .expect("the fixture has a classic table");
 
         text[table..]
             .lines()
@@ -567,7 +569,7 @@ mod tests {
         let objects = 5_000;
         let (data, offsets) = pdf_with_stale_entries(objects);
 
-        let repaired = repair_xref_offsets(&data).unwrap_or_default();
+        let repaired = repair_xref_offsets(&data).unwrap();
 
         assert_eq!(repaired.len(), data.len(), "width-preserving");
         assert_eq!(entry_offsets(&repaired, objects), offsets);
@@ -578,7 +580,7 @@ mod tests {
         let objects = MAX_REPAIRED_ENTRIES + 10;
         let (data, offsets) = pdf_with_stale_entries(objects);
 
-        let repaired = repair_xref_offsets(&data).unwrap_or_default();
+        let repaired = repair_xref_offsets(&data).unwrap();
 
         assert_eq!(repaired.len(), data.len(), "width-preserving");
         let after = entry_offsets(&repaired, objects);
@@ -605,7 +607,7 @@ mod tests {
         assert_eq!(&data[28..35], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[45..49], b"xref", "test fixture geometry");
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
 
         let text = String::from_utf8_lossy(&repaired);
         assert!(text.contains("0000000028 00000 n"), "entry patched: {text}");

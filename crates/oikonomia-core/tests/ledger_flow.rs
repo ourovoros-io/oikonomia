@@ -13,19 +13,13 @@ use tempfile::tempdir;
 
 #[test]
 fn personal_books_expense_and_reports() {
-    let Ok(dir) = tempdir() else {
-        return;
-    };
-    let Ok(mut vault) = Vault::open_path(dir.path()) else {
-        return;
-    };
-    assert!(vault.init("correct horse battery staple").is_ok());
+    let dir = tempdir().unwrap();
+    let mut vault = Vault::open_path(dir.path()).unwrap();
+    vault.init("correct horse battery staple").unwrap();
 
-    let Ok(conn) = vault.connection() else {
-        return;
-    };
+    let conn = vault.connection().unwrap();
 
-    let Ok(entity) = create_entity(
+    let entity = create_entity(
         conn,
         &CreateEntity {
             name: "Personal".into(),
@@ -34,21 +28,16 @@ fn personal_books_expense_and_reports() {
             fiscal_year_start_month: Some(1),
         },
         Locale::En,
-    ) else {
-        return;
-    };
+    )
+    .unwrap();
 
-    let accounts = list_accounts(conn, entity.id).unwrap_or_default();
+    let accounts = list_accounts(conn, entity.id).unwrap();
     assert_ne!(accounts, [] as [oikonomia_core::domain::Account; 0]);
 
-    let Some(checking) = accounts.iter().find(|a| a.code == "1010") else {
-        return;
-    };
-    let Some(food) = accounts.iter().find(|a| a.code == "5100") else {
-        return;
-    };
+    let checking = accounts.iter().find(|a| a.code == "1010").unwrap();
+    let food = accounts.iter().find(|a| a.code == "5100").unwrap();
 
-    let Ok(entry) = post_entry(
+    let entry = post_entry(
         conn,
         &PostJournal {
             entity_id: entity.id,
@@ -70,36 +59,27 @@ fn personal_books_expense_and_reports() {
                 },
             ],
         },
-    ) else {
-        return;
-    };
+    )
+    .unwrap();
     assert!(!entry.is_voided);
 
-    let Ok(tb) = trial_balance(conn, entity.id, "2026-03-31") else {
-        return;
-    };
+    let tb = trial_balance(conn, entity.id, "2026-03-31").unwrap();
     assert_eq!(tb.total_debits, tb.total_credits);
     assert!(tb.total_debits >= 2_500);
 
-    let Ok(pnl) = profit_and_loss(conn, entity.id, "2026-01-01", "2026-03-31") else {
-        return;
-    };
+    let pnl = profit_and_loss(conn, entity.id, "2026-01-01", "2026-03-31").unwrap();
     assert_eq!(pnl.total_expenses, 2_500);
     assert_eq!(pnl.net_income, -2_500);
 
-    let Ok(bs) = balance_sheet(conn, entity.id, "2026-03-31") else {
-        return;
-    };
+    let bs = balance_sheet(conn, entity.id, "2026-03-31").unwrap();
     assert_eq!(bs.total_assets, bs.total_liabilities_equity);
 
     assert!(void_entry(conn, entry.entry.id, Locale::En).is_ok());
 
-    let Ok(pnl2) = profit_and_loss(conn, entity.id, "2026-01-01", "2026-03-31") else {
-        return;
-    };
+    let pnl2 = profit_and_loss(conn, entity.id, "2026-01-01", "2026-03-31").unwrap();
     assert_eq!(pnl2.total_expenses, 0);
 
-    let entities = list_entities(conn).unwrap_or_default();
+    let entities = list_entities(conn).unwrap();
     assert_eq!(entities.len(), 1);
 
     // Duplicate name rejected (case-insensitive).
@@ -117,7 +97,7 @@ fn personal_books_expense_and_reports() {
 
     assert!(delete_entity(conn, entity.id).is_ok());
     assert_eq!(
-        list_entities(conn).unwrap_or_default(),
+        list_entities(conn).unwrap(),
         [] as [oikonomia_core::domain::Entity; 0]
     );
 }
@@ -147,6 +127,7 @@ fn a_vault_holds_any_number_of_entities() {
 
     assert_eq!(count_entities(conn).ok(), Some(3));
 }
+
 #[test]
 fn a_base_currency_is_three_ascii_letters_stored_in_capitals() {
     let dir = tempdir().expect("temp dir");

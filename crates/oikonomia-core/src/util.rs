@@ -121,8 +121,8 @@ mod tests {
 
     #[test]
     fn serde_date_round_trips_as_iso_string() {
-        let date = parse_date("2026-08-10").unwrap_or(time::Date::MIN);
-        let json = serde_json::to_string(&Dated { date }).unwrap_or_default();
+        let date = parse_date("2026-08-10").unwrap();
+        let json = serde_json::to_string(&Dated { date }).unwrap();
         assert_eq!(json, r#"{"date":"2026-08-10"}"#);
 
         let back: Result<Dated> = serde_json::from_str(&json).map_err(|e| {
