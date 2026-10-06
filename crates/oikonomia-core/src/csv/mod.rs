@@ -240,9 +240,10 @@ pub struct CsvColumnMapping {
     pub reference: Option<String>,
     /// Optional column that says which way the money moved (`Debit` /
     /// `Credit`, `D` / `C`, `In` / `Out`), for files whose [`Self::amount`]
-    /// is unsigned. When set, it decides the sign of every row and an
-    /// unrecognized cell makes that row invalid. Ignored when
-    /// [`Self::debit`] and [`Self::credit`] are mapped.
+    /// is unsigned. When set, a recognized cell decides the sign of its row,
+    /// an empty cell leaves the amount's own sign, and any other cell makes
+    /// the row invalid. Ignored when [`Self::debit`] and [`Self::credit`]
+    /// are mapped.
     #[serde(default)]
     pub direction: Option<String>,
 }

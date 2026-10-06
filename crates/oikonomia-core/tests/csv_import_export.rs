@@ -442,16 +442,14 @@ fn preview_mapping_override_and_auto_detect() {
 }
 
 #[test]
-fn export_file_is_written_whole_and_leaves_no_temporary_file() {
+fn export_replaces_an_older_file_through_its_temporary_sibling() {
     let (dir, vault) = setup();
     let conn = vault.connection().expect("conn");
     let (entity_id, _accounts) = entity_with_accounts(conn);
     let dest = dir.path().join("journal.csv");
-    std::fs::write(
-        &dest,
-        "an older export that is longer than the new one\n".repeat(50),
-    )
-    .expect("older export");
+    let temporary = dir.path().join("journal.csv.tmp");
+    std::fs::write(&dest, "an older, longer export\n".repeat(50)).expect("older export");
+    std::fs::write(&temporary, "left by an export that died").expect("stale temporary");
 
     let written = write_journal_csv_file(conn, entity_id, &dest).expect("export");
 
@@ -461,8 +459,8 @@ fn export_file_is_written_whole_and_leaves_no_temporary_file() {
         export_journal_csv(conn, entity_id).expect("export text")
     );
     assert!(
-        !dir.path().join("journal.csv.tmp").exists(),
-        "the temporary file must be renamed away"
+        !temporary.exists(),
+        "the temporary file is what gets renamed into place"
     );
 }
 

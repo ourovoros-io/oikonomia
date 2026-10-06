@@ -31,6 +31,10 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// guessed at, so `0.125`, `1,234.567` and `1,2,3.45` are invalid with
 /// `exponent == 2`.
 ///
+/// With `exponent == 3` three digits after the last separator are always
+/// the fraction, so `12,345` is 12.345 and never twelve thousand; that
+/// reading is a rule of this parser, not something the cell can settle.
+///
 /// Supported examples with `exponent == 2`:
 /// - `1.234,56` / `1234,56` / `1234.56` / `1,234.56`
 /// - `1.234` / `1,234` → `123400`
@@ -50,7 +54,8 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// [`CsvError::AmountOverflow`] when the magnitude does not fit in `i64`.
 pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
     let (negative, digits) = prepare_amount(raw)?;
-    let (int_digits, frac_digits) = split_decimal(&digits, exponent)?;
+    let (int_digits, frac_digits) =
+        split_decimal(&digits, exponent).ok_or_else(|| CsvError::InvalidAmount(raw.to_owned()))?;
 
     // Checked before the fraction is padded: the padding zeros would turn a
     // bare `.` or `,` into a zero amount.
@@ -121,7 +126,8 @@ fn strip_sign(s: &str) -> (bool, &str) {
     }
 }
 
-/// Drops one three-letter code from the front, or failing that from the back.
+/// Drops a three-letter code from the front, and one from the back of what
+/// is left.
 ///
 /// A cell that is nothing but three letters is kept, so it is reported as an
 /// invalid amount instead of an empty one.
@@ -155,36 +161,34 @@ fn is_letter_code(s: &str) -> bool {
 }
 
 /// Splits an all-ASCII body of digits, `.` and `,` into integer digits and
-/// fraction digits.
+/// fraction digits, or returns `None` when the separators do not form an
+/// amount.
 ///
 /// The last separator is the decimal mark unless it is followed by exactly
 /// three digits in a currency without three decimals; then the whole body
 /// has to be a thousands grouping, because `0.125` or `1,234.567` read as
 /// thousands would silently multiply the amount.
-fn split_decimal(body: &str, exponent: u8) -> Result<(String, &str), CsvError> {
-    let invalid = || CsvError::InvalidAmount(body.to_owned());
-
+fn split_decimal(body: &str, exponent: u8) -> Option<(String, &str)> {
     let Some(decimal_mark_at) = body.rfind(['.', ',']) else {
-        return Ok((body.to_owned(), ""));
+        return Some((body.to_owned(), ""));
     };
     let (integer_part, marked_fraction) = body.split_at(decimal_mark_at);
     let (decimal_mark, fraction) = marked_fraction.split_at(1);
 
     if fraction.len() == 3 && exponent != 3 {
-        let integer_digits = grouped_digits(body, decimal_mark).ok_or_else(invalid)?;
-        return Ok((integer_digits, ""));
+        return Some((grouped_digits(body, decimal_mark)?, ""));
     }
     if fraction.len() > usize::from(exponent) {
-        return Err(invalid());
+        return None;
     }
 
     let integer_digits = if integer_part.contains(['.', ',']) {
         let separator = if decimal_mark == "." { "," } else { "." };
-        grouped_digits(integer_part, separator).ok_or_else(invalid)?
+        grouped_digits(integer_part, separator)?
     } else {
         integer_part.to_owned()
     };
-    Ok((integer_digits, fraction))
+    Some((integer_digits, fraction))
 }
 
 /// Returns the digits of `grouped` when it is a thousands grouping on
@@ -300,6 +304,16 @@ mod tests {
         assert_invalid_amount("1234.567", 2);
         assert_invalid_amount("012,345", 2);
         assert_invalid_amount("0.125", 0);
+    }
+
+    #[test]
+    fn an_invalid_amount_reports_the_cell_as_written() {
+        for raw in ["0.125 EUR", "€ 1,2,3.45", "(1.2345)", "12 abc 34"] {
+            assert_eq!(
+                parse_signed_minor(raw, 2),
+                Err(CsvError::InvalidAmount(raw.to_owned()))
+            );
+        }
     }
 
     #[test]
