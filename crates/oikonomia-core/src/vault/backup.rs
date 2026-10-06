@@ -22,16 +22,19 @@
 //!    `vault.db.restore-tmp`, then check them: the header must parse as a
 //!    header of a known format, and the database must not be plaintext
 //!    `SQLite`. Nothing live has been touched; a failure removes the two files.
-//! 2. Remove the live database's `-wal` and `-shm` sidecars. `SQLite` would
-//!    replay a log left next to a different database into it.
+//! 2. Remove the live database's `-shm` index. `SQLite` rebuilds it from the
+//!    log, so nothing is lost if the swap is undone.
 //! 3. Rename the unpacked header to `vault.header.json.restore-new`. This
 //!    file exists exactly while the swap is in progress.
-//! 4. Rename the live header and database, where present, to
-//!    `vault.header.json.restore-old` and `vault.db.restore-old`.
+//! 4. Rename the live header, write-ahead log and database, where present,
+//!    to `vault.header.json.restore-old`, `vault.db-wal.restore-old` and
+//!    `vault.db.restore-old`. The log moves with its database: `SQLite` would
+//!    replay a log left next to a different database into it, and removing
+//!    it would drop commits a crashed session left there.
 //! 5. Rename `vault.db.restore-tmp` to `vault.db`.
 //! 6. Rename `vault.header.json.restore-new` to `vault.header.json`. The
 //!    restore is committed.
-//! 7. Remove the two `restore-old` files.
+//! 7. Remove the three `restore-old` files.
 //!
 //! An error in steps 3 to 6 is undone on the spot, and a crash is settled on
 //! the next open, by the same rules:
@@ -41,13 +44,11 @@
 //!   database; it is renamed back first, so that this test stays true however
 //!   often the undo itself is interrupted. Then the `restore-old` files are
 //!   renamed back, `restore-new` is removed, and last the unpacked files.
+//!   For the same reason `vault.db.restore-tmp` is never removed while
+//!   `restore-new` exists.
 //! - `restore-new` is gone but a `restore-old` file exists: step 6 ran, so
 //!   the restore is finished by removing them.
 //! - Only `restore-tmp` files exist: step 1 was interrupted; they are removed.
-//!
-//! The sidecars removed in step 2 are not put back by an undo. They are
-//! empty or absent unless the previous session crashed, and a vault in that
-//! state should be unlocked once before it is replaced.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -60,8 +61,8 @@ use super::permissions::{create_private_dir, create_private_file};
 use super::store::Vault;
 use crate::error::{Error, Result};
 use crate::vault::files::{
-    discard_database_files, discard_file, remove_db_sidecars, remove_files_if_present,
-    rename_if_present, rename_synced, sibling_path, sync_parent_dir,
+    discard_database_files, discard_file, remove_files_if_present, rename_if_present,
+    rename_synced, sibling_path, sync_parent_dir,
 };
 use crate::vault::header::VaultHeader;
 use crate::vault::paths::{
@@ -122,9 +123,10 @@ pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
 /// The archive is unpacked next to the vault and checked before any live
 /// file is touched, and the two files are swapped by the restore protocol in
 /// the module doc, so a failure or a crash leaves either the previous vault
-/// or the restored one, never one's header with the other's database. WAL/SHM
-/// sidecars and `vault.header.json.tmp` do not survive a replace, so unlock
-/// cannot mix old recovery state with restored files.
+/// or the restored one, never one's header with the other's database. The
+/// previous vault's WAL/SHM sidecars and `vault.header.json.tmp` do not
+/// survive a completed replace, so unlock cannot mix old recovery state with
+/// restored files.
 ///
 /// # Errors
 ///
@@ -144,8 +146,7 @@ pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Resu
         .and_then(|()| refuse_overwrite(&paths, replace))
         .and_then(|()| swap_in_unpacked_pair(&paths));
     if let Err(err) = restored {
-        discard_file(&paths.unpacked_header);
-        discard_file(&paths.unpacked_db);
+        discard_unpacked_unless_swap_pending(&paths);
         return Err(err);
     }
 
@@ -169,9 +170,23 @@ pub(crate) fn recover_interrupted_restore(data_dir: &Path) -> Result<()> {
     if paths.verified_header.exists() {
         undo_swap(&paths)?;
     } else {
-        remove_files_if_present(&[&paths.old_header, &paths.old_db])?;
+        remove_files_if_present(&[&paths.old_header, &paths.old_db, &paths.old_wal])?;
     }
     remove_files_if_present(&[&paths.unpacked_header, &paths.unpacked_db])
+}
+
+/// Removes the unpacked archive after a failed restore.
+///
+/// Not while `restore-new` exists, which is the case when the undo itself
+/// failed: the undo that the next open runs reads a missing
+/// `vault.db.restore-tmp` as "the live database is the new one", and would
+/// set the previous database aside and then delete it.
+fn discard_unpacked_unless_swap_pending(paths: &RestorePaths) {
+    if paths.verified_header.exists() {
+        return;
+    }
+    discard_file(&paths.unpacked_header);
+    discard_file(&paths.unpacked_db);
 }
 
 fn unpack_and_verify(archive: &Path, paths: &RestorePaths) -> Result<()> {
@@ -202,10 +217,10 @@ fn refuse_overwrite(paths: &RestorePaths, replace: bool) -> Result<()> {
     Ok(())
 }
 
-/// Steps 2 to 7 of the restore protocol. On an error the previous pair is
-/// back in place.
+/// Steps 2 to 7 of the restore protocol. On an error the previous files are
+/// back in place, unless the error says that putting them back failed too.
 fn swap_in_unpacked_pair(paths: &RestorePaths) -> Result<()> {
-    remove_db_sidecars(&paths.db)?;
+    remove_files_if_present(&[&paths.shm])?;
 
     if let Err(err) = replace_live_pair(paths) {
         return Err(match undo_swap(paths) {
@@ -219,6 +234,7 @@ fn swap_in_unpacked_pair(paths: &RestorePaths) -> Result<()> {
     // Committed. A leftover here is removed by the next open.
     discard_file(&paths.old_header);
     discard_file(&paths.old_db);
+    discard_file(&paths.old_wal);
     Ok(())
 }
 
@@ -227,6 +243,7 @@ fn replace_live_pair(paths: &RestorePaths) -> Result<()> {
     rename_synced(&paths.unpacked_header, &paths.verified_header)?;
 
     rename_if_present(&paths.header, &paths.old_header)?;
+    rename_if_present(&paths.wal, &paths.old_wal)?;
     rename_if_present(&paths.db, &paths.old_db)?;
 
     fs::rename(&paths.unpacked_db, &paths.db).map_err(|err| Error::Io(err.to_string()))?;
@@ -247,6 +264,7 @@ fn undo_swap(paths: &RestorePaths) -> Result<()> {
     }
     rename_if_present(&paths.old_header, &paths.header)?;
     rename_if_present(&paths.old_db, &paths.db)?;
+    rename_if_present(&paths.old_wal, &paths.wal)?;
 
     remove_files_if_present(&[&paths.verified_header])?;
     sync_parent_dir(&paths.header);
@@ -407,7 +425,7 @@ fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> 
     })();
 
     if result.is_err() {
-        let _ = fs::remove_file(&tmp);
+        discard_file(&tmp);
     }
     result
 }
@@ -942,12 +960,14 @@ mod tests {
     const VERIFIED_HEADER: &str = "vault.header.json.restore-new";
     const OLD_HEADER: &str = "vault.header.json.restore-old";
     const OLD_DB: &str = "vault.db.restore-old";
-    const RESTORE_NAMES: [&str; 5] = [
+    const OLD_WAL: &str = "vault.db-wal.restore-old";
+    const RESTORE_NAMES: [&str; 6] = [
         UNPACKED_HEADER,
         UNPACKED_DB,
         VERIFIED_HEADER,
         OLD_HEADER,
         OLD_DB,
+        OLD_WAL,
     ];
 
     /// A locked vault under [`PASSWORD`] and, in a second directory, the
@@ -1333,6 +1353,56 @@ mod tests {
         assert!(!paths.verified_header.exists(), "swap marker");
         assert!(!paths.old_header.exists() && !paths.old_db.exists());
         assert_opens_with(live.path(), PASSWORD);
+    }
+
+    #[test]
+    fn a_failed_swap_puts_the_previous_write_ahead_log_back() {
+        let (live, incoming) = live_and_incoming();
+        let paths = RestorePaths::new(live.path());
+        let [wal, _shm] = db_sidecar_paths(&paths.db);
+        write_file(&wal, b"commits a crash left in the log");
+        move_file(&vault_header_path(incoming.path()), &paths.unpacked_header);
+
+        swap_in_unpacked_pair(&paths).expect_err("no database to swap in");
+
+        assert_eq!(
+            fs::read(&wal).expect("log is back"),
+            b"commits a crash left in the log"
+        );
+    }
+
+    #[test]
+    fn a_failed_restore_keeps_the_unpacked_database_while_the_swap_is_pending() {
+        let dir = TempDir::new().expect("dir");
+        let paths = RestorePaths::new(dir.path());
+        for path in [&paths.unpacked_header, &paths.unpacked_db] {
+            write_file(path, b"unpacked");
+        }
+
+        write_file(&paths.verified_header, b"marker");
+        discard_unpacked_unless_swap_pending(&paths);
+        assert!(
+            paths.unpacked_db.exists(),
+            "the pending undo reads this file"
+        );
+
+        fs::remove_file(&paths.verified_header).expect("swap settled");
+        discard_unpacked_unless_swap_pending(&paths);
+        assert!(!paths.unpacked_db.exists() && !paths.unpacked_header.exists());
+    }
+
+    #[test]
+    fn open_undoes_a_restore_and_returns_the_previous_write_ahead_log() {
+        let (live, incoming) = live_and_incoming();
+        let paths = RestorePaths::new(live.path());
+        move_file(&paths.header, &paths.old_header);
+        move_file(&paths.db, &paths.old_db);
+        write_file(&live.path().join(OLD_WAL), b"");
+        move_file(&vault_header_path(incoming.path()), &paths.verified_header);
+        move_file(&vault_db_path(incoming.path()), &paths.db);
+
+        assert_opens_with(live.path(), PASSWORD);
+        assert_no_restore_files(live.path());
     }
 
     #[test]

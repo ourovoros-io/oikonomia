@@ -31,6 +31,10 @@ pub(crate) fn sibling_path(path: &Path, suffix: &str) -> Result<PathBuf> {
 
 /// Creates or truncates the owner-only file `path`, writes `bytes` and
 /// flushes both the file and its directory entry to disk.
+///
+/// # Errors
+///
+/// [`Error::Io`] when the file cannot be created, written or flushed.
 pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = create_private_file(path)?;
     file.write_all(bytes)
@@ -61,6 +65,10 @@ pub(crate) fn replace_private_file(dest: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Renames `from` over `to` and flushes the directory so the rename survives
 /// a crash.
+///
+/// # Errors
+///
+/// [`Error::Io`] when the rename fails, including when `from` does not exist.
 pub(crate) fn rename_synced(from: &Path, to: &Path) -> Result<()> {
     fs::rename(from, to).map_err(|err| Error::Io(err.to_string()))?;
     sync_parent_dir(to);
@@ -84,6 +92,10 @@ pub(crate) fn sync_parent_dir(path: &Path) {
 }
 
 /// Removes `path`; a file that is already gone counts as removed.
+///
+/// # Errors
+///
+/// The error of the removal when `path` exists and cannot be removed.
 pub(crate) fn remove_file_if_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
         Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err),
@@ -93,6 +105,10 @@ pub(crate) fn remove_file_if_present(path: &Path) -> io::Result<()> {
 
 /// Renames `from` to `to`; a `from` that does not exist is left as a no-op,
 /// for steps that are repeated when an interrupted sequence is resumed.
+///
+/// # Errors
+///
+/// [`Error::Io`] when `from` exists and cannot be renamed.
 pub(crate) fn rename_if_present(from: &Path, to: &Path) -> Result<()> {
     match fs::rename(from, to) {
         Err(err) if err.kind() != io::ErrorKind::NotFound => Err(Error::Io(format!(
@@ -115,16 +131,6 @@ pub(crate) fn remove_files_if_present(paths: &[&Path]) -> Result<()> {
             .map_err(|err| Error::Io(format!("cannot remove {}: {err}", path.display())))?;
     }
     Ok(())
-}
-
-/// Removes the WAL and SHM sidecars of the database at `db_path`.
-///
-/// # Errors
-///
-/// [`Error::Io`] when a sidecar exists and cannot be removed.
-pub(crate) fn remove_db_sidecars(db_path: &Path) -> Result<()> {
-    let [wal, shm] = db_sidecar_paths(db_path);
-    remove_files_if_present(&[&wal, &shm])
 }
 
 /// Removes a leftover file on a path that has no error to return it through:

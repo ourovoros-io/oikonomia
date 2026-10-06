@@ -218,9 +218,12 @@ impl Vault {
         let conn = open_verified(&db_path, password, &staged)?;
 
         rename_synced(&staged_path, &vault_header_path(&self.data_dir))?;
+        // The staged header is the real one from here on, so the copy in
+        // memory follows before the migration can fail. With the old one, the
+        // next unlock would derive a key that no longer fits.
+        self.header = Some(staged);
 
         crate::db::migrate(&conn)?;
-        self.header = Some(staged);
         self.conn = Some(conn);
         Ok(())
     }
@@ -251,6 +254,10 @@ impl Vault {
     /// crypto/I/O failures. A failed verification leaves any open connection
     /// untouched. A failure after that reopens an unlocked vault under the
     /// old key when that key still fits, and leaves it locked otherwise.
+    ///
+    /// One error is returned after the change took effect: when the vault
+    /// was unlocked and cannot be reopened under the new key. The vault is
+    /// then locked and opens with the new password.
     pub fn change_password(&mut self, old: &str, new: &str) -> Result<()> {
         let header = self
             .header
@@ -392,8 +399,13 @@ fn key_check_error(err: &rusqlite::Error) -> Error {
 /// [`Error::Crypto`] or [`Error::Io`] for everything else.
 fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connection> {
     if !create {
-        let meta = fs::metadata(path)
-            .map_err(|_| Error::VaultCorrupt("vault database is missing".into()))?;
+        let meta = fs::metadata(path).map_err(|err| {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Error::VaultCorrupt("vault database is missing".into())
+            } else {
+                Error::Io(err.to_string())
+            }
+        })?;
         if meta.len() == 0 {
             return Err(Error::VaultCorrupt("vault database is empty".into()));
         }

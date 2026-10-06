@@ -83,15 +83,26 @@ pub(crate) struct RestorePaths {
     pub(crate) old_header: PathBuf,
     /// Previous live database, set aside until the swap is complete.
     pub(crate) old_db: PathBuf,
+    /// Write-ahead log of the live database.
+    pub(crate) wal: PathBuf,
+    /// Shared-memory index of the live database.
+    pub(crate) shm: PathBuf,
+    /// Previous write-ahead log, set aside with the database it belongs to.
+    pub(crate) old_wal: PathBuf,
 }
 
 impl RestorePaths {
     /// Returns the restore paths of `data_dir`.
     #[must_use]
     pub(crate) fn new(data_dir: &Path) -> Self {
+        let db = vault_db_path(data_dir);
+        let [wal, shm] = db_sidecar_paths(&db);
         Self {
             header: vault_header_path(data_dir),
-            db: vault_db_path(data_dir),
+            db,
+            wal,
+            shm,
+            old_wal: data_dir.join("vault.db-wal.restore-old"),
             unpacked_header: data_dir.join("vault.header.json.restore-tmp"),
             unpacked_db: data_dir.join("vault.db.restore-tmp"),
             verified_header: data_dir.join("vault.header.json.restore-new"),
