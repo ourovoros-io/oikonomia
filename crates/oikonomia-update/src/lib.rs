@@ -68,7 +68,10 @@
 //!    link, and on Unix one that belongs to the owner of the cache directory
 //!    and grants nothing to group or others. When its
 //!    bytes pass the checks of steps 5 and 6, the install continues at
-//!    step 8 with that file and downloads nothing.
+//!    step 8 with that file and downloads nothing. A regular file there that
+//!    is longer than [`MAX_ARTIFACT_BYTES`] cannot be the artifact of an
+//!    install this copy would make: the install fails as
+//!    [`UpdateError::ArtifactTooLarge`] and the file is removed.
 //! 4. Checks the artifact URL against the allow-list again and downloads the
 //!    artifact into memory.
 //! 5. Compares the SHA-256 of the bytes with the one in the signed feed.

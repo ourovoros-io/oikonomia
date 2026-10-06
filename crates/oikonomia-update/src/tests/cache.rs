@@ -1,5 +1,6 @@
 //! The cache directory: file names, permissions, and cleaning up.
 
+use crate::artifact_limit::MAX_ARTIFACT_BYTES;
 use crate::client::{
     ClientConfig, InstallHandoff, InstallOutcome, delete_artifact, download_and_verify,
     purge_cache, write_new_private_file,
@@ -134,6 +135,30 @@ fn a_leftover_that_is_not_the_artifact_is_removed_when_the_download_fails() {
     let err = download_and_verify(&config, &offer).expect_err("no download");
 
     assert_eq!(err.code(), "update_network");
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn a_leftover_over_the_download_cap_fails_as_too_large_and_is_removed() {
+    let (public_key, secret_key) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (config, destination) =
+        serve_release_downloaded(&server, (&public_key, &secret_key), cache.path(), 0);
+    // Sparse: only the length matters, and it is one byte past the cap the
+    // release lane and the download share.
+    let over = u64::try_from(MAX_ARTIFACT_BYTES).expect("the cap fits in a file length") + 1;
+    write_new_private_file(&destination, b"").expect("leftover");
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&destination)
+        .expect("open");
+    file.set_len(over).expect("set length");
+    let offer = available_offer(&config);
+
+    let err = download_and_verify(&config, &offer).expect_err("over the cap");
+
+    assert_eq!(err.code(), "update_artifact_too_large");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 

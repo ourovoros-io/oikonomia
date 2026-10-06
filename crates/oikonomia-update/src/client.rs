@@ -43,7 +43,7 @@
 //! two runs of the installer do to each other is the installer's concern
 //! and is not tested here.
 
-use crate::artifact_limit::MAX_ARTIFACT_BYTES;
+use crate::artifact_limit::{ArtifactSizeError, MAX_ARTIFACT_BYTES, check_artifact_file};
 use crate::error::{FeedRefusal, Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
@@ -556,9 +556,9 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 /// [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect from it,
 /// is off the allow-list; [`UpdateError::Network`] when the download fails or
 /// the server answers 204; [`UpdateError::ArtifactTooLarge`] when the
-/// artifact exceeds [`MAX_ARTIFACT_BYTES`]; and
-/// [`UpdateError::ArtifactIntegrity`] when the digest or the signature of
-/// the download does not match.
+/// artifact, or a regular file already under its name, exceeds
+/// [`MAX_ARTIFACT_BYTES`]; and [`UpdateError::ArtifactIntegrity`] when the
+/// digest or the signature of the download does not match.
 pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
     prepare_cache_dir(&config.cache_dir).map_err(UpdateError::CacheIo)?;
 
@@ -571,11 +571,15 @@ pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) 
     ));
     purge_cache(&config.cache_dir, &destination);
 
-    if holds_verified_artifact(config, offer, &destination) {
-        return Ok(destination);
-    }
+    let placed = holds_verified_artifact(config, offer, &destination).and_then(|held| {
+        if held {
+            Ok(())
+        } else {
+            download_and_verify_into(config, offer, &destination)
+        }
+    });
 
-    match download_and_verify_into(config, offer, &destination) {
+    match placed {
         Ok(()) => Ok(destination),
         Err(error) => {
             delete_artifact(&destination);
@@ -858,50 +862,90 @@ fn checked_artifact(host_policy: &HostPolicy, entry: &RawPlatform) -> Result<Che
 /// to the right bytes, because the installer is given the path, and what a
 /// link points at can change after the check.
 ///
-/// Every reason the file cannot be used reads as `false`, a failure to read
-/// it included: the caller then downloads the artifact and replaces the
-/// file, and a real fault of the cache shows there as an error.
-fn holds_verified_artifact(config: &ClientConfig, offer: &VerifiedOffer, path: &Path) -> bool {
-    read_private_file(path, MAX_ARTIFACT_BYTES)
-        .is_some_and(|bytes| verify_artifact(config, offer, &bytes).is_ok())
+/// Every other reason the file cannot be used reads as `false`, a failure
+/// to read it included: the caller then downloads the artifact and replaces
+/// the file, and a real fault of the cache shows there as an error.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ArtifactTooLarge`] when a regular file at `path`
+/// is longer than [`MAX_ARTIFACT_BYTES`].
+fn holds_verified_artifact(
+    config: &ClientConfig,
+    offer: &VerifiedOffer,
+    path: &Path,
+) -> Result<bool> {
+    let held =
+        read_leftover(path)?.is_some_and(|bytes| verify_artifact(config, offer, &bytes).is_ok());
+
+    Ok(held)
 }
 
-/// Reads the file at `path` when it is a regular file of at most `max_bytes`
-/// that, on Unix, belongs to the owner of the directory it is in and grants
+/// Reads the file an earlier attempt left at `path`, when it is one this
+/// crate could have written: a regular file within the download cap that,
+/// on Unix, belongs to the owner of the directory it is in and grants
 /// nothing to group or others.
 ///
-/// Returns `None` when there is no such file, when it is anything else (a
-/// link, a directory, a larger file, one of another owner or one more widely
-/// permitted), or when it cannot be read.
+/// Returns `None` when there is no such file, when it is a link, a
+/// directory, a file of another owner or one more widely permitted, or when
+/// it cannot be read.
+///
+/// The size is judged by [`check_artifact_file`], the check the release lane
+/// makes before publishing, so a file read back and a download have the one
+/// cap. The length is counted again while reading, in case the file grows.
 ///
 /// The kind, the owner and the mode are those of the entry itself, never of
 /// a link's target. They are read before the file is opened, so they
 /// describe the file that is read only as long as nobody else can change the
 /// directory in between; the cache directory is the user's alone for that
 /// reason.
-fn read_private_file(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
-    let metadata = std::fs::symlink_metadata(path).ok()?;
-    let directory = std::fs::metadata(path.parent()?).ok()?;
-    if !metadata.file_type().is_file() || !is_private_to_owner_of(&metadata, &directory) {
-        return None;
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ArtifactTooLarge`] when the file is a regular file
+/// longer than [`MAX_ARTIFACT_BYTES`], before reading or while reading.
+fn read_leftover(path: &Path) -> Result<Option<Vec<u8>>> {
+    match check_artifact_file(path) {
+        Ok(_length) => {}
+        Err(ArtifactSizeError::OverLimit { .. }) => return Err(UpdateError::ArtifactTooLarge),
+        Err(
+            ArtifactSizeError::Metadata { .. }
+            | ArtifactSizeError::NotAFile { .. }
+            | ArtifactSizeError::LimitUnrepresentable,
+        ) => return Ok(None),
     }
+    if !is_private_to_cache_owner(path) {
+        return Ok(None);
+    }
+    let Ok(file) = std::fs::File::open(path) else {
+        return Ok(None);
+    };
 
-    // The size is asked first so that a file that is too large is not read
-    // at all, and counted again while reading in case it grows. One byte
-    // past the limit is enough to tell.
-    let max_length = u64::try_from(max_bytes).unwrap_or(u64::MAX);
-    if metadata.len() > max_length {
-        return None;
-    }
-    let limit = max_length.saturating_add(1);
+    // One byte past the cap is enough to tell a file that has grown past it.
+    let limit = u64::try_from(MAX_ARTIFACT_BYTES).map_or(u64::MAX, |cap| cap.saturating_add(1));
     let mut bytes = Vec::new();
-    std::fs::File::open(path)
-        .ok()?
-        .take(limit)
-        .read_to_end(&mut bytes)
-        .ok()?;
+    if file.take(limit).read_to_end(&mut bytes).is_err() {
+        return Ok(None);
+    }
+    if bytes.len() > MAX_ARTIFACT_BYTES {
+        return Err(UpdateError::ArtifactTooLarge);
+    }
 
-    (bytes.len() <= max_bytes).then_some(bytes)
+    Ok(Some(bytes))
+}
+
+/// Returns whether the entry at `path` belongs to the owner of the directory
+/// it is in and, on Unix, grants nothing to group or others. False when
+/// either cannot be examined.
+fn is_private_to_cache_owner(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    let Some(Ok(directory)) = path.parent().map(std::fs::metadata) else {
+        return false;
+    };
+
+    is_private_to_owner_of(&metadata, &directory)
 }
 
 /// Returns whether the file `metadata` describes belongs to the owner of
@@ -1247,8 +1291,9 @@ fn read_capped(
 #[cfg(test)]
 mod tests {
     use super::{
-        check_feed_as_client, read_private_file, replace_with_private_file, write_new_private_file,
+        check_feed_as_client, read_leftover, replace_with_private_file, write_new_private_file,
     };
+    use crate::artifact_limit::MAX_ARTIFACT_BYTES;
     use crate::error::{FeedRefusal, UpdateError};
     use crate::feed::{FeedArtifact, assemble_manifest};
 
@@ -1349,13 +1394,26 @@ mod tests {
     }
 
     #[test]
-    fn a_private_file_is_read_back_only_within_the_size_limit() {
+    fn a_private_file_is_read_back_and_one_over_the_download_cap_is_too_large() {
         let cache = tempfile::tempdir().expect("temporary directory");
         let path = cache.path().join("artifact.AppImage");
         write_new_private_file(&path, b"four").expect("file");
+        assert_eq!(
+            read_leftover(&path).expect("within the cap"),
+            Some(b"four".to_vec())
+        );
 
-        assert_eq!(read_private_file(&path, 4), Some(b"four".to_vec()));
-        assert_eq!(read_private_file(&path, 3), None);
+        // Sparse, so the test neither writes nor reads 200 MiB: the length
+        // alone refuses the file.
+        let over = u64::try_from(MAX_ARTIFACT_BYTES).expect("the cap fits in a file length") + 1;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open");
+        file.set_len(over).expect("set length");
+
+        let err = read_leftover(&path).expect_err("over the cap");
+        assert!(matches!(err, UpdateError::ArtifactTooLarge), "{err:?}");
     }
 
     #[test]
@@ -1364,8 +1422,11 @@ mod tests {
         let directory = cache.path().join("a-directory");
         std::fs::create_dir(&directory).expect("directory");
 
-        assert_eq!(read_private_file(&directory, 16), None);
-        assert_eq!(read_private_file(&cache.path().join("absent"), 16), None);
+        assert_eq!(read_leftover(&directory).expect("a directory"), None);
+        assert_eq!(
+            read_leftover(&cache.path().join("absent")).expect("absent"),
+            None
+        );
     }
 
     #[test]
