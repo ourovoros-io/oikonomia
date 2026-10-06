@@ -1,16 +1,40 @@
 # Keeps the SHA-pinned Actions, Cargo and npm dependencies current so a pin
 # never quietly ages into a known-vulnerable version.
+#
+# Every ecosystem waits seven days before proposing a new release, so a
+# compromised or broken one has time to be noticed and pulled first, and
+# sends its updates as one pull request a week instead of one per package.
+# Neither setting delays security updates: Dependabot applies cooldown to
+# version updates only, and `applies-to` keeps the groups to those as well.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        applies-to: version-updates
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        applies-to: version-updates
+        patterns: ["*"]
