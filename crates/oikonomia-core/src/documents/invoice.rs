@@ -152,6 +152,9 @@
 //!   for carrying a percentage, and it gets the value-word weight in the
 //!   fallback. For the same reason `Subtotal amount` carries the label
 //!   `total amount` and can decide stage 1.
+//! - **An identifier marker inside a word hides its line from the
+//!   fallback.** `mark` (the MARK number) is in `supermarket`, so an amount
+//!   on a line with that word is found only by a labelled total.
 //! - **Leading zeros in a whole part are accepted beside a decimal mark.**
 //!   `01,50` reads as 1,50, although a bare `08` is not money and `01.234`
 //!   is not a thousands amount.
@@ -686,19 +689,9 @@ fn find_transfer_principal(text: &str) -> Option<i64> {
 /// `index` must be a valid index into `lines`. The next line is taken
 /// whatever it is labelled.
 fn amount_on_line_or_next(lines: &[&str], index: usize) -> Option<i64> {
-    for candidate in [lines[index], lines.get(index + 1).copied().unwrap_or("")] {
-        if candidate.is_empty() {
-            continue;
-        }
-        if let Some(amount) = money_amounts_on_line(candidate)
-            .into_iter()
-            .filter(|value| is_plausible_money(*value) && *value > 0)
-            .max()
-        {
-            return Some(amount);
-        }
-    }
-    None
+    let next = lines.get(index + 1).copied().unwrap_or("");
+
+    largest_plausible_amount(lines[index]).or_else(|| largest_plausible_amount(next))
 }
 
 /// The label of the capital debit on a transfer receipt.
@@ -741,16 +734,14 @@ fn is_transfer_fee_line(folded_line: &str) -> bool {
 }
 
 /// Whether a folded line carries the plain amount label: the word `ποσο`
-/// alone on the line, or `ποσο` anywhere on a line that has a colon and is
-/// not a fee line.
+/// alone on the line, or `ποσο` anywhere on a line that has a colon.
 ///
+/// Fee lines also say `ποσο`; the caller has skipped them before it asks.
 /// The label is matched as a substring, so a line such as `Ποσοστό:`
 /// (percentage) also counts.
 fn is_transfer_amount_label(folded_line: &str) -> bool {
     folded_line.trim() == TRANSFER_AMOUNT_LABEL
-        || (folded_line.contains(TRANSFER_AMOUNT_LABEL)
-            && folded_line.contains(':')
-            && !is_transfer_fee_line(folded_line))
+        || (folded_line.contains(TRANSFER_AMOUNT_LABEL) && folded_line.contains(':'))
 }
 
 /// The fee of a transfer: the smallest plausible amount on the first fee
@@ -764,7 +755,7 @@ fn find_transfer_fee(text: &str) -> Option<i64> {
         }
         if let Some(amount) = money_amounts_on_line(line)
             .into_iter()
-            .filter(|value| is_plausible_money(*value) && *value > 0)
+            .filter(|amount| is_plausible_money(*amount))
             .min()
         {
             return Some(amount);
@@ -969,7 +960,10 @@ const VALUE_WORDS: &[&str] = &["αξια", "value", TOTAL_WORD];
 /// The bare word the fallback favours and the percent rule exempts.
 const TOTAL_WORD: &str = "total";
 
-/// Lines that hold identifiers, never an amount.
+/// Markers of lines that hold identifiers, never an amount: the fallback
+/// skips a line with one.
+///
+/// They are matched as substrings, so `mark` also matches `supermarket`.
 const IDENTIFIER_LINE_MARKERS: &[&str] = &["iban", "α.φ.μ", "αφμ", "mark"];
 
 /// Weights of the fallback, stage 4 of [`find_total_amount`].
@@ -1025,10 +1019,7 @@ fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
             continue;
         }
         if contains_any(&folded_line, TOTALS_ROW_LABELS)
-            && let Some(largest) = money_amounts_on_line(line)
-                .into_iter()
-                .filter(|amount| is_plausible_money(*amount) && *amount > 0)
-                .max()
+            && let Some(largest) = largest_plausible_amount(line)
         {
             return Some(largest);
         }
@@ -1154,11 +1145,7 @@ fn find_labeled_total(text: &str) -> Option<i64> {
             if is_noise_amount_line(&folded_candidate) && candidate != *line {
                 continue;
             }
-            if let Some(largest) = money_amounts_on_line(candidate)
-                .into_iter()
-                .filter(|amount| is_plausible_money(*amount) && *amount > 0)
-                .max()
-            {
+            if let Some(largest) = largest_plausible_amount(candidate) {
                 return Some(largest);
             }
         }
@@ -1373,13 +1360,7 @@ fn is_amount_only_line(line: &str) -> bool {
 
 /// Whether [`first_date_on_line`] finds a date on `line`.
 fn line_has_date(line: &str) -> bool {
-    line.split_whitespace().any(|word| {
-        let token =
-            word.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
-        parse_eu_date(token)
-            .or_else(|| parse_iso_date(token))
-            .is_some()
-    })
+    first_date_on_line(line).is_some()
 }
 
 /// Characters in an ISO date, `YYYY-MM-DD`.
@@ -1569,6 +1550,15 @@ const fn has_cents(minor: i64) -> bool {
 /// Whether `minor` is in [`PLAUSIBLE_MONEY_MINOR`].
 fn is_plausible_money(minor: i64) -> bool {
     PLAUSIBLE_MONEY_MINOR.contains(&minor)
+}
+
+/// The largest plausible amount written on `line`, or `None` when it has
+/// none. An empty line has none.
+fn largest_plausible_amount(line: &str) -> Option<i64> {
+    money_amounts_on_line(line)
+        .into_iter()
+        .filter(|amount| is_plausible_money(*amount))
+        .max()
 }
 
 /// Blanks out percentages (`24%`, `13,5 %`) so a rate is never an amount.
@@ -1847,7 +1837,6 @@ fn decimal_to_minor(whole: &str, cents: Option<&str>) -> Option<i64> {
 fn find_best_date(text: &str) -> Option<String> {
     for line in text.lines() {
         if line.contains('€')
-            && line_has_date(line)
             && let Some(iso) = first_date_on_line(line)
         {
             return Some(iso);
@@ -2205,8 +2194,9 @@ fn supply_code_from_run(run: &str) -> Option<String> {
 /// 2. a known biller ([`known_brand`]);
 /// 3. on a utility bill of no known brand, a generic supplier name in
 ///    `locale`: natural gas, or electricity for a "Power Business" tariff;
-/// 4. the value of the first `Επωνυμία` (legal name) line: after its colon,
-///    or the words that follow the label;
+/// 4. the value of the first `Επωνυμία` (legal name) line: what follows its
+///    colon, or, on a line that starts with the label, what follows the
+///    label;
 /// 5. the first line of [`MERCHANT_LINE_CHARS`] characters that has a letter
 ///    and does not hold the Greek word for "invoice".
 ///
@@ -3074,6 +3064,30 @@ mod tests {
     }
 
     #[test]
+    fn a_receipt_without_a_capital_line_takes_the_plain_amount_label() {
+        let amount = |text: &str| parse_invoice_text(text, crate::prefs::Locale::En).amount_minor;
+
+        // The label with a colon, the amount beside it.
+        assert_eq!(
+            amount("Έμβασμα\nΠοσό: 310,00\nΠρομήθεια: 1,40"),
+            Some(31_000)
+        );
+        // The bare label, the amount on the line below.
+        assert_eq!(
+            amount("Έμβασμα\nΠοσό\n310,00\nΠρομήθεια 1,40"),
+            Some(31_000)
+        );
+        // A fee line that also says "amount" is not the principal.
+        assert_eq!(
+            amount("Έμβασμα\nΠοσό προμήθειας: 1,40\nΠοσό: 310,00"),
+            Some(31_000)
+        );
+        assert_eq!(amount("Έμβασμα\nΠοσό προμήθειας: 1,40"), None);
+        // Without a colon the word inside a sentence is no label.
+        assert_eq!(amount("Έμβασμα\nΤο ποσό των 310,00 μεταφέρθηκε"), None);
+    }
+
+    #[test]
     fn a_transfer_without_a_principal_asks_for_the_amount() {
         let suggestion = parse_invoice_text(
             "Εμβασμα\nΜεταφορά σε άλλη τράπεζα\n",
@@ -3562,6 +3576,17 @@ mod documented_tradeoffs {
         assert_eq!(
             read("Subtotal amount: 100,00\nBalance 124,00 €").amount_minor,
             Some(10_000)
+        );
+    }
+
+    #[test]
+    fn an_identifier_marker_inside_a_word_hides_the_line_from_the_fallback() {
+        assert_eq!(read("Supermarket 12,50 €").amount_minor, None);
+        assert_eq!(read("Grocery 12,50 €").amount_minor, Some(1_250));
+        // A labelled total is found before the fallback runs.
+        assert_eq!(
+            read("Supermarket\nAmount due 12,50 €").amount_minor,
+            Some(1_250)
         );
     }
 
