@@ -44,7 +44,9 @@ use thiserror::Error;
 mod context;
 mod validation;
 
-pub(crate) use context::{CryptoContext, DatabaseContext, IoContext, SerializationContext};
+pub(crate) use context::{
+    AnalysisContext, CryptoContext, DatabaseContext, IoContext, SerializationContext,
+};
 pub use validation::{AccountRole, ValidationError};
 
 /// The result of a fallible operation in `oikonomia-core`.
@@ -265,6 +267,11 @@ impl Error {
     /// Builds the error for a cryptographic failure during `operation`.
     pub(crate) fn crypto(operation: &'static str, detail: impl Display) -> Self {
         Self::Crypto(format!("{operation}: {detail}"))
+    }
+
+    /// Builds the error for a failure to read an image during `operation`.
+    pub(crate) fn analysis(operation: &'static str, detail: impl Display) -> Self {
+        Self::Analysis(format!("{operation}: {detail}"))
     }
 }
 

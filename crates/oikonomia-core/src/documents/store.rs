@@ -53,7 +53,7 @@ use crate::db::{read_column, stored_uuid};
 use crate::default_accounts::{account_by_codes, first_of_type};
 use crate::documents::store::Keyword::{Prefix, Unit, Word};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
 };
@@ -157,7 +157,7 @@ pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Re
 ///   that name ([`ValidationError::NameTaken`]).
 /// - [`Error::NotFound`]: no entry has `entry_id`.
 /// - [`Error::VaultCorrupt`]: the entry's stored row cannot be read back.
-/// - [`Error::Io`]: any other database failure.
+/// - [`Error::Database`]: any other database failure.
 #[expect(
     clippy::too_many_arguments,
     reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
@@ -185,7 +185,7 @@ pub fn save_document(
             rusqlite::params![entity_id.0.to_string(), name],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("check document name is free")?;
     if clash > 0 {
         return Err(Error::Validation(ValidationError::NameTaken {
             name: name.to_owned(),
@@ -250,7 +250,7 @@ fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
             name: name.to_owned(),
         })
     } else {
-        Error::Io(err.to_string())
+        Error::database("insert document", err)
     }
 }
 
@@ -295,7 +295,7 @@ pub fn attach_document(
 /// - Every error of [`save_document`].
 /// - [`Error::NotFound`] from [`save_analysis_json`], if the row written a
 ///   moment earlier in the same transaction cannot be found.
-/// - [`Error::Io`] when the transaction cannot be opened or committed.
+/// - [`Error::Database`] when the transaction cannot be opened or committed.
 #[expect(
     clippy::too_many_arguments,
     reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
@@ -310,7 +310,7 @@ pub fn post_simple_entry_with_document(
 ) -> Result<(PostedEntryView, DocumentMeta)> {
     let transaction = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin entry post with document")?;
 
     let view = post_simple_entry_unchecked(&transaction, input)?;
     let meta = save_document(
@@ -327,7 +327,7 @@ pub fn post_simple_entry_with_document(
 
     transaction
         .commit()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("commit entry post with document")?;
     Ok((view, meta))
 }
 
@@ -343,7 +343,7 @@ const DOCUMENT_META_COLUMNS: &str = "d.id, d.entity_id, d.entry_id, d.filename, 
 ///
 /// [`Error::VaultCorrupt`] when a stored id is not a UUID or a column holds
 /// a value of the wrong type: the application wrote the row, so the damage
-/// is in the vault and not in what the caller passed. [`Error::Io`] for any
+/// is in the vault and not in what the caller passed. [`Error::Database`] for any
 /// other driver failure.
 fn map_document_meta(row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
     let id = stored_uuid("documents.id", &read_column::<String>(row, 0)?)?;
@@ -370,7 +370,7 @@ fn map_document_meta(row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`]: a stored row cannot be read back.
-/// - [`Error::Io`]: any other database failure.
+/// - [`Error::Database`]: any other database failure.
 pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<DocumentMeta>> {
     // Order by created_at DESC, rowid DESC for deterministic insertion-recency order.
     // now_utc_string has 1-second granularity, so multiple documents saved in the same
@@ -385,15 +385,15 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
             ORDER BY d.created_at DESC, d.rowid DESC
             "
         ))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list documents")?;
 
     let rows = statement
         .query_map([entity_id.0.to_string()], |row| Ok(map_document_meta(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list documents")?;
 
     let mut documents = Vec::new();
     for row in rows {
-        documents.push(row.map_err(|err| Error::Io(err.to_string()))??);
+        documents.push(row.database("list documents")??);
     }
     Ok(documents)
 }
@@ -404,7 +404,7 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
 ///
 /// - [`Error::NotFound`]: no document has this id.
 /// - [`Error::VaultCorrupt`]: the stored row cannot be read back.
-/// - [`Error::Io`]: any other database failure.
+/// - [`Error::Database`]: any other database failure.
 pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, Vec<u8>)> {
     // The blob follows the eight metadata columns.
     const DATA_COLUMN: usize = 8;
@@ -426,7 +426,7 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound("document".into()),
-        other => Error::Io(other.to_string()),
+        other => Error::database("read document", other),
     })?
 }
 
@@ -435,11 +435,11 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
 /// # Errors
 ///
 /// - [`Error::NotFound`]: no document has this id.
-/// - [`Error::Io`]: the database failed.
+/// - [`Error::Database`]: the database failed.
 pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
     let deleted = conn
         .execute("DELETE FROM documents WHERE id = ?1", [id.0.to_string()])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete document")?;
     if deleted == 0 {
         return Err(Error::NotFound("document".into()));
     }
@@ -453,14 +453,14 @@ pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
 /// # Errors
 ///
 /// - [`Error::NotFound`]: no document has this id.
-/// - [`Error::Io`]: the database failed.
+/// - [`Error::Database`]: the database failed.
 pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Result<()> {
     let updated = conn
         .execute(
             "UPDATE documents SET analysis_json = ?1 WHERE id = ?2",
             rusqlite::params![json, id.0.to_string()],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("save document analysis")?;
 
     if updated == 0 {
         return Err(Error::NotFound("document".into()));
@@ -475,7 +475,7 @@ pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Resu
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`]: a stored account row cannot be read back.
-/// - [`Error::Io`]: any other database failure.
+/// - [`Error::Database`]: any other database failure.
 pub fn suggest_accounts_for_entity(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
     let mut accounts = list_accounts(conn, entity_id)?;
     accounts.retain(|account| account.is_active);
@@ -933,7 +933,10 @@ mod tests {
         let err = err.expect("the second insert must fail");
 
         assert!(
-            matches!(document_insert_error(&err, "other.pdf"), Error::Io(_)),
+            matches!(
+                document_insert_error(&err, "other.pdf"),
+                Error::Database { .. }
+            ),
             "{err}"
         );
     }

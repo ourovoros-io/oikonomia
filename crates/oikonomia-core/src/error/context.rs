@@ -91,6 +91,25 @@ where
     }
 }
 
+/// Turns an image-decoding or OCR failure into [`Error::Analysis`].
+pub(crate) trait AnalysisContext<T> {
+    /// Reports the failure as a failure to read an image during `operation`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Analysis`] carrying `operation` and the library's text.
+    fn analysis(self, operation: &'static str) -> Result<T>;
+}
+
+impl<T, E> AnalysisContext<T> for std::result::Result<T, E>
+where
+    E: Display,
+{
+    fn analysis(self, operation: &'static str) -> Result<T> {
+        self.map_err(|err| Error::analysis(operation, err))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +158,10 @@ mod tests {
         assert_eq!(
             failed.crypto("derive vault key").map_err(|err| err.code()),
             Err("crypto")
+        );
+        assert_eq!(
+            failed.analysis("decode image").map_err(|err| err.code()),
+            Err("analysis")
         );
     }
 }
