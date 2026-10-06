@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rand::Rng;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 use super::crypto::{self, VaultKey};
 use super::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
@@ -171,14 +171,27 @@ impl Vault {
     /// Recovery path for a password change that died between rekey and rename:
     /// the database is already under the staged header's key, so accept that
     /// header and promote it to be the real one.
+    ///
+    /// Called only after the real header's key failed to decrypt the
+    /// database. No staged header, or one that is not a header (a crash can
+    /// only truncate it before the rekey starts, while the old key is still
+    /// the right one), therefore means the password was simply wrong.
     fn unlock_with_staged_header(&mut self, password: &str) -> Result<()> {
         let staged_path = vault_staged_header_path(&self.data_dir);
-        let raw = fs::read_to_string(&staged_path).map_err(|_| Error::InvalidPassword)?;
-        let staged: VaultHeader = serde_json::from_str(&raw).map_err(|_| Error::InvalidPassword)?;
+        if !staged_path.exists() {
+            return Err(Error::InvalidPassword);
+        }
+        let staged = match VaultHeader::load(&staged_path) {
+            Ok(staged) => staged,
+            Err(Error::VaultCorrupt(reason)) => {
+                log::warn!("ignoring unusable staged vault header: {reason}");
+                return Err(Error::InvalidPassword);
+            }
+            Err(other) => return Err(other),
+        };
 
         let db_path = vault_db_path(&self.data_dir);
-        let conn =
-            open_verified(&db_path, password, &staged).map_err(|_| Error::InvalidPassword)?;
+        let conn = open_verified(&db_path, password, &staged)?;
 
         fs::rename(&staged_path, vault_header_path(&self.data_dir))
             .map_err(|err| Error::Io(err.to_string()))?;
@@ -299,18 +312,54 @@ fn validate_password(password: &str) -> Result<()> {
     Ok(())
 }
 
-/// Derive the key for `header` and open the database, verifying the schema
-/// is readable (i.e. the password actually matches this header).
+/// Derives the key for `header`, opens the database with it and checks that
+/// the vault's own schema is there.
+///
+/// # Errors
+///
+/// [`Error::InvalidPassword`] when the key does not decrypt the database;
+/// [`Error::VaultCorrupt`] when it does but `vault_meta` is missing or empty;
+/// otherwise whatever [`open_sqlcipher`] returns.
 fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result<Connection> {
     let key = crypto::derive_key(password, header)?;
     let conn = open_sqlcipher(db_path, &key, false)?;
 
+    let has_meta_table = conn
+        .query_row(
+            "SELECT EXISTS (
+                 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vault_meta'
+             )",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(|err| key_check_error(&err))?;
+    if !has_meta_table {
+        return Err(Error::VaultCorrupt("vault_meta table is missing".into()));
+    }
+
     conn.query_row("SELECT schema_version FROM vault_meta LIMIT 1", [], |row| {
         row.get::<_, i64>(0)
     })
-    .map_err(|_| Error::InvalidPassword)?;
+    .optional()
+    .map_err(|err| key_check_error(&err))?
+    .ok_or_else(|| Error::VaultCorrupt("vault_meta has no schema version".into()))?;
 
     Ok(conn)
+}
+
+/// Classifies a failed read of a database whose key has just been set.
+///
+/// `SQLCipher` cannot tell a wrong key from a file that is not a database:
+/// either way the first page decrypts to garbage and `SQLite` reports
+/// `SQLITE_NOTADB`. That code alone means the password may be wrong. A busy
+/// database or a disk error says nothing about the password, and reporting
+/// it as one would send the user off retyping a password that is correct.
+fn key_check_error(err: &rusqlite::Error) -> Error {
+    if err.sqlite_error_code() == Some(ErrorCode::NotADatabase) {
+        Error::InvalidPassword
+    } else {
+        Error::Io(err.to_string())
+    }
 }
 
 fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connection> {
@@ -351,13 +400,13 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     let pragma_key = crypto::key_to_sqlcipher_pragma(key);
     // `SQLCipher` requires key before other operations.
     conn.pragma_update(None, "key", pragma_key.as_str())
-        .map_err(|_| Error::InvalidPassword)?;
+        .map_err(|err| key_check_error(&err))?;
 
-    // Fail fast on wrong key / corrupt file.
+    // The key pragma only stores the key; the first read is what proves it.
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
         row.get::<_, i64>(0)
     })
-    .map_err(|_| Error::InvalidPassword)?;
+    .map_err(|err| key_check_error(&err))?;
 
     // Prefer WAL; `SQLCipher` encrypts WAL pages when key is set.
     conn.pragma_update(None, "journal_mode", "WAL")
@@ -490,6 +539,72 @@ mod tests {
             err,
             Error::VaultCorrupt("unsupported vault format 2".into())
         );
+    }
+
+    #[test]
+    fn a_vault_without_its_meta_table_is_corrupt_not_a_wrong_password() {
+        let (_dir, mut vault) = init_vault();
+        vault
+            .connection()
+            .expect("unlocked after init")
+            .execute_batch("DROP TABLE vault_meta")
+            .expect("drop meta table");
+        vault.lock();
+
+        let err = vault.unlock(PASSWORD).expect_err("meta table is gone");
+
+        assert!(matches!(err, Error::VaultCorrupt(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn a_vault_with_an_empty_meta_table_is_corrupt() {
+        let (_dir, mut vault) = init_vault();
+        vault
+            .connection()
+            .expect("unlocked after init")
+            .execute_batch("DELETE FROM vault_meta")
+            .expect("empty meta table");
+        vault.lock();
+
+        let err = vault.unlock(PASSWORD).expect_err("meta row is gone");
+
+        assert!(matches!(err, Error::VaultCorrupt(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn an_unusable_staged_header_does_not_change_a_wrong_password_error() {
+        let (dir, mut vault) = init_vault();
+        vault.lock();
+        fs::write(vault_staged_header_path(dir.path()), b"{ truncated").expect("staged");
+
+        assert_eq!(
+            vault.unlock("wrong password!!"),
+            Err(Error::InvalidPassword)
+        );
+        vault.unlock(PASSWORD).expect("the real header still works");
+    }
+
+    #[test]
+    fn a_busy_database_is_an_io_error_not_a_wrong_password() {
+        let (dir, mut vault) = init_vault();
+        vault.lock();
+
+        // A second connection that holds the database exclusively, the way
+        // another process mid-write would.
+        let header = VaultHeader::load(&vault_header_path(dir.path())).expect("header");
+        let key = crypto::derive_key(PASSWORD, &header).expect("key");
+        let holder = open_sqlcipher(&vault_db_path(dir.path()), &key, false).expect("holder");
+        holder
+            .execute_batch(
+                "PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; \
+                 CREATE TABLE held (id INTEGER); COMMIT;",
+            )
+            .expect("take the exclusive lock");
+
+        let err = vault.unlock(PASSWORD).expect_err("database is held");
+
+        assert!(matches!(err, Error::Io(_)), "got {err:?}");
+        assert_eq!(vault.status(), VaultStatus::Locked);
     }
 
     #[test]
