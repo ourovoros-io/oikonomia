@@ -146,11 +146,20 @@ impl Vault {
         }
     }
 
-    /// Unlock an existing vault.
+    /// Unlocks an existing vault and brings its schema up to date.
+    ///
+    /// On a vault that is already unlocked this returns `Ok(())` without
+    /// looking at `password`, so it cannot be used to check a password again
+    /// (to re-authenticate before a sensitive action, say). Lock first, or
+    /// use [`Vault::change_password`], which always verifies the old one.
     ///
     /// # Errors
     ///
-    /// Uninitialized vault, wrong password, or I/O/crypto failures.
+    /// [`Error::VaultUninitialized`] when there is no vault;
+    /// [`Error::InvalidPassword`] when the password does not decrypt it;
+    /// [`Error::VaultCorrupt`] when the header or database is unusable;
+    /// [`Error::Crypto`] or [`Error::Io`] otherwise, including a failed
+    /// migration.
     pub fn unlock(&mut self, password: &str) -> Result<()> {
         if self.conn.is_some() {
             return Ok(());
@@ -167,7 +176,7 @@ impl Vault {
             Ok(conn) => {
                 // A stale staged header can only be leftover from an
                 // interrupted password change that never rekeyed.
-                let _ = fs::remove_file(vault_staged_header_path(&self.data_dir));
+                discard_file(&vault_staged_header_path(&self.data_dir));
 
                 crate::db::migrate(&conn)?;
                 self.conn = Some(conn);
