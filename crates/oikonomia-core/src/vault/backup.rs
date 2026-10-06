@@ -625,7 +625,6 @@ fn encode_members(members: &[(&str, &[u8])]) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use std::path::PathBuf;
 

@@ -750,7 +750,6 @@ fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{
         AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, idle_secs, resolve_ocr_model_dir,

@@ -121,7 +121,6 @@ impl From<UpdateError> for CommandError {
 pub type CommandResult<T> = Result<T, CommandError>;
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 

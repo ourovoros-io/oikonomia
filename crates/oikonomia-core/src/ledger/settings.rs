@@ -62,7 +62,6 @@ pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
     use crate::vault::Vault;

@@ -100,6 +100,10 @@ pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Re
 ///
 /// [`Error::Validation`] for invalid files or a duplicate filename in the
 /// book; DB errors otherwise.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes travel as separate arguments; tracked for the API pass"
+)]
 pub fn save_document(
     conn: &Connection,
     entity_id: EntityId,
@@ -198,6 +202,10 @@ fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
 ///
 /// [`Error::NotFound`] for a missing entry, [`Error::Validation`] for an
 /// entry in a different book, an invalid file, or a duplicate filename.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes travel as separate arguments; tracked for the API pass"
+)]
 pub fn attach_document(
     conn: &Connection,
     entity_id: EntityId,
@@ -224,6 +232,10 @@ pub fn attach_document(
 ///
 /// All [`post_simple_entry`](crate::ledger::post_simple_entry) and
 /// [`save_document`] errors.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes travel as separate arguments; tracked for the API pass"
+)]
 pub fn post_simple_entry_with_document(
     conn: &Connection,
     input: &PostSimpleEntry,
@@ -727,6 +739,10 @@ const INCOME_KEYWORDS: &TopicKeywords = &[
     ),
 ];
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the keyword table and its catch-all are passed separately; tracked for the API pass"
+)]
 fn match_account_of_type(
     template: ChartTemplate,
     accounts: &[Account],

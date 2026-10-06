@@ -175,10 +175,6 @@ mod tests {
         synthetic_lines: Vec<String>,
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "a malformed fixture must fail the test loudly"
-    )]
     fn fixture() -> Fixture {
         serde_json::from_str(include_str!("../../../web/src/lib/uiTextCodes.json"))
             .expect("uiTextCodes.json parses")

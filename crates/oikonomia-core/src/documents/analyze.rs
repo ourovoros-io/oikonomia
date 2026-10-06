@@ -240,6 +240,10 @@ fn transfer_fee_note(fee_minor: i64, currency: &str) -> UiText {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the analysis source and model ride beside the chart inputs; tracked for the API pass"
+)]
 fn finalize_suggestion(
     s: &mut DocumentSuggestion,
     template: ChartTemplate,
@@ -775,7 +779,6 @@ mod tests {
     }
 
     /// A one-page PDF holding `images`, each `(filter, bytes)`.
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn pdf_with_images(placement: ImagePlacement, images: &[(lopdf::Object, &[u8])]) -> Vec<u8> {
         use lopdf::{Document, Object, Stream, dictionary};
 
@@ -980,7 +983,6 @@ mod tests {
     /// A PDF with one page per entry of `pages`: `(text, readable)`. A
     /// readable page shows its text in a standard font; the other names a
     /// font that is not a font object, which makes pdf-extract fail on it.
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn pdf_with_text_pages(pages: &[(&str, bool)]) -> Vec<u8> {
         use lopdf::content::{Content, Operation};
         use lopdf::{Document, Object, Stream, dictionary};
@@ -1320,7 +1322,6 @@ mod tests {
     }
 
     /// A one-page PDF whose page content is `len` spaces, Flate-compressed.
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn pdf_with_inflating_content(len: usize) -> Vec<u8> {
         use lopdf::{Document, Object, Stream, dictionary};
 

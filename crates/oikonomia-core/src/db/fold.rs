@@ -100,7 +100,6 @@ mod tests {
     use super::*;
     use rusqlite::types::Value;
 
-    #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
     fn folded(sql_text: Option<&str>) -> Option<String> {
         let conn = Connection::open_in_memory().expect("memory");
         register_fold(&conn).expect("register");
@@ -110,7 +109,6 @@ mod tests {
     }
 
     /// The value `SELECT <expression>` gives on a connection with `fold`.
-    #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
     fn value_of(expression: &str) -> Value {
         let conn = Connection::open_in_memory().expect("memory");
         register_fold(&conn).expect("register");

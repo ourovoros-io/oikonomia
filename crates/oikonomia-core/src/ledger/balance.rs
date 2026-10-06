@@ -224,7 +224,6 @@ pub(crate) fn parse_account_type(s: &str) -> Result<AccountType> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
 

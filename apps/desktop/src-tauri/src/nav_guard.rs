@@ -35,7 +35,6 @@ fn is_app_host(host: &str) -> bool {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use tauri::Url;
 

@@ -564,7 +564,6 @@ fn bootstrap_schema(conn: &Connection) -> Result<()> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
     use tempfile::{TempDir, tempdir};

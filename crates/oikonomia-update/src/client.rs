@@ -138,6 +138,10 @@ impl ClientConfig {
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every configuration field is its own argument; tracked for the API pass"
+    )]
     fn new(
         feed_url: Url,
         public_key: &str,
@@ -174,6 +178,10 @@ impl ClientConfig {
 
 #[cfg(test)]
 impl ClientConfig {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors `ClientConfig::new`, which takes every field as an argument; tracked for the API pass"
+    )]
     pub(crate) fn for_test(
         feed_url: Url,
         public_key: &str,

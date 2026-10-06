@@ -636,10 +636,6 @@ mod tests {
     }
 
     /// The parameter names the shared fixture pins for each code that has any.
-    #[expect(
-        clippy::expect_used,
-        reason = "a malformed fixture must fail the test loudly"
-    )]
     fn pinned_params() -> BTreeMap<String, Vec<String>> {
         serde_json::from_str(include_str!("../../../../web/src/lib/errorCodeParams.json"))
             .expect("errorCodeParams.json parses")

@@ -123,7 +123,6 @@ fn personal_books_expense_and_reports() {
 }
 
 #[test]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 fn a_vault_holds_any_number_of_entities() {
     let dir = tempdir().expect("temp dir");
     let mut vault = Vault::open_path(dir.path()).expect("open vault");
@@ -149,7 +148,6 @@ fn a_vault_holds_any_number_of_entities() {
     assert_eq!(count_entities(conn).ok(), Some(3));
 }
 #[test]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 fn a_base_currency_is_three_ascii_letters_stored_in_capitals() {
     let dir = tempdir().expect("temp dir");
     let mut vault = Vault::open_path(dir.path()).expect("open vault");

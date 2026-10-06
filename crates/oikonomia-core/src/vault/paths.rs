@@ -157,7 +157,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn default_data_dir_uses_ourovoros_identity() {
         let data_dir = default_data_dir().expect("app-data dir must be resolvable");
         let path_str = data_dir.to_string_lossy();

@@ -233,7 +233,6 @@ mod tests {
     use super::*;
 
     /// `len` zero bytes as a zlib stream.
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn deflated_zeros(len: usize) -> Vec<u8> {
         let mut encoder =
             flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
@@ -393,7 +392,6 @@ mod tests {
     }
 
     /// `data` packed the way a PDF `LZWDecode` stream is.
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn weezl_packed(data: &[u8]) -> Vec<u8> {
         weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
             .encode(data)

@@ -193,7 +193,6 @@ fn problem_label(locale: Locale, problem: StartupProblem) -> Option<&'static str
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{StartupError, StartupProblem, failure_message, open_app_state_in, problem_label};
     use oikonomia_core::prefs::Locale;

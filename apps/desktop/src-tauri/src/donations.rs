@@ -99,7 +99,6 @@ pub fn donation_addresses() -> Vec<DonationAddress> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use std::collections::HashSet;
 

@@ -1,6 +1,5 @@
 //! Local httptest fixtures. Never contacts production GitHub.
 
-#![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 #![expect(clippy::panic, reason = "tests fail loudly by design")]
 
 use crate::UPDATE_FEED_URL;
@@ -67,6 +66,10 @@ fn spy_with_handoff(fail: bool, handoff: InstallHandoff) -> (SpyInstaller, Arc<A
 
 /// Serves a signed manifest offering `payload` at `artifact_path` as 0.2.0
 /// and returns a config for an app at 0.1.0.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a test helper that takes the keys, the artifact and the cache; tracked for the API pass"
+)]
 fn serve_newer_release(
     server: &Server,
     public_key: &str,
@@ -133,6 +136,10 @@ fn policy_for(server: &Server) -> HostPolicy {
     HostPolicy::test_http_hosts([host])
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a test helper that forwards most of `ClientConfig::for_test`; tracked for the API pass"
+)]
 fn config(
     server: &Server,
     feed_path: &str,

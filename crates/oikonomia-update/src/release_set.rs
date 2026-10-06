@@ -302,7 +302,6 @@ pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{
         CHECKSUMS_FILE, FIXED_LINUX_APPIMAGE, FIXED_LINUX_DEB, FIXED_MACOS_DMG,

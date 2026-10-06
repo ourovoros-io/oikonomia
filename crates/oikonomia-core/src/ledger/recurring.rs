@@ -855,7 +855,6 @@ fn parse_bill_status(s: &str) -> Result<SimpleBillStatus> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
 

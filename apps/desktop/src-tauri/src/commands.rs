@@ -114,7 +114,6 @@ pub async fn vault_unlock(
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{dropped_file_name, require_granted_path, stored_text_locale};
     use crate::state::AppState;
@@ -508,7 +507,6 @@ fn percent_encode(input: &str) -> String {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod app_info_tests {
     use super::{SUPPORT_EMAIL, app_info, percent_encode, support_mailto};
 
@@ -745,6 +743,10 @@ pub async fn account_set_opening_balance(
 
 /// List journal entries matching optional search/date/account filters.
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one field of the IPC payload; tracked for the API pass"
+)]
 pub async fn entry_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
@@ -807,6 +809,10 @@ pub async fn entry_post_simple(
 
 /// Post a simple entry together with its analyzed document (one transaction).
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one field of the IPC payload; tracked for the API pass"
+)]
 pub async fn entry_post_simple_with_document(
     state: State<'_, AppState>,
     input: PostSimpleEntry,
@@ -1282,7 +1288,6 @@ fn ensure_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod pdf_export_tests {
     use super::{
         decode_capped_base64, decode_document_base64, decode_pdf_export_bytes, ensure_pdf_path,
@@ -1728,6 +1733,10 @@ async fn await_blocking<T>(
 /// Analyze a document in memory and suggest a draft entry. Persists
 /// nothing: the file is stored only when the entry is posted
 /// (`entry_post_simple_with_document`), keeping the no-orphan invariant.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes travel as separate arguments; tracked for the API pass"
+)]
 fn analyze_readonly(
     vault: &GatedVault,
     model_dir: &Path,
@@ -1821,6 +1830,10 @@ pub async fn document_delete(
 /// Attach a file to an existing posted entry. No OCR pass — analysis only
 /// runs on the drop-zone flow; `analysis_json` stays NULL here.
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one field of the IPC payload; tracked for the API pass"
+)]
 pub async fn document_attach(
     state: State<'_, AppState>,
     entity_id: EntityId,

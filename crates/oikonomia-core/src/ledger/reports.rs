@@ -522,6 +522,10 @@ fn ratio_bps(numerator: i64, denominator: i64) -> Option<i64> {
 /// Entry-level predicates (status, void, optional Hidden) live in the inner
 /// subquery WHERE — never on the outer LEFT JOIN ON — so a filtered-out entry
 /// contributes nothing and accounts with no matching activity stay at zero.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the report window and its filters are separate arguments; tracked for the API pass"
+)]
 fn account_activity_lines(
     conn: &Connection,
     entity_id: EntityId,
@@ -582,6 +586,10 @@ fn account_activity_lines(
     Ok(lines)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the report window and its filters are separate arguments; tracked for the API pass"
+)]
 fn period_lines(
     conn: &Connection,
     entity_id: EntityId,

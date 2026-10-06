@@ -50,6 +50,10 @@ fn account(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
 }
 
 /// Posts `minor` debited to `debit_code` and credited to `credit_code`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a test helper that names both accounts, the date and the amount; tracked for the API pass"
+)]
 fn post(
     conn: &Connection,
     entity_id: EntityId,

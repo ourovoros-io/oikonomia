@@ -185,7 +185,6 @@ fn install_available_update(
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{install_available_update, run_check};
     use crate::update_key::UPDATER_PUBLIC_KEY;

@@ -57,6 +57,10 @@ fn create_book(conn: &Connection, name: &str, template: ChartTemplate) -> Book {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a test helper that names both accounts, the date and the amount; tracked for the API pass"
+)]
 fn expense(
     entity_id: EntityId,
     wallet: AccountId,

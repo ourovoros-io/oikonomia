@@ -2153,10 +2153,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata/documents")
             .join(relative);
-        #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
-        {
-            std::fs::read_to_string(&path).expect("corpus fixture")
-        }
+        std::fs::read_to_string(&path).expect("corpus fixture")
     }
 
     #[test]
@@ -2336,7 +2333,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn greek_bank_transfer_receipt_principal_not_fee_or_clock() {
         let text = corpus_text("synthetic/text/greek_bank_embasma.txt");
         let suggestion = parse_invoice_text(&text, crate::prefs::Locale::El);
@@ -2558,7 +2554,6 @@ mod jumbled_extract {
     /// Synthetic jumbled layout (the shape `pdf_extract` produces on a
     /// text-layer utility PDF). Placeholders only — not a live dump.
     #[test]
-    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn parse_jumbled_ngs_extract_fixture() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -2803,7 +2798,6 @@ mod jumbled_extract {
 
     #[test]
     #[ignore = "needs tests/fixtures/local_gas_bill.pdf, a private bill that is not in the tree"]
-    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn parse_local_gas_pdf_bytes() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),

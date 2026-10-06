@@ -461,7 +461,6 @@ mod tests {
     }
 
     /// The number in the web source's `export const <name> = <number>` line.
-    #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
     fn web_constant(source: &str, name: &str) -> f64 {
         let declaration = format!("export const {name} = ");
         let value = source

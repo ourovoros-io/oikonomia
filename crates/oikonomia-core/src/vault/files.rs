@@ -152,7 +152,6 @@ pub(crate) fn discard_database_files(db_path: &Path) {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use tempfile::tempdir;
 

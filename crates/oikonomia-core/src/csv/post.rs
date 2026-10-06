@@ -74,6 +74,10 @@ pub fn preview_bank_csv_file(
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the import source is passed beside the parsed inputs; tracked for the API pass"
+)]
 fn preview_bank_csv_named(
     conn: &Connection,
     entity_id: EntityId,

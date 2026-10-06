@@ -82,7 +82,6 @@ pub fn assemble_manifest(
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{FeedArtifact, assemble_manifest};
 

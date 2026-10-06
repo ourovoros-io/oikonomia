@@ -221,7 +221,6 @@ fn grouped_digits(grouped: &str, separator: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
 
