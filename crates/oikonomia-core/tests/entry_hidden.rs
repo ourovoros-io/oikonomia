@@ -328,7 +328,7 @@ fn unhide_puts_entry_back_in_export() {
 
 #[test]
 fn hidden_persists_across_reopen_and_backup_restore() {
-    let (dir, mut vault) = common::vault();
+    let (_dir, mut vault) = common::vault();
     let book;
     let entry_id;
     {
@@ -385,8 +385,9 @@ fn hidden_persists_across_reopen_and_backup_restore() {
     assert_eq!(entry_hidden_flag(conn, entry_id), 1);
     assert!(!export_mentions(conn, book.entity_id, "PersistedSecret"));
 
-    // Source data dir still holds the row too (backup is a copy, not a filter).
-    let _ = dir;
+    // A backup copies the vault; the source still holds the row.
+    let source = vault.connection().expect("source conn");
+    assert_eq!(entry_hidden_flag(source, entry_id), 1);
 }
 
 #[test]

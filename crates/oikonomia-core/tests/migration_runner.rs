@@ -128,3 +128,16 @@ fn a_v1_vault_migrates_through_every_step() {
         .expect("sqlite_master");
     assert_eq!(tables, 7);
 }
+
+#[test]
+fn migrating_a_vault_that_is_already_current_changes_nothing() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
+
+    migrate(conn).expect("first run on a current vault");
+    migrate(conn).expect("second run on a current vault");
+
+    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
+    assert!(table_exists(conn, "recurring_templates"));
+}

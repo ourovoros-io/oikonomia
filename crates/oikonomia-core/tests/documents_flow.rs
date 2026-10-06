@@ -5,7 +5,7 @@
 mod common;
 
 use oikonomia_core::documents::{
-    DocumentId, attach_document, delete_document, get_document, list_documents,
+    DocumentId, MAX_DOCUMENT_BYTES, attach_document, delete_document, get_document, list_documents,
     post_simple_entry_with_document, save_analysis_json, save_document,
     suggest_accounts_for_entity,
 };
@@ -90,7 +90,7 @@ fn delete_entity_with_linked_document() {
 }
 
 #[test]
-fn save_document_rejects_unsupported_and_oversize() {
+fn save_document_rejects_unsupported_empty_and_oversize_files() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
@@ -104,7 +104,10 @@ fn save_document_rejects_unsupported_and_oversize() {
         "application/x-msdownload",
         b"MZ",
     );
-    assert!(exe.is_err(), "executables must be rejected");
+    assert_eq!(
+        exe.expect_err("executables must be rejected"),
+        Error::Validation(ValidationError::FileTypeUnsupported)
+    );
 
     let empty = save_document(
         conn,
@@ -114,7 +117,38 @@ fn save_document_rejects_unsupported_and_oversize() {
         "text/plain",
         b"",
     );
-    assert!(empty.is_err(), "empty files must be rejected");
+    assert_eq!(
+        empty.expect_err("empty files must be rejected"),
+        Error::Validation(ValidationError::FileEmpty)
+    );
+
+    let one_byte_over = vec![0_u8; MAX_DOCUMENT_BYTES + 1];
+    let oversize = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "huge.pdf",
+        "application/pdf",
+        &one_byte_over,
+    );
+    let megabyte = 1024 * 1024;
+    assert_eq!(
+        oversize.expect_err("a file over the limit must be rejected"),
+        Error::Validation(ValidationError::FileTooLarge {
+            max_mb: u64::try_from(MAX_DOCUMENT_BYTES / megabyte).unwrap()
+        })
+    );
+
+    let at_the_limit = vec![0_u8; MAX_DOCUMENT_BYTES];
+    save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "largest.pdf",
+        "application/pdf",
+        &at_the_limit,
+    )
+    .expect("a file of exactly the limit is stored");
 }
 
 #[test]
@@ -141,7 +175,12 @@ fn save_document_rejects_duplicate_name_in_book() {
         "application/pdf",
         b"%PDF-1.4",
     );
-    assert!(dup.is_err(), "same name in the same book must be rejected");
+    assert_eq!(
+        dup.expect_err("same name in the same book must be rejected"),
+        Error::Validation(ValidationError::NameTaken {
+            name: "invoice.pdf".into()
+        })
+    );
 }
 
 #[test]
@@ -183,9 +222,9 @@ fn list_get_delete_round_trip() {
     assert_eq!(data, b"bravo");
 
     delete_document(conn, a.id).expect("delete a");
-    assert!(
-        get_document(conn, a.id).is_err(),
-        "deleted document is gone"
+    assert_eq!(
+        get_document(conn, a.id).expect_err("deleted document is gone"),
+        Error::NotFound("document".into())
     );
     assert_eq!(list_documents(conn, entity_id).expect("list").len(), 1);
 }
@@ -197,7 +236,10 @@ fn delete_missing_document_returns_not_found() {
     common::book(conn, "Docs", ChartTemplate::Personal);
 
     let missing = DocumentId::new();
-    assert!(delete_document(conn, missing).is_err());
+    assert_eq!(
+        delete_document(conn, missing),
+        Err(Error::NotFound("document".into()))
+    );
 }
 
 #[test]
@@ -345,23 +387,24 @@ fn attach_document_rejects_missing_and_wrong_entity_entry() {
     let entity_b = common::book(conn, "Other", ChartTemplate::Personal);
 
     let missing = JournalEntryId::new();
+    let no_entry = attach_document(conn, entity_a, missing, "a.txt", "text/plain", b"data");
     assert!(
-        attach_document(conn, entity_a, missing, "a.txt", "text/plain", b"data").is_err(),
-        "missing entry must fail"
+        matches!(no_entry, Err(Error::NotFound(_))),
+        "missing entry must fail: {no_entry:?}"
     );
 
     let entry_b = post_expense_entry(conn, entity_b, "Other book expense");
-    assert!(
-        attach_document(
-            conn,
-            entity_a,
-            entry_b.entry.id,
-            "b.txt",
-            "text/plain",
-            b"data"
-        )
-        .is_err(),
-        "entry from a different book must fail"
+    let foreign_entry = attach_document(
+        conn,
+        entity_a,
+        entry_b.entry.id,
+        "b.txt",
+        "text/plain",
+        b"data",
+    );
+    assert_eq!(
+        foreign_entry.expect_err("entry from a different book must fail"),
+        Error::Validation(ValidationError::WrongBook)
     );
 
     let err = save_document(
@@ -439,7 +482,12 @@ fn post_with_document_name_clash_rolls_back_the_entry() {
     let second = simple_expense_input(conn, entity_id, "Second");
     let clash =
         post_simple_entry_with_document(conn, &second, "bill.txt", "text/plain", b"b", None);
-    assert!(clash.is_err(), "duplicate name must fail");
+    assert_eq!(
+        clash.expect_err("duplicate name must fail"),
+        Error::Validation(ValidationError::NameTaken {
+            name: "bill.txt".into()
+        })
+    );
 
     let after = list_entries(conn, entity_id, &EntryFilter::default())
         .expect("list")
@@ -462,7 +510,10 @@ fn post_with_document_invalid_file_rolls_back_everything() {
         b"MZ",
         None,
     );
-    assert!(result.is_err(), "unsupported file must fail");
+    assert_eq!(
+        result.expect_err("unsupported file must fail"),
+        Error::Validation(ValidationError::FileTypeUnsupported)
+    );
 
     let entries = list_entries(conn, entity_id, &EntryFilter::default()).expect("list");
     assert!(

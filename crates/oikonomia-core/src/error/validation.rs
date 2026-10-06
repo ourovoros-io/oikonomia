@@ -684,9 +684,21 @@ mod tests {
     }
 
     #[test]
-    fn every_message_is_readable_english() {
+    fn every_message_starts_in_lowercase_and_has_no_trailing_period() {
         for error in every_variant() {
-            assert!(!error.to_string().is_empty(), "{}", error.code());
+            let message = error.to_string();
+            let first = message.chars().next();
+
+            assert!(
+                first.is_some_and(|first| !first.is_uppercase()),
+                "{}: {message:?} must not be empty or start with a capital",
+                error.code()
+            );
+            assert!(
+                !message.ends_with('.'),
+                "{}: {message:?} must not end with a period",
+                error.code()
+            );
         }
     }
 }

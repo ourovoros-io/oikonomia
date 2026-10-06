@@ -40,6 +40,15 @@ fn downgrade_to_v3_with_bad_data(conn: &Connection) {
     .expect("downgrade to v3 shape");
 }
 
+/// Whether SQLite refused the statement because of a table constraint.
+fn is_constraint_violation(result: &rusqlite::Result<usize>) -> bool {
+    matches!(
+        result,
+        Err(rusqlite::Error::SqliteFailure(failure, _))
+            if failure.code == rusqlite::ErrorCode::ConstraintViolation
+    )
+}
+
 #[test]
 fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
     let (_dir, vault) = common::vault();
@@ -87,14 +96,20 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
          VALUES ('dx', 'e1', NULL, 'x.pdf', 'application/pdf', 1, x'00', 'unix:9', NULL)",
         [],
     );
-    assert!(orphan_insert.is_err(), "NOT NULL rejects orphans");
+    assert!(
+        is_constraint_violation(&orphan_insert),
+        "NOT NULL rejects orphans: {orphan_insert:?}"
+    );
 
     let dup_insert = conn.execute(
         "INSERT INTO documents (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json)
          VALUES ('dy', 'e1', 'j1', 'invoice.pdf', 'application/pdf', 1, x'00', 'unix:9', NULL)",
         [],
     );
-    assert!(dup_insert.is_err(), "UNIQUE rejects duplicate names");
+    assert!(
+        is_constraint_violation(&dup_insert),
+        "UNIQUE rejects duplicate names: {dup_insert:?}"
+    );
 }
 
 #[test]

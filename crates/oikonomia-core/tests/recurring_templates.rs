@@ -368,7 +368,21 @@ fn deleting_entity_removes_templates() {
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     create_recurring_template(conn, &monthly_rent(entity_id, &accounts)).expect("create");
+
+    // Read from the table itself: the listing would need the book to exist.
+    let template_rows = || -> i64 {
+        conn.query_row(
+            "SELECT COUNT(1) FROM recurring_templates WHERE entity_id = ?1",
+            [entity_id.0.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count templates")
+    };
+    assert_eq!(template_rows(), 1);
+
     delete_entity(conn, entity_id).expect("delete entity");
+
+    assert_eq!(template_rows(), 0);
 }
 
 #[test]

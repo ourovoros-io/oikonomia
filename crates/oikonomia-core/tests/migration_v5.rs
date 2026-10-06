@@ -14,8 +14,6 @@ use oikonomia_core::prefs::Locale;
 fn v5_rejects_double_sided_journal_line() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
-
     let entity = create_entity(
         conn,
         &CreateEntity {
@@ -172,12 +170,4 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
         matches!(err, Error::VaultCorrupt(ref msg) if msg.contains("1 journal line")),
         "{err:?}"
     );
-}
-
-#[test]
-fn migrate_is_safe_on_fresh_v5_vault() {
-    let (_dir, vault) = common::vault();
-    let conn = vault.connection().expect("conn");
-    migrate(conn).expect("idempotent");
-    migrate(conn).expect("idempotent again");
 }

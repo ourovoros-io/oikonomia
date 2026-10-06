@@ -4,7 +4,7 @@
 
 mod common;
 
-use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
+use oikonomia_core::db::migrate;
 
 fn schema_version(conn: &rusqlite::Connection) -> i64 {
     conn.query_row(
@@ -24,11 +24,6 @@ fn table_exists(conn: &rusqlite::Connection, name: &str) -> bool {
         )
         .expect("sqlite_master");
     n == 1
-}
-
-#[test]
-fn current_schema_is_v7() {
-    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
 }
 
 #[test]
@@ -60,14 +55,4 @@ fn v6_vault_gains_recurring_templates() {
         )
         .expect("indexes");
     assert_eq!(indexed, 2);
-}
-
-#[test]
-fn migrate_is_safe_on_fresh_v7_vault() {
-    let (_dir, vault) = common::vault();
-    let conn = vault.connection().expect("conn");
-    migrate(conn).expect("idempotent");
-    migrate(conn).expect("idempotent again");
-    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
-    assert!(table_exists(conn, "recurring_templates"));
 }
