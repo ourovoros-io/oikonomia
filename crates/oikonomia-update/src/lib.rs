@@ -28,7 +28,7 @@ pub use crate::release_set::{
     feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
 };
 pub use crate::status::UpdateStatus;
-pub use crate::verify::verify_signature;
+pub use crate::verify::{sha256_hex, verify_signature};
 
 #[cfg(test)]
 mod tests;

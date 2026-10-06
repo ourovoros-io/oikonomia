@@ -12,10 +12,8 @@
 use oikonomia_update::{
     FeedArtifact, UpdateError, WindowsBuild, assemble_manifest, checksum_line, checksummed_assets,
     feed_entries, feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
-    verify_signature,
+    sha256_hex, verify_signature,
 };
-use sha2::{Digest, Sha256};
-use std::fmt::Write as FmtWrite;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -127,19 +125,6 @@ fn run_assemble(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("assemble: {e}"))?;
     std::fs::write(&out, manifest).map_err(|e| format!("{}: {e}", out.display()))?;
     writeln!(std::io::stdout(), "wrote {}", out.display()).map_err(|e| e.to_string())
-}
-
-/// Lowercase hex SHA-256 of `bytes`.
-fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let digest = hasher.finalize();
-
-    let mut hex = String::with_capacity(64);
-    for byte in digest {
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
 }
 
 /// Writes the checksum file for the published files in `--dir`.
@@ -307,9 +292,10 @@ fn run_verify_feed(args: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{USAGE, run, sha256_hex, unpublished_assets};
+    use super::{USAGE, run, unpublished_assets};
     use base64::Engine;
     use minisign::KeyPair;
+    use oikonomia_update::sha256_hex;
     use std::io::Cursor;
     use std::path::{Path, PathBuf};
 

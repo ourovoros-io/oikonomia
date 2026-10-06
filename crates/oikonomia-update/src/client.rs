@@ -3,12 +3,11 @@
 use crate::error::{Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
-use crate::verify::{parse_public_key, parse_sha256_hex, to_hex, verify_minisign};
+use crate::verify::{parse_public_key, parse_sha256_hex, sha256, to_hex, verify_minisign};
 use crate::version::parse_version;
 use minisign_verify::PublicKey;
 use semver::Version;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -484,10 +483,7 @@ fn download_and_verify_inner(
     let Fetched::Body(bytes) = fetch_bytes(config, &offer.artifact_url, Resource::Artifact)? else {
         return Err(UpdateError::Network);
     };
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let digest = hasher.finalize();
-    if digest.as_slice() != offer.sha256 {
+    if sha256(&bytes) != offer.sha256 {
         return Err(UpdateError::ArtifactIntegrity);
     }
     verify_minisign(&config.public_key, &bytes, &offer.artifact_signature)

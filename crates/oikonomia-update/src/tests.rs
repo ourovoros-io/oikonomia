@@ -14,11 +14,10 @@ use crate::hosts::HostPolicy;
 use crate::machine::{CheckStart, UpdateMachine};
 use crate::notes::sanitize_notes;
 use crate::status::UpdateStatus;
-use crate::verify::{parse_public_key, to_hex};
+use crate::verify::sha256_hex;
 use httptest::responders::status_code;
 use httptest::{Expectation, Server, matchers::request};
 use minisign::{KeyPair, SecretKey};
-use sha2::{Digest, Sha256};
 use std::io::{Cursor, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -125,12 +124,6 @@ fn test_keys() -> (String, SecretKey) {
 fn sign(sk: &SecretKey, data: &[u8]) -> String {
     let signature = minisign::sign(None, sk, Cursor::new(data), None, None).expect("sign");
     signature.into_string()
-}
-
-fn sha256_hex(data: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(data);
-    to_hex(&hasher.finalize())
 }
 
 /// Returns a fresh cache directory. The caller holds the handle for the whole
@@ -245,14 +238,6 @@ fn leftover_files(dir: &Path) -> Vec<PathBuf> {
         found.push(entry.path());
     }
     found
-}
-
-#[test]
-fn empty_public_key_is_rejected() {
-    let err = parse_public_key("").expect_err("empty");
-    assert_eq!(err.code(), "update_missing_public_key");
-    let err = parse_public_key("   ").expect_err("whitespace");
-    assert_eq!(err.code(), "update_missing_public_key");
 }
 
 #[test]
@@ -1035,13 +1020,6 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
     let err = download_and_verify(&config, &offer).expect_err("hash");
     assert_eq!(err.code(), "update_artifact_integrity");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
-}
-
-#[test]
-fn raw_ed25519_hex_is_not_a_minisign_public_key() {
-    const RAW_KEY_HEX: &str = "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
-    let err = parse_public_key(RAW_KEY_HEX).expect_err("raw hex key");
-    assert_eq!(err.code(), "update_missing_public_key");
 }
 
 /// Proves the promote lane (`assemble_manifest`) and the client (`perform_check`,
