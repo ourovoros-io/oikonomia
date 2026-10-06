@@ -73,9 +73,10 @@ on:
         type: boolean
         default: false
 
-# Attach binaries to the tag's GitHub Release. Not used on pull_request.
+# Read-only by default. Only the three build jobs, which attach binaries to
+# the tag's draft release, widen this to `contents: write`.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -93,8 +94,6 @@ jobs:
   windows-signing-mode:
     name: windows signing mode
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,6 +109,8 @@ jobs:
     needs: windows-signing-mode
     runs-on: macos-latest
     environment: release
+    permissions:
+      contents: write # creates the draft release and uploads to it
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -172,23 +173,28 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          package-manager-cache: false
 
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
 
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      # rust-toolchain.toml names the exact toolchain; with no toolchain
+      # argument rustup installs that one. No build cache in this workflow,
+      # for npm or cargo: a cache entry written by another run must not be
+      # able to reach a signed installer.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --profile minimal --no-self-update
 
       # Official Tauri v2 action. projectPath is the crate that owns tauri.conf.json.
       # beforeBuildCommand already runs `npm run build` in web/ (no web/dist placeholder).
       # Signing/notarization use the env vars below when secrets exist; this job
       # never reaches here if they are missing.
+      # tauriScript is set in every job: projectPath has no package.json, and
+      # without it the action runs `npm install -g @tauri-apps/cli@v2`, so an
+      # unpinned CLI would build the release and hold the signing keys. This
+      # is the CLI `npm ci` installed from web/package-lock.json. Everything
+      # after `--` in args goes to cargo.
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -211,6 +217,8 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
+          tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
+          args: -- --locked
 
       # Tauri notarizes and staples the .app and signs the .dmg with the same
       # identity, but does not notarize the .dmg. This step proves the app is
@@ -310,6 +318,8 @@ jobs:
     needs: macos
     runs-on: ubuntu-22.04
     environment: release
+    permissions:
+      contents: write # uploads to the draft release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -361,18 +371,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          package-manager-cache: false
 
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
 
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --profile minimal --no-self-update
 
       # --bundles deb,appimage attaches .deb for manual download. tauri-action
       # latest.json Linux target is AppImage only (no .deb updater URL).
@@ -391,7 +397,8 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
-          args: --bundles deb,appimage
+          tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
+          args: --bundles deb,appimage -- --locked
 
       - name: Smoke-test the bundled app
         timeout-minutes: 15
@@ -403,6 +410,8 @@ jobs:
     needs: linux
     runs-on: windows-latest
     environment: release
+    permissions:
+      contents: write # uploads to the draft release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -432,18 +441,14 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          package-manager-cache: false
 
       - name: Install frontend dependencies
         working-directory: web
         run: npm ci
 
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --profile minimal --no-self-update
 
       # NSIS only: the update path and the Promote workflow know no MSI.
       # No bundle.windows.certificateThumbprint or signCommand is configured,
@@ -465,7 +470,8 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
-          args: --bundles nsis
+          tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
+          args: --bundles nsis -- --locked
 
       # The installer is the Windows updater artifact: the app downloads it,
       # checks its sha256 and this .sig against the baked public key, then
@@ -488,7 +494,7 @@ jobs:
             exit 1
           }
           $pubkey = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).plugins.updater.pubkey
-          cargo run --quiet -p oikonomia-update --bin assemble_feed -- verify --manifest $installer --sig $sig --pubkey $pubkey
+          cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- verify --manifest $installer --sig $sig --pubkey $pubkey
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error::the updater signature of $installer does not verify with plugins.updater.pubkey"
             exit 1

@@ -1,0 +1,7 @@
+# Exact on purpose: CI, the release builds and every contributor compile with
+# the same rustc, so a new stable cannot change a shipped binary or a lint
+# result unreviewed. Bump it deliberately, in its own commit, to the current
+# stable; it must stay at or above `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
