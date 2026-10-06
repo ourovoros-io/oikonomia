@@ -1,18 +1,34 @@
-//! Known biller brands and utility-service classification.
+//! Known biller brands and the service a utility bill is for.
 //!
-//! Greek bills rarely spell out the issuer in extractable text — branding
-//! lives in logos and images — so recognition leans on portal names, product
-//! lines, and brand tokens that do survive extraction. Matches are
-//! token-bounded to avoid substrings inside unrelated words.
+//! Greek bills rarely spell out the issuer in text that can be extracted: the
+//! branding is in logos and images. Recognition therefore leans on what does
+//! survive extraction, such as portal names, product lines and brand tokens.
+//!
+//! Two questions are answered here, both on folded text
+//! ([`folded`](crate::documents::invoice::folded)):
+//!
+//! - [`known_brand`]: who issued this? The first entry of [`BRANDS`] whose
+//!   token stands in the text as a whole token wins, so the order of the
+//!   table is a priority order.
+//! - [`classify_service`]: is this electricity, gas, telecom or water? Each
+//!   keyword of [`SERVICE_KEYWORDS`] found in the text adds its weight to its
+//!   service, and the highest total wins.
+//!
+//! The invoice reader asks the brand first and falls back to the keyword
+//! score only when the brand does not imply a service.
 
 use crate::text::BillKind;
 
 /// What kind of service a recognized bill covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Service {
+    /// Electric power.
     Electricity,
+    /// Natural gas.
     Gas,
+    /// Fixed or mobile phone, and internet.
     Telecom,
+    /// Water supply.
     Water,
 }
 
@@ -55,7 +71,18 @@ const BRANDS: &[(&str, &str, Option<Service>)] = &[
     ("δεδδηε", "ΔΕΔΔΗΕ", Some(Service::Electricity)),
 ];
 
-/// How strongly a keyword points at a service.
+/// How strongly a keyword points at a service: the scale of
+/// [`SERVICE_KEYWORDS`].
+///
+/// Totals are compared between services, so what matters is the order of
+/// the four levels, not their size. A bill names other services in passing:
+/// an electricity bill carries the national energy-mix table, which lists
+/// natural gas. Such a word is a [`MENTION`](weight::MENTION), the lowest
+/// level, so that it loses to any stronger keyword of the bill's own
+/// service. Against another `MENTION` it only ties, and
+/// [`SERVICE_KEYWORDS`] says how a tie ends.
+///
+/// The four values are 1 to 4, the smallest whole numbers in that order.
 mod weight {
     /// A word that bills of other services also print.
     pub(super) const MENTION: u32 = 1;
@@ -63,12 +90,18 @@ mod weight {
     pub(super) const TERM: u32 = 2;
     /// A term that only a bill of this service prints.
     pub(super) const OWN_TERM: u32 = 3;
-    /// The line that names the supply being billed.
+    /// The line that names the supply being billed ("supply of ...").
     pub(super) const SUPPLY_LINE: u32 = 4;
 }
 
 /// Keywords of each service in folded form, with their weights, in the order
 /// [`classify_service`] compares them.
+///
+/// A keyword is matched as a substring, not as a token. So a supply line
+/// also contains the shorter keyword of its service: `προμηθεια ρευματος`
+/// contains `ρευμα`, and scores a `SUPPLY_LINE` and a `MENTION` together.
+///
+/// The order of the services breaks ties: the later one wins.
 const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
     (
         Service::Electricity,
@@ -107,11 +140,11 @@ const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
     ),
 ];
 
-/// Recognizes a known biller in folded document text
-/// ([`folded`](crate::documents::invoice::folded)).
+/// Recognizes a known biller in folded document text.
 ///
 /// Returns the display name and, when the brand implies it, the service.
-/// The first entry of [`BRANDS`] whose token appears wins.
+/// The first entry of [`BRANDS`] whose token appears wins, wherever in the
+/// text each token is. Returns `None` when no token appears.
 pub(crate) fn known_brand(folded_text: &str) -> Option<(&'static str, Option<Service>)> {
     BRANDS
         .iter()
@@ -149,8 +182,11 @@ pub(crate) fn classify_service(folded_text: &str) -> Option<Service> {
     (best_score > 0).then_some(service)
 }
 
-/// Substring match with token boundaries: the neighbors of the match must
-/// not be alphanumeric, so "nova" never fires inside "innovation".
+/// Whether `token` occurs in `folded_text` with no letter or digit directly
+/// before or after it, so `nova` does not match inside `innovation`.
+///
+/// Punctuation and whitespace are boundaries; so are the start and the end
+/// of the text.
 #[expect(
     clippy::string_slice,
     reason = "`match_indices` yields the offset of a match of `token`, \
