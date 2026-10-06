@@ -11,14 +11,28 @@ use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 
 const QUICK_ADD_LABEL: &str = "quick-add";
-/// Match web one-row rolling tray (`QUICK_ADD_*` in quickAddWindow.ts).
+
+// Sizes of the quick-add window in logical pixels. The frontend resizes the
+// window between them at runtime with its own copies, the `QUICK_ADD_*`
+// constants in `web/src/lib/quickAddWindow.ts`; the test
+// `quick_add_sizes_match_the_web_constants` fails when the two sets differ.
+
+/// Width in every state.
 const QUICK_ADD_WIDTH: f64 = 300.0;
+/// Height the window is created with (the stepper row).
 const QUICK_ADD_STEPPER_HEIGHT: f64 = 64.0;
-/// Kept in lockstep with web; FE resizes to these at runtime.
-#[expect(dead_code)]
+/// Height of the one-line states (locked, saved, no books).
 const QUICK_ADD_COMPACT_HEIGHT: f64 = 56.0;
 /// The tallest the frontend makes the window (the confirm row).
 const QUICK_ADD_SAVE_HEIGHT: f64 = 96.0;
+
+// `placement_height` makes room for the save row on the ground that no state
+// is taller.
+const _: () = assert!(
+    QUICK_ADD_SAVE_HEIGHT >= QUICK_ADD_STEPPER_HEIGHT
+        && QUICK_ADD_SAVE_HEIGHT >= QUICK_ADD_COMPACT_HEIGHT,
+    "the save row must be the tallest quick-add state"
+);
 
 /// Tray menu: open the main window.
 #[must_use]
@@ -444,6 +458,33 @@ mod tests {
         assert_eq!(tray_tooltip(Locale::El), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::Fr), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::De), "Oikonomia");
+    }
+
+    /// The number in the web source's `export const <name> = <number>` line.
+    #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+    fn web_constant(source: &str, name: &str) -> f64 {
+        let declaration = format!("export const {name} = ");
+        let value = source
+            .lines()
+            .find_map(|line| line.strip_prefix(declaration.as_str()))
+            .expect("the web source declares the constant");
+
+        value.trim().parse().expect("the constant is a number")
+    }
+
+    #[test]
+    fn quick_add_sizes_match_the_web_constants() {
+        let web = include_str!("../../../../web/src/lib/quickAddWindow.ts");
+        let native = [
+            ("QUICK_ADD_WIDTH", QUICK_ADD_WIDTH),
+            ("QUICK_ADD_STEPPER_HEIGHT", QUICK_ADD_STEPPER_HEIGHT),
+            ("QUICK_ADD_COMPACT_HEIGHT", QUICK_ADD_COMPACT_HEIGHT),
+            ("QUICK_ADD_SAVE_HEIGHT", QUICK_ADD_SAVE_HEIGHT),
+        ];
+
+        for (name, value) in native {
+            assert_eq!(web_constant(web, name), value, "{name}");
+        }
     }
 
     const FULL_HD: WorkArea = WorkArea {
