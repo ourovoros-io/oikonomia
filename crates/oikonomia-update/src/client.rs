@@ -23,6 +23,18 @@
 //! directory. A download that fails either check never exists as a file, so
 //! nothing unverified can be picked up from the cache, by this process or by
 //! another.
+//!
+//! # A file already under the artifact's name
+//!
+//! The cache file is named after the digest in the signed manifest, so a
+//! second attempt at the same release finds what the first one left: the
+//! artifact a still-running or crashed installer was started from. That file
+//! is not trusted for being there. It is read back and put through the same
+//! two checks as a download, and only bytes that pass are handed to the
+//! installer, without a second download. Anything else at that name is
+//! replaced by the verified download: the bytes go to a new private file
+//! beside it, which is then renamed over it. The rename replaces the entry
+//! itself, so a planted link is removed, not written through.
 
 use crate::error::{FeedRefusal, Result, UpdateError};
 use crate::hosts::HostPolicy;
@@ -514,26 +526,31 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
     })
 }
 
-/// Downloads the artifact of `offer` into the cache directory, verifies its
-/// digest and its signature, and returns the path of the file.
+/// Puts the verified artifact of `offer` in the cache directory and returns
+/// the path of the file.
 ///
-/// The bytes are held in memory until both checks pass and only then written,
-/// so a failed download or a failed check leaves no file. A file left behind
-/// by a write that failed part-way is removed.
+/// A file an earlier attempt left under the artifact's name is used as it is
+/// when its bytes pass the digest and signature checks; nothing is
+/// downloaded then. Otherwise the artifact is downloaded, checked, and
+/// written in place of whatever is at that name.
+///
+/// Downloaded bytes are held in memory until both checks pass and only then
+/// written, so a failed download or a failed check leaves no file: a
+/// leftover that was not the artifact is removed with it, and so is a file
+/// left by a write that failed part-way.
 ///
 /// # Errors
 ///
 /// Returns [`UpdateError::CacheIo`] when the cache directory cannot be
-/// created or made private, or the file cannot be written;
-/// [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect from it,
-/// is off the allow-list; [`UpdateError::Network`] when the download fails or
-/// the server answers 204; [`UpdateError::ResponseTooLarge`] when the
-/// artifact exceeds [`MAX_ARTIFACT_BYTES`]; and
-/// [`UpdateError::ArtifactIntegrity`] when the digest or the signature does
-/// not match.
+/// created or made private, or the file cannot be written or moved to its
+/// name; [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect
+/// from it, is off the allow-list; [`UpdateError::Network`] when the
+/// download fails or the server answers 204;
+/// [`UpdateError::ResponseTooLarge`] when the artifact exceeds
+/// [`MAX_ARTIFACT_BYTES`]; and [`UpdateError::ArtifactIntegrity`] when the
+/// digest or the signature of the download does not match.
 pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
     prepare_cache_dir(&config.cache_dir).map_err(UpdateError::CacheIo)?;
-    purge_cache(&config.cache_dir);
 
     // The digest makes the name unique to these exact bytes; the URL's file
     // name follows it for the sake of its extension.
@@ -542,6 +559,11 @@ pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) 
         to_hex(&offer.sha256),
         artifact_file_name(&offer.artifact_url)
     ));
+    purge_cache(&config.cache_dir, &destination);
+
+    if holds_verified_artifact(config, offer, &destination) {
+        return Ok(destination);
+    }
 
     match download_and_verify_into(config, offer, &destination) {
         Ok(()) => Ok(destination),
@@ -552,19 +574,22 @@ pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) 
     }
 }
 
-/// Removes the files earlier installs left in `cache_dir`.
+/// Removes the files earlier installs left in `cache_dir`, except `keep`.
+///
+/// `keep` is the path the artifact of the install in flight will have. What
+/// an earlier attempt at the same release left there is not removed here:
+/// [`download_and_verify`] reuses it when it is the artifact and replaces it
+/// when it is not.
 ///
 /// Best effort: a file that cannot be removed, such as an installer that is
-/// still running on Windows, stays until a later download clears it. Every
-/// failure is logged and none is returned. A leftover of another release
-/// does not stand in the way of the download that follows, whose file name
-/// starts with its own digest. A leftover of the same release that cannot be
-/// removed does: the write refuses the existing path and the install fails
-/// with [`UpdateError::CacheIo`].
+/// still running on Windows, stays until a later install clears it. Every
+/// failure is logged and none is returned. Such a leftover is of another
+/// release and does not stand in the way of the install that follows, whose
+/// file name starts with its own digest.
 ///
 /// Symbolic links are removed too, never followed: `file_type` describes the
 /// entry itself. Directories are left alone; this crate creates none here.
-pub(crate) fn purge_cache(cache_dir: &Path) {
+pub(crate) fn purge_cache(cache_dir: &Path, keep: &Path) {
     let entries = match std::fs::read_dir(cache_dir) {
         Ok(entries) => entries,
         Err(error) => {
@@ -580,8 +605,9 @@ pub(crate) fn purge_cache(cache_dir: &Path) {
         match entry {
             Ok(entry) => {
                 let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
-                if !is_directory {
-                    delete_artifact(&entry.path());
+                let path = entry.path();
+                if !is_directory && path != keep {
+                    delete_artifact(&path);
                 }
             }
             Err(error) => {
@@ -812,8 +838,125 @@ fn checked_artifact(host_policy: &HostPolicy, entry: &RawPlatform) -> Result<Che
     })
 }
 
+/// Returns whether the file at `path` is the verified artifact of `offer`
+/// already, so that it can be handed to the installer as it is.
+///
+/// The file is trusted for nothing but its bytes passing the checks a
+/// download passes. It must also be a file this crate could have written: a
+/// regular file, not a link, that on Unix no other account may read or
+/// write. A link is refused even to the right bytes, because the installer
+/// is given the path, and what a link points at can change after the check.
+///
+/// Every reason the file cannot be used reads as `false`, a failure to read
+/// it included: the caller then downloads the artifact and replaces the
+/// file, and a real fault of the cache shows there as an error.
+fn holds_verified_artifact(config: &ClientConfig, offer: &VerifiedOffer, path: &Path) -> bool {
+    read_private_file(path, MAX_ARTIFACT_BYTES)
+        .is_some_and(|bytes| verify_artifact(config, offer, &bytes).is_ok())
+}
+
+/// Reads the file at `path` when it is a regular file of at most `max_bytes`
+/// that, on Unix, grants nothing to group or others.
+///
+/// Returns `None` when there is no such file, when it is anything else (a
+/// link, a directory, a larger or more widely permitted file), or when it
+/// cannot be read.
+///
+/// The kind and the mode are those of the entry itself, never of a link's
+/// target. They are read before the file is opened, so they describe the
+/// file that is read only as long as nobody else can change the directory in
+/// between; the cache directory is the user's alone for that reason.
+fn read_private_file(path: &Path, max_bytes: usize) -> Option<Vec<u8>> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() || !grants_only_the_owner(&metadata) {
+        return None;
+    }
+
+    // One byte past the limit is enough to tell a file that is too large.
+    let limit = u64::try_from(max_bytes).map_or(u64::MAX, |max| max.saturating_add(1));
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(limit)
+        .read_to_end(&mut bytes)
+        .ok()?;
+
+    (bytes.len() <= max_bytes).then_some(bytes)
+}
+
+/// Returns whether the permissions in `metadata` leave group and others with
+/// no access.
+#[cfg(unix)]
+#[expect(
+    clippy::verbose_bit_mask,
+    reason = "the mask is the group and other permission bits, as chmod writes them"
+)]
+fn grants_only_the_owner(metadata: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o077 == 0
+}
+
+/// Returns true: there are no Unix permissions to read here, and the
+/// caller's choice of cache directory is what keeps other accounts out.
+#[cfg(not(unix))]
+fn grants_only_the_owner(_metadata: &std::fs::Metadata) -> bool {
+    true
+}
+
+/// Checks `bytes` against the digest and the artifact signature of `offer`.
+///
+/// The one check of an artifact, whether its bytes came from the network or
+/// from a file an earlier attempt left in the cache.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ArtifactIntegrity`] when the SHA-256 of `bytes` is
+/// not the offered one or the signature does not verify them.
+fn verify_artifact(config: &ClientConfig, offer: &VerifiedOffer, bytes: &[u8]) -> Result<()> {
+    if sha256(bytes) != offer.sha256 {
+        return Err(UpdateError::ArtifactIntegrity);
+    }
+
+    verify_minisign(&config.public_key, bytes, &offer.artifact_signature)
+        .map_err(|_| UpdateError::ArtifactIntegrity)
+}
+
+/// Writes `bytes` to `destination` in place of whatever is there.
+///
+/// The bytes go to a new private file beside `destination`, which is then
+/// renamed to it. A file an earlier attempt left at `destination` is
+/// replaced, and so is a planted symbolic link: the rename replaces the
+/// directory entry and never writes through it. The file at `destination` is
+/// therefore always one [`write_new_private_file`] created.
+///
+/// The staging name carries the process id, so a staging file that could not
+/// be removed after an earlier run does not stand in the way of this one.
+/// The staging file is removed when the write or the rename fails.
+///
+/// # Errors
+///
+/// Returns the I/O error of creating, writing or syncing the staging file, or
+/// of the rename. On Windows the rename fails while another process has
+/// `destination` open, as a running installer has its own file.
+fn replace_with_private_file(destination: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let staging = {
+        let mut name = destination.as_os_str().to_owned();
+        name.push(format!(".{}.partial", std::process::id()));
+        PathBuf::from(name)
+    };
+
+    let replaced = write_new_private_file(&staging, bytes)
+        .and_then(|()| std::fs::rename(&staging, destination));
+    if replaced.is_err() {
+        delete_artifact(&staging);
+    }
+
+    replaced
+}
+
 /// Downloads the artifact of `offer`, verifies it, and writes it to
-/// `destination`.
+/// `destination`, replacing what is there.
 ///
 /// # Errors
 ///
@@ -836,13 +979,9 @@ fn download_and_verify_into(
         return Err(UpdateError::Network);
     };
 
-    if sha256(&bytes) != offer.sha256 {
-        return Err(UpdateError::ArtifactIntegrity);
-    }
-    verify_minisign(&config.public_key, &bytes, &offer.artifact_signature)
-        .map_err(|_| UpdateError::ArtifactIntegrity)?;
+    verify_artifact(config, offer, &bytes)?;
 
-    write_new_private_file(destination, &bytes).map_err(UpdateError::CacheIo)
+    replace_with_private_file(destination, &bytes).map_err(UpdateError::CacheIo)
 }
 
 /// Creates the cache directory for this user only.
@@ -1069,7 +1208,7 @@ fn read_capped(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_feed_as_client, write_new_private_file};
+    use super::{check_feed_as_client, replace_with_private_file, write_new_private_file};
     use crate::error::{FeedRefusal, UpdateError};
     use crate::feed::{FeedArtifact, assemble_manifest};
 
@@ -1165,6 +1304,60 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(!outside.exists(), "the write followed the planted link");
+    }
+
+    #[test]
+    fn replacing_overwrites_a_file_left_at_the_path_and_leaves_no_staging_file() {
+        let cache = tempfile::tempdir().expect("temporary directory");
+        let path = cache.path().join("artifact.AppImage");
+        std::fs::write(&path, b"left by an earlier attempt").expect("existing file");
+
+        replace_with_private_file(&path, b"verified").expect("replace");
+
+        assert_eq!(std::fs::read(&path).expect("read"), b"verified");
+        let entries: Vec<_> = std::fs::read_dir(cache.path())
+            .expect("list")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        assert_eq!(entries, vec![path]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replacing_removes_a_link_at_the_path_without_writing_through_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cache = tempfile::tempdir().expect("temporary directory");
+        let outside_dir = tempfile::tempdir().expect("temporary directory");
+        let outside = outside_dir.path().join("victim");
+        std::fs::write(&outside, b"untouched").expect("victim");
+        let path = cache.path().join("artifact.AppImage");
+        std::os::unix::fs::symlink(&outside, &path).expect("plant link");
+
+        replace_with_private_file(&path, b"verified").expect("replace");
+
+        let metadata = std::fs::symlink_metadata(&path).expect("metadata");
+        assert!(metadata.file_type().is_file(), "the link was kept");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read(&path).expect("read"), b"verified");
+        assert_eq!(std::fs::read(&outside).expect("victim"), b"untouched");
+    }
+
+    #[test]
+    fn a_replacement_that_cannot_take_its_place_leaves_no_staging_file() {
+        let cache = tempfile::tempdir().expect("temporary directory");
+        // A file cannot be renamed over a directory that is not empty.
+        let path = cache.path().join("artifact.AppImage");
+        std::fs::create_dir(&path).expect("directory");
+        std::fs::write(path.join("inside"), b"x").expect("file inside");
+
+        replace_with_private_file(&path, b"verified").expect_err("a directory is in the way");
+
+        let entries: Vec<_> = std::fs::read_dir(cache.path())
+            .expect("list")
+            .map(|entry| entry.expect("entry").path())
+            .collect();
+        assert_eq!(entries, vec![path]);
     }
 }
 

@@ -58,17 +58,25 @@
 //! order, stopping at the first that fails:
 //!
 //! 1. Creates the cache directory and, on Unix, sets its mode to `0700`.
-//! 2. Removes the files earlier installs left in it.
-//! 3. Checks the artifact URL against the allow-list again and downloads the
+//! 2. Removes the files earlier installs left in it, except one under the
+//!    name this artifact will have: the digest from the signed feed, then
+//!    the artifact's file name.
+//! 3. Looks for a file under that name, which an earlier attempt at the same
+//!    release may have left. It is read only if it is a regular file, not a
+//!    link, and on Unix one that grants nothing to group or others. When its
+//!    bytes pass the checks of steps 5 and 6, the install continues at
+//!    step 8 with that file and downloads nothing.
+//! 4. Checks the artifact URL against the allow-list again and downloads the
 //!    artifact into memory.
-//! 4. Compares the SHA-256 of the bytes with the one in the signed feed.
-//! 5. Verifies the artifact's minisign signature over the same bytes.
-//! 6. Writes the bytes to a new file in the cache directory, named after the
-//!    digest and the artifact. The file is created with `create_new`, so an
-//!    existing path or a planted symbolic link is refused, and on Unix with
-//!    mode `0600`.
-//! 7. Hands the path to the caller's [`ArtifactInstaller`].
-//! 8. Deletes the file, unless the installer reports a separate installer
+//! 5. Compares the SHA-256 of the bytes with the one in the signed feed.
+//! 6. Verifies the artifact's minisign signature over the same bytes.
+//! 7. Writes the bytes to a new file in the cache directory, created with
+//!    `create_new` and, on Unix, mode `0600`, and renames it to the
+//!    artifact's name. The rename replaces what step 3 found and did not
+//!    use, a planted symbolic link included: the link is removed, never
+//!    written through.
+//! 8. Hands the path to the caller's [`ArtifactInstaller`].
+//! 9. Deletes the file, unless the installer reports a separate installer
 //!    process that is still running from it.
 //!
 //! After a failure at any step the artifact, if it was written at all, is
@@ -123,8 +131,11 @@
 //!
 //! Each install starts by removing the files earlier ones left, so the
 //! directory normally holds only the artifact of the install in flight, or
-//! the one a still-running installer was started from. Nothing in it is ever
-//! read back as trusted input: each install downloads and verifies again.
+//! the one a still-running installer was started from. Nothing in it is
+//! trusted for being there. The one file ever read back is the one under the
+//! name of the artifact being installed, and its bytes are used only after
+//! the digest and signature checks a download gets; a retry of the same
+//! release therefore neither fails on that file nor downloads it again.
 //!
 //! # State
 //!
