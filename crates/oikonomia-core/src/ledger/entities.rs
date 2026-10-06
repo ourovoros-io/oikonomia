@@ -357,13 +357,18 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
     let id = stored_uuid("entities.id", &read_column::<String>(row, 0)?)?;
     let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
 
+    // Reports derive the fiscal year from this number, so one outside the
+    // calendar is refused here instead of shifting every year boundary.
     let stored_month: i64 = read_column(row, 3)?;
-    let fiscal_year_start_month = u8::try_from(stored_month).map_err(|_| {
-        corrupt_column(
-            "entities.fiscal_year_start_month",
-            format_args!("not a month: {stored_month}"),
-        )
-    })?;
+    let fiscal_year_start_month = u8::try_from(stored_month)
+        .ok()
+        .filter(|month| (1..=12).contains(month))
+        .ok_or_else(|| {
+            corrupt_column(
+                "entities.fiscal_year_start_month",
+                format_args!("not a month: {stored_month}"),
+            )
+        })?;
 
     Ok(Entity {
         id: EntityId(id),

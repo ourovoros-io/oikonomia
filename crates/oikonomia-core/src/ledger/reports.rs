@@ -2,10 +2,10 @@
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use time::Date;
+use time::{Date, Month};
 
-use crate::db::read_column;
-use crate::domain::{AccountType, EntityId};
+use crate::db::{corrupt_column, read_column};
+use crate::domain::{AccountType, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_type_str, normal_balance, parse_account_type, sum_types_as_of,
@@ -178,7 +178,7 @@ pub struct TopExpense {
 pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<TrialBalance> {
     let as_of_d = parse_date(as_of)?;
     let entity = get_entity(conn, entity_id)?;
-    let close = unclosed_pnl(conn, entity_id, as_of_d, entity.fiscal_year_start_month)?;
+    let close = unclosed_pnl(conn, entity_id, as_of_d, fiscal_start_month(&entity)?)?;
 
     let mut lines = Vec::new();
     let mut total_debits = 0_i64;
@@ -319,7 +319,7 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     let assets_lines = as_of_lines(conn, entity_id, AccountType::Asset, as_of_d)?;
     let liab_lines = as_of_lines(conn, entity_id, AccountType::Liability, as_of_d)?;
     let mut equity_lines = as_of_lines(conn, entity_id, AccountType::Equity, as_of_d)?;
-    let close = unclosed_pnl(conn, entity_id, as_of_d, entity.fiscal_year_start_month)?;
+    let close = unclosed_pnl(conn, entity_id, as_of_d, fiscal_start_month(&entity)?)?;
 
     if close.prior_net != 0 {
         equity_lines.push(retained_earnings_line(close.prior_net));
@@ -476,7 +476,7 @@ fn month_index(date: Date) -> i64 {
 fn date_from_month_index(index: i64) -> Option<Date> {
     let year = i32::try_from(index.div_euclid(12)).ok()?;
     let month = u8::try_from(index.rem_euclid(12) + 1).ok()?;
-    Date::from_calendar_date(year, time::Month::try_from(month).ok()?, 1).ok()
+    Date::from_calendar_date(year, Month::try_from(month).ok()?, 1).ok()
 }
 
 /// The Expense account with the largest positive spend in the window; on a tie
@@ -638,9 +638,9 @@ fn unclosed_pnl(
     conn: &Connection,
     entity_id: EntityId,
     as_of: Date,
-    fy_start_month: u8,
+    fiscal_start: Month,
 ) -> Result<UnclosedPnl> {
-    let fy_start = fiscal_year_start(as_of, fy_start_month);
+    let fy_start = fiscal_year_start(as_of, fiscal_start);
     let current_net = sum_types_in_range(conn, entity_id, &[AccountType::Income], fy_start, as_of)?
         .saturating_sub(sum_types_in_range(
             conn,
@@ -651,7 +651,7 @@ fn unclosed_pnl(
         )?);
 
     let prior_net = if let Some(prior_end) = fy_start.previous_day() {
-        let books_start = Date::from_calendar_date(1, time::Month::January, 1).unwrap_or(prior_end);
+        let books_start = Date::from_calendar_date(1, Month::January, 1).unwrap_or(prior_end);
         sum_types_in_range(
             conn,
             entity_id,
@@ -712,20 +712,34 @@ fn net_income_line(net: i64) -> ReportLine {
     )
 }
 
-fn fiscal_year_start(as_of: Date, start_month: u8) -> Date {
-    let month = match time::Month::try_from(start_month) {
-        Ok(m) => m,
-        Err(_) => time::Month::January,
-    };
-    let year = if as_of.month() as u8 >= start_month {
+/// The month an entity's fiscal year starts in.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] when the stored number is not a calendar month.
+/// [`get_entity`] already refuses such a row; this covers an [`Entity`] built
+/// any other way, since the field is a plain `u8`.
+fn fiscal_start_month(entity: &Entity) -> Result<Month> {
+    Month::try_from(entity.fiscal_year_start_month).map_err(|_| {
+        corrupt_column(
+            "entities.fiscal_year_start_month",
+            format_args!("not a month: {}", entity.fiscal_year_start_month),
+        )
+    })
+}
+
+/// First day of the fiscal year that contains `as_of`.
+fn fiscal_year_start(as_of: Date, start_month: Month) -> Date {
+    let year = if u8::from(as_of.month()) >= u8::from(start_month) {
         as_of.year()
     } else {
         as_of.year() - 1
     };
-    match Date::from_calendar_date(year, month, 1) {
-        Ok(d) => d,
-        Err(_) => as_of,
-    }
+
+    // Day 1 exists in every month, so this fails only when `year` is below
+    // `Date::MIN`'s year. That fiscal year began before the calendar does, and
+    // the calendar's first day is then the earliest date inside it.
+    Date::from_calendar_date(year, start_month, 1).unwrap_or(Date::MIN)
 }
 
 /// Maps a row selected as `code, name, account_type, debits, credits`.
@@ -784,6 +798,26 @@ mod tests {
                 .map(listed_lines::position)
                 .collect(),
         );
+    }
+
+    #[test]
+    fn fiscal_year_start_is_the_latest_start_month_on_or_before_the_date() {
+        let start = |as_of: &str, month: Month| {
+            parse_date(as_of).map(|date| format_date(fiscal_year_start(date, month)))
+        };
+
+        assert_eq!(start("2026-03-15", Month::January), Ok("2026-01-01".into()));
+        assert_eq!(start("2026-03-15", Month::April), Ok("2025-04-01".into()));
+        assert_eq!(start("2026-04-01", Month::April), Ok("2026-04-01".into()));
+        assert_eq!(
+            start("2026-12-31", Month::December),
+            Ok("2026-12-01".into())
+        );
+    }
+
+    #[test]
+    fn fiscal_year_start_stops_at_the_first_day_of_the_calendar() {
+        assert_eq!(fiscal_year_start(Date::MIN, Month::February), Date::MIN);
     }
 
     #[test]

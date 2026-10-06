@@ -10,9 +10,10 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId}
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
     CreateEntity, CreateRecurringTemplate, EntryFilter, PostSimpleEntry, RecurringCadence,
-    SimpleEntryKind, account_register, activity_window, cash_flow_series, create_entity,
-    create_recurring_template, get_entity, get_entry, get_recurring_template, list_accounts,
-    list_entities, list_entries, list_recurring_templates, post_simple_entry,
+    SimpleEntryKind, account_register, activity_window, balance_sheet, cash_flow_series,
+    create_entity, create_recurring_template, get_entity, get_entry, get_recurring_template,
+    list_accounts, list_entities, list_entries, list_recurring_templates, post_simple_entry,
+    trial_balance,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
@@ -202,6 +203,24 @@ fn an_unknown_chart_template_is_corrupt() {
 
     assert_corrupt(get_entity(conn, book.entity_id), "entities.chart_template");
     assert_corrupt(list_entities(conn), "entities.chart_template");
+}
+
+#[test]
+fn a_fiscal_year_start_month_off_the_calendar_is_corrupt() {
+    for month in [0, 13, 300] {
+        let (_dir, vault) = setup();
+        let conn = vault.connection().expect("conn");
+        let book = book(conn);
+        damage(
+            conn,
+            &format!("UPDATE entities SET fiscal_year_start_month = {month}"),
+        );
+        let column = "entities.fiscal_year_start_month";
+
+        assert_corrupt(get_entity(conn, book.entity_id), column);
+        assert_corrupt(trial_balance(conn, book.entity_id, "2026-12-31"), column);
+        assert_corrupt(balance_sheet(conn, book.entity_id, "2026-12-31"), column);
+    }
 }
 
 #[test]
