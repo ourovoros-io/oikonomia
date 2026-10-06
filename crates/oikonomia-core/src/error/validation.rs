@@ -1,8 +1,32 @@
 //! The reasons a request can be refused for breaking a rule.
 //!
-//! Each reason has a stable `snake_case` code and named parameters, so the UI
-//! can show text in the user's language. The `Display` text is English and is
-//! meant for logs only.
+//! A [`ValidationError`] is what [`Error::Validation`](crate::Error) carries.
+//! It reaches the user as three things, none of them a sentence written here:
+//!
+//! - [`ValidationError::code`], a stable `snake_case` code the UI maps to
+//!   wording in the user's language;
+//! - [`ValidationError::params`], the named values that wording fills in,
+//!   such as an account code or a minimum length;
+//! - for an account that is missing or wrong, the [`AccountRole`] it was
+//!   meant to play, sent as a parameter so the UI can point at the field.
+//!
+//! The `Display` text is English and is meant for logs only.
+//!
+//! # Keeping Rust and the UI in step
+//!
+//! The UI's copy lives in the web sources, so three hand-written lists must
+//! agree with the enums: [`ValidationError::ALL_CODES`], [`AccountRole::ALL`]
+//! and the parameter names in `web/src/lib/errorCodeParams.json`. The tests
+//! in this module check each list against its enum through an exhaustive
+//! `match`, so a variant added without its code, its place in the list or its
+//! parameters fails to compile or fails a test. The desktop crate checks the
+//! codes and the roles against the UI's own lists.
+//!
+//! # What does not belong here
+//!
+//! A rule the user cannot act on (a malformed id, a caller bug) is
+//! [`ValidationError::Internal`]: it has one code for all cases, and its
+//! detail is for logs and is never sent as a parameter.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -50,7 +74,8 @@ impl AccountRole {
         Self::TransferDestination,
     ];
 
-    /// Stable `snake_case` identifier the UI maps to a translated label.
+    /// Returns the stable `snake_case` identifier the UI maps to a translated
+    /// label.
     #[must_use]
     pub fn identifier(self) -> &'static str {
         match self {
@@ -67,7 +92,8 @@ impl AccountRole {
 }
 
 impl fmt::Display for AccountRole {
-    /// The identifier with spaces, which reads as English in logs.
+    /// Writes the identifier with spaces for underscores, which reads as
+    /// English in logs.
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.identifier().replace('_', " "))
     }
@@ -77,7 +103,7 @@ impl fmt::Display for AccountRole {
 ///
 /// Messages that deserve the same user-facing text share a variant. Anything
 /// the user cannot act on is [`ValidationError::Internal`].
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum ValidationError {
     /// The new vault password is shorter than the minimum.
@@ -261,7 +287,8 @@ impl ValidationError {
         "validation_internal",
     ];
 
-    /// Stable `snake_case` identifier the UI maps to localized text.
+    /// Returns the stable `snake_case` identifier the UI maps to localized
+    /// text.
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
@@ -296,7 +323,7 @@ impl ValidationError {
         }
     }
 
-    /// The values the UI substitutes into the localized text, by name.
+    /// Returns the values the UI substitutes into the localized text, by name.
     ///
     /// Roles go out as identifiers, never English labels, so the UI can
     /// translate them. Internal detail is left out on purpose.
@@ -362,6 +389,7 @@ mod tests {
     use oikonomia_test_support::listed_variants;
     use std::collections::{BTreeMap, BTreeSet};
 
+    /// The parameters of `error` as name and value pairs, in name order.
     fn params_of(error: &ValidationError) -> Vec<(&'static str, String)> {
         error.params().into_iter().collect()
     }
@@ -454,7 +482,7 @@ mod tests {
             assert!(
                 identifier
                     .chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '_'),
+                    .all(|letter| letter.is_ascii_lowercase() || letter == '_'),
                 "{identifier}"
             );
         }
@@ -677,7 +705,8 @@ mod tests {
     fn every_code_is_snake_case() {
         for code in ValidationError::ALL_CODES {
             assert!(
-                code.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                code.chars()
+                    .all(|letter| letter.is_ascii_lowercase() || letter == '_'),
                 "{code}"
             );
         }
