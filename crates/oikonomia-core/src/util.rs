@@ -37,24 +37,64 @@ pub fn format_date(date: Date) -> String {
     )
 }
 
-/// Parse `YYYY-MM-DD`.
+/// Parses a calendar date written exactly as `YYYY-MM-DD`.
+///
+/// The text must be ten bytes: four ASCII digits, `-`, two ASCII digits, `-`,
+/// two ASCII digits, naming a day that exists. Nothing else is accepted: no
+/// sign, no surrounding space, no shorter or longer part (`2026-8-1`), no
+/// other digits. That makes this the inverse of [`format_date`] for years
+/// 0000 to 9999, and guarantees that accepted texts compare in date order.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::util::{format_date, parse_date};
+///
+/// let date = parse_date("2026-08-10")?;
+/// assert_eq!(format_date(date), "2026-08-10");
+///
+/// assert!(parse_date("2026-8-10").is_err());
+/// assert!(parse_date("2026-02-30").is_err());
+/// # Ok::<(), oikonomia_core::Error>(())
+/// ```
 ///
 /// # Errors
 ///
-/// Returns [`Error::Validation`] when the string is not a valid date.
-pub fn parse_date(s: &str) -> Result<Date> {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 3 {
-        return Err(invalid_date(s));
-    }
+/// Returns [`Error::Validation`] with [`ValidationError::InvalidDate`], which
+/// carries `text` unchanged, when `text` does not have that form or names a
+/// day that does not exist.
+pub fn parse_date(text: &str) -> Result<Date> {
+    calendar_date(text).ok_or_else(|| invalid_date(text))
+}
 
-    let year: i32 = parts[0].parse().map_err(|_| invalid_date(s))?;
-    let month_num: u8 = parts[1].parse().map_err(|_| invalid_date(s))?;
-    let day: u8 = parts[2].parse().map_err(|_| invalid_date(s))?;
+/// Returns the date `text` names when it is exactly `YYYY-MM-DD`.
+fn calendar_date(text: &str) -> Option<Date> {
+    // A fixed-length byte pattern: any multi-byte character changes the
+    // length or puts a non-digit byte where a digit is required.
+    let &[y0, y1, y2, y3, b'-', m0, m1, b'-', d0, d1] = text.as_bytes() else {
+        return None;
+    };
 
-    let month = Month::try_from(month_num).map_err(|_| invalid_date(s))?;
+    let year = decimal_value(&[y0, y1, y2, y3])?;
+    let month = decimal_value(&[m0, m1])?;
+    let day = decimal_value(&[d0, d1])?;
 
-    Date::from_calendar_date(year, month, day).map_err(|_| invalid_date(s))
+    let month = Month::try_from(u8::try_from(month).ok()?).ok()?;
+    let day = u8::try_from(day).ok()?;
+
+    Date::from_calendar_date(i32::from(year), month, day).ok()
+}
+
+/// Returns the number that `digits` spell in base ten, or `None` when a byte
+/// is not an ASCII digit.
+///
+/// Callers pass at most four digits, so the value is at most 9999 and the
+/// arithmetic stays inside `u16`.
+fn decimal_value(digits: &[u8]) -> Option<u16> {
+    digits.iter().try_fold(0_u16, |value, byte| {
+        byte.is_ascii_digit()
+            .then(|| value * 10 + u16::from(byte - b'0'))
+    })
 }
 
 /// ISO `YYYY-MM-DD` (de)serialization for `time::Date` fields crossing IPC.
@@ -80,8 +120,8 @@ pub mod serde_date {
     ///
     /// Invalid date text.
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        super::parse_date(&s).map_err(serde::de::Error::custom)
+        let text = String::deserialize(deserializer)?;
+        super::parse_date(&text).map_err(serde::de::Error::custom)
     }
 }
 
@@ -136,6 +176,80 @@ mod tests {
             })
         });
         assert_eq!(back.map(|dated| dated.date), Ok(date));
+    }
+
+    #[test]
+    fn only_the_ten_character_form_parses() {
+        let rejected = [
+            "",
+            "2026-08",
+            "2026-08-10-01",
+            // Short or long parts: the widths are fixed.
+            "2026-8-1",
+            "2026-8-10",
+            "2026-08-1",
+            "26-08-10",
+            "999-01-01",
+            "02026-08-10",
+            "2026-008-10",
+            "2026-08-010",
+            // Signs and spaces that integer parsing would take.
+            "+2026-08-10",
+            "2026-+8-10",
+            "2026-08-+1",
+            "-2026-08-10",
+            " 2026-08-10",
+            "2026-08-10 ",
+            "2026-08-10\n",
+            "+026-08-10",
+            "2026-+8-01",
+            // Other separators and digits.
+            "2026/08/10",
+            "2026.08.10",
+            "20260810",
+            "2026-08-1O",
+            "２０２６-08-10",
+            "2026-08-१०",
+            "2026-08-10T00:00:00",
+            // The right shape, but no such day.
+            "2026-00-10",
+            "2026-13-01",
+            "2026-08-00",
+            "2026-08-32",
+            "2026-02-29",
+            "2026-04-31",
+            "1900-02-29",
+        ];
+
+        for text in rejected {
+            assert_eq!(
+                parse_date(text),
+                Err(Error::Validation(ValidationError::InvalidDate {
+                    value: text.to_owned()
+                })),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ten_character_form_parses_to_its_calendar_date() {
+        let accepted = [
+            ("2026-08-10", (2026, Month::August, 10)),
+            ("2024-02-29", (2024, Month::February, 29)),
+            ("2000-02-29", (2000, Month::February, 29)),
+            ("0000-01-01", (0, Month::January, 1)),
+            ("0999-12-31", (999, Month::December, 31)),
+            ("9999-12-31", (9999, Month::December, 31)),
+        ];
+
+        for (text, (year, month, day)) in accepted {
+            assert_eq!(
+                parse_date(text),
+                Ok(Date::from_calendar_date(year, month, day).unwrap()),
+                "{text}"
+            );
+        }
     }
 
     #[test]
@@ -203,7 +317,7 @@ mod properties {
 
         #[test]
         #[ignore = "format_date writes a year before zero with a leading minus sign, \
-                    which parse_date takes for a separator and rejects"]
+                    which parse_date rejects"]
         fn a_formatted_date_of_any_year_parses_back(date in dates_from(Date::MIN)) {
             prop_assert_eq!(parse_date(&format_date(date)), Ok(date));
         }
