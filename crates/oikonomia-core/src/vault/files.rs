@@ -40,6 +40,25 @@ pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Replaces `dest` with an owner-only file holding `bytes`.
+///
+/// The bytes go to `dest` + `.tmp` first and are renamed into place, so a
+/// reader of `dest` never sees a partial file, and a failure leaves whatever
+/// `dest` held before.
+///
+/// # Errors
+///
+/// [`Error::Io`] when `dest` has no file name or the write or rename fails.
+pub(crate) fn replace_private_file(dest: &Path, bytes: &[u8]) -> Result<()> {
+    let staged = sibling_path(dest, ".tmp")?;
+
+    let replaced = write_private_file(&staged, bytes).and_then(|()| rename_synced(&staged, dest));
+    if replaced.is_err() {
+        discard_file(&staged);
+    }
+    replaced
+}
+
 /// Renames `from` over `to` and flushes the directory so the rename survives
 /// a crash.
 pub(crate) fn rename_synced(from: &Path, to: &Path) -> Result<()> {

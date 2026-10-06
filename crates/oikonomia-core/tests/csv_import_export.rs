@@ -5,6 +5,7 @@
 use oikonomia_core::csv::{
     CsvColumnMapping, CsvImportAccounts, JournalCsvStatus, export_journal_csv,
     parse_journal_export, post_import_rows, preview_bank_csv, preview_bank_csv_file,
+    write_journal_csv_file,
 };
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_for_post};
 use oikonomia_core::error::Error;
@@ -438,4 +439,67 @@ fn preview_mapping_override_and_auto_detect() {
         Some("ignored notes")
     );
     assert_eq!(count_entries(conn, entity_id), 0);
+}
+
+#[test]
+fn export_file_is_written_whole_and_leaves_no_temporary_file() {
+    let (dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, _accounts) = entity_with_accounts(conn);
+    let dest = dir.path().join("journal.csv");
+    std::fs::write(
+        &dest,
+        "an older export that is longer than the new one\n".repeat(50),
+    )
+    .expect("older export");
+
+    let written = write_journal_csv_file(conn, entity_id, &dest).expect("export");
+
+    assert_eq!(written, dest);
+    assert_eq!(
+        std::fs::read_to_string(&dest).expect("read export"),
+        export_journal_csv(conn, entity_id).expect("export text")
+    );
+    assert!(
+        !dir.path().join("journal.csv.tmp").exists(),
+        "the temporary file must be renamed away"
+    );
+}
+
+#[test]
+fn failed_export_leaves_no_temporary_file() {
+    let (dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, _accounts) = entity_with_accounts(conn);
+    // A directory at the destination makes the final rename fail.
+    let dest = dir.path().join("journal.csv");
+    std::fs::create_dir(&dest).expect("directory in the way");
+
+    let err = write_journal_csv_file(conn, entity_id, &dest).expect_err("rename must fail");
+
+    assert!(matches!(err, Error::Io(_)), "got {err:?}");
+    assert!(
+        !dir.path().join("journal.csv.tmp").exists(),
+        "a failed export must not leave the plaintext journal behind"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn export_file_is_readable_only_by_its_owner() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, _accounts) = entity_with_accounts(conn);
+
+    let dest =
+        write_journal_csv_file(conn, entity_id, &dir.path().join("journal")).expect("export");
+
+    let mode = std::fs::metadata(&dest)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "the journal is plaintext financial data");
 }

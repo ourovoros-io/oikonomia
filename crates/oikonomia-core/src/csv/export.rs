@@ -12,6 +12,7 @@ use crate::domain::EntityId;
 use crate::error::{Error, Result};
 use crate::ledger::get_entity;
 use crate::util::format_date;
+use crate::vault::files::replace_private_file;
 
 /// Export column header for integer debit minor units.
 pub const DEBIT_MINOR_COLUMN: &str = "debit_minor";
@@ -206,11 +207,17 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
     String::from_utf8(buf).map_err(|_| CsvError::NotUtf8.into())
 }
 
-/// Write [`export_journal_csv`] to `path`, appending `.csv` when missing.
+/// Writes [`export_journal_csv`] to `path`, appending `.csv` when missing,
+/// and returns the path written.
+///
+/// The export is the journal in plaintext, so the file is readable only by
+/// its owner (on Unix), and it is written under a temporary name and renamed
+/// into place so `path` never holds half an export.
 ///
 /// # Errors
 ///
-/// Export or filesystem errors.
+/// Whatever [`export_journal_csv`] returns, or [`Error::Io`] when the file
+/// cannot be written.
 pub fn write_journal_csv_file(
     conn: &Connection,
     entity_id: EntityId,
@@ -218,7 +225,7 @@ pub fn write_journal_csv_file(
 ) -> Result<PathBuf> {
     let dest = ensure_csv_path(path.to_path_buf());
     let text = export_journal_csv(conn, entity_id)?;
-    std::fs::write(&dest, text.as_bytes()).map_err(|err| Error::Io(err.to_string()))?;
+    replace_private_file(&dest, text.as_bytes())?;
     Ok(dest)
 }
 

@@ -2,7 +2,7 @@
 
 mod backup;
 mod crypto;
-mod files;
+pub(crate) mod files;
 mod header;
 mod paths;
 mod permissions;
