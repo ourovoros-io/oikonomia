@@ -97,8 +97,14 @@ jobs:
 
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      # No --all-targets: it would stop cargo running the doctests.
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --lib --bins --tests
+
+      # Doctests run without the desktop crate (it has none). With it in the
+      # build, cargo hands every doctest the link search path of its build
+      # script, where tauri-build leaves an empty msvcrt.lib for the static C
+      # runtime, and the doctests of the other crates then fail to link on
+      # Windows.
+      - run: cargo test --workspace --exclude oikonomia --locked --doc
 
       - run: cargo build -p oikonomia --locked
 
@@ -251,6 +257,42 @@ jobs:
         run: |
           printf '{"bundle": {"createUpdaterArtifacts": false}}' > "${RUNNER_TEMP}/smoke-config.json"
           node web/node_modules/@tauri-apps/cli/tauri.js build --bundles deb,appimage --config "${RUNNER_TEMP}/smoke-config.json" -- --locked
+
+      # The bundler's own fetch has no retry and no integrity check.
+      - name: Fetch the WebView2 bootstrapper (retried, signature-checked)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:LOCALAPPDATA 'tauri'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $exe = Join-Path $dir 'MicrosoftEdgeWebview2Setup.exe'
+          foreach ($i in 1..5) {
+            try {
+              Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $exe
+              break
+            }
+            catch {
+              if ($i -eq 5) { throw }
+              Start-Sleep -Seconds (10 * $i)
+            }
+          }
+          $sig = Get-AuthenticodeSignature -FilePath $exe
+          if ($null -eq $sig.SignerCertificate) {
+            Remove-Item $exe -Force
+            Write-Host "::error::WebView2 bootstrapper signature $($sig.Status); signer certificate missing"
+            exit 1
+          }
+          $signerCn = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          $issuerCn = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $true)
+          $issuerOk = $issuerCn.StartsWith('Microsoft Code Signing PCA') -or $issuerCn.StartsWith('Microsoft Windows Code Signing PCA')
+          if ($sig.Status -ne 'Valid' -or $signerCn -cne 'Microsoft Corporation' -or -not $issuerOk) {
+            Remove-Item $exe -Force
+            Write-Host "::error::WebView2 bootstrapper signature $($sig.Status); signer CN '$signerCn'; issuer CN '$issuerCn'"
+            exit 1
+          }
+          $sha256 = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash
+          Write-Host "WebView2 bootstrapper ok: $((Get-Item $exe).Length) bytes, signer CN $signerCn, issuer CN $issuerCn, thumbprint $($sig.SignerCertificate.Thumbprint), sha256 $sha256"
 
       - name: Build the installers (Windows)
         if: runner.os == 'Windows'

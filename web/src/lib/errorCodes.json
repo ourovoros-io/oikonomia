@@ -59,6 +59,7 @@
   "update_missing_platform",
   "update_artifact_url",
   "update_artifact_integrity",
+  "update_artifact_too_large",
   "update_invalid_feed_url",
   "unknown"
 ]
