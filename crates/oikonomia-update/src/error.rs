@@ -48,14 +48,14 @@ pub enum UpdateError {
     /// there), an artifact request was answered 204, a redirect had no usable
     /// `Location`, there were more redirects than the limit, or the body could
     /// not be read to its end.
-    #[error("update server could not be reached or answered with an error")]
-    Network,
-
-    /// The feed or its detached signature was larger than its size limit
-    /// (`MAX_MANIFEST_BYTES`, `MAX_SIGNATURE_BYTES`). An oversized artifact
+    ///
+    /// Also returned when the feed or its detached signature is larger than
+    /// its size limit (`MAX_MANIFEST_BYTES`, `MAX_SIGNATURE_BYTES`): an
+    /// oversized manifest or signature is a broken feed, and a broken feed
+    /// is reported like one that could not be fetched. An oversized artifact
     /// is [`Self::ArtifactTooLarge`].
-    #[error("update feed or its signature is larger than its size limit")]
-    ResponseTooLarge,
+    #[error("update server could not be reached or gave an unusable answer")]
+    Network,
 
     /// The detached signature of the manifest is absent (the server answered
     /// 404 or 204 for it), is not a minisign signature, or does not verify
@@ -97,8 +97,8 @@ pub enum UpdateError {
 
     /// The artifact is larger than this copy is willing to download
     /// (`MAX_ARTIFACT_BYTES`). Retrying cannot help, so it is kept apart from
-    /// [`Self::Network`]. Only the artifact gets this code; an oversized feed
-    /// or feed signature is [`Self::ResponseTooLarge`].
+    /// [`Self::Network`]. Only the artifact gets this code: an oversized
+    /// manifest or signature is a broken feed and stays [`Self::Network`].
     #[error("update artifact is larger than this copy can download")]
     ArtifactTooLarge,
 
@@ -128,7 +128,6 @@ impl UpdateError {
         "update_install_not_allowed",
         "update_missing_public_key",
         "update_network",
-        "update_response_too_large",
         "update_manifest_signature",
         "update_manifest_parse",
         "update_invalid_version",
@@ -148,7 +147,6 @@ impl UpdateError {
             Self::InstallNotAvailable => "update_install_not_allowed",
             Self::MissingPublicKey => "update_missing_public_key",
             Self::Network => "update_network",
-            Self::ResponseTooLarge => "update_response_too_large",
             Self::ManifestSignature => "update_manifest_signature",
             Self::ManifestParse => "update_manifest_parse",
             Self::InvalidVersion { .. } => "update_invalid_version",
@@ -175,7 +173,6 @@ mod tests {
             UpdateError::InstallNotAvailable,
             UpdateError::MissingPublicKey,
             UpdateError::Network,
-            UpdateError::ResponseTooLarge,
             UpdateError::ManifestSignature,
             UpdateError::ManifestParse,
             UpdateError::InvalidVersion {
@@ -196,7 +193,6 @@ mod tests {
             UpdateError::InstallNotAvailable,
             UpdateError::MissingPublicKey,
             UpdateError::Network,
-            UpdateError::ResponseTooLarge,
             UpdateError::ManifestSignature,
             UpdateError::ManifestParse,
             UpdateError::InvalidVersion { .. },

@@ -58,7 +58,6 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   update_install_not_allowed: 'error.update',
   update_missing_public_key: 'error.update',
   update_network: 'error.update',
-  update_response_too_large: 'error.update',
   update_manifest_signature: 'error.update',
   update_manifest_parse: 'error.update',
   update_invalid_version: 'error.update',

@@ -393,8 +393,8 @@ pub(crate) fn current_updater_platform() -> String {
 /// Returns [`UpdateError::ArtifactUrl`] when the feed URL or a redirect from
 /// it is off the allow-list, or the artifact URL in the manifest does not
 /// parse, is off the allow-list or ends in `.deb`;
-/// [`UpdateError::Network`] when the feed or its signature cannot be fetched;
-/// [`UpdateError::ResponseTooLarge`] when either exceeds its size limit;
+/// [`UpdateError::Network`] when the feed or its signature cannot be fetched
+/// or exceeds its size limit;
 /// [`UpdateError::ManifestSignature`] when the signature is absent or does
 /// not verify, or the manifest's artifact signature is empty;
 /// [`UpdateError::ManifestParse`] when the signed body is not the expected
@@ -819,11 +819,10 @@ fn signature_url_for(feed: &Url) -> Url {
 ///
 /// Returns [`UpdateError::ArtifactUrl`] when `url` or a redirect from it is
 /// off the allow-list; [`UpdateError::ArtifactTooLarge`] when `resource` is
-/// the artifact and the body exceeds its cap, and
-/// [`UpdateError::ResponseTooLarge`] when it is the feed or its signature;
+/// the artifact and the body exceeds its cap;
 /// [`UpdateError::ManifestSignature`] when `resource` is the feed signature
 /// and the server answers 404; and [`UpdateError::Network`] for every other
-/// failure.
+/// failure, a feed or feed signature over its cap included.
 fn fetch(config: &ClientConfig, url: &Url, resource: Resource) -> Result<Fetched> {
     let mut request_url = url.clone();
     if resource.names_this_copy() {
@@ -836,15 +835,15 @@ fn fetch(config: &ClientConfig, url: &Url, resource: Resource) -> Result<Fetched
             // Retrying cannot help, so the user must not be told to check the
             // connection.
             (FetchFailure::TooLarge, Resource::Artifact) => UpdateError::ArtifactTooLarge,
-            (FetchFailure::TooLarge, Resource::Manifest | Resource::ManifestSignature) => {
-                UpdateError::ResponseTooLarge
-            }
             // A feed published without its signature is a feed that cannot be
             // trusted, which is a different finding from a server in trouble.
             (FetchFailure::Status(404), Resource::ManifestSignature) => {
                 UpdateError::ManifestSignature
             }
-            (FetchFailure::Status(_) | FetchFailure::Network, _) => UpdateError::Network,
+            // An oversized manifest or signature is a broken feed and is
+            // reported like one that could not be fetched.
+            (FetchFailure::TooLarge, Resource::Manifest | Resource::ManifestSignature)
+            | (FetchFailure::Status(_) | FetchFailure::Network, _) => UpdateError::Network,
         }
     })
 }

@@ -95,9 +95,9 @@
 //!   through [`check_artifact_file`], so a release cannot publish an
 //!   installer the client would refuse to download.
 //!
-//! An artifact over its limit fails as [`UpdateError::ArtifactTooLarge`]; a
-//! feed or signature over its limit fails as
-//! [`UpdateError::ResponseTooLarge`].
+//! An artifact over its limit fails as [`UpdateError::ArtifactTooLarge`]. A
+//! feed or signature over its limit is a broken feed and fails as
+//! [`UpdateError::Network`].
 //!
 //! Times:
 //!

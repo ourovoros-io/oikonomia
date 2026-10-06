@@ -636,7 +636,7 @@ fn manifest_one_byte_over_the_size_cap_is_refused() {
         Duration::from_secs(2),
     );
 
-    assert_eq!(check_error_code(&config), "update_response_too_large");
+    assert_eq!(check_error_code(&config), "update_network");
 }
 
 #[test]
@@ -659,7 +659,7 @@ fn manifest_signature_over_the_size_cap_is_refused() {
         Duration::from_secs(2),
     );
 
-    assert_eq!(check_error_code(&config), "update_response_too_large");
+    assert_eq!(check_error_code(&config), "update_network");
 }
 
 #[test]

@@ -54,7 +54,6 @@
   "update_install_not_allowed",
   "update_missing_public_key",
   "update_network",
-  "update_response_too_large",
   "update_manifest_signature",
   "update_manifest_parse",
   "update_invalid_version",
