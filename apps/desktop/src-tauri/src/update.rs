@@ -14,7 +14,7 @@ use oikonomia_update::{
     UpdateStatus, perform_check,
 };
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
 /// Where a downloaded update waits to be installed: a directory of its own
@@ -44,39 +44,84 @@ pub async fn update_check(
     state: State<'_, AppState>,
 ) -> CommandResult<UpdateStatus> {
     let cache = updater_cache_dir(&app)?;
-    let machine = state.update_machine();
-    {
-        let mut guard = crate::state::lock_update(&machine);
-        guard.begin_check();
-    }
-
     let version = env!("CARGO_PKG_VERSION").to_owned();
 
-    let outcome = match tauri::async_runtime::spawn_blocking(move || {
+    run_check(state.update_machine(), move || {
         let route = InstallKind::detect().route();
-        let config = match ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, route) {
-            Ok(config) => config,
+        match ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, route) {
+            Ok(config) => perform_check(&config),
             Err(err) => {
                 log::warn!("update check config failed: {err}");
-                return CheckOutcome::Failed;
+                CheckOutcome::Failed
             }
-        };
-        perform_check(&config)
+        }
     })
     .await
-    {
-        Ok(outcome) => outcome,
-        Err(err) => {
-            return Err(CommandError::desktop(
-                DesktopError::TaskFailed,
-                format!("background task failed: {err}"),
-            ));
-        }
-    };
+}
 
-    let mut guard = crate::state::lock_update(&machine);
-    guard.finish_check(outcome);
-    Ok(guard.status())
+/// Runs `check` on the blocking pool and applies its outcome to `machine`.
+///
+/// The machine is locked only on the blocking pool, never by the task that
+/// polls this future: an install holds the same mutex through its download,
+/// and an async worker waiting behind it would stall every other command.
+async fn run_check(
+    machine: Arc<Mutex<UpdateMachine>>,
+    check: impl FnOnce() -> CheckOutcome + Send + 'static,
+) -> CommandResult<UpdateStatus> {
+    let joined = tauri::async_runtime::spawn_blocking(move || {
+        let pending = PendingCheck::begin(&machine);
+        let outcome = check();
+        pending.finish(outcome)
+    })
+    .await;
+
+    joined.map_err(|err| {
+        CommandError::desktop(
+            DesktopError::TaskFailed,
+            format!("background task failed: {err}"),
+        )
+    })
+}
+
+/// A check that has begun on the machine and has to end on it.
+///
+/// Dropped unfinished, which happens when the check panics, it moves the
+/// machine to failed. Otherwise the status would stay `Checking` for the rest
+/// of the session, because nothing else ends a check.
+struct PendingCheck<'a> {
+    /// The machine the check was begun on.
+    machine: &'a Mutex<UpdateMachine>,
+    /// Whether [`Self::finish`] has applied an outcome.
+    finished: bool,
+}
+
+impl<'a> PendingCheck<'a> {
+    /// Marks `machine` as checking.
+    fn begin(machine: &'a Mutex<UpdateMachine>) -> Self {
+        crate::state::lock_update(machine).begin_check();
+
+        Self {
+            machine,
+            finished: false,
+        }
+    }
+
+    /// Applies `outcome` and returns the status it led to.
+    fn finish(mut self, outcome: CheckOutcome) -> UpdateStatus {
+        let mut machine = crate::state::lock_update(self.machine);
+        machine.finish_check(outcome);
+        self.finished = true;
+
+        machine.status()
+    }
+}
+
+impl Drop for PendingCheck<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            crate::state::lock_update(self.machine).fail();
+        }
+    }
 }
 
 /// Install is only legal from [`UpdateStatus::Available`]. Downloads outside the
@@ -125,6 +170,11 @@ pub async fn update_install(
 /// Shared install path used by IPC. Download → verify on disk → exec that path.
 ///
 /// Does not call a plugin check and does not read an unsigned feed URL.
+///
+/// The machine stays locked for the whole download. It has no installing
+/// state, so releasing it in between would let a second install, or a check
+/// that replaces the offer, run against the same cache file. The caller runs
+/// this on the blocking pool, and [`run_check`] waits there too.
 fn install_available_update(
     machine: &Mutex<UpdateMachine>,
     config: ClientConfig,
@@ -137,15 +187,15 @@ fn install_available_update(
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::install_available_update;
+    use super::{install_available_update, run_check};
     use crate::update_key::UPDATER_PUBLIC_KEY;
     use oikonomia_update::{
-        ArtifactInstaller, ClientConfig, InstallHandoff, InstallRoute, UpdateError, UpdateMachine,
-        UpdateStatus, parse_public_key,
+        ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallRoute, UpdateError,
+        UpdateMachine, UpdateStatus, parse_public_key,
     };
     use std::path::Path;
-    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
 
     struct SpyInstaller {
         calls: AtomicUsize,
@@ -213,6 +263,32 @@ mod tests {
                 "update_exec.rs product code must not contain {needle}"
             );
         }
+    }
+
+    #[test]
+    fn a_check_that_dies_does_not_leave_the_machine_checking() {
+        let machine = Arc::new(Mutex::new(UpdateMachine::new()));
+
+        let result = tauri::async_runtime::block_on(run_check(Arc::clone(&machine), || {
+            std::panic::resume_unwind(Box::new("check died"))
+        }));
+
+        assert_eq!(result.expect_err("join error").code, "task_failed");
+        assert_eq!(
+            crate::state::lock_update(&machine).status(),
+            UpdateStatus::Failed
+        );
+    }
+
+    #[test]
+    fn a_finished_check_reports_its_outcome() {
+        let machine = Arc::new(Mutex::new(UpdateMachine::new()));
+
+        let status = tauri::async_runtime::block_on(run_check(Arc::clone(&machine), || {
+            CheckOutcome::UpToDate
+        }));
+
+        assert_eq!(status.ok(), Some(UpdateStatus::UpToDate));
     }
 
     #[test]
