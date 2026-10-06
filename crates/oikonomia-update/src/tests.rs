@@ -1085,6 +1085,7 @@ fn promoted_feed_round_trips_through_check_and_download() {
     assert!(path.exists());
     assert_eq!(leftover_files(cache.path()).len(), 1);
 }
+
 /// Returns a manifest offering `version` at `/Oikonomia.AppImage` on `server`
 /// and the detached signature over it.
 fn signed_manifest(server: &Server, secret_key: &SecretKey, version: &str) -> (String, String) {
@@ -1326,6 +1327,7 @@ fn artifact_redirect_to_a_host_off_the_allow_list_is_refused() {
     assert_eq!(err.code(), "update_artifact_url");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
+
 /// Reads from `stream` up to the blank line that ends an HTTP request head.
 fn read_request_head(stream: &mut TcpStream) {
     let mut head = Vec::new();
@@ -1433,6 +1435,7 @@ fn artifact_download_may_outlast_the_feed_deadline_while_bytes_keep_arriving() {
 
     assert_eq!(std::fs::read(&path).expect("read"), payload);
 }
+
 #[test]
 fn artifact_fields_outside_the_platform_table_are_not_an_offer() {
     let (pk, sk) = test_keys();
@@ -1463,6 +1466,7 @@ fn artifact_fields_outside_the_platform_table_are_not_an_offer() {
 
     assert_eq!(check_error_code(&config), "update_missing_platform");
 }
+
 /// Serves a signed manifest for `version` that lists an artifact for
 /// `darwin-aarch64` only, and returns a config for a `linux-x86_64` app at
 /// 0.1.0.
@@ -1518,6 +1522,7 @@ fn newer_version_without_this_platform_fails_as_a_missing_platform() {
 
     assert_eq!(check_error_code(&config), "update_missing_platform");
 }
+
 #[test]
 fn feed_and_signature_requests_each_name_this_copy_once() {
     const IDENTITY_QUERY: &str = "version=0.1.0&os=linux&arch=x86_64";
@@ -1556,6 +1561,7 @@ fn feed_and_signature_requests_each_name_this_copy_once() {
         "got {status:?}"
     );
 }
+
 /// Keeps every warning the crate logs while the tests run.
 ///
 /// `log` takes one logger per process, so all tests share this one and each
@@ -1638,6 +1644,7 @@ fn delete_artifact_logs_a_removal_that_fails() {
 
     assert_eq!(warnings.mentioning(&directory).len(), 1);
 }
+
 /// Returns a manifest offering 0.2.0, padded with trailing whitespace (which
 /// JSON allows) to exactly `total_bytes`, and the signature over it.
 fn signed_manifest_of_size(
@@ -1707,7 +1714,8 @@ fn manifest_signature_over_the_size_cap_is_refused() {
     let (pk, sk) = test_keys();
     let server = Server::run();
     let (body, mut signature) = signed_manifest(&server, &sk, "0.2.0");
-    // Read in full, this would end as a signature error, not a network one.
+    // `verify_minisign` trims its input, so read in full the padded signature
+    // would verify and the check would end in an offer.
     let padding = MAX_SIGNATURE_BYTES + 1 - signature.len();
     signature.push_str(&"\n".repeat(padding));
     serve_signed_manifest(&server, &body, &signature);
