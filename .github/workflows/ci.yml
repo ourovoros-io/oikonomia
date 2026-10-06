@@ -385,3 +385,48 @@ jobs:
       # The wrappers in deny.toml allow network crates under the updater;
       # core's own subtree must stay at zero.
       - run: ./scripts/assert-core-offline.sh
+
+  # The workflows hold the signing and publishing lanes, so they are linted
+  # like code: actionlint for syntax and shell, zizmor for security findings.
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Release binaries at exact versions, checked against the sha256 each
+      # release publishes for its asset. Dependabot does not see these; bump
+      # the version and the hash together, by hand.
+      - name: Install actionlint and zizmor
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ZIZMOR_VERSION: 1.30.1
+          ZIZMOR_SHA256: e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+        run: |
+          set -euo pipefail
+          tools="${RUNNER_TEMP}/workflow-lint"
+          mkdir -p "${tools}"
+          cd "${tools}"
+          curl --proto '=https' --tlsv1.2 --retry 3 -sSfL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 --retry 3 -sSfL -o zizmor.tar.gz \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          printf '%s  %s\n' \
+            "${ACTIONLINT_SHA256}" actionlint.tar.gz \
+            "${ZIZMOR_SHA256}" zizmor.tar.gz > SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          tar -xzf actionlint.tar.gz actionlint
+          tar -xzf zizmor.tar.gz
+          echo "${tools}" >> "${GITHUB_PATH}"
+
+      - run: actionlint
+
+      # The token lets zizmor ask GitHub about the pinned actions (known
+      # vulnerabilities, commits that are not in the action's own history).
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --no-progress .
