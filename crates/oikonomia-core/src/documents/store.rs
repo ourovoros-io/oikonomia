@@ -139,7 +139,8 @@ pub fn save_document(
     conn.execute(
         "
         INSERT INTO documents (
-            id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json
+            id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+            analysis_json
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)
         ",
         rusqlite::params![

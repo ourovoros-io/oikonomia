@@ -421,7 +421,9 @@ mod tests {
     #[test]
     fn stale_startxref_and_prev_are_rewritten_in_place() {
         // "xref" really lives at offset 21; both references claim 7.
-        let data = b"%PDF-1.4\n1 0 obj\nend\nxref\n0 1\n0000000000 65535 f \ntrailer\n<</Prev 0000007>>\nstartxref\n0000007\n%%EOF";
+        let data = b"%PDF-1.4\n1 0 obj\nend\n\
+              xref\n0 1\n0000000000 65535 f \n\
+              trailer\n<</Prev 0000007>>\nstartxref\n0000007\n%%EOF";
 
         let repaired = repair_xref_offsets(data).unwrap_or_default();
 
@@ -442,7 +444,9 @@ mod tests {
     #[test]
     fn stale_entry_offset_is_rewritten_to_the_object_header() {
         // Object 1 really starts at offset 19, the entry claims 9.
-        let data = b"%PDF-1.4\npadding..\n1 0 obj\nend\nendobj\nxref\n0 2\n0000000000 65535 f \n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n38\n%%EOF";
+        let data = b"%PDF-1.4\npadding..\n1 0 obj\nend\nendobj\n\
+              xref\n0 2\n0000000000 65535 f \n0000000009 00000 n \n\
+              trailer\n<<>>\nstartxref\n38\n%%EOF";
 
         assert_eq!(&data[19..26], b"1 0 obj", "test fixture geometry");
 
@@ -455,8 +459,9 @@ mod tests {
 
     #[test]
     fn valid_offsets_are_left_alone() {
-        let data =
-            b"%PDF-1.4\n1 0 obj\nendobj\nxref\n0 2\n0000000000 65535 f \n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n24\n%%EOF";
+        let data = b"%PDF-1.4\n1 0 obj\nendobj\n\
+              xref\n0 2\n0000000000 65535 f \n0000000009 00000 n \n\
+              trailer\n<<>>\nstartxref\n24\n%%EOF";
 
         assert_eq!(&data[9..16], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[24..28], b"xref", "test fixture geometry");
@@ -479,7 +484,9 @@ mod tests {
     fn an_offset_into_the_middle_of_another_header_is_stale() {
         // Object 1 is at 25. Its entry claims 10: the second digit of
         // "11 0 obj", which reads as "1 0 obj" from there.
-        let data = b"%PDF-1.4\n11 0 obj\nendobj\n1 0 obj\nendobj\nxref\n1 1\n0000000010 00000 n \ntrailer\n<<>>\nstartxref\n40\n%%EOF";
+        let data = b"%PDF-1.4\n11 0 obj\nendobj\n1 0 obj\nendobj\n\
+              xref\n1 1\n0000000010 00000 n \n\
+              trailer\n<<>>\nstartxref\n40\n%%EOF";
 
         assert_eq!(&data[10..17], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[25..32], b"1 0 obj", "test fixture geometry");
@@ -494,7 +501,9 @@ mod tests {
     #[test]
     fn a_word_that_only_starts_with_obj_is_not_a_header() {
         // "1 0 object" at 9 is text; the real header is at 20.
-        let data = b"%PDF-1.4\n1 0 object\n1 0 obj\nendobj\nxref\n1 1\n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n35\n%%EOF";
+        let data = b"%PDF-1.4\n1 0 object\n1 0 obj\nendobj\n\
+              xref\n1 1\n0000000009 00000 n \n\
+              trailer\n<<>>\nstartxref\n35\n%%EOF";
 
         assert_eq!(&data[9..19], b"1 0 object", "test fixture geometry");
         assert_eq!(&data[20..27], b"1 0 obj", "test fixture geometry");
@@ -588,7 +597,9 @@ mod tests {
     #[test]
     fn a_redefined_object_is_repaired_to_the_revision_nearest_its_claimed_offset() {
         // Object 1 is defined at 9 and again at 28; the entry claims 30.
-        let data = b"%PDF-1.4\n1 0 obj\nA\nendobj\n \n1 0 obj\nB\nendobj\nxref\n1 1\n0000000030 00000 n \ntrailer\n<<>>\nstartxref\n45\n%%EOF";
+        let data = b"%PDF-1.4\n1 0 obj\nA\nendobj\n \n1 0 obj\nB\nendobj\n\
+              xref\n1 1\n0000000030 00000 n \n\
+              trailer\n<<>>\nstartxref\n45\n%%EOF";
 
         assert_eq!(&data[9..16], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[28..35], b"1 0 obj", "test fixture geometry");
@@ -603,8 +614,9 @@ mod tests {
     #[test]
     fn refuses_when_corrected_offset_does_not_fit() {
         // Claimed offset has 1 digit; the real xref position needs more.
-        let data =
-            b"%PDF-1.4\npadding padding padding\nxref\n0 1\n0000000000 65535 f \ntrailer\n<<>>\nstartxref\n7\n%%EOF";
+        let data = b"%PDF-1.4\npadding padding padding\n\
+              xref\n0 1\n0000000000 65535 f \n\
+              trailer\n<<>>\nstartxref\n7\n%%EOF";
 
         assert!(repair_xref_offsets(data).is_none());
     }
