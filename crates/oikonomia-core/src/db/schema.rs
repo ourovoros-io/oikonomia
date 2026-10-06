@@ -217,7 +217,8 @@ fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
             UNIQUE (entity_id, filename)
         );
         INSERT INTO documents_v4
-            SELECT id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json
+            SELECT id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+                   analysis_json
             FROM documents;
         DROP TABLE documents;
         ALTER TABLE documents_v4 RENAME TO documents;
