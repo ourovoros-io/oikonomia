@@ -59,7 +59,7 @@ impl UpdateError {
         "update_invalid_feed_url",
     ];
 
-    /// Stable machine code for desktop [`CommandError`] mapping.
+    /// Returns the stable machine code the desktop crate sends to the UI for this error.
     #[must_use]
     pub fn code(&self) -> &'static str {
         match self {
