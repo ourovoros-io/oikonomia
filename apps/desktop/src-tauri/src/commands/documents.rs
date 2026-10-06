@@ -46,10 +46,12 @@ pub(crate) async fn document_analyze(
 
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
-    let locale = stored_text_locale(&state);
+    let data_dir = state.data_dir().to_path_buf();
     state.touch();
 
     run_blocking(move || {
+        let locale = stored_text_locale(&data_dir);
+
         analyze_readonly(
             &vault, &model_dir, entity_id, &filename, &mime_type, &data, locale,
         )
@@ -65,14 +67,16 @@ pub(crate) async fn document_analyze_path(
     path: String,
 ) -> CommandResult<DocumentSuggestion> {
     let filename = dropped_file_name(&path);
-    let path = require_granted_path(&state, &path)?;
-
+    let grants = state.path_grants();
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
-    let locale = stored_text_locale(&state);
+    let data_dir = state.data_dir().to_path_buf();
     state.touch();
 
     run_blocking(move || {
+        let path = require_granted_path(&grants, &path)?;
+        let locale = stored_text_locale(&data_dir);
+
         // Reject oversized/unsupported drops from metadata alone — a stray
         // 10 GB drop must not be read into memory before failing the size cap.
         let meta = std::fs::metadata(&path).map_err(|e| {

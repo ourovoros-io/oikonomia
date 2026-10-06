@@ -26,8 +26,9 @@ pub(crate) async fn csv_import_preview(
     state: State<'_, AppState>,
     input: CsvImportPreviewInput,
 ) -> CommandResult<Option<CsvImportPreview>> {
-    let path = if let Some(chosen) = input.path.as_deref() {
-        require_granted_path(&state, chosen)?
+    let path = if let Some(chosen) = input.path.clone() {
+        let grants = state.path_grants();
+        run_blocking(move || require_granted_path(&grants, &chosen)).await?
     } else {
         let Some(picked) = pick_csv_path(&app, &state).await? else {
             return Ok(None);
@@ -90,22 +91,20 @@ pub(crate) async fn csv_export_journal(
 /// Native Open dialog for a `.csv` file. `None` if cancelled. The chosen path
 /// is granted so a re-preview with a column mapping may pass it back.
 async fn pick_csv_path(app: &tauri::AppHandle, state: &AppState) -> CommandResult<Option<PathBuf>> {
-    let picked = run_blocking({
-        let app = app.clone();
-        move || {
-            use tauri_plugin_dialog::DialogExt;
-            Ok(app
-                .dialog()
-                .file()
-                .add_filter("CSV", &["csv"])
-                .blocking_pick_file())
-        }
+    let app = app.clone();
+    let grants = state.path_grants();
+
+    run_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+
+        let dialog = app.dialog().file().add_filter("CSV", &["csv"]);
+        let Some(picked) = dialog.blocking_pick_file() else {
+            return Ok(None);
+        };
+
+        let path = dialog_path(picked, "CSV")?;
+        grants.grant([path.clone()]);
+        Ok(Some(path))
     })
-    .await?;
-    let Some(file_path) = picked else {
-        return Ok(None);
-    };
-    let path = dialog_path(file_path, "CSV")?;
-    state.grant_paths([path.clone()]);
-    Ok(Some(path))
+    .await
 }

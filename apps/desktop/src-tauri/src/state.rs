@@ -8,7 +8,7 @@
 //!    an unlock with its key derivation, a rekey).
 //! 2. `WatchdogGate::state`, whether the idle watchdog polls or parks. Held
 //!    for a field update, or handed to a condition-variable wait.
-//! 3. `AppState::granted_paths`, the paths the user handed over. Held for one
+//! 3. `PathGrants::paths`, the paths the user handed over. Held for one
 //!    lookup or insert.
 //! 4. `AppState::prefs_lock`, which serializes a load-change-save of the
 //!    plaintext preferences file. Held across that file I/O.
@@ -60,9 +60,9 @@ pub(crate) struct AppState {
     ocr_model_dir: PathBuf,
     /// Seconds since `UNIX_EPOCH` of the last command touching the vault.
     last_activity: Arc<AtomicU64>,
-    /// Canonical paths the user handed over through a native drop or a native
-    /// file dialog; path-taking IPC commands accept only these.
-    granted_paths: Mutex<HashSet<PathBuf>>,
+    /// The paths the user handed over through a native drop or a native file
+    /// dialog; path-taking IPC commands accept only these.
+    path_grants: PathGrants,
     /// Serializes plaintext prefs load-mutate-save.
     prefs_lock: Mutex<()>,
     /// Unlock-screen update check / install machine. Independent of the vault.
@@ -84,7 +84,7 @@ impl AppState {
             data_dir,
             ocr_model_dir,
             last_activity: Arc::new(AtomicU64::new(now_secs())),
-            granted_paths: Mutex::new(HashSet::new()),
+            path_grants: PathGrants::default(),
             prefs_lock: Mutex::new(()),
             update: Arc::new(Mutex::new(UpdateMachine::new())),
         })
@@ -125,41 +125,16 @@ impl AppState {
         }
     }
 
-    /// Record paths the user chose through a native drop or dialog, so a
-    /// later path-taking command may accept them.
+    /// Records paths the user chose through a native drop or dialog, so a
+    /// later path-taking command may accept them ([`PathGrants::grant`]).
     pub(crate) fn grant_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
-        let mut granted = self.lock_granted_paths();
-        for path in paths {
-            if let Ok(canonical) = path.canonicalize() {
-                granted.insert(canonical);
-            }
-        }
+        self.path_grants.grant(paths);
     }
 
-    /// The granted path that `path` resolves to, or `None` if it resolves to
-    /// nothing the user handed over.
-    ///
-    /// The result is the resolved path that was compared, and it is the one
-    /// to open. Opening `path` itself would resolve its links a second time,
-    /// and a link changed in between would lead to a file that was never
-    /// checked. The resolved path is still opened by name, so this does not
-    /// cover a directory on it being replaced after the check.
+    /// Returns a handle to the granted paths that a blocking task can own.
     #[must_use]
-    pub(crate) fn granted_path(&self, path: &Path) -> Option<PathBuf> {
-        let canonical = path.canonicalize().ok()?;
-        let granted = self.lock_granted_paths();
-
-        granted.contains(&canonical).then_some(canonical)
-    }
-
-    fn lock_granted_paths(&self) -> MutexGuard<'_, HashSet<PathBuf>> {
-        match self.granted_paths.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                self.granted_paths.clear_poison();
-                poisoned.into_inner()
-            }
-        }
+    pub(crate) fn path_grants(&self) -> PathGrants {
+        self.path_grants.clone()
     }
 
     /// Record command activity for the idle watchdog.
@@ -173,6 +148,68 @@ impl AppState {
         WatchdogHandles {
             vault: Arc::clone(&self.vault),
             last_activity: Arc::clone(&self.last_activity),
+        }
+    }
+}
+
+/// The paths the user handed over through a native drop or a native file
+/// dialog.
+///
+/// A handle: clones share one set. The Tauri state is borrowed for the length
+/// of a command, so a task on the blocking pool cannot hold it; it holds a
+/// clone of this instead.
+///
+/// Both methods resolve a path through the filesystem, which can block on a
+/// slow or remote volume. Call them on the blocking pool or the main thread,
+/// not on an async worker.
+#[derive(Clone, Default)]
+pub(crate) struct PathGrants {
+    /// The granted paths, each with its links resolved.
+    paths: Arc<Mutex<HashSet<PathBuf>>>,
+}
+
+impl PathGrants {
+    /// Records `paths` as handed over, so a later path-taking command may
+    /// accept them.
+    ///
+    /// A path that cannot be resolved, such as one that no longer exists, is
+    /// skipped: there is nothing a command could open under it.
+    pub(crate) fn grant(&self, paths: impl IntoIterator<Item = PathBuf>) {
+        // Resolved before the set is locked, so the lock is never held across
+        // file I/O.
+        let resolved: Vec<PathBuf> = paths
+            .into_iter()
+            .filter_map(|path| path.canonicalize().ok())
+            .collect();
+
+        self.lock().extend(resolved);
+    }
+
+    /// Returns the granted path that `path` resolves to, or `None` if it
+    /// resolves to nothing the user handed over.
+    ///
+    /// The result is the resolved path that was compared, and it is the one
+    /// to open. Opening `path` itself would resolve its links a second time,
+    /// and a link changed in between would lead to a file that was never
+    /// checked. The resolved path is still opened by name, so this does not
+    /// cover a directory on it being replaced after the check.
+    #[must_use]
+    pub(crate) fn resolve(&self, path: &Path) -> Option<PathBuf> {
+        let canonical = path.canonicalize().ok()?;
+        let granted = self.lock();
+
+        granted.contains(&canonical).then_some(canonical)
+    }
+
+    /// Locks the set, recovering from poisoning: it holds plain paths that
+    /// are valid whichever statement a panic interrupted.
+    fn lock(&self) -> MutexGuard<'_, HashSet<PathBuf>> {
+        match self.paths.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                self.paths.clear_poison();
+                poisoned.into_inner()
+            }
         }
     }
 }
@@ -859,18 +896,22 @@ mod tests {
         fs::create_dir_all(dir.join("sub")).expect("subdir");
         let indirect = dir.join("sub").join("..").join("picked.csv");
 
-        assert_eq!(state.granted_path(&picked), None, "nothing granted yet");
+        assert_eq!(
+            state.path_grants().resolve(&picked),
+            None,
+            "nothing granted yet"
+        );
 
         state.grant_paths([picked.clone()]);
 
         let resolved = picked.canonicalize().expect("canonical");
-        assert_eq!(state.granted_path(&picked), Some(resolved.clone()));
+        assert_eq!(state.path_grants().resolve(&picked), Some(resolved.clone()));
         assert_eq!(
-            state.granted_path(&indirect),
+            state.path_grants().resolve(&indirect),
             Some(resolved),
             "same file through .."
         );
-        assert_eq!(state.granted_path(&dir.join("other.csv")), None);
+        assert_eq!(state.path_grants().resolve(&dir.join("other.csv")), None);
         let _ = fs::remove_dir_all(&dir);
     }
 

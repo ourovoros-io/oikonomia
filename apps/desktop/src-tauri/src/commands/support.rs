@@ -1,7 +1,7 @@
 //! Helpers shared by the command modules.
 
 use crate::error::{CommandError, CommandResult, DesktopError};
-use crate::state::{AppState, VaultGuard};
+use crate::state::{AppState, PathGrants, VaultGuard};
 use base64::Engine;
 use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
@@ -51,7 +51,7 @@ pub(super) fn decode_capped_base64(
 
 /// The error for a payload over a cap of `max_decoded` bytes, with the code
 /// and parameter core uses for a stored document that is too large.
-pub(super) fn too_large_error(max_decoded: usize) -> CommandError {
+fn too_large_error(max_decoded: usize) -> CommandError {
     let max_megabytes = max_decoded / (1024 * 1024);
 
     CommandError::from(CoreError::Validation(ValidationError::FileTooLarge {
@@ -59,29 +59,37 @@ pub(super) fn too_large_error(max_decoded: usize) -> CommandError {
     }))
 }
 
-/// The language that text written into the user's books must be in.
+/// Returns the language that text written into the user's books must be in.
 ///
-/// Read from the stored preference on the desktop side, never from the
-/// webview: the UI cannot choose the language of ledger text, and it is read
-/// before the vault closure so the plaintext preferences file is not touched
-/// while the vault lock is held.
+/// Read from the preferences file in `data_dir`, never taken from the
+/// webview: the UI cannot choose the language of ledger text.
 ///
-/// The read takes no lock. [`save_ui_prefs`](oikonomia_core::prefs::save_ui_prefs) writes a temporary file and
-/// renames it over the preferences file, so a read during a language change
-/// sees the old or the new file, complete. [`AppState::lock_prefs`] is for a
-/// load-change-save, which this is not, and taking it here would make every
-/// caller wait behind a save's fsync.
-pub(super) fn stored_text_locale(state: &AppState) -> Locale {
-    load_ui_prefs(state.data_dir()).locale
+/// This reads a file, so it runs on the blocking pool, and before the vault
+/// is taken, so the plaintext preferences file is not touched while the
+/// vault mutex is held.
+///
+/// The read takes no lock. [`save_ui_prefs`](oikonomia_core::prefs::save_ui_prefs)
+/// writes a temporary file and renames it over the preferences file, so a
+/// read during a language change sees the old or the new file, complete.
+/// [`AppState::lock_prefs`] is for a load-change-save, which this is not, and
+/// taking it here would make every caller wait behind a save's fsync.
+pub(super) fn stored_text_locale(data_dir: &Path) -> Locale {
+    load_ui_prefs(data_dir).locale
 }
 
-/// Accept a webview-supplied path only if the user handed it to the app
+/// Accepts a webview-supplied path only if the user handed it to the app
 /// through a native drop or dialog ([`AppState::grant_paths`]).
 ///
 /// Returns the resolved path that was checked, which is the one to open
-/// ([`AppState::granted_path`]).
-pub(super) fn require_granted_path(state: &AppState, path: &str) -> CommandResult<PathBuf> {
-    state.granted_path(Path::new(path)).ok_or_else(|| {
+/// ([`PathGrants::resolve`]). Resolving reads the filesystem, so this runs on
+/// the blocking pool.
+///
+/// # Errors
+///
+/// Returns `path_not_granted` when the path resolves to nothing the user
+/// handed over, which includes a path that does not exist.
+pub(super) fn require_granted_path(grants: &PathGrants, path: &str) -> CommandResult<PathBuf> {
+    grants.resolve(Path::new(path)).ok_or_else(|| {
         CommandError::desktop(
             DesktopError::PathNotGranted,
             "file path was not chosen through the app",
@@ -139,6 +147,38 @@ where
     F: FnOnce(&Connection) -> Result<T, CoreError> + Send + 'static,
 {
     with_vault_blocking(state, move |vault| work(vault.connection()?)).await
+}
+
+/// Runs `work` on the blocking pool with the unlocked vault's connection and
+/// the language ledger text is written in ([`stored_text_locale`]).
+///
+/// For the commands whose core call writes text into the books: seeded
+/// account names, generated entry descriptions.
+///
+/// # Errors
+///
+/// Returns `vault_locked` when the vault is not unlocked, the error `work`
+/// returns, and `task_failed` when the blocking task panics.
+pub(super) async fn with_localized_connection<T, F>(
+    state: &State<'_, AppState>,
+    work: F,
+) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection, Locale) -> Result<T, CoreError> + Send + 'static,
+{
+    let vault = state.vault();
+    let data_dir = state.data_dir().to_path_buf();
+    state.touch();
+
+    run_blocking(move || {
+        // Read before the vault is taken; see `stored_text_locale`.
+        let locale = stored_text_locale(&data_dir);
+
+        let guard = vault.acquire();
+        Ok(work(guard.connection()?, locale)?)
+    })
+    .await
 }
 
 /// Runs `work` on the runtime's blocking pool and returns what it returns.
@@ -264,12 +304,12 @@ mod tests {
         std::fs::write(&archive, b"OIKOBACK").expect("write");
         let text = archive.to_str().expect("utf-8 path");
 
-        let refused = require_granted_path(&state, text).expect_err("ungranted path");
+        let refused = require_granted_path(&state.path_grants(), text).expect_err("ungranted path");
         assert_eq!(refused.code, "path_not_granted");
 
         state.grant_paths([archive.clone()]);
         assert_eq!(
-            require_granted_path(&state, text).expect("granted path"),
+            require_granted_path(&state.path_grants(), text).expect("granted path"),
             archive.canonicalize().expect("canonical")
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -287,7 +327,7 @@ mod tests {
         state.grant_paths([link.clone()]);
         let named = link.to_str().expect("utf-8 path");
 
-        let accepted = require_granted_path(&state, named).expect("granted");
+        let accepted = require_granted_path(&state.path_grants(), named).expect("granted");
 
         assert_eq!(accepted, real.canonicalize().expect("canonical"));
         // The document keeps the name it was dropped under.
@@ -317,7 +357,7 @@ mod tests {
         std::thread::scope(|scope| {
             let writer = state.lock_prefs();
             scope.spawn(|| {
-                let _ = sender.send(stored_text_locale(&state));
+                let _ = sender.send(stored_text_locale(state.data_dir()));
             });
 
             // The bound only turns a blocked reader into a failure instead of
@@ -339,7 +379,7 @@ mod tests {
         let dir = temp_dir("stored-text-locale");
         let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
 
-        assert_eq!(stored_text_locale(&state), Locale::En);
+        assert_eq!(stored_text_locale(state.data_dir()), Locale::En);
 
         for locale in [Locale::El, Locale::Fr, Locale::De, Locale::En] {
             let prefs = UiPrefs {
@@ -348,7 +388,7 @@ mod tests {
             };
             save_ui_prefs(&dir, &prefs).expect("save prefs");
 
-            assert_eq!(stored_text_locale(&state), locale);
+            assert_eq!(stored_text_locale(state.data_dir()), locale);
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

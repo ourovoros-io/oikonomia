@@ -1,8 +1,8 @@
 //! Journal entry commands.
 
 use crate::commands::support::{
-    decode_document_base64, dropped_file_name, require_granted_path, run_blocking,
-    stored_text_locale, with_connection,
+    decode_document_base64, dropped_file_name, require_granted_path, run_blocking, with_connection,
+    with_localized_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
@@ -109,12 +109,13 @@ pub(crate) async fn entry_post_simple_with_document_path(
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
     let filename = dropped_file_name(&path);
-    let path = require_granted_path(&state, &path)?;
-
+    let grants = state.path_grants();
     let vault = state.vault();
     state.touch();
 
     run_blocking(move || {
+        let path = require_granted_path(&grants, &path)?;
+
         // Reject oversized/unsupported files from metadata alone before reading.
         let meta = std::fs::metadata(&path).map_err(|e| {
             CommandError::desktop(
@@ -155,9 +156,7 @@ pub(crate) async fn entry_replace_simple(
     original_id: JournalEntryId,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
-    let locale = stored_text_locale(&state);
-
-    with_connection(&state, move |conn| {
+    with_localized_connection(&state, move |conn, locale| {
         replace_simple_entry(conn, original_id, &input, locale)
     })
     .await
@@ -179,7 +178,5 @@ pub(crate) async fn entry_void(
     state: State<'_, AppState>,
     id: JournalEntryId,
 ) -> CommandResult<VoidResult> {
-    let locale = stored_text_locale(&state);
-
-    with_connection(&state, move |conn| void_entry(conn, id, locale)).await
+    with_localized_connection(&state, move |conn, locale| void_entry(conn, id, locale)).await
 }

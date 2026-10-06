@@ -1,6 +1,6 @@
 //! Entity (book) commands.
 
-use crate::commands::support::{stored_text_locale, with_connection};
+use crate::commands::support::{with_connection, with_localized_connection};
 use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::domain::{Entity, EntityId};
@@ -21,11 +21,10 @@ pub(crate) async fn entity_create(
     state: State<'_, AppState>,
     input: CreateEntity,
 ) -> CommandResult<Entity> {
-    // The seeded account names are written in the language the app is set to
-    // now. It comes from the stored preference, never from the webview.
-    let locale = stored_text_locale(&state);
-
-    with_connection(&state, move |conn| create_entity(conn, &input, locale)).await
+    with_localized_connection(&state, move |conn, locale| {
+        create_entity(conn, &input, locale)
+    })
+    .await
 }
 
 /// Rename entity.

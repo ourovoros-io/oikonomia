@@ -1,6 +1,6 @@
 //! Account commands.
 
-use crate::commands::support::{stored_text_locale, with_connection};
+use crate::commands::support::{with_connection, with_localized_connection};
 use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::default_accounts::{DefaultAccounts, default_accounts_for_entity};
@@ -98,9 +98,7 @@ pub(crate) async fn account_set_opening_balance(
     target_minor: i64,
     as_of: String,
 ) -> CommandResult<PostedEntryView> {
-    let locale = stored_text_locale(&state);
-
-    with_connection(&state, move |conn| {
+    with_localized_connection(&state, move |conn, locale| {
         set_account_opening_balance(conn, account_id, target_minor, &as_of, locale)
     })
     .await

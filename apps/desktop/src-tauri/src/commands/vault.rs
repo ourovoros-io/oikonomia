@@ -174,9 +174,13 @@ pub(crate) async fn vault_restore(
     replace: bool,
 ) -> CommandResult<Option<String>> {
     // Refuse an ungranted path before touching the session.
-    let granted = path
-        .map(|chosen| require_granted_path(&state, &chosen))
-        .transpose()?;
+    let granted = match path {
+        Some(chosen) => {
+            let grants = state.path_grants();
+            Some(run_blocking(move || require_granted_path(&grants, &chosen)).await?)
+        }
+        None => None,
+    };
     lock_vault_session(&app, &state).await?;
 
     let archive = if let Some(chosen) = granted {
@@ -218,29 +222,29 @@ async fn pick_backup_path(
     app: &tauri::AppHandle,
     state: &AppState,
 ) -> CommandResult<Option<PathBuf>> {
+    let app = app.clone();
     let data_dir = state.data_dir().to_path_buf();
-    let picked = run_blocking({
-        let app = app.clone();
-        move || {
-            use tauri_plugin_dialog::DialogExt;
+    let grants = state.path_grants();
 
-            // Read in here because it is file I/O, which stays off the
-            // async workers.
-            let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale);
-            Ok(app
-                .dialog()
-                .file()
-                .add_filter(filter_label, &[BACKUP_EXTENSION])
-                .blocking_pick_file())
-        }
+    run_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+
+        // The preferences read, like the grant below, is file I/O, which
+        // stays off the async workers.
+        let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale);
+        let dialog = app
+            .dialog()
+            .file()
+            .add_filter(filter_label, &[BACKUP_EXTENSION]);
+        let Some(picked) = dialog.blocking_pick_file() else {
+            return Ok(None);
+        };
+
+        let path = dialog_path(picked, "backup")?;
+        grants.grant([path.clone()]);
+        Ok(Some(path))
     })
-    .await?;
-    let Some(file_path) = picked else {
-        return Ok(None);
-    };
-    let path = dialog_path(file_path, "backup")?;
-    state.grant_paths([path.clone()]);
-    Ok(Some(path))
+    .await
 }
 
 /// Close any open `SQLCipher` connection and notify the UI when the session
