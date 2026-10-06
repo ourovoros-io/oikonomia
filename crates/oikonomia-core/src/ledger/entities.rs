@@ -72,14 +72,22 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
     })?
 }
 
-/// Create entity and seed chart of accounts from template, atomically.
+/// Creates an entity and seeds its chart of accounts from the template,
+/// atomically.
 ///
 /// The seeded account names are written in `locale`, the language the app is
-/// set to now. They are never rewritten if the language changes later.
+/// set to now. They are never rewritten if the language changes later. The
+/// base currency is stored in capitals.
 ///
 /// # Errors
 ///
-/// Validation or DB errors.
+/// - [`ValidationError::NameRequired`] for an empty name.
+/// - [`ValidationError::CurrencyInvalid`] unless the base currency is three
+///   ASCII letters.
+/// - [`ValidationError::Internal`] for a fiscal year start month outside 1–12.
+/// - [`ValidationError::NameTaken`] when an entity that is not archived has
+///   the same name, compared without case.
+/// - [`Error::Io`] on database errors.
 pub fn create_entity(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let tx = conn
         .unchecked_transaction()
@@ -109,10 +117,13 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
         }));
     }
 
-    let currency = input.base_currency.trim().to_uppercase();
-    if currency.len() != 3 {
+    // An ISO 4217 code is three ASCII letters. Checking the letters makes the
+    // byte length a character count too, so "12$" and "€" are both refused.
+    let currency = input.base_currency.trim();
+    if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_alphabetic()) {
         return Err(Error::Validation(ValidationError::CurrencyInvalid));
     }
+    let currency = currency.to_ascii_uppercase();
 
     let month = input.fiscal_year_start_month.unwrap_or(1);
     if !(1..=12).contains(&month) {
