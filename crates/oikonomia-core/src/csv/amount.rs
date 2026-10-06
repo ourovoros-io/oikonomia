@@ -21,11 +21,19 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// Parse a bank-CSV amount into signed minor units.
 ///
 /// The last `.` or `,` followed by at most `exponent` digits is the decimal
-/// mark; a trailing group of three digits (when `exponent != 3`) is thousands,
-/// not a decimal. Other separators are thousands grouping and are stripped.
+/// mark, and the digits before it are either unseparated or grouped in
+/// thousands by the other separator. A last separator followed by exactly
+/// three digits (when `exponent != 3`) is a thousands separator instead, and
+/// then every separator in the cell must be that same character.
+///
+/// Thousands groups are strict: one to three digits with no leading zero,
+/// then groups of exactly three. Anything else is rejected instead of
+/// guessed at, so `0.125`, `1,234.567` and `1,2,3.45` are invalid with
+/// `exponent == 2`.
 ///
 /// Supported examples with `exponent == 2`:
 /// - `1.234,56` / `1234,56` / `1234.56` / `1,234.56`
+/// - `1.234` / `1,234` → `123400`
 /// - `-25` → `-2500`
 ///
 /// Currency symbols (`€$£`) and trailing/leading ISO codes are ignored.
@@ -139,28 +147,59 @@ fn is_letter_code(s: &str) -> bool {
     s.len() == 3 && s.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
+/// Splits an all-ASCII body of digits, `.` and `,` into integer digits and
+/// fraction digits.
+///
+/// The last separator is the decimal mark unless it is followed by exactly
+/// three digits in a currency without three decimals; then the whole body
+/// has to be a thousands grouping, because `0.125` or `1,234.567` read as
+/// thousands would silently multiply the amount.
 fn split_decimal(body: &str, exponent: u8) -> Result<(String, &str), CsvError> {
-    let Some(sep_at) = body.rfind(['.', ',']) else {
-        let int_digits: String = body.chars().filter(char::is_ascii_digit).collect();
-        return Ok((int_digits, ""));
+    let invalid = || CsvError::InvalidAmount(body.to_owned());
+
+    let Some(decimal_mark_at) = body.rfind(['.', ',']) else {
+        return Ok((body.to_owned(), ""));
     };
-    let frac = &body[sep_at + 1..];
-    if !frac.chars().all(|c| c.is_ascii_digit()) {
-        return Err(CsvError::InvalidAmount(body.to_owned()));
+    let (integer_part, marked_fraction) = body.split_at(decimal_mark_at);
+    let (decimal_mark, fraction) = marked_fraction.split_at(1);
+
+    if fraction.len() == 3 && exponent != 3 {
+        let integer_digits = grouped_digits(body, decimal_mark).ok_or_else(invalid)?;
+        return Ok((integer_digits, ""));
+    }
+    if fraction.len() > usize::from(exponent) {
+        return Err(invalid());
     }
 
-    let thousands_group = frac.len() == 3 && exponent != 3;
-    if thousands_group {
-        let int_digits: String = body.chars().filter(char::is_ascii_digit).collect();
-        return Ok((int_digits, ""));
-    }
-    if frac.len() > usize::from(exponent) {
-        return Err(CsvError::InvalidAmount(body.to_owned()));
+    let integer_digits = if integer_part.contains(['.', ',']) {
+        let separator = if decimal_mark == "." { "," } else { "." };
+        grouped_digits(integer_part, separator).ok_or_else(invalid)?
+    } else {
+        integer_part.to_owned()
+    };
+    Ok((integer_digits, fraction))
+}
+
+/// Returns the digits of `grouped` when it is a thousands grouping on
+/// `separator`: a first group of one to three digits with no leading zero,
+/// then groups of exactly three digits. Any other separator makes it `None`.
+fn grouped_digits(grouped: &str, separator: &str) -> Option<String> {
+    let all_digits = |group: &str| group.bytes().all(|byte| byte.is_ascii_digit());
+
+    let mut groups = grouped.split(separator);
+    let first = groups.next()?;
+    if !(1..=3).contains(&first.len()) || first.starts_with('0') || !all_digits(first) {
+        return None;
     }
 
-    let int_part = &body[..sep_at];
-    let int_digits: String = int_part.chars().filter(char::is_ascii_digit).collect();
-    Ok((int_digits, frac))
+    let mut digits = first.to_owned();
+    for group in groups {
+        if group.len() != 3 || !all_digits(group) {
+            return None;
+        }
+        digits.push_str(group);
+    }
+    Some(digits)
 }
 
 #[cfg(test)]
@@ -240,6 +279,39 @@ mod tests {
         assert_eq!(parse_eur_minor("\u{2212}1.234,56"), -123_456);
         assert_eq!(parse_eur_minor("EUR \u{2212}12.00"), -1_200);
         assert_eq!(parse_eur_minor("€\u{2212}3,50"), -350);
+    }
+
+    #[test]
+    fn three_digit_tail_is_thousands_only_in_a_well_formed_grouping() {
+        assert_eq!(parse_eur_minor("1.234.567"), 123_456_700);
+        assert_eq!(parse_eur_minor("12,345"), 1_234_500);
+        assert_eq!(parse_eur_minor("123.456"), 12_345_600);
+
+        assert_invalid_amount("0.125", 2);
+        assert_invalid_amount("0.500", 2);
+        assert_invalid_amount("1,234.567", 2);
+        assert_invalid_amount("1234.567", 2);
+        assert_invalid_amount("012,345", 2);
+        assert_invalid_amount("0.125", 0);
+    }
+
+    #[test]
+    fn malformed_grouping_is_rejected() {
+        assert_invalid_amount("1,2,3.45", 2);
+        assert_invalid_amount("1.2.3", 2);
+        assert_invalid_amount("1.234.56", 2);
+        assert_invalid_amount("12,34.56", 2);
+        assert_invalid_amount("0.123,45", 2);
+        assert_invalid_amount("1,234,567", 3);
+    }
+
+    #[test]
+    fn three_decimal_currencies_read_a_three_digit_tail_as_the_fraction() {
+        assert_eq!(parse_signed_minor("0.125", 3).expect("dinar"), 125);
+        assert_eq!(
+            parse_signed_minor("1,234.567", 3).expect("dinar"),
+            1_234_567
+        );
     }
 
     #[test]
