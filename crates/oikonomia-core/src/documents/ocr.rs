@@ -137,11 +137,9 @@ const UPSCALE_SHORT_SIDE: u32 = 1200;
 /// The most an image is enlarged by.
 ///
 /// Enlarging adds no detail, and the recognizer misreads text that gets too
-/// large: it reads the corpus image `english_total.jpg` (768 x 104, glyphs
-/// about 55 px tall) at up to twice its size and no longer from 2.25 times
-/// on, while it reads the same text at a quarter of that size with no
-/// enlargement at all. The factor keeps that image well inside what is
-/// read; `jpeg_ocr_smoke` in `tests/document_corpus.rs` pins it.
+/// large. At this factor the corpus image `english_total.jpg` (768 x 104) is
+/// read correctly, which `jpeg_ocr_smoke` in `tests/document_corpus.rs`
+/// checks when the models are present.
 const MAX_UPSCALE: f64 = 1.5;
 
 /// Longest side a prepared image may have. Together with the shape of an
@@ -159,17 +157,33 @@ const MAX_ASPECT_RATIO: u32 = 20;
 
 /// Pixel data the decoder may allocate: 256 MiB holds an RGB image of 89
 /// megapixels. Set here so the bound does not depend on the defaults of the
-/// `image` crate.
+/// `image` crate. The greyscale copy made from the decoded image adds at
+/// most half as much again, and nothing when the image is 8-bit grey.
 const MAX_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Longest side the decoder accepts. An image that fits
 /// [`MAX_DECODE_BYTES`] at 4:3 has a long side under 11,000 px; this leaves
-/// room for wider shapes and refuses a strip such as 1 x 60000 by its
-/// dimensions.
+/// room for wider shapes.
 const MAX_DECODED_SIDE: u32 = 16_384;
 
 /// Decodes image bytes and prepares the picture for OCR.
 fn prepare_image(data: &[u8]) -> Result<RgbImage> {
+    // The header is read first, so a shape that would be refused after
+    // decoding is refused before any pixel is decoded.
+    let (width, height) = image_reader(data)?
+        .into_dimensions()
+        .map_err(|err| Error::Analysis(format!("image dimensions: {err}")))?;
+    ocr_scale(width, height)?;
+
+    let decoded = image_reader(data)?
+        .decode()
+        .map_err(|err| Error::Analysis(format!("decode image: {err}")))?;
+
+    preprocess_for_receipt(decoded)
+}
+
+/// A reader over `data` with its format guessed and the decoding limits set.
+fn image_reader(data: &[u8]) -> Result<ImageReader<Cursor<&[u8]>>> {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_DECODED_SIDE);
     limits.max_image_height = Some(MAX_DECODED_SIDE);
@@ -179,15 +193,10 @@ fn prepare_image(data: &[u8]) -> Result<RgbImage> {
         .with_guessed_format()
         .map_err(|err| Error::Analysis(format!("image format: {err}")))?;
     reader.limits(limits);
-
-    let decoded = reader
-        .decode()
-        .map_err(|err| Error::Analysis(format!("decode image: {err}")))?;
-
-    preprocess_for_receipt(&decoded)
+    Ok(reader)
 }
 
-/// Scale a dimension, clamped into the valid non-zero range.
+/// Scales a dimension, clamped into the valid non-zero range.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -237,10 +246,11 @@ fn ocr_scale(width: u32, height: u32) -> Result<f64> {
     Ok(scale)
 }
 
-fn preprocess_for_receipt(img: &DynamicImage) -> Result<RgbImage> {
+fn preprocess_for_receipt(img: DynamicImage) -> Result<RgbImage> {
     // Convert to luma then back to RGB — OCR is greyscale; colour UIs (screenshots)
-    // confuse detection less after this.
-    let mut luma = img.to_luma8();
+    // confuse detection less after this. An 8-bit grey image is taken as it
+    // is, without a copy.
+    let mut luma = img.into_luma8();
     let (width, height) = luma.dimensions();
 
     let scale = ocr_scale(width, height)?;
@@ -378,67 +388,67 @@ mod tests {
         bytes.into_inner()
     }
 
-    /// The prepared size of a PNG of the given size, or `None` on an error.
-    fn prepared_size(width: u32, height: u32) -> Option<(u32, u32)> {
+    /// The prepared size of a PNG of the given size, or the error message.
+    fn prepared_size(width: u32, height: u32) -> Result<(u32, u32), String> {
         prepare_image(&png(width, height))
-            .ok()
             .map(|image| image.dimensions())
+            .map_err(|err| err.to_string())
+    }
+
+    /// Whether preparing a PNG of the given size fails with `reason`.
+    fn is_refused_as(width: u32, height: u32, reason: &str) -> bool {
+        prepared_size(width, height).is_err_and(|message| message.contains(reason))
     }
 
     #[test]
     fn a_slightly_small_image_is_scaled_up_to_the_short_side_target() {
-        assert_eq!(prepared_size(1000, 1500), Some((1200, 1800)));
-        assert_eq!(prepared_size(1500, 1000), Some((1800, 1200)));
+        assert_eq!(prepared_size(1000, 1500), Ok((1200, 1800)));
+        assert_eq!(prepared_size(1500, 1000), Ok((1800, 1200)));
     }
 
     #[test]
     fn a_small_image_is_enlarged_by_the_largest_factor_only() {
-        assert_eq!(prepared_size(600, 800), Some((900, 1200)));
-        assert_eq!(prepared_size(768, 104), Some((1152, 156)));
+        assert_eq!(prepared_size(600, 800), Ok((900, 1200)));
+        assert_eq!(prepared_size(768, 104), Ok((1152, 156)));
     }
 
     #[test]
     fn an_image_already_large_enough_keeps_its_size() {
-        assert_eq!(prepared_size(1200, 1600), Some((1200, 1600)));
-        assert_eq!(prepared_size(2000, 2800), Some((2000, 2800)));
+        assert_eq!(prepared_size(1200, 1600), Ok((1200, 1600)));
+        assert_eq!(prepared_size(2000, 2800), Ok((2000, 2800)));
     }
 
     #[test]
     fn a_huge_image_is_scaled_down_to_the_capped_long_side() {
-        assert_eq!(prepared_size(1500, 3000), Some((1200, 2400)));
+        assert_eq!(prepared_size(1500, 3000), Ok((1200, 2400)));
     }
 
     #[test]
     fn upscaling_a_narrow_image_stops_at_the_long_side_limit() {
         // Scaling 1000 x 2500 to a 1200 short side would make it 3000 long.
-        assert_eq!(prepared_size(1000, 2500), Some((1120, 2800)));
-        assert_eq!(prepared_size(2500, 1000), Some((2800, 1120)));
+        assert_eq!(prepared_size(1000, 2500), Ok((1120, 2800)));
+        assert_eq!(prepared_size(2500, 1000), Ok((2800, 1120)));
     }
 
     #[test]
     fn a_narrow_image_that_is_already_too_long_is_scaled_down() {
-        assert_eq!(prepared_size(400, 4000), Some((240, 2400)));
+        assert_eq!(prepared_size(400, 4000), Ok((240, 2400)));
     }
 
     #[test]
     fn an_extremely_elongated_image_is_refused() {
-        assert_eq!(prepared_size(10, 300), None);
-        assert_eq!(prepared_size(300, 10), None);
+        assert!(is_refused_as(10, 300, "too elongated"));
+        assert!(is_refused_as(300, 10, "too elongated"));
         // The ratio limit itself is still accepted.
-        assert_eq!(prepared_size(100, 2000), Some((140, 2800)));
+        assert_eq!(prepared_size(100, 2000), Ok((140, 2800)));
     }
 
     #[test]
-    fn a_strip_longer_than_the_decoder_limit_is_refused() {
-        let result = prepare_image(&png(1, 60_000));
-
-        assert!(
-            result
-                .as_ref()
-                .is_err_and(|err| err.to_string().contains("decode image")),
-            "{:?}",
-            result.map(|image| image.dimensions())
-        );
+    fn an_image_with_a_side_over_the_decoder_limit_is_refused() {
+        // The limit applies when the header is read, before any pixel.
+        assert!(is_refused_as(17_000, 1_000, "image dimensions"));
+        assert!(is_refused_as(1_000, 17_000, "image dimensions"));
+        assert!(is_refused_as(1, 60_000, "image dimensions"));
     }
 
     #[test]
