@@ -1,19 +1,27 @@
-//! Loading a PDF for extraction.
+//! Loading a PDF for extraction: one parse, then the budget.
 //!
 //! [`BudgetedPdf`] lives in this module so that nothing outside it can build
 //! one: its document is private, and [`load_pdf`] is the only constructor.
 //! Every function that hands a document to pdf-extract takes a
 //! [`BudgetedPdf`], so each of them works on a document that passed the
-//! budget in [`pdf_budget`](super::pdf_budget), nesting check included.
+//! budget in [`pdf_budget`](crate::documents::pdf_budget), nesting check
+//! included.
+//!
+//! [`contain_panics`] is the panic boundary of the PDF path. It lives here
+//! because the load is the first thing that needs it; the analyzer wraps
+//! every later call into lopdf and pdf-extract in it too.
 
 // The same lopdf as pdf-extract uses; see `analyze`.
 use pdf_extract as lopdf;
 
-use super::pdf_budget::within_budget;
-use super::store::MAX_DOCUMENT_BYTES;
+use crate::documents::pdf_budget::within_budget;
+use crate::documents::store::MAX_DOCUMENT_BYTES;
 
 /// A parsed PDF that is within the budget of
-/// [`pdf_budget`](super::pdf_budget). Only [`load_pdf`] builds one.
+/// [`pdf_budget`](crate::documents::pdf_budget). Only [`load_pdf`] builds one.
+///
+/// The field is the document as lopdf parsed it, decrypted when it had an
+/// empty user password.
 pub(super) struct BudgetedPdf(lopdf::Document);
 
 impl BudgetedPdf {
@@ -50,6 +58,11 @@ pub(super) fn contain_panics<T>(work: impl FnOnce() -> T) -> Option<T> {
 
 /// Parses `data` once and checks that one parsed document against the
 /// budget; the check never parses the file again.
+///
+/// A file over the upload cap is over budget without being parsed. A file
+/// encrypted with a password other than the empty one is unreadable, as is
+/// one lopdf cannot parse or panics on. The parse, the decryption and the
+/// budget all run inside [`contain_panics`].
 pub(super) fn load_pdf(data: &[u8]) -> PdfLoad {
     // A stored document is never larger than the upload cap, and lopdf's
     // work and memory while parsing grow with the size of its input.

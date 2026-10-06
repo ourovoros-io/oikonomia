@@ -22,10 +22,13 @@
 //! # Reading a PDF
 //!
 //! 1. **Budget.** [`load_pdf`] refuses a file over the upload cap before
-//!    parsing it, parses it once with lopdf, and then checks the page count
-//!    and the decoded size of every stream
-//!    ([`pdf_budget`](crate::documents::pdf_budget)). Over budget ends the
-//!    analysis with the "over budget" note; nothing of the file is read.
+//!    parsing it, parses it once with lopdf, and then checks, in this order,
+//!    the page count, the decoded size of every stream
+//!    ([`pdf_budget`](crate::documents::pdf_budget)), and that the form
+//!    `XObject`s and the page tree do not make pdf-extract recurse without
+//!    end ([`pdf_nesting`](crate::documents::pdf_nesting)). Over budget ends
+//!    the analysis with the "over budget" note; nothing of the file is
+//!    read.
 //! 2. **Whole document.** [`pdf_text_whole`] asks pdf-extract for the text of
 //!    the whole file.
 //! 3. **Page by page.** When that returns an error or panics,
@@ -34,8 +37,8 @@
 //! 4. **Repair and retry.** When there is still no text, because lopdf could
 //!    not parse the file or no page could be read,
 //!    [`repair_xref_offsets`] rewrites stale cross-reference offsets in a
-//!    copy, and steps 1 to 3 run once more on the copy. A file that reads as
-//!    empty, with no error, is not repaired.
+//!    copy, and steps 1 to 3 run once more on the copy, the whole budget
+//!    included. A file that reads as empty, with no error, is not repaired.
 //! 5. **Embedded JPEGs.** A PDF whose text is missing or shorter than
 //!    [`MIN_PDF_TEXT_CHARS`] is taken as a scan. Up to
 //!    [`MAX_PDF_OCR_IMAGES`] JPEG images embedded in it are read with OCR, in
@@ -52,9 +55,9 @@
 //!
 //! lopdf and pdf-extract index and unwrap on file content, so a malformed
 //! PDF can panic inside them. [`contain_panics`] turns such a panic into "no
-//! result" at five places: loading with decryption and the budget check, the
-//! whole-document pass, listing the pages, each single page, and the search
-//! for embedded JPEGs.
+//! result" at five places: loading with decryption and the whole budget
+//! check, the whole-document pass, listing the pages, each single page, and
+//! the search for embedded JPEGs.
 //!
 //! Outside the boundary are the xref repair and the invoice reader, which
 //! are this crate's own code and are property-tested not to panic on
@@ -62,15 +65,20 @@
 //! error. OCR inference has a boundary of its own in
 //! [`ocr`](crate::documents::ocr).
 //!
-//! Two things the boundary and the budget do not cover:
+//! What the boundary cannot catch, and what stands in its place:
 //!
 //! - A failed allocation aborts the process; it does not unwind. The budget
 //!   is what keeps allocations small.
+//! - A stack overflow aborts the process too. pdf-extract recurses through
+//!   nested forms and up `Parent` links with no limit, so the nesting check
+//!   refuses a document that would take it too deep, and only a document
+//!   that passed it ([`BudgetedPdf`]) is handed to pdf-extract. The first
+//!   load and the repaired copy both go through the check.
 //! - lopdf decompresses object streams and cross-reference streams while it
 //!   loads a file, inside the boundary but before the budget check can run,
-//!   and with no limit of its own. The only bound on that step is the upload
-//!   cap on the file. [`pdf_budget`](crate::documents::pdf_budget) says the
-//!   same.
+//!   and with no limit of its own. Neither the budget nor the nesting check
+//!   covers it: the only bound on that step is the upload cap on the file.
+//!   [`pdf_budget`](crate::documents::pdf_budget) says the same.
 //!
 //! # From text to suggestion
 //!

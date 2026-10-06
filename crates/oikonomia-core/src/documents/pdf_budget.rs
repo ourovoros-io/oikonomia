@@ -1,4 +1,5 @@
-//! Size budget for a parsed PDF, measured on what its streams decode to.
+//! The budget of a parsed PDF: its page count, what its streams decode to,
+//! and how deep pdf-extract would recurse into it.
 //!
 //! pdf-extract decompresses content streams, form and image `XObject`s, font
 //! files and `CMap`s through lopdf, which reads each one to its end with no
@@ -11,10 +12,15 @@
 //! each cut off within one read of [`DECODE_CHUNK_BYTES`] past the budget,
 //! whatever the file holds.
 //!
+//! The budget also bounds recursion. pdf-extract follows form `XObject`s
+//! and `Parent` links with no limit of its own, and a stack overflow cannot
+//! be caught, so [`within_budget`] ends with the walk in
+//! [`pdf_nesting`](crate::documents::pdf_nesting).
+//!
 //! One gap remains. lopdf decompresses object streams and cross-reference
 //! streams while it loads a file, before this check can run, and that step
 //! has no limit either. The only bound on it is the 8 MiB cap on the file
-//! itself, which the analyzer checks before it hands lopdf anything.
+//! itself, which `pdf_load` checks before it hands lopdf anything.
 
 use std::borrow::Cow;
 use std::io::Read;
