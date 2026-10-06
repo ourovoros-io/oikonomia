@@ -4,19 +4,27 @@
 # neither the public nor the updater can see. This workflow is the gate that
 # makes it live. Manual, reviewed, fail-closed. Steps: download the draft's
 # artifacts, assemble latest.json ourselves (sha256 + per-artifact minisign
-# sigs), sign latest.json with the updater minisign key, verify with the app's
-# baked public key, make the version-free copies getoikonomia.app links to,
+# sigs), sign latest.json with the updater minisign key, verify it and every
+# artifact it names with the app's baked public key, make the version-free
+# copies getoikonomia.app links to,
 # write SHA256SUMS, strip every asset outside the tested allow-list, upload
 # the signed feed, the checksums and the copies, and only then publish the
 # draft.
 #
 # macOS and Linux are always published. The Windows installer is published
-# only with `publish_windows`, which stays off until it is code-signed. Which
-# file fills which feed entry, and which assets survive, is decided by
-# `oikonomia-update`'s `release_set` module, not by shell patterns here.
+# when `publish_windows` is on (the default), and that requires the
+# repository variable WINDOWS_SIGNING to record a deliberate signing choice:
+# today only `none` (no Authenticode). Unset or any other value fails the
+# run; it never drops Windows quietly. Turning `publish_windows` off is the
+# one way to withhold Windows, and it warns that the site's Windows link
+# will not resolve. Which file fills which feed entry, and which assets
+# survive, is decided by `oikonomia-update`'s `release_set` module, not by
+# shell patterns here.
 #
 # Needs (Environment `release`):
 #   TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# Needs (repository variable, when publishing Windows):
+#   WINDOWS_SIGNING=none
 name: Promote release
 
 on:
@@ -31,9 +39,9 @@ on:
         type: boolean
         default: false
       publish_windows:
-        description: Publish the Windows installer too (leave off until it is code-signed)
+        description: Publish the Windows installer (needs repository variable WINDOWS_SIGNING=none; turn off only to withhold Windows on purpose)
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -50,11 +58,33 @@ jobs:
       actions: read
     env:
       TAG: ${{ inputs.tag }}
-      WINDOWS_FLAG: ${{ inputs.publish_windows && '--with-windows' || '' }}
+      PUBLISH_WINDOWS: ${{ inputs.publish_windows }}
+      WINDOWS_SIGNING: ${{ vars.WINDOWS_SIGNING }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      # Sets WINDOWS_FLAG for every later step: `--with-windows` or nothing.
+      # Publishing Windows needs both the input and the signing opt-in;
+      # withholding it is only ever the result of turning the input off.
+      - name: Decide whether Windows is published (fail-closed)
+        run: |
+          set -euo pipefail
+          case "${PUBLISH_WINDOWS}" in
+            true)
+              bash ./scripts/require-windows-signing-mode.sh
+              echo "WINDOWS_FLAG=--with-windows" >> "${GITHUB_ENV}"
+              ;;
+            false)
+              echo "::warning title=Windows withheld::publish_windows is off: this release has no Windows installer and no windows-x86_64 feed entry, and getoikonomia.app/download/windows will not resolve until a release that has one."
+              echo "WINDOWS_FLAG=" >> "${GITHUB_ENV}"
+              ;;
+            *)
+              echo "::error::publish_windows is neither true nor false"
+              exit 1
+              ;;
+          esac
 
       - name: Require promote secrets (fail-closed)
         env:
@@ -160,23 +190,40 @@ jobs:
             --manifest artifacts/latest.json --sig artifacts/latest.json.sig \
             --pubkey "${pubkey}"
 
+      # The app checks each artifact's sha256 and minisign signature before
+      # it installs. Make the same check here, against the same baked key,
+      # so a release whose installer the app would refuse (a stale or wrongly
+      # keyed .sig) is never published. Also proves the feed has exactly the
+      # platforms this release publishes, windows-x86_64 included with
+      # publish_windows.
+      - name: Verify every feed artifact with the app's baked public key
+        run: |
+          set -euo pipefail
+          pubkey="$(python3 -c 'import json;print(json.load(open("apps/desktop/src-tauri/tauri.conf.json"))["plugins"]["updater"]["pubkey"])')"
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
+          cargo run --quiet -p oikonomia-update --bin assemble_feed -- verify-feed \
+            --manifest artifacts/latest.json --dir artifacts --pubkey "${pubkey}" \
+            ${WINDOWS_FLAG}
+
       # Version-free copies for getoikonomia.app, which links to
       # releases/latest/download/<fixed name>. Made only after the feed is
       # signed and verified, so they are copies of exactly the files the feed
       # and the checksums vouch for. Fails if any source is missing or
       # ambiguous. The Windows copy exists only with publish_windows.
+      # expected-fixed.txt is the list from release_set; what was made must
+      # be exactly that list.
       - name: Make the version-free download copies
         run: |
           set -euo pipefail
           # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
+          cargo run --quiet -p oikonomia-update --bin assemble_feed -- fixed-names \
+            ${WINDOWS_FLAG} > expected-fixed.txt
+          # shellcheck disable=SC2086 # WINDOWS_FLAG is one flag or nothing.
           cargo run --quiet -p oikonomia-update --bin assemble_feed -- fixed-copies \
             --dir artifacts ${WINDOWS_FLAG} > fixed.txt
           cat fixed.txt
-          expected=4
-          [ -z "${WINDOWS_FLAG}" ] && expected=3
-          count="$(grep -c . fixed.txt || true)"
-          if [ "${count}" != "${expected}" ]; then
-            echo "::error::expected ${expected} version-free copies, made ${count}"
+          if ! diff -u expected-fixed.txt fixed.txt; then
+            echo "::error::the version-free copies made differ from the ones this release must carry"
             exit 1
           fi
           while IFS= read -r name; do
@@ -197,6 +244,13 @@ jobs:
           cat artifacts/SHA256SUMS
           # Prove the file is in the format people will check it with.
           (cd artifacts && sha256sum --check --strict SHA256SUMS)
+          # Every version-free download the site links to must be listed.
+          while IFS= read -r name; do
+            if ! awk -v name="${name}" '$2 == name { found = 1 } END { exit !found }' artifacts/SHA256SUMS; then
+              echo "::error::SHA256SUMS does not list ${name}"
+              exit 1
+            fi
+          done < expected-fixed.txt
 
       - name: Publish the draft
         if: ${{ inputs.dry_run != true }}
@@ -238,10 +292,16 @@ jobs:
           gh release upload "${TAG}" "${uploads[@]}" \
             --repo "${GITHUB_REPOSITORY}" --clobber
 
-          # Every file the site links to must be on the draft before it goes
-          # public; a missing one would be a dead download link.
+          # Every file the site links to, and every file the feed names, must
+          # be on the draft before it goes public; a missing one would be a
+          # dead download link or an update no app can fetch. The lists come
+          # from release_set and from the signed feed, not from what was
+          # uploaded.
+          python3 -c 'import json; [print(p["url"].rsplit("/", 1)[1]) for p in json.load(open("artifacts/latest.json"))["platforms"].values()]' > feed-files.txt
+          mapfile -t expected_fixed < expected-fixed.txt
+          mapfile -t feed_files < feed-files.txt
           gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name' > published.txt
-          for name in latest.json latest.json.sig SHA256SUMS "${fixed[@]}"; do
+          for name in latest.json latest.json.sig SHA256SUMS "${expected_fixed[@]}" "${feed_files[@]}"; do
             if ! grep -Fqx -- "${name}" published.txt; then
               echo "::error::${name} is not on the draft after upload; refusing to publish"
               exit 1
@@ -250,9 +310,13 @@ jobs:
 
           # Last step on purpose: until here nothing is public, so a failure
           # above leaves a draft to fix, never a half-published release.
+          notes="Signed release. The app verifies the minisign signature of latest.json and of every artifact before installing."
+          if [ -n "${WINDOWS_FLAG}" ] && [ "${WINDOWS_SIGNING}" = "none" ]; then
+            notes="${notes} The Windows installer is not Authenticode-signed yet, so Windows shows an unknown-publisher warning on a first install (More info, Run anyway)."
+          fi
           gh release edit "${TAG}" \
             --repo "${GITHUB_REPOSITORY}" \
             --draft=false \
             --latest \
             --title "Oikonomia ${TAG}" \
-            --notes "Signed release. The app verifies the minisign signature of latest.json and of every artifact before installing."
+            --notes "${notes}"
