@@ -6,7 +6,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
-use crate::db::{corrupt_column, fold_case, read_column, stored_date, stored_uuid};
+use crate::db::{collect_rows, corrupt_column, fold_case, read_column, stored_date, stored_uuid};
 use crate::domain::{
     Account, AccountId, EntityId, EntryStatus, JournalEntry, JournalEntryId, JournalLine,
     JournalLineId, validate_lines_for_post,
@@ -296,16 +296,11 @@ fn load_listed_headers(
     let rows = stmt
         .query_map(listed.bound(), |row| {
             let is_voided: i64 = row.get(8)?;
-            Ok((map_entry_row(row), is_voided != 0))
+            Ok(map_entry_row(row).map(|entry| (entry, is_voided != 0)))
         })
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut headers = Vec::new();
-    for row in rows {
-        let (entry, is_voided) = row.map_err(|err| Error::Io(err.to_string()))?;
-        headers.push((entry?, is_voided));
-    }
-    Ok(headers)
+    collect_rows(rows)
 }
 
 fn entry_is_void_reverse(conn: &Connection, id: JournalEntryId) -> Result<bool> {
@@ -1039,9 +1034,9 @@ pub fn account_register(
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut result = Vec::new();
-    for row in rows {
-        let (id_s, date_s, description, debit, credit, hidden) =
-            row.map_err(|err| Error::Io(err.to_string()))?;
+    for (id_s, date_s, description, debit, credit, hidden) in
+        collect_rows(rows.map(|row| row.map(Ok)))?
+    {
         let entry_id = JournalEntryId(stored_uuid("journal_entries.id", &id_s)?);
         let entry_date = stored_date("journal_entries.entry_date", &date_s)?;
         let delta = normal_balance(account.account_type, debit, credit)?;
@@ -1088,8 +1083,7 @@ fn load_listed_lines(
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
-    for row in rows {
-        let line = row.map_err(|err| Error::Io(err.to_string()))??;
+    for line in collect_rows(rows)? {
         grouped.entry(line.entry_id).or_default().push(line);
     }
     Ok(grouped)
@@ -1134,11 +1128,7 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
         .query_map([entry_id.0.to_string()], |row| Ok(map_line_row(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut lines = Vec::new();
-    for row in rows {
-        lines.push(row.map_err(|err| Error::Io(err.to_string()))??);
-    }
-    Ok(lines)
+    collect_rows(rows)
 }
 
 /// Maps a row whose first seven columns are `id, entity_id, entry_date,

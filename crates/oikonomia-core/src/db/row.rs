@@ -64,6 +64,22 @@ pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> 
     })
 }
 
+/// Collects the rows of a query whose row closure is `|row| Ok(mapper(row))`.
+///
+/// Stops at the first row that fails, so a damaged row fails the whole query
+/// instead of being left out of the result.
+///
+/// # Errors
+///
+/// - [`Error::Io`] when the driver fails to step to a row.
+/// - The mapper's own error for the first row it refuses.
+pub(crate) fn collect_rows<T>(
+    rows: impl Iterator<Item = rusqlite::Result<Result<T>>>,
+) -> Result<Vec<T>> {
+    rows.map(|row| row.map_err(|err| Error::Io(err.to_string()))?)
+        .collect()
+}
+
 /// Parses an id stored as text in `column`.
 ///
 /// # Errors

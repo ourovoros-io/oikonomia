@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::{Date, Month};
 
-use crate::db::{corrupt_column, read_column};
+use crate::db::{collect_rows, corrupt_column, read_column};
 use crate::domain::{AccountType, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{
@@ -579,11 +579,7 @@ fn account_activity_lines(
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut lines = Vec::new();
-    for row in rows {
-        lines.push(row.map_err(|err| Error::Io(err.to_string()))??);
-    }
-    Ok(lines)
+    collect_rows(rows)
 }
 
 #[expect(

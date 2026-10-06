@@ -22,6 +22,7 @@
 
 use rusqlite::{Connection, Transaction};
 
+use crate::db::collect_rows;
 use crate::error::{Error, Result};
 
 /// Latest schema version applied by migrations.
@@ -342,11 +343,7 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
         let mapped = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
             .map_err(|err| Error::Io(err.to_string()))?;
-        let mut out = Vec::new();
-        for row in mapped {
-            out.push(row.map_err(|err| Error::Io(err.to_string()))?);
-        }
-        out
+        collect_rows(mapped.map(|row| row.map(Ok)))?
     };
 
     let mut taken: HashSet<(String, String)> = HashSet::new();

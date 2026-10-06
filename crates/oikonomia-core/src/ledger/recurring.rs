@@ -8,7 +8,7 @@ use super::journals::{
     PostSimpleEntry, PostedEntryView, SimpleBillStatus, SimpleEntryKind, ensure_simple_entry_roles,
     post_simple_entry_unchecked,
 };
-use crate::db::{corrupt_column, read_column, stored_date, stored_uuid};
+use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_uuid};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{Error, Result, ValidationError};
 use crate::util::{format_date, now_utc_string, parse_date, utc_today};
@@ -197,12 +197,10 @@ pub fn list_recurring_templates_as_of(
         .query_map([entity_id.0.to_string()], |row| Ok(map_template_row(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut out = Vec::new();
-    for row in rows {
-        let stored = row.map_err(|err| Error::Io(err.to_string()))??;
-        out.push(stored.into_view(today));
-    }
-    Ok(out)
+    Ok(collect_rows(rows)?
+        .into_iter()
+        .map(|stored| stored.into_view(today))
+        .collect())
 }
 
 /// Fetch one template.

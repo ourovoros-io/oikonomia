@@ -3,7 +3,7 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::db::{read_column, stored_uuid};
+use crate::db::{collect_rows, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
@@ -60,11 +60,7 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
         .query_map([entity_id.0.to_string()], |row| Ok(map_account(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row.map_err(|err| Error::Io(err.to_string()))??);
-    }
-    Ok(out)
+    collect_rows(rows)
 }
 
 /// Get one account.

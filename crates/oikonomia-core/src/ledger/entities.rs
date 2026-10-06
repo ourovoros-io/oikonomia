@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::coa::template_accounts;
-use crate::db::{corrupt_column, read_column, stored_uuid};
+use crate::db::{collect_rows, corrupt_column, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
@@ -50,11 +50,7 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
         .query_map([], |row| Ok(map_entity(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut entities = Vec::new();
-    for row in rows {
-        entities.push(row.map_err(|err| Error::Io(err.to_string()))??);
-    }
-    Ok(entities)
+    collect_rows(rows)
 }
 
 /// Fetch one entity by id.

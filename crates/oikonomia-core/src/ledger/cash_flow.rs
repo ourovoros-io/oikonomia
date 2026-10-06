@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
-use crate::db::stored_date;
+use crate::db::{collect_rows, stored_date};
 use crate::domain::{AccountType, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{
@@ -261,9 +261,7 @@ fn daily_activity(
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut days: Vec<DayActivity> = Vec::new();
-    for row in rows {
-        let (date_text, type_text, debits, credits) =
-            row.map_err(|err| Error::Io(err.to_string()))?;
+    for (date_text, type_text, debits, credits) in collect_rows(rows.map(|row| row.map(Ok)))? {
         let date = stored_date("journal_entries.entry_date", &date_text)?;
         let account_type = parse_account_type(&type_text)?;
         let amount = normal_balance(account_type, debits, credits)?;
