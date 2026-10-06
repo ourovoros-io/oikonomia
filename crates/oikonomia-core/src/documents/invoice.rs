@@ -1095,7 +1095,9 @@ fn money_amounts_on_line(line: &str) -> Vec<i64> {
 }
 
 fn parse_money_token(s: &str) -> Option<i64> {
-    let s = s.trim();
+    // The tokenizer keeps `.` and `,`, so an amount that ends a sentence or a
+    // list item arrives with that punctuation attached.
+    let s = s.trim().trim_end_matches(['.', ',']);
     if s.is_empty() || s.len() > 14 {
         return None;
     }
@@ -1816,8 +1818,12 @@ mod tests {
             ("12,345.678", None),
             ("", None),
             (",50", None),
-            // A trailing comma is sentence punctuation after whole euros.
+            // A trailing comma or dot is sentence punctuation.
             ("5,", Some(500)),
+            ("5.", Some(500)),
+            ("45,90.", Some(4_590)),
+            ("1.234,56,", Some(123_456)),
+            (".", None),
             ("1.2.3,4.5", None),
             ("123456789012345", None),
         ];
@@ -2324,6 +2330,18 @@ mod jumbled_extract {
             read("Qty 5 120,50\nAmount due: 602,50").amount_minor,
             Some(60_250)
         );
+    }
+
+    #[test]
+    fn sentence_punctuation_after_an_amount_is_not_part_of_it() {
+        assert_eq!(read("TOTAL 45,90.").amount_minor, Some(4_590));
+        assert_eq!(read("Amount due: 45,90.").amount_minor, Some(4_590));
+        assert_eq!(
+            read("Amount due: 45.90, thank you").amount_minor,
+            Some(4_590)
+        );
+        assert_eq!(read("Amount due: 45.").amount_minor, Some(4_500));
+        assert_eq!(read("Amount due: 45,").amount_minor, Some(4_500));
     }
 
     #[test]
