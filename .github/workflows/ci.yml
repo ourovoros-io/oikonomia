@@ -142,6 +142,49 @@ jobs:
 
       - run: cargo doc --workspace --no-deps --locked
 
+  # Early warning only. Beta becomes stable within six weeks, so a lint that
+  # fails here is one the next toolchain bump will have to fix. It must not
+  # block a merge: continue-on-error keeps the run green while this job shows
+  # red, and the job must not be made a required status check.
+  clippy-beta:
+    name: clippy (beta)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+      # Overrides rust-toolchain.toml for every step, the cache key included.
+      RUSTUP_TOOLCHAIN: beta
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Tauri v2 Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            perl
+
+      - name: Install the beta toolchain
+        run: rustup toolchain install beta --profile minimal --component clippy --no-self-update
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Create frontend dist placeholder
+        run: mkdir -p web/dist
+
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
   # Builds the real installers: the .deb and AppImage on Linux, the NSIS
   # installer on Windows. Windows runs its installer here; the Linux ones run
   # in `smoke-linux` on clean machines. Unit tests cannot see a blank webview,
