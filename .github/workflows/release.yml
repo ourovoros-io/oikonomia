@@ -5,9 +5,12 @@
 # the disk image; any failed check fails the release. The linux
 # job builds the .deb and the AppImage and smoke-tests both. The windows job
 # builds the NSIS installer, checks its updater signature against the app's
-# public key, and smoke-tests it. It is not Authenticode-signed: that needs
-# the repository variable WINDOWS_SIGNING=none, a deliberate opt-in checked
-# before anything is built (see scripts/require-windows-signing-mode.sh).
+# public key, and smoke-tests it. The installer is not Authenticode-signed:
+# that needs the repository variable WINDOWS_SIGNING=none, a deliberate
+# opt-in checked before anything is built (see
+# scripts/require-windows-signing-mode.sh). Each job also refuses an updater
+# artifact larger than the client will download (`assemble_feed check-sizes`
+# reads `MAX_ARTIFACT_BYTES` from oikonomia-update).
 # Every job adds to the same draft; the jobs run one after another so they
 # cannot race to create it.
 #
@@ -212,6 +215,12 @@ jobs:
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
 
+      # The macOS updater artifact is the .app.tar.gz. Fail here, before
+      # notarization, when it is larger than the client will download.
+      # The binary reads MAX_ARTIFACT_BYTES; this step does not repeat it.
+      - name: Reject a macOS updater artifact over the client's download limit
+        run: cargo run --quiet -p oikonomia-update --bin assemble_feed -- check-sizes --dir target/release/bundle
+
       # Tauri notarizes and staples the .app and signs the .dmg with the same
       # identity, but does not notarize the .dmg. This step proves the app is
       # Developer ID signed by this team, hardened, notarized and stapled, then
@@ -393,6 +402,11 @@ jobs:
           uploadWorkflowArtifacts: true
           args: --bundles deb,appimage
 
+      # The Linux updater artifact is the AppImage. The .deb is a manual
+      # download and is not checked. The binary reads MAX_ARTIFACT_BYTES.
+      - name: Reject a Linux updater artifact over the client's download limit
+        run: cargo run --quiet -p oikonomia-update --bin assemble_feed -- check-sizes --dir target/release/bundle
+
       - name: Smoke-test the bundled app
         timeout-minutes: 15
         run: ./scripts/smoke-linux.sh
@@ -466,6 +480,13 @@ jobs:
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
           args: --bundles nsis
+
+      # The NSIS setup is the Windows updater artifact. Fail in this job,
+      # before the signature check, when it is over the client's cap.
+      # The binary reads MAX_ARTIFACT_BYTES; this step does not repeat it.
+      - name: Reject a Windows updater artifact over the client's download limit
+        shell: pwsh
+        run: cargo run --quiet -p oikonomia-update --bin assemble_feed -- check-sizes --dir target/release/bundle
 
       # The installer is the Windows updater artifact: the app downloads it,
       # checks its sha256 and this .sig against the baked public key, then

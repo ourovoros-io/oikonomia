@@ -62,6 +62,8 @@ After the build, the macOS job checks the app with `codesign --verify --deep --s
 
 The Windows job checks the installer's updater `.sig` against the public key in `tauri.conf.json` before its smoke test, and reports the Authenticode status (`NotSigned` with `WINDOWS_SIGNING=none`).
 
+Right after each platform's bundle, and again during promotion for every file the assembled feed names, `assemble_feed check-sizes` refuses an updater artifact larger than `MAX_ARTIFACT_BYTES` in `oikonomia-update`. That constant is the cap the app enforces when it downloads; the workflows do not keep a second copy of the number. The Windows installer embeds the WebView2 bootstrapper so the NSIS setup stays under the cap. Windows 11 includes the runtime and Windows 10 receives it through Windows Update; the bootstrapper downloads it only when it is missing.
+
 The first job, `windows signing mode`, fails the run in seconds when `WINDOWS_SIGNING` is unset or is anything but `none`, before any approval or build. The Windows job checks it again, since a variable of the same name on Environment `release` overrides the repository one there.
 
 Until the Apple secrets are present, the macOS job **fails closed**: it will not publish an unsigned Mac build as if it were signed, and the Linux and Windows jobs, which run after it, do not start. Every job **fails closed** if `TAURI_SIGNING_PRIVATE_KEY` is empty, so no installer reaches the draft without its updater signature. macOS uses Tauri's official `APPLE_*` environment variables once those secrets are set.
@@ -74,7 +76,7 @@ A tag push builds a **draft** release in this repo. A draft is visible only to p
 
 1. Dry run first: `gh workflow run promote.yml -f tag=vX.Y.Z -f dry_run=true`. This assembles, signs, and verifies the feed and every artifact without changing the release.
 2. Promote: `gh workflow run promote.yml -f tag=vX.Y.Z` (uses Environment `release`). Windows is published by default and that needs `WINDOWS_SIGNING=none`; add `-f publish_windows=false` only to withhold Windows on purpose.
-3. The workflow refuses anything that is not a draft, downloads the draft's artifacts, assembles and signs `latest.json` with the updater minisign key, verifies the signature with the app's baked public key, and checks every artifact the feed names against its sha256 and its minisign signature with that same key, as the app does before installing.
+3. The workflow refuses anything that is not a draft, downloads the draft's artifacts, assembles `latest.json`, refuses the release when any file the feed names is larger than the update client's download cap, signs `latest.json` with the updater minisign key, verifies the signature with the app's baked public key, and checks every artifact the feed names against its sha256 and its minisign signature with that same key, as the app does before installing.
 4. It then deletes every asset the release set does not publish, uploads the signed feed, and publishes the draft as the latest release. Publishing is the last step, so a failure leaves a draft to fix, never a half-published release.
 5. The published release holds the `.dmg`, `.app.tar.gz`, `.AppImage`, `.deb` and `-setup.exe` with their signatures, plus `latest.json` and its signature, the version-free copies below, and a `SHA256SUMS` file listing every one of them (`sha256sum --check SHA256SUMS`). The feed has a `darwin-aarch64`, a `linux-x86_64` and a `windows-x86_64` entry. With `-f publish_windows=false` the `-setup.exe`, its copy and the `windows-x86_64` entry are left out.
 
