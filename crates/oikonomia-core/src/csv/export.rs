@@ -53,23 +53,32 @@ pub struct JournalCsvLine {
 /// of a formula.
 const FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
 
-/// Make a text cell inert for spreadsheet apps.
+/// The prefix that makes a spreadsheet app read a cell as literal text.
+const TEXT_GUARD: char = '\'';
+
+/// Makes a text cell inert for spreadsheet apps.
 ///
 /// A bank memo or OCR'd line can start with `=`; exported as-is it becomes a
 /// live `HYPERLINK`/DDE formula on the accountant's machine. A leading
-/// apostrophe turns the cell into literal text. [`restore_formula`] undoes it.
+/// apostrophe turns the cell into literal text.
+///
+/// A cell that already starts with an apostrophe is guarded too. Otherwise
+/// the ledger text `'=foo` and the guarded form of `=foo` would be the same
+/// exported cell, and [`restore_formula`] could not tell them apart.
 fn neutralize_formula(cell: &str) -> Cow<'_, str> {
-    if cell.starts_with(FORMULA_TRIGGERS) {
-        Cow::Owned(format!("'{cell}"))
+    if cell.starts_with(FORMULA_TRIGGERS) || cell.starts_with(TEXT_GUARD) {
+        Cow::Owned(format!("{TEXT_GUARD}{cell}"))
     } else {
         Cow::Borrowed(cell)
     }
 }
 
-/// Inverse of [`neutralize_formula`], so a parsed export equals the ledger.
+/// Exact inverse of [`neutralize_formula`], so a parsed export equals the
+/// ledger: strips one apostrophe when what follows is a cell that
+/// `neutralize_formula` would have guarded.
 fn restore_formula(cell: &str) -> &str {
-    cell.strip_prefix('\'')
-        .filter(|rest| rest.starts_with(FORMULA_TRIGGERS))
+    cell.strip_prefix(TEXT_GUARD)
+        .filter(|rest| rest.starts_with(FORMULA_TRIGGERS) || rest.starts_with(TEXT_GUARD))
         .unwrap_or(cell)
 }
 
@@ -340,7 +349,8 @@ mod tests {
             ("\tcmd", "'\tcmd"),
             ("\rcmd", "'\rcmd"),
             ("Groceries", "Groceries"),
-            ("'quoted", "'quoted"),
+            ("'quoted", "''quoted"),
+            ("'=SUM(A1)", "''=SUM(A1)"),
             ("", ""),
         ];
         for (input, want) in cases {
@@ -353,12 +363,44 @@ mod tests {
         let cases = [
             ("'=SUM(A1)", "=SUM(A1)"),
             ("'-5% discount", "-5% discount"),
-            ("'quoted", "'quoted"),
+            ("''quoted", "'quoted"),
+            ("''=SUM(A1)", "'=SUM(A1)"),
             ("Groceries", "Groceries"),
+            // Never written by the export: left as they are.
+            ("'quoted", "'quoted"),
             ("'", "'"),
         ];
         for (input, want) in cases {
             assert_eq!(restore_formula(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn neutralize_then_restore_returns_the_original_cell() {
+        let cells = [
+            "",
+            "Groceries",
+            "=SUM(A1)",
+            "+1",
+            "-5% discount",
+            "@user",
+            "\tcmd",
+            "\rcmd",
+            "'",
+            "''",
+            "'quoted",
+            "'=foo",
+            "''=foo",
+            "'-5",
+            "it's fine",
+        ];
+        for cell in cells {
+            let exported = neutralize_formula(cell);
+            assert!(
+                !exported.starts_with(FORMULA_TRIGGERS),
+                "exported {exported:?} still starts a formula"
+            );
+            assert_eq!(restore_formula(&exported), cell, "exported {exported:?}");
         }
     }
 
