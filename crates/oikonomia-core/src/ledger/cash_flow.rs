@@ -1,5 +1,21 @@
 //! Cash flow over a window: income and expenses per day or per calendar month,
-//! with running totals, on exactly the basis `dashboard_summary` uses.
+//! with running totals, on exactly the basis
+//! [`dashboard_summary`](crate::ledger::dashboard_summary) uses.
+//!
+//! Income is the activity on income accounts and expenses the activity on
+//! expense accounts, counted on active entries by their entry date. A
+//! transfer between two wallet accounts touches neither and does not appear.
+//!
+//! # Buckets
+//!
+//! A window of at most [`DAILY_BUCKET_MAX_DAYS`] days gets one bucket per day;
+//! a longer one gets one per calendar month, the first and last clipped to
+//! the window. The buckets are contiguous and cover the whole window, empty
+//! ones included, so a chart can draw them without filling gaps.
+//!
+//! The ledger is read once, grouped by day and account type. Each day is then
+//! placed in its bucket by binary search, and the running totals are added in
+//! a second pass over the buckets.
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -50,7 +66,7 @@ pub struct CashFlowBucket {
 /// Income and expenses across `[from, to]`, bucketed per day or per month.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CashFlowSeries {
-    /// Entity id.
+    /// Entity the series was computed for.
     pub entity_id: EntityId,
     /// First day of the window (inclusive).
     #[serde(with = "crate::util::serde_date")]
@@ -70,7 +86,8 @@ pub struct CashFlowSeries {
     pub buckets: Vec<CashFlowBucket>,
 }
 
-/// Income and expenses per day or per month between `from` and `to` inclusive.
+/// Computes income and expenses per day or per month between `from` and `to`
+/// inclusive.
 ///
 /// Posted, active entries only (voided entries and their reversals are
 /// excluded); Hidden entries count, as they do on the dashboard. The final
@@ -89,15 +106,17 @@ pub fn cash_flow_series(
     from: &str,
     to: &str,
 ) -> Result<CashFlowSeries> {
-    let from_d = parse_date(from)?;
-    let to_d = parse_date(to)?;
-    if from_d > to_d {
+    let from = parse_date(from)?;
+    let to = parse_date(to)?;
+    if from > to {
         return Err(Error::Validation(ValidationError::DateRangeInverted));
     }
-    let _ = get_entity(conn, entity_id)?;
+    // Only checks that the entity exists. An archived entity passes, so its
+    // series can still be read.
+    get_entity(conn, entity_id)?;
 
-    let granularity = granularity_for(from_d, to_d);
-    let mut buckets: Vec<CashFlowBucket> = bucket_ranges(from_d, to_d, granularity)
+    let granularity = granularity_for(from, to);
+    let mut buckets: Vec<CashFlowBucket> = bucket_ranges(from, to, granularity)
         .into_iter()
         .map(|(start, end)| CashFlowBucket {
             start,
@@ -109,7 +128,7 @@ pub fn cash_flow_series(
         })
         .collect();
 
-    for day in daily_activity(conn, entity_id, from_d, to_d)? {
+    for day in daily_activity(conn, entity_id, from, to)? {
         // Buckets are sorted and contiguous, so the first one ending on or
         // after the day holds it.
         let index = buckets.partition_point(|bucket| bucket.end < day.date);
@@ -130,8 +149,8 @@ pub fn cash_flow_series(
 
     Ok(CashFlowSeries {
         entity_id,
-        from: from_d,
-        to: to_d,
+        from,
+        to,
         granularity,
         total_income_minor: income,
         total_expenses_minor: expenses,
@@ -140,7 +159,8 @@ pub fn cash_flow_series(
     })
 }
 
-/// The window to draw when a date filter leaves one or both bounds empty.
+/// Returns the window to draw when a date filter leaves one or both bounds
+/// empty.
 ///
 /// - Both given: the window is `from..=to` as given.
 /// - Only `from` given: `to` is the book's last active entry date, or `today`
@@ -164,10 +184,11 @@ pub fn activity_window(
     to: Option<&str>,
     today: Date,
 ) -> Result<(Date, Date)> {
-    let _ = get_entity(conn, entity_id)?;
-    let from_d = from.map(parse_date).transpose()?;
-    let to_d = to.map(parse_date).transpose()?;
-    if let (Some(start), Some(end)) = (from_d, to_d) {
+    // Only checks that the entity exists; an archived one passes.
+    get_entity(conn, entity_id)?;
+    let from = from.map(parse_date).transpose()?;
+    let to = to.map(parse_date).transpose()?;
+    if let (Some(start), Some(end)) = (from, to) {
         if start > end {
             return Err(Error::Validation(ValidationError::DateRangeInverted));
         }
@@ -175,13 +196,15 @@ pub fn activity_window(
     }
 
     let (earliest, latest) = active_entry_bounds(conn, entity_id)?;
-    match (from_d, to_d) {
+    match (from, to) {
         (Some(start), None) => Ok((start, latest.unwrap_or(today).max(start))),
         (None, Some(end)) => Ok((earliest.unwrap_or(end).min(end), end)),
         _ => Ok((earliest.unwrap_or(today), latest.unwrap_or(today))),
     }
 }
 
+/// Chooses day buckets for a window of at most [`DAILY_BUCKET_MAX_DAYS`] days,
+/// counting both ends, and month buckets for a longer one.
 fn granularity_for(from: Date, to: Date) -> CashFlowGranularity {
     let days = to.to_julian_day() - from.to_julian_day() + 1;
     if days <= DAILY_BUCKET_MAX_DAYS {
@@ -191,6 +214,11 @@ fn granularity_for(from: Date, to: Date) -> CashFlowGranularity {
     }
 }
 
+/// Returns the first and last day of each bucket of `from..=to`, oldest first.
+///
+/// The ranges are contiguous and cover the window exactly. A month bucket
+/// ends on the last day of its month or on `to`, whichever is earlier, so the
+/// first and last ones may be partial months. The caller passes `from <= to`.
 fn bucket_ranges(from: Date, to: Date, granularity: CashFlowGranularity) -> Vec<(Date, Date)> {
     let mut ranges = Vec::new();
     let mut start = from;
@@ -208,6 +236,10 @@ fn bucket_ranges(from: Date, to: Date, granularity: CashFlowGranularity) -> Vec<
     ranges
 }
 
+/// Returns the last day of the month `date` is in.
+///
+/// The day asked for is the length of that very month, so the replacement
+/// fails for no date and the fallback is never taken.
 fn last_day_of_month(date: Date) -> Date {
     date.replace_day(date.month().length(date.year()))
         .unwrap_or(date)
@@ -215,11 +247,26 @@ fn last_day_of_month(date: Date) -> Date {
 
 /// Income and expenses on one calendar day.
 struct DayActivity {
+    /// The entry date the figures are for.
     date: Date,
+    /// Credits minus debits on income accounts that day, in minor units.
     income_minor: i64,
+    /// Debits minus credits on expense accounts that day, in minor units.
     expenses_minor: i64,
 }
 
+/// Reads income and expenses per entry date between `from` and `to`
+/// inclusive, oldest first, counting active entries only.
+///
+/// A day with no income or expense activity has no element.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] for a stored entry date or account type that
+///   does not parse.
+/// - [`Error::MoneyOverflow`] when a day's income or expenses do not fit in
+///   `i64`.
+/// - [`Error::Io`] on database errors.
 fn daily_activity(
     conn: &Connection,
     entity_id: EntityId,
@@ -266,6 +313,8 @@ fn daily_activity(
         let account_type = parse_account_type(&type_text)?;
         let amount = normal_balance(account_type, debits, credits)?;
 
+        // Rows arrive ordered by date, at most one per account type, so the
+        // rows of a day are adjacent and extend the last element.
         if days.last().map(|day| day.date) != Some(date) {
             days.push(DayActivity {
                 date,
@@ -286,6 +335,13 @@ fn daily_activity(
     Ok(days)
 }
 
+/// Returns the earliest and the latest entry date among the active entries
+/// of an entity; both are `None` when it has none.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] for a stored entry date that does not parse.
+/// - [`Error::Io`] on database errors.
 fn active_entry_bounds(
     conn: &Connection,
     entity_id: EntityId,
