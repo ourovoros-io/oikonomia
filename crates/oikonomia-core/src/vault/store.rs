@@ -1,4 +1,25 @@
-//! Vault open/create/lock against an on-disk `SQLCipher` database.
+//! The vault handle: create, unlock, lock and rekey one `SQLCipher` database.
+//!
+//! [`Vault`] is the only owner of a vault connection, and `open_sqlcipher`
+//! is the only function that makes one. Everything a connection must have is
+//! set there, in an order that matters: memory security before the key, the
+//! key before any read, and a first read to prove the key, because the key
+//! pragma itself accepts any key.
+//!
+//! Two operations change the header and the database together, and each
+//! publishes the header in the order that keeps a crash recoverable:
+//!
+//! - **First run** ([`Vault::init`]) publishes the header last. A header
+//!   without a database would be a vault that no password opens.
+//! - **Password change** ([`Vault::change_password`]) stages the new header
+//!   before the rekey and publishes it after. Between the two, the staged
+//!   header is the one whose key fits, and [`Vault::unlock`] tries it when
+//!   the published one fails.
+//!
+//! A wrong password and a damaged database look the same to `SQLCipher`
+//! (`SQLITE_NOTADB` on the first read). `key_check_error` maps only that code
+//! to [`Error::InvalidPassword`], so a busy or unreadable database is never
+//! reported as a mistyped password.
 
 use std::path::{Path, PathBuf};
 use std::{fmt, fs};
@@ -6,39 +27,57 @@ use std::{fmt, fs};
 use rand::Rng;
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
-use super::crypto::{self, VaultKey};
-use super::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
-use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
-use super::permissions::{create_private_dir, create_private_file, restrict_to_owner};
 use crate::db::register_fold;
 use crate::error::{Error, Result, ValidationError};
 use crate::vault::backup::recover_interrupted_restore;
+use crate::vault::crypto::{self, VaultKey};
 use crate::vault::files::{
     discard_database_files, discard_file, rename_synced, write_private_file,
 };
-use crate::vault::paths::vault_init_header_path;
+use crate::vault::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
+use crate::vault::paths::{
+    vault_db_path, vault_header_path, vault_init_header_path, vault_staged_header_path,
+};
+use crate::vault::permissions::{create_private_dir, create_private_file, restrict_to_owner};
 
-/// Lifecycle status for the vault (serializable to the UI).
+/// Lifecycle state of a [`Vault`], as [`Vault::status`] reports it.
+///
+/// Serialized to the UI as `uninitialized`, `locked` or `unlocked`.
+///
+/// Nothing outside this crate matches on it exhaustively: the desktop crate
+/// only compares against one variant (`status == VaultStatus::Unlocked`).
+/// A new variant would therefore compile there without a prompt to handle
+/// it, and every such comparison has to be revisited by hand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VaultStatus {
-    /// No vault files on disk yet.
+    /// No vault in the data directory: no header has been published.
     Uninitialized,
-    /// Vault exists; password required.
+    /// A vault exists and this handle holds no connection to it.
     Locked,
-    /// Open connection held in this process.
+    /// This handle holds an open connection.
     Unlocked,
 }
 
-/// Encrypted vault handle. Dropping or [`Vault::lock`] closes the DB.
+/// Handle to the encrypted vault of one data directory.
+///
+/// Dropping it, like [`Vault::lock`], closes the database connection.
 pub struct Vault {
+    /// Directory that holds the vault files.
     data_dir: PathBuf,
+    /// Published header, or `None` while no vault exists. Kept equal to
+    /// `vault.header.json`: whatever replaces the file replaces this too.
     header: Option<VaultHeader>,
+    /// Open connection, present exactly while the vault is unlocked.
     conn: Option<Connection>,
 }
 
 impl Vault {
-    /// Inspects the data directory without opening the database.
+    /// Opens the vault handle of `data_dir` without opening the database,
+    /// creating the directory and restricting it to its owner.
+    ///
+    /// On Unix the directory is set to `0700` and an existing header and
+    /// database to `0600`, whatever their modes were.
     ///
     /// Also settles what a crash left half-done: a restore that was swapping
     /// the vault files is undone or finished (the protocol is in the
@@ -91,7 +130,11 @@ impl Vault {
         })
     }
 
-    /// Current status relative to this process.
+    /// Returns the state of this handle.
+    ///
+    /// It describes this handle only: another process, or another `Vault`
+    /// over the same directory, can hold the database open while this one
+    /// reads `Locked`.
     #[must_use]
     pub fn status(&self) -> VaultStatus {
         if self.conn.is_some() {
@@ -103,7 +146,7 @@ impl Vault {
         }
     }
 
-    /// Data directory for this vault.
+    /// Returns the data directory of this vault.
     #[must_use]
     pub fn data_dir(&self) -> &Path {
         &self.data_dir
@@ -122,9 +165,17 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::Validation`] when a vault already exists or the password is
-    /// too short; [`Error::Crypto`] or [`Error::Io`] when the files cannot be
-    /// created. A failed attempt removes what it created.
+    /// - [`Error::Validation`] with
+    ///   [`ValidationError::VaultAlreadyInitialized`] when this handle has a
+    ///   header or a `vault.db` exists.
+    /// - [`Error::Validation`] with [`ValidationError::PasswordTooShort`]
+    ///   when `password` has fewer than 12 characters.
+    /// - [`Error::Crypto`] when the key cannot be derived or `SQLCipher`
+    ///   rejects a setting.
+    /// - [`Error::Io`] when a file cannot be written or the schema cannot be
+    ///   created.
+    ///
+    /// A failed attempt removes what it created.
     pub fn init(&mut self, password: &str) -> Result<()> {
         if self.header.is_some() || vault_db_path(&self.data_dir).exists() {
             return Err(Error::Validation(ValidationError::VaultAlreadyInitialized));
@@ -160,11 +211,19 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::VaultUninitialized`] when there is no vault;
-    /// [`Error::InvalidPassword`] when the password does not decrypt it;
-    /// [`Error::VaultCorrupt`] when the header or database is unusable;
-    /// [`Error::Crypto`] or [`Error::Io`] otherwise, including a failed
-    /// migration.
+    /// - [`Error::VaultUninitialized`] when there is no vault.
+    /// - [`Error::InvalidPassword`] when the password decrypts the database
+    ///   under neither the published header nor a staged one.
+    /// - [`Error::VaultCorrupt`] when the header cannot be used to derive a
+    ///   key, the database file is missing or empty, the database has no
+    ///   `vault_meta` row, or its schema is newer than this build or fails a
+    ///   migration's checks.
+    /// - [`Error::Crypto`] when Argon2 fails or `SQLCipher` rejects a
+    ///   setting.
+    /// - [`Error::Io`] for every other failure to read or migrate the
+    ///   database, including one that is busy in another process.
+    ///
+    /// After an error the vault is still locked.
     pub fn unlock(&mut self, password: &str) -> Result<()> {
         if self.conn.is_some() {
             return Ok(());
@@ -228,7 +287,30 @@ impl Vault {
         Ok(())
     }
 
-    /// Close the database connection and forget process-local key material.
+    /// Closes the database connection, leaving an unlocked vault locked.
+    ///
+    /// Does nothing to a vault that is not unlocked.
+    ///
+    /// # Key material after a lock
+    ///
+    /// Closing the connection makes `SQLCipher` free its key and page
+    /// buffers, which it wipes first.[^wipe] The copies this crate made, the
+    /// derived key and its hex form, are `zeroize::Zeroizing` values that
+    /// were wiped when [`Vault::unlock`] returned. The password is only
+    /// borrowed by this type; wiping it is up to the caller that owns it.
+    ///
+    /// One copy is outside the control of both. To set the key, the hex form
+    /// is passed to `rusqlite::Connection::pragma_update`, which assembles
+    /// the `PRAGMA key` statement in a plain `String` (`Sql::buf`, in
+    /// rusqlite 0.40 `src/pragma.rs`) and frees it without wiping it. That
+    /// text can stay in freed heap memory after a lock, until the allocator
+    /// reuses it. Setting the key without building a statement means calling
+    /// `sqlite3_key` directly, an `unsafe` FFI call that rusqlite does not
+    /// wrap, and this workspace sets `unsafe_code = "forbid"`.
+    ///
+    /// [^wipe]: <https://www.zetetic.net/sqlcipher/design/>: memory that
+    ///     `SQLCipher` allocates is locked when possible and wiped before it
+    ///     is freed.
     pub fn lock(&mut self) {
         self.conn = None;
     }
@@ -249,11 +331,21 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::VaultUninitialized`], [`Error::InvalidPassword`] for a wrong
-    /// old password, [`Error::Validation`] for a weak new password, or
-    /// crypto/I/O failures. A failed verification leaves any open connection
-    /// untouched. A failure after that reopens an unlocked vault under the
-    /// old key when that key still fits, and leaves it locked otherwise.
+    /// - [`Error::VaultUninitialized`] when there is no vault.
+    /// - [`Error::Validation`] with [`ValidationError::PasswordTooShort`]
+    ///   when `new` has fewer than 12 characters. It is checked before `old`.
+    /// - [`Error::InvalidPassword`] when `old` does not decrypt the database.
+    /// - [`Error::VaultCorrupt`] when the header cannot be used to derive a
+    ///   key, or the database file is missing or empty.
+    /// - [`Error::Crypto`] when Argon2 fails or `SQLCipher` rejects the
+    ///   rekey.
+    /// - [`Error::Io`] when the staged header cannot be written or renamed,
+    ///   the database cannot be read, or its write-ahead log cannot be
+    ///   folded in because another connection holds it.
+    ///
+    /// A failed verification leaves any open connection untouched. A failure
+    /// after that reopens an unlocked vault under the old key when that key
+    /// still fits, and leaves it locked otherwise.
     ///
     /// One error is returned after the change took effect: when the vault
     /// was unlocked and cannot be reopened under the new key. The vault is
@@ -266,7 +358,8 @@ impl Vault {
             .clone();
         validate_password(new)?;
 
-        // Verify the old password first — a typo must not lock the vault.
+        // Verified before the session is closed: a typo must not lock the
+        // vault.
         let old_key = crypto::derive_key(old, &header)?;
         let db_path = vault_db_path(&self.data_dir);
         let rekey_conn = open_sqlcipher(&db_path, &old_key, false)?;
@@ -307,20 +400,22 @@ impl Vault {
         }
     }
 
-    /// Borrow the open connection.
+    /// Returns the open connection.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::VaultLocked`] when not unlocked.
+    /// Returns [`Error::VaultLocked`] when the vault is not unlocked,
+    /// including when no vault exists yet.
     pub fn connection(&self) -> Result<&Connection> {
         self.conn.as_ref().ok_or(Error::VaultLocked)
     }
 
-    /// Mutable borrow of the open connection.
+    /// Returns the open connection for exclusive use.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::VaultLocked`] when not unlocked.
+    /// Returns [`Error::VaultLocked`] when the vault is not unlocked,
+    /// including when no vault exists yet.
     pub fn connection_mut(&mut self) -> Result<&mut Connection> {
         self.conn.as_mut().ok_or(Error::VaultLocked)
     }
@@ -337,6 +432,15 @@ impl fmt::Debug for Vault {
     }
 }
 
+/// Checks that `password` is long enough to be a master password.
+///
+/// Length is counted in characters, not bytes, so the rule reads the same
+/// for a passphrase in any script. Nothing else is required of it.
+///
+/// # Errors
+///
+/// [`Error::Validation`] with [`ValidationError::PasswordTooShort`] when it
+/// has fewer than [`MIN_PASSWORD_LEN`] characters.
 fn validate_password(password: &str) -> Result<()> {
     if password.chars().count() < MIN_PASSWORD_LEN {
         return Err(Error::Validation(ValidationError::PasswordTooShort {
@@ -436,15 +540,19 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
 
     silence_sqlcipher_log(&conn)?;
 
-    // SQLCipher 4.5+ ships with this off. On, it locks and wipes its key and
-    // page buffers instead of leaving plaintext in freed heap or swap. The
-    // flag is process-global and can only be turned on, so set it before the
-    // key so the key material itself is covered.
+    // Off by default. On, SQLCipher wipes every allocation it frees, not
+    // only those of its cryptographic operations, so no page plaintext is
+    // left in freed heap
+    // (https://www.zetetic.net/sqlcipher/sqlcipher-api/, "PRAGMA
+    // cipher_memory_security").
+    // Set before the key so the key's own handling is covered.
     conn.pragma_update(None, "cipher_memory_security", "ON")
         .map_err(|err| Error::Crypto(err.to_string()))?;
 
+    // The key has to be set before any statement that touches the database.
+    // `pragma_update` copies it into a statement string that is not wiped;
+    // see `crypto::key_to_sqlcipher_pragma`.
     let pragma_key = crypto::key_to_sqlcipher_pragma(key);
-    // `SQLCipher` requires key before other operations.
     conn.pragma_update(None, "key", pragma_key.as_str())
         .map_err(|err| key_check_error(&err))?;
 
@@ -454,7 +562,9 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     })
     .map_err(|err| key_check_error(&err))?;
 
-    // Prefer WAL; `SQLCipher` encrypts WAL pages when key is set.
+    // WAL keeps readers and the writer from blocking each other. Its pages
+    // are encrypted with the database key
+    // (https://www.zetetic.net/sqlcipher/design/, "Write Ahead Log Files").
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|err| Error::Io(err.to_string()))?;
     conn.pragma_update(None, "foreign_keys", "ON")
@@ -469,7 +579,7 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     Ok(conn)
 }
 
-/// Turn off `SQLCipher`'s own log on Windows, before memory security is on.
+/// Turns off `SQLCipher`'s own log on Windows, before memory security is on.
 ///
 /// With memory security on, `SQLCipher` locks every allocation in RAM. Windows
 /// allows a process only a small locked set, so the lock soon fails, and
@@ -487,6 +597,8 @@ fn silence_sqlcipher_log(conn: &Connection) -> Result<()> {
         .map_err(|err| Error::Crypto(err.to_string()))
 }
 
+/// Leaves `SQLCipher`'s log on: outside Windows it is written without
+/// allocating, so it cannot recurse (see the Windows version).
 #[cfg(not(windows))]
 #[expect(
     clippy::unnecessary_wraps,
@@ -557,6 +669,11 @@ fn discard_partial_init(data_dir: &Path) {
     discard_file(&vault_init_header_path(data_dir));
 }
 
+/// Creates `vault_meta` at schema version 1 in a new database and migrates
+/// it to the current schema.
+///
+/// `vault_meta` is the table `open_verified` looks for to tell a vault from
+/// some other database that happens to decrypt.
 fn bootstrap_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
