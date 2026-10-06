@@ -116,6 +116,7 @@ pub(crate) fn parse_sha256_hex(hex: &str) -> Result<[u8; SHA256_BYTES]> {
 /// Returns `bytes` as lowercase hex, two characters per byte.
 #[must_use]
 pub(crate) fn to_hex(bytes: &[u8]) -> String {
+    /// The digit for each value a nibble can take, in order.
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
 
     bytes

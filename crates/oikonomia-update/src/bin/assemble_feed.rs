@@ -191,6 +191,8 @@ struct FeedEntry {
     sha256: String,
 }
 
+/// Runs the subcommand the arguments name and reports a failure on standard
+/// error with exit status 1.
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
 

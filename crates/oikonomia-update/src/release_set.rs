@@ -235,7 +235,7 @@ pub fn feed_entries<'a>(
         .collect()
 }
 
-/// Returns the files [`CHECKSUMS_FILE`] lists: every published file except
+/// Returns the files `SHA256SUMS` lists: every published file except
 /// the checksum file itself, sorted by name so the file is reproducible.
 #[must_use]
 pub fn checksummed_assets<'a>(file_names: &[&'a str], windows: WindowsBuild) -> Vec<&'a str> {
@@ -249,7 +249,7 @@ pub fn checksummed_assets<'a>(file_names: &[&'a str], windows: WindowsBuild) -> 
     listed
 }
 
-/// Returns one line of [`CHECKSUMS_FILE`], newline included.
+/// Returns one line of `SHA256SUMS`, newline included.
 ///
 /// Two spaces separate the digest from the name, which is how
 /// `sha256sum --check` marks a file read in text mode.

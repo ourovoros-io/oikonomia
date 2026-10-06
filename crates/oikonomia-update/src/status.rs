@@ -1,22 +1,31 @@
-//! Update state machine status, serde-tagged for the webview.
+//! The update status the webview is shown.
+//!
+//! [`UpdateStatus`] is the only update type that crosses IPC. It serializes
+//! with a `kind` tag in snake case, and `web/src/lib/updateCheck.ts` decodes
+//! exactly that shape, so a variant or field renamed here has to be renamed
+//! there. It is a projection of the machine's private state, which holds the
+//! artifact URL, signature and digest; none of those is in here.
 
 use serde::{Deserialize, Serialize};
 
-/// Unlock-screen update machine. Never a pile of bools.
+/// Where the session's update check or install stands, as the webview
+/// sees it.
 ///
-/// `kind` is the discriminant the webview matches on. [`UpdateStatus::Available`]
-/// carries version and sanitized notes only — never a URL or pubkey.
+/// `kind` is the discriminant the webview matches on. The variants that
+/// report a newer version carry its version and escaped notes only, never a
+/// URL, a signature or a key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UpdateStatus {
     /// No check has been requested this session.
     #[default]
     Idle,
-    /// `update_check` is in flight.
+    /// A check is in flight.
     Checking,
-    /// Manifest verified; installed version is current (or the feed returned 204).
+    /// Nothing newer is published: the verified manifest names this version
+    /// or an older one, or the feed server answered 204.
     UpToDate,
-    /// Manifest verified and a newer artifact URL passed the allow-list.
+    /// The verified manifest offers a newer version this copy may install.
     Available {
         /// The published version from the signed manifest, without a
         /// leading `v`.
@@ -33,9 +42,10 @@ pub enum UpdateStatus {
         /// The release notes with every HTML markup character escaped.
         notes: String,
     },
-    /// `update_install` is downloading, verifying or handing over the
-    /// artifact. No check and no second install starts until it ends.
+    /// An install is downloading, verifying or handing over the artifact.
+    /// No check and no second install starts until it ends.
     Installing,
-    /// Check or install failed. Unlock and export stay usable.
+    /// The last check or install failed. The rest of the application is
+    /// unaffected, and a new check may be started.
     Failed,
 }

@@ -1,4 +1,28 @@
-//! Feed fetch, signed-manifest check, and artifact download. No Tauri types.
+//! The update client: checks the signed feed and installs what it offers.
+//!
+//! Everything that touches the network is in this module. It has two entry
+//! points, [`perform_check`] and [`install_offer`], and both are plain
+//! blocking functions over [`ClientConfig`]; neither knows about Tauri, the
+//! webview or the [`UpdateMachine`](crate::UpdateMachine). The crate
+//! documentation lists the steps of each in order.
+//!
+//! # One fetch
+//!
+//! Every request goes through [`fetch`]. It asks the [`HostPolicy`] about the
+//! URL, sends one `GET`, and follows redirects itself, at most
+//! [`MAX_REDIRECTS`] of them, asking the policy again for each new URL. The
+//! HTTP library is told to follow none (`redirects(0)`), because it would
+//! follow them without that check. A [`Resource`] says what is being fetched
+//! and with it how large the body may be, how long the request may take, and
+//! whether the request names the running version and platform.
+//!
+//! # Verified before written
+//!
+//! An artifact is read into memory, checked against the digest and the
+//! signature from the signed manifest, and only then written to the cache
+//! directory. A download that fails either check never exists as a file, so
+//! nothing unverified can be picked up from the cache, by this process or by
+//! another.
 
 use crate::error::{Result, UpdateError};
 use crate::hosts::HostPolicy;
@@ -21,16 +45,31 @@ use url::Url;
 pub(crate) const UPDATE_FEED_URL: &str =
     "https://github.com/ourovoros-io/oikonomia/releases/latest/download/latest.json";
 
-/// Bounds the feed body held in memory.
+/// The largest feed body that is read: 1 MiB.
+///
+/// The feed is held in memory to be verified. A real one is a few kilobytes
+/// (one entry per platform and a line of notes), so the limit is generous
+/// and still keeps a hostile server from filling memory.
 pub(crate) const MAX_MANIFEST_BYTES: usize = 1_048_576;
 
-/// Bounds the detached feed signature held in memory.
+/// The largest detached feed signature that is read: 16 KiB.
+///
+/// A minisign signature file is four short lines, and the Tauri signer's
+/// base64 of it is about 400 bytes.
 pub(crate) const MAX_SIGNATURE_BYTES: usize = 16_384;
 
-/// Bounds the artifact held in memory while it is verified.
+/// The largest artifact that is downloaded: 200 MiB.
+///
+/// The artifact is held in memory until its digest and signature are checked,
+/// so this is also the most memory an install takes. It has to stay above the
+/// size of the largest installer the release workflow builds.
 pub(crate) const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
 
-/// Bounds how many redirects one fetch follows before it is given up.
+/// The most redirects one fetch follows before it fails.
+///
+/// GitHub answers a release download with a redirect to its asset host,
+/// and `releases/latest` adds one before it. The rest is allowance for the
+/// host to add a hop, and the limit ends a redirect loop.
 pub(crate) const MAX_REDIRECTS: u8 = 5;
 
 /// Bounds one whole feed or signature request: connecting, then everything up
@@ -47,16 +86,6 @@ const ARTIFACT_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// for this long fails; one that keeps delivering bytes has no time limit,
 /// because an artifact of up to [`MAX_ARTIFACT_BYTES`] can take minutes.
 const ARTIFACT_READ_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// `{os}-{arch}` used by Tauri static manifests (`linux-x86_64`, `darwin-aarch64`).
-#[must_use]
-pub(crate) fn current_updater_platform() -> String {
-    let os = match std::env::consts::OS {
-        "macos" => "darwin",
-        other => other,
-    };
-    format!("{os}-{}", std::env::consts::ARCH)
-}
 
 /// How this copy of the app receives a new version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +108,7 @@ pub enum InstallHandoff {
     InstallerStarted,
 }
 
-/// Result of [`install_offer`].
+/// The result of [`install_offer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallOutcome {
     /// Download, verification, or the installer failed; nothing was replaced.
@@ -88,16 +117,32 @@ pub enum InstallOutcome {
     Installed(InstallHandoff),
 }
 
-/// Inputs for one check or install. The webview cannot supply a URL or pubkey.
+/// The inputs of a check or an install.
+///
+/// Built once by the desktop from values compiled into it. Nothing in it
+/// comes from the webview, which therefore cannot choose the feed, the hosts
+/// or the key.
 #[derive(Debug, Clone)]
 pub struct ClientConfig {
+    /// Where the feed is. The detached signature is at the same URL with
+    /// `.sig` appended to the path.
     feed_url: Url,
+    /// The updater public key that the feed and the artifact must be signed
+    /// with.
     public_key: PublicKey,
+    /// The running version. Only a published version greater than this is
+    /// offered.
     current_version: Version,
+    /// The key of this copy's entry in the feed's platform table, such as
+    /// `darwin-aarch64`.
     platform: String,
+    /// The time limit of one feed or signature request.
     metadata_deadline: Duration,
+    /// The directory a verified artifact is written to and run from.
     cache_dir: PathBuf,
+    /// The schemes and hosts that may be contacted.
     host_policy: HostPolicy,
+    /// Whether this copy installs its own updates.
     install_route: InstallRoute,
 }
 
@@ -119,11 +164,11 @@ impl ClientConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or invalid,
-    /// [`UpdateError::InvalidFeedUrl`] when the feed constant does not parse,
-    /// [`UpdateError::ArtifactUrl`] when the feed constant is not on the production
-    /// allow-list, or [`UpdateError::InvalidVersion`] when `current_version` is not
-    /// `SemVer`.
+    /// Returns [`UpdateError::InvalidFeedUrl`] when the feed constant does not
+    /// parse, [`UpdateError::ArtifactUrl`] when it is not on the production
+    /// allow-list, [`UpdateError::MissingPublicKey`] when `public_key` is
+    /// empty or not a minisign key, and [`UpdateError::InvalidVersion`] when
+    /// `current_version` is not `SemVer`.
     pub fn production(
         public_key: &str,
         current_version: &str,
@@ -135,54 +180,36 @@ impl ClientConfig {
         if !host_policy.is_allowed_fetch_url(&feed_url) {
             return Err(UpdateError::ArtifactUrl);
         }
-        let config = Self::new(
-            feed_url,
-            public_key,
-            current_version,
-            current_updater_platform(),
-            cache_dir,
-            host_policy,
-            METADATA_DEADLINE,
-        )?;
-        Ok(Self {
-            install_route,
-            ..config
-        })
-    }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "every configuration field is its own argument; tracked for the API pass"
-    )]
-    fn new(
-        feed_url: Url,
-        public_key: &str,
-        current_version: &str,
-        platform: String,
-        cache_dir: PathBuf,
-        host_policy: HostPolicy,
-        metadata_deadline: Duration,
-    ) -> Result<Self> {
-        let public_key = parse_public_key(public_key)?;
-        let current_version = parse_version(current_version)?;
         Ok(Self {
             feed_url,
-            public_key,
-            current_version,
-            platform,
-            metadata_deadline,
+            public_key: parse_public_key(public_key)?,
+            current_version: parse_version(current_version)?,
+            platform: current_updater_platform(),
+            metadata_deadline: METADATA_DEADLINE,
             cache_dir,
             host_policy,
-            install_route: InstallRoute::InApp,
+            install_route,
         })
     }
 }
 
 #[cfg(test)]
 impl ClientConfig {
+    /// Builds a configuration that points at a test server.
+    ///
+    /// Compiled for tests only: a release build has no way to set the feed
+    /// URL, the host policy or the platform. The install route is
+    /// [`InstallRoute::InApp`]; see [`Self::with_install_route`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or
+    /// not a minisign key, and [`UpdateError::InvalidVersion`] when
+    /// `current_version` is not `SemVer`.
     #[expect(
         clippy::too_many_arguments,
-        reason = "mirrors `ClientConfig::new`, one argument per field; tracked for the API pass"
+        reason = "one argument per field a test sets; tracked for the API pass"
     )]
     pub(crate) fn for_test(
         feed_url: Url,
@@ -193,17 +220,19 @@ impl ClientConfig {
         host_policy: HostPolicy,
         metadata_deadline: Duration,
     ) -> Result<Self> {
-        Self::new(
+        Ok(Self {
             feed_url,
-            public_key,
-            current_version,
-            platform.into(),
+            public_key: parse_public_key(public_key)?,
+            current_version: parse_version(current_version)?,
+            platform: platform.into(),
+            metadata_deadline,
             cache_dir,
             host_policy,
-            metadata_deadline,
-        )
+            install_route: InstallRoute::InApp,
+        })
     }
 
+    /// Returns this configuration with `install_route` in place of its own.
     pub(crate) fn with_install_route(self, install_route: InstallRoute) -> Self {
         Self {
             install_route,
@@ -218,7 +247,7 @@ impl ClientConfig {
 /// The fields are private and there is no public constructor, so a value of
 /// this type always comes from [`perform_check`] and cannot be altered on its
 /// way to [`install_offer`].
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct VerifiedOffer {
     /// The published version, parsed from the manifest. It is newer than the
     /// running one.
@@ -242,18 +271,18 @@ impl VerifiedOffer {
         &self.version
     }
 
-    /// Returns the release notes, sanitized by [`sanitize_notes`]: plain text
-    /// with every markup character escaped.
+    /// Returns the release notes with every HTML markup character escaped.
     #[must_use]
     pub fn notes(&self) -> &str {
         &self.notes
     }
 }
 
-/// Outcome of [`perform_check`]. Never a URL.
-#[derive(Debug, Clone)]
+/// The result of [`perform_check`]. It never carries a URL.
+#[derive(Debug)]
 pub enum CheckOutcome {
-    /// Same version, older version, or HTTP 204.
+    /// Nothing newer is published: the signed manifest names this version or
+    /// an older one, or the server answered 204 to the feed request.
     UpToDate,
     /// Newer signed manifest with an allow-listed artifact URL, for a copy
     /// that installs its own updates ([`InstallRoute::InApp`]).
@@ -264,84 +293,32 @@ pub enum CheckOutcome {
     AvailableManually {
         /// The published version, parsed from the signed manifest.
         version: Version,
-        /// The release notes after [`sanitize_notes`].
+        /// The release notes with every HTML markup character escaped.
         notes: String,
     },
-    /// Network, signature, parse, or allow-list failure.
+    /// The check could not be completed or its result could not be trusted.
+    /// The cause, an [`UpdateError`], is logged and not returned.
     Failed,
 }
 
-#[derive(Debug, Deserialize)]
-struct RawManifest {
-    version: String,
-    #[serde(default)]
-    notes: Option<String>,
-    #[serde(default)]
-    platforms: HashMap<String, RawPlatform>,
+/// The platform installer, called only with an artifact whose digest and
+/// signature have been verified.
+pub trait ArtifactInstaller {
+    /// Installs the verified artifact at `artifact`, a file in the cache
+    /// directory, and says how the new version takes over.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`UpdateError`] when the artifact could not be installed.
+    /// [`install_offer`] logs it, deletes the artifact and reports
+    /// [`InstallOutcome::Failed`].
+    fn install(&self, artifact: &Path) -> Result<InstallHandoff>;
 }
 
-#[derive(Debug, Deserialize)]
-struct RawPlatform {
-    url: String,
-    signature: String,
-    sha256: String,
-}
-
-/// What a fetch is for. That fixes its size cap, its time limits, and whether
-/// the request tells the server which copy of the app is asking.
-#[derive(Debug, Clone, Copy)]
-enum Resource {
-    /// The `latest.json` feed.
-    Manifest,
-    /// The detached minisign signature over the feed.
-    ManifestSignature,
-    /// The platform artifact a verified manifest names.
-    Artifact,
-}
-
-impl Resource {
-    fn max_bytes(self) -> usize {
-        match self {
-            Self::Manifest => MAX_MANIFEST_BYTES,
-            Self::ManifestSignature => MAX_SIGNATURE_BYTES,
-            Self::Artifact => MAX_ARTIFACT_BYTES,
-        }
-    }
-
-    /// Only the feed endpoints are told the version and platform, which is
-    /// what lets a feed server answer 204 to a copy that is current. The
-    /// artifact URL comes from the manifest and is fetched exactly as signed.
-    fn names_this_copy(self) -> bool {
-        match self {
-            Self::Manifest | Self::ManifestSignature => true,
-            Self::Artifact => false,
-        }
-    }
-}
-
-/// What a fetch that reached its last hop came back with.
-enum Fetched {
-    /// HTTP 200 and its body, within the size cap of the resource.
-    Body(Vec<u8>),
-    /// HTTP 204.
-    NoContent,
-}
-
-/// Why a fetch ended without a body or a 204.
-enum FetchFail {
-    /// No response arrived, a redirect could not be followed, or the body
-    /// could not be read to its end.
-    Network,
-    /// The last hop answered with this status, which is not 200, 204 or a
-    /// redirect.
-    Status(u16),
-    /// A URL on the way was off the allow-list.
-    Denied,
-    /// The body was larger than the cap of the resource.
-    TooLarge,
-}
-
-/// Fetches the signed manifest. Does **not** download the artifact.
+/// Checks the feed for a newer version. Does not download the artifact.
+///
+/// Blocks on the network for up to the feed deadline per request. The cause
+/// of a failure is logged and the outcome is [`CheckOutcome::Failed`].
 #[must_use]
 pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
     match perform_check_inner(config) {
@@ -353,36 +330,91 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
     }
 }
 
-/// Logs `error` under `context`, with its cause when it has one.
+/// Downloads and verifies the artifact of `offer`, then hands it to `installer`.
 ///
-/// The message of an [`UpdateError`] leaves the cause out, so that it does
-/// not repeat it when a caller prints the chain. A failure that is only
-/// logged has no such caller, and without the cause a cache failure would
-/// not say which operation the system refused.
-fn log_failure(context: &str, error: &UpdateError) {
-    match std::error::Error::source(error) {
-        Some(cause) => log::warn!("{context}: {error}: {cause}"),
-        None => log::warn!("{context}: {error}"),
+/// Does not touch an [`UpdateMachine`](crate::UpdateMachine), so the caller
+/// need not hold one locked for the minutes a download may take. The offer
+/// comes from [`UpdateMachine::begin_install`](crate::UpdateMachine::begin_install)
+/// and the outcome goes to
+/// [`UpdateMachine::finish_install`](crate::UpdateMachine::finish_install).
+///
+/// The artifact is verified in memory before it is written, so a failed
+/// download or check leaves no file and `installer` is not called. The
+/// artifact is deleted afterwards unless an installer process is still
+/// running from it. The cause of a failure is logged.
+#[must_use]
+pub fn install_offer(
+    config: &ClientConfig,
+    offer: &VerifiedOffer,
+    installer: &impl ArtifactInstaller,
+) -> InstallOutcome {
+    let path = match download_and_verify(config, offer) {
+        Ok(path) => path,
+        Err(err) => {
+            log_failure("update install verify failed", &err);
+            return InstallOutcome::Failed;
+        }
+    };
+
+    match installer.install(&path) {
+        Ok(InstallHandoff::Replaced) => {
+            delete_artifact(&path);
+            InstallOutcome::Installed(InstallHandoff::Replaced)
+        }
+        Ok(InstallHandoff::InstallerStarted) => {
+            InstallOutcome::Installed(InstallHandoff::InstallerStarted)
+        }
+        Err(err) => {
+            log_failure("update install exec failed", &err);
+            delete_artifact(&path);
+            InstallOutcome::Failed
+        }
     }
+}
+
+/// Returns the key this binary looks itself up by in a feed: `{os}-{arch}`
+/// in Tauri's spelling, such as `linux-x86_64` or `darwin-aarch64`.
+#[must_use]
+pub(crate) fn current_updater_platform() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{os}-{}", std::env::consts::ARCH)
 }
 
 /// Runs the check and keeps the cause of a failure, which [`perform_check`]
 /// logs and reduces to [`CheckOutcome::Failed`].
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ArtifactUrl`] when the feed URL, a redirect from
+/// it, or the artifact URL in the manifest is off the allow-list;
+/// [`UpdateError::Network`] when the feed or its signature cannot be fetched;
+/// [`UpdateError::ResponseTooLarge`] when either exceeds its size limit;
+/// [`UpdateError::ManifestSignature`] when the signature is absent or does
+/// not verify, or the manifest's artifact signature is empty;
+/// [`UpdateError::ManifestParse`] when the signed body is not the expected
+/// JSON; [`UpdateError::InvalidVersion`] when its version is not `SemVer`;
+/// [`UpdateError::MissingPlatform`] when a newer version lists no artifact
+/// for this platform; and [`UpdateError::ArtifactIntegrity`] when the
+/// manifest's SHA-256 is not 64 hex characters.
 pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome> {
-    let Fetched::Body(body) = fetch_bytes(config, &config.feed_url, Resource::Manifest)? else {
+    let Fetched::Body(body) = fetch(config, &config.feed_url, Resource::Manifest)? else {
         return Ok(CheckOutcome::UpToDate);
     };
 
     // Derived from the configured URL, not from the URL that was requested:
-    // `fetch_bytes` appends the identity query itself, once per request.
+    // `fetch` appends the identity query itself, once per request.
     let signature_url = signature_url_for(&config.feed_url);
-    let Fetched::Body(signature_bytes) =
-        fetch_bytes(config, &signature_url, Resource::ManifestSignature)?
+    let Fetched::Body(signature) = fetch(config, &signature_url, Resource::ManifestSignature)?
     else {
         return Err(UpdateError::ManifestSignature);
     };
-    let signature =
-        std::str::from_utf8(&signature_bytes).map_err(|_| UpdateError::ManifestSignature)?;
+    let signature = std::str::from_utf8(&signature).map_err(|_| UpdateError::ManifestSignature)?;
+
+    // Over the bytes as they arrived, and before anything reads them: the
+    // JSON parser never sees a body the key holder did not sign.
     verify_minisign(&config.public_key, &body, signature)?;
 
     let manifest: RawManifest =
@@ -409,35 +441,8 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
     })
 }
 
-fn offer_from_manifest(
-    config: &ClientConfig,
-    manifest: &RawManifest,
-    version: Version,
-) -> Result<VerifiedOffer> {
-    let platform = manifest
-        .platforms
-        .get(&config.platform)
-        .ok_or(UpdateError::MissingPlatform)?;
-
-    let artifact_url = Url::parse(&platform.url).map_err(|_| UpdateError::ArtifactUrl)?;
-    if !config.host_policy.is_allowed_artifact_url(&artifact_url) {
-        return Err(UpdateError::ArtifactUrl);
-    }
-    if platform.signature.trim().is_empty() {
-        return Err(UpdateError::ManifestSignature);
-    }
-    let sha256 = parse_sha256_hex(&platform.sha256)?;
-    let notes = sanitize_notes(manifest.notes.as_deref().unwrap_or(""));
-    Ok(VerifiedOffer {
-        version,
-        notes,
-        artifact_url,
-        artifact_signature: platform.signature.clone(),
-        sha256,
-    })
-}
-
-/// Downloads the artifact outside the vault, verifies hash and minisign, then returns the path.
+/// Downloads the artifact of `offer` into the cache directory, verifies its
+/// digest and its signature, and returns the path of the file.
 ///
 /// The bytes are held in memory until both checks pass and only then written,
 /// so a failed download or a failed check leaves no file. A file left behind
@@ -445,125 +450,32 @@ fn offer_from_manifest(
 ///
 /// # Errors
 ///
-/// Returns [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect
-/// from it, is off the allow-list; [`UpdateError::ArtifactIntegrity`] when the
-/// hash or the signature does not match; [`UpdateError::Network`] when the
-/// download fails or the server answers 204;
-/// [`UpdateError::ResponseTooLarge`] when the artifact exceeds
-/// [`MAX_ARTIFACT_BYTES`]; and [`UpdateError::CacheIo`] when the cache
-/// directory cannot be created or made private, or the file cannot be written.
+/// Returns [`UpdateError::CacheIo`] when the cache directory cannot be
+/// created or made private, or the file cannot be written;
+/// [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect from it,
+/// is off the allow-list; [`UpdateError::Network`] when the download fails or
+/// the server answers 204; [`UpdateError::ResponseTooLarge`] when the
+/// artifact exceeds [`MAX_ARTIFACT_BYTES`]; and
+/// [`UpdateError::ArtifactIntegrity`] when the digest or the signature does
+/// not match.
 pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
     prepare_cache_dir(&config.cache_dir).map_err(UpdateError::CacheIo)?;
     purge_cache(&config.cache_dir);
-    let dest = config.cache_dir.join(format!(
+
+    // The digest makes the name unique to these exact bytes; the URL's file
+    // name follows it for the sake of its extension.
+    let destination = config.cache_dir.join(format!(
         "{}-{}",
         to_hex(&offer.sha256),
         artifact_file_name(&offer.artifact_url)
     ));
-    match download_and_verify_inner(config, offer, &dest) {
-        Ok(()) => Ok(dest),
+
+    match download_and_verify_into(config, offer, &destination) {
+        Ok(()) => Ok(destination),
         Err(err) => {
-            delete_artifact(&dest);
+            delete_artifact(&destination);
             Err(err)
         }
-    }
-}
-
-fn download_and_verify_inner(
-    config: &ClientConfig,
-    offer: &VerifiedOffer,
-    dest: &Path,
-) -> Result<()> {
-    if !config
-        .host_policy
-        .is_allowed_artifact_url(&offer.artifact_url)
-    {
-        return Err(UpdateError::ArtifactUrl);
-    }
-    let Fetched::Body(bytes) = fetch_bytes(config, &offer.artifact_url, Resource::Artifact)? else {
-        return Err(UpdateError::Network);
-    };
-    if sha256(&bytes) != offer.sha256 {
-        return Err(UpdateError::ArtifactIntegrity);
-    }
-    verify_minisign(&config.public_key, &bytes, &offer.artifact_signature)
-        .map_err(|_| UpdateError::ArtifactIntegrity)?;
-    write_new_private_file(dest, &bytes).map_err(UpdateError::CacheIo)
-}
-
-/// Creates the cache directory for this user only.
-///
-/// The verified artifact is read back from here by path and then run, so
-/// nobody else may be able to swap it in between. On Unix the directory is
-/// forced to mode `0700`; that fails, and the install with it, when the
-/// directory belongs to another account. The caller passes a directory under
-/// the user's own cache location, never a shared temporary directory.
-fn prepare_cache_dir(cache_dir: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(cache_dir)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::set_permissions(cache_dir, std::fs::Permissions::from_mode(0o700))?;
-    }
-
-    Ok(())
-}
-
-/// Writes `bytes` to a file that must not exist yet. `create_new` refuses an
-/// existing path, a symbolic link included, so the write cannot be
-/// redirected to a file outside the cache.
-pub(crate) fn write_new_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        options.mode(0o600);
-    }
-
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
-
-/// Local file name for a downloaded artifact: the last segment of its URL,
-/// reduced to ASCII letters, digits, `.`, `-` and `_`.
-///
-/// The extension has to survive the download. The installers choose their
-/// action from it, and Windows will not start a program whose name has no
-/// extension.
-fn artifact_file_name(url: &Url) -> String {
-    const MAX_NAME_CHARS: usize = 96;
-
-    let segment = url
-        .path_segments()
-        .and_then(|mut segments| segments.next_back())
-        .unwrap_or("");
-
-    let mut name = String::new();
-    for ch in segment.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_' {
-            name.push(ch);
-        } else {
-            name.push('_');
-        }
-    }
-
-    // Keep the tail: that is where the extension lives.
-    let excess = name.len().saturating_sub(MAX_NAME_CHARS);
-    let name = name.split_off(excess);
-    let name = name.trim_start_matches('.');
-
-    if name.is_empty() {
-        "artifact".to_owned()
-    } else {
-        name.to_owned()
     }
 }
 
@@ -625,20 +537,291 @@ pub(crate) fn delete_artifact(path: &Path) {
     }
 }
 
+/// Writes `bytes` to a file that must not exist yet. `create_new` refuses an
+/// existing path, a symbolic link included, so the write cannot be
+/// redirected to a file outside the cache. On Unix the file is created with
+/// mode `0600`.
+///
+/// # Errors
+///
+/// Returns the I/O error of creating, writing or syncing the file; its kind
+/// is `AlreadyExists` when something is at `path`.
+pub(crate) fn write_new_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.mode(0o600);
+    }
+
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
+}
+
+/// The feed as the client reads it. Fields the client has no use for are
+/// ignored.
+#[derive(Debug, Deserialize)]
+struct RawManifest {
+    /// The published version, with or without a leading `v`.
+    version: String,
+    /// The release notes, unsanitized. Absent in a feed without notes.
+    #[serde(default)]
+    notes: Option<String>,
+    /// The artifact of each platform, by platform key. A feed without the
+    /// table reads as one that offers no platform.
+    #[serde(default)]
+    platforms: HashMap<String, RawPlatform>,
+}
+
+/// One platform's artifact as the feed describes it.
+#[derive(Debug, Deserialize)]
+struct RawPlatform {
+    /// Where the artifact is downloaded from.
+    url: String,
+    /// The minisign signature over the artifact.
+    signature: String,
+    /// The hex SHA-256 of the artifact.
+    sha256: String,
+}
+
+/// What a fetch is for. That fixes its size cap, its time limits, and whether
+/// the request tells the server which copy of the app is asking.
+#[derive(Debug, Clone, Copy)]
+enum Resource {
+    /// The `latest.json` feed.
+    Manifest,
+    /// The detached minisign signature over the feed.
+    ManifestSignature,
+    /// The platform artifact a verified manifest names.
+    Artifact,
+}
+
+impl Resource {
+    /// Returns the largest body that is read for this resource.
+    fn max_bytes(self) -> usize {
+        match self {
+            Self::Manifest => MAX_MANIFEST_BYTES,
+            Self::ManifestSignature => MAX_SIGNATURE_BYTES,
+            Self::Artifact => MAX_ARTIFACT_BYTES,
+        }
+    }
+
+    /// Returns whether the request carries the running version and platform.
+    ///
+    /// Only the feed endpoints are told, which is what lets a feed server
+    /// answer 204 to a copy that is current. The artifact URL comes from the
+    /// manifest and is fetched exactly as signed.
+    fn names_this_copy(self) -> bool {
+        match self {
+            Self::Manifest | Self::ManifestSignature => true,
+            Self::Artifact => false,
+        }
+    }
+}
+
+/// What a fetch that reached its last hop came back with.
+enum Fetched {
+    /// HTTP 200 and its body, within the size cap of the resource.
+    Body(Vec<u8>),
+    /// HTTP 204.
+    NoContent,
+}
+
+/// Why a fetch ended without a body or a 204.
+enum FetchFail {
+    /// No response arrived, a redirect could not be followed, or the body
+    /// could not be read to its end.
+    Network,
+    /// The last hop answered with this status, which is not 200, 204 or a
+    /// redirect.
+    Status(u16),
+    /// A URL on the way was off the allow-list.
+    Denied,
+    /// The body was larger than the cap of the resource.
+    TooLarge,
+}
+
+/// Logs `error` under `context`, with its cause when it has one.
+///
+/// The message of an [`UpdateError`] leaves the cause out, so that it does
+/// not repeat it when a caller prints the chain. A failure that is only
+/// logged has no such caller, and without the cause a cache failure would
+/// not say which operation the system refused.
+fn log_failure(context: &str, error: &UpdateError) {
+    match std::error::Error::source(error) {
+        Some(cause) => log::warn!("{context}: {error}: {cause}"),
+        None => log::warn!("{context}: {error}"),
+    }
+}
+
+/// Builds the offer for `version` from this platform's entry in `manifest`.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::MissingPlatform`] when the manifest has no entry
+/// for the configured platform; [`UpdateError::ArtifactUrl`] when the entry's
+/// URL does not parse, is off the allow-list or ends in `.deb`;
+/// [`UpdateError::ManifestSignature`] when its signature is empty; and
+/// [`UpdateError::ArtifactIntegrity`] when its SHA-256 is not 64 hex
+/// characters.
+fn offer_from_manifest(
+    config: &ClientConfig,
+    manifest: &RawManifest,
+    version: Version,
+) -> Result<VerifiedOffer> {
+    let platform = manifest
+        .platforms
+        .get(&config.platform)
+        .ok_or(UpdateError::MissingPlatform)?;
+
+    let artifact_url = Url::parse(&platform.url).map_err(|_| UpdateError::ArtifactUrl)?;
+    if !config.host_policy.is_allowed_artifact_url(&artifact_url) {
+        return Err(UpdateError::ArtifactUrl);
+    }
+    if platform.signature.trim().is_empty() {
+        return Err(UpdateError::ManifestSignature);
+    }
+    let sha256 = parse_sha256_hex(&platform.sha256)?;
+    let notes = sanitize_notes(manifest.notes.as_deref().unwrap_or(""));
+
+    Ok(VerifiedOffer {
+        version,
+        notes,
+        artifact_url,
+        artifact_signature: platform.signature.clone(),
+        sha256,
+    })
+}
+
+/// Downloads the artifact of `offer`, verifies it, and writes it to
+/// `destination`.
+///
+/// # Errors
+///
+/// As [`download_and_verify`], except for the cache directory, which the
+/// caller has prepared.
+fn download_and_verify_into(
+    config: &ClientConfig,
+    offer: &VerifiedOffer,
+    destination: &Path,
+) -> Result<()> {
+    // Checked when the offer was built, and again here: the offer may have
+    // waited, and this is the last step before the request.
+    if !config
+        .host_policy
+        .is_allowed_artifact_url(&offer.artifact_url)
+    {
+        return Err(UpdateError::ArtifactUrl);
+    }
+    let Fetched::Body(bytes) = fetch(config, &offer.artifact_url, Resource::Artifact)? else {
+        return Err(UpdateError::Network);
+    };
+
+    if sha256(&bytes) != offer.sha256 {
+        return Err(UpdateError::ArtifactIntegrity);
+    }
+    verify_minisign(&config.public_key, &bytes, &offer.artifact_signature)
+        .map_err(|_| UpdateError::ArtifactIntegrity)?;
+
+    write_new_private_file(destination, &bytes).map_err(UpdateError::CacheIo)
+}
+
+/// Creates the cache directory for this user only.
+///
+/// The verified artifact is read back from here by path and then run, so
+/// nobody else may be able to swap it in between. On Unix the directory is
+/// forced to mode `0700`; that fails, and the install with it, when the
+/// directory belongs to another account. The caller passes a directory under
+/// the user's own cache location, never a shared temporary directory.
+///
+/// # Errors
+///
+/// Returns the I/O error of creating the directory or setting its mode.
+fn prepare_cache_dir(cache_dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(cache_dir)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(cache_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    Ok(())
+}
+
+/// Returns the local file name for a downloaded artifact: the last segment
+/// of its URL, reduced to ASCII letters, digits, `.`, `-` and `_`.
+///
+/// The extension has to survive the download. The installers choose their
+/// action from it, and Windows will not start a program whose name has no
+/// extension. Every other character becomes `_`, so the name holds no path
+/// separator and cannot leave the cache directory.
+fn artifact_file_name(url: &Url) -> String {
+    /// Longest name kept. With the 64-character digest and the hyphen put
+    /// in front of it, the file name stays well under the 255 bytes common
+    /// file systems allow.
+    const MAX_NAME_BYTES: usize = 96;
+
+    let segment = url
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or("");
+
+    let mut name: String = segment
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    // Keep the tail: that is where the extension lives. The name is ASCII by
+    // now, so every byte offset is a character boundary.
+    let excess = name.len().saturating_sub(MAX_NAME_BYTES);
+    let name = name.split_off(excess);
+    let name = name.trim_start_matches('.');
+
+    if name.is_empty() {
+        "artifact".to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// Returns the URL of the detached signature of the feed at `feed`: the same
+/// URL with `.sig` appended to its path.
 fn signature_url_for(feed: &Url) -> Url {
     let mut signature = feed.clone();
-    let path = format!("{}.sig", feed.path());
-    signature.set_path(&path);
+    signature.set_path(&format!("{}.sig", feed.path()));
     signature
 }
 
-fn fetch_bytes(config: &ClientConfig, url: &Url, resource: Resource) -> Result<Fetched> {
+/// Fetches `url` as `resource` and returns the body, or that there was none.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ArtifactUrl`] when `url` or a redirect from it is
+/// off the allow-list; [`UpdateError::ResponseTooLarge`] when the body
+/// exceeds the cap of `resource`; [`UpdateError::ManifestSignature`] when
+/// `resource` is the feed signature and the server answers 404; and
+/// [`UpdateError::Network`] for every other failure.
+fn fetch(config: &ClientConfig, url: &Url, resource: Resource) -> Result<Fetched> {
     let mut request_url = url.clone();
     if resource.names_this_copy() {
-        attach_version_os_arch(&mut request_url, config);
+        append_identity_query(&mut request_url, config);
     }
 
-    fetch_once(config, &request_url, resource).map_err(|fail| match fail {
+    fetch_following_redirects(config, request_url, resource).map_err(|fail| match fail {
         FetchFail::Denied => UpdateError::ArtifactUrl,
         FetchFail::TooLarge => UpdateError::ResponseTooLarge,
         // A feed published without its signature is a feed that cannot be
@@ -650,14 +833,15 @@ fn fetch_bytes(config: &ClientConfig, url: &Url, resource: Resource) -> Result<F
     })
 }
 
-fn fetch_once(
+/// Requests `url` and follows up to [`MAX_REDIRECTS`] redirects, checking
+/// every URL against the host policy before it is requested.
+fn fetch_following_redirects(
     config: &ClientConfig,
-    start: &Url,
+    mut url: Url,
     resource: Resource,
 ) -> std::result::Result<Fetched, FetchFail> {
     let agent = agent_for(config, resource);
 
-    let mut url = start.clone();
     let mut redirects_followed = 0_u8;
     loop {
         if !config.host_policy.is_allowed_fetch_url(&url) {
@@ -678,8 +862,8 @@ fn fetch_once(
 
         match response.status() {
             200 => {
-                let bytes = read_capped(response, resource.max_bytes())?;
-                return Ok(Fetched::Body(bytes));
+                let body = read_capped(response, resource.max_bytes())?;
+                return Ok(Fetched::Body(body));
             }
             204 => return Ok(Fetched::NoContent),
             status if is_redirect(status) => {
@@ -691,7 +875,9 @@ fn fetch_once(
                 let Some(location) = response.header("Location") else {
                     return Err(FetchFail::Network);
                 };
-                url = resolve_redirect(&url, location)?;
+                // A relative `Location` is resolved against the URL that
+                // sent it, as a browser does.
+                url = url.join(location).map_err(|_| FetchFail::Network)?;
             }
             status => return Err(FetchFail::Status(status)),
         }
@@ -721,102 +907,52 @@ fn agent_for(config: &ClientConfig, resource: Resource) -> ureq::Agent {
     builder.build()
 }
 
-fn is_redirect(code: u16) -> bool {
-    code == 301 || code == 302 || code == 303 || code == 307 || code == 308
+/// Returns whether `status` is a redirect this client follows.
+///
+/// 300 and 304 are left out: neither names one new location to request.
+fn is_redirect(status: u16) -> bool {
+    matches!(status, 301 | 302 | 303 | 307 | 308)
 }
 
-fn resolve_redirect(current: &Url, location: &str) -> std::result::Result<Url, FetchFail> {
-    current.join(location).map_err(|_| FetchFail::Network)
+/// Appends the running version and the platform to the query of `url`, as
+/// `version`, `os` and `arch`.
+fn append_identity_query(url: &mut Url, config: &ClientConfig) {
+    let (os, arch) = config
+        .platform
+        .split_once('-')
+        .unwrap_or((config.platform.as_str(), ""));
+
+    url.query_pairs_mut()
+        .append_pair("version", &config.current_version.to_string())
+        .append_pair("os", os)
+        .append_pair("arch", arch);
 }
 
-fn attach_version_os_arch(url: &mut Url, config: &ClientConfig) {
-    let (os, arch) = split_platform(&config.platform);
-    let mut pairs = url.query_pairs_mut();
-    pairs.append_pair("version", &config.current_version.to_string());
-    pairs.append_pair("os", os);
-    pairs.append_pair("arch", arch);
-}
-
-fn split_platform(platform: &str) -> (&str, &str) {
-    match platform.split_once('-') {
-        Some((os, arch)) => (os, arch),
-        None => (platform, ""),
-    }
-}
-
+/// Reads the body of `response`, giving up as soon as it is known to be
+/// larger than `max_bytes`.
+///
+/// The size is counted as the body arrives and not taken from
+/// `Content-Length`, which a server can omit or misstate.
 fn read_capped(
     response: ureq::Response,
     max_bytes: usize,
 ) -> std::result::Result<Vec<u8>, FetchFail> {
     let mut reader = response.into_reader();
-    let mut buf = Vec::new();
+    let mut body = Vec::new();
     let mut chunk = [0_u8; 8192];
+
     loop {
-        let read = match reader.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => n,
+        let count = match reader.read(&mut chunk) {
+            Ok(0) => return Ok(body),
+            Ok(count) => count,
             Err(_) => return Err(FetchFail::Network),
         };
-        if buf.len().saturating_add(read) > max_bytes {
+        if body.len().saturating_add(count) > max_bytes {
             return Err(FetchFail::TooLarge);
         }
-        buf.extend_from_slice(&chunk[..read]);
-    }
-    Ok(buf)
-}
-
-/// Downloads and verifies the artifact of `offer`, then hands it to `installer`.
-///
-/// Does not touch an [`UpdateMachine`](crate::UpdateMachine), so the caller
-/// need not hold one locked for the minutes a download may take. The offer
-/// comes from [`UpdateMachine::begin_install`](crate::UpdateMachine::begin_install)
-/// and the outcome goes to
-/// [`UpdateMachine::finish_install`](crate::UpdateMachine::finish_install).
-///
-/// The artifact is verified in memory before it is written, so a failed
-/// download or check leaves no file and `installer` is not called. The
-/// artifact is deleted afterwards unless an installer process is still
-/// running from it. The cause of a failure is logged.
-#[must_use]
-pub fn install_offer(
-    config: &ClientConfig,
-    offer: &VerifiedOffer,
-    installer: &impl ArtifactInstaller,
-) -> InstallOutcome {
-    let path = match download_and_verify(config, offer) {
-        Ok(path) => path,
-        Err(err) => {
-            log_failure("update install verify failed", &err);
-            return InstallOutcome::Failed;
-        }
-    };
-
-    match installer.install(&path) {
-        Ok(InstallHandoff::Replaced) => {
-            delete_artifact(&path);
-            InstallOutcome::Installed(InstallHandoff::Replaced)
-        }
-        Ok(InstallHandoff::InstallerStarted) => {
-            InstallOutcome::Installed(InstallHandoff::InstallerStarted)
-        }
-        Err(err) => {
-            log_failure("update install exec failed", &err);
-            delete_artifact(&path);
-            InstallOutcome::Failed
-        }
+        body.extend_from_slice(&chunk[..count]);
     }
 }
-
-/// Platform installer invoked only after hash and signature succeed.
-pub trait ArtifactInstaller {
-    /// Executes the already-verified artifact.
-    ///
-    /// # Errors
-    ///
-    /// Returns an [`UpdateError`] when the platform installer cannot run.
-    fn install(&self, artifact: &Path) -> Result<InstallHandoff>;
-}
-
 #[cfg(test)]
 mod tests {
     use super::write_new_private_file;

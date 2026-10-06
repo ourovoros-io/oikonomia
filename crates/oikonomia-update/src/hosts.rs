@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn production_allows_release_assets_redirect_host() {
         // GitHub answers a release-asset download with a 302 to
-        // release-assets.githubusercontent.com. `fetch_once` in `client.rs`
+        // release-assets.githubusercontent.com. `fetch_following_redirects` in `client.rs`
         // follows it and checks `is_allowed_fetch_url` on every hop, so the
         // manifest, its signature and the artifact all need this host allowed.
         let policy = HostPolicy::production();

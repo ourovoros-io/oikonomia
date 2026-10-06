@@ -3,9 +3,15 @@
 //! The promote workflow calls the `assemble_feed` bin, which calls
 //! [`assemble_manifest`]; the client tests parse the same output through
 //! `perform_check`, so the promote lane and the client cannot drift.
+//!
+//! The manifest is `latest.json`: the version, the release notes, and for
+//! each platform the URL, the minisign signature and the SHA-256 of the one
+//! artifact that platform installs. Platforms are written in sorted order
+//! and the output is pretty-printed, so the same inputs give the same bytes,
+//! which matters because the bytes are what gets signed.
 
 use crate::error::{Result, UpdateError};
-use crate::verify::parse_sha256_hex;
+use crate::verify::{parse_sha256_hex, to_hex};
 use crate::version::parse_version;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -19,7 +25,8 @@ pub struct FeedArtifact {
     pub file_name: String,
     /// Minisign signature over the artifact (contents of the `.sig` file).
     pub signature: String,
-    /// Lowercase hex SHA-256 of the artifact bytes.
+    /// Hex SHA-256 of the artifact bytes, in either case; the manifest holds
+    /// it in lowercase.
     pub sha256_hex: String,
 }
 
@@ -43,17 +50,27 @@ impl FeedArtifact {
     }
 }
 
+/// One platform's entry as it is written into the manifest.
 #[derive(Serialize)]
 struct ManifestPlatform {
+    /// Where the app downloads the artifact from.
     url: String,
+    /// The minisign signature over the artifact.
     signature: String,
+    /// The lowercase hex SHA-256 of the artifact.
     sha256: String,
 }
 
+/// The manifest as it is written. The client's reading side is
+/// `RawManifest` in `client.rs`; a property test there parses what this
+/// writes.
 #[derive(Serialize)]
 struct Manifest {
+    /// The published version, without a leading `v`.
     version: String,
+    /// The release notes as given. The client escapes them when it reads.
     notes: String,
+    /// The artifact of each platform, by platform key, in sorted order.
     platforms: BTreeMap<String, ManifestPlatform>,
 }
 
@@ -84,19 +101,24 @@ pub fn assemble_manifest(
     }
 
     let base = base_url.trim_end_matches('/');
-    let mut platforms = BTreeMap::new();
-    for artifact in artifacts {
-        artifact.require_fields()?;
-        parse_sha256_hex(&artifact.sha256_hex)?;
-        platforms.insert(
-            artifact.platform.clone(),
-            ManifestPlatform {
-                url: format!("{base}/{}", artifact.file_name),
-                signature: artifact.signature.clone(),
-                sha256: artifact.sha256_hex.to_lowercase(),
-            },
-        );
-    }
+    let platforms = artifacts
+        .iter()
+        .map(|artifact| {
+            artifact.require_fields()?;
+            // Written back from the parsed digest, so the manifest holds one
+            // spelling whatever case or padding the caller used.
+            let sha256 = to_hex(&parse_sha256_hex(&artifact.sha256_hex)?);
+
+            Ok((
+                artifact.platform.clone(),
+                ManifestPlatform {
+                    url: format!("{base}/{}", artifact.file_name),
+                    signature: artifact.signature.clone(),
+                    sha256,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
 
     let manifest = Manifest {
         version: version.to_string(),
