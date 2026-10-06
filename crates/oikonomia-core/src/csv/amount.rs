@@ -61,26 +61,15 @@ pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
 }
 
 fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
-    let compact: String = raw.trim().chars().filter(|c| !c.is_whitespace()).collect();
+    let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
     if compact.is_empty() {
         return Err(CsvError::MissingAmount);
     }
 
-    let mut negative = false;
-    let mut body = compact;
-    if body.starts_with('(') && body.ends_with(')') && body.len() >= 2 {
-        negative = true;
-        body = body[1..body.len() - 1].to_owned();
-    }
-
-    body = strip_currency_noise(&body);
-    if let Some(rest) = body.strip_prefix('-') {
-        negative = true;
-        body = rest.to_owned();
-    } else if let Some(rest) = body.strip_prefix('+') {
-        body = rest.to_owned();
-    }
-    body = strip_currency_noise(&body);
+    let (parenthesized, unwrapped) = strip_parentheses(&compact);
+    let without_symbols = strip_currency_symbols(unwrapped);
+    let (signed_negative, unsigned) = strip_sign(strip_letter_code(&without_symbols));
+    let body = strip_letter_code(unsigned);
 
     if body.is_empty()
         || !body
@@ -89,46 +78,65 @@ fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
     {
         return Err(CsvError::InvalidAmount(raw.to_owned()));
     }
-    Ok((negative, body))
+    Ok((parenthesized || signed_negative, body.to_owned()))
 }
 
-fn strip_currency_noise(s: &str) -> String {
+/// Accounting notation: an amount wrapped in parentheses is negative.
+fn strip_parentheses(s: &str) -> (bool, &str) {
+    match s.strip_prefix('(').and_then(|rest| rest.strip_suffix(')')) {
+        Some(inner) => (true, inner),
+        None => (false, s),
+    }
+}
+
+fn strip_currency_symbols(s: &str) -> String {
     const SYMBOLS: [char; 6] = ['€', '$', '£', '¥', '₹', '₩'];
-    let stripped: String = s.chars().filter(|c| !SYMBOLS.contains(c)).collect();
-    strip_iso_code(&stripped)
+    s.chars().filter(|c| !SYMBOLS.contains(c)).collect()
 }
 
-fn strip_iso_code(s: &str) -> String {
-    let Some((first, rest)) = split_leading_iso(s) else {
-        return strip_trailing_iso(s);
+/// Splits off a leading sign. Bank exports write the minus as either the
+/// ASCII hyphen or U+2212 MINUS SIGN.
+fn strip_sign(s: &str) -> (bool, &str) {
+    if let Some(rest) = s.strip_prefix(['-', '\u{2212}']) {
+        (true, rest)
+    } else if let Some(rest) = s.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, s)
+    }
+}
+
+/// Drops one three-letter code from the front, or failing that from the back.
+///
+/// A cell that is nothing but three letters is kept, so it is reported as an
+/// invalid amount instead of an empty one.
+fn strip_letter_code(s: &str) -> &str {
+    let Some((code, rest)) = split_leading_letter_code(s) else {
+        return strip_trailing_letter_code(s);
     };
     if rest.is_empty() {
-        return first.to_owned();
+        return code;
     }
-    strip_trailing_iso(rest)
+    strip_trailing_letter_code(rest)
 }
 
-fn split_leading_iso(s: &str) -> Option<(&str, &str)> {
-    let mut chars = s.chars();
-    let a = chars.next()?;
-    let b = chars.next()?;
-    let c = chars.next()?;
-    if a.is_ascii_alphabetic() && b.is_ascii_alphabetic() && c.is_ascii_alphabetic() {
-        Some((&s[..3], &s[3..]))
-    } else {
-        None
+fn split_leading_letter_code(s: &str) -> Option<(&str, &str)> {
+    let (code, rest) = s.split_at_checked(3)?;
+    is_letter_code(code).then_some((code, rest))
+}
+
+fn strip_trailing_letter_code(s: &str) -> &str {
+    // `split_at_checked` is `None` when three bytes from the end falls inside
+    // a multi-byte character, which also means the tail is not three letters.
+    let split = s.len().checked_sub(3).and_then(|at| s.split_at_checked(at));
+    match split {
+        Some((head, code)) if is_letter_code(code) => head,
+        _ => s,
     }
 }
 
-fn strip_trailing_iso(s: &str) -> String {
-    if s.len() < 3 {
-        return s.to_owned();
-    }
-    let tail_start = s.len() - 3;
-    if s[tail_start..].chars().all(|c| c.is_ascii_alphabetic()) {
-        return s[..tail_start].to_owned();
-    }
-    s.to_owned()
+fn is_letter_code(s: &str) -> bool {
+    s.len() == 3 && s.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
 fn split_decimal(body: &str, exponent: u8) -> Result<(String, &str), CsvError> {
@@ -207,6 +215,31 @@ mod tests {
             parse_signed_minor(&too_big, 2),
             Err(CsvError::AmountOverflow)
         );
+    }
+
+    fn assert_invalid_amount(raw: &str, exponent: u8) {
+        let parsed = parse_signed_minor(raw, exponent);
+        assert!(
+            matches!(parsed, Err(CsvError::InvalidAmount(_))),
+            "{raw:?} with exponent {exponent} must be an invalid amount, got {parsed:?}"
+        );
+    }
+
+    #[test]
+    fn multi_byte_cells_are_rejected_without_panicking() {
+        assert_invalid_amount("₽50", 2);
+        assert_invalid_amount("éé", 2);
+        assert_invalid_amount("50₽", 2);
+        assert_invalid_amount("é", 2);
+        assert_invalid_amount("(é)", 2);
+    }
+
+    #[test]
+    fn unicode_minus_sign_is_negative() {
+        assert_eq!(parse_eur_minor("\u{2212}25"), -2_500);
+        assert_eq!(parse_eur_minor("\u{2212}1.234,56"), -123_456);
+        assert_eq!(parse_eur_minor("EUR \u{2212}12.00"), -1_200);
+        assert_eq!(parse_eur_minor("€\u{2212}3,50"), -350);
     }
 
     #[test]
