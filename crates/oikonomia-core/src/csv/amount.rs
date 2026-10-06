@@ -50,8 +50,9 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// Whitespace and the currency symbols `€$£¥₹₩` are ignored. So are three
 /// ASCII letters directly before or after the number; they are not checked
 /// against the ISO 4217 list, so `1.00 abc` parses like `1.00 EUR`.
-/// Parentheses mean negative (`(25,00)`), as do a leading `-` and a leading
-/// U+2212 MINUS SIGN.
+/// Parentheses mean negative (`(25,00)`), as does one minus, written as `-`
+/// or U+2212 MINUS SIGN, before the number or after it (`25-`). A second
+/// sign makes the cell invalid.
 ///
 /// # Errors
 ///
@@ -95,6 +96,8 @@ fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
 
     let (parenthesized, unwrapped) = strip_parentheses(&compact);
     let without_symbols = strip_currency_symbols(unwrapped);
+    // A code is dropped on both sides of the sign, so `EUR -12`, `-EUR 12`,
+    // `12- EUR` and `12 EUR-` all leave the bare digits.
     let (signed_negative, unsigned) = strip_sign(strip_letter_code(&without_symbols));
     let body = strip_letter_code(unsigned);
 
@@ -121,15 +124,25 @@ fn strip_currency_symbols(s: &str) -> String {
     s.chars().filter(|c| !SYMBOLS.contains(c)).collect()
 }
 
-/// Splits off a leading sign. Bank exports write the minus as either the
-/// ASCII hyphen or U+2212 MINUS SIGN.
-fn strip_sign(s: &str) -> (bool, &str) {
-    if let Some(rest) = s.strip_prefix(['-', '\u{2212}']) {
+/// The two characters bank exports write a minus with: the ASCII hyphen and
+/// U+2212 MINUS SIGN.
+const MINUS_SIGNS: [char; 2] = ['-', '\u{2212}'];
+
+/// Splits off one sign and returns whether it was a minus: a leading `-` or
+/// `+`, or else a trailing `-`.
+///
+/// Only one sign is taken. A second one stays in the text, where the caller's
+/// digits-and-separators check rejects it, so `-25-` and `+25-` are not
+/// amounts.
+fn strip_sign(text: &str) -> (bool, &str) {
+    if let Some(rest) = text.strip_prefix(MINUS_SIGNS) {
         (true, rest)
-    } else if let Some(rest) = s.strip_prefix('+') {
+    } else if let Some(rest) = text.strip_prefix('+') {
         (false, rest)
+    } else if let Some(rest) = text.strip_suffix(MINUS_SIGNS) {
+        (true, rest)
     } else {
-        (false, s)
+        (false, text)
     }
 }
 
@@ -299,6 +312,35 @@ mod tests {
     }
 
     #[test]
+    fn a_trailing_minus_is_negative() {
+        assert_eq!(parse_eur_minor("25-"), -2_500);
+        assert_eq!(parse_eur_minor("1.234,56-"), -123_456);
+        assert_eq!(parse_eur_minor("25\u{2212}"), -2_500);
+        assert_eq!(parse_eur_minor("25 -"), -2_500);
+        assert_eq!(parse_eur_minor("€25-"), -2_500);
+    }
+
+    #[test]
+    fn a_trailing_minus_is_read_on_either_side_of_a_currency_code() {
+        assert_eq!(parse_eur_minor("25- EUR"), -2_500);
+        assert_eq!(parse_eur_minor("25 EUR-"), -2_500);
+        assert_eq!(parse_eur_minor("EUR 25-"), -2_500);
+        assert_eq!(parse_eur_minor("12,00-EUR"), -1_200);
+    }
+
+    #[test]
+    fn a_second_sign_is_rejected() {
+        assert_invalid_amount("-25-", 2);
+        assert_invalid_amount("+25-", 2);
+        assert_invalid_amount("25--", 2);
+        assert_invalid_amount("--25", 2);
+        assert_invalid_amount("\u{2212}25-", 2);
+        assert_invalid_amount("-25- EUR", 2);
+        assert_invalid_amount("25+", 2);
+        assert_invalid_amount("-", 2);
+    }
+
+    #[test]
     fn three_digit_tail_is_thousands_only_in_a_well_formed_grouping() {
         assert_eq!(parse_eur_minor("1.234.567"), 123_456_700);
         assert_eq!(parse_eur_minor("12,345"), 1_234_500);
@@ -423,6 +465,9 @@ mod properties {
                 if minor < 0 {
                     let bracketed = format!("({unsigned})");
                     prop_assert_eq!(parse_signed_minor(&bracketed, 2), Ok(minor), "{}", bracketed);
+
+                    let trailing = format!("{unsigned}-");
+                    prop_assert_eq!(parse_signed_minor(&trailing, 2), Ok(minor), "{}", trailing);
                 }
             }
         }

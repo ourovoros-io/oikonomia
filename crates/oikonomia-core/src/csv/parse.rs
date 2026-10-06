@@ -578,6 +578,13 @@ mod tests {
     }
 
     #[test]
+    fn a_trailing_minus_amount_is_an_expense() {
+        let row = first_parsed_row("Date,Description,Amount\n2026-03-15,Coffee,3.50-\n");
+        assert_eq!(row.signed_amount_minor, -350);
+        assert_eq!(row.kind, SimpleEntryKind::Expense);
+    }
+
+    #[test]
     fn debit_credit_columns() {
         let csv =
             "Date,Description,Debit,Credit\n01/04/2026,Rent,800.00,\n01/04/2026,Pay,,2500.00\n";
