@@ -1,8 +1,10 @@
 //! Guards for the security-relevant parts of `tauri.conf.json`.
 //!
-//! The app promises to never reach the network. These tests make loosening
-//! the content security policy or the Windows installer a deliberate,
-//! reviewed change rather than a silent one.
+//! The webview never reaches the network. The app's only network path is the
+//! update check and install the user clicks, which runs in Rust
+//! (`oikonomia-update`). These tests make loosening the content security
+//! policy or the Windows installer a deliberate, reviewed change rather than
+//! a silent one.
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 

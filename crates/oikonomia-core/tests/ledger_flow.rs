@@ -1,6 +1,7 @@
 //! End-to-end ledger flow against an encrypted vault.
 
 use oikonomia_core::domain::ChartTemplate;
+use oikonomia_core::error::{Error, ValidationError};
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, balance_sheet, count_entities, create_entity,
     delete_entity, list_accounts, list_entities, post_entry, profit_and_loss, trial_balance,
@@ -146,4 +147,39 @@ fn a_vault_holds_any_number_of_entities() {
     }
 
     assert_eq!(count_entities(conn).ok(), Some(3));
+}
+#[test]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
+fn a_base_currency_is_three_ascii_letters_stored_in_capitals() {
+    let dir = tempdir().expect("temp dir");
+    let mut vault = Vault::open_path(dir.path()).expect("open vault");
+    vault
+        .init("correct horse battery staple")
+        .expect("init vault");
+    let conn = vault.connection().expect("connection");
+    let book = |name: &str, base_currency: &str| {
+        create_entity(
+            conn,
+            &CreateEntity {
+                name: name.into(),
+                base_currency: base_currency.into(),
+                chart_template: ChartTemplate::Blank,
+                fiscal_year_start_month: None,
+            },
+            Locale::En,
+        )
+        .map(|entity| entity.base_currency)
+    };
+
+    // "€" and "12$" are three bytes long; "ευρ" is three letters, not ASCII.
+    for not_a_code in ["", "EU", "EURO", "12$", "€", "ευρ", "E R", "EU1"] {
+        assert_eq!(
+            book("Refused", not_a_code),
+            Err(Error::Validation(ValidationError::CurrencyInvalid)),
+            "{not_a_code:?}"
+        );
+    }
+
+    assert_eq!(book("Lowercase", " eur "), Ok("EUR".to_owned()));
+    assert_eq!(book("Capitals", "USD"), Ok("USD".to_owned()));
 }
