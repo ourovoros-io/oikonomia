@@ -1941,3 +1941,38 @@ fn a_machine_stays_installing_after_a_successful_install() {
     assert_eq!(machine.status(), UpdateStatus::Installing);
     assert_eq!(machine.begin_check(), CheckStart::InstallInProgress);
 }
+
+#[test]
+fn a_leading_v_in_the_feed_version_does_not_reach_the_status() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let (body, signature) = signed_manifest(&server, &sk, " v0.2.0 ");
+    serve_signed_manifest(&server, &body, &signature);
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    let offer = available_offer(&config);
+    assert_eq!(offer.version().to_string(), "0.2.0");
+
+    assert_eq!(
+        UpdateMachine::new().check(&config),
+        UpdateStatus::Available {
+            version: "0.2.0".into(),
+            notes: "notes".into(),
+        }
+    );
+    assert_eq!(
+        UpdateMachine::new().check(&config.with_install_route(InstallRoute::PackageManager)),
+        UpdateStatus::AvailableManually {
+            version: "0.2.0".into(),
+            notes: "notes".into(),
+        }
+    );
+}

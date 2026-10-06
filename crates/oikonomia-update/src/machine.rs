@@ -20,6 +20,7 @@
 use crate::client::{CheckOutcome, ClientConfig, InstallOutcome, VerifiedOffer, perform_check};
 use crate::error::{Result, UpdateError};
 use crate::status::UpdateStatus;
+use semver::Version;
 
 /// Tracks one session's update check and install.
 ///
@@ -45,11 +46,11 @@ impl UpdateMachine {
             State::Checking => UpdateStatus::Checking,
             State::UpToDate => UpdateStatus::UpToDate,
             State::Installable(offer) => UpdateStatus::Available {
-                version: offer.version.clone(),
-                notes: offer.notes.clone(),
+                version: offer.version().to_string(),
+                notes: offer.notes().to_owned(),
             },
             State::Manual { version, notes } => UpdateStatus::AvailableManually {
-                version: version.clone(),
+                version: version.to_string(),
                 notes: notes.clone(),
             },
             State::Installing => UpdateStatus::Installing,
@@ -170,7 +171,7 @@ enum State {
     /// has to install. No artifact is kept, so nothing can install it.
     Manual {
         /// The newer version.
-        version: String,
+        version: Version,
         /// Its release notes, sanitized.
         notes: String,
     },

@@ -209,16 +209,42 @@ impl ClientConfig {
     }
 }
 
-/// Artifact metadata taken only after the detached manifest signature verifies.
+/// A newer release this copy may install, read from a manifest whose
+/// detached signature verified.
+///
+/// The fields are private and there is no public constructor, so a value of
+/// this type always comes from [`perform_check`] and cannot be altered on its
+/// way to [`install_offer`].
 #[derive(Debug, Clone)]
 pub struct VerifiedOffer {
-    /// Remote version string (without a required leading `v`).
-    pub version: String,
-    /// Sanitized notes.
-    pub notes: String,
+    /// The published version, parsed from the manifest. It is newer than the
+    /// running one.
+    version: Version,
+    /// The release notes after [`sanitize_notes`].
+    notes: String,
+    /// Where the artifact is downloaded from. It passed
+    /// [`HostPolicy::is_allowed_artifact_url`] when the offer was built.
     artifact_url: Url,
+    /// The minisign signature over the artifact, as the manifest gives it.
     artifact_signature: String,
+    /// The SHA-256 the downloaded artifact must have.
     sha256: [u8; 32],
+}
+
+impl VerifiedOffer {
+    /// Returns the published version. A leading `v` in the manifest is not
+    /// part of it.
+    #[must_use]
+    pub fn version(&self) -> &Version {
+        &self.version
+    }
+
+    /// Returns the release notes, sanitized by [`sanitize_notes`]: plain text
+    /// with every markup character escaped.
+    #[must_use]
+    pub fn notes(&self) -> &str {
+        &self.notes
+    }
 }
 
 /// Outcome of [`perform_check`]. Never a URL.
@@ -233,9 +259,9 @@ pub enum CheckOutcome {
     /// ([`InstallRoute::PackageManager`]). It carries no artifact, so there
     /// is nothing an install could be started with.
     AvailableManually {
-        /// Remote version string from the signed manifest.
-        version: String,
-        /// Sanitized notes.
+        /// The published version, parsed from the signed manifest.
+        version: Version,
+        /// The release notes after [`sanitize_notes`].
         notes: String,
     },
     /// Network, signature, parse, or allow-list failure.
@@ -350,7 +376,7 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
     // The offer is built, and so its artifact entry checked, on both
     // routes: a feed this copy could not install from is a failed check for
     // a package-managed copy too.
-    let offer = offer_from_manifest(config, &manifest)?;
+    let offer = offer_from_manifest(config, &manifest, remote)?;
     Ok(match config.install_route {
         InstallRoute::InApp => CheckOutcome::Available(offer),
         InstallRoute::PackageManager => CheckOutcome::AvailableManually {
@@ -360,7 +386,11 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
     })
 }
 
-fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<VerifiedOffer> {
+fn offer_from_manifest(
+    config: &ClientConfig,
+    manifest: &RawManifest,
+    version: Version,
+) -> Result<VerifiedOffer> {
     let platform = manifest
         .platforms
         .get(&config.platform)
@@ -376,7 +406,7 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
     let sha256 = parse_sha256_hex(&platform.sha256)?;
     let notes = sanitize_notes(manifest.notes.as_deref().unwrap_or(""));
     Ok(VerifiedOffer {
-        version: manifest.version.clone(),
+        version,
         notes,
         artifact_url,
         artifact_signature: platform.signature.clone(),
