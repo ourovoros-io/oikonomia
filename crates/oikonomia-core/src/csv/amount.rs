@@ -47,7 +47,7 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// - `1.234` / `1,234` → `123400`
 /// - `-25` → `-2500`
 ///
-/// Whitespace and the currency symbols `€$£¥₹₩` are ignored. So are three
+/// Whitespace and the currency signs `€$£¥₹₺₩` are ignored. So are three
 /// ASCII letters directly before or after the number; they are not checked
 /// against the ISO 4217 list, so `1.00 abc` parses like `1.00 EUR`.
 /// Parentheses mean negative (`(25,00)`), as does one minus, written as `-`
@@ -119,9 +119,24 @@ fn strip_parentheses(s: &str) -> (bool, &str) {
     }
 }
 
-fn strip_currency_symbols(s: &str) -> String {
-    const SYMBOLS: [char; 6] = ['€', '$', '£', '¥', '₹', '₩'];
-    s.chars().filter(|c| !SYMBOLS.contains(c)).collect()
+/// Currency signs dropped from an amount cell, wherever they stand.
+///
+/// The rule: every currency of the book picker (`web/src/lib/currencies.ts`)
+/// that has a sign of its own is here: `€` EUR, `$` USD, CAD and AUD, `£`
+/// GBP, `¥` JPY and CNY, `₹` INR, `₺` TRY. `₩` is the one sign beyond the
+/// picker; core accepts any three-letter code for a book, and KRW is in
+/// [`currency_minor_exponent`]'s table.
+///
+/// The picker's other currencies are written with letters (`kr`, `zł`, `Kč`,
+/// `Ft`, `lei`, `R$`, `CHF`). Letters are never treated as a sign; they pass
+/// only as a three-letter code (see [`strip_letter_code`]).
+const CURRENCY_SIGNS: [char; 7] = ['€', '$', '£', '¥', '₹', '₺', '₩'];
+
+/// Returns `text` without the [`CURRENCY_SIGNS`].
+fn strip_currency_symbols(text: &str) -> String {
+    text.chars()
+        .filter(|character| !CURRENCY_SIGNS.contains(character))
+        .collect()
 }
 
 /// The two characters bank exports write a minus with: the ASCII hyphen and
@@ -309,6 +324,28 @@ mod tests {
         assert_eq!(parse_eur_minor("\u{2212}1.234,56"), -123_456);
         assert_eq!(parse_eur_minor("EUR \u{2212}12.00"), -1_200);
         assert_eq!(parse_eur_minor("€\u{2212}3,50"), -350);
+    }
+
+    #[test]
+    fn the_sign_of_every_currency_in_the_picker_is_ignored() {
+        // EUR, USD/CAD/AUD, GBP, JPY/CNY, INR and TRY: the currencies of
+        // `web/src/lib/currencies.ts` that have a sign of their own.
+        for sign in ['€', '$', '£', '¥', '₹', '₺'] {
+            assert_eq!(parse_eur_minor(&format!("{sign}25,00")), 2_500, "{sign}");
+            assert_eq!(parse_eur_minor(&format!("25,00 {sign}")), 2_500, "{sign}");
+            assert_eq!(parse_eur_minor(&format!("-{sign}25,00")), -2_500, "{sign}");
+        }
+    }
+
+    #[test]
+    fn a_currency_written_with_letters_is_read_only_as_a_three_letter_code() {
+        assert_eq!(parse_eur_minor("25,00 lei"), 2_500);
+        assert_eq!(parse_eur_minor("CHF 25.00"), 2_500);
+
+        assert_invalid_amount("25,00 zł", 2);
+        assert_invalid_amount("25 kr", 2);
+        assert_invalid_amount("25 Ft", 2);
+        assert_invalid_amount("R$ 25,00", 2);
     }
 
     #[test]
