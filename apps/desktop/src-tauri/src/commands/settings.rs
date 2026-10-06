@@ -1,4 +1,11 @@
-//! Settings commands: the lock timeout and the plaintext preferences.
+//! Settings commands: the idle lock timeout and the plaintext preferences.
+//!
+//! The two kinds of setting live in different places. The lock timeout is
+//! stored inside the vault, so its commands require the unlocked vault. The
+//! language and the quick-add window's last choices are stored in a plaintext
+//! preferences file beside the vault, so that the tray and the unlock screen
+//! can use them before a password is entered; their commands work in every
+//! vault state and go through [`with_prefs_blocking`].
 
 use crate::commands::support::{run_blocking, with_connection, with_vault_blocking};
 use crate::error::{CommandError, CommandResult, DesktopError};
@@ -10,13 +17,28 @@ use oikonomia_core::prefs::{
 };
 use tauri::{Manager, State};
 
-/// Get auto-lock timeout seconds.
+/// Returns the idle time, in seconds, after which the vault locks itself.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns the [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandResult<u64> {
     with_connection(&state, get_lock_timeout_secs).await
 }
 
-/// Set auto-lock timeout seconds.
+/// Stores the idle time, in seconds, after which the vault locks itself, and
+/// hands the new value to the idle watchdog.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `lock_timeout_too_short` (with the minimum as `min_secs`) for a value
+/// under the minimum, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn settings_set_lock_timeout(
     state: State<'_, AppState>,
@@ -38,7 +60,12 @@ pub(crate) async fn settings_set_lock_timeout(
 /// The plaintext preferences file is read and written with blocking I/O, and
 /// a save ends in an fsync. A synchronous command would do that on the main
 /// thread, which also runs the event loop, and an async one on a runtime
-/// worker, so every settings command goes through here.
+/// worker, so every preferences command goes through here.
+///
+/// # Errors
+///
+/// Returns the error `work` returns, and `task_failed` when the application
+/// state was never set up or the blocking task panics.
 async fn with_prefs_blocking<T, F>(app: tauri::AppHandle, work: F) -> CommandResult<T>
 where
     T: Send + 'static,
@@ -59,8 +86,17 @@ where
     .await
 }
 
-/// Get the native UI locale. Plaintext preference: readable before unlock so
-/// tray chrome and dialogs match the user's language before a password.
+/// Returns the stored app language.
+///
+/// Works in every vault state: the preference is plaintext so that the tray
+/// and native dialogs are in the user's language before a password is
+/// entered. A missing or unreadable preferences file yields the default
+/// language.
+///
+/// # Errors
+///
+/// Returns `task_failed` when the application state was never set up or the
+/// blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale> {
     with_prefs_blocking(
@@ -70,8 +106,16 @@ pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<
     .await
 }
 
-/// Persist the native UI locale, then rebuild the tray menu and refresh the
-/// quick-add window title when that window exists.
+/// Stores the app language, then rebuilds the tray menu and retitles the
+/// quick-add window in it.
+///
+/// Works in every vault state.
+///
+/// # Errors
+///
+/// Returns `io` when the preferences file cannot be written, and
+/// `task_failed` when the application state was never set up or the blocking
+/// task panics.
 #[tauri::command]
 pub(crate) async fn settings_set_locale(
     app: tauri::AppHandle,
@@ -88,15 +132,22 @@ pub(crate) async fn settings_set_locale(
     .await
 }
 
-/// The app language, chosen from the system on the very first run.
+/// Returns the app language, choosing it from the system's languages on the
+/// very first run.
 ///
-/// `system_languages` is the webview's report of the OS preferred languages
-/// (`navigator.languages`); Rust decides everything else. When a language is
-/// already stored it is returned unchanged and nothing is written, so the
-/// system is consulted once per installation. Otherwise the supported
-/// language is mapped, stored, and the native strings are refreshed exactly
-/// as after a change in Settings. Works before a vault exists and while
-/// locked, and is safe to call on every launch.
+/// `system_languages` is the webview's report of the system's preferred
+/// languages (`navigator.languages`); Rust decides everything else. When a
+/// language is already stored it is returned unchanged and nothing is
+/// written, so the system is consulted once per installation. Otherwise the
+/// first supported language is stored and the native strings are refreshed
+/// exactly as after a change in Settings. Works in every vault state and
+/// before a vault exists, and is safe to call on every launch.
+///
+/// # Errors
+///
+/// Returns `io` when the preferences file cannot be written, and
+/// `task_failed` when the application state was never set up or the blocking
+/// task panics.
 #[tauri::command]
 pub(crate) async fn settings_resolve_locale(
     app: tauri::AppHandle,
@@ -119,13 +170,32 @@ pub(crate) async fn settings_resolve_locale(
     .await
 }
 
-/// Full plaintext UI prefs (locale, tray last-used). Safe before unlock.
+/// Returns the whole plaintext preferences: the language and what the
+/// quick-add window last used.
+///
+/// Works in every vault state. A missing or unreadable preferences file
+/// yields the defaults.
+///
+/// # Errors
+///
+/// Returns `task_failed` when the application state was never set up or the
+/// blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResult<UiPrefs> {
     with_prefs_blocking(app, |_app, state| Ok(load_ui_prefs(state.data_dir()))).await
 }
 
-/// Remember last entity + role accounts after a successful tray post.
+/// Remembers the entity, and the accounts chosen for an entry kind, that the
+/// quick-add window last posted with.
+///
+/// Works in every vault state. The values go to the plaintext preferences
+/// file; they are identifiers, with no amount and no name among them.
+///
+/// # Errors
+///
+/// Returns `io` when the preferences file cannot be written, and
+/// `task_failed` when the application state was never set up or the blocking
+/// task panics.
 #[tauri::command]
 pub(crate) async fn settings_remember_quick_add(
     app: tauri::AppHandle,

@@ -1,4 +1,8 @@
 //! App identity, window and support-mail commands.
+//!
+//! None of these needs the vault, so all of them work while it is locked and
+//! before one exists, and all are synchronous: they neither block nor wait
+//! for a mutex.
 
 use crate::error::{CommandError, CommandResult, DesktopError};
 use serde::Serialize;
@@ -7,19 +11,21 @@ use serde::Serialize;
 /// shows derives from this one address.
 pub(crate) const SUPPORT_EMAIL: &str = "info@ourovoros.io";
 
-/// Static app metadata for the about screen / diagnostics.
+/// Static app metadata for the about screen and for diagnostics.
 #[derive(Debug, Serialize)]
 pub(crate) struct AppInfo {
-    /// Crate version.
+    /// The crate version.
     pub version: &'static str,
-    /// Product name.
+    /// The product name.
     pub name: &'static str,
     /// Support mailbox, shown verbatim so a user can copy it. Opening it is
     /// [`open_support_email`]'s job; the webview never builds the URL.
     pub support_email: &'static str,
 }
 
-/// Return build identity and the support address (no secrets).
+/// Returns the app's name and version and the support address.
+///
+/// Holds no secret and needs no vault.
 #[tauri::command]
 pub(crate) fn app_info() -> AppInfo {
     AppInfo {
@@ -29,12 +35,16 @@ pub(crate) fn app_info() -> AppInfo {
     }
 }
 
-/// Open the default mail client on the support mailbox.
+/// Opens the default mail client on a message to the support mailbox.
 ///
 /// The URL is built here from [`SUPPORT_EMAIL`] and handed to the opener's
 /// Rust API, which applies no capability scope. That is deliberate: the
 /// webview never supplies a URL, so `capabilities/default.json` needs no
 /// `mailto:` glob, and a glob that could admit extra recipients never exists.
+///
+/// # Errors
+///
+/// Returns `mail_client_failed` when the system cannot open a mail client.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,
@@ -53,14 +63,15 @@ pub(crate) fn open_support_email(app: tauri::AppHandle) -> CommandResult<()> {
         })
 }
 
-/// `mailto:` link to [`SUPPORT_EMAIL`] whose subject names the app version,
-/// so every support thread opens with the one fact each report needs.
+/// Returns a `mailto:` link to [`SUPPORT_EMAIL`] whose subject names the app
+/// version, so every support thread opens with the one fact each report
+/// needs.
 fn support_mailto(version: &str) -> String {
     let subject = percent_encode(&format!("Oikonomia v{version} support"));
     format!("mailto:{SUPPORT_EMAIL}?subject={subject}")
 }
 
-/// RFC 3986 percent-encoding for a `mailto:` query value: unreserved bytes
+/// Percent-encodes a `mailto:` query value as RFC 3986 does: unreserved bytes
 /// pass through, everything else becomes `%XX`.
 fn percent_encode(input: &str) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
@@ -78,6 +89,10 @@ fn percent_encode(input: &str) -> String {
     out
 }
 
+/// Shows the main window, restores it if minimized, and focuses it.
+///
+/// The quick-add window calls this to hand over to the full app. Does nothing
+/// after a failed start ([`crate::tray::show_main_window`]).
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,
@@ -87,6 +102,7 @@ pub(crate) fn open_main_window(app: tauri::AppHandle) {
     crate::tray::show_main_window(&app);
 }
 
+/// Hides the quick-add window. Does nothing when the window does not exist.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,

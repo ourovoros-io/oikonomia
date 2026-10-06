@@ -1,4 +1,10 @@
 //! Bank CSV import and journal CSV export commands.
+//!
+//! Import is two steps, so that nothing reaches the books unreviewed:
+//! [`csv_import_preview`] parses a file into suggested rows and posts
+//! nothing, and [`csv_import_post`] posts the rows the user kept. The file
+//! comes from a native open dialog, or from a path that dialog returned
+//! earlier and the webview passes back with a column mapping.
 
 use crate::commands::support::{
     SaveTarget, dialog_path, require_granted_path, run_blocking, save_with_dialog, with_connection,
@@ -15,11 +21,23 @@ use oikonomia_core::ledger::get_entity;
 use std::path::PathBuf;
 use tauri::State;
 
-/// Parse a bank CSV into suggested simple-entry rows. **Does not post.**
+/// Parses a bank CSV file into suggested simple-entry rows. Posts nothing.
 ///
-/// When `input.path` is omitted, a native Open dialog chooses the file.
-/// `input.mapping` overrides header auto-detect when set.
-/// Returns `None` if the user cancelled the dialog.
+/// Requires the unlocked vault. When `input.path` is absent, a native open
+/// dialog chooses the file; a given path must be a granted one.
+/// `input.mapping`, when set, replaces the detection of columns from the
+/// header. A row that cannot be read is reported in the preview, not as an
+/// error. Returns `None` if the user cancelled the dialog.
+///
+/// # Errors
+///
+/// Returns `path_not_granted` for a path the user never handed over;
+/// `save_location_invalid` when the dialog's answer is not a path; `io` when
+/// the file cannot be read; `csv_parse` when it is over the size limit, not
+/// UTF-8, empty, or has no usable date and amount columns; `not_found` when
+/// the entity or a role's account does not exist; `account_wrong_entity`
+/// when an account belongs to another entity; and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn csv_import_preview(
     app: tauri::AppHandle,
@@ -49,10 +67,20 @@ pub(crate) async fn csv_import_preview(
     .map(Some)
 }
 
-/// Post selected preview rows through `post_simple_entry`.
+/// Posts the preview rows the user kept, all in one transaction.
 ///
-/// Duplicates (date + amount + normalized description) are skipped unless
-/// `include_duplicates` is true. Junk / unbalanced rows fail the whole batch.
+/// Requires the unlocked vault. A row that duplicates a posted entry (same
+/// date, amount and normalized description) is skipped unless
+/// `input.include_duplicates` is set. If any row is refused, no row is
+/// posted.
+///
+/// # Errors
+///
+/// Returns `validation_internal` when the rows belong to more than one
+/// entity, the
+/// [simple-entry errors](crate::commands::journal#simple-entry-errors) for a
+/// row that cannot be posted, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn csv_import_post(
     state: State<'_, AppState>,
@@ -64,9 +92,19 @@ pub(crate) async fn csv_import_post(
     .await
 }
 
-/// Export the current entity's journal as CSV via a native Save dialog.
+/// Exports an entity's journal as CSV to a path chosen in a native save
+/// dialog.
 ///
-/// Returns the destination path, or `None` if the user cancelled.
+/// Requires the unlocked vault. Hidden entries are left out. The file is
+/// plaintext, written only where the user chose. Returns the path written, or
+/// `None` if the user cancelled.
+///
+/// # Errors
+///
+/// Returns `not_found` when the entity does not exist, `csv_parse` when the
+/// CSV cannot be produced, `save_location_invalid` when the dialog's answer
+/// is not a path, `save_failed` when the file cannot be written, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn csv_export_journal(
     app: tauri::AppHandle,
@@ -88,8 +126,14 @@ pub(crate) async fn csv_export_journal(
     save_with_dialog(&app, target, csv_text.into_bytes()).await
 }
 
-/// Native Open dialog for a `.csv` file. `None` if cancelled. The chosen path
-/// is granted so a re-preview with a column mapping may pass it back.
+/// Asks for a `.csv` file with a native open dialog and grants the chosen
+/// path, so that a second preview with a column mapping may pass it back.
+/// Returns `None` if the user cancelled.
+///
+/// # Errors
+///
+/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// and `task_failed` when the blocking task panics.
 async fn pick_csv_path(app: &tauri::AppHandle, state: &AppState) -> CommandResult<Option<PathBuf>> {
     let app = app.clone();
     let grants = state.path_grants();

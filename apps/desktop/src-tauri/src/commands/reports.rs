@@ -1,4 +1,9 @@
-//! Report, dashboard and PDF export commands.
+//! Report and dashboard commands, and the PDF export.
+//!
+//! The report commands require the unlocked vault and compute their figures
+//! in core. The PDF is different: the webview lays it out and hands over the
+//! finished bytes, and [`report_export_pdf`] only saves them where the user
+//! chooses, so that command never opens the vault.
 
 use crate::commands::support::{
     SaveTarget, decode_capped_base64, save_with_dialog, with_connection,
@@ -14,7 +19,16 @@ use oikonomia_core::ledger::{
 use oikonomia_core::util::{format_date, utc_today};
 use tauri::State;
 
-/// Trial balance.
+/// Returns an entity's trial balance as of a date.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `invalid_date` when `as_of` is not a date, `not_found` when the
+/// entity does not exist, `money_overflow` when a total does not fit the
+/// money type, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn report_trial_balance(
     state: State<'_, AppState>,
@@ -24,7 +38,16 @@ pub(crate) async fn report_trial_balance(
     with_connection(&state, move |conn| trial_balance(conn, entity_id, &as_of)).await
 }
 
-/// Profit and loss.
+/// Returns an entity's profit and loss for the dates `from` through `to`.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `invalid_date` when a bound is not a date, `date_range_inverted`
+/// when `from` is after `to`, `not_found` when the entity does not exist,
+/// `money_overflow` when a total does not fit the money type, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn report_pnl(
     state: State<'_, AppState>,
@@ -38,7 +61,14 @@ pub(crate) async fn report_pnl(
     .await
 }
 
-/// Accountant / PDF export P&L. Same args as [`report_pnl`]; Hidden omitted.
+/// Returns the profit and loss that goes to other people: [`report_pnl`]
+/// with hidden entries left out.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns the errors of [`report_pnl`].
 #[tauri::command]
 pub(crate) async fn report_pnl_export(
     state: State<'_, AppState>,
@@ -52,7 +82,16 @@ pub(crate) async fn report_pnl_export(
     .await
 }
 
-/// Balance sheet.
+/// Returns an entity's balance sheet as of a date.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `invalid_date` when `as_of` is not a date, `not_found` when the
+/// entity does not exist, `money_overflow` when a total does not fit the
+/// money type, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn report_balance_sheet(
     state: State<'_, AppState>,
@@ -62,11 +101,20 @@ pub(crate) async fn report_balance_sheet(
     with_connection(&state, move |conn| balance_sheet(conn, entity_id, &as_of)).await
 }
 
-/// Saves PDF bytes the webview built to a path chosen in a native Save
+/// Saves PDF bytes the webview built to a path chosen in a native save
 /// dialog. Returns the path written, or `None` if the user cancelled.
 ///
-/// The vault is not opened, so this also works while it is locked. The call
-/// counts as activity for the idle watchdog.
+/// Does not need the vault, so it also works while the vault is locked. The
+/// call counts as activity for the idle watchdog. A chosen name without a
+/// `.pdf` extension gets one.
+///
+/// # Errors
+///
+/// Returns `file_data_invalid` when `bytes_base64` is not base64,
+/// `file_too_large` (with the cap as `max_mb`) for more than
+/// [`MAX_PDF_EXPORT_BYTES`], `save_location_invalid` when the dialog's answer
+/// is not a path, `save_failed` when the file cannot be written, and
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn report_export_pdf(
     app: tauri::AppHandle,
@@ -85,13 +133,21 @@ pub(crate) async fn report_export_pdf(
     save_with_dialog(&app, target, data).await
 }
 
-/// Decoded PDF cap for a monthly expense report (webview-generated).
+/// The largest decoded PDF [`report_export_pdf`] accepts.
 const MAX_PDF_EXPORT_BYTES: usize = 32 * 1024 * 1024;
 
+/// Decodes the PDF the webview sent, up to [`MAX_PDF_EXPORT_BYTES`].
+///
+/// # Errors
+///
+/// Returns `file_too_large` for a payload over the cap and
+/// `file_data_invalid` for one that is not base64.
 fn decode_pdf_export_bytes(bytes_base64: &str) -> CommandResult<Vec<u8>> {
     decode_capped_base64(bytes_base64, MAX_PDF_EXPORT_BYTES)
 }
 
+/// Returns the file name the save dialog suggests: the webview's suggestion,
+/// trimmed, or `oikonomia-expenses.pdf` when it is absent or blank.
 fn pdf_export_file_name(suggested_name: Option<&str>) -> String {
     match suggested_name
         .map(str::trim)
@@ -102,6 +158,10 @@ fn pdf_export_file_name(suggested_name: Option<&str>) -> String {
     }
 }
 
+/// Returns `path` with `.pdf` appended, unless it already has that extension
+/// in any letter case.
+///
+/// A path with no file name becomes `oikonomia-expenses.pdf`.
 fn ensure_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
     match path.extension().and_then(|extension| extension.to_str()) {
         Some(extension) if extension.eq_ignore_ascii_case("pdf") => path,
@@ -122,7 +182,17 @@ fn ensure_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
     }
 }
 
-/// Dashboard summary.
+/// Returns the dashboard figures of an entity: income and expenses for the
+/// dates `from` through `to`, and assets as of `assets_as_of`.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `not_found` when the entity does not exist, `invalid_date` when a
+/// date argument is not a date, `date_range_inverted` when `from` is after
+/// `to`, `money_overflow` when a total does not fit the money type, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn dashboard_summary_cmd(
     state: State<'_, AppState>,
@@ -137,9 +207,19 @@ pub(crate) async fn dashboard_summary_cmd(
     .await
 }
 
-/// Income and expenses per day or month for the cash-flow light. An empty
-/// bound resolves to the book's first or last active entry (Transactions with
-/// no date filter); both bounds set is the dashboard's period.
+/// Returns income and expenses per day or per month, for the cash-flow chart.
+///
+/// Requires the unlocked vault. An absent bound resolves to the entity's
+/// first or last active entry, which is how the transactions page asks with
+/// no date filter; with both bounds given the range is the dashboard's
+/// period.
+///
+/// # Errors
+///
+/// Returns `not_found` when the entity does not exist, `invalid_date` when a
+/// bound is not a date, `date_range_inverted` when `from` is after `to`,
+/// `money_overflow` when a total does not fit the money type, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn cash_flow_series_cmd(
     state: State<'_, AppState>,

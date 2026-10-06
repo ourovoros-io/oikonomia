@@ -1,4 +1,9 @@
-//! Account commands.
+//! Account commands: the chart of accounts of one entity, account registers
+//! and balances.
+//!
+//! Every command here requires the unlocked vault. The four commands whose
+//! names end in `_cmd` across this layer carry the suffix because the core
+//! function they call has the bare name; the suffix is part of the IPC name.
 
 use crate::commands::support::{with_connection, with_localized_connection};
 use crate::error::CommandResult;
@@ -11,7 +16,14 @@ use oikonomia_core::ledger::{
 };
 use tauri::State;
 
-/// List accounts for an entity.
+/// Lists an entity's accounts, active and inactive.
+///
+/// Requires the unlocked vault. An unknown entity has no accounts, so it
+/// yields an empty list, not an error.
+///
+/// # Errors
+///
+/// Returns the [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn account_list(
     state: State<'_, AppState>,
@@ -20,10 +32,16 @@ pub(crate) async fn account_list(
     with_connection(&state, move |conn| list_accounts(conn, entity_id)).await
 }
 
-/// The default account for each role the entry forms need.
+/// Returns the default account for each role the entry forms need.
 ///
-/// Chosen in Rust by the seeded account's template code and type, never by
-/// name, so it is right for a renamed or translated chart.
+/// Requires the unlocked vault. The accounts are chosen in core by the seeded
+/// account's template code and type, never by name, so the choice is right
+/// for a renamed or translated chart.
+///
+/// # Errors
+///
+/// Returns `not_found` when the entity does not exist, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn account_defaults(
     state: State<'_, AppState>,
@@ -35,7 +53,16 @@ pub(crate) async fn account_defaults(
     .await
 }
 
-/// Create account.
+/// Creates an account in an entity's chart.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `not_found` when the entity does not exist or is archived,
+/// `name_required` for an empty code or name, `account_code_taken` when the
+/// entity already has an account with the code, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn account_create(
     state: State<'_, AppState>,
@@ -44,7 +71,17 @@ pub(crate) async fn account_create(
     with_connection(&state, move |conn| create_account(conn, &input)).await
 }
 
-/// Update account.
+/// Updates an account's code, name, active flag and sort order.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `not_found` when the account does not exist, `name_required` for
+/// an empty code or name, `account_code_taken` when the entity already has
+/// another account with the code, `system_account_protected` for an attempt
+/// to deactivate an account the books depend on, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn account_update(
     state: State<'_, AppState>,
@@ -53,7 +90,16 @@ pub(crate) async fn account_update(
     with_connection(&state, move |conn| update_account(conn, &input)).await
 }
 
-/// Archive (deactivate) account.
+/// Deactivates an account. Its posted lines stay in the books.
+///
+/// Requires the unlocked vault. Deactivating an account that is already
+/// inactive succeeds.
+///
+/// # Errors
+///
+/// Returns `not_found` when the account does not exist,
+/// `system_account_protected` for an account the books depend on, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn account_archive(
     state: State<'_, AppState>,
@@ -62,7 +108,17 @@ pub(crate) async fn account_archive(
     with_connection(&state, move |conn| archive_account(conn, id)).await
 }
 
-/// Account register.
+/// Returns the register of one account: its posted lines with a running
+/// balance, optionally limited to the dates `from` through `to`.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `not_found` when the account does not exist, `invalid_date` for a
+/// bound that is not a date, `money_overflow` when a balance does not fit
+/// the money type, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn account_register_cmd(
     state: State<'_, AppState>,
@@ -76,7 +132,17 @@ pub(crate) async fn account_register_cmd(
     .await
 }
 
-/// Signed normal balance of one account as of a date.
+/// Returns the balance of one account as of a date, in minor units, signed so
+/// that the account's normal side is positive.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `not_found` when the account does not exist, `invalid_date` when
+/// `as_of` is not a date, `money_overflow` when the balance does not fit the
+/// money type, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn account_balance_cmd(
     state: State<'_, AppState>,
@@ -89,8 +155,22 @@ pub(crate) async fn account_balance_cmd(
     .await
 }
 
-/// Set an account's balance as of a date by posting the difference against
-/// the book's Opening Balances equity account.
+/// Sets an account's balance as of a date by posting the difference against
+/// the book's opening-balances equity account, and returns the posted entry.
+///
+/// Requires the unlocked vault. The entry's description is written in the
+/// app's stored language.
+///
+/// # Errors
+///
+/// Returns `not_found` when the account does not exist,
+/// `opening_balance_account_type` for an account that is neither an asset
+/// nor a liability, `account_inactive` for an inactive account,
+/// `invalid_date` when `as_of` is not a date, `opening_balance_unchanged`
+/// when the account already has that balance, `no_equity_account` when the
+/// book has no equity account to post against, `money_overflow` when an
+/// amount does not fit the money type, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn account_set_opening_balance(
     state: State<'_, AppState>,

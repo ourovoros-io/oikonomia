@@ -1,4 +1,15 @@
-//! Document analysis and storage commands.
+//! Document commands: analyze a bill or receipt into a draft entry, and
+//! store, list, show, export and delete the documents attached to entries.
+//!
+//! Analysis is offline: the text is read by the OCR models shipped with the
+//! app and nothing is sent anywhere. Analysis also stores nothing. A document
+//! reaches the vault only together with the entry it belongs to
+//! ([`entry_post_simple_with_document`](crate::commands::entry_post_simple_with_document)),
+//! so a document without an entry cannot exist.
+//!
+//! A document arrives in one of two ways. Picked in the webview, it comes as
+//! base64 with a name and a type. Dropped on a window, it comes as a path,
+//! which must be a granted one and is read here.
 
 use crate::commands::support::{
     SaveTarget, decode_document_base64, dropped_file_name, require_granted_path, run_blocking,
@@ -19,7 +30,9 @@ use serde::Serialize;
 use std::path::Path;
 use tauri::State;
 
-/// Whether the shipped on-device OCR models are available.
+/// Returns whether the OCR models shipped with the app were found.
+///
+/// Needs no vault.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,
@@ -29,11 +42,20 @@ pub(crate) fn document_analyzer_status(state: State<'_, AppState>) -> AnalyzerSt
     analyzer_status(Some(state.ocr_model_dir().as_path()))
 }
 
-/// Analyze a picked file and return a draft entry suggestion.
+/// Analyzes a document the webview picked and returns a draft entry
+/// suggestion.
 ///
-/// Nothing is stored: the file reaches the vault only when the entry is
-/// posted ([`entry_post_simple_with_document`](crate::commands::entry_post_simple_with_document)). Analysis is fully offline
-/// (bundled OCR + heuristics). Nothing is sent to the network.
+/// Requires the unlocked vault, for the entity's accounts and currency.
+/// Nothing is stored. Core reads the document's text with the app's stored
+/// language.
+///
+/// # Errors
+///
+/// Returns `file_data_invalid` when `data_base64` is not base64;
+/// `file_too_large` (with the cap as `max_mb`), `file_empty`,
+/// `file_type_unsupported` and `name_required` when the document is refused;
+/// `not_found` when the entity does not exist; and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn document_analyze(
     state: State<'_, AppState>,
@@ -59,7 +81,21 @@ pub(crate) async fn document_analyze(
     .await
 }
 
-/// Analyze a file from a filesystem path (Tauri native drag-and-drop).
+/// Analyzes the document at `path` and returns a draft entry suggestion.
+///
+/// Requires the unlocked vault and a granted path: the file the user dropped
+/// on a window. The size and type are checked from the file's metadata before
+/// it is read, so an oversized drop is never loaded into memory. Nothing is
+/// stored.
+///
+/// # Errors
+///
+/// Returns `path_not_granted` for a path the user never handed over;
+/// `file_unreadable` when the file cannot be read; `file_too_large` (with the
+/// cap as `max_mb`), `file_empty`, `file_type_unsupported` and
+/// `name_required` when the document is refused; `not_found` when the entity
+/// does not exist; and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn document_analyze_path(
     state: State<'_, AppState>,
@@ -101,9 +137,16 @@ pub(crate) async fn document_analyze_path(
     .await
 }
 
-/// Analyze a document in memory and suggest a draft entry. Persists
-/// nothing: the file is stored only when the entry is posted
-/// (`entry_post_simple_with_document`), keeping the no-orphan invariant.
+/// Analyzes a document held in memory and suggests a draft entry.
+///
+/// The vault is held only to read the entity and its accounts, and released
+/// before the OCR pass, which can take seconds. Stores nothing.
+///
+/// # Errors
+///
+/// Returns the validation errors of a refused document, `not_found` when the
+/// entity does not exist, and `vault_locked`, `io` or `vault_corrupt` from
+/// the vault.
 #[expect(
     clippy::too_many_arguments,
     reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
@@ -145,16 +188,25 @@ fn analyze_readonly(
     Ok(suggestion)
 }
 
-/// Metadata plus base64 payload for the in-app viewer.
+/// A stored document's metadata and bytes, for the in-app viewer.
 #[derive(Debug, Serialize)]
 pub(crate) struct DocumentContent {
-    /// Metadata.
+    /// The document's metadata.
     pub meta: DocumentMeta,
-    /// Raw bytes, base64-encoded for IPC (bounded by the 8 MiB cap).
+    /// The document's bytes as base64, the form IPC carries. Bounded by core's
+    /// size cap on a stored document.
     pub data_base64: String,
 }
 
-/// All stored documents for an entity (metadata only).
+/// Lists the documents stored for an entity, metadata only.
+///
+/// Requires the unlocked vault. An unknown entity has no documents, so it
+/// yields an empty list, not an error.
+///
+/// # Errors
+///
+/// Returns `validation_internal` when a stored identifier cannot be parsed,
+/// and the [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn document_list(
     state: State<'_, AppState>,
@@ -163,8 +215,16 @@ pub(crate) async fn document_list(
     with_connection(&state, move |conn| list_documents(conn, entity_id)).await
 }
 
-/// One document's bytes for the in-app viewer. Decrypted content crosses
-/// IPC only; nothing is written to disk.
+/// Returns one stored document, decrypted, for the in-app viewer.
+///
+/// Requires the unlocked vault. The bytes cross IPC only; nothing is written
+/// to disk.
+///
+/// # Errors
+///
+/// Returns `not_found` when the document does not exist,
+/// `validation_internal` when a stored identifier cannot be parsed, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn document_get(
     state: State<'_, AppState>,
@@ -180,7 +240,15 @@ pub(crate) async fn document_get(
     .await
 }
 
-/// Permanently delete a stored document.
+/// Deletes a stored document, permanently. The entry it was attached to
+/// stays.
+///
+/// Requires the unlocked vault.
+///
+/// # Errors
+///
+/// Returns `not_found` when the document does not exist, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn document_delete(
     state: State<'_, AppState>,
@@ -189,8 +257,20 @@ pub(crate) async fn document_delete(
     with_connection(&state, move |conn| delete_document(conn, document_id)).await
 }
 
-/// Attach a file to an existing posted entry. No OCR pass — analysis only
-/// runs on the drop-zone flow; `analysis_json` stays NULL here.
+/// Stores a document the webview picked and attaches it to a posted entry.
+///
+/// Requires the unlocked vault. The document is not analyzed: analysis
+/// belongs to the flow that drafts a new entry, so the stored analysis stays
+/// empty here.
+///
+/// # Errors
+///
+/// Returns `file_data_invalid` when `data_base64` is not base64; `not_found`
+/// when the entry does not exist; `wrong_book` when it belongs to another
+/// entity; `file_too_large` (with the cap as `max_mb`), `file_empty`,
+/// `file_type_unsupported` and `name_required` when the document is refused;
+/// `name_taken` when the entity already stores a document under the file
+/// name; and the [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 #[expect(
     clippy::too_many_arguments,
@@ -212,12 +292,22 @@ pub(crate) async fn document_attach(
     .await
 }
 
-/// Export a stored document, decrypted, to a path chosen in a native Save
+/// Exports a stored document, decrypted, to a path chosen in a native save
 /// dialog. Returns the path written, or `None` if the user cancelled.
 ///
-/// Like the journal CSV export ([`csv_export_journal`](crate::commands::csv_export_journal)) and the report PDF
-/// ([`report_export_pdf`](crate::commands::report_export_pdf)), this writes plaintext to disk, and like them only
-/// to a path the user picked in the dialog ([`save_with_dialog`]).
+/// Requires the unlocked vault. Like the journal CSV export
+/// ([`csv_export_journal`](crate::commands::csv_export_journal)) and the
+/// report PDF ([`report_export_pdf`](crate::commands::report_export_pdf)),
+/// this writes plaintext to disk, and like them only to a path the user
+/// picked in the dialog ([`save_with_dialog`]).
+///
+/// # Errors
+///
+/// Returns `not_found` when the document does not exist,
+/// `validation_internal` when a stored identifier cannot be parsed,
+/// `save_location_invalid` when the dialog's answer is not a path,
+/// `save_failed` when the file cannot be written, and the
+/// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn document_export(
     app: tauri::AppHandle,

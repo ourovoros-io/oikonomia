@@ -1,4 +1,13 @@
-//! Vault lifecycle commands: status, unlock, lock, backup and restore.
+//! Vault lifecycle commands: status, create, unlock, lock, change password,
+//! back up and restore.
+//!
+//! These are the commands that change the vault's own state, so they take the
+//! whole vault ([`with_vault_blocking`]), not just its connection. None of
+//! them touches the idle watchdog: the vault guard does that as it is dropped.
+//!
+//! A lock made here is announced to every window with the `vault-locked`
+//! event, the same event the watchdog emits for an idle lock
+//! ([`crate::state::spawn_auto_lock`]).
 
 use crate::commands::support::{
     dialog_path, require_granted_path, run_blocking, with_vault_blocking,
@@ -11,11 +20,16 @@ use std::path::PathBuf;
 use tauri::{Emitter, State};
 use zeroize::Zeroizing;
 
-/// Return vault lock lifecycle status.
+/// Returns whether the vault is uninitialized, locked or unlocked.
 ///
-/// Async so that the probe waits for the vault mutex on the blocking pool,
-/// not on the main thread, while a long operation such as a rekey holds it.
-/// A probe does not count as activity; the idle heartbeat is [`vault_touch`].
+/// Works in every state. Async so that the probe waits for the vault mutex
+/// on the blocking pool, not on the main thread, while a long operation such
+/// as a password change holds it. A probe does not count as activity; the
+/// idle heartbeat is [`vault_touch`].
+///
+/// # Errors
+///
+/// Returns `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
     let vault = state.vault();
@@ -27,8 +41,10 @@ pub(crate) async fn vault_status(state: State<'_, AppState>) -> CommandResult<Va
     .await
 }
 
-/// Heartbeat for the idle watchdog. Separate from [`vault_status`] so lock
-/// probes (quick-add focus) do not extend the idle window.
+/// Records user activity for the idle watchdog.
+///
+/// Separate from [`vault_status`] so that lock probes, such as the one the
+/// quick-add window makes when it gains focus, do not extend the idle window.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,
@@ -38,10 +54,19 @@ pub(crate) fn vault_touch(state: State<'_, AppState>) {
     state.touch();
 }
 
-/// Create a new encrypted vault with the master password.
+/// Creates a new encrypted vault under the master password and leaves it
+/// unlocked.
 ///
-/// The password is wiped from memory when the command returns; only the
-/// derived key lives on, inside `SQLCipher`.
+/// Requires that no vault exists yet. The password is wiped from memory when
+/// the command returns; only the derived key lives on, inside `SQLCipher`.
+///
+/// # Errors
+///
+/// Returns `vault_already_initialized` when a vault exists,
+/// `password_too_short` (with the minimum as `min`) for a password under the
+/// minimum length, `crypto` when the key cannot be derived, and `io` or
+/// `vault_corrupt` when the vault files cannot be written. Returns
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_init(
     state: State<'_, AppState>,
@@ -54,7 +79,18 @@ pub(crate) async fn vault_init(
     .await
 }
 
-/// Unlock an existing vault. The password is wiped when the command returns.
+/// Unlocks the vault with the master password and returns its status.
+///
+/// Requires an existing vault. Unlocking also brings an older database up to
+/// the current schema. The password is wiped when the command returns.
+///
+/// # Errors
+///
+/// Returns `vault_uninitialized` when no vault exists, `invalid_password`
+/// when the password is rejected, `vault_corrupt` when the header or the
+/// database cannot be used, which includes a database written by a newer
+/// version, `crypto` when the key cannot be derived, and `io` when a file
+/// cannot be read. Returns `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_unlock(
     state: State<'_, AppState>,
@@ -67,12 +103,21 @@ pub(crate) async fn vault_unlock(
     .await
 }
 
-/// Change the master password (requires the current password). Both
-/// passwords are wiped when the command returns.
+/// Changes the master password, given the current one, and returns the
+/// status the vault is left in.
 ///
-/// Returns the status the vault is left in. The watchdog follows it whatever
-/// it is, so this does not depend on whether core unlocks a locked vault as
-/// part of the change.
+/// Requires an existing vault, locked or unlocked. Both passwords are wiped
+/// when the command returns. The watchdog follows whatever status results, so
+/// this does not depend on whether core unlocks a locked vault as part of the
+/// change.
+///
+/// # Errors
+///
+/// Returns `vault_uninitialized` when no vault exists, `password_too_short`
+/// (with the minimum as `min`) for a new password under the minimum length,
+/// `invalid_password` when the current password is rejected, `crypto` when a
+/// key cannot be derived, and `io` or `vault_corrupt` when the vault files
+/// cannot be rewritten. Returns `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_change_password(
     state: State<'_, AppState>,
@@ -86,7 +131,14 @@ pub(crate) async fn vault_change_password(
     .await
 }
 
-/// Lock the vault for this session.
+/// Locks the vault, emits `vault-locked` and returns the vault's status.
+///
+/// Works in every state; the event is emitted even when the vault was already
+/// locked.
+///
+/// # Errors
+///
+/// Returns `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_lock(
     app: tauri::AppHandle,
@@ -101,17 +153,26 @@ pub(crate) async fn vault_lock(
     Ok(status)
 }
 
-/// Write a portable ciphertext archive. Does not lock; an unlocked session
-/// stays unlocked.
+/// Writes a portable archive of the encrypted vault to a path chosen in a
+/// native save dialog.
 ///
-/// Always presents a native save dialog (same pattern as [`document_export`](crate::commands::document_export)).
-/// The suggested filename is `oikonomia-backup-YYYY-MM-DD.oikonomia-backup`
-/// using the local calendar date. An unlocked vault is snapshotted with
-/// `VACUUM INTO` so the copy is consistent without closing `SQLCipher`.
-/// The archive is `vault.db` plus `vault.header.json` only: it is not
-/// re-encrypted and never stores the master password.
+/// Requires an existing vault, locked or unlocked, and leaves its lock state
+/// as it was. The suggested file name is
+/// `oikonomia-backup-YYYY-MM-DD.oikonomia-backup`, using the local calendar
+/// date, and the extension is added to a chosen name that lacks it. An
+/// unlocked vault is snapshotted with `VACUUM INTO`, so the copy is
+/// consistent without closing `SQLCipher`. The archive is `vault.db` plus
+/// `vault.header.json` only: it is not re-encrypted and never stores the
+/// master password.
 ///
 /// Returns the destination path, or `None` if the user cancelled.
+///
+/// # Errors
+///
+/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// `vault_uninitialized` when there is no vault to back up, `vault_corrupt`
+/// when the vault files are incomplete, and `io` when the archive cannot be
+/// written. Returns `task_failed` when a blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_backup(
     app: tauri::AppHandle,
@@ -150,22 +211,35 @@ pub(crate) async fn vault_backup(
     .map(Some)
 }
 
-/// Restore a portable vault archive and leave the vault locked.
+/// Restores a portable vault archive and leaves the vault locked.
 ///
-/// `path` is the archive to unpack. When `path` is `None`, a native open
-/// dialog chooses the file (the in-app path). A concrete path is accepted only
-/// if the user granted it ([`AppState::grant_paths`]), so the webview cannot
-/// name arbitrary files. The grant is not tied to this command: besides the
-/// path [`vault_pick_backup`] returned, any file the user dropped on a window
-/// or picked for a CSV import passes the check, and is then rejected only if
-/// it is not a backup archive. Decrypt is not performed; the owner unlocks
-/// afterwards with the existing master password.
+/// `path` is the archive to unpack. When it is `None`, a native open dialog
+/// chooses the file. A given path is accepted only if the user granted it
+/// ([`AppState::grant_paths`]), so the webview cannot name arbitrary files.
+/// The grant is not tied to this command: besides the path
+/// [`vault_pick_backup`] returned, any file the user dropped on a window or
+/// picked for a CSV import passes the check, and is then rejected only if it
+/// is not a backup archive.
 ///
-/// Existing vault files are not overwritten unless `replace` is `true`.
-/// An uninitialized data directory accepts `replace: false`.
+/// The session is locked, and `vault-locked` emitted if it was unlocked,
+/// before the dialog opens, so cancelling the dialog still leaves the vault
+/// locked. Nothing is decrypted; the owner unlocks afterwards with the
+/// password the archive was made under.
 ///
-/// Returns the archive path that was restored, or `None` if the user cancelled
-/// the open dialog.
+/// Existing vault files are not overwritten unless `replace` is `true`. A
+/// data directory without a vault accepts `replace: false`.
+///
+/// Returns the archive path that was restored, or `None` if the user
+/// cancelled the dialog.
+///
+/// # Errors
+///
+/// Returns `path_not_granted` for a path the user never handed over, before
+/// the session is touched; `save_location_invalid` when the dialog's answer
+/// is not a path; `backup_invalid` when the file is not a backup archive;
+/// `restore_would_overwrite` when a vault exists and `replace` is `false`;
+/// and `io` or `vault_corrupt` when the vault files cannot be replaced.
+/// Returns `task_failed` when a blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_restore(
     app: tauri::AppHandle,
@@ -200,11 +274,17 @@ pub(crate) async fn vault_restore(
     .map(Some)
 }
 
-/// Choose a backup file via a native open dialog.
+/// Asks for a backup archive with a native open dialog and returns its path.
 ///
-/// Read-only: does not restore, lock, or write vault files. Returns the chosen
-/// path, or `None` if the user cancelled. The frontend confirms, then calls
-/// [`vault_restore`] with that path and `replace`.
+/// Works in every state and changes nothing: it does not restore, lock, or
+/// write vault files. The chosen path is granted, so the frontend can confirm
+/// with the user and then pass it to [`vault_restore`]. Returns `None` if the
+/// user cancelled.
+///
+/// # Errors
+///
+/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// and `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_pick_backup(
     app: tauri::AppHandle,
@@ -216,8 +296,14 @@ pub(crate) async fn vault_pick_backup(
     Ok(Some(path.display().to_string()))
 }
 
-/// Native Open dialog for a `.oikonomia-backup` file. `None` if cancelled.
-/// The chosen path is granted so [`vault_restore`] may receive it back.
+/// Asks for a `.oikonomia-backup` file with a native open dialog and grants
+/// the chosen path, so that [`vault_restore`] accepts it back. Returns `None`
+/// if the user cancelled.
+///
+/// # Errors
+///
+/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// and `task_failed` when the blocking task panics.
 async fn pick_backup_path(
     app: &tauri::AppHandle,
     state: &AppState,
@@ -247,8 +333,12 @@ async fn pick_backup_path(
     .await
 }
 
-/// Close any open `SQLCipher` connection and notify the UI when the session
-/// actually transitioned from unlocked to locked.
+/// Locks the vault, and emits `vault-locked` if that ended an unlocked
+/// session.
+///
+/// # Errors
+///
+/// Returns `task_failed` when the blocking task panics.
 async fn lock_vault_session(
     app: &tauri::AppHandle,
     state: &State<'_, AppState>,
@@ -265,6 +355,10 @@ async fn lock_vault_session(
     Ok(())
 }
 
+/// Returns `path` with the backup extension appended, unless it already ends
+/// in exactly that extension.
+///
+/// A path with no file name becomes `oikonomia.oikonomia-backup`.
 fn with_backup_extension(path: std::path::PathBuf) -> std::path::PathBuf {
     match path.extension().and_then(|extension| extension.to_str()) {
         Some(extension) if extension == BACKUP_EXTENSION => path,
