@@ -3,7 +3,6 @@
 use crate::error::{Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
-use crate::status::UpdateStatus;
 use crate::verify::{parse_public_key, parse_sha256_hex, to_hex, verify_minisign};
 use minisign_verify::PublicKey;
 use semver::Version;
@@ -220,27 +219,6 @@ pub struct VerifiedOffer {
     artifact_url: Url,
     artifact_signature: String,
     sha256: [u8; 32],
-    install_route: InstallRoute,
-}
-
-impl VerifiedOffer {
-    /// The status this offer puts the machine in: installable in-app, or
-    /// only reported when the package manager owns the files.
-    #[must_use]
-    pub fn status(&self) -> UpdateStatus {
-        let version = self.version.clone();
-        let notes = self.notes.clone();
-        match self.install_route {
-            InstallRoute::InApp => UpdateStatus::Available { version, notes },
-            InstallRoute::PackageManager => UpdateStatus::AvailableManually { version, notes },
-        }
-    }
-
-    /// How this copy of the app may take the offer.
-    #[must_use]
-    pub fn install_route(&self) -> InstallRoute {
-        self.install_route
-    }
 }
 
 /// Outcome of [`perform_check`]. Never a URL.
@@ -248,8 +226,18 @@ impl VerifiedOffer {
 pub enum CheckOutcome {
     /// Same version, older version, or HTTP 204.
     UpToDate,
-    /// Newer signed manifest with an allow-listed artifact URL.
+    /// Newer signed manifest with an allow-listed artifact URL, for a copy
+    /// that installs its own updates ([`InstallRoute::InApp`]).
     Available(VerifiedOffer),
+    /// The same finding for a copy the system package manager owns
+    /// ([`InstallRoute::PackageManager`]). It carries no artifact, so there
+    /// is nothing an install could be started with.
+    AvailableManually {
+        /// Remote version string from the signed manifest.
+        version: String,
+        /// Sanitized notes.
+        notes: String,
+    },
     /// Network, signature, parse, or allow-list failure.
     Failed,
 }
@@ -359,8 +347,17 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
         return Ok(CheckOutcome::UpToDate);
     }
 
+    // The offer is built, and so its artifact entry checked, on both
+    // routes: a feed this copy could not install from is a failed check for
+    // a package-managed copy too.
     let offer = offer_from_manifest(config, &manifest)?;
-    Ok(CheckOutcome::Available(offer))
+    Ok(match config.install_route {
+        InstallRoute::InApp => CheckOutcome::Available(offer),
+        InstallRoute::PackageManager => CheckOutcome::AvailableManually {
+            version: offer.version,
+            notes: offer.notes,
+        },
+    })
 }
 
 fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<VerifiedOffer> {
@@ -384,7 +381,6 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
         artifact_url,
         artifact_signature: platform.signature.clone(),
         sha256,
-        install_route: config.install_route,
     })
 }
 
