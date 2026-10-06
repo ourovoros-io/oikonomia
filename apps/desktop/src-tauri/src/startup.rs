@@ -12,15 +12,13 @@
 //! blocking calls must not be used on the main thread, which is where the
 //! setup hook runs.
 
-use std::path::{Path, PathBuf};
-
+use crate::state::AppState;
 use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use oikonomia_core::vault::default_data_dir;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-
-use crate::state::AppState;
 
 /// Process exit code after a failed start.
 const STARTUP_FAILURE_EXIT_CODE: i32 = 1;
@@ -49,7 +47,7 @@ pub(crate) enum StartupError {
 }
 
 impl StartupError {
-    /// The data directory the failure is about, when there is one.
+    /// Returns the data directory the failure is about, when there is one.
     fn data_dir(&self) -> Option<&Path> {
         match self {
             Self::Vault { data_dir, .. } => Some(data_dir),
@@ -57,7 +55,7 @@ impl StartupError {
         }
     }
 
-    /// What the user is told went wrong.
+    /// Returns what the user is told went wrong.
     fn problem(&self) -> StartupProblem {
         match self {
             Self::Vault {
@@ -93,6 +91,12 @@ pub(crate) fn open_app_state(ocr_model_dir: PathBuf) -> Result<AppState, Startup
     open_app_state_in(data_dir, ocr_model_dir)
 }
 
+/// Opens the vault in `data_dir`.
+///
+/// # Errors
+///
+/// Returns [`StartupError::Vault`], naming `data_dir`, when the directory or
+/// the vault header in it cannot be used.
 fn open_app_state_in(data_dir: PathBuf, ocr_model_dir: PathBuf) -> Result<AppState, StartupError> {
     AppState::open_path(data_dir.clone(), ocr_model_dir)
         .map_err(|source| StartupError::Vault { data_dir, source })
@@ -130,14 +134,14 @@ pub(crate) fn report_and_exit(app: &tauri::App, failure: &StartupError) {
         .show(move |_acknowledged| handle.exit(STARTUP_FAILURE_EXIT_CODE));
 }
 
-/// The lower-level cause of `failure`, for the log.
+/// Returns the lower-level cause of `failure` as text, for the log.
 fn source_text(failure: &StartupError) -> String {
     std::error::Error::source(failure)
         .map_or_else(|| "no further detail".to_owned(), ToString::to_string)
 }
 
-/// The text of the failure message: that the app cannot start, what is wrong
-/// when that is known, and the data directory on a line of its own.
+/// Returns the text of the failure message: that the app cannot start, what
+/// is wrong when that is known, and the data directory on a line of its own.
 ///
 /// The cause is worded here per language. Core's error text is English and
 /// may hold operating-system text, so it goes to the log, never to the user.
@@ -155,7 +159,7 @@ fn failure_message(locale: Locale, problem: StartupProblem, data_dir: Option<&Pa
     message
 }
 
-/// Failure message: the app cannot start.
+/// Returns the sentence that says the app cannot start.
 fn cannot_start_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Oikonomia cannot start.",
@@ -165,7 +169,8 @@ fn cannot_start_label(locale: Locale) -> &'static str {
     }
 }
 
-/// Failure message: what is wrong, for the problems that have a sentence.
+/// Returns the sentence that says what is wrong, for the problems that have
+/// one.
 ///
 /// The damaged-vault sentences are the ones the web catalog shows for
 /// `error.vaultCorrupt`, so the app names this problem one way.
@@ -199,8 +204,10 @@ mod tests {
     use oikonomia_core::vault::vault_header_path;
     use std::path::{Path, PathBuf};
 
+    /// Every language the app is worded in.
     const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
 
+    /// Creates a fresh directory for one test.
     fn temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "oiko-startup-{label}-{}-{}",

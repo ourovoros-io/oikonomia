@@ -2954,6 +2954,7 @@ dependencies = [
  "oikonomia-core",
  "oikonomia-test-support",
  "oikonomia-update",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",

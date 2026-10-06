@@ -97,7 +97,9 @@ pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
     },
 ];
 
-/// Donation addresses for the Settings page. Readable while locked.
+/// Returns the donation addresses, for the Settings page.
+///
+/// Needs no vault, so it works while the vault is locked. Cannot fail.
 #[tauri::command]
 pub(crate) fn donation_addresses() -> Vec<DonationAddress> {
     DONATION_ADDRESSES.to_vec()
@@ -109,13 +111,19 @@ mod tests {
 
     use super::{Coin, DONATION_ADDRESSES, DonationAddress};
 
+    /// The Base58 alphabet Bitcoin-style addresses use.
     const BASE58: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    /// The Bech32 data alphabet.
     const BECH32: &str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
+    /// Returns whether `text` is non-empty and made only of characters of
+    /// `alphabet`.
     fn all_in(text: &str, alphabet: &str) -> bool {
         !text.is_empty() && text.chars().all(|character| alphabet.contains(character))
     }
 
+    /// Returns whether `address` is Base58, starts with one of `prefixes` and
+    /// has a length in `lengths`.
     fn is_base58_with(
         address: &str,
         prefixes: &[char],
@@ -124,6 +132,8 @@ mod tests {
         all_in(address, BASE58) && lengths.contains(&address.len()) && address.starts_with(prefixes)
     }
 
+    /// Returns whether `address` is `prefix` followed by Bech32 characters and
+    /// has a length in `lengths`.
     fn is_bech32_with(
         address: &str,
         prefix: &str,
@@ -135,12 +145,13 @@ mod tests {
             && lengths.contains(&address.len())
     }
 
-    /// Whether `address` has the right shape for `coin`. A format check, not
-    /// a checksum: it catches a changed prefix, a changed length, or a
-    /// character outside the alphabet. A same-length substitution of another
-    /// in-alphabet character passes, as does a case change in an Ethereum
-    /// address. Verify checksums separately whenever an address is added or
-    /// changed. It cannot tell whose address it is.
+    /// Returns whether `address` has the right shape for `coin`.
+    ///
+    /// A format check, not a checksum: it catches a changed prefix, a changed
+    /// length, or a character outside the alphabet. A same-length substitution
+    /// of another in-alphabet character passes, as does a case change in an
+    /// Ethereum address. Verify checksums separately whenever an address is
+    /// added or changed. It cannot tell whose address it is.
     fn has_valid_shape(coin: Coin, address: &str) -> bool {
         match coin {
             Coin::Btc => {
@@ -312,6 +323,7 @@ mod tests {
         }
     }
 
+    /// Returns the ticker `coin` serializes as.
     fn ticker(coin: Coin) -> String {
         serde_json::to_value(coin)
             .expect("serialize")
@@ -320,7 +332,7 @@ mod tests {
             .to_owned()
     }
 
-    /// The exact README table line an entry must have: the ticker and any
+    /// Returns the exact README table line an entry must have: the ticker and any
     /// tokens it also accepts, the network, then the address in backticks.
     fn expected_readme_row(entry: &DonationAddress) -> String {
         let mut labels = vec![ticker(entry.coin)];
