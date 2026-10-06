@@ -36,17 +36,27 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// - `1.234` / `1,234` → `123400`
 /// - `-25` → `-2500`
 ///
-/// Currency symbols (`€$£`) and trailing/leading ISO codes are ignored.
-/// Parentheses mean negative (`(25,00)`).
+/// Whitespace and the currency symbols `€$£¥₹₩` are ignored. So are three
+/// ASCII letters directly before or after the number; they are not checked
+/// against the ISO 4217 list, so `1.00 abc` parses like `1.00 EUR`.
+/// Parentheses mean negative (`(25,00)`), as do a leading `-` and a leading
+/// U+2212 MINUS SIGN.
 ///
 /// # Errors
 ///
 /// [`CsvError::MissingAmount`] when the cell is empty or only whitespace;
-/// [`CsvError::InvalidAmount`] when the cell is not a number;
+/// [`CsvError::InvalidAmount`] when the cell is not a number, including a
+/// cell with a separator but no digit;
 /// [`CsvError::AmountOverflow`] when the magnitude does not fit in `i64`.
 pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
     let (negative, digits) = prepare_amount(raw)?;
     let (int_digits, frac_digits) = split_decimal(&digits, exponent)?;
+
+    // Checked before the fraction is padded: the padding zeros would turn a
+    // bare `.` or `,` into a zero amount.
+    if int_digits.is_empty() && frac_digits.is_empty() {
+        return Err(CsvError::InvalidAmount(raw.to_owned()));
+    }
 
     let mut frac = frac_digits.to_owned();
     while frac.len() < usize::from(exponent) {
@@ -54,9 +64,6 @@ pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
     }
 
     let combined = format!("{int_digits}{frac}");
-    if combined.is_empty() {
-        return Err(CsvError::InvalidAmount(raw.to_owned()));
-    }
     let magnitude: i64 = match combined.parse() {
         Ok(value) => value,
         Err(_) => return Err(CsvError::AmountOverflow),
@@ -312,6 +319,17 @@ mod tests {
             parse_signed_minor("1,234.567", 3).expect("dinar"),
             1_234_567
         );
+    }
+
+    #[test]
+    fn a_separator_without_digits_is_not_zero() {
+        assert_invalid_amount(".", 2);
+        assert_invalid_amount(",", 2);
+        assert_invalid_amount("-.", 2);
+        assert_invalid_amount("€,", 2);
+        assert_invalid_amount(".", 0);
+        assert_eq!(parse_eur_minor(".5"), 50);
+        assert_eq!(parse_eur_minor("5."), 500);
     }
 
     #[test]
