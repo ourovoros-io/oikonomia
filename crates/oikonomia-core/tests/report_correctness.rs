@@ -141,6 +141,10 @@ fn an_entry_dated_in_year_zero_reaches_retained_earnings() {
 
 /// Before year zero there are no books: the fiscal year that holds the first
 /// day of year zero has no prior period.
+///
+/// This pins the edge and does not depend on where the prior-period sum
+/// starts: the day before year zero is written with a leading minus sign and
+/// sorts, as text, below every stored date, so no entry is on or before it.
 #[test]
 fn the_first_fiscal_year_has_no_retained_earnings() {
     let (_dir, vault) = common::vault();

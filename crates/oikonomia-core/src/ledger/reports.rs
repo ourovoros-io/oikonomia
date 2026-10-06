@@ -45,10 +45,6 @@
 //! [`Error::VaultCorrupt`] for it, and posting loads each account through
 //! `get_account`, so nothing new can be posted to it either.
 
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-use time::{Date, Month};
-
 use crate::db::{collect_rows, corrupt_column, read_column};
 use crate::domain::{AccountType, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
@@ -58,6 +54,9 @@ use crate::ledger::balance::{
 };
 use crate::ledger::entities::get_entity;
 use crate::util::{format_date, parse_date};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use time::{Date, Month};
 
 /// A report row the reports compute instead of reading from an account.
 ///
@@ -194,16 +193,17 @@ pub struct DashboardSummary {
     /// Number of active entries dated in the window.
     pub recent_entry_count: usize,
     /// Net income as a share of income, in basis points; `None` when income is
-    /// zero or less.
+    /// zero or less, or the share does not fit in `i64`.
     pub savings_rate_bps: Option<i64>,
     /// Expenses as a share of income, in basis points; `None` when income is
-    /// zero or less.
+    /// zero or less, or the share does not fit in `i64`.
     pub spend_ratio_bps: Option<i64>,
     /// The Expense account with the most spending in the window; `None` when
-    /// there are no expenses.
+    /// `expenses` is zero or less, or no account has a positive spend.
     pub top_expense: Option<TopExpense>,
     /// Change in net income against [`previous_window`], in basis points of the
-    /// previous net's size; `None` when the previous net is zero.
+    /// previous net's size; `None` when the previous net is zero, when there
+    /// is no previous window, or when the change does not fit in `i64`.
     pub net_vs_previous_bps: Option<i64>,
 }
 
@@ -460,6 +460,9 @@ pub fn dashboard_summary(
 /// month compares with the month before, a quarter with the quarter before and
 /// a year with the year before. Any other window steps back by the same number
 /// of days. `None` only at the edge of the calendar.
+///
+/// The caller passes `from <= to`; the result for an inverted pair is not a
+/// window before `from`.
 #[must_use]
 pub fn previous_window(from: Date, to: Date) -> Option<(Date, Date)> {
     let previous_to = from.previous_day()?;
@@ -475,14 +478,6 @@ pub fn previous_window(from: Date, to: Date) -> Option<(Date, Date)> {
     let previous_from = Date::from_julian_day(previous_to.to_julian_day() - length).ok()?;
     Some((previous_from, previous_to))
 }
-
-/// The earliest date an entry can have: the first day of year zero.
-///
-/// This is the lower bound of what [`parse_date`] reads, and every stored
-/// entry date went through it. `Date::MIN` would be the wrong bound for the
-/// queries, which compare dates as text: it is written with a leading minus
-/// sign (`-9999-01-01`), and text with a minus sign does not sort by date.
-const BOOKS_START: Date = time::macros::date!(0000 - 01 - 01);
 
 /// Computes [`profit_and_loss`] or, with `omit_hidden`,
 /// [`profit_and_loss_export`].
@@ -579,8 +574,9 @@ fn top_expense(
 }
 
 /// Returns `numerator / denominator` in basis points, rounded half away from
-/// zero; `None` when the denominator is zero or the result does not fit in
-/// `i64`.
+/// zero.
+///
+/// `None` when the denominator is zero or the result does not fit in `i64`.
 fn ratio_bps(numerator: i64, denominator: i64) -> Option<i64> {
     if denominator == 0 {
         return None;
@@ -678,7 +674,9 @@ fn account_activity_lines(
 }
 
 /// Reads the accounts of one type that have a debit or a credit between
-/// `from` and `to` inclusive. Income and expense lines are read this way.
+/// `from` and `to` inclusive.
+///
+/// Income and expense lines are read this way.
 ///
 /// # Errors
 ///
@@ -707,8 +705,9 @@ fn period_lines(
 }
 
 /// Reads the accounts of one type that have a debit or a credit on any day
-/// through `as_of`, hidden entries included. Asset, liability and equity
-/// lines are read this way.
+/// through `as_of`, hidden entries included.
+///
+/// Asset, liability and equity lines are read this way.
 ///
 /// # Errors
 ///
@@ -723,13 +722,22 @@ fn as_of_lines(
     Ok(lines.into_iter().filter(has_activity).collect())
 }
 
-/// Whether any debit or credit was posted to the line's account in the window.
+/// Returns whether any debit or credit was posted to the line's account in
+/// the window.
 ///
 /// The balance needs no test of its own: it is the difference of the two
 /// totals, so it is zero whenever both are.
 fn has_activity(line: &ReportLine) -> bool {
     line.debit_minor != 0 || line.credit_minor != 0
 }
+
+/// The earliest date an entry can have: the first day of year zero.
+///
+/// This is the lower bound of what [`parse_date`] reads, and every stored
+/// entry date went through it. `Date::MIN` would be the wrong bound for the
+/// queries, which compare dates as text: it is written with a leading minus
+/// sign (`-9999-01-01`), and text with a minus sign does not sort by date.
+const BOOKS_START: Date = time::macros::date!(0000 - 01 - 01);
 
 /// The profit and loss that no closing entry has moved into equity, split at
 /// the start of the fiscal year that holds the as-of date.

@@ -27,14 +27,13 @@
 //! ([`account_type_str`], [`parse_account_type`]), because the queries here
 //! filter on it.
 
-use rusqlite::Connection;
-use time::Date;
-
 use crate::db::corrupt_column;
 use crate::domain::{AccountId, AccountType, EntityId};
 use crate::error::{Error, Result};
 use crate::ledger::accounts::get_account;
 use crate::util::{format_date, parse_date};
+use rusqlite::Connection;
+use time::Date;
 
 /// SQL predicate on `journal_entries je` that selects the active entries:
 /// posted, not voided, and not the reversing entry of a void.

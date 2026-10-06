@@ -8,9 +8,8 @@
 //! The functions here read and write a single row, so none of them opens a
 //! transaction.
 
-use rusqlite::{Connection, OptionalExtension};
-
 use crate::error::{Error, Result, ValidationError};
+use rusqlite::{Connection, OptionalExtension};
 
 /// The idle lock timeout, in seconds, of a vault that has stored none: 15
 /// minutes.
@@ -26,7 +25,8 @@ const KEY_LOCK_TIMEOUT: &str = "lock_timeout_secs";
 /// Reads the idle lock timeout in seconds, or
 /// [`DEFAULT_LOCK_TIMEOUT_SECS`] when none has been stored.
 ///
-/// A stored value below the 60-second minimum is returned as 60.
+/// A stored value below the minimum (60 seconds, `MIN_LOCK_TIMEOUT_SECS`) is
+/// returned as that minimum.
 /// [`set_lock_timeout_secs`] is the only writer and refuses such a value, so
 /// one can only come from a damaged or hand-edited vault. The desktop watchdog
 /// locks as soon as the idle time reaches what this returns, and a stored `0`
@@ -62,7 +62,8 @@ pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
 ///
 /// # Errors
 ///
-/// - [`ValidationError::LockTimeoutTooShort`] when `secs` is below 60.
+/// - [`ValidationError::LockTimeoutTooShort`] when `secs` is below the
+///   minimum (60, `MIN_LOCK_TIMEOUT_SECS`).
 /// - [`Error::Io`] on database errors.
 pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
     if secs < MIN_LOCK_TIMEOUT_SECS {

@@ -16,13 +16,12 @@
 //!
 //! Each function writes with a single statement, so none opens a transaction.
 
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-
 use crate::db::{collect_rows, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 
 /// Input for [`create_account`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +124,8 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
 /// - [`Error::NotFound`] for an unknown or archived entity.
 /// - [`ValidationError::AccountCodeTaken`] when the entity already has an
 ///   account with this code.
+/// - [`Error::VaultCorrupt`] when the account does not parse on being read
+///   back.
 /// - [`Error::Io`] on database errors.
 pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Account> {
     let code = input.code.trim();

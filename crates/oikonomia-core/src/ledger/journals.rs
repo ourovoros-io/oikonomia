@@ -6,7 +6,7 @@
 //! An entry is a header and at least two lines. Each line debits or credits
 //! one account by a positive amount, never both, and the debits of an entry
 //! equal its credits. Every entry is written by the private
-//! `insert_posted_entry`, which checks those rules
+//! `post_entry_in_tx`, which checks those rules
 //! ([`validate_lines_for_post`]) and that each account belongs to the entry's
 //! entity; no other code inserts into the journal. The schema repeats the
 //! rule for a single line as a `CHECK`.
@@ -36,13 +36,8 @@
 //! A public function that writes more than one row opens a transaction and
 //! commits it. The work itself is in a helper that takes the connection and
 //! leaves the transaction to its caller, named `_in_tx` when private and
-//! `_unchecked` when another module composes it with writes of its own.
-
-use std::collections::HashMap;
-
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-use time::Date;
+//! `_unchecked` when it is `pub(crate)` for another module to compose with
+//! writes of its own.
 
 use crate::db::{collect_rows, corrupt_column, fold_case, read_column, stored_date, stored_uuid};
 use crate::domain::{
@@ -58,6 +53,10 @@ use crate::money::Money;
 use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
 use crate::util::{format_date, now_utc_string, parse_date};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use time::Date;
 
 /// One line of a [`PostJournal`].
 ///
@@ -226,8 +225,9 @@ pub struct EntryFilter {
 ///
 /// Voided entries and their reversals are listed too, marked by
 /// [`PostedEntryView::is_voided`]. Entries of one date are ordered by when
-/// they were created, latest first. An entity that does not exist has no
-/// entries and gives an empty list.
+/// they were created, latest first; creation time is kept to the second, so
+/// entries created within one second have no fixed order among themselves.
+/// An entity that does not exist has no entries and gives an empty list.
 ///
 /// # Errors
 ///
@@ -344,7 +344,7 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
     let tx = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
-    let view = insert_posted_entry(&tx, input, false, ArchivedAccounts::Refuse)?;
+    let view = post_entry_in_tx(&tx, input, false, ArchivedAccounts::Refuse)?;
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(view)
 }
@@ -562,7 +562,9 @@ pub fn set_account_opening_balance(
 /// Lists the lines of active entries on an account between `from` and `to`
 /// inclusive (`YYYY-MM-DD`), oldest first, each with the running balance.
 ///
-/// `None` leaves that end of the range open. The running balance starts from
+/// `None` leaves that end of the range open. Lines of one date are ordered by
+/// when their entries were created, to the second, and lines of one entry by
+/// their order in it. The running balance starts from
 /// the account's balance on the day before `from`, so the first line's
 /// balance is the account's true balance and not just the sum of the lines
 /// shown.
@@ -713,7 +715,7 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
         },
     ];
 
-    insert_posted_entry(
+    post_entry_in_tx(
         conn,
         &PostJournal {
             entity_id: input.entity_id,
@@ -766,16 +768,17 @@ const LISTED_ENTRIES_PREDICATE: &str = "
 
 /// The values [`LISTED_ENTRIES_PREDICATE`] binds, normalized from an [`EntryFilter`].
 struct ListedEntries {
-    /// `?1`: the entity whose entries are listed.
-    entity: String,
+    /// `?1`: the id of the entity whose entries are listed.
+    entity_id: String,
     /// `?2`: inclusive lower date bound as `YYYY-MM-DD`, if any.
     date_from: Option<String>,
     /// `?3`: inclusive upper date bound as `YYYY-MM-DD`, if any.
     date_to: Option<String>,
     /// `?4`: case-folded `LIKE` pattern for the text search, if any.
     pattern: Option<String>,
-    /// `?5`: an account that a listed entry must have a line on, if any.
-    account: Option<String>,
+    /// `?5`: the id of an account that a listed entry must have a line on, if
+    /// any.
+    account_id: Option<String>,
 }
 
 impl ListedEntries {
@@ -792,7 +795,7 @@ impl ListedEntries {
         };
 
         Ok(Self {
-            entity: entity_id.0.to_string(),
+            entity_id: entity_id.0.to_string(),
             date_from: normalized(filter.date_from.as_deref())?,
             date_to: normalized(filter.date_to.as_deref())?,
             pattern: filter
@@ -801,18 +804,18 @@ impl ListedEntries {
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(like_pattern),
-            account: filter.account_id.map(|id| id.0.to_string()),
+            account_id: filter.account_id.map(|id| id.0.to_string()),
         })
     }
 
     /// The bound values, `?1` to `?5`.
     fn bound(&self) -> [&dyn rusqlite::ToSql; 5] {
         [
-            &self.entity,
+            &self.entity_id,
             &self.date_from,
             &self.date_to,
             &self.pattern,
-            &self.account,
+            &self.account_id,
         ]
     }
 }
@@ -877,7 +880,9 @@ fn load_listed_headers(
 /// The entries are selected by joining on [`LISTED_ENTRIES_PREDICATE`] rather
 /// than by an `IN` list of their ids: a list binds one variable per entry, and
 /// `SQLite` refuses a statement with more than `SQLITE_MAX_VARIABLE_NUMBER`
-/// of them (32766 in the bundled build), which a large book exceeds.
+/// of them (<https://www.sqlite.org/limits.html#max_variable_number>; 32766
+/// in the bundled build), which a large book exceeds. The test
+/// `tests/entry_list_scale.rs` lists a book past that limit.
 ///
 /// # Errors
 ///
@@ -979,7 +984,7 @@ enum ArchivedAccounts {
 ///
 /// Those of [`post_entry`]; with [`ArchivedAccounts::Accept`], an archived
 /// account is not one of them.
-fn insert_posted_entry(
+fn post_entry_in_tx(
     conn: &Connection,
     input: &PostJournal,
     hidden: bool,
@@ -1137,7 +1142,7 @@ fn simple_entry_role_accounts(
 ) -> Result<(Account, Account)> {
     use AccountType::{Asset, Expense, Income, Liability};
 
-    let role = |id: Option<AccountId>, role: AccountRole, allowed: &[AccountType]| {
+    let account_in = |id: Option<AccountId>, role: AccountRole, allowed: &[AccountType]| {
         let id = id.ok_or(Error::Validation(ValidationError::AccountRequired { role }))?;
         let account = get_account(conn, id)?;
         if !allowed.contains(&account.account_type) {
@@ -1151,49 +1156,49 @@ fn simple_entry_role_accounts(
 
     match input.kind {
         SimpleEntryKind::Expense => Ok((
-            role(input.category_account_id, AccountRole::Category, &[Expense])?,
-            role(
+            account_in(input.category_account_id, AccountRole::Category, &[Expense])?,
+            account_in(
                 input.wallet_account_id,
                 AccountRole::Payment,
                 &[Asset, Liability],
             )?,
         )),
         SimpleEntryKind::Income => Ok((
-            role(input.wallet_account_id, AccountRole::Deposit, &[Asset])?,
-            role(input.category_account_id, AccountRole::Income, &[Income])?,
+            account_in(input.wallet_account_id, AccountRole::Deposit, &[Asset])?,
+            account_in(input.category_account_id, AccountRole::Income, &[Income])?,
         )),
         SimpleEntryKind::Bill => match input.bill_status {
             Some(SimpleBillStatus::Paid) => Ok((
-                role(
+                account_in(
                     input.category_account_id,
                     AccountRole::BillCategory,
                     &[Expense],
                 )?,
-                role(
+                account_in(
                     input.wallet_account_id,
                     AccountRole::Payment,
                     &[Asset, Liability],
                 )?,
             )),
             Some(SimpleBillStatus::Unpaid) => Ok((
-                role(
+                account_in(
                     input.category_account_id,
                     AccountRole::BillCategory,
                     &[Expense],
                 )?,
-                role(
+                account_in(
                     input.payable_account_id,
                     AccountRole::BillsPayable,
                     &[Liability],
                 )?,
             )),
             Some(SimpleBillStatus::PayExisting) => Ok((
-                role(
+                account_in(
                     input.payable_account_id,
                     AccountRole::BillsPayable,
                     &[Liability],
                 )?,
-                role(
+                account_in(
                     input.wallet_account_id,
                     AccountRole::Payment,
                     &[Asset, Liability],
@@ -1202,12 +1207,12 @@ fn simple_entry_role_accounts(
             None => Err(Error::Validation(ValidationError::BillStatusRequired)),
         },
         SimpleEntryKind::Transfer => Ok((
-            role(
+            account_in(
                 input.to_account_id,
                 AccountRole::TransferDestination,
                 &[Asset, Liability],
             )?,
-            role(
+            account_in(
                 input.from_account_id,
                 AccountRole::TransferSource,
                 &[Asset, Liability],
@@ -1253,7 +1258,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
-    let reverse = insert_posted_entry(
+    let reverse = post_entry_in_tx(
         conn,
         &reverse_input,
         view.entry.hidden,

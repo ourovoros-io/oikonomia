@@ -1,8 +1,9 @@
 //! The double-entry ledger: entities, their charts of accounts, the journal,
 //! recurring templates, reports, and the settings stored beside them.
 //!
-//! Every function takes the connection of an unlocked vault. The submodules
-//! are private and their public items are re-exported from here:
+//! Every function that reads or writes the books takes the connection of an
+//! unlocked vault. The submodules are private and their public items are
+//! re-exported from here:
 //!
 //! - `entities`: the separate sets of books a vault holds.
 //! - `accounts`: the chart of accounts of an entity.
@@ -31,9 +32,15 @@
 //! - **A write of several rows is atomic.** See [Transactions](#transactions).
 //! - **A report filters entries inside its subquery**, never in the `ON`
 //!   clause of a `LEFT JOIN`, where the filter would have no effect.
-//! - **A stored value that does not parse is a corrupt vault.** It is reported
-//!   as [`Error::VaultCorrupt`](crate::error::Error::VaultCorrupt), and the
-//!   read fails instead of leaving the row out.
+//! - **A stored value that does not parse is a corrupt vault.** A function
+//!   that maps a stored row reports it as
+//!   [`Error::VaultCorrupt`](crate::error::Error::VaultCorrupt) and fails,
+//!   instead of leaving the row out or returning it half-read. Two values are
+//!   tolerated because nothing is computed from them: an account's sort order
+//!   outside `i32` reads as 0, and so does an entry count outside `usize`.
+//!   The reports are the gap: they select accounts by type and so never map
+//!   an account whose stored type is unknown. The `reports` module doc says
+//!   what they rely on instead.
 //!
 //! # Active entries and voids
 //!
@@ -70,10 +77,11 @@
 //! transaction.
 //!
 //! The work is for that reason in a helper that takes the connection and
-//! opens nothing: the caller owns the transaction. A helper private to its
-//! module is named `_in_tx`. One that another module composes with writes of
-//! its own, such as posting an entry together with its document, is
-//! `pub(crate)` and named `_unchecked`.
+//! opens nothing: the caller owns the transaction. A private helper that does
+//! the work of one public function carries that function's name with `_in_tx`
+//! added. A `pub(crate)` one, which another module can compose with writes of
+//! its own, such as posting an entry together with its document, is named
+//! `_unchecked`.
 //!
 //! # Overflow
 //!

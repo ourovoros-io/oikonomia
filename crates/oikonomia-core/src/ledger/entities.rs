@@ -28,9 +28,6 @@
 //! - Posting an entry checks the entry's accounts and never the entity, so it
 //!   is accepted as well.
 
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-
 use crate::coa::template_accounts;
 use crate::db::{collect_rows, corrupt_column, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
@@ -38,6 +35,8 @@ use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
 use crate::util::now_utc_string;
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 
 /// Input for [`create_entity`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +124,8 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
 /// - [`ValidationError::Internal`] for a fiscal year start month outside 1–12.
 /// - [`ValidationError::NameTaken`] when an entity that is not archived has
 ///   the same name, compared without case.
+/// - [`Error::VaultCorrupt`] when the entity does not parse on being read
+///   back.
 /// - [`Error::Io`] on database errors.
 pub fn create_entity(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let tx = conn
@@ -304,13 +305,13 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 ///
 /// Those of [`delete_entity`].
 fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
-    let entity = id.0.to_string();
+    let entity_id = id.0.to_string();
 
     // No `archived_at` test: an archived entity is deleted like any other.
     let exists: i64 = conn
         .query_row(
             "SELECT COUNT(1) FROM entities WHERE id = ?1",
-            [&entity],
+            [&entity_id],
             |row| row.get(0),
         )
         .map_err(|err| Error::Io(err.to_string()))?;
@@ -326,7 +327,7 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         SET voided_by_entry_id = NULL
         WHERE entity_id = ?1
         ",
-        [&entity],
+        [&entity_id],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
@@ -335,32 +336,32 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         DELETE FROM journal_lines
         WHERE entry_id IN (SELECT id FROM journal_entries WHERE entity_id = ?1)
         ",
-        [&entity],
+        [&entity_id],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
     // Documents reference journal entries, so they go before the entries.
-    conn.execute("DELETE FROM documents WHERE entity_id = ?1", [&entity])
+    conn.execute("DELETE FROM documents WHERE entity_id = ?1", [&entity_id])
         .map_err(|err| Error::Io(err.to_string()))?;
 
     // Templates reference accounts, so they go before the accounts.
     conn.execute(
         "DELETE FROM recurring_templates WHERE entity_id = ?1",
-        [&entity],
+        [&entity_id],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
     conn.execute(
         "DELETE FROM journal_entries WHERE entity_id = ?1",
-        [&entity],
+        [&entity_id],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
-    conn.execute("DELETE FROM accounts WHERE entity_id = ?1", [&entity])
+    conn.execute("DELETE FROM accounts WHERE entity_id = ?1", [&entity_id])
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let deleted = conn
-        .execute("DELETE FROM entities WHERE id = ?1", [&entity])
+        .execute("DELETE FROM entities WHERE id = ?1", [&entity_id])
         .map_err(|err| Error::Io(err.to_string()))?;
 
     if deleted == 0 {
@@ -374,7 +375,8 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
 /// case. `exclude` names the entity being renamed, which may keep its name.
 ///
 /// Case folds for every letter through the `fold` SQL function, which every
-/// vault connection registers; `SQLite`'s `lower()` would fold ASCII only.
+/// vault connection registers; `SQLite`'s `lower()` would fold ASCII only
+/// (<https://www.sqlite.org/lang_corefunc.html#lower>).
 ///
 /// # Errors
 ///

@@ -17,10 +17,6 @@
 //! placed in its bucket by binary search, and the running totals are added in
 //! a second pass over the buckets.
 
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-use time::Date;
-
 use crate::db::{collect_rows, stored_date};
 use crate::domain::{AccountType, EntityId};
 use crate::error::{Error, Result, ValidationError};
@@ -29,6 +25,9 @@ use crate::ledger::balance::{
 };
 use crate::ledger::entities::get_entity;
 use crate::util::{format_date, parse_date};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use time::Date;
 
 /// Windows of this many days or fewer get one bucket per day; longer windows
 /// get one per calendar month. 92 days covers any calendar quarter.
@@ -308,9 +307,9 @@ fn daily_activity(
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut days: Vec<DayActivity> = Vec::new();
-    for (date_text, type_text, debits, credits) in collect_rows(rows.map(|row| row.map(Ok)))? {
-        let date = stored_date("journal_entries.entry_date", &date_text)?;
-        let account_type = parse_account_type(&type_text)?;
+    for (date, account_type, debits, credits) in collect_rows(rows.map(|row| row.map(Ok)))? {
+        let date = stored_date("journal_entries.entry_date", &date)?;
+        let account_type = parse_account_type(&account_type)?;
         let amount = normal_balance(account_type, debits, credits)?;
 
         // Rows arrive ordered by date, at most one per account type, so the

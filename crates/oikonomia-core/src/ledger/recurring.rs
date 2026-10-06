@@ -27,10 +27,6 @@
 //! `_as_of` functions take that date from the caller so that tests can fix
 //! it.
 
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-use time::{Date, Duration, Month};
-
 use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_uuid};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{Error, Result, ValidationError};
@@ -39,6 +35,9 @@ use crate::ledger::journals::{
     post_simple_entry_unchecked,
 };
 use crate::util::{format_date, now_utc_string, parse_date, utc_today};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use time::{Date, Duration, Month};
 
 /// How often a template produces the next occurrence.
 ///
@@ -401,8 +400,9 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 /// Posts one journal entry from a template, then advances `next_date`.
 ///
 /// `entry_date` and `amount_minor` default to the template's `next_date` and
-/// `amount_minor`. Overrides are for the FE confirm sheet (adjust before
-/// save); they do not rewrite the stored template amount or change which
+/// `amount_minor`. Overrides are for the confirmation sheet of the UI, where
+/// the user can adjust either before saving; they do not rewrite the stored
+/// template amount or change which
 /// occurrence is advanced. Cadence always steps from the stored `next_date`.
 ///
 /// No background auto-post: this is the only way a template creates an entry.
@@ -420,7 +420,9 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
 /// - [`Error::Io`] on database errors.
 ///
-/// On any error neither the entry nor the new date is stored.
+/// On an error before the commit neither the entry nor the new date is
+/// stored. The template is read back after the commit to build the result;
+/// if that read fails, the error is returned although both are stored.
 pub fn post_recurring_template(
     conn: &Connection,
     id: RecurringTemplateId,
@@ -500,7 +502,8 @@ pub fn advance_next_date(
     }
 }
 
-/// `true` when `next_date` is on or before `today` (UTC calendar dates).
+/// Returns whether `next_date` is on or before `today`, both calendar dates
+/// in UTC.
 #[must_use]
 pub fn template_is_due(next_date: Date, today: Date) -> bool {
     next_date <= today
@@ -552,9 +555,10 @@ fn add_months(year: i32, month: Month, delta: i32) -> Result<(i32, Month)> {
     Ok((year, month))
 }
 
-/// Returns the same month and day `years` calendar years after `from`,
-/// overflowing as [`place_day_or_next`] does when the day does not exist
-/// there (February 29).
+/// Returns the same month and day `years` calendar years after `from`.
+///
+/// When the day does not exist in that year (February 29), it overflows as
+/// [`place_day_or_next`] does.
 ///
 /// # Errors
 ///

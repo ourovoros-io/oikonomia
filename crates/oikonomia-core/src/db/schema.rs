@@ -21,12 +21,10 @@
 //! Never edit a step that has shipped: a vault that already ran it will not
 //! run it again, so the change would reach new vaults only.
 
-use std::collections::HashSet;
-
-use rusqlite::{Connection, Transaction};
-
 use crate::db::collect_rows;
 use crate::error::{Error, Result};
+use rusqlite::{Connection, Transaction};
+use std::collections::HashSet;
 
 /// The schema version [`migrate`] brings a vault to.
 pub const CURRENT_SCHEMA_VERSION: i64 = 7;
@@ -202,13 +200,15 @@ CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
 /// v4: every document is linked to an entry and uniquely named in its book.
 ///
 /// The constraints are `entry_id NOT NULL` and `UNIQUE(entity_id, filename)`.
-/// `SQLite` cannot add a constraint in place, so the table is rebuilt after
-/// the existing data is cleaned: documents without an entry are deleted and
-/// duplicate names get a numeric suffix.
+/// `SQLite` cannot add a constraint to an existing table
+/// (<https://www.sqlite.org/lang_altertable.html>), so the table is rebuilt
+/// after the existing data is cleaned: documents without an entry are deleted
+/// and duplicate names get a numeric suffix.
 ///
 /// The clean-up, the rebuild and the version bump share the runner's
-/// transaction. `SQLite` DDL is transactional, so a crash part-way rolls all
-/// of it back. Otherwise `documents_v4` could be left half-built with
+/// transaction. `SQLite` DDL is transactional
+/// (<https://www.sqlite.org/lang_transaction.html>), so a crash part-way
+/// rolls all of it back. Otherwise `documents_v4` could be left half-built with
 /// `schema_version` still at 3, and every later unlock would run this step
 /// again and fail on the table that already exists.
 fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
@@ -251,7 +251,9 @@ fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
 /// v5: every journal line is a debit or a credit, never both and never
 /// neither.
 ///
-/// `SQLite` cannot add a `CHECK` in place, so the table is rebuilt. Existing
+/// `SQLite` cannot add a `CHECK` to an existing table
+/// (<https://www.sqlite.org/lang_altertable.html>), so the table is rebuilt.
+/// Existing
 /// lines are copied only if every one already satisfies the rule: a line that
 /// does not is a corrupt book, and the step fails with
 /// [`Error::VaultCorrupt`] instead of dropping it.
@@ -315,8 +317,9 @@ fn migrate_v6(tx: &Transaction<'_>) -> Result<()> {
 
 /// v7: the `recurring_templates` table.
 ///
-/// A template is posted only when the user asks, and `next_date` moves only
-/// after such a post. The five role-account columns are those of
+/// A template is posted only when the user asks. Nothing but such a post
+/// advances `next_date`; the user can also set it by editing the template.
+/// The five role-account columns are those of
 /// [`crate::ledger::PostSimpleEntry`].
 fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
