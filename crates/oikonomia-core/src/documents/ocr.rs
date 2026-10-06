@@ -60,10 +60,13 @@ static ENGINE: LazyLock<Mutex<Option<OcrEngine>>> = LazyLock::new(|| Mutex::new(
 ///
 /// Inference keeps the lock for a whole run, which can take seconds, and
 /// [`ocr_available`] must not wait for that. Every store is made with the
-/// lock held ([`set_engine`], [`lock_engine`]), so the flag agrees with the
-/// engine whenever the lock is free. It carries no data, only a yes or no
-/// that the next [`ensure_engine`] call checks again under the lock, so
-/// `Relaxed` is enough.
+/// lock held ([`set_engine`], [`lock_engine`]), so the stored value agrees
+/// with the engine whenever the lock is free.
+///
+/// A reader does not take the lock, so what it loads is a hint that can be
+/// stale for a moment, and `Relaxed` is enough. A stale `false` falls back
+/// to checking the model files. A stale `true` ends in [`ensure_engine`],
+/// which looks again under the lock.
 static ENGINE_LOADED: AtomicBool = AtomicBool::new(false);
 
 /// Where the two `.rten` model files are.
@@ -100,9 +103,10 @@ impl OcrModelPaths {
 /// Whether OCR can run: an engine is already loaded, or both model files
 /// exist at `paths`.
 ///
-/// Once an engine is loaded this is true whatever `paths` says. Never waits
+/// With an engine loaded this is true whatever `paths` says. Never waits
 /// for a running OCR: it reads [`ENGINE_LOADED`] instead of taking the engine
-/// lock.
+/// lock, so the answer can lag a load or a reset on another thread by a
+/// moment.
 pub(super) fn ocr_available(paths: &OcrModelPaths) -> bool {
     ENGINE_LOADED.load(Ordering::Relaxed) || paths.available()
 }
@@ -219,7 +223,8 @@ const UPSCALE_SHORT_SIDE: u32 = 1200;
 ///
 /// Enlarging adds no detail, and the recognizer misreads text that gets too
 /// large. At this factor the corpus image `english_total.jpg` (768 x 104) is
-/// read correctly, which `jpeg_ocr_smoke` in `tests/document_corpus.rs`
+/// read correctly, which `a_jpeg_is_read_through_ocr` in
+/// `tests/document_corpus.rs`
 /// checks.
 const MAX_UPSCALE: f64 = 1.5;
 
@@ -618,10 +623,11 @@ mod tests {
         drop(in_use);
         assert!(asker.join().is_ok());
 
+        assert!(available.is_ok(), "the answer must not wait for the engine");
         assert_eq!(
             available,
             Ok(false),
-            "the answer must not wait for the engine"
+            "no unit test loads an engine, so a directory without models is unavailable"
         );
     }
 

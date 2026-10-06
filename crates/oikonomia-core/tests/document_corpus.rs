@@ -1,4 +1,4 @@
-//! Offline document golden harness (week 1).
+//! Offline document golden harness.
 //!
 //! Loads `testdata/documents/MANIFEST.toml`, runs the invoice reader (and the
 //! public analyze path for PDF / JPEG), and compares locked fields to golden
@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oikonomia_core::documents::{
-    AnalyzeContext, DocumentSuggestion, EntryKindSuggestion, analyze_document_bytes,
+    AnalyzeContext, DocumentSuggestion, EntryKindSuggestion, OcrModelPaths, analyze_document_bytes,
     analyzer_status, parse_invoice_text,
 };
 use oikonomia_core::domain::ChartTemplate;
@@ -335,9 +335,11 @@ const BUNDLED_OCR_REL: &str = "apps/desktop/src-tauri/resources/ocr";
 /// a checkout without them is broken and the OCR tests fail instead of
 /// passing without reading anything.
 fn bundled_ocr_dir() -> PathBuf {
+    // The files are checked directly: the analyzer status is true for any
+    // directory once another test has loaded the engine.
     if let Some(dir) = std::env::var_os("OIKONOMIA_OCR_MODELS") {
         let path = PathBuf::from(dir);
-        if analyzer_status(Some(path.as_path())).ocr_available {
+        if OcrModelPaths::from_dir(&path).available() {
             return path;
         }
     }
@@ -345,7 +347,7 @@ fn bundled_ocr_dir() -> PathBuf {
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let bundled = workspace.join(BUNDLED_OCR_REL);
     assert!(
-        analyzer_status(Some(bundled.as_path())).ocr_available,
+        OcrModelPaths::from_dir(&bundled).available(),
         "the OCR models text-detection.rten and text-recognition.rten must be in {} \
          (or in the directory OIKONOMIA_OCR_MODELS names)",
         bundled.display()
@@ -395,7 +397,7 @@ fn golden_corpus_matches_parser() {
 
     assert!(
         compared >= 12,
-        "expected the week-1 public text/PDF fixtures, compared={compared}"
+        "expected every public text and PDF fixture, compared={compared}"
     );
 }
 
@@ -479,11 +481,11 @@ fn write_missing_goldens() {
 }
 
 #[test]
-fn jpeg_ocr_smoke() {
+fn a_jpeg_is_read_through_ocr() {
     let root = corpus_root();
     let jpeg_path = root.join("synthetic/image/english_total.jpg");
     assert!(jpeg_path.is_file(), "synthetic JPEG must be checked in");
-    let bytes = fs::read(&jpeg_path).expect("jpeg");
+    let bytes = fs::read(&jpeg_path).expect("the corpus JPEG is checked in");
 
     let model_dir = bundled_ocr_dir();
 
@@ -499,10 +501,15 @@ fn jpeg_ocr_smoke() {
         },
         Some(model_dir.as_path()),
     )
-    .expect("analyze jpeg");
+    .expect("analysis reports a failure in the notes, never as an error");
 
     let golden = load_golden(&root.join("golden/english_total_jpeg.json"));
     assert_against_golden("english-total-jpeg", &suggestion, &golden);
+
+    assert!(
+        analyzer_status(Some(Path::new("no-such-model-directory"))).ocr_available,
+        "a loaded engine answers for any directory"
+    );
 }
 
 /// A one-page PDF whose only content is an image stream marked as a JPEG
@@ -552,7 +559,7 @@ fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
         },
         Some(model_dir),
     )
-    .expect("analyze pdf")
+    .expect("analysis reports a failure in the notes, never as an error")
 }
 
 /// Runs in this file because it loads the real models: the engine is one
@@ -562,7 +569,8 @@ fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
 fn a_scanned_pdf_is_read_through_its_image_or_says_why_not() {
     let model_dir = bundled_ocr_dir();
     let root = corpus_root();
-    let jpeg = fs::read(root.join("synthetic/image/english_total.jpg")).expect("jpeg");
+    let jpeg = fs::read(root.join("synthetic/image/english_total.jpg"))
+        .expect("the corpus JPEG is checked in");
 
     let read = analyze_pdf(&scanned_pdf(&jpeg), model_dir.as_path());
     let golden = load_golden(&root.join("golden/english_total_jpeg.json"));
