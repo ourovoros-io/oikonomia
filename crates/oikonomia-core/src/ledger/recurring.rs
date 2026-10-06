@@ -18,12 +18,12 @@ use crate::util::{format_date, now_utc_string, parse_date, parse_uuid, utc_today
 ///
 /// - **Weekly:** add 7 days. The weekday is implied by `next_date`; there is
 ///   no separate weekday column.
-/// - **Monthly:** one calendar month later on `day_of_month` (1–31). When that
-///   day does not exist (31 in February), overflow to the next valid day:
-///   the 1st of the short month plus (`day_of_month` − 1) days. January 31
-///   → March 3 in a non-leap year (February 1 + 30 days). An overflow date
-///   (day ≠ `day_of_month`) is treated as belonging to the previous month so
-///   the following post lands on the next real 31st (March 3 → March 31).
+/// - **Monthly:** the first occurrence of `day_of_month` (1–31) strictly after
+///   `next_date`, so the date never moves backwards whatever day `next_date`
+///   is on. When the day does not exist in a month (31 in February), the
+///   occurrence overflows to the 1st of that month plus (`day_of_month` − 1)
+///   days: January 31 → March 3 in a non-leap year (February 1 + 30 days).
+///   The following post then lands on the next real 31st (March 3 → March 31).
 /// - **Yearly:** add one calendar year. February 29 on a non-leap year
 ///   overflows the same way (March 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -444,18 +444,20 @@ pub fn template_is_due(next_date: Date, today: Date) -> bool {
     next_date <= today
 }
 
+/// The first occurrence of `day_of_month` strictly after `from`.
+///
+/// The occurrence in `from`'s own month wins when it is still ahead: that is
+/// how an overflow date returns to the real day (March 3 for day 31 steps to
+/// March 31). Otherwise the next month's occurrence is taken, which is always
+/// after `from` because it falls on or after that month's first day.
 fn next_monthly(from: Date, day_of_month: u8) -> Result<Date> {
-    let logical = if from.day() == day_of_month {
-        (from.year(), from.month())
-    } else {
-        previous_month(from.year(), from.month())?
-    };
-    let (year, month) = add_months(logical.0, logical.1, 1)?;
-    place_day_or_next(year, month, day_of_month)
-}
+    let this_month = place_day_or_next(from.year(), from.month(), day_of_month)?;
+    if this_month > from {
+        return Ok(this_month);
+    }
 
-fn previous_month(year: i32, month: Month) -> Result<(i32, Month)> {
-    add_months(year, month, -1)
+    let (year, month) = add_months(from.year(), from.month(), 1)?;
+    place_day_or_next(year, month, day_of_month)
 }
 
 fn add_months(year: i32, month: Month, delta: i32) -> Result<(i32, Month)> {
@@ -911,6 +913,44 @@ mod tests {
         let next = advance_next_date(date("2024-01-31"), RecurringCadence::Monthly, Some(31))
             .expect("leap jan");
         assert_eq!(next, date("2024-03-02"), "Feb 1 + 30 days in a leap year");
+    }
+
+    #[test]
+    fn monthly_from_a_later_day_than_day_of_month_moves_forward() {
+        let next = advance_next_date(date("2026-01-20"), RecurringCadence::Monthly, Some(15))
+            .expect("mismatch");
+        assert_eq!(next, date("2026-02-15"));
+    }
+
+    #[test]
+    fn monthly_from_an_earlier_day_than_day_of_month_lands_in_the_same_month() {
+        let next = advance_next_date(date("2026-01-10"), RecurringCadence::Monthly, Some(15))
+            .expect("mismatch");
+        assert_eq!(next, date("2026-01-15"));
+    }
+
+    #[test]
+    fn monthly_december_advances_into_january() {
+        let advance = |from: &str, day: u8| {
+            advance_next_date(date(from), RecurringCadence::Monthly, Some(day)).expect("december")
+        };
+        assert_eq!(advance("2026-12-15", 15), date("2027-01-15"));
+        assert_eq!(advance("2026-12-20", 15), date("2027-01-15"));
+        assert_eq!(advance("2026-12-31", 31), date("2027-01-31"));
+    }
+
+    #[test]
+    fn monthly_always_moves_strictly_forward() {
+        let mut from = date("2023-12-01");
+        let end = date("2025-03-01");
+        while from < end {
+            for day in 1..=31 {
+                let next = advance_next_date(from, RecurringCadence::Monthly, Some(day))
+                    .expect("in range");
+                assert!(next > from, "from {from} day {day} gave {next}");
+            }
+            from = from.next_day().expect("in range");
+        }
     }
 
     #[test]
