@@ -39,7 +39,8 @@ use crate::vault::files::{
 };
 use crate::vault::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
 use crate::vault::paths::{
-    vault_db_path, vault_header_path, vault_init_header_path, vault_staged_header_path,
+    DB_FILE_NAME, vault_db_path, vault_header_path, vault_init_header_path,
+    vault_staged_header_path,
 };
 use crate::vault::permissions::{create_private_dir, create_private_file, restrict_to_owner};
 
@@ -228,7 +229,8 @@ impl Vault {
     ///   setting.
     /// - [`Error::Database`] for every other failure to read or migrate the
     ///   database, including one that is busy in another process.
-    /// - [`Error::Io`] when the database file cannot be inspected.
+    /// - [`Error::Io`] when the database file cannot be inspected, or a
+    ///   staged header cannot be read or published.
     ///
     /// After an error the vault is still locked.
     pub fn unlock(&mut self, password: &str) -> Result<()> {
@@ -351,7 +353,8 @@ impl Vault {
     ///   key, or the database file is missing or empty.
     /// - [`Error::Crypto`] when Argon2 fails or `SQLCipher` rejects the
     ///   rekey.
-    /// - [`Error::Io`] when the staged header cannot be written or renamed.
+    /// - [`Error::Io`] when the staged header cannot be written or renamed,
+    ///   or the database file cannot be inspected.
     /// - [`Error::Database`] when the database cannot be read, or its
     ///   write-ahead log cannot be folded in because another connection
     ///   holds it.
@@ -538,7 +541,7 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
         })?;
         if metadata.len() == 0 {
             return Err(Error::VaultCorrupt(VaultCorruption::EmptyFile {
-                file: "vault.db",
+                file: DB_FILE_NAME,
             }));
         }
     }
@@ -576,7 +579,7 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
         row.get::<_, i64>(0)
     })
-    .map_err(|err| key_check_error("read with database key", &err))?;
+    .map_err(|err| key_check_error("verify database key", &err))?;
 
     // WAL keeps readers and the writer from blocking each other. Its pages
     // are encrypted with the database key

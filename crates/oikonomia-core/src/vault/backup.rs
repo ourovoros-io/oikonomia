@@ -517,11 +517,11 @@ fn is_plaintext_sqlite(path: &Path) -> Result<bool> {
     const SQLITE_MAGIC: &[u8; 6] = b"SQLite";
 
     let mut magic = [0u8; SQLITE_MAGIC.len()];
-    let mut file = File::open(path).io("open backup snapshot")?;
+    let mut file = File::open(path).io("open database to check encryption")?;
     match file.read_exact(&mut magic) {
         Ok(()) => Ok(&magic == SQLITE_MAGIC),
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(err) => Err(Error::io("read backup snapshot", err)),
+        Err(err) => Err(Error::io("read database to check encryption", err)),
     }
 }
 
@@ -711,10 +711,8 @@ fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Resu
     while remaining > 0 {
         // `usize` to `u64` and back only fails on a platform where one does
         // not fit the other; it is reported instead of truncated.
-        let capacity = u64::try_from(buffer.len())
-            .map_err(|_| Error::io("copy backup member", "length does not fit this platform"))?;
-        let wanted = usize::try_from(remaining.min(capacity))
-            .map_err(|_| Error::io("copy backup member", "length does not fit this platform"))?;
+        let capacity = u64::try_from(buffer.len()).map_err(|_| length_overflow())?;
+        let wanted = usize::try_from(remaining.min(capacity)).map_err(|_| length_overflow())?;
         let read = match reader.read(&mut buffer[..wanted]) {
             Ok(0) => return Err(Error::BackupInvalid(BackupDefect::Truncated)),
             Ok(read) => read,
@@ -726,13 +724,16 @@ fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Resu
         writer
             .write_all(&buffer[..read])
             .io("write backup member")?;
-        let copied = u64::try_from(read)
-            .map_err(|_| Error::io("copy backup member", "length does not fit this platform"))?;
-        remaining = remaining
-            .checked_sub(copied)
-            .ok_or_else(|| Error::io("copy backup member", "length does not fit this platform"))?;
+        let copied = u64::try_from(read).map_err(|_| length_overflow())?;
+        remaining = remaining.checked_sub(copied).ok_or_else(length_overflow)?;
     }
     Ok(())
+}
+
+/// The error for a length that does not convert between `usize` and `u64`
+/// while a member is copied.
+fn length_overflow() -> Error {
+    Error::io("copy backup member", "length does not fit this platform")
 }
 
 /// Reads the name of the next member, or returns `None` when the archive

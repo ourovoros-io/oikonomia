@@ -10,9 +10,10 @@
 //! # Where the codes come from
 //!
 //! - **Core.** `oikonomia_core::Error` names its own code. A broken rule is
-//!   its `Validation` variant, whose `ValidationError` names a code of its
-//!   own and the parameters that go with it. Converted with `From`, so a
-//!   command propagates a core error with `?`.
+//!   its `Validation` variant and an unreadable CSV its `Csv` variant; the
+//!   `ValidationError` or `CsvError` inside names a code of its own and the
+//!   parameters that go with it. Converted with `From`, so a command
+//!   propagates a core error with `?`.
 //! - **The update crate.** `oikonomia_update::UpdateError` names its own
 //!   code and has no parameters. Converted with `From` as well.
 //! - **The shell.** [`DesktopError`] is the failures only the shell can
@@ -28,10 +29,10 @@
 //! there.
 //!
 //! The lower-level text of a failure (the `detail` of `database`, `io`,
-//! `serialization`, `crypto` and `analysis`, and the reason of
-//! `vault_corrupt` and `backup_invalid`) is diagnostic, may hold
-//! operating-system error text, and is never a parameter. It reaches the
-//! webview only in `message`.
+//! `serialization`, `crypto`, `analysis`, `csv_parse` and
+//! `validation_internal`, and the reason of `vault_corrupt` and
+//! `backup_invalid`) is diagnostic, may hold operating-system error text,
+//! and is never a parameter. It reaches the webview only in `message`.
 //!
 //! # Codes used more broadly than their name
 //!

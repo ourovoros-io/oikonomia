@@ -61,8 +61,9 @@
 //!   parameter.
 //!
 //! `Display` is `operation: detail`. The call site picks the variant through
-//! a helper that exists for one foreign error type only, so a `rusqlite`
-//! failure cannot be reported as a file failure by mistake:
+//! a helper. The database and file helpers exist for one foreign error type
+//! each, so a `rusqlite` failure cannot be reported as a file failure by
+//! mistake:
 //!
 //! ```ignore
 //! conn.execute(sql, params).database("insert journal entry")?;
@@ -78,7 +79,8 @@
 //! object, and [`source`](std::error::Error::source) is `None` for every
 //! variant. What a source would have told a reader is in `detail`, and what
 //! core was doing is in `operation`, as typed fields. A test compares the
-//! variant and the operation, never the text of a dependency.
+//! variant and the operation. It reads the text of a dependency only when
+//! that dependency's behaviour is the thing it pins, and says so.
 //!
 //! # Exhaustive on purpose
 //!
@@ -185,7 +187,8 @@ pub enum Error {
         detail: String,
     },
 
-    /// Encoding or decoding one of the application's own JSON files failed.
+    /// Encoding or decoding one of the application's own files failed: a JSON
+    /// file, or the journal CSV export.
     #[error("{operation}: {detail}")]
     Serialization {
         /// What core was doing, as a lowercase phrase such as
@@ -196,7 +199,7 @@ pub enum Error {
     },
 
     /// Deriving the vault key or applying a cipher setting to the database
-    /// failed.
+    /// failed, or a snapshot of the database came out unencrypted.
     #[error("{operation}: {detail}")]
     Crypto {
         /// What core was doing, as a lowercase phrase such as

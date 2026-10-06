@@ -108,17 +108,17 @@ pub struct ParsedBankCsv {
 ///   [`MAX_CSV_BYTES`], or with [`CsvError::NotUtf8`] when it is not valid
 ///   UTF-8.
 pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
-    let metadata = fs::metadata(path).io("inspect csv file")?;
+    let metadata = fs::metadata(path).io("inspect CSV file")?;
     if !metadata.is_file() {
         return Err(Error::io(
-            "read csv file",
+            "read CSV file",
             format_args!("not a regular file: {}", path.display()),
         ));
     }
     if metadata.len() > MAX_CSV_BYTES {
         return Err(CsvError::TooLarge.into());
     }
-    let bytes = fs::read(path).io("read csv file")?;
+    let bytes = fs::read(path).io("read CSV file")?;
     let text = String::from_utf8(bytes).map_err(|_| CsvError::NotUtf8)?;
     Ok(text.trim_start_matches('\u{feff}').to_owned())
 }

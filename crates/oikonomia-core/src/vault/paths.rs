@@ -50,10 +50,13 @@ pub fn default_data_dir() -> Result<PathBuf> {
         })
 }
 
+/// The file name of the encrypted `SQLCipher` database in the data directory.
+pub(crate) const DB_FILE_NAME: &str = "vault.db";
+
 /// Returns the path of the encrypted `SQLCipher` database, `vault.db`.
 #[must_use]
 pub fn vault_db_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("vault.db")
+    data_dir.join(DB_FILE_NAME)
 }
 
 /// Returns the path of the public vault header, `vault.header.json`.

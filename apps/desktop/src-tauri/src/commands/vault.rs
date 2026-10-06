@@ -180,8 +180,10 @@ pub(crate) async fn vault_lock(
 /// Returns `save_location_invalid` when the dialog's answer is not a path,
 /// `vault_uninitialized` when there is no vault to back up, `vault_corrupt`
 /// when the vault files are incomplete, `io` when the archive cannot be
-/// written, and `database` when the open vault cannot be snapshotted. Returns
-/// `task_failed` when a blocking task panics.
+/// written, `database` when the open vault cannot be snapshotted, `crypto`
+/// when that snapshot is not encrypted, and `backup_invalid` when a vault
+/// file becomes shorter while it is copied. Returns `task_failed` when a
+/// blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_backup(
     app: tauri::AppHandle,

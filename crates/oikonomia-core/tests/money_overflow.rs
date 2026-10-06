@@ -188,6 +188,9 @@ fn account_register_refuses_a_running_balance_that_overflows() {
 
 /// Pins the `SQLite` behaviour the ledger module's overflow policy relies on:
 /// `SUM` over the two asset accounts fails the query rather than wrapping.
+///
+/// The text of `SQLite`'s error is read on purpose: the variant alone would
+/// not show that the query failed for the overflow and not for another reason.
 #[test]
 fn a_total_sqlite_adds_up_fails_the_query_instead_of_wrapping() {
     let (_dir, vault) = common::vault();

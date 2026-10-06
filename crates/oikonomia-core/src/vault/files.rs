@@ -37,7 +37,7 @@ use crate::vault::permissions::create_private_file;
 pub(crate) fn sibling_path(path: &Path, suffix: &str) -> Result<PathBuf> {
     if path.file_name().is_none() {
         return Err(Error::io(
-            "name a file beside the destination",
+            "name staged file",
             format_args!("destination has no file name: {}", path.display()),
         ));
     }
@@ -84,7 +84,7 @@ pub(crate) fn replace_private_file(dest: &Path, bytes: &[u8]) -> Result<()> {
 ///
 /// [`Error::Io`] when the rename fails, including when `from` does not exist.
 pub(crate) fn rename_synced(from: &Path, to: &Path) -> Result<()> {
-    fs::rename(from, to).io("rename vault file")?;
+    fs::rename(from, to).io("rename file into place")?;
     sync_parent_dir(to);
     Ok(())
 }

@@ -66,8 +66,9 @@ impl StartupError {
 
 /// Returns what the user is told when opening the vault failed with `source`.
 ///
-/// Opening reads the data directory and the vault header and nothing else, so
-/// only a corrupt vault and a file failure are expected here. Every other
+/// Opening works on the files of the data directory and never opens the
+/// database, so only a corrupt vault and a file failure are expected here.
+/// Every other
 /// variant is listed, without a wildcard arm, so that a new core error has to
 /// be given a sentence here before this compiles.
 fn vault_problem(source: &CoreError) -> StartupProblem {

@@ -124,7 +124,7 @@ pub fn post_import_rows(
     }
     let _entity = get_entity(conn, entity_id)?;
 
-    let transaction = conn.unchecked_transaction().database("begin csv import")?;
+    let transaction = conn.unchecked_transaction().database("begin CSV import")?;
     let mut seen = load_active_keys(&transaction, entity_id)?;
     let mut posted: Vec<PostedEntryView> = Vec::new();
     let mut skipped_duplicate_count = 0u32;
@@ -140,7 +140,7 @@ pub fn post_import_rows(
         posted.push(view);
     }
 
-    transaction.commit().database("commit csv import")?;
+    transaction.commit().database("commit CSV import")?;
     Ok(CsvImportPostResult {
         posted,
         skipped_duplicate_count,
