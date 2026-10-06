@@ -441,7 +441,8 @@ pub fn resolve_mime(mime_type: &str, filename: &str) -> String {
     mime
 }
 
-fn has_extension(filename: &str, ext: &str) -> bool {
+/// Whether `filename` ends in the extension `ext`, in any letter case.
+pub(super) fn has_extension(filename: &str, ext: &str) -> bool {
     std::path::Path::new(filename)
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case(ext))
