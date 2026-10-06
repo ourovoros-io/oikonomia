@@ -64,6 +64,10 @@ choose More info, then Run anyway. Check the file against `SHA256SUMS` first.
 Updates from inside the app are verified with the same minisign signature as
 on macOS and Linux, which does not depend on that certificate.
 
+The installer embeds Microsoft's WebView2 bootstrapper. Windows 11 includes
+the runtime and Windows 10 receives it through Windows Update, so the
+bootstrapper downloads it only when the machine does not already have it.
+
 On Linux the tray icon needs a desktop that shows one (KDE, or GNOME with the
 AppIndicator extension). Without it the app works the same; reach quick-add by
 launching the app, which brings the window back.
