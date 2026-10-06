@@ -1,13 +1,46 @@
-//! Bundled offline OCR (ocrs neural models shipped with the app).
+//! OCR with the `ocrs` models that ship with the application.
 //!
-//! Models are small (~12 MB total) and run entirely on-device. No network,
-//! no Ollama, no external services.
+//! The two models, text detection and text recognition (about 12 MB
+//! together), are read from disk and run on the device. Nothing here opens a
+//! socket.
 //!
-//! Receipts: best-effort preprocessing (resampling into a bounded size,
-//! contrast) before OCR.
+//! # One engine per process
+//!
+//! [`ENGINE`] holds the loaded engine behind a mutex. [`ensure_engine`] loads
+//! it on first use from the model paths of that call; once an engine is
+//! loaded, later calls do not look at their paths. Inference keeps the lock
+//! for a whole run, so two images are never read at once.
+//! [`ocr_available`] does not take the lock: it reads [`ENGINE_LOADED`] and
+//! the model paths.
+//!
+//! A panic inside the engine is caught in [`run_ocr_on_rgb`] and reported as
+//! an error. The engine is dropped there, because its state after an unwind
+//! is unknown, and the next call loads a new one.
+//!
+//! # Preparing an image
+//!
+//! [`prepare_image`] turns the bytes of a PNG, JPEG or WebP file into what
+//! the engine reads:
+//!
+//! 1. The header is read under the decoder limits ([`MAX_DECODED_SIDE`],
+//!    [`MAX_DECODE_BYTES`]), and a shape that cannot be read (a zero side, or
+//!    more elongated than [`MAX_ASPECT_RATIO`]) is refused before any pixel
+//!    is decoded.
+//! 2. The image is decoded and reduced to 8-bit grey. Orientation is taken as
+//!    stored: an EXIF rotation tag is not applied.
+//! 3. It is resampled by the factor [`ocr_scale`] gives: small images are
+//!    enlarged a little, huge ones shrunk, so the long side never exceeds
+//!    [`MAX_LONG_SIDE`].
+//! 4. [`contrast_stretched`] inverts a dark image and raises the contrast.
+//!
+//! # Reading
+//!
+//! [`infer_text`] returns the recognized lines joined with newlines, without
+//! the lines of a single character.
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use image::imageops::{self, FilterType};
@@ -17,19 +50,40 @@ use rten::Model;
 
 use crate::error::{Error, Result};
 
+/// The one OCR engine of the process, or `None` until [`ensure_engine`] has
+/// loaded it and again after it panicked.
+///
+/// The lock is held for the whole of an inference run.
 static ENGINE: LazyLock<Mutex<Option<OcrEngine>>> = LazyLock::new(|| Mutex::new(None));
 
-/// Paths to the two shipped `.rten` models.
+/// Whether [`ENGINE`] holds a loaded engine, readable without its lock.
+///
+/// Inference keeps the lock for a whole run, which can take seconds, and
+/// [`ocr_available`] must not wait for that. Every store is made with the
+/// lock held ([`set_engine`], [`lock_engine`]), so the stored value agrees
+/// with the engine whenever the lock is free.
+///
+/// A reader does not take the lock, so what it loads is a hint that can be
+/// stale for a moment, and `Relaxed` is enough. A stale `false` falls back
+/// to checking the model files. A stale `true` ends in [`ensure_engine`],
+/// which looks again under the lock.
+static ENGINE_LOADED: AtomicBool = AtomicBool::new(false);
+
+/// Where the two `.rten` model files are.
 #[derive(Debug, Clone)]
 pub struct OcrModelPaths {
-    /// Text detection network.
+    /// The text detection model, which finds where the words are.
     pub detection: PathBuf,
-    /// Text recognition network.
+    /// The text recognition model, which reads a line of text.
     pub recognition: PathBuf,
 }
 
 impl OcrModelPaths {
-    /// Resolve models under a directory that contains the two files.
+    /// The paths of the two models in `dir`, under the names they ship with:
+    /// `text-detection.rten` and `text-recognition.rten`.
+    ///
+    /// Nothing is read; [`available`](Self::available) says whether the files
+    /// exist.
     #[must_use]
     pub fn from_dir(dir: impl AsRef<Path>) -> Self {
         let dir = dir.as_ref();
@@ -39,25 +93,48 @@ impl OcrModelPaths {
         }
     }
 
-    /// Whether both model files exist on disk.
+    /// Whether both model files exist. Their content is not checked.
     #[must_use]
     pub fn available(&self) -> bool {
         self.detection.is_file() && self.recognition.is_file()
     }
 }
 
-/// True if the OCR engine can be (or already has been) loaded.
+/// Whether OCR can run: an engine is already loaded, or both model files
+/// exist at `paths`.
+///
+/// With an engine loaded this is true whatever `paths` says. Never waits
+/// for a running OCR: it reads [`ENGINE_LOADED`] instead of taking the engine
+/// lock, so the answer can lag a load or a reset on another thread by a
+/// moment.
 pub(super) fn ocr_available(paths: &OcrModelPaths) -> bool {
-    if lock_engine().is_some() {
-        return true;
-    }
-    paths.available()
+    ENGINE_LOADED.load(Ordering::Relaxed) || paths.available()
 }
 
+/// Locks [`ENGINE`], recovering from a poisoned lock, and keeps
+/// [`ENGINE_LOADED`] in step when the slot comes back empty.
 fn lock_engine() -> std::sync::MutexGuard<'static, Option<OcrEngine>> {
-    recover_option_mutex(&ENGINE)
+    let guard = recover_option_mutex(&ENGINE);
+    // Recovery from a poisoned lock empties the slot without going through
+    // `set_engine`.
+    if guard.is_none() {
+        ENGINE_LOADED.store(false, Ordering::Relaxed);
+    }
+    guard
 }
 
+/// Puts `engine` in the locked `slot` and records whether one is loaded.
+fn set_engine(slot: &mut Option<OcrEngine>, engine: Option<OcrEngine>) {
+    ENGINE_LOADED.store(engine.is_some(), Ordering::Relaxed);
+    *slot = engine;
+}
+
+/// Locks `mutex`. When a panic poisoned it, clears the poison and empties the
+/// slot.
+///
+/// The slot is emptied because the value was in use when its holder
+/// panicked, so it may be half-updated; `None` makes the next user build a
+/// new one. For the engine that means reloading the models.
 fn recover_option_mutex<T>(mutex: &Mutex<Option<T>>) -> std::sync::MutexGuard<'_, Option<T>> {
     match mutex.lock() {
         Ok(guard) => guard,
@@ -70,11 +147,15 @@ fn recover_option_mutex<T>(mutex: &Mutex<Option<T>>) -> std::sync::MutexGuard<'_
     }
 }
 
-/// Ensure the global OCR engine is loaded (lazy, once).
+/// Loads the engine into [`ENGINE`] unless one is loaded already.
+///
+/// Loading reads both model files, so the first call is slow and the lock is
+/// held while it runs.
 ///
 /// # Errors
 ///
-/// Missing model files or engine init failure.
+/// [`Error::Analysis`] when a model file is missing, when a model does not
+/// load, or when the engine cannot be built from the two models.
 pub(super) fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
     let mut guard = lock_engine();
 
@@ -97,32 +178,36 @@ pub(super) fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
     );
 
     let detection = Model::load_file(&paths.detection)
-        .map_err(|e| Error::Analysis(format!("load detection model: {e}")))?;
+        .map_err(|err| Error::Analysis(format!("load detection model: {err}")))?;
     let recognition = Model::load_file(&paths.recognition)
-        .map_err(|e| Error::Analysis(format!("load recognition model: {e}")))?;
+        .map_err(|err| Error::Analysis(format!("load recognition model: {err}")))?;
 
     let engine = OcrEngine::new(OcrEngineParams {
         detection_model: Some(detection),
         recognition_model: Some(recognition),
         ..Default::default()
     })
-    .map_err(|e| Error::Analysis(format!("init OCR engine: {e}")))?;
+    .map_err(|err| Error::Analysis(format!("init OCR engine: {err}")))?;
 
-    *guard = Some(engine);
+    set_engine(&mut guard, Some(engine));
     Ok(())
 }
 
-/// Run OCR on an image (PNG/JPEG/WebP bytes) and return plain text lines joined.
+/// Reads the text of an image file (PNG, JPEG or WebP bytes).
 ///
-/// Applies best-effort preprocessing for phone photos / receipts: orientation is
-/// left as stored; the image is resampled into a bounded size; mild contrast
-/// boost.
+/// The image is prepared first ([`prepare_image`]). The text is the
+/// recognized lines joined with newlines, and is empty when none was found.
 ///
 /// # Errors
 ///
-/// Missing models, an image that does not decode or is over the decoding
-/// limits, an image with a zero side or too elongated to read, or an OCR
-/// runtime error.
+/// [`Error::Analysis`] in every case:
+///
+/// - the models are missing or do not load ([`ensure_engine`]);
+/// - the bytes are not an image the decoder knows, or the image is over the
+///   decoding limits;
+/// - the image has a zero side or is more elongated than
+///   [`MAX_ASPECT_RATIO`];
+/// - the engine fails or panics.
 pub(super) fn ocr_image_bytes(paths: &OcrModelPaths, data: &[u8]) -> Result<String> {
     ensure_engine(paths)?;
 
@@ -138,8 +223,9 @@ const UPSCALE_SHORT_SIDE: u32 = 1200;
 ///
 /// Enlarging adds no detail, and the recognizer misreads text that gets too
 /// large. At this factor the corpus image `english_total.jpg` (768 x 104) is
-/// read correctly, which `jpeg_ocr_smoke` in `tests/document_corpus.rs`
-/// checks when the models are present.
+/// read correctly, which `a_jpeg_is_read_through_ocr` in
+/// `tests/document_corpus.rs`
+/// checks.
 const MAX_UPSCALE: f64 = 1.5;
 
 /// Longest side a prepared image may have. Together with the shape of an
@@ -166,7 +252,14 @@ const MAX_DECODE_BYTES: u64 = 256 * 1024 * 1024;
 /// room for wider shapes.
 const MAX_DECODED_SIDE: u32 = 16_384;
 
-/// Decodes image bytes and prepares the picture for OCR.
+/// Decodes image bytes and prepares the picture for OCR, by the four steps in
+/// the module documentation.
+///
+/// # Errors
+///
+/// [`Error::Analysis`] when the format is not recognized, the header or the
+/// pixels do not decode within the limits, or [`ocr_scale`] refuses the
+/// shape.
 fn prepare_image(data: &[u8]) -> Result<RgbImage> {
     // The header is read first, so a shape that would be refused after
     // decoding is refused before any pixel is decoded.
@@ -182,7 +275,13 @@ fn prepare_image(data: &[u8]) -> Result<RgbImage> {
     preprocess_for_receipt(decoded)
 }
 
-/// A reader over `data` with its format guessed and the decoding limits set.
+/// A reader over `data` with its format guessed from the content and the
+/// decoding limits set.
+///
+/// # Errors
+///
+/// [`Error::Analysis`] when the format cannot be guessed. Reading from memory
+/// does not fail otherwise.
 fn image_reader(data: &[u8]) -> Result<ImageReader<Cursor<&[u8]>>> {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_DECODED_SIDE);
@@ -196,7 +295,7 @@ fn image_reader(data: &[u8]) -> Result<ImageReader<Cursor<&[u8]>>> {
     Ok(reader)
 }
 
-/// Scales a dimension, clamped into the valid non-zero range.
+/// `side` multiplied by `scale` and rounded, at least 1.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -246,11 +345,18 @@ fn ocr_scale(width: u32, height: u32) -> Result<f64> {
     Ok(scale)
 }
 
-fn preprocess_for_receipt(img: DynamicImage) -> Result<RgbImage> {
-    // Convert to luma then back to RGB — OCR is greyscale; colour UIs (screenshots)
-    // confuse detection less after this. An 8-bit grey image is taken as it
-    // is, without a copy.
-    let mut luma = img.into_luma8();
+/// Reduces a decoded image to grey, resamples it by [`ocr_scale`] and raises
+/// its contrast.
+///
+/// Grey because the models read luminance, and a coloured ground (a
+/// screenshot of a user interface) gets in the way of detection less once it
+/// is grey. An 8-bit grey image is taken as it is, without a copy.
+///
+/// # Errors
+///
+/// [`Error::Analysis`] when [`ocr_scale`] refuses the shape.
+fn preprocess_for_receipt(image: DynamicImage) -> Result<RgbImage> {
+    let mut luma = image.into_luma8();
     let (width, height) = luma.dimensions();
 
     let scale = ocr_scale(width, height)?;
@@ -269,6 +375,30 @@ fn preprocess_for_receipt(img: DynamicImage) -> Result<RgbImage> {
     Ok(contrast_stretched(&luma))
 }
 
+/// The grey level halfway between black and white, and the mean assumed for
+/// an image without pixels.
+const MID_GREY: u8 = 128;
+
+/// Mean grey level under which an image is taken as light text on a dark
+/// ground and inverted.
+///
+/// The reason for 90 is not recorded. No test depends on it: the corpus
+/// image is read with inversion never applied and with it always applied.
+const DARK_IMAGE_MEAN: u8 = 90;
+
+/// How much the distance of a pixel from mid-grey is multiplied by.
+///
+/// The reason for 1.35 is not recorded. No test depends on it: the corpus
+/// image is read at 1.0, which is no stretch, and at 3.0.
+const CONTRAST_GAIN: f32 = 1.35;
+
+/// Exponent applied after the contrast stretch. Under 1, so midtones get
+/// lighter.
+///
+/// The reason for 0.92 is not recorded. The corpus image is read the same
+/// at 1.0, which is no gamma, and is not read at 0.5.
+const MIDTONE_GAMMA: f32 = 0.92;
+
 /// Raises the contrast of a greyscale image and returns it as RGB.
 ///
 /// Helps faded thermal receipts and UI screenshots. A dark image (dark-mode
@@ -283,19 +413,18 @@ fn contrast_stretched(luma: &image::GrayImage) -> RgbImage {
     // A mean of u8 pixels always fits u8; try_from guards the impossible case.
     let mean = sum
         .checked_div(count)
-        .map_or(128, |m| u8::try_from(m).unwrap_or(u8::MAX));
-    let invert = mean < 90;
+        .map_or(MID_GREY, |mean| u8::try_from(mean).unwrap_or(u8::MAX));
+    let invert = mean < DARK_IMAGE_MEAN;
 
     let mut rgb = RgbImage::new(luma.width(), luma.height());
-    let contrast = 1.35_f32;
     for (x, y, pixel) in luma.enumerate_pixels() {
         let mut value = f32::from(pixel[0]) / 255.0;
         if invert {
             value = 1.0 - value;
         }
         // Contrast around mid-grey, then a soft gamma to open midtones.
-        value = ((value - 0.5) * contrast + 0.5).clamp(0.0, 1.0);
-        value = value.powf(0.92);
+        value = ((value - 0.5) * CONTRAST_GAIN + 0.5).clamp(0.0, 1.0);
+        value = value.powf(MIDTONE_GAMMA);
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -308,10 +437,17 @@ fn contrast_stretched(luma: &image::GrayImage) -> RgbImage {
     rgb
 }
 
-/// Runs the engine that [`ensure_engine`] loaded on a prepared image.
-fn run_ocr_on_rgb(img: &RgbImage) -> Result<String> {
-    let img_source = ImageSource::from_bytes(img.as_raw(), img.dimensions())
-        .map_err(|e| Error::Analysis(format!("image source: {e}")))?;
+/// Runs the loaded engine on a prepared image, holding the engine lock for
+/// the whole run.
+///
+/// # Errors
+///
+/// [`Error::Analysis`] when no engine is loaded, when the engine reports an
+/// error, or when it panics. After a panic the engine is dropped and
+/// [`ensure_engine`] loads a new one on the next call.
+fn run_ocr_on_rgb(image: &RgbImage) -> Result<String> {
+    let image_source = ImageSource::from_bytes(image.as_raw(), image.dimensions())
+        .map_err(|err| Error::Analysis(format!("image source: {err}")))?;
 
     let mut guard = lock_engine();
     let engine = guard
@@ -319,48 +455,74 @@ fn run_ocr_on_rgb(img: &RgbImage) -> Result<String> {
         .ok_or_else(|| Error::Analysis("OCR engine not loaded".into()))?;
 
     let inferred = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        infer_text(engine, img_source)
+        infer_text(engine, image_source)
     }));
 
     if let Ok(result) = inferred {
         result
     } else {
-        *guard = None;
+        set_engine(&mut guard, None);
         Err(Error::Analysis("OCR engine panicked".into()))
     }
 }
 
-fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<String> {
-    let ocr_input = engine
-        .prepare_input(img_source)
-        .map_err(|e| Error::Analysis(format!("OCR prepare: {e}")))?;
+/// Most characters of a recognized line that is dropped as noise: a line of
+/// one character is a speck or a rule, not text. No test depends on it.
+const NOISE_LINE_CHARS: usize = 1;
 
-    // Prefer the high-level API when possible for denser text recovery.
+/// Most characters of a first-pass reading that is not returned as it is.
+///
+/// The same number as `MIN_PDF_TEXT_CHARS` in the analyzer. The reason for 8
+/// is not recorded, and no test depends on it.
+const SPARSE_TEXT_CHARS: usize = 8;
+
+/// Reads the text of a prepared image.
+///
+/// The first pass is `OcrEngine::get_text`. When it fails, or yields
+/// [`SPARSE_TEXT_CHARS`] characters or fewer, a second pass calls the three
+/// steps `get_text` is made of (`detect_words`, `find_text_lines`,
+/// `recognize_text`; `ocrs` 0.13 `src/lib.rs`) one by one. The second pass
+/// therefore recognizes the same text. What it changes is that a failure
+/// names the step that failed, and that a short reading is returned
+/// untrimmed.
+///
+/// Both passes drop lines of [`NOISE_LINE_CHARS`] or fewer. Returns an empty
+/// string when nothing was recognized.
+///
+/// # Errors
+///
+/// [`Error::Analysis`] naming the step that failed: preparing the input,
+/// detecting words or recognizing text.
+fn infer_text(engine: &mut OcrEngine, image_source: ImageSource<'_>) -> Result<String> {
+    let ocr_input = engine
+        .prepare_input(image_source)
+        .map_err(|err| Error::Analysis(format!("OCR prepare: {err}")))?;
+
     if let Ok(blob) = engine.get_text(&ocr_input) {
         let cleaned = blob
             .lines()
             .map(str::trim)
-            .filter(|l| l.chars().count() > 1)
+            .filter(|line| line.chars().count() > NOISE_LINE_CHARS)
             .collect::<Vec<_>>()
             .join("\n");
-        if cleaned.chars().count() > 8 {
+        if cleaned.chars().count() > SPARSE_TEXT_CHARS {
             return Ok(cleaned);
         }
     }
 
     let word_rects = engine
         .detect_words(&ocr_input)
-        .map_err(|e| Error::Analysis(format!("OCR detect: {e}")))?;
+        .map_err(|err| Error::Analysis(format!("OCR detect: {err}")))?;
     let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
     let line_texts = engine
         .recognize_text(&ocr_input, &line_rects)
-        .map_err(|e| Error::Analysis(format!("OCR recognize: {e}")))?;
+        .map_err(|err| Error::Analysis(format!("OCR recognize: {err}")))?;
 
     let mut lines = Vec::new();
     for line in line_texts.iter().flatten() {
-        let s = line.to_string();
-        if s.chars().count() > 1 {
-            lines.push(s);
+        let text = line.to_string();
+        if text.chars().count() > NOISE_LINE_CHARS {
+            lines.push(text);
         }
     }
 
@@ -370,9 +532,12 @@ fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<Str
 #[cfg(test)]
 #[expect(clippy::panic, reason = "test poisons a local mutex on purpose")]
 mod tests {
-    use super::{prepare_image, recover_option_mutex};
     use std::io::Cursor;
     use std::sync::Mutex;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::{ENGINE, OcrModelPaths, ocr_available, prepare_image, recover_option_mutex};
 
     /// A white PNG of the given size.
     fn png(width: u32, height: u32) -> Vec<u8> {
@@ -452,6 +617,31 @@ mod tests {
     }
 
     #[test]
+    fn availability_is_answered_while_the_engine_is_in_use() {
+        // Inference holds this lock for its whole run.
+        let in_use = recover_option_mutex(&ENGINE);
+        let (answer, answered) = mpsc::channel();
+
+        let asker = std::thread::spawn(move || {
+            let paths = OcrModelPaths::from_dir("no-such-model-directory");
+            let _ = answer.send(ocr_available(&paths));
+        });
+
+        // An answer that needs the lock never comes while it is held here;
+        // the wait only bounds how long that failure takes to show.
+        let available = answered.recv_timeout(Duration::from_secs(30));
+        drop(in_use);
+        assert!(asker.join().is_ok());
+
+        assert!(available.is_ok(), "the answer must not wait for the engine");
+        assert_eq!(
+            available,
+            Ok(false),
+            "no unit test loads an engine, so a directory without models is unavailable"
+        );
+    }
+
+    #[test]
     fn recover_option_mutex_clears_poison() {
         let mutex = Mutex::new(Some(7_i32));
         let _ = std::panic::catch_unwind(|| {
@@ -463,6 +653,6 @@ mod tests {
         assert!(guard.is_none());
         drop(guard);
         assert!(!mutex.is_poisoned());
-        assert!(mutex.lock().is_ok_and(|g| g.is_none()));
+        assert!(mutex.lock().is_ok_and(|guard| guard.is_none()));
     }
 }
