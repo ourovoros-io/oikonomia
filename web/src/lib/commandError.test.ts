@@ -83,7 +83,9 @@ describe('command error localization', () => {
 
     for (const code of codes) {
       const unworded = UNWORDED_PARAMS[code] ?? []
-      const expected = [...(paramsByCode[code] ?? [])].filter((name) => !unworded.includes(name)).sort()
+      const expected = [...(paramsByCode[code] ?? [])]
+        .filter((name) => !unworded.includes(name))
+        .sort()
       for (const [locale, catalog] of Object.entries(catalogs)) {
         const copy = flattenMessages(catalog)[ERROR_CODE_KEYS[code]]
         const used = [...new Set([...copy.matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort()

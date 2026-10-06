@@ -89,7 +89,10 @@ fn a_step_that_fails_part_way_is_undone_and_the_steps_before_it_stay() {
     let failed = migrate(conn);
 
     assert!(
-        matches!(&failed, Err(Error::Database { operation, .. }) if *operation == "create documents table"),
+        matches!(
+            &failed,
+            Err(Error::Database { operation, .. }) if *operation == "create documents table"
+        ),
         "{failed:?}"
     );
     assert_eq!(
