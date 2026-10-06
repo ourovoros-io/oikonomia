@@ -25,7 +25,8 @@ pub const UPDATE_FEED_URL: &str =
 const MAX_MANIFEST_BYTES: usize = 1_048_576;
 const MAX_SIGNATURE_BYTES: usize = 16_384;
 const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
-const MAX_REDIRECTS: u8 = 5;
+/// Bounds how many redirects one fetch follows before it is given up.
+pub(crate) const MAX_REDIRECTS: u8 = 5;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// `{os}-{arch}` used by Tauri static manifests (`linux-x86_64`, `darwin-aarch64`).
@@ -263,7 +264,9 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
     }
 }
 
-fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome> {
+/// Runs the check and keeps the cause of a failure, which [`perform_check`]
+/// logs and reduces to [`CheckOutcome::Failed`].
+pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome> {
     let (final_url, body, status) =
         fetch_bytes(config, &config.feed_url, MAX_MANIFEST_BYTES, true)?;
     if status == 204 {
@@ -531,34 +534,38 @@ fn fetch_once(
         .build();
 
     let mut url = start.clone();
-    let mut hop = 0;
+    let mut redirects_followed = 0_u8;
     loop {
         if !config.host_policy.is_allowed_fetch_url(&url) {
             return Err(FetchFail::Denied);
         }
-        match agent.get(url.as_str()).call() {
-            Ok(response) => {
-                let status = response.status();
-                if status == 204 {
-                    return Ok((Vec::new(), 204));
-                }
-                if status != 200 {
-                    return Err(FetchFail::Network);
-                }
+
+        // With `redirects(0)` ureq 2 hands a 3xx back as `Ok` (`connect` in
+        // its `unit.rs`) and reports only 4xx and 5xx as `Error::Status`, so
+        // redirects are followed here, one policy check per hop.
+        let response = agent
+            .get(url.as_str())
+            .call()
+            .map_err(|_| FetchFail::Network)?;
+
+        match response.status() {
+            200 => {
                 let bytes = read_capped(response, max_bytes)?;
-                return Ok((bytes, status));
+                return Ok((bytes, 200));
             }
-            Err(ureq::Error::Status(code, response)) if is_redirect(code) => {
-                hop += 1;
-                if hop > MAX_REDIRECTS {
+            204 => return Ok((Vec::new(), 204)),
+            status if is_redirect(status) => {
+                if redirects_followed == MAX_REDIRECTS {
                     return Err(FetchFail::Network);
                 }
+                redirects_followed += 1;
+
                 let Some(location) = response.header("Location") else {
                     return Err(FetchFail::Network);
                 };
                 url = resolve_redirect(&url, location)?;
             }
-            Err(_) => return Err(FetchFail::Network),
+            _ => return Err(FetchFail::Network),
         }
     }
 }
