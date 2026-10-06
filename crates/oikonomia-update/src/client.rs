@@ -43,6 +43,7 @@
 //! two runs of the installer do to each other is the installer's concern
 //! and is not tested here.
 
+use crate::artifact_limit::MAX_ARTIFACT_BYTES;
 use crate::error::{FeedRefusal, Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
@@ -78,13 +79,6 @@ pub(crate) const MAX_MANIFEST_BYTES: usize = 1_048_576;
 /// A minisign signature file is four short lines, and the Tauri signer's
 /// base64 of it is about 400 bytes.
 pub(crate) const MAX_SIGNATURE_BYTES: usize = 16_384;
-
-/// The largest artifact that is downloaded: 200 MiB.
-///
-/// The artifact is held in memory until its digest and signature are checked,
-/// so this is also the most memory an install takes. It has to stay above the
-/// size of the largest installer the release workflow builds.
-pub(crate) const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
 
 /// The most redirects one fetch follows before it fails.
 ///
@@ -493,8 +487,8 @@ pub(crate) fn current_updater_platform() -> String {
 /// Returns [`UpdateError::ArtifactUrl`] when the feed URL or a redirect from
 /// it is off the allow-list, or the artifact URL in the manifest does not
 /// parse, is off the allow-list or ends in `.deb`;
-/// [`UpdateError::Network`] when the feed or its signature cannot be fetched;
-/// [`UpdateError::ResponseTooLarge`] when either exceeds its size limit;
+/// [`UpdateError::Network`] when the feed or its signature cannot be fetched
+/// or exceeds its size limit;
 /// [`UpdateError::ManifestSignature`] when the signature is absent or does
 /// not verify, or the manifest's artifact signature is empty;
 /// [`UpdateError::ManifestParse`] when the signed body is not the expected
@@ -558,12 +552,13 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 ///
 /// Returns [`UpdateError::CacheIo`] when the cache directory cannot be
 /// created or made private, or the file cannot be written or moved to its
-/// name, as when a directory is at that name; [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect
-/// from it, is off the allow-list; [`UpdateError::Network`] when the
-/// download fails or the server answers 204;
-/// [`UpdateError::ResponseTooLarge`] when the artifact exceeds
-/// [`MAX_ARTIFACT_BYTES`]; and [`UpdateError::ArtifactIntegrity`] when the
-/// digest or the signature of the download does not match.
+/// name, as when a directory is at that name;
+/// [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect from it,
+/// is off the allow-list; [`UpdateError::Network`] when the download fails or
+/// the server answers 204; [`UpdateError::ArtifactTooLarge`] when the
+/// artifact exceeds [`MAX_ARTIFACT_BYTES`]; and
+/// [`UpdateError::ArtifactIntegrity`] when the digest or the signature of
+/// the download does not match.
 pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
     prepare_cache_dir(&config.cache_dir).map_err(UpdateError::CacheIo)?;
 
@@ -1098,25 +1093,33 @@ fn signature_url_for(feed: &Url) -> Url {
 /// # Errors
 ///
 /// Returns [`UpdateError::ArtifactUrl`] when `url` or a redirect from it is
-/// off the allow-list; [`UpdateError::ResponseTooLarge`] when the body
-/// exceeds the cap of `resource`; [`UpdateError::ManifestSignature`] when
-/// `resource` is the feed signature and the server answers 404; and
-/// [`UpdateError::Network`] for every other failure.
+/// off the allow-list; [`UpdateError::ArtifactTooLarge`] when `resource` is
+/// the artifact and the body exceeds its cap;
+/// [`UpdateError::ManifestSignature`] when `resource` is the feed signature
+/// and the server answers 404; and [`UpdateError::Network`] for every other
+/// failure, a feed or feed signature over its cap included.
 fn fetch(config: &ClientConfig, url: &Url, resource: Resource) -> Result<Fetched> {
     let mut request_url = url.clone();
     if resource.names_this_copy() {
         append_identity_query(&mut request_url, config);
     }
 
-    fetch_following_redirects(config, request_url, resource).map_err(|failure| match failure {
-        FetchFailure::Denied => UpdateError::ArtifactUrl,
-        FetchFailure::TooLarge => UpdateError::ResponseTooLarge,
-        // A feed published without its signature is a feed that cannot be
-        // trusted, which is a different finding from a server in trouble.
-        FetchFailure::Status(404) if matches!(resource, Resource::ManifestSignature) => {
-            UpdateError::ManifestSignature
+    fetch_following_redirects(config, request_url, resource).map_err(|failure| {
+        match (failure, resource) {
+            (FetchFailure::Denied, _) => UpdateError::ArtifactUrl,
+            // Retrying cannot help, so the user must not be told to check the
+            // connection.
+            (FetchFailure::TooLarge, Resource::Artifact) => UpdateError::ArtifactTooLarge,
+            // A feed published without its signature is a feed that cannot be
+            // trusted, which is a different finding from a server in trouble.
+            (FetchFailure::Status(404), Resource::ManifestSignature) => {
+                UpdateError::ManifestSignature
+            }
+            // An oversized manifest or signature is a broken feed and is
+            // reported like one that could not be fetched.
+            (FetchFailure::TooLarge, Resource::Manifest | Resource::ManifestSignature)
+            | (FetchFailure::Status(_) | FetchFailure::Network, _) => UpdateError::Network,
         }
-        FetchFailure::Status(_) | FetchFailure::Network => UpdateError::Network,
     })
 }
 

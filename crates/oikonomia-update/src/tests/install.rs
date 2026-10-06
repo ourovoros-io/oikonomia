@@ -1,9 +1,8 @@
 //! The install: download, verification and hand-off to the installer, and
 //! the machine's installing state around them.
 
-use crate::client::{
-    InstallHandoff, InstallOutcome, InstallRoute, MAX_ARTIFACT_BYTES, download_and_verify,
-};
+use crate::artifact_limit::MAX_ARTIFACT_BYTES;
+use crate::client::{InstallHandoff, InstallOutcome, InstallRoute, download_and_verify};
 use crate::error::UpdateError;
 use crate::machine::{CheckStart, UpdateMachine};
 use crate::status::UpdateStatus;
@@ -338,6 +337,43 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
+/// The feed's sha256 names the tampered bytes, so only the artifact's
+/// signature stands between them and the installer.
+#[test]
+fn artifact_matching_its_hash_but_not_its_signature_is_refused() {
+    let (public_key, secret_key) = test_keys();
+    let server = Server::run();
+    let payload = b"real-bytes";
+    let tampered = b"real-bytez";
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
+    let body = static_manifest(
+        "0.2.0",
+        "n",
+        artifact.as_str(),
+        &sign(&secret_key, payload),
+        &sha256_hex(tampered),
+    );
+    let signature = sign(&secret_key, body.as_bytes());
+    serve_signed_manifest(&server, &body, &signature);
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/Oikonomia.AppImage"))
+            .respond_with(status_code(200).body(tampered.as_slice())),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &public_key,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+    let offer = available_offer(&config);
+    let err = download_and_verify(&config, &offer).expect_err("tampered artifact");
+    assert_eq!(err.code(), "update_artifact_integrity");
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
+}
+
 #[test]
 fn artifact_download_may_outlast_the_feed_deadline_while_bytes_keep_arriving() {
     let (public_key, secret_key) = test_keys();
@@ -379,7 +415,7 @@ fn artifact_over_the_size_cap_is_refused_and_leaves_no_file() {
 
     let err = download_and_verify(&config, &offer).expect_err("over the cap");
 
-    assert_eq!(err.code(), "update_response_too_large");
+    assert_eq!(err.code(), "update_artifact_too_large");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 

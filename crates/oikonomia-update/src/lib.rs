@@ -7,11 +7,13 @@
 //! key, and it is shown only an [`UpdateStatus`].
 //!
 //! The crate also holds the release-side half of the same contract
-//! ([`assemble_manifest`], the release-set functions and the `assemble_feed`
-//! binary). The client's tests parse what the release side writes, and the
-//! release side checks a feed before publication with the functions the
-//! client checks it with ([`verify_signature`], [`sha256_hex`] and
-//! [`check_feed_as_client`]), so the two cannot drift apart.
+//! ([`assemble_manifest`], the release-set functions, the artifact size
+//! check and the `assemble_feed` binary). The client's tests parse what the
+//! release side writes, and the release side checks a feed, its signatures,
+//! digests and sizes before publication with the functions and the limit
+//! the client uses ([`verify_signature`], [`sha256_hex`],
+//! [`check_feed_as_client`] and [`check_artifact_file`]), so the two cannot
+//! drift apart.
 //!
 //! # Trust root
 //!
@@ -107,8 +109,14 @@
 //!
 //! - `MAX_MANIFEST_BYTES`, 1 MiB, for the feed;
 //! - `MAX_SIGNATURE_BYTES`, 16 KiB, for its signature;
-//! - `MAX_ARTIFACT_BYTES`, 200 MiB, for the artifact, which is held in
-//!   memory until it is verified.
+//! - [`MAX_ARTIFACT_BYTES`], 200 MiB, for the artifact, which is held in
+//!   memory until it is verified. The release lane reads the same constant
+//!   through [`check_artifact_file`], so a release cannot publish an
+//!   installer the client would refuse to download.
+//!
+//! An artifact over its limit fails as [`UpdateError::ArtifactTooLarge`]. A
+//! feed or signature over its limit is a broken feed and fails as
+//! [`UpdateError::Network`].
 //!
 //! Times:
 //!
@@ -175,6 +183,7 @@
 
 #![forbid(unsafe_code)]
 
+mod artifact_limit;
 mod client;
 mod error;
 mod feed;
@@ -186,6 +195,7 @@ mod status;
 mod verify;
 mod version;
 
+pub use crate::artifact_limit::{ArtifactSizeError, MAX_ARTIFACT_BYTES, check_artifact_file};
 pub use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
     VerifiedOffer, check_feed_as_client, install_offer, perform_check,
@@ -194,8 +204,9 @@ pub use crate::error::{FeedRefusal, Result, UpdateError};
 pub use crate::feed::{FeedArtifact, assemble_manifest};
 pub use crate::machine::{CheckStart, UpdateMachine};
 pub use crate::release_set::{
-    ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets, feed_entries,
-    feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
+    ReleaseSetError, UpdaterArtifactKind, WindowsBuild, checksum_line, checksummed_assets,
+    feed_entries, feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
+    updater_artifact_kinds,
 };
 pub use crate::status::UpdateStatus;
 pub use crate::verify::{sha256_hex, verify_signature};

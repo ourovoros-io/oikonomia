@@ -42,7 +42,7 @@
     ],
     "macOS": { "minimumSystemVersion": "12.0" },
     "windows": {
-      "webviewInstallMode": { "type": "offlineInstaller" },
+      "webviewInstallMode": { "type": "embedBootstrapper" },
       "nsis": { "installMode": "currentUser" }
     },
     "icon": [

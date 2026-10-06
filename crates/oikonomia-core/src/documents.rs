@@ -14,9 +14,11 @@
 //!
 //! 1. **Kind** (`analyze.rs`). The MIME type and the file extension sort the
 //!    file: image, plain text, PDF, or nothing readable.
-//! 2. **PDF budget** (`analyze.rs`, `pdf_budget.rs`). A PDF is parsed once. A
-//!    file over 8 MiB, over 50 pages, or whose streams decode to over 32 MiB
-//!    is not read at all.
+//! 2. **PDF budget** (`pdf_load.rs`, `pdf_budget.rs`, `pdf_nesting.rs`). A
+//!    PDF is parsed once. A file over 8 MiB, over 50 pages, or whose streams
+//!    decode to over 32 MiB is not read at all. Nor, checked last, is one
+//!    whose forms or page tree would make pdf-extract recurse without end:
+//!    that overflows the stack, which no panic handler catches.
 //! 3. **Whole-document text** (`analyze.rs`). pdf-extract reads the text
 //!    layer of the whole PDF.
 //! 4. **Per-page text** (`analyze.rs`). If that fails, each page is read on
@@ -53,6 +55,8 @@ mod brands;
 mod invoice;
 mod ocr;
 mod pdf_budget;
+mod pdf_load;
+mod pdf_nesting;
 mod pdf_repair;
 mod store;
 

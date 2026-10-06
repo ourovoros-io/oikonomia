@@ -13,16 +13,20 @@
 //! - `unpublished` lists the draft assets that must not be published;
 //! - `fixed-copies` writes the version-free copies the website links to;
 //! - `fixed-names` prints the version-free names a release must carry;
-//! - `checksums` writes the release's `SHA256SUMS` file.
+//! - `checksums` writes the release's `SHA256SUMS` file;
+//! - `check-sizes` refuses an updater artifact larger than the client will
+//!   download. `--dir` scans a bundle for the files a feed can name;
+//!   `--manifest` with `--dir` checks exactly the files that feed points at.
 //!
 //! A subcommand prints its result to standard output and nothing else, so a
 //! workflow can read it line by line. A failure prints one line to standard
 //! error and exits with status 1.
 
 use oikonomia_update::{
-    FeedArtifact, FeedRefusal, ReleaseSetError, UpdateError, WindowsBuild, assemble_manifest,
-    check_feed_as_client, checksum_line, checksummed_assets, feed_entries, feed_platform_keys,
-    fixed_name_copies, fixed_names, is_published_asset, sha256_hex, verify_signature,
+    ArtifactSizeError, FeedArtifact, FeedRefusal, ReleaseSetError, UpdateError, WindowsBuild,
+    assemble_manifest, check_artifact_file, check_feed_as_client, checksum_line,
+    checksummed_assets, feed_entries, feed_platform_keys, fixed_name_copies, fixed_names,
+    is_published_asset, sha256_hex, updater_artifact_kinds, verify_signature,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -42,7 +46,9 @@ const USAGE: &str = "usage:
   assemble_feed unpublished [--with-windows] <asset-name>...
   assemble_feed checksums --dir <artifact-dir> --out <SHA256SUMS> [--with-windows]
   assemble_feed fixed-copies --dir <artifact-dir> [--with-windows]
-  assemble_feed fixed-names [--with-windows]";
+  assemble_feed fixed-names [--with-windows]
+  assemble_feed check-sizes --dir <bundle-or-artifact-dir>
+  assemble_feed check-sizes --manifest <latest.json> --dir <artifact-dir>";
 
 /// The flag that includes the Windows installer in the release.
 const WITH_WINDOWS: &str = "--with-windows";
@@ -153,6 +159,34 @@ enum CliError {
     #[error(transparent)]
     Refused(#[from] FeedRefusal),
 
+    /// A bundle directory holds no file a feed could name.
+    #[error("{}: no updater artifact matching {suffixes}", directory.display())]
+    NoUpdaterArtifact {
+        /// The directory that was scanned.
+        directory: PathBuf,
+        /// The suffixes that were looked for, comma-separated.
+        suffixes: String,
+    },
+
+    /// A file named like an updater artifact is a symbolic link.
+    #[error("{}: updater artifact is a symlink", path.display())]
+    SymlinkedArtifact {
+        /// The link.
+        path: PathBuf,
+    },
+
+    /// A feed lists no platform, so there is nothing to check.
+    #[error("{}: no platforms", path.display())]
+    EmptyFeed {
+        /// The feed file.
+        path: PathBuf,
+    },
+
+    /// One or more updater artifacts are missing, are not regular files, or
+    /// are larger than the update client will download.
+    #[error("{0}")]
+    ArtifactSizes(SizeFailures),
+
     /// The draft does not hold the files the release needs.
     #[error(transparent)]
     ReleaseSet(#[from] ReleaseSetError),
@@ -196,6 +230,56 @@ struct FeedEntry {
     sha256: String,
 }
 
+/// The part of `latest.json` that `check-sizes` reads: where each platform's
+/// artifact is. The other fields of an entry are not needed to find a file.
+#[derive(Debug, Deserialize)]
+struct FeedUrls {
+    /// The artifact URL of each platform, by platform key.
+    platforms: BTreeMap<String, FeedUrl>,
+}
+
+/// One platform's artifact URL.
+#[derive(Debug, Deserialize)]
+struct FeedUrl {
+    /// Where the app downloads the artifact from.
+    url: String,
+}
+
+/// What one entry of a bundle directory is to the size check.
+enum BundleEntry {
+    /// A directory, to be scanned in turn.
+    Directory,
+    /// An updater artifact for the platform with this feed key.
+    Artifact(&'static str),
+    /// Anything else: a manual download, a signature, a link to either.
+    Other,
+}
+
+/// One artifact the size check refused.
+#[derive(Debug)]
+struct SizeFailure {
+    /// The feed key of the platform the artifact is for.
+    platform: String,
+    /// Why the artifact was refused.
+    error: ArtifactSizeError,
+}
+
+/// Every artifact one run of the size check refused, printed one per line.
+#[derive(Debug)]
+struct SizeFailures(Vec<SizeFailure>);
+
+impl std::fmt::Display for SizeFailures {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let lines: Vec<String> = self
+            .0
+            .iter()
+            .map(|failure| format!("{}: {}", failure.platform, failure.error))
+            .collect();
+
+        formatter.write_str(&lines.join("\n"))
+    }
+}
+
 /// Runs the subcommand the arguments name and reports a failure on standard
 /// error with exit status 1.
 fn main() -> ExitCode {
@@ -231,6 +315,7 @@ fn run(args: &[String]) -> CliResult<()> {
         "checksums" => run_checksums(rest),
         "fixed-copies" => run_fixed_copies(rest),
         "fixed-names" => run_fixed_names(rest),
+        "check-sizes" => run_check_sizes(rest),
         _ => Err(CliError::Usage),
     }
 }
@@ -400,16 +485,10 @@ fn verify_feed_entry<'a>(
     directory: &Path,
     public_key: &str,
 ) -> CliResult<&'a str> {
-    // The name is joined to `directory`, so it must stay inside it.
-    let file_name = entry
-        .url
-        .rsplit('/')
-        .next()
-        .filter(|name| !name.is_empty() && *name != ".." && !name.contains('\\'))
-        .ok_or_else(|| CliError::NoFileName {
-            platform: platform.to_owned(),
-            url: entry.url.clone(),
-        })?;
+    let file_name = artifact_file_name(&entry.url).ok_or_else(|| CliError::NoFileName {
+        platform: platform.to_owned(),
+        url: entry.url.clone(),
+    })?;
     let artifact_path = directory.join(file_name);
     let bytes = std::fs::read(&artifact_path).map_err(CliError::io("read", &artifact_path))?;
 
@@ -528,6 +607,180 @@ fn run_fixed_names(args: &[String]) -> CliResult<()> {
     fixed_names(windows_build(args))
         .into_iter()
         .try_for_each(print_line)
+}
+
+/// Refuses updater artifacts larger than the update client will download.
+///
+/// `--dir` on its own scans a bundle for the files a feed can name.
+/// `--manifest` with `--dir` checks the files that feed names, which is the
+/// set an installed copy will download.
+///
+/// # Errors
+///
+/// Returns [`CliError::Usage`] for a missing flag, and otherwise whatever
+/// [`check_bundle_sizes`] or [`check_manifest_sizes`] returns.
+fn run_check_sizes(args: &[String]) -> CliResult<()> {
+    let directory = Path::new(required_flag(args, "--dir")?);
+
+    match optional_flag(args, "--manifest")? {
+        Some(manifest) => check_manifest_sizes(Path::new(manifest), directory),
+        None => check_bundle_sizes(directory),
+    }
+}
+
+/// Checks every updater artifact found under `directory`.
+///
+/// # Errors
+///
+/// Returns what [`updater_artifacts_in`] returns for a bundle that cannot be
+/// scanned, [`CliError::NoUpdaterArtifact`] when the scan finds nothing, so
+/// that a wrong directory does not pass as a bundle within the limit, and
+/// what [`report_sizes`] returns for the files found.
+fn check_bundle_sizes(directory: &Path) -> CliResult<()> {
+    let found = updater_artifacts_in(directory)?;
+    if found.is_empty() {
+        let suffixes: Vec<&str> = updater_artifact_kinds()
+            .iter()
+            .map(|kind| kind.suffix)
+            .collect();
+
+        return Err(CliError::NoUpdaterArtifact {
+            directory: directory.to_path_buf(),
+            suffixes: suffixes.join(", "),
+        });
+    }
+
+    report_sizes(found)
+}
+
+/// Checks the file in `directory` that each entry of the feed at `manifest`
+/// names.
+///
+/// # Errors
+///
+/// Returns [`CliError::Io`] or [`CliError::Feed`] for a feed that cannot be
+/// read or parsed, [`CliError::EmptyFeed`] when it lists no platform,
+/// [`CliError::NoFileName`] when an entry's URL names no file, and what
+/// [`report_sizes`] returns for the files named.
+fn check_manifest_sizes(manifest: &Path, directory: &Path) -> CliResult<()> {
+    let body = std::fs::read(manifest).map_err(CliError::io("read", manifest))?;
+    let feed: FeedUrls = serde_json::from_slice(&body).map_err(|source| CliError::Feed {
+        path: manifest.to_path_buf(),
+        source,
+    })?;
+    if feed.platforms.is_empty() {
+        return Err(CliError::EmptyFeed {
+            path: manifest.to_path_buf(),
+        });
+    }
+
+    // A `BTreeMap` yields the platforms sorted, so the report is stable.
+    let files = feed
+        .platforms
+        .iter()
+        .map(|(platform, entry)| {
+            let file_name = artifact_file_name(&entry.url).ok_or_else(|| CliError::NoFileName {
+                platform: platform.clone(),
+                url: entry.url.clone(),
+            })?;
+            Ok((platform.clone(), directory.join(file_name)))
+        })
+        .collect::<CliResult<Vec<_>>>()?;
+
+    report_sizes(files)
+}
+
+/// Returns the updater artifacts under `directory`, nested bundle folders
+/// included, as `(platform key, path)` sorted by both.
+///
+/// # Errors
+///
+/// Returns [`CliError::Io`] when a directory cannot be listed or an entry
+/// cannot be examined, [`CliError::FileNameNotUtf8`] for such a name, and
+/// [`CliError::SymlinkedArtifact`] for a symbolic link named like an updater
+/// artifact.
+fn updater_artifacts_in(directory: &Path) -> CliResult<Vec<(String, PathBuf)>> {
+    let mut pending = vec![directory.to_path_buf()];
+    let mut found = Vec::new();
+
+    while let Some(current) = pending.pop() {
+        let entries = std::fs::read_dir(&current).map_err(CliError::io("list", &current))?;
+
+        for entry in entries {
+            let entry = entry.map_err(CliError::io("list", &current))?;
+            match classify_bundle_entry(&entry, &current)? {
+                BundleEntry::Directory => pending.push(entry.path()),
+                BundleEntry::Artifact(platform) => found.push((platform.to_owned(), entry.path())),
+                BundleEntry::Other => {}
+            }
+        }
+    }
+    found.sort();
+
+    Ok(found)
+}
+
+/// Says what the entry `entry` of the bundle directory `directory` is to the
+/// size check.
+///
+/// # Errors
+///
+/// Returns [`CliError::Io`] when the entry's type cannot be read,
+/// [`CliError::FileNameNotUtf8`] for such a name, and
+/// [`CliError::SymlinkedArtifact`] for a symbolic link named like an updater
+/// artifact: the gate must see the file that will be uploaded, not a link.
+fn classify_bundle_entry(entry: &std::fs::DirEntry, directory: &Path) -> CliResult<BundleEntry> {
+    let path = entry.path();
+    let file_type = entry.file_type().map_err(CliError::io("examine", &path))?;
+    let name = utf8_file_name(entry.file_name(), directory)?;
+    let kind = updater_artifact_kinds()
+        .iter()
+        .find(|kind| name.ends_with(kind.suffix));
+
+    match kind {
+        Some(_) if file_type.is_symlink() => Err(CliError::SymlinkedArtifact { path }),
+        Some(kind) if file_type.is_file() => Ok(BundleEntry::Artifact(kind.platform)),
+        _ if file_type.is_dir() => Ok(BundleEntry::Directory),
+        _ => Ok(BundleEntry::Other),
+    }
+}
+
+/// Prints each file within the limit and returns every refusal together, so
+/// one run names every platform that is over the cap.
+///
+/// # Errors
+///
+/// Returns [`CliError::ArtifactSizes`] when any file is refused, and
+/// [`CliError::Output`] when a result line cannot be printed.
+fn report_sizes(files: Vec<(String, PathBuf)>) -> CliResult<()> {
+    let mut failures = Vec::new();
+
+    for (platform, path) in files {
+        match check_artifact_file(&path) {
+            Ok(length) => print_line(format_args!(
+                "{platform}: {} is {length} bytes, within the update client's download limit",
+                path.display()
+            ))?,
+            Err(error) => failures.push(SizeFailure { platform, error }),
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::ArtifactSizes(SizeFailures(failures)))
+    }
+}
+
+/// Returns the last path segment of an artifact URL.
+///
+/// The name is joined to a directory, so it must stay inside it: an empty
+/// name, `..` and a name that contains a backslash are refused, and a feed
+/// cannot point a check at a path outside `--dir`.
+fn artifact_file_name(url: &str) -> Option<&str> {
+    url.rsplit('/')
+        .next()
+        .filter(|name| !name.is_empty() && *name != ".." && !name.contains('\\'))
 }
 
 /// Returns the Windows choice the arguments make: published when
@@ -774,6 +1027,10 @@ mod tests {
             vec!["verify", "--manifest", "latest.json"],
             vec!["checksums", "--dir", "."],
             vec!["verify-feed", "--manifest", "latest.json", "--dir", "."],
+            vec!["check-sizes"],
+            vec!["check-sizes", "--dir"],
+            vec!["check-sizes", "--manifest"],
+            vec!["check-sizes", "--manifest", "latest.json"],
             // A flag is not a value: `--out` has none here.
             vec!["checksums", "--dir", ".", "--out", "--with-windows"],
             vec![
@@ -1277,5 +1534,122 @@ mod tests {
 
         assert!(err.contains("is not UTF-8"), "{err}");
         assert!(!out.exists());
+    }
+
+    /// The update client's download cap as a file length.
+    fn limit_bytes() -> u64 {
+        u64::try_from(oikonomia_update::MAX_ARTIFACT_BYTES).expect("the cap fits in a file length")
+    }
+
+    /// Creates a sparse file of `len` bytes at `path`.
+    fn file_of_length(path: &Path, len: u64) {
+        let file = std::fs::File::create(path).expect("create");
+        file.set_len(len).expect("set length");
+    }
+
+    /// Runs `check-sizes` with `extra` and returns a failure as printed.
+    fn check_sizes(extra: &[&str]) -> Result<(), String> {
+        let mut list = vec!["check-sizes"];
+        list.extend_from_slice(extra);
+        run_text(&list)
+    }
+
+    #[test]
+    fn check_sizes_accepts_an_at_cap_bundle_and_rejects_one_byte_over() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let macos = dir.path().join("macos");
+        std::fs::create_dir(&macos).expect("macos dir");
+        let archive = macos.join("Oikonomia.app.tar.gz");
+        file_of_length(&archive, limit_bytes());
+
+        // A manual download is not an updater artifact, however large.
+        let dmg_dir = dir.path().join("dmg");
+        std::fs::create_dir(&dmg_dir).expect("dmg dir");
+        file_of_length(&dmg_dir.join("Oikonomia.dmg"), limit_bytes() + 50);
+
+        assert_eq!(check_sizes(&["--dir", text(dir.path())]), Ok(()));
+
+        let nsis = dir.path().join("nsis");
+        std::fs::create_dir(&nsis).expect("nsis dir");
+        let setup = nsis.join("Oikonomia_0.2.0_x64-setup.exe");
+        file_of_length(&setup, limit_bytes() + 1);
+
+        let err = check_sizes(&["--dir", text(dir.path())]).expect_err("over the cap");
+        assert!(err.contains("windows-x86_64"), "{err}");
+        assert!(err.contains(&(limit_bytes() + 1).to_string()), "{err}");
+        assert!(err.contains(&limit_bytes().to_string()), "{err}");
+        assert!(err.contains("x64-setup.exe"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_sizes_refuses_a_symlinked_updater_artifact() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let payload = dir.path().join("payload");
+        std::fs::write(&payload, b"small").expect("payload");
+        std::os::unix::fs::symlink(&payload, dir.path().join(MAC)).expect("link");
+
+        let err = check_sizes(&["--dir", text(dir.path())]).expect_err("symlink");
+        assert!(err.contains("symlink"), "{err}");
+    }
+
+    #[test]
+    fn check_sizes_fails_closed_when_a_bundle_has_no_updater_artifact() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("Oikonomia.deb"), b"deb").expect("deb");
+        std::fs::write(dir.path().join("Oikonomia.app.tar.gz.sig"), b"sig").expect("sig");
+
+        let err = check_sizes(&["--dir", text(dir.path())]).expect_err("nothing to check");
+        assert!(err.contains("no updater artifact"), "{err}");
+
+        let missing = dir.path().join("no-such-bundle");
+        let err = check_sizes(&["--dir", text(&missing)]).expect_err("missing dir");
+        assert!(err.contains("no-such-bundle"), "{err}");
+    }
+
+    #[test]
+    fn check_sizes_checks_every_file_the_feed_names() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let appimage = "Oikonomia_0.2.0_amd64.AppImage";
+        let setup = "Oikonomia_0.2.0_x64-setup.exe";
+        file_of_length(&dir.path().join(appimage), limit_bytes());
+        file_of_length(&dir.path().join(setup), 1);
+
+        let manifest = dir.path().join("latest.json");
+        let base = "https://github.com/o/r/releases/download/v0.2.0";
+        let body = format!(
+            r#"{{"platforms":{{
+                "linux-x86_64":{{"url":"{base}/{appimage}"}},
+                "windows-x86_64":{{"url":"{base}/{setup}"}}
+            }}}}"#
+        );
+        std::fs::write(&manifest, body).expect("manifest");
+
+        assert_eq!(
+            check_sizes(&["--manifest", text(&manifest), "--dir", text(dir.path())]),
+            Ok(())
+        );
+
+        file_of_length(&dir.path().join(setup), limit_bytes() + 1);
+        let err = check_sizes(&["--manifest", text(&manifest), "--dir", text(dir.path())])
+            .expect_err("feed artifact over the cap");
+        assert!(err.contains("windows-x86_64"), "{err}");
+        assert!(err.contains(&limit_bytes().to_string()), "{err}");
+
+        let escaped = dir.path().join("bad.json");
+        std::fs::write(
+            &escaped,
+            r#"{"platforms":{"linux-x86_64":{"url":"https://example.com/.."}}}"#,
+        )
+        .expect("bad manifest");
+        let err = check_sizes(&["--manifest", text(&escaped), "--dir", text(dir.path())])
+            .expect_err("path escape");
+        assert!(err.contains("no file name"), "{err}");
+
+        let empty = dir.path().join("empty.json");
+        std::fs::write(&empty, r#"{"platforms":{}}"#).expect("empty platforms");
+        let err = check_sizes(&["--manifest", text(&empty), "--dir", text(dir.path())])
+            .expect_err("no platforms");
+        assert!(err.contains("no platforms"), "{err}");
     }
 }

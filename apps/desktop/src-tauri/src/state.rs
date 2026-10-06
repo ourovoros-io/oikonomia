@@ -890,11 +890,19 @@ mod tests {
     /// A poll interval no test waits out, so a watchdog that leaves its poll
     /// wait was woken and did not time out.
     const NEVER_ELAPSES: Duration = Duration::from_hours(1);
-    /// How long a test waits for another thread before it fails. It only
-    /// turns an event that never comes into a failure instead of a hung
-    /// test, so it is generous: an unlock derives a key, which takes far
-    /// longer on a machine that is busy with other work.
+    /// How long a test waits for the watchdog thread before it fails.
+    ///
+    /// It only turns an event that never comes into a failure instead of a
+    /// hung test. No wait bounded by it covers a key derivation, which can
+    /// take many seconds on a loaded runner: each unlock is finished, on the
+    /// test's own thread or behind a signal of its own, before such a wait
+    /// starts. What remains is a thread being scheduled and a few
+    /// [`SHORT_POLL`] intervals.
     const GIVE_UP_AFTER: Duration = Duration::from_mins(1);
+    /// How long a test waits for a step that derives a key on another thread.
+    ///
+    /// Long enough that only a deadlock reaches it, never a slow runner.
+    const DEADLOCK_AFTER: Duration = Duration::from_mins(5);
 
     #[test]
     fn packaged_ocr_models_resolve_from_the_bundle_resources() {
@@ -1113,6 +1121,7 @@ mod tests {
         let last_activity = Arc::clone(&handles.last_activity);
 
         let (announced, announcements) = mpsc::channel();
+        let (unlocked_again, unlocks) = mpsc::channel();
         let unlocker = Arc::clone(&vault);
         let activity = Arc::clone(&last_activity);
         let mut calls = 0_u32;
@@ -1122,6 +1131,7 @@ mod tests {
                 if calls == 1 {
                     unlocker.acquire().unlock(TEST_PASSWORD).expect("unlock");
                     activity.store(now_secs(), Ordering::Relaxed);
+                    let _ = unlocked_again.send(());
                     std::panic::resume_unwind(Box::new("emit failed"));
                 }
                 let _ = announced.send(calls);
@@ -1130,6 +1140,13 @@ mod tests {
 
         last_activity.store(0, Ordering::Relaxed);
         vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
+
+        // The second unlock derives a key on the watchdog's thread, so this
+        // wait is bounded only against a deadlock. What follows it, the
+        // recovery's lock and its announcement, derives none.
+        unlocks
+            .recv_timeout(DEADLOCK_AFTER)
+            .expect("the emitter is called for the idle lock and unlocks again");
 
         let got = announcements.recv_timeout(GIVE_UP_AFTER);
         assert_eq!(got.ok(), Some(2), "the recovery's lock was not announced");
@@ -1262,9 +1279,15 @@ mod tests {
             let gate_state = shared.gate.lock_state();
             let unlock = scope.spawn(move || shared.acquire().unlock(TEST_PASSWORD));
 
-            wait_until("the unlock's guard reaches its gate update", || {
-                shared.gate.follow_entries.load(Ordering::SeqCst) > entries_before
-            });
+            // Every guard's drop calls `follow`, which then blocks on the
+            // gate state this thread holds, so the count must go up before
+            // the unlock thread can end. If it ends first, the unlock never
+            // reached its gate update.
+            wait_while_running(
+                "the unlock's guard reaches its gate update",
+                &unlock,
+                || shared.gate.follow_entries.load(Ordering::SeqCst) > entries_before,
+            );
             // The vault is unlocked and its gate update is pending. Anyone
             // who could take the vault now could get their update in first.
             let vault_is_held = matches!(shared.vault.try_lock(), Err(TryLockError::WouldBlock));
@@ -1366,16 +1389,40 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Waits until `condition`, which another thread makes true, holds.
+    /// Waits until `condition`, which `worker` makes true, holds.
     ///
-    /// The deadline only turns an event that never comes into a failure instead
-    /// of a hung test.
+    /// The outcome does not depend on how fast `worker` runs. The unlock
+    /// it waits on derives a key, which can take many seconds on a loaded
+    /// CI runner, so a short deadline failed a correct run. Instead, `worker`
+    /// ending first is the failure. The long deadline is only there so a
+    /// deadlock fails the test instead of hanging it. Sleeping between
+    /// checks leaves the CPU to `worker` rather than spinning against it.
+    fn wait_while_running<T>(
+        what: &str,
+        worker: &std::thread::ScopedJoinHandle<'_, T>,
+        condition: impl Fn() -> bool,
+    ) {
+        let hang = Instant::now() + Duration::from_secs(300);
+
+        while !condition() {
+            assert!(!worker.is_finished(), "the worker ended before {what}");
+            assert!(Instant::now() < hang, "deadlocked waiting until {what}");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Waits until `condition`, which the watchdog thread makes true, holds.
+    ///
+    /// Only for an event the watchdog reaches without deriving a key: it
+    /// parks, starts a poll wait or locks. [`GIVE_UP_AFTER`] then only turns
+    /// an event that never comes into a failure instead of a hung test.
+    /// Sleeping between checks leaves the CPU to the watchdog.
     fn wait_until(what: &str, condition: impl Fn() -> bool) {
         let deadline = Instant::now() + GIVE_UP_AFTER;
 
         while !condition() {
             assert!(Instant::now() < deadline, "timed out waiting until {what}");
-            std::thread::yield_now();
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 
