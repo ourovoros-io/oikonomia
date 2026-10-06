@@ -10,8 +10,9 @@ use oikonomia_core::Error;
 use oikonomia_core::domain::{ChartTemplate, EntityId};
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, EntryFilter, PostJournal, create_entity, list_accounts,
-    list_entries, post_entry, update_entity,
+    CreateEntity, CreateJournalLine, CreateRecurringTemplate, EntryFilter, PostJournal,
+    RecurringCadence, SimpleEntryKind, create_entity, create_recurring_template, list_accounts,
+    list_entities, list_entries, list_recurring_templates, post_entry, update_entity,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
@@ -385,4 +386,69 @@ fn references_and_memos_are_searched_in_any_case() {
     // Accents other than Greek ones still count.
     assert_eq!(found(conn, entity_id, "epicerie"), Vec::<String>::new());
     assert_eq!(found(conn, entity_id, "facture ete"), Vec::<String>::new());
+}
+/// Names in the order a reader expects, written so that code point order
+/// would put every capitalised one first.
+const NAMES_IN_ORDER: &[&str] = &["apple", "Banana", "αλφα", "Βήτα", "γάμα"];
+
+#[test]
+fn entities_are_listed_by_name_without_regard_to_case_in_any_script() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    for name in NAMES_IN_ORDER.iter().rev() {
+        create_book(conn, name).expect("book");
+    }
+
+    let listed: Vec<String> = list_entities(conn)
+        .expect("list")
+        .into_iter()
+        .map(|entity| entity.name)
+        .collect();
+
+    assert_eq!(listed, NAMES_IN_ORDER);
+}
+
+#[test]
+fn templates_due_the_same_day_are_listed_by_name_without_regard_to_case() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = create_book(conn, "Templates").expect("book");
+    let accounts = list_accounts(conn, entity_id).expect("accounts");
+    let by_code = |code: &str| {
+        accounts
+            .iter()
+            .find(|account| account.code == code)
+            .map(|account| account.id)
+            .expect(code)
+    };
+    for name in NAMES_IN_ORDER.iter().rev() {
+        create_recurring_template(
+            conn,
+            &CreateRecurringTemplate {
+                entity_id,
+                name: (*name).into(),
+                kind: SimpleEntryKind::Expense,
+                bill_status: None,
+                amount_minor: 1_000,
+                cadence: RecurringCadence::Weekly,
+                day_of_month: None,
+                category_account_id: Some(by_code("5100")),
+                wallet_account_id: Some(by_code("1010")),
+                payable_account_id: None,
+                from_account_id: None,
+                to_account_id: None,
+                memo: None,
+                next_date: "2026-03-02".into(),
+            },
+        )
+        .expect("template");
+    }
+
+    let listed: Vec<String> = list_recurring_templates(conn, entity_id)
+        .expect("list")
+        .into_iter()
+        .map(|template| template.name)
+        .collect();
+
+    assert_eq!(listed, NAMES_IN_ORDER);
 }

@@ -1,8 +1,10 @@
 //! Guards for the security-relevant parts of `tauri.conf.json`.
 //!
-//! The app promises to never reach the network. These tests make loosening
-//! the content security policy or the Windows installer a deliberate,
-//! reviewed change rather than a silent one.
+//! The webview never reaches the network. The app's only network path is the
+//! update check and install the user clicks, which runs in Rust
+//! (`oikonomia-update`). These tests make loosening the content security
+//! policy or the Windows installer a deliberate, reviewed change rather than
+//! a silent one.
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
@@ -67,9 +69,21 @@ fn csp_allows_the_document_viewer_blob_urls_explicitly() {
 }
 
 #[test]
-fn windows_installer_bundles_the_webview2_runtime_offline() {
-    let mode = &config()["bundle"]["windows"]["webviewInstallMode"]["type"];
-    assert_eq!(mode, "offlineInstaller");
+fn windows_installer_embeds_the_webview2_bootstrapper() {
+    // Tauri 2 (tauri-utils 2.10) schema: `type` is the serde tag, and
+    // `silent` defaults to true for every mode that runs an installer.
+    // embedBootstrapper puts Microsoft's bootstrapper in the NSIS setup.
+    // Windows 11 ships WebView2 and Windows 10 receives it through Windows
+    // Update, so the bootstrapper downloads the runtime only when it is
+    // missing. The full offline runtime made the setup about 224 MiB, which
+    // the update client refuses.
+    let mode = &config()["bundle"]["windows"]["webviewInstallMode"];
+    assert_eq!(mode["type"], "embedBootstrapper");
+    let silent = mode.get("silent");
+    assert!(
+        silent.is_none_or(|value| value.as_bool() == Some(true)),
+        "webview bootstrapper must stay silent, got {silent:?}"
+    );
 }
 
 #[test]
