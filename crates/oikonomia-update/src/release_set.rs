@@ -10,7 +10,7 @@
 //! single place that decides which group a name belongs to:
 //!
 //! - a feed artifact, the one file per platform the app installs
-//!   ([`feed_entries`]), and its detached `.sig`;
+//!   ([`feed_entries`], [`updater_artifact_kinds`]), and its detached `.sig`;
 //! - a manual download (`.dmg`, `.deb`) and its `.sig`;
 //! - the feed itself, `latest.json` and `latest.json.sig`;
 //! - a version-free copy of a download, which the website links to
@@ -90,6 +90,17 @@ struct FeedPlatform {
     suffix: &'static str,
     /// Which releases offer this platform.
     shipped: Shipped,
+}
+
+impl FeedPlatform {
+    /// Returns the key and suffix of this platform's artifact, the part of
+    /// the entry that does not depend on the Windows choice.
+    const fn kind(&self) -> UpdaterArtifactKind {
+        UpdaterArtifactKind {
+            platform: self.key,
+            suffix: self.suffix,
+        }
+    }
 }
 
 /// The platforms a feed can hold, in the order the feed lists them.
@@ -212,6 +223,33 @@ pub fn feed_platform_keys(windows: WindowsBuild) -> Vec<&'static str> {
     feed_platforms(windows)
         .map(|platform| platform.key)
         .collect()
+}
+
+/// One installer the update client can be asked to download.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdaterArtifactKind {
+    /// Feed key, for example `windows-x86_64`.
+    pub platform: &'static str,
+    /// File-name suffix of the artifact that key installs.
+    pub suffix: &'static str,
+}
+
+/// Returns every kind of artifact a client downloads, Windows included.
+///
+/// Promotion can withhold Windows, but the Windows release job still builds
+/// the installer. The size gate has to recognize it there, before a feed
+/// exists.
+#[must_use]
+pub const fn updater_artifact_kinds() -> &'static [UpdaterArtifactKind] {
+    /// The feed platforms, whatever the Windows choice. A test holds this
+    /// to the platform table entry by entry.
+    const KINDS: [UpdaterArtifactKind; FEED_PLATFORMS.len()] = [
+        FEED_PLATFORMS[0].kind(),
+        FEED_PLATFORMS[1].kind(),
+        FEED_PLATFORMS[2].kind(),
+    ];
+
+    &KINDS
 }
 
 /// Returns the `(platform key, file name)` pairs for `latest.json`.
@@ -342,8 +380,9 @@ fn only_versioned_file<'a>(
 mod tests {
     use super::{
         CHECKSUMS_FILE, FIXED_LINUX_APPIMAGE, FIXED_LINUX_DEB, FIXED_MACOS_DMG,
-        FIXED_WINDOWS_SETUP, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets,
-        feed_entries, feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
+        FIXED_WINDOWS_SETUP, ReleaseSetError, UpdaterArtifactKind, WindowsBuild, checksum_line,
+        checksummed_assets, feed_entries, feed_platform_keys, fixed_name_copies, fixed_names,
+        is_published_asset, updater_artifact_kinds,
     };
     use crate::client::current_updater_platform;
 
@@ -385,6 +424,48 @@ mod tests {
             Some(&("windows-x86_64", "Oikonomia_0.2.0_x64-setup.exe"))
         );
         assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn updater_artifact_kinds_are_the_feed_suffixes_including_windows() {
+        assert_eq!(
+            updater_artifact_kinds(),
+            &[
+                UpdaterArtifactKind {
+                    platform: "darwin-aarch64",
+                    suffix: ".app.tar.gz",
+                },
+                UpdaterArtifactKind {
+                    platform: "linux-x86_64",
+                    suffix: ".AppImage",
+                },
+                UpdaterArtifactKind {
+                    platform: "windows-x86_64",
+                    suffix: "-setup.exe",
+                },
+            ]
+        );
+
+        let entries = feed_entries(&DRAFT, WindowsBuild::Published).expect("entries");
+        for (key, name) in entries {
+            assert!(
+                updater_artifact_kinds()
+                    .iter()
+                    .any(|kind| { kind.platform == key && name.ends_with(kind.suffix) }),
+                "{key} {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn updater_artifact_kinds_follow_the_platform_table_entry_by_entry() {
+        let kinds = updater_artifact_kinds();
+
+        assert_eq!(kinds.len(), super::FEED_PLATFORMS.len());
+        for (kind, platform) in kinds.iter().zip(&super::FEED_PLATFORMS) {
+            assert_eq!(kind.platform, platform.key);
+            assert_eq!(kind.suffix, platform.suffix);
+        }
     }
 
     #[test]

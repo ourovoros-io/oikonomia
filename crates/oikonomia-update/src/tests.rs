@@ -17,4 +17,5 @@ mod cache;
 mod check;
 mod install;
 mod redirects;
+mod signatures;
 mod support;

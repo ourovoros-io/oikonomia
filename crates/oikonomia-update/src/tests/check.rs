@@ -263,6 +263,7 @@ fn bad_manifest_sig_is_failed() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
+    assert_eq!(check_error_code(&config), "update_manifest_signature");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 

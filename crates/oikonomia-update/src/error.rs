@@ -51,8 +51,10 @@ pub enum UpdateError {
     #[error("update server could not be reached or answered with an error")]
     Network,
 
-    /// A response body was larger than the limit for what was requested.
-    #[error("update response is larger than its size limit")]
+    /// The feed or its detached signature was larger than its size limit
+    /// (`MAX_MANIFEST_BYTES`, `MAX_SIGNATURE_BYTES`). An oversized artifact
+    /// is [`Self::ArtifactTooLarge`].
+    #[error("update feed or its signature is larger than its size limit")]
     ResponseTooLarge,
 
     /// The detached signature of the manifest is absent (the server answered
@@ -93,6 +95,13 @@ pub enum UpdateError {
     #[error("update artifact failed verification")]
     ArtifactIntegrity,
 
+    /// The artifact is larger than this copy is willing to download
+    /// (`MAX_ARTIFACT_BYTES`). Retrying cannot help, so it is kept apart from
+    /// [`Self::Network`]. Only the artifact gets this code; an oversized feed
+    /// or feed signature is [`Self::ResponseTooLarge`].
+    #[error("update artifact is larger than this copy can download")]
+    ArtifactTooLarge,
+
     /// The cache directory could not be created or made private, or the
     /// verified artifact could not be written into it.
     #[error("update cache could not be written")]
@@ -126,6 +135,7 @@ impl UpdateError {
         "update_missing_platform",
         "update_artifact_url",
         "update_artifact_integrity",
+        "update_artifact_too_large",
         "update_cache_io",
         "update_invalid_feed_url",
         "update_invalid_feed_input",
@@ -145,6 +155,7 @@ impl UpdateError {
             Self::MissingPlatform => "update_missing_platform",
             Self::ArtifactUrl => "update_artifact_url",
             Self::ArtifactIntegrity => "update_artifact_integrity",
+            Self::ArtifactTooLarge => "update_artifact_too_large",
             Self::CacheIo(_) => "update_cache_io",
             Self::InvalidFeedUrl => "update_invalid_feed_url",
             Self::InvalidFeedInput { .. } => "update_invalid_feed_input",
@@ -173,6 +184,7 @@ mod tests {
             UpdateError::MissingPlatform,
             UpdateError::ArtifactUrl,
             UpdateError::ArtifactIntegrity,
+            UpdateError::ArtifactTooLarge,
             UpdateError::CacheIo(std::io::Error::other("x")),
             UpdateError::InvalidFeedUrl,
             UpdateError::InvalidFeedInput { field: "x" },
@@ -191,6 +203,7 @@ mod tests {
             UpdateError::MissingPlatform,
             UpdateError::ArtifactUrl,
             UpdateError::ArtifactIntegrity,
+            UpdateError::ArtifactTooLarge,
             UpdateError::CacheIo(_),
             UpdateError::InvalidFeedUrl,
             UpdateError::InvalidFeedInput { .. },

@@ -4,9 +4,10 @@
 # neither the public nor the updater can see. This workflow is the gate that
 # makes it live. Manual, reviewed, fail-closed. Steps: download the draft's
 # artifacts, assemble latest.json ourselves (sha256 + per-artifact minisign
-# sigs), sign latest.json with the updater minisign key, verify it and every
-# artifact it names with the app's baked public key, make the version-free
-# copies getoikonomia.app links to,
+# sigs), refuse any artifact the feed names that is larger than the client
+# will download, sign latest.json with the updater minisign key, verify it
+# and every artifact it names with the app's baked public key, make the
+# version-free copies getoikonomia.app links to,
 # write SHA256SUMS, strip every asset outside the tested allow-list, upload
 # the signed feed, the checksums and the copies, and only then publish the
 # draft.
@@ -195,6 +196,15 @@ jobs:
             --dir artifacts --out artifacts/latest.json --notes-file notes.txt \
             ${WINDOWS_FLAG}
           cat artifacts/latest.json
+
+      # Every URL in the assembled feed is a file an installed copy will
+      # download. The release jobs already checked their own bundles; this
+      # checks the set that will ship. The binary reads MAX_ARTIFACT_BYTES.
+      - name: Reject feed artifacts over the client's download limit
+        run: |
+          set -euo pipefail
+          cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- check-sizes \
+            --manifest artifacts/latest.json --dir artifacts
 
       # `signer sign` reads the key and its password from these two variables
       # (its --help lists them), so neither is put on the command line, where
