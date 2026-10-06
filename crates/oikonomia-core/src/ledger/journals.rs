@@ -1,4 +1,42 @@
-//! Journal entry posting, listing, void, and account register.
+//! The journal: posting entries, listing them, voiding and correcting them,
+//! and the register of one account.
+//!
+//! # Posting
+//!
+//! An entry is a header and at least two lines. Each line debits or credits
+//! one account by a positive amount, never both, and the debits of an entry
+//! equal its credits. Every entry is written by the private
+//! `insert_posted_entry`, which checks those rules
+//! ([`validate_lines_for_post`]) and that each account belongs to the entry's
+//! entity; no other code inserts into the journal. The schema repeats the
+//! rule for a single line as a `CHECK`.
+//!
+//! The simple entry form posts through [`post_simple_entry`]. Its input names
+//! accounts by role and the mapping from an entry kind to a debit and a
+//! credit is here, so the UI holds no accounting rule.
+//!
+//! # Entries are not edited
+//!
+//! Once posted, an entry's date, description, amounts and accounts never
+//! change. Two things about it can: the hidden flag
+//! ([`set_entry_hidden`]) and the void link. A correction is a void followed
+//! by a new entry ([`replace_simple_entry`]), so what was posted before stays
+//! on record. An entry is removed only when its whole entity is deleted.
+//!
+//! # Voiding
+//!
+//! [`void_entry`] posts a reversing entry, with every debit and credit
+//! swapped, and links the two through `voided_by_entry_id` in both
+//! directions. Either link takes an entry out of the active books; the views
+//! here report that as [`PostedEntryView::is_voided`], for the original and
+//! for its reversal alike. Nothing is deleted.
+//!
+//! # Transactions
+//!
+//! A public function that writes more than one row opens a transaction and
+//! commits it. The work itself is in a helper that takes the connection and
+//! leaves the transaction to its caller, named `_in_tx` when private and
+//! `_unchecked` when another module composes it with writes of its own.
 
 use std::collections::HashMap;
 
@@ -8,8 +46,8 @@ use time::Date;
 
 use crate::db::{collect_rows, corrupt_column, fold_case, read_column, stored_date, stored_uuid};
 use crate::domain::{
-    Account, AccountId, EntityId, EntryStatus, JournalEntry, JournalEntryId, JournalLine,
-    JournalLineId, validate_lines_for_post,
+    Account, AccountId, AccountType, EntityId, EntryStatus, JournalEntry, JournalEntryId,
+    JournalLine, JournalLineId, validate_lines_for_post,
 };
 use crate::error::{AccountRole, Error, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
@@ -21,63 +59,72 @@ use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
 use crate::util::{format_date, now_utc_string, parse_date};
 
-/// One line when posting a journal entry.
+/// One line of a [`PostJournal`].
+///
+/// Exactly one of the two amounts is positive and the other is 0.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateJournalLine {
-    /// Account to debit or credit.
+    /// Account the line posts to. It must belong to the entry's entity and
+    /// not be archived.
     pub account_id: AccountId,
-    /// Debit minor units (0 if credit side).
+    /// Amount debited to the account, in minor units; 0 on a credit line.
     pub debit_minor: i64,
-    /// Credit minor units (0 if debit side).
+    /// Amount credited to the account, in minor units; 0 on a debit line.
     pub credit_minor: i64,
-    /// Optional memo.
+    /// Note on the line, stored as given. `None` stores none.
     pub memo: Option<String>,
 }
 
-/// Post a balanced journal entry in one step.
+/// Input for [`post_entry`]: a whole entry, with its lines spelled out.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostJournal {
-    /// Entity book.
+    /// Entity whose books the entry goes into.
     pub entity_id: EntityId,
-    /// Accounting date `YYYY-MM-DD`.
+    /// Accounting date as `YYYY-MM-DD`.
     pub entry_date: String,
-    /// Description.
+    /// What the entry is for. Surrounding whitespace is trimmed; it may be
+    /// empty.
     pub description: String,
-    /// Optional reference.
+    /// The user's own reference for the entry, such as an invoice number.
+    /// Surrounding whitespace is trimmed and a blank one is stored as none.
     pub reference: Option<String>,
-    /// Lines (≥ 2, balanced).
+    /// At least two lines, whose debits add up to their credits.
     pub lines: Vec<CreateJournalLine>,
 }
 
-/// Entry header plus lines for UI.
+/// An entry as the UI shows it: its header, its lines and whether it counts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostedEntryView {
-    /// Header.
+    /// The entry itself: date, description, reference, status and hidden
+    /// flag.
     pub entry: JournalEntry,
-    /// Lines.
+    /// The entry's lines, in the order they were posted.
     pub lines: Vec<JournalLine>,
     /// True if this entry is out of the active books: it has been voided, or
     /// it is the reversing entry that a void posted.
     pub is_voided: bool,
 }
 
-/// One line in an account register.
+/// One line of [`account_register`]: a posting to the account, with the
+/// balance after it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterLine {
-    /// Entry id.
+    /// Entry the line belongs to.
     pub entry_id: JournalEntryId,
-    /// Date.
+    /// Accounting date of the entry.
     #[serde(with = "crate::util::serde_date")]
     pub entry_date: Date,
-    /// Description.
+    /// Description of the entry.
     pub description: String,
-    /// Debit.
+    /// Amount the line debits the account, in minor units; 0 on a credit.
     pub debit_minor: i64,
-    /// Credit.
+    /// Amount the line credits the account, in minor units; 0 on a debit.
     pub credit_minor: i64,
-    /// Running normal balance after this line.
+    /// Balance of the account after this line, in minor units, signed towards
+    /// the normal side of the account's type. It counts every active entry up
+    /// to this line, those before the register's first day included.
     pub balance_minor: i64,
-    /// Owner-only hidden flag from the parent entry.
+    /// Whether the line's entry is hidden.
     pub hidden: bool,
 }
 
@@ -108,19 +155,35 @@ pub enum SimpleBillStatus {
 }
 
 /// Input for [`post_simple_entry`]: one amount plus role accounts per kind.
+///
+/// The kind decides which two roles are read, which account types each may
+/// hold, and which is debited:
+///
+/// | Kind | Debit | Credit |
+/// |------|-------|--------|
+/// | expense | category (expense) | wallet (asset or liability) |
+/// | income | wallet (asset) | category (income) |
+/// | bill, paid | category (expense) | wallet (asset or liability) |
+/// | bill, unpaid | category (expense) | payable (liability) |
+/// | bill, pay existing | payable (liability) | wallet (asset or liability) |
+/// | transfer | to (asset or liability) | from (asset or liability) |
+///
+/// A role the kind does not read is ignored, whatever it holds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostSimpleEntry {
-    /// Entity book.
+    /// Entity whose books the entry goes into.
     pub entity_id: EntityId,
-    /// Entry kind.
+    /// What kind of entry this is; it selects the row of the table above.
     pub kind: SimpleEntryKind,
     /// Required when `kind` is [`SimpleEntryKind::Bill`].
     pub bill_status: Option<SimpleBillStatus>,
     /// Accounting date `YYYY-MM-DD`.
     pub entry_date: String,
-    /// Description.
+    /// What the entry is for. Surrounding whitespace is trimmed; it may be
+    /// empty.
     pub description: String,
-    /// Optional reference.
+    /// The user's own reference for the entry. Surrounding whitespace is
+    /// trimmed and a blank one is stored as none.
     pub reference: Option<String>,
     /// Positive amount in minor units.
     pub amount_minor: i64,
@@ -136,40 +199,545 @@ pub struct PostSimpleEntry {
     pub to_account_id: Option<AccountId>,
 }
 
-/// Result of voiding an entry.
+/// Result of [`void_entry`]: the two entries the void linked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoidResult {
-    /// Original entry id.
+    /// The entry that was voided.
     pub original_id: JournalEntryId,
-    /// Reversing entry id.
+    /// The reversing entry the void posted.
     pub reverse_id: JournalEntryId,
 }
 
 /// Optional predicates for [`list_entries`]; every `None` means "no filter".
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EntryFilter {
-    /// Case-insensitive substring over description, reference, and line memos.
+    /// Case-insensitive substring over description, reference, and line
+    /// memos. Text that is blank after trimming is no filter.
     pub text: Option<String>,
     /// Inclusive ISO lower bound (`YYYY-MM-DD`).
     pub date_from: Option<String>,
-    /// Inclusive ISO upper bound.
+    /// Inclusive ISO upper bound (`YYYY-MM-DD`).
     pub date_to: Option<String>,
     /// Only entries with at least one line on this account.
     pub account_id: Option<AccountId>,
 }
 
-/// Wrap trimmed user text in `%…%`, escaping LIKE wildcards so `%`/`_`
-/// in a search are literals, not patterns.
+/// Lists the posted entries of an entity that match `filter`, newest first.
 ///
-/// The text is case-folded here and the searched columns are folded in SQL
-/// with `fold(...)`, so the match ignores case for every letter, not only
-/// ASCII ones.
-fn like_pattern(text: &str) -> String {
-    let escaped = fold_case(text)
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_");
-    format!("%{escaped}%")
+/// Voided entries and their reversals are listed too, marked by
+/// [`PostedEntryView::is_voided`]. Entries of one date are ordered by when
+/// they were created, latest first. An entity that does not exist has no
+/// entries and gives an empty list.
+///
+/// # Errors
+///
+/// [`Error::Validation`] for a malformed date in `filter`;
+/// [`Error::VaultCorrupt`] for a stored id, date, status or amount that does
+/// not parse; database errors as [`Error::Io`].
+pub fn list_entries(
+    conn: &Connection,
+    entity_id: EntityId,
+    filter: &EntryFilter,
+) -> Result<Vec<PostedEntryView>> {
+    let listed = ListedEntries::new(entity_id, filter)?;
+    let headers = load_listed_headers(conn, &listed)?;
+    let mut lines_by_entry = load_listed_lines(conn, &listed)?;
+
+    Ok(headers
+        .into_iter()
+        .map(|(entry, is_voided)| PostedEntryView {
+            lines: lines_by_entry.remove(&entry.id).unwrap_or_default(),
+            entry,
+            is_voided,
+        })
+        .collect())
+}
+
+/// Returns one entry with its lines, whatever its status.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown entry.
+/// - [`Error::VaultCorrupt`] for a stored id, date, status or amount that
+///   does not parse.
+/// - [`Error::Io`] on database errors.
+pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryView> {
+    let (entry, has_void_link) = conn
+        .query_row(
+            "
+            SELECT id, entity_id, entry_date, description, reference, status, hidden,
+                   voided_by_entry_id
+            FROM journal_entries WHERE id = ?1
+            ",
+            [id.0.to_string()],
+            |row| {
+                let voided_by: Option<String> = row.get(7)?;
+                Ok((map_entry_row(row), voided_by.is_some()))
+            },
+        )
+        .map_err(|err| match err {
+            rusqlite::Error::QueryReturnedNoRows => Error::NotFound("journal entry".into()),
+            other => Error::Io(other.to_string()),
+        })?;
+    let entry = entry?;
+
+    let is_voided = has_void_link || entry_is_void_reverse(conn, entry.id)?;
+    let lines = load_lines(conn, entry.id)?;
+
+    Ok(PostedEntryView {
+        entry,
+        lines,
+        is_voided,
+    })
+}
+
+/// Sets the owner-only hidden flag on an existing journal entry.
+///
+/// Hidden keeps an entry out of what leaves the app: the journal CSV export
+/// omits it, and so does the accountant profit and loss
+/// ([`profit_and_loss_export`](crate::ledger::profit_and_loss_export)). It is
+/// not extra encryption and not a second password. Inside the app the owner
+/// still sees the row via [`list_entries`], [`get_entry`] and
+/// [`account_register`], and every other report counts it.
+///
+/// Any entry can be hidden or shown again, whatever its status, a voided one
+/// included.
+///
+/// # Errors
+///
+/// [`Error::NotFound`] for an unknown entry; [`Error::VaultCorrupt`] for a
+/// stored row that does not parse; database errors as [`Error::Io`].
+pub fn set_entry_hidden(
+    conn: &Connection,
+    id: JournalEntryId,
+    hidden: bool,
+) -> Result<PostedEntryView> {
+    let updated = conn
+        .execute(
+            "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
+            rusqlite::params![i64::from(hidden), id.0.to_string()],
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+    if updated == 0 {
+        return Err(Error::NotFound("journal entry".into()));
+    }
+    get_entry(conn, id)
+}
+
+/// Validates and posts a journal entry atomically.
+///
+/// # Errors
+///
+/// - [`ValidationError::InvalidDate`] for a malformed entry date.
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`Error::AccountWrongEntity`] for an account of another entity.
+/// - [`ValidationError::AccountInactive`] for an archived account.
+/// - [`Error::NegativeMoney`] for a negative debit or credit.
+/// - [`Error::TooFewLines`] for fewer than two lines.
+/// - [`Error::InvalidLineAmounts`] for a line that is not debit XOR credit.
+/// - [`Error::MoneyOverflow`] when the debits or the credits do not fit in
+///   `i64`.
+/// - [`Error::UnbalancedEntry`] when debits and credits differ.
+/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
+/// - [`Error::Io`] on database errors.
+pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let view = insert_posted_entry(&tx, input, false, ArchivedAccounts::Refuse)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(view)
+}
+
+/// Builds and posts the journal entry for a simple-form input, atomically.
+///
+/// The kind → debit/credit mapping lives here so the UI never carries
+/// accounting rules; each role account's type is checked before posting.
+/// [`PostSimpleEntry`] has the mapping.
+///
+/// # Errors
+///
+/// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
+/// - [`ValidationError::BillStatusRequired`] for a bill without a status.
+/// - [`ValidationError::AccountRequired`] when a role the kind reads is
+///   empty.
+/// - [`ValidationError::AccountWrongType`] when a role holds an account of a
+///   type the kind does not allow there.
+/// - [`ValidationError::SameAccount`] when both sides are one account.
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`Error::AccountWrongEntity`] for an account of another entity.
+/// - [`ValidationError::AccountInactive`] for an archived account.
+/// - [`ValidationError::InvalidDate`] for a malformed entry date.
+/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
+/// - [`Error::Io`] on database errors.
+pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let view = post_simple_entry_unchecked(&tx, input)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(view)
+}
+
+/// Voids a posted entry by posting a reversing entry and linking the two.
+///
+/// The reverse entry's description and memo are written in `locale`.
+///
+/// The reverse insert and both link updates happen in one transaction.
+/// If the original is hidden, the reverse `VOID:` row inherits that flag so
+/// journal CSV omits both. A visible void still exports the original and the
+/// reverse.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown entry.
+/// - [`ValidationError::EntryAlreadyVoided`] when the entry is voided or is
+///   itself a reversing entry.
+/// - [`ValidationError::EntryNotPosted`] when the entry is a draft.
+/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
+/// - [`Error::Io`] on database errors.
+///
+/// An archived account is not an error here: the reversing entry posts to the
+/// original's accounts even when one of them has since been archived, so that
+/// archiving an account never makes its entries impossible to void.
+pub fn void_entry(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let result = void_entry_in_tx(&tx, id, locale)?;
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(result)
+}
+
+/// Corrects a posted entry: voids the original and posts the replacement in
+/// one transaction, moving any attached documents to the replacement.
+///
+/// Posted entries stay immutable — an edit is a void plus repost so the audit
+/// trail survives. The UI hides voided pairs, so this reads as an in-place edit.
+/// A hidden original yields a hidden replacement (and a hidden VOID reverse)
+/// so journal CSV omits the whole edit. A visible original stays visible.
+/// The reversing entry's description and memo are written in `locale`.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown entry.
+/// - [`ValidationError::WrongBook`] when `input` names another entity than
+///   the original's.
+/// - The errors of [`void_entry`] for the original.
+/// - The errors of [`post_simple_entry`] for the replacement, including
+///   [`ValidationError::AccountInactive`]: the reversal may post to an
+///   archived account of the original, but the replacement is a new entry and
+///   may not.
+///
+/// On any error nothing is changed; the void is rolled back with the post.
+pub fn replace_simple_entry(
+    conn: &Connection,
+    original_id: JournalEntryId,
+    input: &PostSimpleEntry,
+    locale: Locale,
+) -> Result<PostedEntryView> {
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let original = get_entry(&tx, original_id)?;
+    if original.entry.entity_id != input.entity_id {
+        return Err(Error::Validation(ValidationError::WrongBook));
+    }
+
+    void_entry_in_tx(&tx, original_id, locale)?;
+    let replacement = post_simple_entry_unchecked_hidden(&tx, input, original.entry.hidden)?;
+
+    tx.execute(
+        "UPDATE documents SET entry_id = ?1 WHERE entry_id = ?2",
+        rusqlite::params![
+            replacement.entry.id.0.to_string(),
+            original_id.0.to_string(),
+        ],
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    Ok(replacement)
+}
+
+/// Sets an asset or liability account's balance as of a date by posting the
+/// difference against the entity's Opening Balances equity account.
+///
+/// The user states what the account actually holds; the gap between that and
+/// the ledger becomes one adjustment entry, so repeating the call converges on
+/// the stated balance instead of stacking duplicates. The entry's description
+/// is written in `locale`.
+///
+/// `target_minor` is in minor units and signed like the account's balance.
+/// The contra account is the entity's active system equity account, or any
+/// other active equity account when the chart has no such system account.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`ValidationError::OpeningBalanceAccountType`] unless the account is an
+///   asset or a liability.
+/// - [`ValidationError::AccountInactive`] for an archived account.
+/// - [`ValidationError::InvalidDate`] when `as_of` is not a date.
+/// - [`ValidationError::OpeningBalanceUnchanged`] when the account already
+///   has that balance on that date.
+/// - [`ValidationError::NoEquityAccount`] when the entity has no active
+///   equity account to post against.
+/// - [`Error::MoneyOverflow`] when the difference between the target and the
+///   current balance does not fit in `i64`.
+/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
+/// - [`Error::Io`] on database errors.
+pub fn set_account_opening_balance(
+    conn: &Connection,
+    account_id: AccountId,
+    target_minor: i64,
+    as_of: &str,
+    locale: Locale,
+) -> Result<PostedEntryView> {
+    let account = get_account(conn, account_id)?;
+    if account.account_type != AccountType::Asset && account.account_type != AccountType::Liability
+    {
+        return Err(Error::Validation(
+            ValidationError::OpeningBalanceAccountType,
+        ));
+    }
+    ensure_active(&account)?;
+
+    let as_of = parse_date(as_of)?;
+    let current = account_balance_as_of(conn, account_id, account.account_type, as_of)?;
+    let delta = target_minor
+        .checked_sub(current)
+        .ok_or(Error::MoneyOverflow)?;
+    if delta == 0 {
+        return Err(Error::Validation(ValidationError::OpeningBalanceUnchanged));
+    }
+
+    // Prefer the system Opening Balances account; fall back to any active
+    // equity account so hand-built (blank template) charts still work.
+    let accounts = list_accounts(conn, account.entity_id)?;
+    let is_active_equity =
+        |candidate: &&Account| candidate.account_type == AccountType::Equity && candidate.is_active;
+    let equity = accounts
+        .iter()
+        .find(|candidate| is_active_equity(candidate) && candidate.is_system)
+        .or_else(|| accounts.iter().find(is_active_equity))
+        .ok_or(Error::Validation(ValidationError::NoEquityAccount))?;
+
+    // A debit-normal account grows by debiting: a positive delta debits the
+    // account and credits equity; every other combination flips the sides.
+    let amount = delta.checked_abs().ok_or(Error::MoneyOverflow)?;
+    let account_on_debit_side = account.account_type.is_debit_normal() == (delta > 0);
+    let (debit_id, credit_id) = if account_on_debit_side {
+        (account.id, equity.id)
+    } else {
+        (equity.id, account.id)
+    };
+
+    post_entry(
+        conn,
+        &PostJournal {
+            entity_id: account.entity_id,
+            entry_date: format_date(as_of),
+            description: opening_balance_description(locale, &account.name),
+            reference: None,
+            lines: vec![
+                CreateJournalLine {
+                    account_id: debit_id,
+                    debit_minor: amount,
+                    credit_minor: 0,
+                    memo: None,
+                },
+                CreateJournalLine {
+                    account_id: credit_id,
+                    debit_minor: 0,
+                    credit_minor: amount,
+                    memo: None,
+                },
+            ],
+        },
+    )
+}
+
+/// Lists the lines of active entries on an account between `from` and `to`
+/// inclusive (`YYYY-MM-DD`), oldest first, each with the running balance.
+///
+/// `None` leaves that end of the range open. The running balance starts from
+/// the account's balance on the day before `from`, so the first line's
+/// balance is the account's true balance and not just the sum of the lines
+/// shown.
+///
+/// # Errors
+///
+/// [`Error::NotFound`] for an unknown account; [`Error::Validation`] for a
+/// malformed date; [`Error::MoneyOverflow`] when the running balance does not
+/// fit in `i64`; [`Error::VaultCorrupt`] for a stored id or date that does not
+/// parse; database errors as [`Error::Io`].
+pub fn account_register(
+    conn: &Connection,
+    account_id: AccountId,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<Vec<RegisterLine>> {
+    let account = get_account(conn, account_id)?;
+    let from = from.map(parse_date).transpose()?.map(format_date);
+    let to = to.map(parse_date).transpose()?.map(format_date);
+
+    let mut running = if let Some(from) = from.as_deref() {
+        let prior_sql = format!(
+            "
+            SELECT COALESCE(SUM(jl.debit_minor),0), COALESCE(SUM(jl.credit_minor),0)
+            FROM journal_lines jl
+            JOIN journal_entries je ON je.id = jl.entry_id
+            WHERE jl.account_id = ?1
+              AND {ACTIVE_ENTRY_PREDICATE}
+              AND je.entry_date < ?2
+            "
+        );
+        let (prior_debits, prior_credits): (i64, i64) = conn
+            .query_row(
+                &prior_sql,
+                rusqlite::params![account_id.0.to_string(), from],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|err| Error::Io(err.to_string()))?;
+        normal_balance(account.account_type, prior_debits, prior_credits)?
+    } else {
+        0
+    };
+
+    let list_sql = format!(
+        "
+        SELECT je.id, je.entry_date, je.description,
+               jl.debit_minor, jl.credit_minor, je.hidden
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE jl.account_id = ?1
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND (?2 IS NULL OR je.entry_date >= ?2)
+          AND (?3 IS NULL OR je.entry_date <= ?3)
+        ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
+        "
+    );
+    let mut stmt = conn
+        .prepare(&list_sql)
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let rows = stmt
+        .query_map(
+            rusqlite::params![account_id.0.to_string(), from, to],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            },
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let mut register = Vec::new();
+    for (entry_id, entry_date, description, debit_minor, credit_minor, hidden) in
+        collect_rows(rows.map(|row| row.map(Ok)))?
+    {
+        let entry_id = JournalEntryId(stored_uuid("journal_entries.id", &entry_id)?);
+        let entry_date = stored_date("journal_entries.entry_date", &entry_date)?;
+        let change = normal_balance(account.account_type, debit_minor, credit_minor)?;
+        running = add_minor(running, change)?;
+
+        register.push(RegisterLine {
+            entry_id,
+            entry_date,
+            description,
+            debit_minor,
+            credit_minor,
+            balance_minor: running,
+            hidden: hidden != 0,
+        });
+    }
+
+    Ok(register)
+}
+
+/// Builds and inserts the simple-form entry without transaction management.
+///
+/// Callers own the transaction: [`post_simple_entry`] wraps this, and
+/// `documents::post_simple_entry_with_document` composes it with the
+/// document save inside one transaction.
+///
+/// # Errors
+///
+/// Those of [`post_simple_entry`].
+pub(crate) fn post_simple_entry_unchecked(
+    conn: &Connection,
+    input: &PostSimpleEntry,
+) -> Result<PostedEntryView> {
+    post_simple_entry_unchecked_hidden(conn, input, false)
+}
+
+/// Builds and inserts the simple-form entry with the given hidden flag,
+/// without transaction management.
+///
+/// [`replace_simple_entry`] passes the flag of the entry it replaces, so that
+/// correcting a hidden entry does not bring it back into the exports.
+///
+/// # Errors
+///
+/// Those of [`post_simple_entry`].
+pub(crate) fn post_simple_entry_unchecked_hidden(
+    conn: &Connection,
+    input: &PostSimpleEntry,
+    hidden: bool,
+) -> Result<PostedEntryView> {
+    if input.amount_minor <= 0 {
+        return Err(Error::Validation(ValidationError::AmountNotPositive));
+    }
+
+    let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
+
+    let lines = vec![
+        CreateJournalLine {
+            account_id: debit_account,
+            debit_minor: input.amount_minor,
+            credit_minor: 0,
+            memo: None,
+        },
+        CreateJournalLine {
+            account_id: credit_account,
+            debit_minor: 0,
+            credit_minor: input.amount_minor,
+            memo: None,
+        },
+    ];
+
+    insert_posted_entry(
+        conn,
+        &PostJournal {
+            entity_id: input.entity_id,
+            entry_date: input.entry_date.clone(),
+            description: input.description.clone(),
+            reference: input.reference.clone(),
+            lines,
+        },
+        hidden,
+        ArchivedAccounts::Refuse,
+    )
+}
+
+/// Checks the role accounts of `input` exactly as [`post_simple_entry`] does.
+///
+/// Posting resolves its accounts through the same [`simple_entry_sides`], so
+/// an input that passes here cannot be refused for its accounts at post time
+/// unless an account changes in between.
+///
+/// # Errors
+///
+/// Those [`simple_entry_sides`] returns.
+pub(crate) fn ensure_simple_entry_roles(conn: &Connection, input: &PostSimpleEntry) -> Result<()> {
+    simple_entry_sides(conn, input).map(|_| ())
 }
 
 /// The entries [`list_entries`] returns, as a predicate on `journal_entries je`.
@@ -211,6 +779,11 @@ struct ListedEntries {
 }
 
 impl ListedEntries {
+    /// Normalizes `filter` into the values the predicate binds.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::InvalidDate`] when a date bound is not a date.
     fn new(entity_id: EntityId, filter: &EntryFilter) -> Result<Self> {
         // Normalize before binding: SQL compares date TEXT lexicographically, so a
         // lenient input like `2026-3-5` must become `2026-03-05` first.
@@ -244,33 +817,28 @@ impl ListedEntries {
     }
 }
 
-/// Lists posted entries for an entity (newest first) matching `filter`.
+/// Wraps trimmed user text in `%…%`, escaping LIKE wildcards so `%`/`_`
+/// in a search are literals, not patterns.
+///
+/// The text is case-folded here and the searched columns are folded in SQL
+/// with `fold(...)`, so the match ignores case for every letter, not only
+/// ASCII ones.
+fn like_pattern(text: &str) -> String {
+    let escaped = fold_case(text)
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
+/// Loads the entries [`list_entries`] returns, newest first, each with
+/// whether it is out of the active books.
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date in `filter`;
-/// [`Error::VaultCorrupt`] for a stored id, date, status or amount that does
-/// not parse; database errors as [`Error::Io`].
-pub fn list_entries(
-    conn: &Connection,
-    entity_id: EntityId,
-    filter: &EntryFilter,
-) -> Result<Vec<PostedEntryView>> {
-    let listed = ListedEntries::new(entity_id, filter)?;
-    let headers = load_listed_headers(conn, &listed)?;
-    let mut lines_by_entry = load_listed_lines(conn, &listed)?;
-
-    Ok(headers
-        .into_iter()
-        .map(|(entry, is_voided)| PostedEntryView {
-            lines: lines_by_entry.remove(&entry.id).unwrap_or_default(),
-            entry,
-            is_voided,
-        })
-        .collect())
-}
-
-/// Entry headers for [`list_entries`], newest first, each with its voided flag.
+/// - [`Error::VaultCorrupt`] for a stored id, date or status that does not
+///   parse.
+/// - [`Error::Io`] on database errors.
 fn load_listed_headers(
     conn: &Connection,
     listed: &ListedEntries,
@@ -281,8 +849,8 @@ fn load_listed_headers(
                je.status, je.hidden, je.voided_by_entry_id,
                je.voided_by_entry_id IS NOT NULL
                    OR EXISTS (
-                       SELECT 1 FROM journal_entries x
-                       WHERE x.voided_by_entry_id = je.id
+                       SELECT 1 FROM journal_entries voider
+                       WHERE voider.voided_by_entry_id = je.id
                    ) AS is_voided
         FROM journal_entries je
         WHERE {LISTED_ENTRIES_PREDICATE}
@@ -303,6 +871,78 @@ fn load_listed_headers(
     collect_rows(rows)
 }
 
+/// Loads the lines of every entry [`list_entries`] returns, grouped by entry
+/// and in line order within each.
+///
+/// The entries are selected by joining on [`LISTED_ENTRIES_PREDICATE`] rather
+/// than by an `IN` list of their ids: a list binds one variable per entry, and
+/// `SQLite` refuses a statement with more than `SQLITE_MAX_VARIABLE_NUMBER`
+/// of them (32766 in the bundled build), which a large book exceeds.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] for a stored id or amount that does not parse.
+/// - [`Error::Io`] on database errors.
+fn load_listed_lines(
+    conn: &Connection,
+    listed: &ListedEntries,
+) -> Result<HashMap<JournalEntryId, Vec<JournalLine>>> {
+    let sql = format!(
+        "
+        SELECT jl.id, jl.entry_id, jl.account_id, jl.debit_minor, jl.credit_minor, jl.memo
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE {LISTED_ENTRIES_PREDICATE}
+        ORDER BY jl.entry_id, jl.line_order
+        "
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let rows = stmt
+        .query_map(listed.bound(), |row| Ok(map_line_row(row)))
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
+    for line in collect_rows(rows)? {
+        grouped.entry(line.entry_id).or_default().push(line);
+    }
+    Ok(grouped)
+}
+
+/// Loads the lines of one entry, in the order they were posted.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] for a stored id or amount that does not parse.
+/// - [`Error::Io`] on database errors.
+fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<JournalLine>> {
+    let mut stmt = conn
+        .prepare(
+            "
+            SELECT id, entry_id, account_id, debit_minor, credit_minor, memo
+            FROM journal_lines
+            WHERE entry_id = ?1
+            ORDER BY line_order
+            ",
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    let rows = stmt
+        .query_map([entry_id.0.to_string()], |row| Ok(map_line_row(row)))
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    collect_rows(rows)
+}
+
+/// Returns whether another entry names `id` in its `voided_by_entry_id`.
+///
+/// That is the second half of the void test in [`get_entry`]: it finds a
+/// reversing entry that carries no link of its own.
+///
+/// # Errors
+///
+/// [`Error::Io`] on database errors.
 fn entry_is_void_reverse(conn: &Connection, id: JournalEntryId) -> Result<bool> {
     let count: i64 = conn
         .query_row(
@@ -317,101 +957,6 @@ fn entry_is_void_reverse(conn: &Connection, id: JournalEntryId) -> Result<bool> 
     Ok(count > 0)
 }
 
-/// Get one entry with lines.
-///
-/// # Errors
-///
-/// Not found or DB error.
-pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryView> {
-    let (entry, mut is_voided) = conn
-        .query_row(
-            "
-            SELECT id, entity_id, entry_date, description, reference, status, hidden,
-                   voided_by_entry_id
-            FROM journal_entries WHERE id = ?1
-            ",
-            [id.0.to_string()],
-            |row| {
-                let voided: Option<String> = row.get(7)?;
-                Ok((map_entry_row(row), voided.is_some()))
-            },
-        )
-        .map_err(|err| match err {
-            rusqlite::Error::QueryReturnedNoRows => Error::NotFound("journal entry".into()),
-            other => Error::Io(other.to_string()),
-        })?;
-    let entry = entry?;
-
-    if !is_voided {
-        is_voided = entry_is_void_reverse(conn, entry.id)?;
-    }
-
-    let lines = load_lines(conn, entry.id)?;
-    Ok(PostedEntryView {
-        entry,
-        lines,
-        is_voided,
-    })
-}
-
-/// Sets the owner-only hidden flag on an existing journal entry.
-///
-/// Hidden keeps an entry out of what leaves the app: the journal CSV export
-/// omits it, and so does the accountant profit and loss
-/// ([`profit_and_loss_export`](crate::ledger::profit_and_loss_export)). It is
-/// not extra encryption and not a second password. Inside the app the owner
-/// still sees the row via [`list_entries`], [`get_entry`] and
-/// [`account_register`], and every other report counts it.
-///
-/// v1: any existing entry the owner can load (draft or posted, including
-/// voided) can be hidden or unhidden.
-///
-/// # Errors
-///
-/// [`Error::NotFound`] for an unknown entry; [`Error::VaultCorrupt`] for a
-/// stored row that does not parse; database errors as [`Error::Io`].
-pub fn set_entry_hidden(
-    conn: &Connection,
-    id: JournalEntryId,
-    hidden: bool,
-) -> Result<PostedEntryView> {
-    let n = conn
-        .execute(
-            "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
-            rusqlite::params![i64::from(hidden), id.0.to_string()],
-        )
-        .map_err(|err| Error::Io(err.to_string()))?;
-    if n == 0 {
-        return Err(Error::NotFound("journal entry".into()));
-    }
-    get_entry(conn, id)
-}
-
-/// Validates and posts a journal entry atomically.
-///
-/// # Errors
-///
-/// - [`ValidationError::InvalidDate`] for a malformed entry date.
-/// - [`Error::NotFound`] for an unknown account.
-/// - [`Error::AccountWrongEntity`] for an account of another entity.
-/// - [`ValidationError::AccountInactive`] for an archived account.
-/// - [`Error::NegativeMoney`] for a negative debit or credit.
-/// - [`Error::TooFewLines`] for fewer than two lines.
-/// - [`Error::InvalidLineAmounts`] for a line that is not debit XOR credit.
-/// - [`Error::MoneyOverflow`] when the debits or the credits do not fit in
-///   `i64`.
-/// - [`Error::UnbalancedEntry`] when debits and credits differ.
-/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
-/// - [`Error::Io`] on database errors.
-pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-    let view = insert_posted_entry(&tx, input, false, ArchivedAccounts::Refuse)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(view)
-}
-
 /// Whether a new entry may post to an archived account.
 #[derive(Debug, Clone, Copy)]
 enum ArchivedAccounts {
@@ -423,53 +968,58 @@ enum ArchivedAccounts {
     Accept,
 }
 
-/// Insert header + lines without transaction management.
+/// Validates `input` and inserts its header and lines, without transaction
+/// management.
 ///
 /// Callers own the transaction: [`post_entry`] and [`void_entry`] wrap this so
 /// a failure mid-insert can never leave a partial posted entry behind.
 /// `hidden` is for [`void_entry`]: a reverse of a hidden original stays hidden.
+///
+/// # Errors
+///
+/// Those of [`post_entry`]; with [`ArchivedAccounts::Accept`], an archived
+/// account is not one of them.
 fn insert_posted_entry(
     conn: &Connection,
     input: &PostJournal,
     hidden: bool,
     archived: ArchivedAccounts,
 ) -> Result<PostedEntryView> {
-    // Description may be empty (tray quick-add memo is optional); still trim.
+    // An empty description is accepted: the quick-add form leaves it optional.
     let description = input.description.trim();
 
     let entry_date = parse_date(&input.entry_date)?;
     let entry_id = JournalEntryId::new();
 
     let mut lines = Vec::with_capacity(input.lines.len());
-    for raw in &input.lines {
-        let account = get_account(conn, raw.account_id)?;
+    for line_input in &input.lines {
+        let account = get_account(conn, line_input.account_id)?;
         ensure_in_book(&account, input.entity_id)?;
         match archived {
             ArchivedAccounts::Refuse => ensure_active(&account)?,
             ArchivedAccounts::Accept => {}
         }
 
-        let debit = Money::from_minor(raw.debit_minor)?;
-        let credit = Money::from_minor(raw.credit_minor)?;
+        let debit = Money::from_minor(line_input.debit_minor)?;
+        let credit = Money::from_minor(line_input.credit_minor)?;
         lines.push(JournalLine {
             id: JournalLineId::new(),
             entry_id,
-            account_id: raw.account_id,
+            account_id: line_input.account_id,
             debit,
             credit,
-            memo: raw.memo.clone(),
+            memo: line_input.memo.clone(),
         });
     }
 
     validate_lines_for_post(&lines)?;
 
     let now = now_utc_string();
-    let date_s = format_date(entry_date);
     let reference = input
         .reference
         .as_ref()
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty());
+        .map(|reference| reference.trim().to_owned())
+        .filter(|reference| !reference.is_empty());
 
     conn.execute(
         "
@@ -481,7 +1031,7 @@ fn insert_posted_entry(
         rusqlite::params![
             entry_id.0.to_string(),
             input.entity_id.0.to_string(),
-            date_s,
+            format_date(entry_date),
             description,
             reference,
             now,
@@ -513,90 +1063,6 @@ fn insert_posted_entry(
     get_entry(conn, entry_id)
 }
 
-/// Build and insert the simple-form entry without transaction management.
-///
-/// Callers own the transaction: [`post_simple_entry`] wraps this, and
-/// `documents::post_simple_entry_with_document` composes it with the
-/// document save inside one transaction.
-pub(crate) fn post_simple_entry_unchecked(
-    conn: &Connection,
-    input: &PostSimpleEntry,
-) -> Result<PostedEntryView> {
-    post_simple_entry_unchecked_hidden(conn, input, false)
-}
-
-/// Like [`post_simple_entry_unchecked`], copying `hidden` onto the new row.
-pub(crate) fn post_simple_entry_unchecked_hidden(
-    conn: &Connection,
-    input: &PostSimpleEntry,
-    hidden: bool,
-) -> Result<PostedEntryView> {
-    if input.amount_minor <= 0 {
-        return Err(Error::Validation(ValidationError::AmountNotPositive));
-    }
-
-    let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
-
-    let lines = vec![
-        CreateJournalLine {
-            account_id: debit_account,
-            debit_minor: input.amount_minor,
-            credit_minor: 0,
-            memo: None,
-        },
-        CreateJournalLine {
-            account_id: credit_account,
-            debit_minor: 0,
-            credit_minor: input.amount_minor,
-            memo: None,
-        },
-    ];
-
-    insert_posted_entry(
-        conn,
-        &PostJournal {
-            entity_id: input.entity_id,
-            entry_date: input.entry_date.clone(),
-            description: input.description.clone(),
-            reference: input.reference.clone(),
-            lines,
-        },
-        hidden,
-        ArchivedAccounts::Refuse,
-    )
-}
-
-/// Build and post the journal entry for a simple-form input.
-///
-/// The kind → debit/credit mapping lives here so the UI never carries
-/// accounting rules; each role account's type is checked before posting.
-///
-/// # Errors
-///
-/// [`Error::Validation`] for missing/mistyped role accounts or a
-/// non-positive amount, plus all [`post_entry`] errors.
-pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-    let view = post_simple_entry_unchecked(&tx, input)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(view)
-}
-
-/// Checks the role accounts of `input` exactly as [`post_simple_entry`] does.
-///
-/// Posting resolves its accounts through the same [`simple_entry_sides`], so
-/// an input that passes here cannot be refused for its accounts at post time
-/// unless an account changes in between.
-///
-/// # Errors
-///
-/// Those [`simple_entry_sides`] returns.
-pub(crate) fn ensure_simple_entry_roles(conn: &Connection, input: &PostSimpleEntry) -> Result<()> {
-    simple_entry_sides(conn, input).map(|_| ())
-}
-
 /// Resolves the (debit, credit) account pair for a simple entry.
 ///
 /// # Errors
@@ -608,6 +1074,8 @@ pub(crate) fn ensure_simple_entry_roles(conn: &Connection, input: &PostSimpleEnt
 /// - [`Error::AccountWrongEntity`] or [`ValidationError::AccountInactive`]
 ///   when an account belongs to another book or is archived.
 /// - [`Error::NotFound`] for an unknown account id.
+/// - [`Error::VaultCorrupt`] for a stored account that does not parse.
+/// - [`Error::Io`] on database errors.
 fn simple_entry_sides(
     conn: &Connection,
     input: &PostSimpleEntry,
@@ -625,6 +1093,10 @@ fn simple_entry_sides(
 }
 
 /// Checks that `account` belongs to the book of `entity_id`.
+///
+/// # Errors
+///
+/// [`Error::AccountWrongEntity`] when it belongs to another.
 fn ensure_in_book(account: &Account, entity_id: EntityId) -> Result<()> {
     if account.entity_id != entity_id {
         return Err(Error::AccountWrongEntity);
@@ -633,6 +1105,11 @@ fn ensure_in_book(account: &Account, entity_id: EntityId) -> Result<()> {
 }
 
 /// Checks that `account` is not archived.
+///
+/// # Errors
+///
+/// [`ValidationError::AccountInactive`], carrying the account's code, when it
+/// is.
 fn ensure_active(account: &Account) -> Result<()> {
     if !account.is_active {
         return Err(Error::Validation(ValidationError::AccountInactive {
@@ -644,24 +1121,33 @@ fn ensure_active(account: &Account) -> Result<()> {
 
 /// Loads the (debit, credit) accounts the kind of `input` maps its roles to,
 /// checking only that each role is filled with an account of an allowed type.
+///
+/// # Errors
+///
+/// - [`ValidationError::BillStatusRequired`] for a bill without a status.
+/// - [`ValidationError::AccountRequired`] for an empty role.
+/// - [`ValidationError::AccountWrongType`] for an account of a type the role
+///   does not allow.
+/// - [`Error::NotFound`] for an unknown account id.
+/// - [`Error::VaultCorrupt`] for a stored account that does not parse.
+/// - [`Error::Io`] on database errors.
 fn simple_entry_role_accounts(
     conn: &Connection,
     input: &PostSimpleEntry,
 ) -> Result<(Account, Account)> {
-    use crate::domain::AccountType::{Asset, Expense, Income, Liability};
+    use AccountType::{Asset, Expense, Income, Liability};
 
-    let role =
-        |id: Option<AccountId>, role: AccountRole, allowed: &[crate::domain::AccountType]| {
-            let id = id.ok_or(Error::Validation(ValidationError::AccountRequired { role }))?;
-            let account = get_account(conn, id)?;
-            if !allowed.contains(&account.account_type) {
-                return Err(Error::Validation(ValidationError::AccountWrongType {
-                    role,
-                    code: account.code.clone(),
-                }));
-            }
-            Ok(account)
-        };
+    let role = |id: Option<AccountId>, role: AccountRole, allowed: &[AccountType]| {
+        let id = id.ok_or(Error::Validation(ValidationError::AccountRequired { role }))?;
+        let account = get_account(conn, id)?;
+        if !allowed.contains(&account.account_type) {
+            return Err(Error::Validation(ValidationError::AccountWrongType {
+                role,
+                code: account.code.clone(),
+            }));
+        }
+        Ok(account)
+    };
 
     match input.kind {
         SimpleEntryKind::Expense => Ok((
@@ -730,36 +1216,16 @@ fn simple_entry_role_accounts(
     }
 }
 
-/// Void a posted entry by posting a reverse entry and linking `voided_by`.
+/// Posts the reversing entry of `id` and links the two, without transaction
+/// management.
 ///
-/// The reverse entry's description and memo are written in `locale`.
-///
-/// The reverse insert and both link updates happen in one transaction.
-/// If the original is hidden, the reverse `VOID:` row inherits that flag so
-/// journal CSV omits both. A visible void still exports the original and the
-/// reverse.
+/// The caller owns the transaction: the reversal and the two links must be
+/// written together, and [`replace_simple_entry`] adds the replacement entry
+/// to the same transaction.
 ///
 /// # Errors
 ///
-/// - [`Error::NotFound`] for an unknown entry.
-/// - [`ValidationError::EntryAlreadyVoided`] when the entry is voided or is
-///   itself a reversing entry.
-/// - [`ValidationError::EntryNotPosted`] when the entry is a draft.
-/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
-/// - [`Error::Io`] on database errors.
-///
-/// An archived account is not an error here: the reversing entry posts to the
-/// original's accounts even when one of them has since been archived, so that
-/// archiving an account never makes its entries impossible to void.
-pub fn void_entry(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-    let result = void_entry_in_tx(&tx, id, locale)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(result)
-}
-
+/// Those of [`void_entry`].
 fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
     let view = get_entry(conn, id)?;
     if view.is_voided {
@@ -794,16 +1260,16 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         ArchivedAccounts::Accept,
     )?;
 
-    // Link original → reverse (original is voided).
     conn.execute(
         "UPDATE journal_entries SET voided_by_entry_id = ?1 WHERE id = ?2",
         rusqlite::params![reverse.entry.id.0.to_string(), id.0.to_string()],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
-    // Link reverse → original so the reversing entry is also out of active books
-    // and hidden from the UI (`is_voided`). Without this, delete left a "VOID: …"
-    // row visible in Transactions.
+    // The reversal is linked back to the original as well, so that it
+    // carries its own mark of being out of the active books. A vault whose
+    // voids wrote only the first link is still read correctly: every reader
+    // also looks for an entry that points at the one it is reading.
     conn.execute(
         "UPDATE journal_entries SET voided_by_entry_id = ?1 WHERE id = ?2",
         rusqlite::params![id.0.to_string(), reverse.entry.id.0.to_string()],
@@ -816,281 +1282,13 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     })
 }
 
-/// Correct a posted entry: void the original and post the replacement in one
-/// transaction, moving any attached documents to the replacement.
-///
-/// Posted entries stay immutable — an edit is a void plus repost so the audit
-/// trail survives. The UI hides voided pairs, so this reads as an in-place edit.
-/// A hidden original yields a hidden replacement (and a hidden VOID reverse)
-/// so journal CSV omits the whole edit. A visible original stays visible.
-/// The reversing entry's description and memo are written in `locale`.
-///
-/// # Errors
-///
-/// - [`Error::NotFound`] for an unknown entry.
-/// - [`ValidationError::WrongBook`] when `input` names another entity than
-///   the original's.
-/// - The errors of [`void_entry`] for the original.
-/// - The errors of [`post_simple_entry`] for the replacement, including
-///   [`ValidationError::AccountInactive`]: the reversal may post to an
-///   archived account of the original, but the replacement is a new entry and
-///   may not.
-///
-/// On any error nothing is changed; the void is rolled back with the post.
-pub fn replace_simple_entry(
-    conn: &Connection,
-    original_id: JournalEntryId,
-    input: &PostSimpleEntry,
-    locale: Locale,
-) -> Result<PostedEntryView> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    let original = get_entry(&tx, original_id)?;
-    if original.entry.entity_id != input.entity_id {
-        return Err(Error::Validation(ValidationError::WrongBook));
-    }
-
-    void_entry_in_tx(&tx, original_id, locale)?;
-    let replacement = post_simple_entry_unchecked_hidden(&tx, input, original.entry.hidden)?;
-
-    tx.execute(
-        "UPDATE documents SET entry_id = ?1 WHERE entry_id = ?2",
-        rusqlite::params![
-            replacement.entry.id.0.to_string(),
-            original_id.0.to_string(),
-        ],
-    )
-    .map_err(|err| Error::Io(err.to_string()))?;
-
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(replacement)
-}
-
-/// Set an asset or liability account's balance as of a date by posting the
-/// difference against the entity's Opening Balances equity account.
-///
-/// The user states what the account actually holds; the gap between that and
-/// the ledger becomes one adjustment entry, so repeating the call converges on
-/// the stated balance instead of stacking duplicates. The entry's description
-/// is written in `locale`.
-///
-/// # Errors
-///
-/// Wrong account type, inactive account, no equity account to post against,
-/// a target equal to the current balance, or DB errors.
-pub fn set_account_opening_balance(
-    conn: &Connection,
-    account_id: AccountId,
-    target_minor: i64,
-    as_of: &str,
-    locale: Locale,
-) -> Result<PostedEntryView> {
-    use crate::domain::AccountType;
-
-    let account = get_account(conn, account_id)?;
-    if account.account_type != AccountType::Asset && account.account_type != AccountType::Liability
-    {
-        return Err(Error::Validation(
-            ValidationError::OpeningBalanceAccountType,
-        ));
-    }
-    if !account.is_active {
-        return Err(Error::Validation(ValidationError::AccountInactive {
-            code: account.code.clone(),
-        }));
-    }
-
-    let as_of_d = parse_date(as_of)?;
-    let current = account_balance_as_of(conn, account_id, account.account_type, as_of_d)?;
-    let delta = target_minor
-        .checked_sub(current)
-        .ok_or(Error::MoneyOverflow)?;
-    if delta == 0 {
-        return Err(Error::Validation(ValidationError::OpeningBalanceUnchanged));
-    }
-
-    // Prefer the system Opening Balances account; fall back to any active
-    // equity account so hand-built (blank template) charts still work.
-    let accounts = list_accounts(conn, account.entity_id)?;
-    let equity = accounts
-        .iter()
-        .find(|a| a.account_type == AccountType::Equity && a.is_system && a.is_active)
-        .or_else(|| {
-            accounts
-                .iter()
-                .find(|a| a.account_type == AccountType::Equity && a.is_active)
-        })
-        .ok_or(Error::Validation(ValidationError::NoEquityAccount))?;
-
-    // A debit-normal account grows by debiting: a positive delta debits the
-    // account and credits equity; every other combination flips the sides.
-    let amount = delta.checked_abs().ok_or(Error::MoneyOverflow)?;
-    let account_on_debit_side = account.account_type.is_debit_normal() == (delta > 0);
-    let (debit_id, credit_id) = if account_on_debit_side {
-        (account.id, equity.id)
-    } else {
-        (equity.id, account.id)
-    };
-
-    post_entry(
-        conn,
-        &PostJournal {
-            entity_id: account.entity_id,
-            entry_date: format_date(as_of_d),
-            description: opening_balance_description(locale, &account.name),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: debit_id,
-                    debit_minor: amount,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: credit_id,
-                    debit_minor: 0,
-                    credit_minor: amount,
-                    memo: None,
-                },
-            ],
-        },
-    )
-}
-
-/// Account register with running balance (oldest first in range).
-///
-/// # Errors
-///
-/// [`Error::NotFound`] for an unknown account; [`Error::Validation`] for a
-/// malformed date; [`Error::MoneyOverflow`] when the running balance does not
-/// fit in `i64`; [`Error::VaultCorrupt`] for a stored id or date that does not
-/// parse; database errors as [`Error::Io`].
-pub fn account_register(
-    conn: &Connection,
-    account_id: AccountId,
-    from: Option<&str>,
-    to: Option<&str>,
-) -> Result<Vec<RegisterLine>> {
-    let account = get_account(conn, account_id)?;
-    let from = from.map(parse_date).transpose()?.map(format_date);
-    let to = to.map(parse_date).transpose()?.map(format_date);
-
-    let mut running = if let Some(from) = from.as_deref() {
-        let prior_sql = format!(
-            "
-            SELECT COALESCE(SUM(jl.debit_minor),0), COALESCE(SUM(jl.credit_minor),0)
-            FROM journal_lines jl
-            JOIN journal_entries je ON je.id = jl.entry_id
-            WHERE jl.account_id = ?1
-              AND {ACTIVE_ENTRY_PREDICATE}
-              AND je.entry_date < ?2
-            "
-        );
-        let prior: (i64, i64) = conn
-            .query_row(
-                &prior_sql,
-                rusqlite::params![account_id.0.to_string(), from],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .map_err(|err| Error::Io(err.to_string()))?;
-        normal_balance(account.account_type, prior.0, prior.1)?
-    } else {
-        0
-    };
-
-    let list_sql = format!(
-        "
-        SELECT je.id, je.entry_date, je.description,
-               jl.debit_minor, jl.credit_minor, je.hidden
-        FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
-        WHERE jl.account_id = ?1
-          AND {ACTIVE_ENTRY_PREDICATE}
-          AND (?2 IS NULL OR je.entry_date >= ?2)
-          AND (?3 IS NULL OR je.entry_date <= ?3)
-        ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
-        "
-    );
-    let mut stmt = conn
-        .prepare(&list_sql)
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    let rows = stmt
-        .query_map(
-            rusqlite::params![account_id.0.to_string(), from, to],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
-                ))
-            },
-        )
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    let mut result = Vec::new();
-    for (id_s, date_s, description, debit, credit, hidden) in
-        collect_rows(rows.map(|row| row.map(Ok)))?
-    {
-        let entry_id = JournalEntryId(stored_uuid("journal_entries.id", &id_s)?);
-        let entry_date = stored_date("journal_entries.entry_date", &date_s)?;
-        let delta = normal_balance(account.account_type, debit, credit)?;
-        running = add_minor(running, delta)?;
-        result.push(RegisterLine {
-            entry_id,
-            entry_date,
-            description,
-            debit_minor: debit,
-            credit_minor: credit,
-            balance_minor: running,
-            hidden: hidden != 0,
-        });
-    }
-
-    Ok(result)
-}
-
-/// Lines of every entry [`list_entries`] returns, grouped by entry and in line
-/// order within each.
-///
-/// The entries are selected by joining on [`LISTED_ENTRIES_PREDICATE`] rather
-/// than by an `IN` list of their ids: a list binds one variable per entry, and
-/// `SQLite` refuses a statement with more than `SQLITE_MAX_VARIABLE_NUMBER`
-/// of them (32766 in the bundled build), which a large book exceeds.
-fn load_listed_lines(
-    conn: &Connection,
-    listed: &ListedEntries,
-) -> Result<HashMap<JournalEntryId, Vec<JournalLine>>> {
-    let sql = format!(
-        "
-        SELECT jl.id, jl.entry_id, jl.account_id, jl.debit_minor, jl.credit_minor, jl.memo
-        FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
-        WHERE {LISTED_ENTRIES_PREDICATE}
-        ORDER BY jl.entry_id, jl.line_order
-        "
-    );
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|err| Error::Io(err.to_string()))?;
-    let rows = stmt
-        .query_map(listed.bound(), |row| Ok(map_line_row(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
-    for line in collect_rows(rows)? {
-        grouped.entry(line.entry_id).or_default().push(line);
-    }
-    Ok(grouped)
-}
-
 /// Maps a row selected as `id, entry_id, account_id, debit_minor,
 /// credit_minor, memo`.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when an id does not parse, an
+/// amount is negative, or a column has the wrong storage class.
 fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
     let id = stored_uuid("journal_lines.id", &read_column::<String>(row, 0)?)?;
     let entry_id = stored_uuid("journal_lines.entry_id", &read_column::<String>(row, 1)?)?;
@@ -1106,33 +1304,24 @@ fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
     })
 }
 
-/// A line amount as stored; the schema's CHECK keeps it non-negative.
+/// Returns a line amount as stored; the schema's `CHECK` keeps it
+/// non-negative.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming `column` when `minor` is negative.
 fn stored_amount(column: &str, minor: i64) -> Result<Money> {
     Money::from_minor(minor)
         .map_err(|_| corrupt_column(column, format_args!("negative amount: {minor}")))
 }
 
-fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<JournalLine>> {
-    let mut stmt = conn
-        .prepare(
-            "
-            SELECT id, entry_id, account_id, debit_minor, credit_minor, memo
-            FROM journal_lines
-            WHERE entry_id = ?1
-            ORDER BY line_order
-            ",
-        )
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    let rows = stmt
-        .query_map([entry_id.0.to_string()], |row| Ok(map_line_row(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    collect_rows(rows)
-}
-
 /// Maps a row whose first seven columns are `id, entity_id, entry_date,
 /// description, reference, status, hidden`.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when an id, the date or the
+/// status does not parse, or a column has the wrong storage class.
 fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
     let id = stored_uuid("journal_entries.id", &read_column::<String>(row, 0)?)?;
     let entity_id = stored_uuid("journal_entries.entity_id", &read_column::<String>(row, 1)?)?;
