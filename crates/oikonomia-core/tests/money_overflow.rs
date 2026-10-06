@@ -197,7 +197,7 @@ fn a_total_sqlite_adds_up_fails_the_query_instead_of_wrapping() {
     let summary = dashboard_summary(conn, entity_id, "2026-03-01", "2026-03-31", "2026-03-31");
 
     assert!(
-        matches!(&summary, Err(Error::Io(detail)) if detail.contains("integer overflow")),
+        matches!(&summary, Err(Error::Database { detail, .. }) if detail.contains("integer overflow")),
         "{summary:?}"
     );
 }

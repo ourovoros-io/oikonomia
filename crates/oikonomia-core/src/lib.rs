@@ -41,7 +41,7 @@
 //! - **Money is integer minor units.** Amounts are `i64` counts of the
 //!   currency's smallest unit and are never held in floating point. Sums are
 //!   checked: a total that does not fit is an error, never a wrapped or
-//!   clamped figure. The error is [`Error::MoneyOverflow`], or [`Error::Io`]
+//!   clamped figure. The error is [`Error::MoneyOverflow`], or [`Error::Database`]
 //!   when it is `SQLite`'s `SUM` that overflows (see [`ledger`]).
 //! - **A posted entry balances.** It has at least two lines, each line has an
 //!   amount on exactly one side, and total debits equal total credits

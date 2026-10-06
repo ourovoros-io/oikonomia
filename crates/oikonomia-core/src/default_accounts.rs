@@ -148,7 +148,7 @@ pub fn default_accounts(template: ChartTemplate, accounts: &[Account]) -> Defaul
 ///   `entity_id`.
 /// - [`Error::VaultCorrupt`](crate::Error::VaultCorrupt) when the entity or
 ///   one of its accounts is stored with a value that cannot be read.
-/// - [`Error::Io`](crate::Error::Io) when the database query fails.
+/// - [`Error::Database`](crate::Error::Database) when the database query fails.
 pub fn default_accounts_for_entity(
     conn: &Connection,
     entity_id: EntityId,

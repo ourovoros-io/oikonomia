@@ -18,7 +18,7 @@
 
 use crate::db::{collect_rows, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ pub struct UpdateAccount {
 /// - [`Error::VaultCorrupt`] for a stored account whose id, entity, type or
 ///   parent does not parse. The whole list fails: an account left out would
 ///   be missing from every report built on it.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
     let mut stmt = conn
         .prepare(
@@ -81,11 +81,11 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
             ORDER BY sort_order, code
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list accounts")?;
 
     let rows = stmt
         .query_map([entity_id.0.to_string()], |row| Ok(map_account(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list accounts")?;
 
     collect_rows(rows)
 }
@@ -97,7 +97,7 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`Error::VaultCorrupt`] for a stored account whose id, entity, type or
 ///   parent does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
     conn.query_row(
         "
@@ -110,7 +110,7 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound("account".into()),
-        other => Error::Io(other.to_string()),
+        other => Error::database("read account", other),
     })?
 }
 
@@ -126,7 +126,7 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
 ///   account with this code.
 /// - [`Error::VaultCorrupt`] when the account does not parse on being read
 ///   back.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Account> {
     let code = input.code.trim();
     let name = input.name.trim();
@@ -145,7 +145,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
             [input.entity_id.0.to_string()],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("check entity exists")?;
     if exists == 0 {
         return Err(Error::NotFound("entity".into()));
     }
@@ -188,7 +188,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
 /// - [`ValidationError::AccountCodeTaken`] when the entity already has
 ///   another account with this code.
 /// - [`Error::VaultCorrupt`] when the stored account does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Account> {
     let code = input.code.trim();
     let name = input.name.trim();
@@ -238,7 +238,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`ValidationError::SystemAccountProtected`] for a system account.
 /// - [`Error::VaultCorrupt`] when the stored account does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
     let account = get_account(conn, id)?;
     if account.is_system {
@@ -249,7 +249,7 @@ pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
         "UPDATE accounts SET is_active = 0 WHERE id = ?1",
         [id.0.to_string()],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("archive account")?;
     Ok(())
 }
 
@@ -272,7 +272,7 @@ fn account_write_error(err: &rusqlite::Error) -> Error {
         {
             Error::Validation(ValidationError::AccountCodeTaken)
         }
-        other => Error::Io(other.to_string()),
+        other => Error::database("write account", other),
     }
 }
 
@@ -433,10 +433,16 @@ mod tests {
         .expect("create triggers");
 
         let created = create_account(&conn, &new_account("2000"));
-        assert!(matches!(created, Err(Error::Io(_))), "{created:?}");
+        assert!(
+            matches!(created, Err(Error::Database { .. })),
+            "{created:?}"
+        );
 
         let updated = update_account(&conn, &renumbered(&existing, "3000"));
-        assert!(matches!(updated, Err(Error::Io(_))), "{updated:?}");
+        assert!(
+            matches!(updated, Err(Error::Database { .. })),
+            "{updated:?}"
+        );
     }
 
     #[test]

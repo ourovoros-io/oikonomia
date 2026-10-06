@@ -93,7 +93,7 @@
 //! Totals that `SQLite` adds up with `SUM` are covered too, by a different
 //! route: `SUM` over integers raises an error on overflow instead of wrapping
 //! (<https://www.sqlite.org/lang_aggfunc.html#sumunc>), so the query fails.
-//! That failure is reported as [`Error::Io`](crate::error::Error::Io), not as
+//! That failure is reported as [`Error::Database`](crate::error::Error::Database), not as
 //! `MoneyOverflow`.
 
 mod accounts;

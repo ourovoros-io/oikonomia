@@ -31,7 +31,7 @@
 use crate::coa::template_accounts;
 use crate::db::{collect_rows, corrupt_column, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
 use crate::util::now_utc_string;
@@ -63,7 +63,7 @@ pub struct CreateEntity {
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`] for a stored entity that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
     let mut stmt = conn
         .prepare(
@@ -74,11 +74,11 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
             ORDER BY fold(name), name
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list entities")?;
 
     let rows = stmt
         .query_map([], |row| Ok(map_entity(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list entities")?;
 
     collect_rows(rows)
 }
@@ -93,7 +93,7 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
 /// - [`Error::NotFound`] for an unknown entity.
 /// - [`Error::VaultCorrupt`] for a stored entity whose id, chart template or
 ///   fiscal year start month does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
     conn.query_row(
         "
@@ -105,7 +105,7 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound("entity".into()),
-        other => Error::Io(other.to_string()),
+        other => Error::database("read entity", other),
     })?
 }
 
@@ -126,13 +126,13 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
 ///   the same name, compared without case.
 /// - [`Error::VaultCorrupt`] when the entity does not parse on being read
 ///   back.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn create_entity(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin entity creation")?;
     let entity = create_entity_in_tx(&tx, input, locale)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit entity creation")?;
     Ok(entity)
 }
 
@@ -140,12 +140,12 @@ pub fn create_entity(conn: &Connection, input: &CreateEntity, locale: Locale) ->
 ///
 /// # Errors
 ///
-/// [`Error::Io`] on database errors.
+/// [`Error::Database`] on database errors.
 pub fn count_entities(conn: &Connection) -> Result<u64> {
     let count: i64 = conn
         .query_row("SELECT COUNT(1) FROM entities", [], |row| row.get(0))
-        .map_err(|err| Error::Io(err.to_string()))?;
-    u64::try_from(count).map_err(|_| Error::Io("entity count overflow".into()))
+        .database("count entities")?;
+    u64::try_from(count).map_err(|_| Error::database("count entities", "the count is negative"))
 }
 
 /// Renames an entity.
@@ -157,7 +157,7 @@ pub fn count_entities(conn: &Connection) -> Result<u64> {
 ///   has the same name, compared without case.
 /// - [`Error::NotFound`] for an unknown or archived entity.
 /// - [`Error::VaultCorrupt`] when the stored entity does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Entity> {
     let name = name.trim();
     if name.is_empty() {
@@ -175,7 +175,7 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
             "UPDATE entities SET name = ?1 WHERE id = ?2 AND archived_at IS NULL",
             rusqlite::params![name, id.0.to_string()],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("rename entity")?;
 
     if renamed == 0 {
         return Err(Error::NotFound("entity".into()));
@@ -193,14 +193,14 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
 ///
 /// - [`Error::NotFound`] for an unknown entity, or one that is already
 ///   archived.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
     let archived = conn
         .execute(
             "UPDATE entities SET archived_at = ?1 WHERE id = ?2 AND archived_at IS NULL",
             rusqlite::params![now_utc_string(), id.0.to_string()],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("archive entity")?;
 
     if archived == 0 {
         return Err(Error::NotFound("entity".into()));
@@ -216,13 +216,13 @@ pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entity.
-/// - [`Error::Io`] on database errors. Nothing is deleted in that case.
+/// - [`Error::Database`] on database errors. Nothing is deleted in that case.
 pub fn delete_entity(conn: &Connection, id: EntityId) -> Result<()> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin entity deletion")?;
     delete_entity_in_tx(&tx, id)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit entity deletion")?;
     Ok(())
 }
 
@@ -276,7 +276,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
             now_utc_string(),
         ],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("insert entity")?;
 
     for template_account in template_accounts(input.chart_template, locale) {
         let account = Account {
@@ -314,7 +314,7 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
             [&entity_id],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("check entity exists")?;
     if exists == 0 {
         return Err(Error::NotFound("entity".into()));
     }
@@ -329,7 +329,7 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         ",
         [&entity_id],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("clear void links of entity")?;
 
     conn.execute(
         "
@@ -338,31 +338,31 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         ",
         [&entity_id],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("delete journal lines of entity")?;
 
     // Documents reference journal entries, so they go before the entries.
     conn.execute("DELETE FROM documents WHERE entity_id = ?1", [&entity_id])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete documents of entity")?;
 
     // Templates reference accounts, so they go before the accounts.
     conn.execute(
         "DELETE FROM recurring_templates WHERE entity_id = ?1",
         [&entity_id],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("delete recurring templates of entity")?;
 
     conn.execute(
         "DELETE FROM journal_entries WHERE entity_id = ?1",
         [&entity_id],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("delete journal entries of entity")?;
 
     conn.execute("DELETE FROM accounts WHERE entity_id = ?1", [&entity_id])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete accounts of entity")?;
 
     let deleted = conn
         .execute("DELETE FROM entities WHERE id = ?1", [&entity_id])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete entity")?;
 
     if deleted == 0 {
         return Err(Error::NotFound("entity".into()));
@@ -381,7 +381,7 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
 /// # Errors
 ///
 /// - [`ValidationError::NameTaken`] when the name is in use.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) -> Result<()> {
     let count: i64 = match exclude {
         Some(id) => conn
@@ -395,7 +395,7 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
                 rusqlite::params![name, id.0.to_string()],
                 |row| row.get(0),
             )
-            .map_err(|err| Error::Io(err.to_string()))?,
+            .database("check entity name is free")?,
         None => conn
             .query_row(
                 "
@@ -406,7 +406,7 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
                 [name],
                 |row| row.get(0),
             )
-            .map_err(|err| Error::Io(err.to_string()))?,
+            .database("check entity name is free")?,
     };
 
     if count > 0 {
@@ -426,7 +426,7 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
 ///
 /// # Errors
 ///
-/// [`Error::Io`] on database errors.
+/// [`Error::Database`] on database errors.
 fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
     conn.execute(
         "
@@ -447,7 +447,7 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
             account.sort_order,
         ],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("insert account")?;
     Ok(())
 }
 

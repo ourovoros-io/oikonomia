@@ -44,7 +44,7 @@ use crate::domain::{
     Account, AccountId, AccountType, EntityId, EntryStatus, JournalEntry, JournalEntryId,
     JournalLine, JournalLineId, validate_lines_for_post,
 };
-use crate::error::{AccountRole, Error, Result, ValidationError};
+use crate::error::{AccountRole, DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
@@ -233,7 +233,7 @@ pub struct EntryFilter {
 ///
 /// [`Error::Validation`] for a malformed date in `filter`;
 /// [`Error::VaultCorrupt`] for a stored id, date, status or amount that does
-/// not parse; database errors as [`Error::Io`].
+/// not parse; database errors as [`Error::Database`].
 pub fn list_entries(
     conn: &Connection,
     entity_id: EntityId,
@@ -260,7 +260,7 @@ pub fn list_entries(
 /// - [`Error::NotFound`] for an unknown entry.
 /// - [`Error::VaultCorrupt`] for a stored id, date, status or amount that
 ///   does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryView> {
     let (entry, has_void_link) = conn
         .query_row(
@@ -277,7 +277,7 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
         )
         .map_err(|err| match err {
             rusqlite::Error::QueryReturnedNoRows => Error::NotFound("journal entry".into()),
-            other => Error::Io(other.to_string()),
+            other => Error::database("read journal entry", other),
         })?;
     let entry = entry?;
 
@@ -306,7 +306,7 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
 /// # Errors
 ///
 /// [`Error::NotFound`] for an unknown entry; [`Error::VaultCorrupt`] for a
-/// stored row that does not parse; database errors as [`Error::Io`].
+/// stored row that does not parse; database errors as [`Error::Database`].
 pub fn set_entry_hidden(
     conn: &Connection,
     id: JournalEntryId,
@@ -317,7 +317,7 @@ pub fn set_entry_hidden(
             "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
             rusqlite::params![i64::from(hidden), id.0.to_string()],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("set journal entry visibility")?;
     if updated == 0 {
         return Err(Error::NotFound("journal entry".into()));
     }
@@ -339,13 +339,13 @@ pub fn set_entry_hidden(
 ///   `i64`.
 /// - [`Error::UnbalancedEntry`] when debits and credits differ.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin journal entry post")?;
     let view = post_entry_in_tx(&tx, input, false, ArchivedAccounts::Refuse)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit journal entry post")?;
     Ok(view)
 }
 
@@ -369,13 +369,13 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 /// - [`ValidationError::AccountInactive`] for an archived account.
 /// - [`ValidationError::InvalidDate`] for a malformed entry date.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin journal entry post")?;
     let view = post_simple_entry_unchecked(&tx, input)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit journal entry post")?;
     Ok(view)
 }
 
@@ -395,7 +395,7 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
 ///   itself a reversing entry.
 /// - [`ValidationError::EntryNotPosted`] when the entry is a draft.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 ///
 /// An archived account is not an error here: the reversing entry posts to the
 /// original's accounts even when one of them has since been archived, so that
@@ -403,9 +403,9 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
 pub fn void_entry(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin journal entry void")?;
     let result = void_entry_in_tx(&tx, id, locale)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit journal entry void")?;
     Ok(result)
 }
 
@@ -438,7 +438,7 @@ pub fn replace_simple_entry(
 ) -> Result<PostedEntryView> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin journal entry replacement")?;
 
     let original = get_entry(&tx, original_id)?;
     if original.entry.entity_id != input.entity_id {
@@ -455,9 +455,9 @@ pub fn replace_simple_entry(
             original_id.0.to_string(),
         ],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("move documents to replacement entry")?;
 
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit journal entry replacement")?;
     Ok(replacement)
 }
 
@@ -487,7 +487,7 @@ pub fn replace_simple_entry(
 /// - [`Error::MoneyOverflow`] when the difference between the target and the
 ///   current balance does not fit in `i64`.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn set_account_opening_balance(
     conn: &Connection,
     account_id: AccountId,
@@ -574,7 +574,7 @@ pub fn set_account_opening_balance(
 /// [`Error::NotFound`] for an unknown account; [`Error::Validation`] for a
 /// malformed date; [`Error::MoneyOverflow`] when the running balance does not
 /// fit in `i64`; [`Error::VaultCorrupt`] for a stored id or date that does not
-/// parse; database errors as [`Error::Io`].
+/// parse; database errors as [`Error::Database`].
 pub fn account_register(
     conn: &Connection,
     account_id: AccountId,
@@ -602,7 +602,7 @@ pub fn account_register(
                 rusqlite::params![account_id.0.to_string(), from],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .database("sum account activity before period")?;
         normal_balance(account.account_type, prior_debits, prior_credits)?
     } else {
         0
@@ -621,9 +621,7 @@ pub fn account_register(
         ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
         "
     );
-    let mut stmt = conn
-        .prepare(&list_sql)
-        .map_err(|err| Error::Io(err.to_string()))?;
+    let mut stmt = conn.prepare(&list_sql).database("read account register")?;
 
     let rows = stmt
         .query_map(
@@ -639,7 +637,7 @@ pub fn account_register(
                 ))
             },
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read account register")?;
 
     let mut register = Vec::new();
     for (entry_id, entry_date, description, debit_minor, credit_minor, hidden) in
@@ -841,7 +839,7 @@ fn like_pattern(text: &str) -> String {
 ///
 /// - [`Error::VaultCorrupt`] for a stored id, date or status that does not
 ///   parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn load_listed_headers(
     conn: &Connection,
     listed: &ListedEntries,
@@ -860,16 +858,14 @@ fn load_listed_headers(
         ORDER BY je.entry_date DESC, je.created_at DESC
         "
     );
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|err| Error::Io(err.to_string()))?;
+    let mut stmt = conn.prepare(&sql).database("list journal entries")?;
 
     let rows = stmt
         .query_map(listed.bound(), |row| {
             let is_voided: i64 = row.get(8)?;
             Ok(map_entry_row(row).map(|entry| (entry, is_voided != 0)))
         })
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list journal entries")?;
 
     collect_rows(rows)
 }
@@ -887,7 +883,7 @@ fn load_listed_headers(
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`] for a stored id or amount that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn load_listed_lines(
     conn: &Connection,
     listed: &ListedEntries,
@@ -901,12 +897,10 @@ fn load_listed_lines(
         ORDER BY jl.entry_id, jl.line_order
         "
     );
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|err| Error::Io(err.to_string()))?;
+    let mut stmt = conn.prepare(&sql).database("list journal lines")?;
     let rows = stmt
         .query_map(listed.bound(), |row| Ok(map_line_row(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list journal lines")?;
 
     let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
     for line in collect_rows(rows)? {
@@ -920,7 +914,7 @@ fn load_listed_lines(
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`] for a stored id or amount that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<JournalLine>> {
     let mut stmt = conn
         .prepare(
@@ -931,11 +925,11 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
             ORDER BY line_order
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read journal lines")?;
 
     let rows = stmt
         .query_map([entry_id.0.to_string()], |row| Ok(map_line_row(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read journal lines")?;
 
     collect_rows(rows)
 }
@@ -947,7 +941,7 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
 ///
 /// # Errors
 ///
-/// [`Error::Io`] on database errors.
+/// [`Error::Database`] on database errors.
 fn entry_is_void_reverse(conn: &Connection, id: JournalEntryId) -> Result<bool> {
     let count: i64 = conn
         .query_row(
@@ -958,7 +952,7 @@ fn entry_is_void_reverse(conn: &Connection, id: JournalEntryId) -> Result<bool> 
             [id.0.to_string()],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("check journal entry is a reversal")?;
     Ok(count > 0)
 }
 
@@ -1043,7 +1037,7 @@ fn post_entry_in_tx(
             i64::from(hidden),
         ],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("insert journal entry")?;
 
     for (order, line) in lines.iter().enumerate() {
         conn.execute(
@@ -1062,7 +1056,7 @@ fn post_entry_in_tx(
                 i32::try_from(order).unwrap_or(i32::MAX),
             ],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("insert journal line")?;
     }
 
     get_entry(conn, entry_id)
@@ -1080,7 +1074,7 @@ fn post_entry_in_tx(
 ///   when an account belongs to another book or is archived.
 /// - [`Error::NotFound`] for an unknown account id.
 /// - [`Error::VaultCorrupt`] for a stored account that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn simple_entry_sides(
     conn: &Connection,
     input: &PostSimpleEntry,
@@ -1135,7 +1129,7 @@ fn ensure_active(account: &Account) -> Result<()> {
 ///   does not allow.
 /// - [`Error::NotFound`] for an unknown account id.
 /// - [`Error::VaultCorrupt`] for a stored account that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn simple_entry_role_accounts(
     conn: &Connection,
     input: &PostSimpleEntry,
@@ -1269,7 +1263,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         "UPDATE journal_entries SET voided_by_entry_id = ?1 WHERE id = ?2",
         rusqlite::params![reverse.entry.id.0.to_string(), id.0.to_string()],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("link voided entry to its reversal")?;
 
     // The reversal is linked back to the original as well, so that it
     // carries its own mark of being out of the active books. A vault whose
@@ -1279,7 +1273,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         "UPDATE journal_entries SET voided_by_entry_id = ?1 WHERE id = ?2",
         rusqlite::params![id.0.to_string(), reverse.entry.id.0.to_string()],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("link reversal to voided entry")?;
 
     Ok(VoidResult {
         original_id: id,
