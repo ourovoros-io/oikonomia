@@ -58,10 +58,11 @@ downloaded.
 | Linux x86_64, Debian and Ubuntu | `.deb` | The app tells you when a newer version exists; install the new `.deb` over the old one |
 | Windows 10 and 11, x86_64 | `-setup.exe` | In the app |
 
-The Windows installer is built and tested with every release but is not yet
-published: it has no code-signing certificate, so Windows would show its
-unknown-publisher warning. Until then, build it from source
-(see [Develop](#develop)).
+The Windows installer is not yet signed with a code-signing (Authenticode)
+certificate, so on a first install Windows shows "Windows protected your PC":
+choose More info, then Run anyway. Check the file against `SHA256SUMS` first.
+Updates from inside the app are verified with the same minisign signature as
+on macOS and Linux, which does not depend on that certificate.
 
 On Linux the tray icon needs a desktop that shows one (KDE, or GNOME with the
 AppIndicator extension). Without it the app works the same; reach quick-add by
