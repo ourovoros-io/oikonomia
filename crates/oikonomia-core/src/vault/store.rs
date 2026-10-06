@@ -225,21 +225,27 @@ impl Vault {
         self.conn = None;
     }
 
-    /// Re-encrypt the vault under a new master password (`SQLCipher` rekey).
+    /// Re-encrypts the vault under a new master password (`SQLCipher` rekey).
     ///
     /// Crash-safety protocol: the new header is staged to a temp file before
     /// the rekey and renamed over the real header after it, and [`Vault::unlock`]
     /// falls back to the staged header when the real one no longer opens the
     /// database. Whatever step the process dies at, exactly one of the two
-    /// passwords opens the vault. On success the vault is left unlocked under
-    /// the new key.
+    /// passwords opens the vault.
+    ///
+    /// The lock state is kept: an unlocked vault is reopened under the new
+    /// key, and a locked vault stays locked. Opening a locked vault is left to
+    /// [`Vault::unlock`], which also migrates the schema; a vault opened here
+    /// would skip that, and a caller that tracks the lock state would not
+    /// expect a password change to alter it.
     ///
     /// # Errors
     ///
     /// [`Error::VaultUninitialized`], [`Error::InvalidPassword`] for a wrong
     /// old password, [`Error::Validation`] for a weak new password, or
     /// crypto/I/O failures. A failed verification leaves any open connection
-    /// untouched.
+    /// untouched. A failure after that reopens an unlocked vault under the
+    /// old key when that key still fits, and leaves it locked otherwise.
     pub fn change_password(&mut self, old: &str, new: &str) -> Result<()> {
         let header = self
             .header
@@ -251,54 +257,41 @@ impl Vault {
         // Verify the old password first — a typo must not lock the vault.
         let old_key = crypto::derive_key(old, &header)?;
         let db_path = vault_db_path(&self.data_dir);
-        let conn = open_sqlcipher(&db_path, &old_key, false)?;
+        let rekey_conn = open_sqlcipher(&db_path, &old_key, false)?;
 
         // Only now drop our own connection: its page cache would go stale
         // across the rekey below.
-        let was_unlocked = self.conn.is_some();
-        self.conn = None;
+        let was_unlocked = self.conn.take().is_some();
 
-        let result = (|| -> Result<VaultHeader> {
-            let mut salt = [0u8; SALT_LEN];
-            rand::rng().fill_bytes(&mut salt);
-            let new_header = VaultHeader::new_with_salt(&salt);
-            let new_key = crypto::derive_key(new, &new_header)?;
-
-            let header_path = vault_header_path(&self.data_dir);
-            let staged_path = vault_staged_header_path(&self.data_dir);
-            let header_json = serde_json::to_string_pretty(&new_header)
-                .map_err(|err| Error::Io(err.to_string()))?;
-            write_private_file(&staged_path, header_json.as_bytes())?;
-
-            // Fold WAL pages into the main file so the rekey covers everything.
-            let blocked: i64 = conn
-                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-                .map_err(|err| Error::Io(err.to_string()))?;
-            if blocked != 0 {
-                return Err(Error::Io("wal checkpoint blocked; will not rekey".into()));
-            }
-            let pragma_key = crypto::key_to_sqlcipher_pragma(&new_key);
-            conn.pragma_update(None, "rekey", pragma_key.as_str())
-                .map_err(|err| Error::Crypto(err.to_string()))?;
-            drop(conn);
-
-            rename_synced(&staged_path, &header_path)?;
-            Ok(new_header)
-        })();
-
-        match result {
-            Ok(new_header) => {
-                let new_key = crypto::derive_key(new, &new_header)?;
+        match rekey_database(&self.data_dir, rekey_conn, new) {
+            Ok((new_header, new_key)) => {
+                // The files are under the new key from here on, so the header
+                // in memory follows before anything else can fail. With the
+                // old one, the next unlock would derive the wrong key.
                 self.header = Some(new_header);
-                self.conn = Some(open_sqlcipher(&db_path, &new_key, false)?);
+                if was_unlocked {
+                    self.conn = Some(open_sqlcipher(&db_path, &new_key, false)?);
+                }
                 Ok(())
             }
             Err(err) => {
-                if was_unlocked && let Ok(restored) = open_sqlcipher(&db_path, &old_key, false) {
-                    self.conn = Some(restored);
+                if was_unlocked {
+                    self.reopen_after_failed_rekey(&db_path, &old_key);
                 }
                 Err(err)
             }
+        }
+    }
+
+    /// Puts back the session a failed password change closed.
+    ///
+    /// The old key no longer fits when the rekey itself went through and a
+    /// later step failed. The vault then stays locked, and the next unlock
+    /// recovers through the staged header.
+    fn reopen_after_failed_rekey(&mut self, db_path: &Path, old_key: &VaultKey) {
+        match open_sqlcipher(db_path, old_key, false) {
+            Ok(conn) => self.conn = Some(conn),
+            Err(err) => log::warn!("vault left locked after a failed password change: {err}"),
         }
     }
 
@@ -473,6 +466,42 @@ fn silence_sqlcipher_log(conn: &Connection) -> Result<()> {
 )]
 fn silence_sqlcipher_log(_conn: &Connection) -> Result<()> {
     Ok(())
+}
+
+/// Rekeys the database behind `conn` to a fresh salt and `new_password`,
+/// following the staging protocol [`Vault::change_password`] documents.
+///
+/// Returns the header now on disk and the key derived from it, so the
+/// caller neither re-reads the header nor runs the KDF a second time.
+fn rekey_database(
+    data_dir: &Path,
+    conn: Connection,
+    new_password: &str,
+) -> Result<(VaultHeader, VaultKey)> {
+    let mut salt = [0u8; SALT_LEN];
+    rand::rng().fill_bytes(&mut salt);
+    let new_header = VaultHeader::new_with_salt(&salt);
+    let new_key = crypto::derive_key(new_password, &new_header)?;
+
+    let staged_path = vault_staged_header_path(data_dir);
+    let header_json =
+        serde_json::to_string_pretty(&new_header).map_err(|err| Error::Io(err.to_string()))?;
+    write_private_file(&staged_path, header_json.as_bytes())?;
+
+    // Fold WAL pages into the main file so the rekey covers everything.
+    let blocked: i64 = conn
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
+        .map_err(|err| Error::Io(err.to_string()))?;
+    if blocked != 0 {
+        return Err(Error::Io("wal checkpoint blocked; will not rekey".into()));
+    }
+    let pragma_key = crypto::key_to_sqlcipher_pragma(&new_key);
+    conn.pragma_update(None, "rekey", pragma_key.as_str())
+        .map_err(|err| Error::Crypto(err.to_string()))?;
+    drop(conn);
+
+    rename_synced(&staged_path, &vault_header_path(data_dir))?;
+    Ok((new_header, new_key))
 }
 
 /// Writes the files of a new vault in the order [`Vault::init`] documents and
