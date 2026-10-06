@@ -43,9 +43,10 @@ pub enum UpdateError {
     MissingPublicKey,
 
     /// A request did not end in a usable response: the host could not be
-    /// reached, the request timed out, the status was neither 200 nor 204,
-    /// a redirect had no usable `Location`, there were more redirects than
-    /// the limit, or the body could not be read to its end.
+    /// reached, the request timed out, the status was neither 200 nor 204
+    /// (but see [`Self::ManifestSignature`] for a signature that is not
+    /// there), a redirect had no usable `Location`, there were more redirects
+    /// than the limit, or the body could not be read to its end.
     #[error("update server could not be reached or answered with an error")]
     Network,
 
@@ -54,7 +55,7 @@ pub enum UpdateError {
     ResponseTooLarge,
 
     /// The detached signature of the manifest is absent (the server answered
-    /// 204 for it), is not a minisign signature, or does not verify
+    /// 404 or 204 for it), is not a minisign signature, or does not verify
     /// the manifest with the updater public key. Also returned when a
     /// manifest names an artifact with an empty signature.
     #[error("update manifest signature is invalid")]

@@ -323,9 +323,17 @@ enum Fetched {
     NoContent,
 }
 
+/// Why a fetch ended without a body or a 204.
 enum FetchFail {
+    /// No response arrived, a redirect could not be followed, or the body
+    /// could not be read to its end.
     Network,
+    /// The last hop answered with this status, which is not 200, 204 or a
+    /// redirect.
+    Status(u16),
+    /// A URL on the way was off the allow-list.
     Denied,
+    /// The body was larger than the cap of the resource.
     TooLarge,
 }
 
@@ -610,7 +618,12 @@ fn fetch_bytes(config: &ClientConfig, url: &Url, resource: Resource) -> Result<F
     fetch_once(config, &request_url, resource).map_err(|fail| match fail {
         FetchFail::Denied => UpdateError::ArtifactUrl,
         FetchFail::TooLarge => UpdateError::ResponseTooLarge,
-        FetchFail::Network => UpdateError::Network,
+        // A feed published without its signature is a feed that cannot be
+        // trusted, which is a different finding from a server in trouble.
+        FetchFail::Status(404) if matches!(resource, Resource::ManifestSignature) => {
+            UpdateError::ManifestSignature
+        }
+        FetchFail::Status(_) | FetchFail::Network => UpdateError::Network,
     })
 }
 
@@ -629,11 +642,15 @@ fn fetch_once(
         }
 
         // With `redirects(0)` ureq 2 hands a 3xx back as `Ok` (`connect` in
-        // its `unit.rs`) and reports only 4xx and 5xx as `Error::Status`, so
-        // redirects are followed here, one policy check per hop.
+        // its `unit.rs`) and reports only a status of 400 or above as
+        // `Error::Status` (the docs of that variant), so redirects are
+        // followed here, one policy check per hop.
         let response = agent.get(url.as_str()).call().map_err(|err| {
             log::warn!("update fetch failed: {err}");
-            FetchFail::Network
+            match err {
+                ureq::Error::Status(status, _) => FetchFail::Status(status),
+                ureq::Error::Transport(_) => FetchFail::Network,
+            }
         })?;
 
         match response.status() {
@@ -653,7 +670,7 @@ fn fetch_once(
                 };
                 url = resolve_redirect(&url, location)?;
             }
-            _ => return Err(FetchFail::Network),
+            status => return Err(FetchFail::Status(status)),
         }
     }
 }

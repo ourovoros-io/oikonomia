@@ -455,10 +455,9 @@ fn missing_manifest_sig_is_failed() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    // The fetch reports every status other than 200 and 204 as a network
-    // failure, so a 404 on the signature ends the check before any signature
-    // is looked at.
-    assert_eq!(check_error_code(&config), "update_network");
+    // A feed published without its signature cannot be trusted; that is
+    // not the same finding as a server that could not be reached.
+    assert_eq!(check_error_code(&config), "update_manifest_signature");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -2037,4 +2036,51 @@ fn a_cache_directory_that_cannot_be_created_fails_as_a_cache_error() {
 
     assert_eq!(err.code(), "update_cache_io");
     assert!(std::error::Error::source(&err).is_some());
+}
+
+#[test]
+fn a_server_error_on_the_manifest_signature_is_a_network_failure() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let (body, _signature) = signed_manifest(&server, &sk, "0.2.0");
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/latest.json"))
+            .respond_with(status_code(200).body(body)),
+    );
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/latest.json.sig"))
+            .respond_with(status_code(503)),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    assert_eq!(check_error_code(&config), "update_network");
+}
+
+#[test]
+fn a_missing_manifest_is_a_network_failure_not_a_signature_one() {
+    let (pk, _sk) = test_keys();
+    let server = Server::run();
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/latest.json"))
+            .respond_with(status_code(404)),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    assert_eq!(check_error_code(&config), "update_network");
 }
