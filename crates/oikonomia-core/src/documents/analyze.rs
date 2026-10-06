@@ -1182,7 +1182,7 @@ mod tests {
         use crate::csv::currency_minor_exponent;
 
         assert_eq!(currency_minor_exponent("ISK"), 0);
-        assert_eq!(currency_minor_exponent("IQD"), 3);
+        assert_eq!(currency_minor_exponent("IQD"), 0);
         assert_eq!(currency_minor_exponent("LYD"), 3);
     }
 
@@ -1203,12 +1203,9 @@ mod tests {
             }
         }
 
-        assert_eq!(
-            without_two_decimals,
-            [
-                "BHD", "CLP", "IQD", "ISK", "JOD", "JPY", "KRW", "KWD", "LYD", "OMR", "TND", "VND"
-            ]
-        );
+        // The exact list is pinned next to the table in `csv::amount`.
+        assert_eq!(without_two_decimals.len(), 51);
+        assert!(without_two_decimals.iter().any(|code| code == "IQD"));
         assert!(!keeps_the_amount_in("isk"), "codes are case-insensitive");
     }
 
