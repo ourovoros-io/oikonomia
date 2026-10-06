@@ -29,6 +29,8 @@
 //! Digits-only tokens with a leading zero, of more than five digits, or in
 //! 1900..=2100 are date fragments, identifiers and years, not money.
 
+use std::ops::RangeInclusive;
+
 use crate::documents::analyze::{AnalyzeSource, DocumentSuggestion, EntryKindSuggestion};
 use crate::documents::brands::{Service, classify_service, known_brand};
 use crate::prefs::Locale;
@@ -248,7 +250,7 @@ fn push_spaced_number(numbers: &[char], start: usize, out: &mut String) -> usize
             group_digits += 1;
             index += 1;
         } else if let Some(next_digit) = digit_after_separator(numbers, index)
-            && (next_digit == index + 1 || !has_separator || group_digits == 3)
+            && (next_digit == index + 1 || !has_separator || group_digits == THOUSANDS_GROUP_DIGITS)
         {
             out.push(current);
             has_separator = true;
@@ -256,7 +258,7 @@ fn push_spaced_number(numbers: &[char], start: usize, out: &mut String) -> usize
             index = next_digit;
         } else if !has_separator
             && may_group_thousands
-            && (1..=3).contains(&group_digits)
+            && (1..=THOUSANDS_GROUP_DIGITS).contains(&group_digits)
             && is_thousands_group(numbers, index)
         {
             group_digits = 0;
@@ -297,6 +299,9 @@ fn digit_after_separator(numbers: &[char], index: usize) -> Option<usize> {
     }
 }
 
+/// Digits in a thousands group: `1.234.567`, `1 234 567`.
+const THOUSANDS_GROUP_DIGITS: usize = 3;
+
 /// Whether `index` holds one space followed by exactly three digits.
 fn is_thousands_group(numbers: &[char], index: usize) -> bool {
     let is_digit = |at: usize| numbers.get(at).is_some_and(char::is_ascii_digit);
@@ -304,8 +309,8 @@ fn is_thousands_group(numbers: &[char], index: usize) -> bool {
     numbers
         .get(index)
         .is_some_and(|space| space.is_whitespace())
-        && (1..=3).all(|offset| is_digit(index + offset))
-        && !is_digit(index + 4)
+        && (1..=THOUSANDS_GROUP_DIGITS).all(|offset| is_digit(index + offset))
+        && !is_digit(index + THOUSANDS_GROUP_DIGITS + 1)
 }
 
 /// Lowercases `text` and folds its Greek accents.
@@ -518,6 +523,15 @@ const EXECUTION_DATE_LABELS: &[&str] = &["εκτελεσ", "execution"];
 
 const TRANSFER_DATE_LABELS: &[&str] = &["ημερομην", "date", "συναλλαγ"];
 
+/// Fewest characters of a payee, issuer or customer name.
+const MIN_NAME_CHARS: usize = 3;
+
+/// Lengths of a transfer transaction code.
+const TRANSFER_CODE_CHARS: RangeInclusive<usize> = 10..=24;
+
+/// Length of the shortest IBAN (Norway's).
+const MIN_IBAN_CHARS: usize = 15;
+
 fn is_transfer_fee_line(folded_line: &str) -> bool {
     contains_any(folded_line, TRANSFER_FEE_LABELS)
 }
@@ -573,7 +587,7 @@ fn find_transfer_payee(text: &str) -> Option<String> {
 
 fn is_plausible_payee(name: &str) -> bool {
     let trimmed = name.trim();
-    if trimmed.chars().count() < 3 || !trimmed.chars().any(char::is_alphabetic) {
+    if trimmed.chars().count() < MIN_NAME_CHARS || !trimmed.chars().any(char::is_alphabetic) {
         return false;
     }
     let folded_name = folded(trimmed);
@@ -623,7 +637,7 @@ fn transfer_code_token(line: &str) -> Option<String> {
 }
 
 fn is_transfer_code(token: &str) -> bool {
-    if token.len() < 10 || token.len() > 24 {
+    if !TRANSFER_CODE_CHARS.contains(&token.len()) {
         return false;
     }
     if !token.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -638,7 +652,7 @@ fn is_transfer_code(token: &str) -> bool {
         return false;
     }
     // IBAN-shaped: two letters then only digits.
-    if upper.len() >= 15
+    if upper.len() >= MIN_IBAN_CHARS
         && upper.chars().take(2).all(|c| c.is_ascii_alphabetic())
         && upper.chars().skip(2).all(|c| c.is_ascii_digit())
     {
@@ -711,6 +725,18 @@ const TOTAL_WORD: &str = "total";
 /// Lines that hold identifiers, never an amount.
 const IDENTIFIER_LINE_MARKERS: &[&str] = &["iban", "α.φ.μ", "αφμ", "mark"];
 
+/// Weights of the fallback in [`find_total_amount`].
+mod fallback_weight {
+    /// Every line that may hold an amount.
+    pub(super) const LINE: i32 = 1;
+    /// A line with one of [`VALUE_WORDS`](super::VALUE_WORDS).
+    pub(super) const VALUE_WORD: i32 = 3;
+    /// A line with a euro mark.
+    pub(super) const EURO_MARK: i32 = 4;
+    /// An amount with cents.
+    pub(super) const CENTS: i32 = 2;
+}
+
 fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
     // 1) Strong labeled totals always win — even when PDF extract is jumbled.
     //    Frequency scoring before them could pick the day of a date as euros.
@@ -748,14 +774,14 @@ fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
         if is_noise_amount_line(&folded_line) {
             continue;
         }
-        let mut line_weight = 1;
+        let mut line_weight = fallback_weight::LINE;
         // `αξία` on invoices means line-value; `Ημερομηνία Αξίας` is a value
         // date and must not boost a clock (`7:00` → 700 minor).
         if !is_value_date_line(&folded_line) && contains_any(&folded_line, VALUE_WORDS) {
-            line_weight += 3;
+            line_weight += fallback_weight::VALUE_WORD;
         }
         if folded_line.contains('€') {
-            line_weight += 4;
+            line_weight += fallback_weight::EURO_MARK;
         }
         if contains_any(&folded_line, IDENTIFIER_LINE_MARKERS) {
             line_weight = 0;
@@ -767,8 +793,8 @@ fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
             if is_plausible_money(amount) {
                 // Prefer amounts with cents over bare whole euros (less ID/date-like).
                 let mut score = line_weight;
-                if amount % 100 != 0 {
-                    score += 2;
+                if has_cents(amount) {
+                    score += fallback_weight::CENTS;
                 }
                 weighted.push((amount, score));
             }
@@ -863,6 +889,43 @@ fn find_labeled_total(text: &str) -> Option<i64> {
     None
 }
 
+/// Weights and thresholds of the vote in [`find_utility_payment_total`].
+mod utility_vote {
+    use std::ops::RangeInclusive;
+
+    /// Every occurrence of an amount.
+    pub(super) const OCCURRENCE: i32 = 1;
+    /// The line has a euro mark.
+    pub(super) const EURO_MARK: i32 = 12;
+    /// The amount has cents.
+    pub(super) const CENTS: i32 = 16;
+    /// The amount is whole euros.
+    pub(super) const WHOLE_EUROS: i32 = -8;
+    /// The line holds the amount and nothing else.
+    pub(super) const AMOUNT_ONLY_LINE: i32 = 18;
+    /// The line has a euro mark and a date.
+    pub(super) const DATED_EURO_LINE: i32 = 14;
+    /// The line has a euro mark and is short.
+    pub(super) const SHORT_EURO_LINE: i32 = 8;
+    /// The line has one of [`PAYMENT_LABELS`](super::PAYMENT_LABELS).
+    pub(super) const PAYMENT_LABEL: i32 = 25;
+    /// The amount is in [`TYPICAL_BILL_MINOR`].
+    pub(super) const TYPICAL_BILL: i32 = 6;
+    /// The amount is at least [`LARGE_AMOUNT_MINOR`].
+    pub(super) const LARGE_AMOUNT: i32 = -10;
+    /// Each occurrence of an amount printed [`MIN_REPEATS`] times or more.
+    pub(super) const PER_REPEAT: i32 = 10;
+
+    /// Most characters of a short line.
+    pub(super) const SHORT_LINE_CHARS: usize = 40;
+    /// The band of a typical monthly bill, in minor units.
+    pub(super) const TYPICAL_BILL_MINOR: RangeInclusive<i64> = 1_000..=50_000;
+    /// The amount, in minor units, from which a figure counts as large.
+    pub(super) const LARGE_AMOUNT_MINOR: i64 = 100_000;
+    /// Occurrences from which an amount counts as repeated.
+    pub(super) const MIN_REPEATS: i32 = 2;
+}
+
 /// Electricity/gas/water bills: payment total is usually a short line with `€`,
 /// often repeated, and not on kWh/GWh/rate tables.
 fn find_utility_payment_total(text: &str) -> Option<i64> {
@@ -882,7 +945,7 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
             continue;
         }
 
-        let is_short = line.chars().count() <= 40;
+        let is_short = line.chars().count() <= utility_vote::SHORT_LINE_CHARS;
         let has_euro = line.contains('€');
         let has_date = line_has_date(line);
         let is_amount_only = is_amount_only_line(line);
@@ -894,39 +957,37 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
             }
             // Bare whole-euro integers (e.g. day-of-month 26 → €26) are almost never
             // the printed payment total on Greek utilities — those show cents.
-            let has_cents = amount % 100 != 0;
+            let has_cents = has_cents(amount);
             if !has_cents && !is_amount_only && !has_payment_label {
                 continue;
             }
 
-            let mut score = 1;
+            let mut score = utility_vote::OCCURRENCE;
             if has_euro {
-                score += 12;
+                score += utility_vote::EURO_MARK;
             }
             if has_cents {
-                score += 16;
+                score += utility_vote::CENTS;
             } else {
-                score -= 8;
+                score += utility_vote::WHOLE_EUROS;
             }
             if is_amount_only {
-                score += 18;
+                score += utility_vote::AMOUNT_ONLY_LINE;
             }
             if has_date && has_euro {
-                score += 14;
+                score += utility_vote::DATED_EURO_LINE;
             }
             if is_short && has_euro {
-                score += 8;
+                score += utility_vote::SHORT_EURO_LINE;
             }
             if has_payment_label {
-                score += 25;
+                score += utility_vote::PAYMENT_LABEL;
             }
-            // Typical monthly utility total band
-            if (1_000..=50_000).contains(&amount) {
-                score += 6;
+            if utility_vote::TYPICAL_BILL_MINOR.contains(&amount) {
+                score += utility_vote::TYPICAL_BILL;
             }
-            // Zone prices / large one-offs are often noise
-            if amount >= 100_000 {
-                score -= 10;
+            if amount >= utility_vote::LARGE_AMOUNT_MINOR {
+                score += utility_vote::LARGE_AMOUNT;
             }
 
             *scores.entry(amount).or_insert(0) += score;
@@ -936,8 +997,8 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
 
     // Frequency bonus (payment total is printed several times on Greek power bills)
     for (amount, count) in &occurrences {
-        if *count >= 2 {
-            *scores.entry(*amount).or_insert(0) += count * 10;
+        if *count >= utility_vote::MIN_REPEATS {
+            *scores.entry(*amount).or_insert(0) += count * utility_vote::PER_REPEAT;
         }
     }
 
@@ -997,6 +1058,9 @@ fn line_has_date(line: &str) -> bool {
     })
 }
 
+/// Characters in an ISO date, `YYYY-MM-DD`.
+const ISO_DATE_CHARS: usize = 10;
+
 /// Blank out EU/ISO date tokens so day/month numbers are not parsed as euros.
 ///
 /// Real PDF extracts often put `13/08/2026 72,53 €` on one line — without this,
@@ -1012,8 +1076,8 @@ fn mask_date_tokens(line: &str) -> String {
 
     while let Some(&current) = chars.get(index) {
         if is_iso_date_at(&chars, index) {
-            out.push_str("          ");
-            index += 10;
+            out.push_str(&" ".repeat(ISO_DATE_CHARS));
+            index += ISO_DATE_CHARS;
         } else if let Some(len) = eu_date_len_at(&chars, index) {
             out.push_str(&" ".repeat(len));
             index += len;
@@ -1026,17 +1090,14 @@ fn mask_date_tokens(line: &str) -> String {
 }
 
 fn is_iso_date_at(chars: &[char], start: usize) -> bool {
-    start + 9 < chars.len()
-        && chars[start].is_ascii_digit()
-        && chars[start + 1].is_ascii_digit()
-        && chars[start + 2].is_ascii_digit()
-        && chars[start + 3].is_ascii_digit()
-        && chars[start + 4] == '-'
-        && chars[start + 5].is_ascii_digit()
-        && chars[start + 6].is_ascii_digit()
-        && chars[start + 7] == '-'
-        && chars[start + 8].is_ascii_digit()
-        && chars[start + 9].is_ascii_digit()
+    let Some([y1, y2, y3, y4, '-', m1, m2, '-', d1, d2]) = chars.get(start..start + ISO_DATE_CHARS)
+    else {
+        return false;
+    };
+
+    [y1, y2, y3, y4, m1, m2, d1, d2]
+        .into_iter()
+        .all(char::is_ascii_digit)
 }
 
 /// Length of a `d/m/yyyy` (or `dd.mm.yy`, …) token starting at `start`.
@@ -1151,10 +1212,20 @@ fn two_digits_at(chars: &[char], index: usize) -> Option<u32> {
     Some(digit_at(chars, index)? * 10 + digit_at(chars, index + 1)?)
 }
 
+/// Minor units in one euro. The reader always reads two decimals.
+const MINOR_PER_EURO: i64 = 100;
+
+/// The amounts taken as money: 0,50 to 10 000 000,00, in minor units.
+const PLAUSIBLE_MONEY_MINOR: RangeInclusive<i64> = 50..=1_000_000_000;
+
+/// Whether `minor` is not a whole number of euros.
+const fn has_cents(minor: i64) -> bool {
+    minor % MINOR_PER_EURO != 0
+}
+
 /// Accept amounts that look like currency, not AFM / invoice IDs / ZIPs.
 fn is_plausible_money(minor: i64) -> bool {
-    // 0.50 EUR .. 10_000_000.00 EUR
-    (50..=1_000_000_000).contains(&minor)
+    PLAUSIBLE_MONEY_MINOR.contains(&minor)
 }
 
 /// Blanks out percentages (`24%`, `13,5 %`) so a rate is never an amount.
@@ -1226,11 +1297,26 @@ fn money_amounts_on_line(line: &str) -> Vec<i64> {
     amounts
 }
 
+/// Most characters of a money token.
+const MAX_MONEY_TOKEN_CHARS: usize = 14;
+
+/// Most digits of a token without separators that is read as whole euros.
+const MAX_BARE_EURO_DIGITS: usize = 5;
+
+/// Whole-euro figures that are taken as years.
+const YEAR_LIKE_EUROS: RangeInclusive<i64> = 1_900..=2_100;
+
+/// Most digits of the whole part of a token with separators.
+const MAX_WHOLE_PART_DIGITS: usize = 8;
+
+/// Most digits of a fraction.
+const MAX_CENT_DIGITS: usize = 2;
+
 fn parse_money_token(token: &str) -> Option<i64> {
     // The tokenizer keeps `.` and `,`, so an amount that ends a sentence or a
     // list item arrives with that punctuation attached.
     let token = token.trim().trim_end_matches(['.', ',']);
-    if token.is_empty() || token.len() > 14 {
+    if token.is_empty() || token.len() > MAX_MONEY_TOKEN_CHARS {
         return None;
     }
 
@@ -1244,8 +1330,7 @@ fn parse_money_token(token: &str) -> Option<i64> {
 /// A token of digits only, as whole euros. Long digit strings are IDs (AFM,
 /// MARK, IBAN fragments), not money.
 fn whole_euros_to_minor(digits: &str) -> Option<i64> {
-    // Cap at 5 digits so long IDs never become money.
-    if digits.len() > 5 {
+    if digits.len() > MAX_BARE_EURO_DIGITS {
         return None;
     }
     // Leading-zero numbers (08, 06) are date fragments, not euro amounts.
@@ -1254,11 +1339,10 @@ fn whole_euros_to_minor(digits: &str) -> Option<i64> {
     }
 
     let whole: i64 = digits.parse().ok()?;
-    // 4-digit years leak from unmasked date fragments — not money.
-    if (1_900..=2_100).contains(&whole) {
+    if YEAR_LIKE_EUROS.contains(&whole) {
         return None;
     }
-    whole.checked_mul(100)
+    whole.checked_mul(MINOR_PER_EURO)
 }
 
 /// The role each separator plays in a money token, per the module table.
@@ -1282,11 +1366,11 @@ fn separator_roles(token: &str) -> Option<SeparatorRoles> {
         let only_one = token.matches(mark).count() == 1;
 
         match tail.len() {
-            1 | 2 if only_one => Some(SeparatorRoles {
+            1..=MAX_CENT_DIGITS if only_one => Some(SeparatorRoles {
                 decimal: Some(mark),
                 grouping: other,
             }),
-            3 => Some(SeparatorRoles {
+            THOUSANDS_GROUP_DIGITS => Some(SeparatorRoles {
                 decimal: None,
                 grouping: mark,
             }),
@@ -1338,13 +1422,13 @@ fn join_thousands_groups(whole: &str, grouping: char) -> Option<String> {
     let mut groups = whole.split(grouping);
 
     let first = groups.next()?;
-    if !(1..=3).contains(&first.len()) || first.starts_with('0') {
+    if !(1..=THOUSANDS_GROUP_DIGITS).contains(&first.len()) || first.starts_with('0') {
         return None;
     }
 
     let mut joined = first.to_owned();
     for group in groups {
-        if group.len() != 3 {
+        if group.len() != THOUSANDS_GROUP_DIGITS {
             return None;
         }
         joined.push_str(group);
@@ -1356,20 +1440,21 @@ fn join_thousands_groups(whole: &str, grouping: char) -> Option<String> {
 fn decimal_to_minor(whole: &str, cents: Option<&str>) -> Option<i64> {
     let all_digits = |digits: &str| digits.bytes().all(|byte| byte.is_ascii_digit());
 
-    // Whole part too long → ID
-    if whole.is_empty() || whole.len() > 8 || !all_digits(whole) {
+    if whole.is_empty() || whole.len() > MAX_WHOLE_PART_DIGITS || !all_digits(whole) {
         return None;
     }
 
     let cents = match cents {
-        Some(cents) if !(1..=2).contains(&cents.len()) || !all_digits(cents) => return None,
-        Some(cents) => format!("{cents:0<2}").parse::<i64>().ok()?,
+        Some(cents) if !(1..=MAX_CENT_DIGITS).contains(&cents.len()) || !all_digits(cents) => {
+            return None;
+        }
+        Some(cents) => format!("{cents:0<MAX_CENT_DIGITS$}").parse::<i64>().ok()?,
         None => 0,
     };
     whole
         .parse::<i64>()
         .ok()?
-        .checked_mul(100)?
+        .checked_mul(MINOR_PER_EURO)?
         .checked_add(cents)
 }
 
@@ -1398,6 +1483,12 @@ fn find_best_date(text: &str) -> Option<String> {
 /// Labels of an issue, due or generic date line.
 const DATE_LABELS: &[&str] = &["ημερομην", "date", "εκδοσ", "ληξ", "due"];
 
+/// The years a document date may have.
+const DOCUMENT_YEARS: RangeInclusive<i32> = 1990..=2100;
+
+/// What a two-digit year is counted from: `26` is 2026.
+const TWO_DIGIT_YEAR_CENTURY: i32 = 2000;
+
 /// The numbers of a token written like a date: a year in 1990..=2100, a
 /// month in 1..=12 and a day in 1..=31.
 ///
@@ -1414,7 +1505,7 @@ struct DateShape {
 impl DateShape {
     fn new(year: i32, month: u8, day: u8) -> Option<Self> {
         let in_range =
-            (1990..=2100).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day);
+            DOCUMENT_YEARS.contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day);
 
         in_range.then_some(Self { year, month, day })
     }
@@ -1459,7 +1550,11 @@ fn eu_date_shape(token: &str) -> Option<DateShape> {
         return None;
     }
 
-    let year = if year < 100 { year + 2000 } else { year };
+    let year = if year < 100 {
+        year + TWO_DIGIT_YEAR_CENTURY
+    } else {
+        year
+    };
     DateShape::new(year, month, day)
 }
 
@@ -1486,6 +1581,18 @@ fn find_invoice_reference(text: &str) -> Option<String> {
 }
 
 const SUPPLY_CODE_LABELS: &[&str] = &["κωδικος παροχης", "supply", "ηκασπ"];
+
+/// Lengths of an alphanumeric supply code.
+const SUPPLY_CODE_CHARS: RangeInclusive<usize> = 8..=24;
+
+/// Fewest characters of an RF payment code, the `RF` included.
+const MIN_RF_CODE_CHARS: usize = 10;
+
+/// Lengths of a run of digits that can be a reference.
+const REFERENCE_DIGITS: RangeInclusive<usize> = 6..=20;
+
+/// Fewest digits of a reference that no label names.
+const MIN_UNLABELLED_REFERENCE_DIGITS: usize = 10;
 
 /// Supply / meter code next to its label (e.g. NGS000000001). PDF extraction
 /// often puts the value on the line after the label.
@@ -1533,7 +1640,7 @@ fn rf_payment_code(line: &str) -> Option<String> {
 }
 
 fn is_rf_payment_code(upper: &str) -> bool {
-    upper.len() >= 10 && is_rf_then_digits(upper)
+    upper.len() >= MIN_RF_CODE_CHARS && is_rf_then_digits(upper)
 }
 
 /// Whether uppercased `upper` is `RF` followed by digits only, whatever its
@@ -1578,7 +1685,7 @@ fn labelled_reference_number(lines: &[&str]) -> Option<String> {
 fn longest_reference_number(lines: &[&str]) -> Option<String> {
     let mut longest: Option<String> = None;
     for number in lines.iter().filter_map(|line| long_digit_token(line)) {
-        if number.len() >= 10
+        if number.len() >= MIN_UNLABELLED_REFERENCE_DIGITS
             && longest
                 .as_ref()
                 .is_none_or(|longest| number.len() > longest.len())
@@ -1594,8 +1701,7 @@ fn long_digit_token(line: &str) -> Option<String> {
     let mut run = String::new();
 
     let end_run = |run: &mut String, longest: &mut Option<String>| {
-        if run.len() >= 6
-            && run.len() <= 20
+        if REFERENCE_DIGITS.contains(&run.len())
             && longest
                 .as_ref()
                 .is_none_or(|longest| run.len() >= longest.len())
@@ -1620,8 +1726,7 @@ fn long_digit_token(line: &str) -> Option<String> {
 fn alnum_supply_code(line: &str) -> Option<String> {
     for word in line.split_whitespace() {
         let token = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
-        if token.len() >= 8
-            && token.len() <= 24
+        if SUPPLY_CODE_CHARS.contains(&token.len())
             && token.chars().any(|c| c.is_ascii_alphabetic())
             && token.chars().any(|c| c.is_ascii_digit())
             && token.chars().all(|c| c.is_ascii_alphanumeric())
@@ -1649,8 +1754,7 @@ fn alnum_supply_code(line: &str) -> Option<String> {
 }
 
 fn supply_code_from_run(run: &str) -> Option<String> {
-    if run.len() >= 8
-        && run.len() <= 24
+    if SUPPLY_CODE_CHARS.contains(&run.len())
         && run.chars().any(|c| c.is_ascii_alphabetic())
         && run.chars().any(|c| c.is_ascii_digit())
     {
@@ -1692,7 +1796,7 @@ fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Option<String
     for line in text.lines() {
         if folded(line).contains(ISSUER_NAME_LABEL) {
             if let Some(name) = value_after_colon(line)
-                && name.chars().count() >= 3
+                && name.chars().count() >= MIN_NAME_CHARS
             {
                 return Some(name);
             }
@@ -1702,7 +1806,7 @@ fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Option<String
                 .skip_while(|word| *word == ":" || folded(word).contains(ISSUER_NAME_STEM))
                 .collect::<Vec<_>>()
                 .join(" ");
-            if cleaned.chars().count() >= 3 {
+            if cleaned.chars().count() >= MIN_NAME_CHARS {
                 return Some(cleaned);
             }
         }
@@ -1711,13 +1815,21 @@ fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Option<String
     text.lines()
         .map(str::trim)
         .find(|line| {
-            line.chars().count() >= 5
-                && line.chars().count() <= 80
+            MERCHANT_LINE_CHARS.contains(&line.chars().count())
                 && line.chars().any(char::is_alphabetic)
                 && !folded(line).contains(INVOICE_WORD_GREEK)
         })
         .map(ToOwned::to_owned)
 }
+
+/// Lengths of a line that can stand in for the merchant's name.
+const MERCHANT_LINE_CHARS: RangeInclusive<usize> = 5..=80;
+
+/// Fewest characters of an unlabelled line taken as the customer's name.
+const MIN_CUSTOMER_LINE_CHARS: usize = 5;
+
+/// Fewest letters and spaces of a line-item description.
+const MIN_DESCRIPTION_CHARS: usize = 4;
 
 /// Markers of a natural gas bill whose supplier is not a known brand.
 const GAS_SUPPLY_MARKERS: &[&str] = &[
@@ -1767,14 +1879,14 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
 
         if (folded_line.contains(ISSUER_NAME_LABEL) || folded_line.starts_with("name"))
             && let Some(name) = value_after_colon(line)
-            && name.chars().count() >= 3
+            && name.chars().count() >= MIN_NAME_CHARS
         {
             return Some(name);
         }
 
         // Next substantial non-label line
         if !contains_any(&folded_line, TAX_ID_OR_ADDRESS_LABELS)
-            && line.chars().count() >= 5
+            && line.chars().count() >= MIN_CUSTOMER_LINE_CHARS
             && line.chars().any(char::is_alphabetic)
             && !folded_line.ends_with(':')
         {
@@ -1831,7 +1943,9 @@ fn find_description(
                 .filter(|c| c.is_alphabetic() || c.is_whitespace())
                 .collect();
             let words = words.trim();
-            if words.chars().count() >= 4 && !contains_any(&folded(words), QUANTITY_HEADERS) {
+            if words.chars().count() >= MIN_DESCRIPTION_CHARS
+                && !contains_any(&folded(words), QUANTITY_HEADERS)
+            {
                 return Some(words.to_owned());
             }
         }
@@ -1846,29 +1960,45 @@ fn find_description(
     merchant.map(ToOwned::to_owned)
 }
 
+/// The parts of the confidence that [`score_confidence`] adds up.
+mod confidence {
+    /// A document that was read at all.
+    pub(super) const BASE: f32 = 0.2;
+    /// An amount was found.
+    pub(super) const AMOUNT: f32 = 0.4;
+    /// A date was found.
+    pub(super) const DATE: f32 = 0.15;
+    /// A reference was found.
+    pub(super) const REFERENCE: f32 = 0.1;
+    /// The document was classified as income or as a bill.
+    pub(super) const CLASSIFIED_KIND: f32 = 0.05;
+    /// The most a heuristic reading claims.
+    pub(super) const CEILING: f32 = 0.95;
+}
+
 fn score_confidence(
     amount: Option<i64>,
     date: Option<&String>,
     reference: Option<&String>,
     kind: EntryKindSuggestion,
 ) -> f32 {
-    let mut confidence = 0.2_f32;
+    let mut confidence = confidence::BASE;
     if amount.is_some() {
-        confidence += 0.4;
+        confidence += confidence::AMOUNT;
     }
     if date.is_some() {
-        confidence += 0.15;
+        confidence += confidence::DATE;
     }
     if reference.is_some() {
-        confidence += 0.1;
+        confidence += confidence::REFERENCE;
     }
     if matches!(
         kind,
         EntryKindSuggestion::Income | EntryKindSuggestion::Bill
     ) {
-        confidence += 0.05;
+        confidence += confidence::CLASSIFIED_KIND;
     }
-    confidence.min(0.95)
+    confidence.min(confidence::CEILING)
 }
 
 fn build_notes(
