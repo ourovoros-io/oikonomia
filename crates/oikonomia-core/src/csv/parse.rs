@@ -278,10 +278,17 @@ fn split_three(text: &str, separator: char) -> Option<[&str; 3]> {
 ///
 /// # Errors
 ///
-/// [`CsvError::InvalidDate`] carrying `raw` when a segment is not a number
-/// or the three do not name a day that exists (`31/02`).
+/// [`CsvError::InvalidDate`] carrying `raw` when a segment is not made of
+/// ASCII digits or the three do not name a day that exists (`31/02`).
 fn calendar_date(year: &str, month: &str, day: &str, raw: &str) -> CsvResult<Date> {
     let invalid = || CsvError::InvalidDate(raw.to_owned());
+
+    // `str::parse` takes a leading sign, so `+5/+3/2026` would be a date and
+    // `-123/01/02` a year before the common era.
+    let all_digits = |segment: &str| segment.bytes().all(|byte| byte.is_ascii_digit());
+    if ![year, month, day].into_iter().all(all_digits) {
+        return Err(invalid());
+    }
 
     let year: i32 = year.parse().map_err(|_| invalid())?;
     let month: u8 = month.parse().map_err(|_| invalid())?;
@@ -921,6 +928,17 @@ mod tests {
             "2026-03-05 10:00",
             "2026-02-30",
         ] {
+            assert_eq!(
+                parse_csv_date(cell),
+                Err(CsvError::InvalidDate(cell.to_owned())),
+                "{cell}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_signed_date_segment_is_rejected() {
+        for cell in ["+5/+3/2026", "-123/01/02", "2026-+3-05", "5/3/+026"] {
             assert_eq!(
                 parse_csv_date(cell),
                 Err(CsvError::InvalidDate(cell.to_owned())),
