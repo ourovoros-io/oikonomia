@@ -3,14 +3,49 @@
 //! Import parses a statement into suggested [`PostSimpleEntry`] rows and
 //! **does not post**. Posting is a separate call ([`post_import_rows`]).
 //!
+//! The import is two steps so that nothing a bank file says reaches the
+//! ledger without the user seeing it first. A file-level problem (no header,
+//! no date column) is an error; a problem in one row makes that row invalid
+//! and leaves the others usable.
+//!
+//! # Amounts
+//!
+//! An amount cell becomes signed integer minor units; no floating point is
+//! involved. [`parse_signed_minor`] does it, for a currency with `exponent`
+//! decimals ([`currency_minor_exponent`]). What it accepts, with the result
+//! for a two-decimal currency:
+//!
+//! | Part | Accepted | Example |
+//! |------|----------|---------|
+//! | Negative | A leading or a trailing minus (`-` or U+2212), or parentheses around the cell. | `-25`, `25-`, `(25,00)` → −2500 |
+//! | Positive | No sign, or a leading `+`. | `+25.00` → 2500 |
+//! | Decimal mark | `.` or `,`: the last separator in the cell, followed by at most `exponent` digits. | `1234,5` → 123450 |
+//! | Grouping | The other separator, in groups of three after a first group of one to three digits with no leading zero. | `1.234,56`, `1,234.56` → 123456 |
+//! | Three-digit tail | Read as a thousands group, not a fraction, unless the currency has three decimals. | `1.234` → 123400 |
+//! | Currency | The signs `€ $ £ ¥ ₹ ₺ ₩` anywhere, and three ASCII letters at either end. | `€1.234,56`, `12.00 EUR` |
+//! | Whitespace | Ignored anywhere, so a space can group thousands. | `1 234,56` → 123456 |
+//! | Exponent | None. Scientific notation is not an amount. | `1e3` is rejected |
+//!
+//! Anything else is rejected, not guessed at: a second sign (`-25-`), a
+//! fraction longer than the currency has (`0.125` in EUR), irregular
+//! grouping (`1,2,3.45`), an apostrophe as the grouping character
+//! (`1'234.56`), a currency sign outside the list, and a separator with no
+//! digit. The exact rules and their order are in the `csv/amount.rs` module
+//! doc.
+//!
 //! # Amount sign → kind
 //!
 //! Default bank convention: **money leaving the account is negative** and
 //! maps to [`SimpleEntryKind::Expense`]; a positive amount maps to
 //! [`SimpleEntryKind::Income`]. Two-line simple entries only (the existing
-//! kind → debit/credit mapping in `post_simple_entry`). If a given bank
-//! inverts that sign, the file must be adjusted before import; v1 does not
-//! auto-flip.
+//! kind → debit/credit mapping in `post_simple_entry`). A zero amount makes
+//! the row invalid.
+//!
+//! A file that does not follow the convention is handled by its columns,
+//! never by a setting that flips every sign: separate debit and credit
+//! columns are read as money out and money in whatever sign they carry, and
+//! a direction column ([`CsvColumnMapping::direction`]) decides the sign of
+//! the amount beside it, whatever sign that amount was written with.
 //!
 //! # Duplicate detection
 //!
@@ -54,13 +89,17 @@ pub use export::{
 pub use parse::{ParsedBankCsv, parse_bank_csv, parse_csv_date, read_csv_text};
 pub use post::{post_import_rows, preview_bank_csv, preview_bank_csv_file};
 
-/// Upper bound on a CSV file read into memory (same cap as documents).
+/// Upper bound on a CSV file read into memory: 8 MiB, the same as
+/// [`crate::documents::MAX_DOCUMENT_BYTES`].
 pub const MAX_CSV_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Parse-shape failures for bank and journal CSV.
 ///
-/// Defined here so call sites can match without a wildcard; new variants may
-/// be added without bumping the crate to a breaking release.
+/// The enum is `#[non_exhaustive]`: a variant can be added without breaking
+/// another crate, and in exchange a `match` in another crate needs a
+/// wildcard arm. Inside this crate the attribute has no effect, and the one
+/// `match` over it lists every variant on purpose, so that a new one has to
+/// be given its wording for the UI.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CsvError {
@@ -108,6 +147,12 @@ pub enum CsvError {
     InvalidMapping(String),
 }
 
+/// Flattens a CSV failure into the crate error.
+///
+/// [`CsvError::AmountOverflow`] becomes [`Error::MoneyOverflow`], the error
+/// every other amount that does not fit the ledger is reported with. All
+/// other variants become [`Error::CsvParse`] carrying the message; which
+/// variant it was is not recoverable from that.
 impl From<CsvError> for Error {
     fn from(err: CsvError) -> Self {
         if matches!(err, CsvError::AmountOverflow) {
@@ -192,6 +237,11 @@ pub struct ParsedBankRow {
 }
 
 /// Per-row outcome from [`parse_bank_csv`].
+///
+/// A row either parsed or it did not, and the preview in this crate matches
+/// both variants without a wildcard. The desktop crate never sees this
+/// type: it receives [`CsvImportPreviewRow`] values. A third variant would
+/// therefore be caught by the compiler here and nowhere else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CsvRowOutcome {
     /// Row parsed into a suggested simple entry.
