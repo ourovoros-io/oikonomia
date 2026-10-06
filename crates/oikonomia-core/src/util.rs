@@ -24,8 +24,9 @@
 //!
 //! # Timestamps
 //!
-//! [`now_utc_string`] gives the `created_at` ordering key. It is not a date
-//! and core never parses it back.
+//! [`now_utc_string`] gives the text stored in the `created_at`, `posted_at`
+//! and `archived_at` columns. It is not an accounting date, and core never
+//! parses it back.
 //!
 //! # Ids
 //!
@@ -55,8 +56,8 @@ pub fn parse_uuid(text: &str) -> Result<Uuid> {
 /// Returns `date` as `YYYY-MM-DD`, zero-padded.
 ///
 /// The text is ten characters for years 0000 to 9999. An earlier year is
-/// written with a leading minus sign and three digits (`-001-12-31`), a form
-/// [`parse_date`] rejects.
+/// written with a leading minus sign (`-001-12-31`), a form [`parse_date`]
+/// rejects.
 ///
 /// # Examples
 ///
@@ -215,11 +216,13 @@ pub mod serde_date {
 pub fn utc_today() -> Date {
     time::OffsetDateTime::now_utc().date()
 }
+
 /// Returns the current instant as `unix:` followed by whole seconds since the
 /// Unix epoch, for example `unix:1791244800`.
 ///
-/// The text is stored in `created_at` columns as an ordering key; it is never
-/// an accounting date. Comparing two such texts agrees with time order only
+/// The text is stored in the `created_at`, `posted_at` and `archived_at`
+/// columns, and queries order rows by `created_at`; it is never an
+/// accounting date. Comparing two such texts agrees with time order only
 /// while both have the same number of digits: ten digits cover 2001-09-09 to
 /// 2286-11-20 (`10^9` to `10^10 - 1` seconds). A clock set before 1970 gives
 /// a negative count (`unix:-5`), which sorts before every ten-digit value but

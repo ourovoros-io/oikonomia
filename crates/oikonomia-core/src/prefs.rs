@@ -74,18 +74,6 @@ pub enum Locale {
     De,
 }
 
-/// The number of system language tags read when picking the first-run
-/// language; later tags are ignored.
-const MAX_SYSTEM_LANGUAGES: usize = 16;
-
-/// The longest system language tag considered, in characters; a longer one
-/// is skipped.
-///
-/// 35 is the smallest buffer RFC 5646 (section 4.4.1) recommends for a
-/// language tag. A longer tag can be valid; it is skipped here so that the
-/// work per tag stays bounded whatever the system reports.
-const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
-
 impl Locale {
     /// Every supported language, in declaration order.
     ///
@@ -127,6 +115,8 @@ impl Locale {
     ///
     /// Only the primary language subtag counts, compared without regard to
     /// ASCII case, and both `-` and `_` separate subtags (`el-GR`, `EL_gr`).
+    /// Surrounding whitespace is trimmed before the tag is split; the length
+    /// limit applies to the tag as given, before trimming.
     fn from_language_tag(tag: &str) -> Option<Self> {
         // `nth` stops at the limit, so an absurdly long input is never
         // walked to its end.
@@ -152,6 +142,18 @@ impl Locale {
         }
     }
 }
+
+/// The number of system language tags read when picking the first-run
+/// language; later tags are ignored.
+const MAX_SYSTEM_LANGUAGES: usize = 16;
+
+/// The longest system language tag considered, in characters; a longer one
+/// is skipped.
+///
+/// 35 is the smallest buffer RFC 5646 (section 4.4.1) recommends for a
+/// language tag. A longer tag can be valid; it is skipped here so that the
+/// work per tag stays bounded whatever the system reports.
+const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
 
 /// The accounts last used for one kind of quick-add entry in one entity.
 ///
@@ -253,8 +255,8 @@ pub fn ui_prefs_path(data_dir: &Path) -> PathBuf {
 /// read.
 ///
 /// A file that is missing or cannot be read gives the defaults silently. A
-/// file that is not a [`UiPrefs`] gives the defaults too, with a warning in
-/// the log. Nothing is an error: a damaged preferences file must not stop
+/// file that is not a [`UiPrefs`] gives the defaults too, with a warning
+/// through the `log` facade. Nothing is an error: a damaged preferences file must not stop
 /// the app from starting, it only costs the saved choices.
 #[must_use]
 pub fn load_ui_prefs(data_dir: &Path) -> UiPrefs {
@@ -303,8 +305,8 @@ pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
 /// This loads the file, changes the one field and saves the result with
 /// [`save_ui_prefs`], which replaces the file by renaming a temporary one over
 /// it. Nothing here locks: a caller that can race another writer must hold a
-/// lock of its own across the call, or a save made between this
-/// load and this save is lost.
+/// lock of its own across the call, or a save made between this load and
+/// this save is lost.
 ///
 /// # Errors
 ///
@@ -336,8 +338,7 @@ pub struct LocaleResolution {
 /// language is mapped from `system_languages`, stored, and returned.
 ///
 /// Nothing here locks: a caller holds its own lock across the call so that
-/// the check and the write cannot interleave
-/// with a language change.
+/// the check and the write cannot interleave with a language change.
 ///
 /// # Errors
 ///
@@ -368,7 +369,8 @@ pub fn resolve_locale<S: AsRef<str>>(
 /// The JSON is written to a temporary sibling file, flushed to disk, and
 /// renamed over the target, so a reader (and a crash) sees either the old or
 /// the new complete file, never a truncated one. A temporary file left by an
-/// earlier crash is removed first, and a failed write leaves none behind.
+/// earlier crash is removed first, and after a failed write the temporary
+/// file is removed again; a removal that fails is only logged.
 ///
 /// The file gets the process's default permissions, not the owner-only mode
 /// of vault files: it is not part of the vault.
@@ -440,12 +442,20 @@ mod tests {
     }
 
     /// Fails unless `Locale::ALL` is the variants in the `listed_locales`
-    /// list above, in that order. The compiler checks that list against the
-    /// enum with an exhaustive `match`, so a language added to the enum but
-    /// left out of the list does not compile.
+    /// list above, in the order the enum declares them (its discriminants).
+    /// The compiler checks that list against the enum with an exhaustive
+    /// `match`, so a language added to the enum but left out of the list does
+    /// not compile.
     #[test]
     fn all_lists_every_locale_once_in_declaration_order() {
         assert_eq!(Locale::ALL, listed_locales::variants());
+        assert!(
+            Locale::ALL
+                .iter()
+                .map(|locale| *locale as usize)
+                .eq(0..Locale::ALL.len()),
+            "Locale::ALL is not in declaration order"
+        );
         listed_locales::assert_every_position_once(
             Locale::ALL.iter().map(listed_locales::position).collect(),
         );
@@ -594,7 +604,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_locale_field_is_ignored() {
+    fn unknown_keys_beside_a_locale_are_ignored() {
         let dir = tempdir().unwrap();
 
         let json = r#"{ "theme": "light", "locale": "el", "future_field": 42 }"#;

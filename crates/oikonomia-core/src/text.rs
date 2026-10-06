@@ -23,18 +23,17 @@
 //! # Conventions for stored wording
 //!
 //! - The text is exported to CSV and printed in the expense PDF. The embedded
-//!   Inter font covers U+202F and the typographic apostrophe, but the
-//!   Helvetica fallback used if the embed fails cannot encode them, so the
-//!   wording here avoids them: French uses ordinary spaces and the plain
-//!   apostrophe, never a narrow no-break space.
+//!   Inter font covers U+202F, but the Helvetica fallback used if the embed
+//!   fails cannot encode it, so French wording here uses an ordinary space,
+//!   never a narrow no-break space. The wording also keeps to the plain
+//!   apostrophe and has no U+00A0; a test checks all three.
 //! - No wording supplied here starts with `=`, `+`, `-` or `@`, the
 //!   characters a spreadsheet reads as the start of a formula. That covers a
 //!   generated text only when core's wording comes first. [`bill_description`]
 //!   and [`customer_invoice_description`] lead with a merchant or customer
-//!   name read from a document, and [`void_description`] and
-//!   [`opening_balance_description`] embed text the user wrote, so stored
-//!   text as a whole is not formula-safe. [`crate::csv::export_journal_csv`]
-//!   guards every free-text cell it writes for that reason.
+//!   name read from a document, so their result can start with anything.
+//!   [`crate::csv::export_journal_csv`] guards every free-text cell it writes
+//!   for that reason.
 
 use crate::domain::ChartTemplate;
 use crate::prefs::Locale;
@@ -646,7 +645,7 @@ mod tests {
     }
 
     #[test]
-    fn english_forms_are_the_ones_written_before_localization() {
+    fn english_forms_are_exact() {
         assert_eq!(
             forms(Locale::En),
             [
@@ -788,6 +787,14 @@ mod tests {
             generated.push(void_memo(locale).to_owned());
             generated.push(natural_gas_merchant(locale).to_owned());
             generated.push(electricity_supplier_merchant(locale).to_owned());
+
+            for names in [PERSONAL_ACCOUNT_NAMES, COMPANY_ACCOUNT_NAMES] {
+                generated.extend(
+                    names
+                        .iter()
+                        .map(|(_, name)| name.in_locale(locale).to_owned()),
+                );
+            }
 
             for text in &generated {
                 assert!(

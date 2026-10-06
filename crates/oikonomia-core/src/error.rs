@@ -1,4 +1,7 @@
-//! The one error type every fallible function in the crate returns.
+//! The error type of the crate's public API.
+//!
+//! Every fallible public function returns [`enum@Error`], except the serde
+//! hooks, which return the serializer's or deserializer's own error.
 //!
 //! # Shape
 //!
@@ -16,8 +19,9 @@
 //! The UI never shows text written here. Each error has a stable
 //! `snake_case` code ([`Error::code`]) that the UI maps to wording in the
 //! user's language, and a validation error adds named values for that wording
-//! ([`ValidationError::params`]). The `Display` text is English and is meant
-//! for logs.
+//! ([`ValidationError::params`]). The `Display` text is English diagnostic
+//! text. The desktop shell passes it along beside the code, and the UI never
+//! shows it.
 //!
 //! Adding a variant therefore means adding a code. [`Error::code`] and
 //! [`ValidationError::code`] match without a wildcard arm, so a variant
@@ -46,8 +50,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// A failure of an operation in `oikonomia-core`.
 ///
 /// See the [module documentation](self) for how the variants are organised
-/// and how they reach the user. A `String` payload is English detail for
-/// logs; the UI receives only [`Error::code`].
+/// and how they reach the user. A `String` payload is English detail that
+/// appears in the `Display` text; the UI words the error from
+/// [`Error::code`] and does not show it.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -131,7 +136,8 @@ pub enum Error {
     #[error("analysis failed: {0}")]
     Analysis(String),
 
-    /// A bank CSV or journal CSV could not be read; the text says why.
+    /// A bank CSV or journal CSV could not be read, or the journal export
+    /// could not be written; the text says why.
     #[error("{0}")]
     CsvParse(String),
 }
@@ -205,6 +211,7 @@ impl Error {
         }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::{Error, ValidationError};

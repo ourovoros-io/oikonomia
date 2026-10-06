@@ -27,9 +27,8 @@
 //! units rather than [`Money`]; see [`crate::ledger`] for how those are kept
 //! from overflowing.
 
-use serde::{Deserialize, Serialize};
-
 use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 
 /// A non-negative amount in the smallest unit of a currency.
 ///
@@ -137,7 +136,7 @@ impl<'de> Deserialize<'de> for Money {
         }
 
         let raw = Raw::deserialize(deserializer)?;
-        Money::from_minor(raw.amount_minor).map_err(serde::de::Error::custom)
+        Self::from_minor(raw.amount_minor).map_err(serde::de::Error::custom)
     }
 }
 

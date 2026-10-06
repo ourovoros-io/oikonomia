@@ -8,18 +8,16 @@
 //!
 //! This is the channel for text that is not a failure: a note on a document
 //! suggestion, or the reason one row of a CSV import cannot be used. A failed
-//! operation reports through [`crate::error`], which
-//! uses the same idea of a code with parameters. Wording that is stored in
-//! the book is the one case where core writes the words itself, in
-//! [`crate::text`].
+//! operation reports through [`crate::error`], which uses the same idea of a
+//! code with parameters. Wording that is stored in the book is the one case
+//! where core writes the words itself, in [`crate::text`].
 //!
 //! The codes are shared with the web sources by hand, so the tests below
 //! check [`UiTextCode::ALL`] against the enum and against the fixture the UI
 //! reads its code list from.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Every coded text Rust sends: the notes the document analyzer attaches to a
 /// suggestion, and the reasons a CSV import row cannot be used.
@@ -282,12 +280,21 @@ mod tests {
     /// Fails unless `UiTextCode::ALL` is exactly the set of variants in the
     /// `listed_codes` list above, each once. The compiler checks that list
     /// against the enum with an exhaustive `match`, so a variant added to the
-    /// enum but left out of the list does not compile. It does not check the
-    /// order of `ALL`, nor that the UI has copy for a code;
+    /// enum but left out of the list does not compile. The discriminants pin
+    /// the order of `ALL` to the order of declaration. It does not check that
+    /// the UI has copy for a code;
     /// `the_shared_fixture_lists_exactly_the_codes_rust_can_emit` does that.
     #[test]
     fn all_lists_exactly_the_variants_of_the_enum() {
         let listed = listed_codes::variants();
+
+        assert!(
+            UiTextCode::ALL
+                .iter()
+                .map(|code| *code as usize)
+                .eq(0..UiTextCode::ALL.len()),
+            "UiTextCode::ALL is not in declaration order"
+        );
 
         assert_eq!(
             UiTextCode::ALL.len(),

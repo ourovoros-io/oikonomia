@@ -21,8 +21,9 @@
 //! 3. the debits and the credits add up to the same total.
 //!
 //! Everything that needs the database (the accounts exist, belong to the
-//! entry's entity and are active) is checked in [`crate::ledger`], which
-//! calls this function as part of every post.
+//! entry's entity and, except for the reversing entry of a void, are active)
+//! is checked in [`crate::ledger`], which calls this function as part of
+//! every post.
 //!
 //! # Lifecycle
 //!
@@ -181,13 +182,15 @@ pub struct JournalLine {
 ///
 /// # Errors
 ///
-/// The checks run in this order and the first failure is returned:
+/// The first failure is returned. The line count is checked first, then the
+/// lines one at a time in order, each for its sides and then for the running
+/// totals, and the balance last:
 ///
 /// - [`Error::TooFewLines`] when there are fewer than two lines.
-/// - [`Error::InvalidLineAmounts`] for the first line whose debit and credit
-///   are both zero or both greater than zero.
-/// - [`Error::MoneyOverflow`] when the debits or the credits up to a line add
-///   up to more than `i64::MAX`.
+/// - [`Error::InvalidLineAmounts`] for a line whose debit and credit are both
+///   zero or both greater than zero.
+/// - [`Error::MoneyOverflow`] when adding a line takes the total of the
+///   debits or of the credits past `i64::MAX`.
 /// - [`Error::UnbalancedEntry`], carrying both totals, when the total of the
 ///   debits differs from the total of the credits.
 pub fn validate_lines_for_post(lines: &[JournalLine]) -> Result<()> {
@@ -221,6 +224,7 @@ pub fn validate_lines_for_post(lines: &[JournalLine]) -> Result<()> {
 
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

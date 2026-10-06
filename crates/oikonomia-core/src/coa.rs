@@ -149,6 +149,7 @@ impl AccountShape {
         }
     }
 }
+
 /// Returns the shapes of the personal chart, in chart order: cash and cards,
 /// owner equity, salary, and living expenses.
 fn personal_template_shapes() -> Vec<AccountShape> {
@@ -468,12 +469,20 @@ mod tests {
     }
 
     /// Fails unless `DocumentTopic::ALL` is the variants in the
-    /// `listed_topics` list above, in that order. The compiler checks that
-    /// list against the enum with an exhaustive `match`, so a topic added to
-    /// the enum but left out of the list does not compile.
+    /// `listed_topics` list above, in the order the enum declares them (its
+    /// discriminants). The compiler checks that list against the enum with an
+    /// exhaustive `match`, so a topic added to the enum but left out of the
+    /// list does not compile.
     #[test]
     fn all_lists_every_topic_once_in_declaration_order() {
         assert_eq!(DocumentTopic::ALL, listed_topics::variants());
+        assert!(
+            DocumentTopic::ALL
+                .iter()
+                .map(|topic| *topic as usize)
+                .eq(0..DocumentTopic::ALL.len()),
+            "DocumentTopic::ALL is not in declaration order"
+        );
         listed_topics::assert_every_position_once(
             DocumentTopic::ALL
                 .iter()

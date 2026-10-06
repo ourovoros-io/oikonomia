@@ -10,7 +10,7 @@
 //! - for an account that is missing or wrong, the [`AccountRole`] it was
 //!   meant to play, sent as a parameter so the UI can point at the field.
 //!
-//! The `Display` text is English and is meant for logs only.
+//! The `Display` text is English diagnostic text; the UI never shows it.
 //!
 //! # Keeping Rust and the UI in step
 //!
@@ -26,11 +26,10 @@
 //!
 //! A rule the user cannot act on (a malformed id, a caller bug) is
 //! [`ValidationError::Internal`]: it has one code for all cases, and its
-//! detail is for logs and is never sent as a parameter.
+//! detail is diagnostic text and is never sent as a parameter.
 
 use std::collections::BTreeMap;
 use std::fmt;
-
 use thiserror::Error;
 
 /// The part an account plays in a simple entry.
@@ -60,9 +59,10 @@ pub enum AccountRole {
 }
 
 impl AccountRole {
-    /// Every role, in the order the entry form meets them.
+    /// Every role.
     ///
-    /// The desktop crate checks this list against `accountRoles.json`.
+    /// The desktop crate checks this list, and its order, against
+    /// `accountRoles.json`.
     pub const ALL: &'static [Self] = &[
         Self::Category,
         Self::Payment,
@@ -244,7 +244,8 @@ pub enum ValidationError {
     VaultAlreadyInitialized,
 
     /// A rule broke that the user cannot act on (a malformed id, a bug in
-    /// the caller). The detail is for logs and is never sent as a parameter.
+    /// the caller). The detail is diagnostic text and is never sent as a
+    /// parameter.
     #[error("{detail}")]
     Internal {
         /// What went wrong, in English.

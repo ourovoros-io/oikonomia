@@ -3,7 +3,7 @@
 //! Everything the app knows about bookkeeping lives in this crate: the types,
 //! the rules, the encrypted storage and the queries. The desktop shell
 //! (`apps/desktop/src-tauri`) is a thin layer that turns IPC commands into
-//! calls on this crate, and the web UI holds no accounting rule at all.
+//! calls on this crate, and the web UI is meant to hold no accounting rule.
 //!
 //! # Module map
 //!
@@ -40,8 +40,9 @@
 //!
 //! - **Money is integer minor units.** Amounts are `i64` counts of the
 //!   currency's smallest unit and are never held in floating point. Sums are
-//!   checked: an amount that does not fit is [`Error::MoneyOverflow`], never
-//!   a wrapped or clamped figure.
+//!   checked: a total that does not fit is an error, never a wrapped or
+//!   clamped figure. The error is [`Error::MoneyOverflow`], or [`Error::Io`]
+//!   when it is `SQLite`'s `SUM` that overflows (see [`ledger`]).
 //! - **A posted entry balances.** It has at least two lines, each line has an
 //!   amount on exactly one side, and total debits equal total credits
 //!   ([`domain::validate_lines_for_post`]).
@@ -49,10 +50,10 @@
 //!   credited, which account types a part of an entry accepts, and what
 //!   counts as a duplicate are decided in Rust. The UI sends a request and
 //!   shows the answer.
-//! - **Core is offline.** No HTTP, TLS or socket crate is in this crate's
-//!   dependency tree; `scripts/assert-core-offline.sh` fails the build when
-//!   one of the crates it lists appears. The only network path in the app is
-//!   the update check in `oikonomia-update`.
+//! - **Core is offline.** None of the HTTP, TLS-client and socket crates
+//!   listed in `scripts/assert-core-offline.sh` is in this crate's dependency
+//!   tree, and the script fails when one appears. The only network path in
+//!   the app is the update check in `oikonomia-update`.
 //! - **The vault is encrypted at rest.** Books are stored in the `SQLCipher`
 //!   database in [`vault`], and a backup is a copy of that encrypted
 //!   database with its header. The files this crate writes in

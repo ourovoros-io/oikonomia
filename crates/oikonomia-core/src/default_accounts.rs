@@ -273,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn english_personal_chart_gets_todays_defaults() {
+    fn english_personal_chart_gets_the_template_defaults() {
         let accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
 
         // category, payment, deposit, income, bill category, payable, from, to
@@ -286,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn english_company_chart_gets_todays_defaults() {
+    fn english_company_chart_gets_the_template_defaults() {
         let accounts = seeded_chart_for_tests(ChartTemplate::Company, false);
 
         assert_eq!(
