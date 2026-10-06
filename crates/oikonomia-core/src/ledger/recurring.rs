@@ -29,7 +29,7 @@
 
 use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_uuid};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
-use crate::error::{DatabaseContext, Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::journals::{
     PostSimpleEntry, PostedEntryView, SimpleBillStatus, SimpleEntryKind, ensure_simple_entry_roles,
     post_simple_entry_unchecked,
@@ -372,7 +372,7 @@ pub fn update_recurring_template(
         .database("update recurring template")?;
 
     if updated == 0 {
-        return Err(Error::NotFound("recurring template".into()));
+        return Err(Error::NotFound(Resource::RecurringTemplate));
     }
 
     get_recurring_template(conn, input.id)
@@ -392,7 +392,7 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
         )
         .database("delete recurring template")?;
     if deleted == 0 {
-        return Err(Error::NotFound("recurring template".into()));
+        return Err(Error::NotFound(Resource::RecurringTemplate));
     }
     Ok(())
 }
@@ -775,7 +775,7 @@ fn validated_fields(
     let name = input.name.trim();
     if name.is_empty() {
         return Err(ValidationError::NameRequired {
-            field: "template name",
+            field: NameField::TemplateName,
         }
         .into());
     }
@@ -871,7 +871,7 @@ fn ensure_entity_exists(conn: &Connection, entity_id: EntityId) -> Result<()> {
         )
         .database("check entity exists")?;
     if exists == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
     Ok(())
 }
@@ -896,7 +896,7 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
         |row| Ok(map_template_row(row)),
     )
     .map_err(|err| match err {
-        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("recurring template".into()),
+        rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::RecurringTemplate),
         other => Error::database("read recurring template", other),
     })?
 }

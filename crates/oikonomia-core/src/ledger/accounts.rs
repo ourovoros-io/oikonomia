@@ -18,7 +18,7 @@
 
 use crate::db::{collect_rows, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
-use crate::error::{DatabaseContext, Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -109,7 +109,7 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
         |row| Ok(map_account(row)),
     )
     .map_err(|err| match err {
-        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("account".into()),
+        rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Account),
         other => Error::database("read account", other),
     })?
 }
@@ -132,7 +132,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
     let name = input.name.trim();
     if code.is_empty() || name.is_empty() {
         return Err(ValidationError::NameRequired {
-            field: "code and name",
+            field: NameField::AccountCodeAndName,
         }
         .into());
     }
@@ -148,7 +148,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
         )
         .database("check entity exists")?;
     if exists == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
 
     let id = AccountId::new();
@@ -195,7 +195,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
     let name = input.name.trim();
     if code.is_empty() || name.is_empty() {
         return Err(ValidationError::NameRequired {
-            field: "code and name",
+            field: NameField::AccountCodeAndName,
         }
         .into());
     }
@@ -223,7 +223,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
         .map_err(|err| account_write_error(&err))?;
 
     if updated == 0 {
-        return Err(Error::NotFound("account".into()));
+        return Err(Error::NotFound(Resource::Account));
     }
 
     get_account(conn, input.id)

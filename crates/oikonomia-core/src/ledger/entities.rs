@@ -31,7 +31,7 @@
 use crate::coa::template_accounts;
 use crate::db::{collect_rows, corrupt_column, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
-use crate::error::{DatabaseContext, Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
 use crate::util::now_utc_string;
@@ -104,7 +104,7 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
         |row| Ok(map_entity(row)),
     )
     .map_err(|err| match err {
-        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("entity".into()),
+        rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Entity),
         other => Error::database("read entity", other),
     })?
 }
@@ -162,7 +162,7 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
     let name = name.trim();
     if name.is_empty() {
         return Err(ValidationError::NameRequired {
-            field: "entity name",
+            field: NameField::EntityName,
         }
         .into());
     }
@@ -179,7 +179,7 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
         .database("rename entity")?;
 
     if renamed == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
 
     get_entity(conn, id)
@@ -204,7 +204,7 @@ pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
         .database("archive entity")?;
 
     if archived == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
     Ok(())
 }
@@ -239,7 +239,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
     let name = input.name.trim();
     if name.is_empty() {
         return Err(ValidationError::NameRequired {
-            field: "entity name",
+            field: NameField::EntityName,
         }
         .into());
     }
@@ -319,7 +319,7 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         )
         .database("check entity exists")?;
     if exists == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
 
     // A voided entry and its reversal reference each other, so neither could
@@ -368,7 +368,7 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         .database("delete entity")?;
 
     if deleted == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
 
     Ok(())

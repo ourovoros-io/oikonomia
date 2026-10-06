@@ -44,7 +44,7 @@ use crate::domain::{
     Account, AccountId, AccountType, EntityId, EntryStatus, JournalEntry, JournalEntryId,
     JournalLine, JournalLineId, validate_lines_for_post,
 };
-use crate::error::{AccountRole, DatabaseContext, Error, Result, ValidationError};
+use crate::error::{AccountRole, DatabaseContext, Error, Resource, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
@@ -276,7 +276,7 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
             },
         )
         .map_err(|err| match err {
-            rusqlite::Error::QueryReturnedNoRows => Error::NotFound("journal entry".into()),
+            rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::JournalEntry),
             other => Error::database("read journal entry", other),
         })?;
     let entry = entry?;
@@ -319,7 +319,7 @@ pub fn set_entry_hidden(
         )
         .database("set journal entry visibility")?;
     if updated == 0 {
-        return Err(Error::NotFound("journal entry".into()));
+        return Err(Error::NotFound(Resource::JournalEntry));
     }
     get_entry(conn, id)
 }

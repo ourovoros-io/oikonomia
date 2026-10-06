@@ -5,6 +5,7 @@
   "file_too_large": ["max_mb"],
   "invalid_date": ["value"],
   "lock_timeout_too_short": ["min_secs"],
+  "name_required": ["field"],
   "name_taken": ["name"],
   "password_too_short": ["min"]
 }

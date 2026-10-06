@@ -200,7 +200,9 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use oikonomia_core::Error as CoreError;
-    use oikonomia_core::error::{AccountRole, BackupDefect, ValidationError, VaultCorruption};
+    use oikonomia_core::error::{
+        AccountRole, BackupDefect, Resource, ValidationError, VaultCorruption,
+    };
     use oikonomia_update::UpdateError;
 
     use super::{CommandError, DesktopError};
@@ -480,10 +482,7 @@ mod tests {
                 CoreParams::DiagnosticText,
             ),
             (CoreError::RestoreWouldOverwrite, CoreParams::NoData),
-            (
-                CoreError::NotFound("account".to_owned()),
-                CoreParams::KnownGap,
-            ),
+            (CoreError::NotFound(Resource::Account), CoreParams::KnownGap),
             (
                 CoreError::Analysis {
                     operation: "decode",

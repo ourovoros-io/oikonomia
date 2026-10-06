@@ -8,8 +8,8 @@
 mod common;
 
 use oikonomia_core::domain::{ChartTemplate, EntityId};
-use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
+use oikonomia_core::error::{Error, Resource};
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, ReportLine, SyntheticLine, balance_sheet,
     cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
@@ -518,15 +518,15 @@ fn reports_reject_unknown_entity() {
 
     assert_eq!(
         trial_balance(conn, missing, "2026-12-31").expect_err("tb"),
-        Error::NotFound("entity".into())
+        Error::NotFound(Resource::Entity)
     );
     assert_eq!(
         profit_and_loss(conn, missing, "2026-01-01", "2026-12-31").expect_err("pnl"),
-        Error::NotFound("entity".into())
+        Error::NotFound(Resource::Entity)
     );
     assert_eq!(
         balance_sheet(conn, missing, "2026-12-31").expect_err("bs"),
-        Error::NotFound("entity".into())
+        Error::NotFound(Resource::Entity)
     );
 }
 

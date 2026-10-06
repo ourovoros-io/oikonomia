@@ -43,13 +43,15 @@ use thiserror::Error;
 
 mod context;
 mod damage;
+mod resource;
 mod validation;
 
 pub(crate) use context::{
     AnalysisContext, CryptoContext, DatabaseContext, IoContext, SerializationContext,
 };
 pub use damage::{BackupDefect, VaultCorruption};
-pub use validation::{AccountRole, ValidationError};
+pub use resource::Resource;
+pub use validation::{AccountRole, NameField, ValidationError};
 
 /// The result of a fallible operation in `oikonomia-core`.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -177,10 +179,9 @@ pub enum Error {
     #[error("a vault already exists; restore requires replace")]
     RestoreWouldOverwrite,
 
-    /// The requested record does not exist; the text names its kind, such as
-    /// `account`.
+    /// The requested record does not exist.
     #[error("{0} not found")]
-    NotFound(String),
+    NotFound(Resource),
 
     /// Reading an image with the bundled OCR failed: its models, decoding
     /// the image, or the engine.
@@ -319,7 +320,7 @@ impl Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{BackupDefect, Error, ValidationError, VaultCorruption};
+    use super::{BackupDefect, Error, Resource, ValidationError, VaultCorruption};
     use oikonomia_test_support::listed_variants;
 
     /// One value of every variant, in the order of the enum.
@@ -361,7 +362,7 @@ mod tests {
             },
             Error::BackupInvalid(BackupDefect::Truncated),
             Error::RestoreWouldOverwrite,
-            Error::NotFound("x".into()),
+            Error::NotFound(Resource::Account),
             Error::Analysis {
                 operation: "x",
                 detail: "x".into(),

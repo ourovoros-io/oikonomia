@@ -53,7 +53,7 @@ use crate::db::{read_column, stored_uuid};
 use crate::default_accounts::{account_by_codes, first_of_type};
 use crate::documents::store::Keyword::{Prefix, Unit, Word};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId};
-use crate::error::{DatabaseContext, Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
 };
@@ -134,7 +134,10 @@ pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Re
         .into());
     }
     if filename.trim().is_empty() {
-        return Err(ValidationError::NameRequired { field: "filename" }.into());
+        return Err(ValidationError::NameRequired {
+            field: NameField::Filename,
+        }
+        .into());
     }
     if !is_allowed_mime(mime) {
         return Err(ValidationError::FileTypeUnsupported.into());
@@ -426,7 +429,7 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
         },
     )
     .map_err(|err| match err {
-        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("document".into()),
+        rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Document),
         other => Error::database("read document", other),
     })?
 }
@@ -442,7 +445,7 @@ pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
         .execute("DELETE FROM documents WHERE id = ?1", [id.0.to_string()])
         .database("delete document")?;
     if deleted == 0 {
-        return Err(Error::NotFound("document".into()));
+        return Err(Error::NotFound(Resource::Document));
     }
     Ok(())
 }
@@ -464,7 +467,7 @@ pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Resu
         .database("save document analysis")?;
 
     if updated == 0 {
-        return Err(Error::NotFound("document".into()));
+        return Err(Error::NotFound(Resource::Document));
     }
     Ok(())
 }

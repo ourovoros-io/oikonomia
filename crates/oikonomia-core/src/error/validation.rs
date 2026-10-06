@@ -99,6 +99,53 @@ impl fmt::Display for AccountRole {
     }
 }
 
+/// The name a request left blank.
+///
+/// [`ValidationError::NameRequired`] names the field so the UI can say which
+/// one to fill in. It is sent as the `field` parameter, by
+/// [`NameField::identifier`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameField {
+    /// The name of an entity.
+    EntityName,
+    /// The code and the name of an account; either one blank refuses it.
+    AccountCodeAndName,
+    /// The name of a recurring template.
+    TemplateName,
+    /// The file name of a document.
+    Filename,
+}
+
+impl NameField {
+    /// Every field, in declaration order.
+    pub const ALL: &'static [Self] = &[
+        Self::EntityName,
+        Self::AccountCodeAndName,
+        Self::TemplateName,
+        Self::Filename,
+    ];
+
+    /// Returns the stable `snake_case` identifier sent as the `field`
+    /// parameter.
+    #[must_use]
+    pub fn identifier(self) -> &'static str {
+        match self {
+            Self::EntityName => "entity_name",
+            Self::AccountCodeAndName => "account_code_and_name",
+            Self::TemplateName => "template_name",
+            Self::Filename => "filename",
+        }
+    }
+}
+
+impl fmt::Display for NameField {
+    /// Writes the identifier with spaces for underscores, which reads as
+    /// English in logs.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.identifier().replace('_', " "))
+    }
+}
+
 /// Why a request was refused. Mapped one to one onto a UI code.
 ///
 /// Messages that deserve the same user-facing text share a variant. Anything
@@ -116,8 +163,8 @@ pub enum ValidationError {
     /// A required name or code was blank.
     #[error("{field} is required")]
     NameRequired {
-        /// English description of the blank field, for logs.
-        field: &'static str,
+        /// The field that was blank.
+        field: NameField,
     },
 
     /// An entity or document with this name already exists.
@@ -336,6 +383,9 @@ impl ValidationError {
             Self::PasswordTooShort { min } => {
                 params.insert("min", min.to_string());
             }
+            Self::NameRequired { field } => {
+                params.insert("field", field.identifier().to_owned());
+            }
             Self::NameTaken { name } => {
                 params.insert("name", name.clone());
             }
@@ -358,8 +408,7 @@ impl ValidationError {
             Self::FileTooLarge { max_mb } => {
                 params.insert("max_mb", max_mb.to_string());
             }
-            Self::NameRequired { .. }
-            | Self::AccountCodeTaken
+            Self::AccountCodeTaken
             | Self::SystemAccountProtected
             | Self::SameAccount
             | Self::AmountNotPositive
@@ -386,7 +435,7 @@ impl ValidationError {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccountRole, ValidationError};
+    use super::{AccountRole, NameField, ValidationError};
     use oikonomia_test_support::listed_variants;
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -530,6 +579,54 @@ mod tests {
         );
     }
 
+    listed_variants! {
+        units listed_fields for NameField {
+            NameField::EntityName,
+            NameField::AccountCodeAndName,
+            NameField::TemplateName,
+            NameField::Filename,
+        }
+    }
+
+    /// Fails unless `NameField::ALL` is exactly the listed variants, each
+    /// once, with distinct `snake_case` identifiers. The compiler checks the
+    /// list above against the enum with an exhaustive `match`.
+    #[test]
+    fn the_field_list_covers_every_variant_with_a_distinct_identifier() {
+        let identifiers: BTreeSet<&str> = NameField::ALL
+            .iter()
+            .map(|field| field.identifier())
+            .collect();
+
+        assert_eq!(NameField::ALL.len(), listed_fields::COUNT);
+        listed_fields::assert_every_position_once(
+            NameField::ALL.iter().map(listed_fields::position).collect(),
+        );
+        assert_eq!(identifiers.len(), NameField::ALL.len());
+        for identifier in identifiers {
+            assert!(
+                identifier
+                    .chars()
+                    .all(|letter| letter.is_ascii_lowercase() || letter == '_'),
+                "{identifier}"
+            );
+        }
+    }
+
+    #[test]
+    fn name_required_reports_which_field_is_blank() {
+        let error = ValidationError::NameRequired {
+            field: NameField::AccountCodeAndName,
+        };
+
+        assert_eq!(error.code(), "name_required");
+        assert_eq!(
+            params_of(&error),
+            vec![("field", "account_code_and_name".to_owned())]
+        );
+        assert_eq!(error.to_string(), "account code and name is required");
+    }
+
     #[test]
     fn invalid_date_reports_the_offending_text() {
         let error = ValidationError::InvalidDate {
@@ -611,7 +708,7 @@ mod tests {
         vec![
             ValidationError::PasswordTooShort { min: 12 },
             ValidationError::NameRequired {
-                field: "entity name",
+                field: NameField::EntityName,
             },
             ValidationError::NameTaken { name: "x".into() },
             ValidationError::AccountCodeTaken,

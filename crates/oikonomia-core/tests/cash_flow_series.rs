@@ -6,8 +6,8 @@
 mod common;
 
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
-use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
+use oikonomia_core::error::{Error, Resource};
 use oikonomia_core::ledger::{
     CashFlowGranularity, CashFlowSeries, activity_window, cash_flow_series, dashboard_summary,
     set_entry_hidden, void_entry,
@@ -301,7 +301,7 @@ fn an_unknown_book_is_not_found() {
 
     assert_eq!(
         cash_flow_series(conn, EntityId::new(), "2026-08-01", "2026-08-31").expect_err("unknown"),
-        Error::NotFound("entity".into())
+        Error::NotFound(Resource::Entity)
     );
 }
 
@@ -424,6 +424,6 @@ fn an_explicit_inverted_window_is_a_validation_error() {
     ));
     assert_eq!(
         activity_window(conn, EntityId::new(), None, None, today).expect_err("unknown"),
-        Error::NotFound("entity".into())
+        Error::NotFound(Resource::Entity)
     );
 }

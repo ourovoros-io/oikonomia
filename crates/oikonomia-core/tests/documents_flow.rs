@@ -10,7 +10,7 @@ use oikonomia_core::documents::{
     suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
-use oikonomia_core::error::{Error, ValidationError};
+use oikonomia_core::error::{Error, Resource, ValidationError};
 use oikonomia_core::ledger::{
     CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, archive_account,
     delete_entity, list_accounts, list_entities, list_entries, post_entry,
@@ -224,7 +224,7 @@ fn list_get_delete_round_trip() {
     delete_document(conn, a.id).expect("delete a");
     assert_eq!(
         get_document(conn, a.id).expect_err("deleted document is gone"),
-        Error::NotFound("document".into())
+        Error::NotFound(Resource::Document)
     );
     assert_eq!(list_documents(conn, entity_id).expect("list").len(), 1);
 }
@@ -238,7 +238,7 @@ fn delete_missing_document_returns_not_found() {
     let missing = DocumentId::new();
     assert_eq!(
         delete_document(conn, missing),
-        Err(Error::NotFound("document".into()))
+        Err(Error::NotFound(Resource::Document))
     );
 }
 
@@ -252,11 +252,11 @@ fn saving_analysis_for_a_missing_document_returns_not_found() {
 
     assert_eq!(
         save_analysis_json(conn, missing, "{}"),
-        Err(Error::NotFound("document".into()))
+        Err(Error::NotFound(Resource::Document))
     );
     assert_eq!(
         delete_document(conn, missing),
-        Err(Error::NotFound("document".into())),
+        Err(Error::NotFound(Resource::Document)),
         "the same unknown id gets the same answer from delete"
     );
 }
