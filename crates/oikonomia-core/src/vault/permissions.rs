@@ -101,8 +101,18 @@ fn set_owner_only_mode(path: &Path) -> std::io::Result<()> {
     set_permissions(path, Permissions::from_mode(mode))
 }
 
+/// Returns the permission bits of `path`, for the tests across the vault
+/// that pin the owner-only modes.
+#[cfg(test)]
+#[cfg(unix)]
+pub(crate) fn mode_of(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = std::fs::metadata(path).expect("the file under test exists");
+    metadata.permissions().mode() & 0o777
+}
+
 #[cfg(all(test, unix))]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use std::fs;
     use std::io::Write;
@@ -111,10 +121,6 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-
-    fn mode_of(path: &Path) -> u32 {
-        fs::metadata(path).expect("metadata").permissions().mode() & 0o777
-    }
 
     #[test]
     fn private_dir_is_created_with_parents_at_owner_only_mode() {

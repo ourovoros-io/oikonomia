@@ -11,8 +11,7 @@ use super::CsvError;
 use crate::domain::EntityId;
 use crate::error::{Error, Result};
 use crate::ledger::get_entity;
-use crate::util::format_date;
-use crate::vault::files::replace_private_file;
+use crate::vault::files::{local_iso_date, replace_private_file};
 
 /// Export column header for integer debit minor units.
 pub(super) const DEBIT_MINOR_COLUMN: &str = "debit_minor";
@@ -88,11 +87,6 @@ fn restore_formula(cell: &str) -> &str {
 pub fn default_journal_export_file_name(entity_name: &str) -> String {
     let slug = sanitize_file_stem(entity_name);
     format!("oikonomia-journal-{slug}-{}.csv", local_iso_date())
-}
-
-fn local_iso_date() -> String {
-    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
-    format_date(now.date())
 }
 
 fn sanitize_file_stem(name: &str) -> String {

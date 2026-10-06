@@ -61,8 +61,8 @@ use super::permissions::{create_private_dir, create_private_file};
 use super::store::Vault;
 use crate::error::{Error, Result};
 use crate::vault::files::{
-    discard_database_files, discard_file, remove_files_if_present, rename_if_present,
-    rename_synced, sibling_path, sync_parent_dir,
+    discard_database_files, discard_file, local_iso_date, remove_files_if_present,
+    rename_if_present, rename_synced, sibling_path, sync_parent_dir,
 };
 use crate::vault::header::VaultHeader;
 use crate::vault::paths::{
@@ -84,11 +84,6 @@ pub const BACKUP_EXTENSION: &str = "oikonomia-backup";
 #[must_use]
 pub fn default_backup_file_name() -> String {
     format!("oikonomia-backup-{}.{BACKUP_EXTENSION}", local_iso_date())
-}
-
-fn local_iso_date() -> String {
-    let now = time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc());
-    crate::util::format_date(now.date())
 }
 
 const MEMBER_DB: &str = "vault.db";
@@ -630,6 +625,8 @@ mod tests {
 
     use super::*;
     use crate::vault::VaultStatus;
+    #[cfg(unix)]
+    use crate::vault::permissions::mode_of;
     use tempfile::TempDir;
 
     const PASSWORD: &str = "UNIQUE-MASTER-PASSWORD-TOKEN-9f3a";
@@ -1261,12 +1258,6 @@ mod tests {
             matches!(err, Error::BackupInvalid(ref msg) if msg.contains("trailing") || msg.contains("unexpected")),
             "got {err:?}"
         );
-    }
-
-    #[cfg(unix)]
-    fn mode_of(path: &Path) -> u32 {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path).expect("metadata").permissions().mode() & 0o777
     }
 
     #[cfg(unix)]

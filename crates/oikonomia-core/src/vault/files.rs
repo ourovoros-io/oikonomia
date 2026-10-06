@@ -10,7 +10,10 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use time::OffsetDateTime;
+
 use crate::error::{Error, Result};
+use crate::util::format_date;
 use crate::vault::paths::{db_sidecar_paths, with_appended};
 use crate::vault::permissions::create_private_file;
 
@@ -149,6 +152,19 @@ pub(crate) fn discard_database_files(db_path: &Path) {
     for sidecar in db_sidecar_paths(db_path) {
         discard_file(&sidecar);
     }
+}
+
+/// Returns today's date as `YYYY-MM-DD`, for the default names of backup and
+/// export files.
+///
+/// The date is the local one, so a file saved late in the evening carries
+/// the day the user sees on the clock. `time` refuses to read the local
+/// offset where doing so is unsound (`OffsetDateTime::now_local` returns
+/// `IndeterminateOffset`, on Linux in a process with more than one thread);
+/// the UTC date is used then.
+pub(crate) fn local_iso_date() -> String {
+    let now = OffsetDateTime::now_local().unwrap_or_else(|_| OffsetDateTime::now_utc());
+    format_date(now.date())
 }
 
 #[cfg(test)]

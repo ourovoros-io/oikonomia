@@ -577,6 +577,8 @@ fn bootstrap_schema(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::vault::permissions::mode_of;
     use tempfile::{TempDir, tempdir};
 
     const PASSWORD: &str = "correct horse battery staple";
@@ -719,12 +721,6 @@ mod tests {
             state, "1",
             "SQLCipher must lock and wipe its key and page buffers"
         );
-    }
-
-    #[cfg(unix)]
-    fn mode_of(path: &Path) -> u32 {
-        use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path).expect("metadata").permissions().mode() & 0o777
     }
 
     #[cfg(unix)]
