@@ -40,7 +40,8 @@ pub(crate) const MAX_REDIRECTS: u8 = 5;
 /// (`AgentBuilder::timeout` docs).
 const METADATA_DEADLINE: Duration = Duration::from_secs(20);
 
-/// Bounds opening the connection for one artifact request.
+/// Bounds opening the connection for one artifact request. The DNS lookup
+/// before it is not bounded, for the reason given above.
 const ARTIFACT_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Bounds each socket read of an artifact response. A download that stalls
@@ -293,6 +294,14 @@ impl Resource {
     }
 }
 
+/// What a fetch that reached its last hop came back with.
+enum Fetched {
+    /// HTTP 200 and its body, within the size cap of the resource.
+    Body(Vec<u8>),
+    /// HTTP 204.
+    NoContent,
+}
+
 enum FetchFail {
     Network,
     Denied,
@@ -314,22 +323,18 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
 /// Runs the check and keeps the cause of a failure, which [`perform_check`]
 /// logs and reduces to [`CheckOutcome::Failed`].
 pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome> {
-    let (body, status) = fetch_bytes(config, &config.feed_url, Resource::Manifest)?;
-    if status == 204 {
+    let Fetched::Body(body) = fetch_bytes(config, &config.feed_url, Resource::Manifest)? else {
         return Ok(CheckOutcome::UpToDate);
-    }
-    if status != 200 {
-        return Err(UpdateError::Network);
-    }
+    };
 
     // Derived from the configured URL, not from the URL that was requested:
     // `fetch_bytes` appends the identity query itself, once per request.
     let signature_url = signature_url_for(&config.feed_url);
-    let (signature_bytes, sig_status) =
-        fetch_bytes(config, &signature_url, Resource::ManifestSignature)?;
-    if sig_status != 200 {
+    let Fetched::Body(signature_bytes) =
+        fetch_bytes(config, &signature_url, Resource::ManifestSignature)?
+    else {
         return Err(UpdateError::ManifestSignature);
-    }
+    };
     let signature =
         std::str::from_utf8(&signature_bytes).map_err(|_| UpdateError::ManifestSignature)?;
     verify_minisign(&config.public_key, &body, signature)?;
@@ -419,10 +424,9 @@ fn download_and_verify_inner(
     {
         return Err(UpdateError::ArtifactUrl);
     }
-    let (bytes, status) = fetch_bytes(config, &offer.artifact_url, Resource::Artifact)?;
-    if status != 200 {
+    let Fetched::Body(bytes) = fetch_bytes(config, &offer.artifact_url, Resource::Artifact)? else {
         return Err(UpdateError::Network);
-    }
+    };
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
@@ -557,7 +561,7 @@ fn signature_url_for(feed: &Url) -> Url {
     signature
 }
 
-fn fetch_bytes(config: &ClientConfig, url: &Url, resource: Resource) -> Result<(Vec<u8>, u16)> {
+fn fetch_bytes(config: &ClientConfig, url: &Url, resource: Resource) -> Result<Fetched> {
     let mut request_url = url.clone();
     if resource.names_this_copy() {
         attach_version_os_arch(&mut request_url, config);
@@ -573,7 +577,7 @@ fn fetch_once(
     config: &ClientConfig,
     start: &Url,
     resource: Resource,
-) -> std::result::Result<(Vec<u8>, u16), FetchFail> {
+) -> std::result::Result<Fetched, FetchFail> {
     let agent = agent_for(config, resource);
 
     let mut url = start.clone();
@@ -586,17 +590,17 @@ fn fetch_once(
         // With `redirects(0)` ureq 2 hands a 3xx back as `Ok` (`connect` in
         // its `unit.rs`) and reports only 4xx and 5xx as `Error::Status`, so
         // redirects are followed here, one policy check per hop.
-        let response = agent
-            .get(url.as_str())
-            .call()
-            .map_err(|_| FetchFail::Network)?;
+        let response = agent.get(url.as_str()).call().map_err(|err| {
+            log::warn!("update fetch failed: {err}");
+            FetchFail::Network
+        })?;
 
         match response.status() {
             200 => {
                 let bytes = read_capped(response, resource.max_bytes())?;
-                return Ok((bytes, 200));
+                return Ok(Fetched::Body(bytes));
             }
-            204 => return Ok((Vec::new(), 204)),
+            204 => return Ok(Fetched::NoContent),
             status if is_redirect(status) => {
                 if redirects_followed == MAX_REDIRECTS {
                     return Err(FetchFail::Network);
