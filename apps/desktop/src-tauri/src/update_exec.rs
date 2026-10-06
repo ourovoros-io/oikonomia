@@ -176,49 +176,111 @@ fn run_platform_installer(_kind: &InstallKind, _artifact: &Path) -> Result<Insta
     Err(UpdateError::InstallNotAvailable)
 }
 
-#[cfg(target_os = "linux")]
+/// Replaces the image at `current` with the verified download.
+///
+/// The new image is written to a staging file next to `current` and moved
+/// over it with a single `rename`, which replaces the target atomically: the
+/// launch path names the old image or the complete new one, never nothing.
+/// Setting the old image aside first would open a gap in which a crash leaves
+/// no image there at all.
+///
+/// Compiled for tests on every Unix so the replacement is exercised on a
+/// development machine; only a Linux `AppImage` copy reaches it otherwise.
+#[cfg(any(target_os = "linux", all(test, unix)))]
 fn replace_linux_appimage(verified: &Path, current: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
     let parent = current.parent().ok_or(UpdateError::ArtifactIntegrity)?;
     let file_name = current
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or(UpdateError::ArtifactIntegrity)?;
     let staging = parent.join(format!(".{file_name}.staging"));
-    let backup = parent.join(format!(".{file_name}.previous"));
 
-    if let Err(err) = std::fs::copy(verified, &staging) {
-        log::warn!("verified appimage copy failed: {err}");
-        return Err(UpdateError::ArtifactIntegrity);
-    }
-    let mut permissions = std::fs::metadata(&staging)
-        .map_err(|_| UpdateError::ArtifactIntegrity)?
-        .permissions();
-    permissions.set_mode(0o755);
-    if let Err(err) = std::fs::set_permissions(&staging, permissions) {
-        let _ = std::fs::remove_file(&staging);
-        log::warn!("verified appimage chmod failed: {err}");
-        return Err(UpdateError::ArtifactIntegrity);
-    }
-
-    if current.exists()
-        && let Err(err) = std::fs::rename(current, &backup)
-    {
-        let _ = std::fs::remove_file(&staging);
-        log::warn!("current appimage backup failed: {err}");
-        return Err(UpdateError::ArtifactIntegrity);
-    }
-    if let Err(err) = std::fs::rename(&staging, current) {
-        if backup.exists() {
-            let _ = std::fs::rename(&backup, current);
-        }
-        let _ = std::fs::remove_file(&staging);
+    stage_and_swap_appimage(verified, &staging, current).map_err(|err| {
         log::warn!("appimage replace failed: {err}");
-        return Err(UpdateError::ArtifactIntegrity);
-    }
-    let _ = std::fs::remove_file(&backup);
+        UpdateError::ArtifactIntegrity
+    })
+}
+
+/// Copies `verified` into a new file at `staging`, then renames it over
+/// `current`. On any failure the staging file is removed again.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn stage_and_swap_appimage(verified: &Path, staging: &Path, current: &Path) -> std::io::Result<()> {
+    let mut source = std::fs::File::open(verified)?;
+    let mut staged = StagingFile::create(staging)?;
+
+    std::io::copy(&mut source, &mut staged.file)?;
+    // Without this a power cut shortly after the rename could leave a
+    // truncated image under the launch path.
+    staged.file.sync_all()?;
+
+    std::fs::rename(staging, current)?;
+    staged.renamed = true;
     Ok(())
+}
+
+/// The file a new image is staged in, removed on drop unless it was renamed
+/// into place, so no error path leaves a partial image behind.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+struct StagingFile<'a> {
+    /// Where the file was created.
+    path: &'a Path,
+    /// The open file, created by this process.
+    file: std::fs::File,
+    /// Whether the file has been moved to its final name.
+    renamed: bool,
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+impl<'a> StagingFile<'a> {
+    /// Creates an empty executable file at `path`.
+    ///
+    /// The name is fixed, so whatever sits there is a leftover of an
+    /// interrupted update or was planted. It is removed, and the file is then
+    /// created with `create_new`, which fails on an existing name and never
+    /// follows a link, so the bytes cannot be written through one.
+    fn create(path: &'a Path) -> std::io::Result<Self> {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        remove_file_if_present(path)?;
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o755)
+            .open(path)?;
+        let staged = Self {
+            path,
+            file,
+            renamed: false,
+        };
+
+        // The process umask may have cleared bits of the mode asked for
+        // above. Set on the handle, so the path is not resolved again.
+        staged
+            .file
+            .set_permissions(std::fs::Permissions::from_mode(0o755))?;
+        Ok(staged)
+    }
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+impl Drop for StagingFile<'_> {
+    fn drop(&mut self) {
+        if self.renamed {
+            return;
+        }
+        if let Err(err) = remove_file_if_present(self.path) {
+            log::warn!("could not remove the staged appimage: {err}");
+        }
+    }
+}
+
+/// Removes the file or link at `path`; a missing one is not an error.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn remove_file_if_present(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
+        Ok(()) | Err(_) => Ok(()),
+    }
 }
 
 /// Flags for the NSIS installer Tauri builds: `/P` shows progress only and
@@ -955,6 +1017,105 @@ mod tests {
             .mode();
         assert_eq!(mode & 0o111, 0o111, "the new AppImage must be executable");
         assert!(verified.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An installed image and a verified download next to it, as
+    /// `(directory, current, verified)`.
+    #[cfg(unix)]
+    fn appimage_and_download() -> (PathBuf, PathBuf, PathBuf) {
+        let dir = temp_dir();
+        let current = dir.join("Oikonomia.AppImage");
+        let verified = dir.join("abc-Oikonomia_0.2.0_amd64.AppImage");
+        std::fs::write(&current, b"old-appimage").expect("current");
+        std::fs::write(&verified, b"new-verified").expect("verified");
+        (dir, current, verified)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn appimage_replace_does_not_write_through_a_link_planted_at_the_staging_name() {
+        let (dir, current, verified) = appimage_and_download();
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, b"untouched").expect("victim");
+        let planted = dir.join(".Oikonomia.AppImage.staging");
+        std::os::unix::fs::symlink(&victim, &planted).expect("link");
+
+        super::replace_linux_appimage(&verified, &current).expect("replace");
+
+        assert_eq!(std::fs::read(&victim).expect("victim"), b"untouched");
+        assert_eq!(std::fs::read(&current).expect("current"), b"new-verified");
+        assert!(!current.is_symlink(), "the image must be a real file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Names of the entries in `dir`, sorted.
+    #[cfg(unix)]
+    fn entries_of(dir: &std::path::Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .expect("read dir")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn appimage_replace_leaves_an_executable_image_and_nothing_else() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (dir, current, verified) = appimage_and_download();
+
+        super::replace_linux_appimage(&verified, &current).expect("replace");
+
+        assert_eq!(std::fs::read(&current).expect("current"), b"new-verified");
+        let mode = std::fs::metadata(&current)
+            .expect("metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+        assert_eq!(
+            entries_of(&dir),
+            ["Oikonomia.AppImage", "abc-Oikonomia_0.2.0_amd64.AppImage"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn appimage_replace_starts_over_a_staging_file_left_by_an_interrupted_update() {
+        let (dir, current, verified) = appimage_and_download();
+        let stale = dir.join(".Oikonomia.AppImage.staging");
+        std::fs::write(
+            &stale,
+            b"half of an older download, longer than the new one",
+        )
+        .expect("stale");
+
+        super::replace_linux_appimage(&verified, &current).expect("replace");
+
+        assert_eq!(std::fs::read(&current).expect("current"), b"new-verified");
+        assert!(!stale.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn appimage_replace_that_fails_removes_its_staging_file_and_keeps_the_installed_image() {
+        let (dir, _current, verified) = appimage_and_download();
+        // A directory cannot be replaced by renaming a file over it, so the
+        // update fails after the staging file was written.
+        let installed = dir.join("Installed.AppImage");
+        std::fs::create_dir(&installed).expect("directory");
+        std::fs::write(installed.join("kept"), b"old").expect("content");
+
+        let err = super::replace_linux_appimage(&verified, &installed).expect_err("refused");
+
+        assert_eq!(err.code(), "update_artifact_integrity");
+        assert_eq!(std::fs::read(installed.join("kept")).expect("kept"), b"old");
+        assert!(!dir.join(".Installed.AppImage.staging").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
