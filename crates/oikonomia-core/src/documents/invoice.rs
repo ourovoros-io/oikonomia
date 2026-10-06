@@ -2229,6 +2229,15 @@ mod tests {
     }
 
     #[test]
+    fn a_total_line_with_a_currency_mark_outranks_a_subtotal_line() {
+        let text = "Invoice\nSubtotal 10,00\nTOTAL 45,90 EUR\nThank you";
+
+        let suggestion = parse_invoice_text(text, crate::prefs::Locale::En);
+
+        assert_eq!(suggestion.amount_minor, Some(4590));
+    }
+
+    #[test]
     fn rejects_afm_as_money() {
         assert_eq!(parse_money_token("000000000"), None);
         assert_eq!(parse_money_token("900000000000001"), None);

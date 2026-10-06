@@ -739,7 +739,6 @@ fn jpeg_from_object(doc: &lopdf::Document, object: &lopdf::Object) -> Option<Vec
 
 #[cfg(test)]
 mod tests {
-    use super::super::invoice::parse_invoice_text;
     use super::*;
     use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
     use crate::documents::pdf_budget::MAX_PDF_DECODED_BYTES;
@@ -1098,13 +1097,6 @@ mod tests {
         assert!(should_ocr_pdf_images(Some("abc")));
         assert!(should_ocr_pdf_images(Some("1234567")));
         assert!(!should_ocr_pdf_images(Some("12345678")));
-    }
-
-    #[test]
-    fn english_total_line() {
-        let text = "Invoice\nSubtotal 10,00\nTOTAL 45,90 EUR\nThank you";
-        let s = parse_invoice_text(text, crate::prefs::Locale::En);
-        assert_eq!(s.amount_minor, Some(4590));
     }
 
     fn notes_of(suggestion: Result<DocumentSuggestion>) -> Vec<UiText> {
