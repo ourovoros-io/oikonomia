@@ -8,6 +8,7 @@
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use image::imageops::{self, FilterType};
@@ -18,6 +19,16 @@ use rten::Model;
 use crate::error::{Error, Result};
 
 static ENGINE: LazyLock<Mutex<Option<OcrEngine>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Whether [`ENGINE`] holds a loaded engine, readable without its lock.
+///
+/// Inference keeps the lock for a whole run, which can take seconds, and
+/// [`ocr_available`] must not wait for that. Every store is made with the
+/// lock held ([`set_engine`], [`lock_engine`]), so the flag agrees with the
+/// engine whenever the lock is free. It carries no data, only a yes or no
+/// that the next [`ensure_engine`] call checks again under the lock, so
+/// `Relaxed` is enough.
+static ENGINE_LOADED: AtomicBool = AtomicBool::new(false);
 
 /// Paths to the two shipped `.rten` models.
 #[derive(Debug, Clone)]
@@ -47,15 +58,27 @@ impl OcrModelPaths {
 }
 
 /// True if the OCR engine can be (or already has been) loaded.
+///
+/// Never waits for a running OCR: it reads [`ENGINE_LOADED`] and, when no
+/// engine is loaded, checks that the model files exist.
 pub(super) fn ocr_available(paths: &OcrModelPaths) -> bool {
-    if lock_engine().is_some() {
-        return true;
-    }
-    paths.available()
+    ENGINE_LOADED.load(Ordering::Relaxed) || paths.available()
 }
 
 fn lock_engine() -> std::sync::MutexGuard<'static, Option<OcrEngine>> {
-    recover_option_mutex(&ENGINE)
+    let guard = recover_option_mutex(&ENGINE);
+    // Recovery from a poisoned lock empties the slot without going through
+    // `set_engine`.
+    if guard.is_none() {
+        ENGINE_LOADED.store(false, Ordering::Relaxed);
+    }
+    guard
+}
+
+/// Puts `engine` in the locked `slot` and records whether one is loaded.
+fn set_engine(slot: &mut Option<OcrEngine>, engine: Option<OcrEngine>) {
+    ENGINE_LOADED.store(engine.is_some(), Ordering::Relaxed);
+    *slot = engine;
 }
 
 fn recover_option_mutex<T>(mutex: &Mutex<Option<T>>) -> std::sync::MutexGuard<'_, Option<T>> {
@@ -108,7 +131,7 @@ pub(super) fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
     })
     .map_err(|e| Error::Analysis(format!("init OCR engine: {e}")))?;
 
-    *guard = Some(engine);
+    set_engine(&mut guard, Some(engine));
     Ok(())
 }
 
@@ -325,7 +348,7 @@ fn run_ocr_on_rgb(img: &RgbImage) -> Result<String> {
     if let Ok(result) = inferred {
         result
     } else {
-        *guard = None;
+        set_engine(&mut guard, None);
         Err(Error::Analysis("OCR engine panicked".into()))
     }
 }
@@ -370,9 +393,12 @@ fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<Str
 #[cfg(test)]
 #[expect(clippy::panic, reason = "test poisons a local mutex on purpose")]
 mod tests {
-    use super::{prepare_image, recover_option_mutex};
     use std::io::Cursor;
     use std::sync::Mutex;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::{ENGINE, OcrModelPaths, ocr_available, prepare_image, recover_option_mutex};
 
     /// A white PNG of the given size.
     fn png(width: u32, height: u32) -> Vec<u8> {
@@ -449,6 +475,30 @@ mod tests {
         assert!(is_refused_as(17_000, 1_000, "image dimensions"));
         assert!(is_refused_as(1_000, 17_000, "image dimensions"));
         assert!(is_refused_as(1, 60_000, "image dimensions"));
+    }
+
+    #[test]
+    fn availability_is_answered_while_the_engine_is_in_use() {
+        // Inference holds this lock for its whole run.
+        let in_use = recover_option_mutex(&ENGINE);
+        let (answer, answered) = mpsc::channel();
+
+        let asker = std::thread::spawn(move || {
+            let paths = OcrModelPaths::from_dir("no-such-model-directory");
+            let _ = answer.send(ocr_available(&paths));
+        });
+
+        // An answer that needs the lock never comes while it is held here;
+        // the wait only bounds how long that failure takes to show.
+        let available = answered.recv_timeout(Duration::from_secs(30));
+        drop(in_use);
+        assert!(asker.join().is_ok());
+
+        assert_eq!(
+            available,
+            Ok(false),
+            "the answer must not wait for the engine"
+        );
     }
 
     #[test]
