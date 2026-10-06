@@ -1106,9 +1106,10 @@ mod tests {
 
     /// Waits until `condition`, which another thread makes true, holds. The
     /// deadline only turns an event that never comes into a failure instead
-    /// of a hung test.
+    /// of a hung test. It is long because some waits include a key derivation,
+    /// which takes several seconds in a debug build on a loaded CI runner.
     fn wait_until(what: &str, condition: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(60);
 
         while !condition() {
             assert!(Instant::now() < deadline, "timed out waiting until {what}");
