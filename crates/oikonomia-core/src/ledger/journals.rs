@@ -171,78 +171,127 @@ fn like_pattern(text: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// List posted entries for an entity (newest first) matching `filter`.
+/// The entries [`list_entries`] returns, as a predicate on `journal_entries je`.
+///
+/// It binds `?1` entity, `?2` and `?3` the date bounds, `?4` the folded `LIKE`
+/// pattern and `?5` an account, in the order of [`ListedEntries::bound`]. The
+/// header query and the line query both use it, so they always agree on the
+/// set and neither binds a value per entry.
+const LISTED_ENTRIES_PREDICATE: &str = "
+    je.entity_id = ?1
+    AND je.status = 'posted'
+    AND (?2 IS NULL OR je.entry_date >= ?2)
+    AND (?3 IS NULL OR je.entry_date <= ?3)
+    AND (?4 IS NULL
+         OR fold(je.description) LIKE ?4 ESCAPE '\\'
+         OR fold(je.reference) LIKE ?4 ESCAPE '\\'
+         OR EXISTS (
+             SELECT 1 FROM journal_lines memo_line
+             WHERE memo_line.entry_id = je.id AND fold(memo_line.memo) LIKE ?4 ESCAPE '\\'
+         ))
+    AND (?5 IS NULL OR EXISTS (
+         SELECT 1 FROM journal_lines account_line
+         WHERE account_line.entry_id = je.id AND account_line.account_id = ?5
+    ))
+";
+
+/// The values [`LISTED_ENTRIES_PREDICATE`] binds, normalized from an [`EntryFilter`].
+struct ListedEntries {
+    entity: String,
+    date_from: Option<String>,
+    date_to: Option<String>,
+    pattern: Option<String>,
+    account: Option<String>,
+}
+
+impl ListedEntries {
+    fn new(entity_id: EntityId, filter: &EntryFilter) -> Result<Self> {
+        // Normalize before binding: SQL compares date TEXT lexicographically, so a
+        // lenient input like `2026-3-5` must become `2026-03-05` first.
+        let normalized = |date: Option<&str>| -> Result<Option<String>> {
+            Ok(date.map(parse_date).transpose()?.map(format_date))
+        };
+
+        Ok(Self {
+            entity: entity_id.0.to_string(),
+            date_from: normalized(filter.date_from.as_deref())?,
+            date_to: normalized(filter.date_to.as_deref())?,
+            pattern: filter
+                .text
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(like_pattern),
+            account: filter.account_id.map(|id| id.0.to_string()),
+        })
+    }
+
+    /// The bound values, `?1` to `?5`.
+    fn bound(&self) -> [&dyn rusqlite::ToSql; 5] {
+        [
+            &self.entity,
+            &self.date_from,
+            &self.date_to,
+            &self.pattern,
+            &self.account,
+        ]
+    }
+}
+
+/// Lists posted entries for an entity (newest first) matching `filter`.
 ///
 /// # Errors
 ///
-/// DB / validation errors.
+/// [`Error::Validation`] for a malformed date in `filter`;
+/// [`Error::VaultCorrupt`] for a stored id, date, status or amount that does
+/// not parse; database errors as [`Error::Io`].
 pub fn list_entries(
     conn: &Connection,
     entity_id: EntityId,
     filter: &EntryFilter,
 ) -> Result<Vec<PostedEntryView>> {
-    // Normalize before binding: SQL compares date TEXT lexicographically, so a
-    // lenient input like `2026-3-5` must become `2026-03-05` first.
-    let from = filter
-        .date_from
-        .as_deref()
-        .map(parse_date)
-        .transpose()?
-        .map(format_date);
-    let to = filter
-        .date_to
-        .as_deref()
-        .map(parse_date)
-        .transpose()?
-        .map(format_date);
+    let listed = ListedEntries::new(entity_id, filter)?;
+    let headers = load_listed_headers(conn, &listed)?;
+    let mut lines_by_entry = load_listed_lines(conn, &listed)?;
 
-    let pattern = filter
-        .text
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(like_pattern);
-    let account = filter.account_id.map(|id| id.0.to_string());
+    Ok(headers
+        .into_iter()
+        .map(|(entry, is_voided)| PostedEntryView {
+            lines: lines_by_entry.remove(&entry.id).unwrap_or_default(),
+            entry,
+            is_voided,
+        })
+        .collect())
+}
 
-    let mut stmt = conn
-        .prepare(
-            "
-            SELECT je.id, je.entity_id, je.entry_date, je.description, je.reference,
-                   je.status, je.hidden, je.voided_by_entry_id,
-                   je.voided_by_entry_id IS NOT NULL
-                       OR EXISTS (
-                           SELECT 1 FROM journal_entries x
-                           WHERE x.voided_by_entry_id = je.id
-                       ) AS is_voided
-            FROM journal_entries je
-            WHERE je.entity_id = ?1
-              AND je.status = 'posted'
-              AND (?2 IS NULL OR je.entry_date >= ?2)
-              AND (?3 IS NULL OR je.entry_date <= ?3)
-              AND (?4 IS NULL
-                   OR fold(je.description) LIKE ?4 ESCAPE '\\'
-                   OR fold(je.reference) LIKE ?4 ESCAPE '\\'
+/// Entry headers for [`list_entries`], newest first, each with its voided flag.
+fn load_listed_headers(
+    conn: &Connection,
+    listed: &ListedEntries,
+) -> Result<Vec<(JournalEntry, bool)>> {
+    let sql = format!(
+        "
+        SELECT je.id, je.entity_id, je.entry_date, je.description, je.reference,
+               je.status, je.hidden, je.voided_by_entry_id,
+               je.voided_by_entry_id IS NOT NULL
                    OR EXISTS (
-                       SELECT 1 FROM journal_lines jl
-                       WHERE jl.entry_id = je.id AND fold(jl.memo) LIKE ?4 ESCAPE '\\'
-                   ))
-              AND (?5 IS NULL OR EXISTS (
-                   SELECT 1 FROM journal_lines jl
-                   WHERE jl.entry_id = je.id AND jl.account_id = ?5
-              ))
-            ORDER BY je.entry_date DESC, je.created_at DESC
-            ",
-        )
+                       SELECT 1 FROM journal_entries x
+                       WHERE x.voided_by_entry_id = je.id
+                   ) AS is_voided
+        FROM journal_entries je
+        WHERE {LISTED_ENTRIES_PREDICATE}
+        ORDER BY je.entry_date DESC, je.created_at DESC
+        "
+    );
+    let mut stmt = conn
+        .prepare(&sql)
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let rows = stmt
-        .query_map(
-            rusqlite::params![entity_id.0.to_string(), from, to, pattern, account],
-            |row| {
-                let is_voided: i64 = row.get(8)?;
-                Ok((map_entry_row(row), is_voided != 0))
-            },
-        )
+        .query_map(listed.bound(), |row| {
+            let is_voided: i64 = row.get(8)?;
+            Ok((map_entry_row(row), is_voided != 0))
+        })
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut headers = Vec::new();
@@ -250,20 +299,7 @@ pub fn list_entries(
         let (entry, is_voided) = row.map_err(|err| Error::Io(err.to_string()))?;
         headers.push((entry?, is_voided));
     }
-
-    let mut lines_by_entry =
-        load_lines_for_entries(conn, headers.iter().map(|(entry, _)| entry.id))?;
-
-    let mut out = Vec::new();
-    for (entry, is_voided) in headers {
-        let lines = lines_by_entry.remove(&entry.id).unwrap_or_default();
-        out.push(PostedEntryView {
-            entry,
-            lines,
-            is_voided,
-        });
-    }
-    Ok(out)
+    Ok(headers)
 }
 
 fn entry_is_void_reverse(conn: &Connection, id: JournalEntryId) -> Result<bool> {
@@ -919,34 +955,34 @@ pub fn account_register(
     Ok(result)
 }
 
-fn load_lines_for_entries(
+/// Lines of every entry [`list_entries`] returns, grouped by entry and in line
+/// order within each.
+///
+/// The entries are selected by joining on [`LISTED_ENTRIES_PREDICATE`] rather
+/// than by an `IN` list of their ids: a list binds one variable per entry, and
+/// `SQLite` refuses a statement with more than `SQLITE_MAX_VARIABLE_NUMBER`
+/// of them (32766 in the bundled build), which a large book exceeds.
+fn load_listed_lines(
     conn: &Connection,
-    ids: impl IntoIterator<Item = JournalEntryId>,
+    listed: &ListedEntries,
 ) -> Result<HashMap<JournalEntryId, Vec<JournalLine>>> {
-    let ids: Vec<String> = ids.into_iter().map(|id| id.0.to_string()).collect();
-    let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
-    if ids.is_empty() {
-        return Ok(grouped);
-    }
-
-    let placeholders = vec!["?"; ids.len()].join(",");
     let sql = format!(
         "
-        SELECT id, entry_id, account_id, debit_minor, credit_minor, memo
-        FROM journal_lines
-        WHERE entry_id IN ({placeholders})
-        ORDER BY entry_id, line_order
+        SELECT jl.id, jl.entry_id, jl.account_id, jl.debit_minor, jl.credit_minor, jl.memo
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE {LISTED_ENTRIES_PREDICATE}
+        ORDER BY jl.entry_id, jl.line_order
         "
     );
     let mut stmt = conn
         .prepare(&sql)
         .map_err(|err| Error::Io(err.to_string()))?;
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(ids.iter()), |row| {
-            Ok(map_line_row(row))
-        })
+        .query_map(listed.bound(), |row| Ok(map_line_row(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
+    let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
     for row in rows {
         let line = row.map_err(|err| Error::Io(err.to_string()))??;
         grouped.entry(line.entry_id).or_default().push(line);
