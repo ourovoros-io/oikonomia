@@ -10,6 +10,14 @@
 //! A mapper is used from a rusqlite row closure as `|row| Ok(map_thing(row))`:
 //! the outer `rusqlite::Result` carries driver failures and the inner one
 //! carries the mapper's verdict on the row.
+//!
+//! Damage shows up at two levels, and both are `vault_corrupt`:
+//!
+//! - the value has the wrong storage class or range for its Rust type (text
+//!   where an amount belongs). [`read_column`] reports it under the column's
+//!   name in the query, which has no table prefix;
+//! - the value reads, but does not parse (text that is not a date). The
+//!   mapper reports it with [`corrupt_column`] under `table.column`.
 
 use std::fmt::Display;
 
@@ -23,8 +31,9 @@ use crate::util::{parse_date, parse_uuid};
 
 /// The error for a stored value that is not what the application writes there.
 ///
-/// `column` is the `table.column` the value was read from; `detail` says what
-/// is wrong with it.
+/// `column` says where the value was read from: `table.column` when a mapper
+/// calls this, the column's name in the query when [`read_column`] does.
+/// `detail` says what is wrong with the value.
 pub(crate) fn corrupt_column(column: &str, detail: impl Display) -> Error {
     Error::VaultCorrupt(format!("{column}: {detail}"))
 }
@@ -33,9 +42,26 @@ pub(crate) fn corrupt_column(column: &str, detail: impl Display) -> Error {
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when the driver cannot produce a `T` from the column.
+/// - [`Error::VaultCorrupt`] when the stored value cannot be a `T`: it has
+///   another storage class, or is out of `T`'s range.
+/// - [`Error::Io`] for any other driver failure, such as an `index` the query
+///   does not select.
 pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> {
-    row.get(index).map_err(|err| Error::Io(err.to_string()))
+    row.get(index).map_err(|err| match err {
+        rusqlite::Error::InvalidColumnType(..)
+        | rusqlite::Error::IntegralValueOutOfRange(..)
+        | rusqlite::Error::FromSqlConversionFailure(..) => {
+            // These three are raised for a column the query does select, so
+            // the name lookup fails only if rusqlite changes that; the index
+            // then stands in for the name.
+            let statement: &rusqlite::Statement<'_> = row.as_ref();
+            let column = statement
+                .column_name(index)
+                .map_or_else(|_| format!("column {index}"), str::to_owned);
+            corrupt_column(&column, &err)
+        }
+        other => Error::Io(other.to_string()),
+    })
 }
 
 /// Parses an id stored as text in `column`.

@@ -159,7 +159,8 @@ pub struct RecurringPostResult {
 ///
 /// # Errors
 ///
-/// Unknown entity or DB errors.
+/// [`Error::NotFound`] for an unknown entity; [`Error::VaultCorrupt`] for a
+/// stored template that does not parse; database errors as [`Error::Io`].
 pub fn list_recurring_templates(
     conn: &Connection,
     entity_id: EntityId,
@@ -171,7 +172,7 @@ pub fn list_recurring_templates(
 ///
 /// # Errors
 ///
-/// Unknown entity or DB errors.
+/// Those of [`list_recurring_templates`].
 pub fn list_recurring_templates_as_of(
     conn: &Connection,
     entity_id: EntityId,
@@ -763,13 +764,18 @@ fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
     })
 }
 
+/// A template's day of the month as stored; the schema's CHECK keeps it in
+/// 1..=31.
 fn stored_day_of_month(stored: i64) -> Result<u8> {
-    u8::try_from(stored).map_err(|_| {
-        corrupt_column(
-            "recurring_templates.day_of_month",
-            format_args!("not a day of the month: {stored}"),
-        )
-    })
+    u8::try_from(stored)
+        .ok()
+        .filter(|day| (1..=31).contains(day))
+        .ok_or_else(|| {
+            corrupt_column(
+                "recurring_templates.day_of_month",
+                format_args!("not a day of the month: {stored}"),
+            )
+        })
 }
 
 fn stored_account(

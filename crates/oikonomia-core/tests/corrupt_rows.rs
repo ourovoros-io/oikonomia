@@ -179,6 +179,25 @@ fn an_unparseable_line_id_or_entry_status_is_corrupt() {
     assert_corrupt(get_entry(conn, book.entry_id), "journal_entries.status");
 }
 
+/// A value of the wrong storage class is damage too. The driver reports it
+/// before any parsing, and names the column as the query selects it.
+#[test]
+fn text_where_an_amount_belongs_is_corrupt() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    damage(
+        conn,
+        "UPDATE journal_lines SET debit_minor = 'plenty' WHERE credit_minor = 0",
+    );
+
+    assert_corrupt(get_entry(conn, book.entry_id), "debit_minor");
+    assert_corrupt(
+        list_entries(conn, book.entity_id, &EntryFilter::default()),
+        "debit_minor",
+    );
+}
+
 #[test]
 fn an_unknown_account_type_is_corrupt() {
     let (_dir, vault) = setup();
@@ -231,6 +250,8 @@ fn a_damaged_recurring_template_is_corrupt() {
         ("next_date", "'2026-02-31'"),
         ("bill_status", "'overdue'"),
         ("day_of_month", "-1"),
+        ("day_of_month", "0"),
+        ("day_of_month", "32"),
     ];
 
     for (column, value) in damaged_columns {
