@@ -97,8 +97,14 @@ jobs:
 
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      # No --all-targets: it would stop cargo running the doctests.
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --lib --bins --tests
+
+      # Doctests run without the desktop crate (it has none). With it in the
+      # build, cargo hands every doctest the link search path of its build
+      # script, where tauri-build leaves an empty msvcrt.lib for the static C
+      # runtime, and the doctests of the other crates then fail to link on
+      # Windows.
+      - run: cargo test --workspace --exclude oikonomia --locked --doc
 
       - run: cargo build -p oikonomia --locked
 
