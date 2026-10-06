@@ -209,7 +209,7 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
         )?);
     }
 
-    lines.retain(|line| line.debit_minor != 0 || line.credit_minor != 0);
+    lines.retain(has_activity);
     let total_debits = sum_minor(lines.iter().map(|line| line.debit_minor))?;
     let total_credits = sum_minor(lines.iter().map(|line| line.credit_minor))?;
 
@@ -602,10 +602,7 @@ fn period_lines(
         to,
         omit_hidden,
     )?;
-    Ok(lines
-        .into_iter()
-        .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)
-        .collect())
+    Ok(lines.into_iter().filter(has_activity).collect())
 }
 
 fn as_of_lines(
@@ -615,10 +612,15 @@ fn as_of_lines(
     as_of: Date,
 ) -> Result<Vec<ReportLine>> {
     let lines = account_activity_lines(conn, entity_id, Some(account_type), None, as_of, false)?;
-    Ok(lines
-        .into_iter()
-        .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)
-        .collect())
+    Ok(lines.into_iter().filter(has_activity).collect())
+}
+
+/// Whether any debit or credit was posted to the line's account in the window.
+///
+/// The balance needs no test of its own: it is the difference of the two
+/// totals, so it is zero whenever both are.
+fn has_activity(line: &ReportLine) -> bool {
+    line.debit_minor != 0 || line.credit_minor != 0
 }
 
 /// Current-FY net income and unclosed P&L from before `fy_start`.
