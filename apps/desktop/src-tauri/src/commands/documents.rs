@@ -30,6 +30,16 @@ use serde::Serialize;
 use std::path::Path;
 use tauri::State;
 
+/// A stored document's metadata and bytes, for the in-app viewer.
+#[derive(Debug, Serialize)]
+pub(crate) struct DocumentContent {
+    /// The document's metadata.
+    pub meta: DocumentMeta,
+    /// The document's bytes as base64, the form IPC carries. Bounded by core's
+    /// size cap on a stored document.
+    pub data_base64: String,
+}
+
 /// Returns whether the OCR models shipped with the app were found.
 ///
 /// Needs no vault.
@@ -135,67 +145,6 @@ pub(crate) async fn document_analyze_path(
         )
     })
     .await
-}
-
-/// Analyzes a document held in memory and suggests a draft entry.
-///
-/// The vault is held only to read the entity and its accounts, and released
-/// before the OCR pass, which can take seconds. Stores nothing.
-///
-/// # Errors
-///
-/// Returns the validation errors of a refused document, `not_found` when the
-/// entity does not exist, and `vault_locked`, `io` or `vault_corrupt` from
-/// the vault.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
-)]
-fn analyze_readonly(
-    vault: &GatedVault,
-    model_dir: &Path,
-    entity_id: EntityId,
-    filename: &str,
-    mime_type: &str,
-    data: &[u8],
-    locale: Locale,
-) -> CommandResult<DocumentSuggestion> {
-    let mime_type = oikonomia_core::documents::resolve_mime(mime_type, filename);
-    oikonomia_core::documents::validate_document_file(filename, &mime_type, data.len() as u64)?;
-
-    let (accounts, entity) = {
-        let guard = vault.acquire();
-        let conn = guard.connection()?;
-        (
-            suggest_accounts_for_entity(conn, entity_id)?,
-            get_entity(conn, entity_id)?,
-        )
-    };
-
-    let suggestion = analyze_document_bytes(
-        filename,
-        &mime_type,
-        data,
-        &AnalyzeContext {
-            template: entity.chart_template,
-            accounts: &accounts,
-            default_currency: &entity.base_currency,
-            locale,
-        },
-        Some(model_dir),
-    )?;
-
-    Ok(suggestion)
-}
-
-/// A stored document's metadata and bytes, for the in-app viewer.
-#[derive(Debug, Serialize)]
-pub(crate) struct DocumentContent {
-    /// The document's metadata.
-    pub meta: DocumentMeta,
-    /// The document's bytes as base64, the form IPC carries. Bounded by core's
-    /// size cap on a stored document.
-    pub data_base64: String,
 }
 
 /// Lists the documents stored for an entity, metadata only.
@@ -323,4 +272,55 @@ pub(crate) async fn document_export(
         complete_path: std::convert::identity,
     };
     save_with_dialog(&app, target, data).await
+}
+
+/// Analyzes a document held in memory and suggests a draft entry.
+///
+/// The vault is held only to read the entity and its accounts, and released
+/// before the OCR pass, which can take seconds. Stores nothing.
+///
+/// # Errors
+///
+/// Returns the validation errors of a refused document, `not_found` when the
+/// entity does not exist, and `vault_locked`, `io` or `vault_corrupt` from
+/// the vault.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
+)]
+fn analyze_readonly(
+    vault: &GatedVault,
+    model_dir: &Path,
+    entity_id: EntityId,
+    filename: &str,
+    mime_type: &str,
+    data: &[u8],
+    locale: Locale,
+) -> CommandResult<DocumentSuggestion> {
+    let mime_type = oikonomia_core::documents::resolve_mime(mime_type, filename);
+    oikonomia_core::documents::validate_document_file(filename, &mime_type, data.len() as u64)?;
+
+    let (accounts, entity) = {
+        let guard = vault.acquire();
+        let conn = guard.connection()?;
+        (
+            suggest_accounts_for_entity(conn, entity_id)?,
+            get_entity(conn, entity_id)?,
+        )
+    };
+
+    let suggestion = analyze_document_bytes(
+        filename,
+        &mime_type,
+        data,
+        &AnalyzeContext {
+            template: entity.chart_template,
+            accounts: &accounts,
+            default_currency: &entity.base_currency,
+            locale,
+        },
+        Some(model_dir),
+    )?;
+
+    Ok(suggestion)
 }

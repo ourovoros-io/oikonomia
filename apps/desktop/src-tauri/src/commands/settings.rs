@@ -55,37 +55,6 @@ pub(crate) async fn settings_set_lock_timeout(
     .await
 }
 
-/// Runs preferences work on the blocking pool with the shared state.
-///
-/// The plaintext preferences file is read and written with blocking I/O, and
-/// a save ends in an fsync. A synchronous command would do that on the main
-/// thread, which also runs the event loop, and an async one on a runtime
-/// worker, so every preferences command goes through here.
-///
-/// # Errors
-///
-/// Returns the error `work` returns, and `task_failed` when the application
-/// state was never set up or the blocking task panics.
-async fn with_prefs_blocking<T, F>(app: tauri::AppHandle, work: F) -> CommandResult<T>
-where
-    T: Send + 'static,
-    F: FnOnce(&tauri::AppHandle, &AppState) -> CommandResult<T> + Send + 'static,
-{
-    run_blocking(move || {
-        // `Manager::state` panics when the state is not managed, which is the
-        // case after a failed start (`crate::startup`) while the hidden
-        // webview is still running.
-        let Some(state) = app.try_state::<AppState>() else {
-            return Err(CommandError::desktop(
-                DesktopError::TaskFailed,
-                "application state is not set up",
-            ));
-        };
-        work(&app, &state)
-    })
-    .await
-}
-
 /// Returns the stored app language.
 ///
 /// Works in every vault state: the preference is plaintext so that the tray
@@ -214,6 +183,37 @@ pub(crate) async fn settings_remember_quick_add(
 
         save_ui_prefs(state.data_dir(), &prefs)?;
         Ok(())
+    })
+    .await
+}
+
+/// Runs preferences work on the blocking pool with the shared state.
+///
+/// The plaintext preferences file is read and written with blocking I/O, and
+/// a save ends in an fsync. A synchronous command would do that on the main
+/// thread, which also runs the event loop, and an async one on a runtime
+/// worker, so every preferences command goes through here.
+///
+/// # Errors
+///
+/// Returns the error `work` returns, and `task_failed` when the application
+/// state was never set up or the blocking task panics.
+async fn with_prefs_blocking<T, F>(app: tauri::AppHandle, work: F) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&tauri::AppHandle, &AppState) -> CommandResult<T> + Send + 'static,
+{
+    run_blocking(move || {
+        // `Manager::state` panics when the state is not managed, which is the
+        // case after a failed start (`crate::startup`) while the hidden
+        // webview is still running.
+        let Some(state) = app.try_state::<AppState>() else {
+            return Err(CommandError::desktop(
+                DesktopError::TaskFailed,
+                "application state is not set up",
+            ));
+        };
+        work(&app, &state)
     })
     .await
 }

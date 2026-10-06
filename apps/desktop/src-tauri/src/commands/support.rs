@@ -19,117 +19,34 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 use tauri_plugin_dialog::FilePath;
 
-/// Decodes a document the webview picked, up to the size core stores
-/// ([`oikonomia_core::documents::MAX_DOCUMENT_BYTES`]).
+/// Runs `work` on the runtime's blocking pool and returns what it returns.
 ///
-/// The drop path applies the same cap from the file's metadata, before
-/// reading it.
-///
-/// # Errors
-///
-/// Returns `file_too_large` for a payload over the cap and
-/// `file_data_invalid` for one that is not base64.
-pub(super) fn decode_document_base64(data_base64: &str) -> CommandResult<Vec<u8>> {
-    decode_capped_base64(data_base64, oikonomia_core::documents::MAX_DOCUMENT_BYTES)
-}
-
-/// Decodes base64 from the webview into at most `max_decoded` bytes.
-///
-/// Surrounding whitespace is ignored for the size check and the decode alike.
-/// The encoded length is checked first, so a huge payload is refused before
-/// it is decoded into memory. That check alone lets through up to three
-/// bytes over the cap, because it allows one more base64 group than the cap
-/// needs, so the decoded length is checked as well.
+/// For work that may block a thread: waiting for the vault mutex, a native
+/// dialog, file I/O. An async worker that blocks stalls every other command
+/// scheduled on it.
 ///
 /// # Errors
 ///
-/// Returns `file_too_large`, with the cap in mebibytes as `max_mb`, for a
-/// payload over the cap, and `file_data_invalid` for one that is not base64.
-pub(super) fn decode_capped_base64(
-    bytes_base64: &str,
-    max_decoded: usize,
-) -> CommandResult<Vec<u8>> {
-    let trimmed = bytes_base64.trim();
-    let max_base64_len = max_decoded / 3 * 4 + 4;
-    if trimmed.len() > max_base64_len {
-        return Err(too_large_error(max_decoded));
+/// Returns the error `work` returns, and `task_failed` when the task panics
+/// or the runtime drops it.
+///
+/// # Cancel safety
+///
+/// Dropping the returned future does not stop `work`: once the task is
+/// spawned, which happens when the future is first polled, it runs to the
+/// end and its result is discarded.
+pub(super) async fn run_blocking<T, F>(work: F) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> CommandResult<T> + Send + 'static,
+{
+    match tauri::async_runtime::spawn_blocking(work).await {
+        Ok(result) => result,
+        Err(err) => Err(CommandError::desktop(
+            DesktopError::TaskFailed,
+            format!("background task failed: {err}"),
+        )),
     }
-
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(trimmed)
-        .map_err(|err| {
-            CommandError::desktop(
-                DesktopError::FileDataInvalid,
-                format!("invalid file data: {err}"),
-            )
-        })?;
-
-    if data.len() > max_decoded {
-        return Err(too_large_error(max_decoded));
-    }
-    Ok(data)
-}
-
-/// Builds the error for a payload over a cap of `max_decoded` bytes, with the
-/// code and parameter core uses for a stored document that is too large.
-fn too_large_error(max_decoded: usize) -> CommandError {
-    let max_megabytes = max_decoded / (1024 * 1024);
-
-    CommandError::from(CoreError::Validation(ValidationError::FileTooLarge {
-        max_mb: u64::try_from(max_megabytes).unwrap_or(u64::MAX),
-    }))
-}
-
-/// Returns the language that text written into the user's books must be in.
-///
-/// Read from the preferences file in `data_dir`, never taken from the
-/// webview: the UI cannot choose the language of ledger text.
-///
-/// This reads a file, so it runs on the blocking pool, and before the vault
-/// is taken, so the plaintext preferences file is not touched while the
-/// vault mutex is held.
-///
-/// The read takes no lock. [`save_ui_prefs`](oikonomia_core::prefs::save_ui_prefs)
-/// writes a temporary file and renames it over the preferences file, so a
-/// read during a language change sees the old or the new file, complete.
-/// [`AppState::lock_prefs`] is for a load-change-save, which this is not, and
-/// taking it here would make every caller wait behind a save's fsync.
-pub(super) fn stored_text_locale(data_dir: &Path) -> Locale {
-    load_ui_prefs(data_dir).locale
-}
-
-/// Accepts a webview-supplied path only if the user handed it to the app
-/// through a native drop or dialog ([`AppState::grant_paths`]).
-///
-/// Returns the resolved path that was checked, which is the one to open
-/// ([`PathGrants::resolve`]). Resolving reads the filesystem, so this runs on
-/// the blocking pool.
-///
-/// # Errors
-///
-/// Returns `path_not_granted` when the path resolves to nothing the user
-/// handed over, which includes a path that does not exist.
-pub(super) fn require_granted_path(grants: &PathGrants, path: &str) -> CommandResult<PathBuf> {
-    grants.resolve(Path::new(path)).ok_or_else(|| {
-        CommandError::desktop(
-            DesktopError::PathNotGranted,
-            "file path was not chosen through the app",
-        )
-    })
-}
-
-/// Returns the name a dropped document is stored and typed under: the last
-/// component of the path as the user dropped it.
-///
-/// Taken before the path is resolved, because a dropped link keeps its own
-/// name and extension while the file it points to may be named anything. A
-/// path with no last component, or one that is not UTF-8, gets `document`.
-pub(super) fn dropped_file_name(dropped_path: &str) -> String {
-    Path::new(dropped_path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("document")
-        .to_owned()
 }
 
 /// Runs `work` on the blocking pool with exclusive access to the vault.
@@ -214,53 +131,117 @@ where
     .await
 }
 
-/// Runs `work` on the runtime's blocking pool and returns what it returns.
+/// Returns the language that text written into the user's books must be in.
 ///
-/// For work that may block a thread: waiting for the vault mutex, a native
-/// dialog, file I/O. An async worker that blocks stalls every other command
-/// scheduled on it.
+/// Read from the preferences file in `data_dir`, never taken from the
+/// webview: the UI cannot choose the language of ledger text.
 ///
-/// # Errors
+/// This reads a file, so it runs on the blocking pool, and before the vault
+/// is taken, so the plaintext preferences file is not touched while the
+/// vault mutex is held.
 ///
-/// Returns the error `work` returns, and `task_failed` when the task panics
-/// or the runtime drops it.
-///
-/// # Cancel safety
-///
-/// Dropping the returned future does not stop `work`: once the task is
-/// spawned, which happens when the future is first polled, it runs to the
-/// end and its result is discarded.
-pub(super) async fn run_blocking<T, F>(work: F) -> CommandResult<T>
-where
-    T: Send + 'static,
-    F: FnOnce() -> CommandResult<T> + Send + 'static,
-{
-    match tauri::async_runtime::spawn_blocking(work).await {
-        Ok(result) => result,
-        Err(err) => Err(CommandError::desktop(
-            DesktopError::TaskFailed,
-            format!("background task failed: {err}"),
-        )),
-    }
+/// The read takes no lock. [`save_ui_prefs`](oikonomia_core::prefs::save_ui_prefs)
+/// writes a temporary file and renames it over the preferences file, so a
+/// read during a language change sees the old or the new file, complete.
+/// [`AppState::lock_prefs`] is for a load-change-save, which this is not, and
+/// taking it here would make every caller wait behind a save's fsync.
+pub(super) fn stored_text_locale(data_dir: &Path) -> Locale {
+    load_ui_prefs(data_dir).locale
 }
 
-/// Converts the location a native file dialog returned into a filesystem path.
+/// Accepts a webview-supplied path only if the user handed it to the app
+/// through a native drop or dialog ([`AppState::grant_paths`]).
 ///
-/// `purpose` names the dialog in the diagnostic message: `"save"`,
-/// `"backup"`, `"CSV"`.
+/// Returns the resolved path that was checked, which is the one to open
+/// ([`PathGrants::resolve`]). Resolving reads the filesystem, so this runs on
+/// the blocking pool.
 ///
 /// # Errors
 ///
-/// Returns `save_location_invalid`, for open dialogs as well as save dialogs,
-/// when the location is not a path. A desktop dialog returns paths; the
-/// plugin's other form is a URI, which mobile systems hand out.
-pub(super) fn dialog_path(picked: FilePath, purpose: &str) -> CommandResult<PathBuf> {
-    picked.into_path().map_err(|err| {
+/// Returns `path_not_granted` when the path resolves to nothing the user
+/// handed over, which includes a path that does not exist.
+pub(super) fn require_granted_path(grants: &PathGrants, path: &str) -> CommandResult<PathBuf> {
+    grants.resolve(Path::new(path)).ok_or_else(|| {
         CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid {purpose} location: {err}"),
+            DesktopError::PathNotGranted,
+            "file path was not chosen through the app",
         )
     })
+}
+
+/// Returns the name a dropped document is stored and typed under: the last
+/// component of the path as the user dropped it.
+///
+/// Taken before the path is resolved, because a dropped link keeps its own
+/// name and extension while the file it points to may be named anything. A
+/// path with no last component, or one that is not UTF-8, gets `document`.
+pub(super) fn dropped_file_name(dropped_path: &str) -> String {
+    Path::new(dropped_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("document")
+        .to_owned()
+}
+
+/// Decodes a document the webview picked, up to the size core stores
+/// ([`oikonomia_core::documents::MAX_DOCUMENT_BYTES`]).
+///
+/// The drop path applies the same cap from the file's metadata, before
+/// reading it.
+///
+/// # Errors
+///
+/// Returns `file_too_large` for a payload over the cap and
+/// `file_data_invalid` for one that is not base64.
+pub(super) fn decode_document_base64(data_base64: &str) -> CommandResult<Vec<u8>> {
+    decode_capped_base64(data_base64, oikonomia_core::documents::MAX_DOCUMENT_BYTES)
+}
+
+/// Decodes base64 from the webview into at most `max_decoded` bytes.
+///
+/// Surrounding whitespace is ignored for the size check and the decode alike.
+/// The encoded length is checked first, so a huge payload is refused before
+/// it is decoded into memory. That check alone lets through up to three
+/// bytes over the cap, because it allows one more base64 group than the cap
+/// needs, so the decoded length is checked as well.
+///
+/// # Errors
+///
+/// Returns `file_too_large`, with the cap in mebibytes as `max_mb`, for a
+/// payload over the cap, and `file_data_invalid` for one that is not base64.
+pub(super) fn decode_capped_base64(
+    bytes_base64: &str,
+    max_decoded: usize,
+) -> CommandResult<Vec<u8>> {
+    let trimmed = bytes_base64.trim();
+    let max_base64_len = max_decoded / 3 * 4 + 4;
+    if trimmed.len() > max_base64_len {
+        return Err(too_large_error(max_decoded));
+    }
+
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(trimmed)
+        .map_err(|err| {
+            CommandError::desktop(
+                DesktopError::FileDataInvalid,
+                format!("invalid file data: {err}"),
+            )
+        })?;
+
+    if data.len() > max_decoded {
+        return Err(too_large_error(max_decoded));
+    }
+    Ok(data)
+}
+
+/// Builds the error for a payload over a cap of `max_decoded` bytes, with the
+/// code and parameter core uses for a stored document that is too large.
+fn too_large_error(max_decoded: usize) -> CommandError {
+    let max_megabytes = max_decoded / (1024 * 1024);
+
+    CommandError::from(CoreError::Validation(ValidationError::FileTooLarge {
+        max_mb: u64::try_from(max_megabytes).unwrap_or(u64::MAX),
+    }))
 }
 
 /// What a native save dialog offers, and how the chosen path is completed.
@@ -315,6 +296,25 @@ pub(super) async fn save_with_dialog(
         Ok(Some(destination.display().to_string()))
     })
     .await
+}
+
+/// Converts the location a native file dialog returned into a filesystem path.
+///
+/// `purpose` names the dialog in the diagnostic message: `"save"`,
+/// `"backup"`, `"CSV"`.
+///
+/// # Errors
+///
+/// Returns `save_location_invalid`, for open dialogs as well as save dialogs,
+/// when the location is not a path. A desktop dialog returns paths; the
+/// plugin's other form is a URI, which mobile systems hand out.
+pub(super) fn dialog_path(picked: FilePath, purpose: &str) -> CommandResult<PathBuf> {
+    picked.into_path().map_err(|err| {
+        CommandError::desktop(
+            DesktopError::SaveLocationInvalid,
+            format!("invalid {purpose} location: {err}"),
+        )
+    })
 }
 
 #[cfg(test)]

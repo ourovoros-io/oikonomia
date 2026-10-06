@@ -63,6 +63,29 @@ pub(crate) fn open_support_email(app: tauri::AppHandle) -> CommandResult<()> {
         })
 }
 
+/// Shows the main window, restores it if minimized, and focuses it.
+///
+/// The quick-add window calls this to hand over to the full app. Does nothing
+/// after a failed start ([`crate::tray::show_main_window`]).
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands a command its arguments by value"
+)]
+pub(crate) fn open_main_window(app: tauri::AppHandle) {
+    crate::tray::show_main_window(&app);
+}
+
+/// Hides the quick-add window. Does nothing when the window does not exist.
+#[tauri::command]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands a command its arguments by value"
+)]
+pub(crate) fn quick_add_hide(app: tauri::AppHandle) {
+    crate::tray::hide_quick_add(&app);
+}
+
 /// Returns a `mailto:` link to [`SUPPORT_EMAIL`] whose subject names the app
 /// version, so every support thread opens with the one fact each report
 /// needs.
@@ -87,29 +110,6 @@ fn percent_encode(input: &str) -> String {
         }
     }
     out
-}
-
-/// Shows the main window, restores it if minimized, and focuses it.
-///
-/// The quick-add window calls this to hand over to the full app. Does nothing
-/// after a failed start ([`crate::tray::show_main_window`]).
-#[tauri::command]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "Tauri hands a command its arguments by value"
-)]
-pub(crate) fn open_main_window(app: tauri::AppHandle) {
-    crate::tray::show_main_window(&app);
-}
-
-/// Hides the quick-add window. Does nothing when the window does not exist.
-#[tauri::command]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "Tauri hands a command its arguments by value"
-)]
-pub(crate) fn quick_add_hide(app: tauri::AppHandle) {
-    crate::tray::hide_quick_add(&app);
 }
 
 #[cfg(test)]

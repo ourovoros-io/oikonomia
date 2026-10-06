@@ -76,13 +76,13 @@ mod vault;
 
 // A command is a function plus a hidden macro that `generate_handler!`
 // looks up beside it; a glob carries both, a named re-export does not.
-pub(crate) use self::accounts::*;
-pub(crate) use self::app::*;
-pub(crate) use self::csv::*;
-pub(crate) use self::documents::*;
-pub(crate) use self::entities::*;
-pub(crate) use self::journal::*;
-pub(crate) use self::recurring::*;
-pub(crate) use self::reports::*;
-pub(crate) use self::settings::*;
-pub(crate) use self::vault::*;
+pub(crate) use crate::commands::accounts::*;
+pub(crate) use crate::commands::app::*;
+pub(crate) use crate::commands::csv::*;
+pub(crate) use crate::commands::documents::*;
+pub(crate) use crate::commands::entities::*;
+pub(crate) use crate::commands::journal::*;
+pub(crate) use crate::commands::recurring::*;
+pub(crate) use crate::commands::reports::*;
+pub(crate) use crate::commands::settings::*;
+pub(crate) use crate::commands::vault::*;
