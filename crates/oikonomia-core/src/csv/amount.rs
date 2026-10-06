@@ -2,26 +2,30 @@
 
 use super::CsvError;
 
-/// Decimal digits (minor-unit exponent) for an ISO 4217 code.
+/// Decimal digits (minor-unit exponent) for a currency code.
 ///
 /// This is the one exponent table of the crate: CSV import and the document
-/// analyzer both read it. It lists the codes whose exponent is not 2, as
-/// given in ISO 4217 list one (published 2026-09-17): `CLP`, `ISK`, `JPY`,
-/// `KRW` and `VND` have no minor unit; `BHD`, `IQD`, `JOD`, `KWD`, `LYD`,
-/// `OMR` and `TND` have three decimals. Every other code, known or not,
-/// gets 2 (EUR, USD).
+/// analyzer both read it. It has to agree with the webview, which turns
+/// `amount_minor` into a displayed amount (and typed amounts back into minor
+/// units) with the digits `Intl.NumberFormat` reports for the currency. Those
+/// digits come from CLDR, not ISO 4217, and the two differ: CLDR gives `IQD`,
+/// `IRR`, `RSD` and a dozen more no decimals where ISO gives two or three. If
+/// this table followed ISO, an imported IQD amount would show 1000 times too
+/// large. So the table is CLDR's (version 46, as shipped in ICU 76): every
+/// code whose digits are not 2 is listed below, and every other code, known
+/// or not, gets 2 (EUR, USD). Withdrawn codes CLDR still knows are kept so an
+/// old export lines up with what the webview shows.
 #[must_use]
 pub fn currency_minor_exponent(code: &str) -> u8 {
     let code = code.trim().to_ascii_uppercase();
-    if matches!(code.as_str(), "CLP" | "ISK" | "JPY" | "KRW" | "VND") {
-        0
-    } else if matches!(
-        code.as_str(),
-        "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND"
-    ) {
-        3
-    } else {
-        2
+    match code.as_str() {
+        "ADP" | "AFN" | "ALL" | "BIF" | "BYR" | "CLP" | "DJF" | "ESP" | "GNF" | "IQD" | "IRR"
+        | "ISK" | "ITL" | "JPY" | "KMF" | "KPW" | "KRW" | "LAK" | "LBP" | "LUF" | "MGA" | "MGF"
+        | "MMK" | "MRO" | "PYG" | "RSD" | "RWF" | "SLL" | "SOS" | "STD" | "SYP" | "TMM" | "TRL"
+        | "UGX" | "UYI" | "VND" | "VUV" | "XAF" | "XOF" | "XPF" | "YER" | "ZMK" | "ZWD" => 0,
+        "BHD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3,
+        "CLF" | "UYW" => 4,
+        _ => 2,
     }
 }
 
@@ -365,5 +369,63 @@ mod tests {
         assert_eq!(currency_minor_exponent("JPY"), 0);
         assert_eq!(currency_minor_exponent("KWD"), 3);
         assert_eq!(currency_minor_exponent("XXX"), 2);
+    }
+
+    /// The codes where ISO 4217 and CLDR disagree, or where the table used to
+    /// say 2 while the webview formats with no decimals. Each one, read with
+    /// the wrong exponent, shows an amount 100 or 1000 times off.
+    #[test]
+    fn exponents_match_what_the_webview_formats_with() {
+        for (code, digits) in [
+            ("IQD", 0),
+            ("XOF", 0),
+            ("XAF", 0),
+            ("UGX", 0),
+            ("PYG", 0),
+            ("RSD", 0),
+            ("IRR", 0),
+            ("ISK", 0),
+            ("LYD", 3),
+            ("CLF", 4),
+        ] {
+            assert_eq!(currency_minor_exponent(code), digits, "{code}");
+        }
+    }
+
+    /// Every code with digits other than 2, as `Intl.NumberFormat` reports
+    /// them in Node 20 (ICU 76, CLDR 46), checked across all three-letter
+    /// codes so a code cannot drift in or out unnoticed.
+    #[test]
+    fn the_non_two_digit_codes_are_exactly_cldrs() {
+        let letters = || 'A'..='Z';
+        let mut by_digits: [Vec<String>; 5] = Default::default();
+        for code in letters()
+            .flat_map(|a| letters().flat_map(move |b| letters().map(move |c| [a, b, c])))
+            .map(String::from_iter)
+        {
+            let digits = currency_minor_exponent(&code);
+            if digits != 2 {
+                by_digits[usize::from(digits)].push(code);
+            }
+        }
+
+        assert_eq!(
+            by_digits[0],
+            [
+                "ADP", "AFN", "ALL", "BIF", "BYR", "CLP", "DJF", "ESP", "GNF", "IQD", "IRR", "ISK",
+                "ITL", "JPY", "KMF", "KPW", "KRW", "LAK", "LBP", "LUF", "MGA", "MGF", "MMK", "MRO",
+                "PYG", "RSD", "RWF", "SLL", "SOS", "STD", "SYP", "TMM", "TRL", "UGX", "UYI", "VND",
+                "VUV", "XAF", "XOF", "XPF", "YER", "ZMK", "ZWD"
+            ]
+        );
+        assert_eq!(by_digits[3], ["BHD", "JOD", "KWD", "LYD", "OMR", "TND"]);
+        assert_eq!(by_digits[4], ["CLF", "UYW"]);
+        assert!(by_digits[1].is_empty() && by_digits[2].is_empty());
+    }
+
+    #[test]
+    fn a_four_digit_unit_keeps_all_four_decimals() {
+        assert_eq!(parse_signed_minor("1,2345", 4).expect("CLF"), 12_345);
+        assert_eq!(parse_signed_minor("40.000,5", 4).expect("CLF"), 400_005_000);
     }
 }
