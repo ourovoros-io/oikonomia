@@ -239,7 +239,7 @@ pub(super) fn decode_capped_base64(
 fn too_large_error(max_decoded: usize) -> CommandError {
     let max_megabytes = max_decoded / (1024 * 1024);
 
-    CommandError::from(CoreError::Validation(ValidationError::FileTooLarge {
+    CommandError::from(CoreError::from(ValidationError::FileTooLarge {
         max_mb: u64::try_from(max_megabytes).unwrap_or(u64::MAX),
     }))
 }

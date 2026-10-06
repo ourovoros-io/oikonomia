@@ -8,15 +8,17 @@
 //! - [`ValidationError::params`], the named values that wording fills in,
 //!   such as an account code or a minimum length;
 //! - for an account that is missing or wrong, the [`AccountRole`] it was
-//!   meant to play, sent as a parameter so the UI can point at the field.
+//!   meant to play, and for a blank name the [`NameField`] that was left
+//!   empty, each sent as a parameter so the UI can point at the field.
 //!
 //! The `Display` text is English diagnostic text; the UI never shows it.
 //!
 //! # Keeping Rust and the UI in step
 //!
-//! The UI's copy lives in the web sources, so three hand-written lists must
-//! agree with the enums: [`ValidationError::ALL_CODES`], [`AccountRole::ALL`]
-//! and the parameter names in `web/src/lib/errorCodeParams.json`. The tests
+//! The UI's copy lives in the web sources, so hand-written lists must agree
+//! with the enums: [`ValidationError::ALL_CODES`], [`AccountRole::ALL`],
+//! [`NameField::ALL`] and the parameter names in
+//! `web/src/lib/errorCodeParams.json`. The tests
 //! in this module check each list against its enum through an exhaustive
 //! `match`, so a variant added without its code, its place in the list or its
 //! parameters fails to compile or fails a test. The desktop crate checks the
@@ -38,7 +40,6 @@ use thiserror::Error;
 /// UI shows the same label the entry form uses for it, chosen by
 /// [`AccountRole::identifier`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum AccountRole {
     /// The expense account an expense is for.
     Category,
@@ -151,7 +152,6 @@ impl fmt::Display for NameField {
 /// Messages that deserve the same user-facing text share a variant. Anything
 /// the user cannot act on is [`ValidationError::Internal`].
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[non_exhaustive]
 pub enum ValidationError {
     /// The new vault password is shorter than the minimum.
     #[error("password must be at least {min} characters")]

@@ -5,38 +5,89 @@
 //!
 //! # Shape
 //!
-//! [`enum@Error`] is a public enum because the desktop shell branches on it, and
-//! it has two layers:
+//! [`enum@Error`] is a public enum because the desktop shell and the tests
+//! branch on it. Its variants are of four kinds:
 //!
-//! - Variants of [`enum@Error`] itself say that an operation failed: the vault is
-//!   locked, an entry does not balance, a file could not be written.
-//! - [`Error::Validation`] wraps a [`ValidationError`], the reasons a request
-//!   was refused because the caller broke a rule. They are kept in their own
-//!   enum because they alone carry parameters for the UI.
+//! - **A state or a rule of the ledger**, with no payload or with the values
+//!   that broke the rule: [`Error::VaultLocked`], [`Error::UnbalancedEntry`],
+//!   [`Error::NotFound`] with the [`Resource`] that is missing.
+//! - **A refused request.** [`Error::Validation`] wraps a
+//!   [`ValidationError`] and [`Error::Csv`] a [`CsvError`]. Both convert with
+//!   `From`, so a function writes the reason itself and `?` or `.into()`
+//!   does the rest.
+//! - **Stored data that cannot be used.** [`Error::VaultCorrupt`] and
+//!   [`Error::BackupInvalid`] carry an enum of the reasons
+//!   ([`VaultCorruption`], [`BackupDefect`]), so the reason can be matched
+//!   and not only read. [`Error::VaultTooNew`] is kept apart from them: that
+//!   vault is sound, and only this build is too old for it.
+//! - **A failure below the crate.** [`Error::Database`], [`Error::Io`],
+//!   [`Error::Serialization`], [`Error::Crypto`] and [`Error::Analysis`] say
+//!   which layer failed and carry an `operation` and a `detail`, described
+//!   below.
 //!
-//! # Codes, not sentences
+//! # Codes and parameters, not sentences
 //!
-//! The UI never shows text written here. Each error has a stable
-//! `snake_case` code ([`Error::code`]) that the UI maps to wording in the
-//! user's language, and a validation error adds named values for that wording
-//! ([`ValidationError::params`]). The `Display` text is English diagnostic
-//! text. The desktop shell passes it along beside the code, and the UI never
-//! shows it.
+//! The UI never shows text written here. An error reaches the user as two
+//! things:
 //!
-//! Adding a variant therefore means adding a code. [`Error::code`] and
-//! [`ValidationError::code`] match without a wildcard arm, so a variant
-//! without a code does not compile, and the tests below fail when
-//! [`Error::ALL_CODES`] or [`ValidationError::ALL_CODES`] falls out of step
-//! with the variants.
+//! - [`Error::code`], a stable `snake_case` code the UI maps to wording in
+//!   the user's language;
+//! - [`Error::params`], the named values that wording fills in: an account
+//!   code, a minimum length, the kind of record that was not found.
 //!
-//! # Sources are flattened to text
+//! The `Display` text is English diagnostic text. The desktop shell passes
+//! it along beside the code, where it reaches a log and never the screen.
 //!
-//! [`enum@Error`] is `Clone + PartialEq + Eq` so that tests can compare whole
-//! results, and it holds no `rusqlite`, `std::io` or other foreign error
-//! type (`std::io::Error`, for one, is neither `Clone` nor `PartialEq`). The
-//! price is that a lower-level error is kept as its message, in the `String`
-//! of variants such as [`Error::Io`], and not as a
-//! [`source`](std::error::Error::source): no variant has one.
+//! Both methods match every variant without a wildcard arm, here and in
+//! [`ValidationError`] and [`CsvError`]. A new variant therefore does not
+//! compile until it has a code and its parameters are decided, in the crate
+//! that defines it. The tests below fail when [`Error::ALL_CODES`] falls out
+//! of step with the variants, and when the parameter names differ from
+//! `web/src/lib/errorCodeParams.json`, which the UI's own tests read.
+//!
+//! A value that is not a number or a name goes out as an identifier, never
+//! as English: [`Resource::identifier`], [`AccountRole::identifier`],
+//! [`NameField::identifier`]. The UI translates it.
+//!
+//! # Operation and detail
+//!
+//! A variant for a failure below the crate has two fields.
+//!
+//! - `operation` is what core was doing, as a fixed lowercase phrase:
+//!   `insert journal entry`, `write backup archive`. It is written at the
+//!   call site, it never holds data, and it is sent as a parameter.
+//! - `detail` is the lower-level error's own text. It may hold a path or an
+//!   operating-system message, so it is for logs only and is never a
+//!   parameter.
+//!
+//! `Display` is `operation: detail`. The call site picks the variant through
+//! a helper that exists for one foreign error type only, so a `rusqlite`
+//! failure cannot be reported as a file failure by mistake:
+//!
+//! ```ignore
+//! conn.execute(sql, params).database("insert journal entry")?;
+//! fs::rename(from, to).io("rename vault file")?;
+//! ```
+//!
+//! # Why the error is `Eq` and has no source
+//!
+//! [`enum@Error`] is `Clone + PartialEq + Eq`, so a test compares a whole
+//! result with `assert_eq!` and a caller can keep an error after reporting
+//! it. `rusqlite::Error` and `std::io::Error` are neither `Clone` nor
+//! `PartialEq`, so the error holds no foreign error type and no boxed trait
+//! object, and [`source`](std::error::Error::source) is `None` for every
+//! variant. What a source would have told a reader is in `detail`, and what
+//! core was doing is in `operation`, as typed fields. A test compares the
+//! variant and the operation, never the text of a dependency.
+//!
+//! # Exhaustive on purpose
+//!
+//! None of the enums here is `#[non_exhaustive]`. The workspace is not
+//! published, so its only other user is the desktop crate, and that crate
+//! is meant to break when a variant is added: it matches these enums without
+//! a wildcard arm, so the compiler points at every place that has to decide
+//! what the new variant means. With `#[non_exhaustive]` those matches would
+//! need a wildcard, and a new variant would fall into it unnoticed.
 
 use crate::csv::CsvError;
 use std::collections::BTreeMap;
@@ -61,11 +112,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// A failure of an operation in `oikonomia-core`.
 ///
 /// See the [module documentation](self) for how the variants are organised
-/// and how they reach the user. A `String` payload is English detail that
-/// appears in the `Display` text; the UI words the error from
-/// [`Error::code`] and does not show it.
+/// and how they reach the user. The UI words the error from
+/// [`Error::code`] and [`Error::params`]; a `detail` field is English text
+/// for logs and is not shown.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[non_exhaustive]
 pub enum Error {
     /// No vault exists in the data directory yet.
     #[error("vault is not initialized")]
@@ -203,7 +253,8 @@ pub enum Error {
 
 impl Error {
     /// Every code [`Error::code`] returns for a variant other than
-    /// [`Error::Validation`], whose codes are [`ValidationError::ALL_CODES`].
+    /// [`Error::Validation`] and [`Error::Csv`], whose codes are
+    /// [`ValidationError::ALL_CODES`] and [`CsvError::ALL_CODES`].
     ///
     /// The codes are in the order of the variants. The desktop crate checks
     /// this list against `errorCodes.json`.
@@ -232,9 +283,10 @@ impl Error {
     /// Returns the stable `snake_case` identifier the UI maps to localized
     /// text.
     ///
-    /// A validation error gives its own code, [`ValidationError::code`]. The
-    /// match has no wildcard arm, so a new variant does not compile until it
-    /// has a code here.
+    /// A validation error and a CSV error give their own code
+    /// ([`ValidationError::code`], [`CsvError::code`]). The match has no
+    /// wildcard arm, so a new variant does not compile until it has a code
+    /// here.
     ///
     /// # Examples
     ///
@@ -465,12 +517,12 @@ mod tests {
 
     /// Fails when `every_variant` has no sample for a variant named in the
     /// `listed_errors` list above, or when `ALL_CODES` is not the codes of the
-    /// samples other than the validation one, in order. The compiler checks
+    /// samples other than the validation and CSV ones, in order. The compiler checks
     /// `listed_errors` against the enum with an exhaustive `match`, so a
     /// variant added to the enum but not to that list does not compile. It
     /// does not check that the UI has copy for a code; the desktop crate does.
     #[test]
-    fn all_codes_lists_the_code_of_every_variant_but_validation() {
+    fn all_codes_lists_the_code_of_every_variant_that_has_its_own() {
         let samples = every_variant();
         let codes: Vec<&str> = samples
             .iter()
