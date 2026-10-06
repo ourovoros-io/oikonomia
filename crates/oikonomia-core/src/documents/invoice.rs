@@ -97,23 +97,23 @@ fn category_hint_of(suggestion: &DocumentSuggestion) -> String {
 /// Read every field, wording the generated text in `locale`.
 fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
     let normalized = normalize(text);
-    let lower_full = normalized.to_lowercase();
-    if is_bank_transfer_receipt(&fold_greek(&lower_full)) {
+    let folded_full = folded(&normalized);
+    if is_bank_transfer_receipt(&folded_full) {
         return parse_bank_transfer(&normalized, locale);
     }
 
-    let amount_minor = find_total_amount(&normalized, &lower_full);
+    let amount_minor = find_total_amount(&normalized, &folded_full);
     let entry_date = find_best_date(&normalized);
     let reference = find_invoice_reference(&normalized);
-    let merchant = find_merchant(&normalized, &lower_full, locale);
+    let merchant = find_merchant(&normalized, &folded_full, locale);
     let description = find_description(
         &normalized,
-        &lower_full,
+        &folded_full,
         merchant.as_deref(),
         reference.as_deref(),
         locale,
     );
-    let (kind, bill_unpaid) = classify_kind(&lower_full);
+    let (kind, bill_unpaid) = classify_kind(&folded_full);
 
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
@@ -131,7 +131,7 @@ fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
         wallet_account_id: None,
         payable_account_id: None,
         confidence,
-        notes: build_notes(amount_minor, kind, bill_unpaid, &lower_full),
+        notes: build_notes(amount_minor, kind, bill_unpaid, &folded_full),
     };
 
     InvoiceReading {
@@ -298,82 +298,14 @@ fn is_thousands_group(numbers: &[char], index: usize) -> bool {
         && !is_digit(index + 4)
 }
 
-fn is_utility_bill(lower: &str) -> bool {
-    // Strong utility markers only. Loose tokens ("ηλεκτρ", "έναντι") used to
-    // misfire on unrelated documents — a software company's own sales invoice
-    // matched via "ΗΛΕΚΤΡΟΝΙΚΩΝ ΣΥΣΤΗΜΑΤΩΝ" in its line of business.
-    lower.contains("kwh")
-        || lower.contains("ρεύμα")
-        || lower.contains("ρευμα")
-        || lower.contains("εκκαθαριστικ")
-        || lower.contains("δεδδηε")
-        || lower.contains("ηκασπ")
-        || lower.contains("φυσικού αερίου")
-        || lower.contains("φυσικου αεριου")
-        || lower.contains("φυσικό αέριο")
-        || lower.contains("φυσικο αεριο")
-        || lower.contains("προμήθεια φ.α")
-        || lower.contains("προμηθεια φ.α")
-        || lower.contains("χρέωση προμήθειας φ.α")
-        || lower.contains("gas simple")
-        || lower.contains("myon")
-        || lower.contains("κωδικός παροχής")
-        || lower.contains("κωδικος παροχης")
-        || lower.contains("ύδρευσ")
-        || lower.contains("υδρευσ")
-        || lower.contains("power business")
-}
-
-/// Sales invoice issued by the book's owner: the counterparty block is
-/// labeled "Στοιχεία Πελάτη".
-fn is_sales_invoice(lower: &str) -> bool {
-    (lower.contains("στοιχεία πελάτη") || lower.contains("στοιχεια πελατη"))
-        && (lower.contains("τιμολόγιο") || lower.contains("τιμολογιο") || lower.contains("invoice"))
-}
-
-fn classify_kind(lower: &str) -> (EntryKindSuggestion, bool) {
-    // Utility / electricity / water / gas settlement bills are expenses/bills for the customer.
-    if is_utility_bill(lower) {
-        let unpaid = lower.contains("ληξιπρόθεσμ")
-            || lower.contains("ανεξόφλητ")
-            || lower.contains("amount due");
-        return (EntryKindSuggestion::Bill, unpaid);
-    }
-
-    // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
-    let sales = is_sales_invoice(lower) || lower.contains("sales invoice");
-
-    let purchase = lower.contains("τιμολόγιο αγορ")
-        || lower.contains("purchase invoice")
-        || lower.contains("supplier");
-
-    let unpaid = lower.contains("επί πιστώσει")
-        || lower.contains("επι πιστωσει")
-        || lower.contains("amount due")
-        || lower.contains("unpaid")
-        || lower.contains("outstanding")
-        || lower.contains("please pay");
-
-    if sales && !purchase {
-        return (EntryKindSuggestion::Income, unpaid);
-    }
-
-    // A recognized biller with a known service (telecom etc.) is a bill to
-    // pay even without the utility markers above.
-    if let Some((_, Some(_))) = super::brands::known_brand(lower) {
-        return (EntryKindSuggestion::Bill, unpaid);
-    }
-
-    if unpaid {
-        (EntryKindSuggestion::Bill, true)
-    } else {
-        (EntryKindSuggestion::Expense, false)
-    }
-}
-
-/// Fold monotonic Greek accents so label matching is accent-insensitive.
-fn fold_greek(s: &str) -> String {
-    s.chars()
+/// Lowercases `text` and folds its Greek accents.
+///
+/// Every label and marker in this module and in `brands` is matched against
+/// text in this form, and is itself written in it, so `Τελική`, `ΤΕΛΙΚΗ` and
+/// `τελικη` all match the one needle `τελικη`.
+pub(super) fn folded(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
         .map(|c| match c {
             'ά' | 'ὰ' | 'ᾶ' | 'ἀ' | 'ἁ' | 'ᾳ' => 'α',
             'έ' | 'ὲ' | 'ἐ' | 'ἑ' => 'ε',
@@ -387,10 +319,96 @@ fn fold_greek(s: &str) -> String {
         .collect()
 }
 
-fn is_bank_transfer_receipt(folded: &str) -> bool {
-    folded.contains("εμβασμα")
-        || folded.contains("μεταφορα σε αλλη τραπεζα")
-        || folded.contains("κωδικος συναλλαγης")
+/// Whether folded text contains any of `needles`.
+fn contains_any(folded_text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| folded_text.contains(needle))
+}
+
+/// Strong utility markers only. Loose ones such as `ηλεκτρ` also match a
+/// software company's line of business (`ΗΛΕΚΤΡΟΝΙΚΩΝ ΣΥΣΤΗΜΑΤΩΝ`).
+const UTILITY_MARKERS: &[&str] = &[
+    "kwh",
+    "ρευμα",
+    "εκκαθαριστικ",
+    "δεδδηε",
+    "ηκασπ",
+    "φυσικου αεριου",
+    "φυσικο αεριο",
+    "προμηθεια φ.α",
+    "χρεωση προμηθειας φ.α",
+    "gas simple",
+    "myon",
+    "κωδικος παροχης",
+    "υδρευσ",
+    "power business",
+];
+
+/// The heading of the counterparty block on a sales invoice.
+const CUSTOMER_BLOCK_LABEL: &str = "στοιχεια πελατη";
+
+const INVOICE_WORDS: &[&str] = &[INVOICE_WORD_GREEK, "invoice"];
+
+const UTILITY_UNPAID_MARKERS: &[&str] = &["ληξιπροθεσμ", "ανεξοφλητ", "amount due"];
+
+const PURCHASE_MARKERS: &[&str] = &["τιμολογιο αγορ", "purchase invoice", "supplier"];
+
+const UNPAID_MARKERS: &[&str] = &[
+    "επι πιστωσει",
+    "amount due",
+    "unpaid",
+    "outstanding",
+    "please pay",
+];
+
+const TRANSFER_MARKERS: &[&str] = &[
+    "εμβασμα",
+    "μεταφορα σε αλλη τραπεζα",
+    TRANSFER_REFERENCE_LABEL,
+];
+
+const TRANSFER_REFERENCE_LABEL: &str = "κωδικος συναλλαγης";
+
+fn is_utility_bill(folded_text: &str) -> bool {
+    contains_any(folded_text, UTILITY_MARKERS)
+}
+
+/// Sales invoice issued by the book's owner: the counterparty block is
+/// labeled "Στοιχεία Πελάτη".
+fn is_sales_invoice(folded_text: &str) -> bool {
+    folded_text.contains(CUSTOMER_BLOCK_LABEL) && contains_any(folded_text, INVOICE_WORDS)
+}
+
+fn classify_kind(folded_text: &str) -> (EntryKindSuggestion, bool) {
+    // Utility / electricity / water / gas settlement bills are expenses/bills for the customer.
+    if is_utility_bill(folded_text) {
+        let unpaid = contains_any(folded_text, UTILITY_UNPAID_MARKERS);
+        return (EntryKindSuggestion::Bill, unpaid);
+    }
+
+    // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
+    let sales = is_sales_invoice(folded_text) || folded_text.contains("sales invoice");
+    let purchase = contains_any(folded_text, PURCHASE_MARKERS);
+    let unpaid = contains_any(folded_text, UNPAID_MARKERS);
+
+    if sales && !purchase {
+        return (EntryKindSuggestion::Income, unpaid);
+    }
+
+    // A recognized biller with a known service (telecom etc.) is a bill to
+    // pay even without the utility markers above.
+    if let Some((_, Some(_))) = super::brands::known_brand(folded_text) {
+        return (EntryKindSuggestion::Bill, unpaid);
+    }
+
+    if unpaid {
+        (EntryKindSuggestion::Bill, true)
+    } else {
+        (EntryKindSuggestion::Expense, false)
+    }
+}
+
+fn is_bank_transfer_receipt(folded_text: &str) -> bool {
+    contains_any(folded_text, TRANSFER_MARKERS)
 }
 
 /// Expense fill for a Greek bank `έμβασμα` / other-bank transfer receipt.
@@ -431,22 +449,22 @@ fn parse_bank_transfer(text: &str, locale: Locale) -> InvoiceReading {
 fn find_transfer_principal(text: &str) -> Option<i64> {
     let lines: Vec<&str> = text.lines().collect();
     for (i, line) in lines.iter().enumerate() {
-        let folded = fold_greek(&line.to_lowercase());
-        if is_transfer_fee_line(&folded) {
+        let folded_line = folded(line);
+        if is_transfer_fee_line(&folded_line) {
             continue;
         }
-        if folded.contains("ποσο χρεωσης κεφαλαιου")
+        if folded_line.contains(TRANSFER_PRINCIPAL_LABEL)
             && let Some(amount) = amount_on_line_or_next(&lines, i)
         {
             return Some(amount);
         }
     }
     for (i, line) in lines.iter().enumerate() {
-        let folded = fold_greek(&line.to_lowercase());
-        if is_transfer_fee_line(&folded) {
+        let folded_line = folded(line);
+        if is_transfer_fee_line(&folded_line) {
             continue;
         }
-        if is_transfer_poso_label(&folded)
+        if is_transfer_amount_label(&folded_line)
             && let Some(amount) = amount_on_line_or_next(&lines, i)
         {
             return Some(amount);
@@ -471,22 +489,40 @@ fn amount_on_line_or_next(lines: &[&str], index: usize) -> Option<i64> {
     None
 }
 
-fn is_transfer_fee_line(folded: &str) -> bool {
-    folded.contains("προμηθεια") || folded.contains("εξοδων") || folded.contains("εξοδα")
+/// The label of the capital debit on a transfer receipt.
+const TRANSFER_PRINCIPAL_LABEL: &str = "ποσο χρεωσης κεφαλαιου";
+
+/// The plain "amount" label a receipt uses when it has no capital line.
+const TRANSFER_AMOUNT_LABEL: &str = "ποσο";
+
+const TRANSFER_FEE_LABELS: &[&str] = &["προμηθεια", "εξοδων", "εξοδα"];
+
+const BENEFICIARY_LABEL: &str = "δικαιουχου";
+
+/// The two halves of the `Ονοματεπώνυμο / Επωνυμία` beneficiary label.
+const BENEFICIARY_NAME_LABELS: [&str; 2] = ["ονοματεπωνυμο", ISSUER_NAME_LABEL];
+
+const BANK_WORDS: &[&str] = &["τραπεζα", "bank"];
+
+const EXECUTION_DATE_LABELS: &[&str] = &["εκτελεσ", "execution"];
+
+const TRANSFER_DATE_LABELS: &[&str] = &["ημερομην", "date", "συναλλαγ"];
+
+fn is_transfer_fee_line(folded_line: &str) -> bool {
+    contains_any(folded_line, TRANSFER_FEE_LABELS)
 }
 
-fn is_transfer_poso_label(folded: &str) -> bool {
-    let trimmed = folded.trim();
-    trimmed == "ποσο"
-        || trimmed.starts_with("ποσο:")
-        || folded.contains("ποσο:")
-        || (folded.contains("ποσο") && folded.contains(':') && !is_transfer_fee_line(folded))
+fn is_transfer_amount_label(folded_line: &str) -> bool {
+    folded_line.trim() == TRANSFER_AMOUNT_LABEL
+        || (folded_line.contains(TRANSFER_AMOUNT_LABEL)
+            && folded_line.contains(':')
+            && !is_transfer_fee_line(folded_line))
 }
 
 fn find_transfer_fee(text: &str) -> Option<i64> {
     for line in text.lines() {
-        let folded = fold_greek(&line.to_lowercase());
-        if !is_transfer_fee_line(&folded) {
+        let folded_line = folded(line);
+        if !is_transfer_fee_line(&folded_line) {
             continue;
         }
         if let Some(amount) = money_amounts_on_line(line)
@@ -503,9 +539,11 @@ fn find_transfer_fee(text: &str) -> Option<i64> {
 fn find_transfer_payee(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     for (i, line) in lines.iter().enumerate() {
-        let folded = fold_greek(&line.to_lowercase());
-        let beneficiary = folded.contains("δικαιουχου")
-            || (folded.contains("ονοματεπωνυμο") && folded.contains("επωνυμια"));
+        let folded_line = folded(line);
+        let beneficiary = folded_line.contains(BENEFICIARY_LABEL)
+            || BENEFICIARY_NAME_LABELS
+                .iter()
+                .all(|label| folded_line.contains(label));
         if !beneficiary {
             continue;
         }
@@ -528,27 +566,31 @@ fn is_plausible_payee(name: &str) -> bool {
     if trimmed.chars().count() < 3 || !trimmed.chars().any(char::is_alphabetic) {
         return false;
     }
-    let folded = fold_greek(&trimmed.to_lowercase());
-    if is_bank_counterparty(&folded) || folded.contains("iban") {
+    let folded_name = folded(trimmed);
+    if is_bank_counterparty(&folded_name) || folded_name.contains("iban") {
         return false;
     }
-    let stripped = folded
-        .replace("ονοματεπωνυμο", " ")
-        .replace("επωνυμια", " ")
-        .replace("δικαιουχου", " ")
-        .replace(['/', ':', '：'], " ");
+
+    // A line that only repeats the label is not a name.
+    let mut stripped = folded_name.replace(['/', ':', '：'], " ");
+    for label in BENEFICIARY_NAME_LABELS
+        .into_iter()
+        .chain([BENEFICIARY_LABEL])
+    {
+        stripped = stripped.replace(label, " ");
+    }
     stripped.chars().any(char::is_alphabetic)
 }
 
-fn is_bank_counterparty(folded: &str) -> bool {
-    folded.contains("τραπεζα") || folded.contains("bank")
+fn is_bank_counterparty(folded_name: &str) -> bool {
+    contains_any(folded_name, BANK_WORDS)
 }
 
 fn find_transfer_reference(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     for (i, line) in lines.iter().enumerate() {
-        let folded = fold_greek(&line.to_lowercase());
-        if !folded.contains("κωδικος συναλλαγης") {
+        let folded_line = folded(line);
+        if !folded_line.contains(TRANSFER_REFERENCE_LABEL) {
             continue;
         }
         for candidate in [*line, lines.get(i + 1).copied().unwrap_or("")] {
@@ -598,27 +640,23 @@ fn is_transfer_code(token: &str) -> bool {
 fn find_transfer_date(text: &str) -> Option<String> {
     let mut labeled: Option<String> = None;
     for line in text.lines() {
-        if is_value_date_line(&line.to_lowercase()) {
+        if is_value_date_line(&folded(line)) {
             continue;
         }
         let Some(date) = first_date_on_line(line) else {
             continue;
         };
-        let folded = fold_greek(&line.to_lowercase());
-        if folded.contains("εκτελεσ") || folded.contains("execution") {
+        let folded_line = folded(line);
+        if contains_any(&folded_line, EXECUTION_DATE_LABELS) {
             return Some(date);
         }
-        if labeled.is_none()
-            && (folded.contains("ημερομην")
-                || folded.contains("date")
-                || folded.contains("συναλλαγ"))
-        {
+        if labeled.is_none() && contains_any(&folded_line, TRANSFER_DATE_LABELS) {
             labeled = Some(date);
         }
     }
     labeled.or_else(|| {
         text.lines().find_map(|line| {
-            if is_value_date_line(&line.to_lowercase()) {
+            if is_value_date_line(&folded(line)) {
                 None
             } else {
                 first_date_on_line(line)
@@ -651,15 +689,27 @@ fn build_transfer_notes(amount: Option<i64>) -> Vec<UiText> {
     notes
 }
 
-fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
+/// The label of a totals row: the largest amount on it is the total.
+const TOTALS_ROW_LABELS: &[&str] = &["συνολα", "totals"];
+
+/// Words that mark a line as holding a value, for the weighted fallback.
+const VALUE_WORDS: &[&str] = &["αξια", "value", TOTAL_WORD];
+
+/// The bare word the fallback favours and the percent rule exempts.
+const TOTAL_WORD: &str = "total";
+
+/// Lines that hold identifiers, never an amount.
+const IDENTIFIER_LINE_MARKERS: &[&str] = &["iban", "α.φ.μ", "αφμ", "mark"];
+
+fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
     // 1) Strong labeled totals always win — even when PDF extract is jumbled.
-    //    (Utility frequency scoring used to run first and could pick date days as €.)
+    //    Frequency scoring before them could pick the day of a date as euros.
     if let Some(v) = find_labeled_total(text) {
         return Some(v);
     }
 
     // 2) Utility bills: vote among € amounts (with date tokens masked).
-    if is_utility_bill(lower)
+    if is_utility_bill(folded_text)
         && let Some(v) = find_utility_payment_total(text)
     {
         return Some(v);
@@ -667,11 +717,11 @@ fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
 
     // 3) Line containing "σύνολα" / "totals" — take the largest plausible amount
     for line in text.lines() {
-        let line_l = line.to_lowercase();
-        if is_noise_amount_line(&line_l) {
+        let folded_line = folded(line);
+        if is_noise_amount_line(&folded_line) {
             continue;
         }
-        if (line_l.contains("σύνολα") || line_l.contains("συνολα") || line_l.contains("totals"))
+        if contains_any(&folded_line, TOTALS_ROW_LABELS)
             && let Some(v) = money_amounts_on_line(line)
                 .into_iter()
                 .filter(|a| is_plausible_money(*a) && *a > 0)
@@ -684,26 +734,20 @@ fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
     // 4) Weighted fallback (skip rate / mix / area lines)
     let mut weighted: Vec<(i64, i32)> = Vec::new();
     for line in text.lines() {
-        let line_l = line.to_lowercase();
-        if is_noise_amount_line(&line_l) {
+        let folded_line = folded(line);
+        if is_noise_amount_line(&folded_line) {
             continue;
         }
         let mut w = 1;
         // `αξία` on invoices means line-value; `Ημερομηνία Αξίας` is a value
         // date and must not boost a clock (`7:00` → 700 minor).
-        if !is_value_date_line(&line_l)
-            && (line_l.contains("αξία") || line_l.contains("value") || line_l.contains("total"))
-        {
+        if !is_value_date_line(&folded_line) && contains_any(&folded_line, VALUE_WORDS) {
             w += 3;
         }
-        if line_l.contains('€') {
+        if folded_line.contains('€') {
             w += 4;
         }
-        if line_l.contains("iban")
-            || line_l.contains("α.φ.μ")
-            || line_l.contains("αφμ")
-            || line_l.contains("mark")
-        {
+        if contains_any(&folded_line, IDENTIFIER_LINE_MARKERS) {
             w = 0;
         }
         if w == 0 {
@@ -724,16 +768,12 @@ fn find_total_amount(text: &str, lower: &str) -> Option<i64> {
     weighted.first().map(|(v, _)| *v)
 }
 
+/// Labels that name the amount to pay. A line with one decides the total.
 const TOTAL_LABELS: &[&str] = &[
-    "συνολικό ποσό πληρωμής",
     "συνολικο ποσο πληρωμης",
-    "ποσό πληρωμής",
     "ποσο πληρωμης",
-    "σύνολο τρέχοντος λογαριασμού",
     "συνολο τρεχοντος λογαριασμου",
-    "τρέχοντος λογαριασμού",
     "τρεχοντος λογαριασμου",
-    "πληρωτέο",
     "πληρωτεο",
     "payable",
     "amount due",
@@ -742,24 +782,54 @@ const TOTAL_LABELS: &[&str] = &[
     "amount payable",
     "amount to pay",
     "total to pay",
-    "συνολ. αξία",
-    "συνολική αξία",
+    "συνολ. αξια",
     "συνολικη αξια",
-    "τελ. αξία",
-    "τελική αξία",
+    "τελ. αξια",
+    "τελικη αξια",
     "total amount",
     "invoice total",
     "net payable",
 ];
 
+/// Labels of the payment line on a utility bill, for the vote among amounts.
+const PAYMENT_LABELS: &[&str] = &["πληρωμ", "τρεχοντος", "payable", "amount due"];
+
+/// Deposits and guarantees are not the bill total.
+const DEPOSIT_LABELS: &[&str] = &["εγγυηση", "deposit"];
+
+/// Markers of rate, volume, area and energy-mix lines, which hold numbers
+/// that are not the payment total.
+const RATE_LINE_MARKERS: &[&str] = &[
+    "kwh",
+    "gwh",
+    "kva",
+    "τ.μ",
+    "τμ ",
+    "τιμη ζωνης",
+    "συντελεστ",
+    "λιγνιτ",
+    "υδροηλεκτ",
+    "διασυνδεσ",
+    "παραγωγ",
+    "x0,",
+    "x 0,",
+    "x0.",
+    "×",
+];
+
+/// The heading of a gas volume or calorific table when an `x` follows it.
+const CONSUMPTION_LABEL: &str = "καταναλωση";
+
+const VALUE_DATE_LABELS: &[&str] = &["ημερομηνια αξιας", "value date"];
+
 fn find_labeled_total(text: &str) -> Option<i64> {
     let lines: Vec<&str> = text.lines().collect();
     for (i, line) in lines.iter().enumerate() {
-        let line_l = line.to_lowercase();
-        if is_noise_amount_line(&line_l) {
+        let folded_line = folded(line);
+        if is_noise_amount_line(&folded_line) {
             continue;
         }
-        if !TOTAL_LABELS.iter().any(|p| line_l.contains(p)) {
+        if !contains_any(&folded_line, TOTAL_LABELS) {
             continue;
         }
         // Same line first, then next line (labels and values often split in PDF extract).
@@ -767,8 +837,8 @@ fn find_labeled_total(text: &str) -> Option<i64> {
             if candidate.is_empty() {
                 continue;
             }
-            let cand_l = candidate.to_lowercase();
-            if is_noise_amount_line(&cand_l) && candidate != *line {
+            let folded_candidate = folded(candidate);
+            if is_noise_amount_line(&folded_candidate) && candidate != *line {
                 continue;
             }
             if let Some(v) = money_amounts_on_line(candidate)
@@ -792,8 +862,8 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
     let mut freq: HashMap<i64, i32> = HashMap::new();
 
     for line in text.lines() {
-        let line_l = line.to_lowercase();
-        if is_noise_amount_line(&line_l) {
+        let folded_line = folded(line);
+        if is_noise_amount_line(&folded_line) {
             continue;
         }
 
@@ -806,14 +876,7 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
         let has_euro = line.contains('€');
         let has_date = line_has_date(line);
         let mostly_amount = is_amount_only_line(line);
-        let pay_label = {
-            let l = line_l.as_str();
-            l.contains("πληρωμ")
-                || l.contains("τρέχοντος")
-                || l.contains("τρεχοντος")
-                || l.contains("payable")
-                || l.contains("amount due")
-        };
+        let pay_label = contains_any(&folded_line, PAYMENT_LABELS);
 
         for a in amounts {
             if !is_plausible_money(a) {
@@ -875,48 +938,28 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
         .map(|(a, _)| a)
 }
 
-fn is_noise_amount_line(line_l: &str) -> bool {
-    // Deposits / guarantees are not the bill total
-    if line_l.contains("εγγύηση") || line_l.contains("εγγυηση") || line_l.contains("deposit")
-    {
+fn is_noise_amount_line(folded_line: &str) -> bool {
+    if contains_any(folded_line, DEPOSIT_LABELS) {
         return true;
     }
     // A percentage marks a rate line, unless the line names the total: a
     // total is often printed with its VAT rate ("Total incl. VAT 24%").
-    if line_l.contains('%') && !names_a_total(line_l) {
+    if folded_line.contains('%') && !names_a_total(folded_line) {
         return true;
     }
-    // Rate / volume / dimension lines (not payment total)
-    line_l.contains("kwh")
-        || line_l.contains("gwh")
-        || line_l.contains("kva")
-        || line_l.contains("τ.μ")
-        || line_l.contains("τμ ")
-        || line_l.contains("τιμή ζώνης")
-        || line_l.contains("τιμη ζωνης")
-        || line_l.contains("συντελεστ")
-        || line_l.contains("λιγνιτ")
-        || line_l.contains("υδροηλεκτ")
-        || line_l.contains("διασύνδεσ")
-        || line_l.contains("παραγωγ")
-        // Gas volume / calorific tables (not the euro total)
-        || line_l.contains("κατανάλωση") && line_l.contains('x')
-        || line_l.contains("καταναλωση") && (line_l.contains('x') || line_l.contains('×'))
-        || line_l.contains("x0,")
-        || line_l.contains("x 0,")
-        || line_l.contains("x0.")
-        || line_l.contains('×')
+
+    contains_any(folded_line, RATE_LINE_MARKERS)
+        || (folded_line.contains(CONSUMPTION_LABEL) && folded_line.contains('x'))
 }
 
-/// Whether a lowercased line carries a total label: one of [`TOTAL_LABELS`]
-/// or the bare word `total`, which the weighted fallback also favours.
-fn names_a_total(line_l: &str) -> bool {
-    line_l.contains("total") || TOTAL_LABELS.iter().any(|label| line_l.contains(label))
+/// Whether a folded line carries a total label: one of [`TOTAL_LABELS`] or
+/// the bare word `total`, which the weighted fallback also favours.
+fn names_a_total(folded_line: &str) -> bool {
+    folded_line.contains(TOTAL_WORD) || contains_any(folded_line, TOTAL_LABELS)
 }
 
-fn is_value_date_line(line_l: &str) -> bool {
-    let folded = fold_greek(line_l);
-    folded.contains("ημερομηνια αξιας") || folded.contains("value date")
+fn is_value_date_line(folded_line: &str) -> bool {
+    contains_any(folded_line, VALUE_DATE_LABELS)
 }
 
 fn is_amount_only_line(line: &str) -> bool {
@@ -1331,12 +1374,7 @@ fn find_best_date(text: &str) -> Option<String> {
     }
 
     for line in text.lines() {
-        let l = line.to_lowercase();
-        if (l.contains("ημερομην")
-            || l.contains("date")
-            || l.contains("έκδοσ")
-            || l.contains("ληξ")
-            || l.contains("due"))
+        if contains_any(&folded(line), DATE_LABELS)
             && let Some(iso) = first_date_on_line(line)
         {
             return Some(iso);
@@ -1345,6 +1383,9 @@ fn find_best_date(text: &str) -> Option<String> {
 
     text.lines().find_map(first_date_on_line)
 }
+
+/// Labels of an issue, due or generic date line.
+const DATE_LABELS: &[&str] = &["ημερομην", "date", "εκδοσ", "ληξ", "due"];
 
 /// The numbers of a token written like a date: a year in 1990..=2100, a
 /// month in 1..=12 and a day in 1..=31.
@@ -1431,14 +1472,13 @@ fn find_invoice_reference(text: &str) -> Option<String> {
         .or_else(|| longest_reference_number(&lines))
 }
 
+const SUPPLY_CODE_LABELS: &[&str] = &["κωδικος παροχης", "supply", "ηκασπ"];
+
 /// Supply / meter code next to its label (e.g. NGS000000001). PDF extraction
 /// often puts the value on the line after the label.
 fn labelled_supply_code(lines: &[&str]) -> Option<String> {
-    const LABELS: [&str; 4] = ["κωδικός παροχής", "κωδικος παροχης", "supply", "ηκασπ"];
-
     for (i, line) in lines.iter().enumerate() {
-        let lower = line.to_lowercase();
-        if !LABELS.iter().any(|label| lower.contains(label)) {
+        if !contains_any(&folded(line), SUPPLY_CODE_LABELS) {
             continue;
         }
 
@@ -1485,14 +1525,13 @@ fn is_rf_payment_code(upper: &str) -> bool {
         && upper.chars().skip(2).all(|c| c.is_ascii_digit())
 }
 
+const MARK_LABELS: &[&str] = &["μαρκ", "mark", "α.α", "αα "];
+
 /// MARK number on Greek invoices: a long digit string on the MARK / Α.Α.
 /// line or the one after it.
 fn mark_number(lines: &[&str]) -> Option<String> {
-    const LABELS: [&str; 4] = ["μαρκ", "mark", "α.α", "αα "];
-
     for (i, line) in lines.iter().enumerate() {
-        let lower = line.to_lowercase();
-        if !LABELS.iter().any(|label| lower.contains(label)) {
+        if !contains_any(&folded(line), MARK_LABELS) {
             continue;
         }
 
@@ -1504,13 +1543,12 @@ fn mark_number(lines: &[&str]) -> Option<String> {
     None
 }
 
+const REFERENCE_LABELS: &[&str] = &["invoice", "αρ. παραστατ", "αριθμος", "number", "ref"];
+
 /// A long number on a line that names it as an invoice or reference number.
 fn labelled_reference_number(lines: &[&str]) -> Option<String> {
-    const LABELS: [&str; 5] = ["invoice", "αρ. παραστατ", "αριθμός", "number", "ref"];
-
     lines.iter().find_map(|line| {
-        let lower = line.to_lowercase();
-        if LABELS.iter().any(|label| lower.contains(label)) {
+        if contains_any(&folded(line), REFERENCE_LABELS) {
             long_digit_token(line)
         } else {
             None
@@ -1601,40 +1639,34 @@ fn take_supply_buf(buf: &str) -> Option<String> {
     }
 }
 
-fn find_merchant(text: &str, lower: &str, locale: Locale) -> Option<String> {
+fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Option<String> {
     // Outgoing sales invoice: the counterparty is the customer. This runs
     // before brand recognition because the issuer's payment footer often
     // names a bank ("PIRAEUS BANK, IBAN …") that must not win.
-    if is_sales_invoice(lower)
+    if is_sales_invoice(folded_text)
         && let Some(customer) = sales_invoice_customer(text)
     {
         return Some(customer);
     }
 
     // Known billers: brand tokens that survive text extraction.
-    if let Some((brand, _)) = super::brands::known_brand(lower) {
+    if let Some((brand, _)) = super::brands::known_brand(folded_text) {
         return Some(brand.to_owned());
     }
 
     // Unrecognized utility supplier: generic but honest labels.
-    if is_utility_bill(lower) {
-        if lower.contains("φυσικού αερίου")
-            || lower.contains("φυσικου αεριου")
-            || lower.contains("φυσικό αέριο")
-            || lower.contains("gas simple")
-            || lower.contains("προμήθεια φ.α")
-        {
+    if is_utility_bill(folded_text) {
+        if contains_any(folded_text, GAS_SUPPLY_MARKERS) {
             return Some(natural_gas_merchant(locale).into());
         }
-        if lower.contains("power business") {
+        if folded_text.contains("power business") {
             return Some(electricity_supplier_merchant(locale).into());
         }
     }
 
     // Issuer: first Επωνυμία value
     for line in text.lines() {
-        let l = line.to_lowercase();
-        if l.contains("επωνυμία") || l.contains("επωνυμια") {
+        if folded(line).contains(ISSUER_NAME_LABEL) {
             if let Some(name) = value_after_colon(line)
                 && name.chars().count() >= 3
             {
@@ -1643,10 +1675,7 @@ fn find_merchant(text: &str, lower: &str, locale: Locale) -> Option<String> {
             // same line after spaces
             let cleaned = line
                 .split_whitespace()
-                .skip_while(|w| {
-                    let w = w.to_lowercase();
-                    w.contains("επων") || w == ":"
-                })
+                .skip_while(|word| *word == ":" || folded(word).contains(ISSUER_NAME_STEM))
                 .collect::<Vec<_>>()
                 .join(" ");
             if cleaned.chars().count() >= 3 {
@@ -1657,24 +1686,53 @@ fn find_merchant(text: &str, lower: &str, locale: Locale) -> Option<String> {
 
     text.lines()
         .map(str::trim)
-        .find(|l| {
-            l.chars().count() >= 5
-                && l.chars().count() <= 80
-                && l.chars().any(char::is_alphabetic)
-                && !l.to_lowercase().contains("τιμολόγιο")
+        .find(|line| {
+            line.chars().count() >= 5
+                && line.chars().count() <= 80
+                && line.chars().any(char::is_alphabetic)
+                && !folded(line).contains(INVOICE_WORD_GREEK)
         })
         .map(ToOwned::to_owned)
 }
+
+/// Markers of a natural gas bill whose supplier is not a known brand.
+const GAS_SUPPLY_MARKERS: &[&str] = &[
+    "φυσικου αεριου",
+    "φυσικο αεριο",
+    "gas simple",
+    "προμηθεια φ.α",
+];
+
+/// The label of a legal name, on an issuer or a customer.
+const ISSUER_NAME_LABEL: &str = "επωνυμια";
+
+/// What every form of that label starts with, to skip the label word itself.
+const ISSUER_NAME_STEM: &str = "επων";
+
+const INVOICE_WORD_GREEK: &str = "τιμολογιο";
+
+/// Headings that open the customer block of a sales invoice.
+const CUSTOMER_BLOCK_STARTS: &[&str] = &[CUSTOMER_BLOCK_LABEL, "customer"];
+
+/// Labels of the lines in a customer block that are not the customer's name.
+const TAX_ID_OR_ADDRESS_LABELS: &[&str] = &["α.φ.μ", "αφμ", "διευθυν"];
+
+const DESCRIPTION_HEADERS: &[&str] = &["περιγραφη", "description"];
+
+/// Column headings that follow the description heading in a table header.
+const QUANTITY_HEADERS: &[&str] = &["ποσοτητα", "quantity"];
+
+/// Markers of a document that states it carries no VAT.
+const VAT_EXEMPT_MARKERS: &[&str] = &["χωρις φπα", "0%"];
 
 /// Customer name from the "Στοιχεία Πελάτη" block of a sales invoice.
 fn sales_invoice_customer(text: &str) -> Option<String> {
     let mut after_client = false;
 
     for line in text.lines() {
-        let l = line.to_lowercase();
+        let folded_line = folded(line);
 
-        if l.contains("στοιχεία πελάτη") || l.contains("στοιχεια πελατη") || l.contains("customer")
-        {
+        if contains_any(&folded_line, CUSTOMER_BLOCK_STARTS) {
             after_client = true;
             continue;
         }
@@ -1682,7 +1740,7 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
             continue;
         }
 
-        if (l.contains("επωνυμία") || l.contains("επωνυμια") || l.starts_with("name"))
+        if (folded_line.contains(ISSUER_NAME_LABEL) || folded_line.starts_with("name"))
             && let Some(name) = value_after_colon(line)
             && name.chars().count() >= 3
         {
@@ -1690,12 +1748,10 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
         }
 
         // Next substantial non-label line
-        if !l.contains("α.φ.μ")
-            && !l.contains("αφμ")
-            && !l.contains("διεύθυν")
+        if !contains_any(&folded_line, TAX_ID_OR_ADDRESS_LABELS)
             && line.chars().count() >= 5
             && line.chars().any(char::is_alphabetic)
-            && !l.ends_with(':')
+            && !folded_line.ends_with(':')
         {
             return Some(line.trim().to_owned());
         }
@@ -1716,24 +1772,24 @@ fn value_after_colon(line: &str) -> Option<String> {
 
 fn find_description(
     text: &str,
-    lower: &str,
+    folded_text: &str,
     merchant: Option<&str>,
     reference: Option<&str>,
     locale: Locale,
 ) -> Option<String> {
     // Outgoing sales invoice: customer-first title.
-    if is_sales_invoice(lower)
+    if is_sales_invoice(folded_text)
         && let Some(m) = merchant
     {
         return Some(customer_invoice_description(locale, m, reference));
     }
 
     // Recognized biller or utility bill: company-first title with the
-    // service decided by weighted scoring, never by a single keyword.
-    let brand_service = super::brands::known_brand(lower).and_then(|(_, service)| service);
+    // service decided by weighted keyword scoring.
+    let brand_service = super::brands::known_brand(folded_text).and_then(|(_, service)| service);
 
-    if is_utility_bill(lower) || brand_service.is_some() {
-        let service = brand_service.or_else(|| super::brands::classify_service(lower));
+    if is_utility_bill(folded_text) || brand_service.is_some() {
+        let service = brand_service.or_else(|| super::brands::classify_service(folded_text));
         let kind = service.map_or(BillKind::Utility, super::brands::Service::bill_kind);
 
         return Some(bill_description(locale, kind, merchant));
@@ -1742,8 +1798,7 @@ fn find_description(
     // Line-item description under Περιγραφή
     let mut after_header = false;
     for line in text.lines() {
-        let l = line.to_lowercase();
-        if l.contains("περιγραφή") || l.contains("description") {
+        if contains_any(&folded(line), DESCRIPTION_HEADERS) {
             after_header = true;
             continue;
         }
@@ -1754,10 +1809,7 @@ fn find_description(
                 .filter(|c| c.is_alphabetic() || c.is_whitespace())
                 .collect();
             let alpha = alpha.trim();
-            if alpha.chars().count() >= 4
-                && !alpha.to_lowercase().contains("ποσότητα")
-                && !alpha.to_lowercase().contains("quantity")
-            {
+            if alpha.chars().count() >= 4 && !contains_any(&folded(alpha), QUANTITY_HEADERS) {
                 return Some(alpha.to_owned());
             }
         }
@@ -1766,7 +1818,7 @@ fn find_description(
     if let Some(r) = reference {
         return Some(invoice_reference_description(locale, r, merchant));
     }
-    if lower.contains("τιμολόγιο") {
+    if folded_text.contains(INVOICE_WORD_GREEK) {
         return Some(invoice_word(locale).into());
     }
     merchant.map(ToOwned::to_owned)
@@ -1801,7 +1853,7 @@ fn build_notes(
     amount: Option<i64>,
     kind: EntryKindSuggestion,
     unpaid: bool,
-    lower: &str,
+    folded_text: &str,
 ) -> Vec<UiText> {
     let mut notes = vec![UiText::new(UiTextCode::InvoiceParsed)];
 
@@ -1811,13 +1863,13 @@ fn build_notes(
     if matches!(kind, EntryKindSuggestion::Income) {
         notes.push(UiText::new(UiTextCode::InvoiceIncome));
     }
-    if is_utility_bill(lower) {
+    if is_utility_bill(folded_text) {
         notes.push(UiText::new(UiTextCode::InvoiceUtility));
     }
     if unpaid {
         notes.push(UiText::new(UiTextCode::InvoiceUnpaid));
     }
-    if lower.contains("χωρίς φπα") || lower.contains("0%") {
+    if contains_any(folded_text, VAT_EXEMPT_MARKERS) {
         notes.push(UiText::new(UiTextCode::InvoiceVatExempt));
     }
 
@@ -1835,6 +1887,71 @@ mod tests {
     fn time_len(text: &str, at: usize) -> Option<usize> {
         let chars: Vec<char> = text.chars().collect();
         time_len_at(&chars, at)
+    }
+
+    /// Every label and marker constant of the reader. A constant added to
+    /// the module has to be added here to be checked.
+    const LABEL_SETS: &[(&str, &[&str])] = &[
+        ("UTILITY_MARKERS", UTILITY_MARKERS),
+        ("CUSTOMER_BLOCK_LABEL", &[CUSTOMER_BLOCK_LABEL]),
+        ("INVOICE_WORDS", INVOICE_WORDS),
+        ("UTILITY_UNPAID_MARKERS", UTILITY_UNPAID_MARKERS),
+        ("PURCHASE_MARKERS", PURCHASE_MARKERS),
+        ("UNPAID_MARKERS", UNPAID_MARKERS),
+        ("TRANSFER_MARKERS", TRANSFER_MARKERS),
+        ("TRANSFER_REFERENCE_LABEL", &[TRANSFER_REFERENCE_LABEL]),
+        ("TRANSFER_PRINCIPAL_LABEL", &[TRANSFER_PRINCIPAL_LABEL]),
+        ("TRANSFER_AMOUNT_LABEL", &[TRANSFER_AMOUNT_LABEL]),
+        ("TRANSFER_FEE_LABELS", TRANSFER_FEE_LABELS),
+        ("BENEFICIARY_LABEL", &[BENEFICIARY_LABEL]),
+        ("BENEFICIARY_NAME_LABELS", &BENEFICIARY_NAME_LABELS),
+        ("BANK_WORDS", BANK_WORDS),
+        ("EXECUTION_DATE_LABELS", EXECUTION_DATE_LABELS),
+        ("TRANSFER_DATE_LABELS", TRANSFER_DATE_LABELS),
+        ("TOTALS_ROW_LABELS", TOTALS_ROW_LABELS),
+        ("VALUE_WORDS", VALUE_WORDS),
+        ("TOTAL_WORD", &[TOTAL_WORD]),
+        ("IDENTIFIER_LINE_MARKERS", IDENTIFIER_LINE_MARKERS),
+        ("TOTAL_LABELS", TOTAL_LABELS),
+        ("PAYMENT_LABELS", PAYMENT_LABELS),
+        ("DEPOSIT_LABELS", DEPOSIT_LABELS),
+        ("RATE_LINE_MARKERS", RATE_LINE_MARKERS),
+        ("CONSUMPTION_LABEL", &[CONSUMPTION_LABEL]),
+        ("VALUE_DATE_LABELS", VALUE_DATE_LABELS),
+        ("DATE_LABELS", DATE_LABELS),
+        ("SUPPLY_CODE_LABELS", SUPPLY_CODE_LABELS),
+        ("MARK_LABELS", MARK_LABELS),
+        ("REFERENCE_LABELS", REFERENCE_LABELS),
+        ("GAS_SUPPLY_MARKERS", GAS_SUPPLY_MARKERS),
+        ("ISSUER_NAME_LABEL", &[ISSUER_NAME_LABEL]),
+        ("ISSUER_NAME_STEM", &[ISSUER_NAME_STEM]),
+        ("INVOICE_WORD_GREEK", &[INVOICE_WORD_GREEK]),
+        ("CUSTOMER_BLOCK_STARTS", CUSTOMER_BLOCK_STARTS),
+        ("TAX_ID_OR_ADDRESS_LABELS", TAX_ID_OR_ADDRESS_LABELS),
+        ("DESCRIPTION_HEADERS", DESCRIPTION_HEADERS),
+        ("QUANTITY_HEADERS", QUANTITY_HEADERS),
+        ("VAT_EXEMPT_MARKERS", VAT_EXEMPT_MARKERS),
+    ];
+
+    #[test]
+    fn every_label_and_marker_is_in_folded_form() {
+        for (name, needles) in LABEL_SETS {
+            for needle in *needles {
+                assert_eq!(
+                    folded(needle),
+                    *needle,
+                    "{name}: {needle:?} can never match folded text"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn folding_lowercases_and_drops_greek_accents() {
+        assert_eq!(folded("Τελική Αξία"), "τελικη αξια");
+        assert_eq!(folded("ΤΕΛΙΚΗ ΑΞΙΑ"), "τελικη αξια");
+        assert_eq!(folded("Ϊ ΰ Ώ"), "ι υ ω");
+        assert_eq!(folded("Total 24%"), "total 24%");
     }
 
     #[test]
@@ -2342,7 +2459,12 @@ mod tests {
 
     #[test]
     fn credit_terms_and_zero_vat_each_add_their_note() {
-        let notes = build_notes(Some(1000), EntryKindSuggestion::Bill, true, "χωρίς φπα");
+        let notes = build_notes(
+            Some(1000),
+            EntryKindSuggestion::Bill,
+            true,
+            &folded("Χωρίς ΦΠΑ"),
+        );
 
         assert_eq!(
             notes,
@@ -2609,6 +2731,42 @@ mod jumbled_extract {
             Some(12_400)
         );
         assert_eq!(read("Discount 10% 5,00").amount_minor, None);
+    }
+
+    #[test]
+    fn an_all_caps_total_label_reads_like_the_accented_one() {
+        for label in ["Τελική Αξία", "ΤΕΛΙΚΗ ΑΞΙΑ", "ΤΕΛ. ΑΞΙΑ", "ΣΥΝΟΛ. ΑΞΙΑ"]
+        {
+            assert_eq!(
+                read(&format!("{label} 124,00\nΚαθαρή 100,00 €")).amount_minor,
+                Some(12_400),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_caps_greek_markers_read_like_accented_ones() {
+        let purchase = "ΤΙΜΟΛΟΓΙΟ ΑΓΟΡΑΣ\nΣΤΟΙΧΕΙΑ ΠΕΛΑΤΗ\nΕΠΩΝΥΜΙΑ: ACME LTD\nΠΛΗΡΩΤΕΟ 500,00";
+        assert_eq!(read(purchase).kind, EntryKindSuggestion::Expense);
+
+        let exempt = read("ΤΙΜΟΛΟΓΙΟ\nΧΩΡΙΣ ΦΠΑ\nΠΛΗΡΩΤΕΟ 500,00");
+        assert!(
+            exempt
+                .notes
+                .contains(&UiText::new(UiTextCode::InvoiceVatExempt)),
+            "{:?}",
+            exempt.notes
+        );
+
+        let described = read("ACME LTD\nΠΕΡΙΓΡΑΦΗ\nΣυμβουλευτικές υπηρεσίες\nΠΛΗΡΩΤΕΟ 500,00");
+        assert_eq!(
+            described.description.as_deref(),
+            Some("Συμβουλευτικές υπηρεσίες")
+        );
+
+        let overdue = read("ΛΟΓΑΡΙΑΣΜΟΣ ΡΕΥΜΑΤΟΣ\nΛΗΞΙΠΡΟΘΕΣΜΟ ΥΠΟΛΟΙΠΟ\nΠΛΗΡΩΤΕΟ 80,00");
+        assert!(overdue.bill_unpaid);
     }
 
     #[test]
