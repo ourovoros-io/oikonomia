@@ -388,8 +388,7 @@ pub fn dashboard_summary(
     let count_sql = format!(
         "
         SELECT COUNT(1) FROM journal_entries je
-        WHERE je.entity_id = ?1 AND je.status = 'posted'
-          AND {ACTIVE_ENTRY_PREDICATE}
+        WHERE je.entity_id = ?1 AND {ACTIVE_ENTRY_PREDICATE}
           AND je.entry_date >= ?2 AND je.entry_date <= ?3
         "
     );
@@ -547,8 +546,7 @@ fn account_activity_lines(
                    SUM(jl.credit_minor) AS credits
             FROM journal_lines jl
             JOIN journal_entries je ON je.id = jl.entry_id
-            WHERE je.status = 'posted'
-              AND {ACTIVE_ENTRY_PREDICATE}
+            WHERE {ACTIVE_ENTRY_PREDICATE}
               {hidden_predicate}
               AND (?2 IS NULL OR je.entry_date >= ?2)
               AND je.entry_date <= ?3

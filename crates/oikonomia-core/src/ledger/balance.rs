@@ -51,13 +51,18 @@ pub(crate) fn sum_minor(amounts: impl IntoIterator<Item = i64>) -> Result<i64> {
     amounts.into_iter().try_fold(0_i64, add_minor)
 }
 
-/// Posted entries that are not voided and are not void-reversals.
+/// SQL predicate on `journal_entries je`: posted entries that are not voided
+/// and are not void-reversals.
+///
+/// The status test is part of the predicate so that a query cannot use the
+/// void test and forget it.
 ///
 /// A void posts a reverse entry and sets `voided_by` on the original. Newer voids
 /// also mark the reverse; older data may only mark the original — so we exclude
 /// any entry that is the target of another entry's `voided_by_entry_id`.
 pub(crate) const ACTIVE_ENTRY_PREDICATE: &str = "
-    je.voided_by_entry_id IS NULL
+    je.status = 'posted'
+    AND je.voided_by_entry_id IS NULL
     AND NOT EXISTS (
         SELECT 1 FROM journal_entries je_void
         WHERE je_void.voided_by_entry_id = je.id
@@ -96,7 +101,6 @@ pub fn account_balance_as_of(
         FROM journal_lines jl
         JOIN journal_entries je ON je.id = jl.entry_id
         WHERE jl.account_id = ?1
-          AND je.status = 'posted'
           AND {ACTIVE_ENTRY_PREDICATE}
           AND je.entry_date <= ?2
         "
@@ -133,7 +137,6 @@ pub(crate) fn sum_types_as_of(
             JOIN accounts a ON a.id = jl.account_id
             WHERE a.entity_id = ?1
               AND a.account_type = ?2
-              AND je.status = 'posted'
               AND {ACTIVE_ENTRY_PREDICATE}
               AND je.entry_date <= ?3
             "
@@ -174,7 +177,6 @@ pub(crate) fn sum_types_in_range(
             JOIN accounts a ON a.id = jl.account_id
             WHERE a.entity_id = ?1
               AND a.account_type = ?2
-              AND je.status = 'posted'
               AND {ACTIVE_ENTRY_PREDICATE}
               AND je.entry_date >= ?3
               AND je.entry_date <= ?4
@@ -220,6 +222,7 @@ pub(crate) fn parse_account_type(s: &str) -> Result<AccountType> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
 
@@ -245,6 +248,39 @@ mod tests {
             normal_balance(AccountType::Asset, i64::MAX, 0),
             Ok(i64::MAX)
         );
+    }
+
+    #[test]
+    fn the_active_entry_predicate_alone_selects_posted_unvoided_entries() {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(
+            "
+            CREATE TABLE journal_entries (
+                id TEXT PRIMARY KEY NOT NULL,
+                status TEXT NOT NULL,
+                voided_by_entry_id TEXT
+            );
+            INSERT INTO journal_entries VALUES
+                ('posted', 'posted', NULL),
+                ('draft', 'draft', NULL),
+                ('voided', 'posted', 'reversal'),
+                ('reversal', 'posted', 'voided'),
+                ('voided-before-reversals-were-marked', 'posted', 'old-reversal'),
+                ('old-reversal', 'posted', NULL);
+            ",
+        )
+        .expect("create and fill the table");
+
+        let sql = format!("SELECT je.id FROM journal_entries je WHERE {ACTIVE_ENTRY_PREDICATE}");
+        let active: Vec<String> = conn
+            .prepare(&sql)
+            .expect("prepare")
+            .query_map([], |row| row.get(0))
+            .expect("query")
+            .collect::<rusqlite::Result<_>>()
+            .expect("rows");
+
+        assert_eq!(active, ["posted"]);
     }
 
     #[test]

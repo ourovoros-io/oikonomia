@@ -230,7 +230,6 @@ fn daily_activity(
         JOIN accounts a ON a.id = jl.account_id
         WHERE a.entity_id = ?1
           AND a.account_type IN ('income', 'expense')
-          AND je.status = 'posted'
           AND {ACTIVE_ENTRY_PREDICATE}
           AND je.entry_date >= ?2
           AND je.entry_date <= ?3
@@ -292,7 +291,6 @@ fn active_entry_bounds(
         SELECT MIN(je.entry_date), MAX(je.entry_date)
         FROM journal_entries je
         WHERE je.entity_id = ?1
-          AND je.status = 'posted'
           AND {ACTIVE_ENTRY_PREDICATE}
         "
     );

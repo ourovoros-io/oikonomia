@@ -848,7 +848,6 @@ pub fn account_register(
             FROM journal_lines jl
             JOIN journal_entries je ON je.id = jl.entry_id
             WHERE jl.account_id = ?1
-              AND je.status = 'posted'
               AND {ACTIVE_ENTRY_PREDICATE}
               AND je.entry_date < ?2
             "
@@ -872,7 +871,6 @@ pub fn account_register(
         FROM journal_lines jl
         JOIN journal_entries je ON je.id = jl.entry_id
         WHERE jl.account_id = ?1
-          AND je.status = 'posted'
           AND {ACTIVE_ENTRY_PREDICATE}
           AND (?2 IS NULL OR je.entry_date >= ?2)
           AND (?3 IS NULL OR je.entry_date <= ?3)
