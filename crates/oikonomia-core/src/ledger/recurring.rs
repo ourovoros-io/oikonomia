@@ -436,7 +436,7 @@ pub fn post_recurring_template(
     let stored = load_template(&tx, id)?;
     let post_amount = match amount_minor {
         Some(minor) if minor <= 0 => {
-            return Err(Error::Validation(ValidationError::AmountNotPositive));
+            return Err(ValidationError::AmountNotPositive.into());
         }
         Some(minor) => minor,
         None => stored.amount_minor,
@@ -493,7 +493,7 @@ pub fn advance_next_date(
     match cadence {
         RecurringCadence::Weekly => from
             .checked_add(Duration::days(7))
-            .ok_or(Error::Validation(ValidationError::DateOutOfRange)),
+            .ok_or(ValidationError::DateOutOfRange.into()),
         RecurringCadence::Yearly => add_calendar_years(from, 1),
         RecurringCadence::Monthly => {
             let day = require_day_of_month(day_of_month)?;
@@ -537,7 +537,7 @@ fn next_monthly(from: Date, day_of_month: u8) -> Result<Date> {
 ///
 /// [`ValidationError::DateOutOfRange`] when the year does not fit in `i32`.
 fn add_months(year: i32, month: Month, delta: i32) -> Result<(i32, Month)> {
-    let out_of_range = || Error::Validation(ValidationError::DateOutOfRange);
+    let out_of_range = || Error::from(ValidationError::DateOutOfRange);
 
     // Months counted from January of year zero, so that adding `delta` and
     // splitting again carries into the year in both directions.
@@ -567,7 +567,7 @@ fn add_calendar_years(from: Date, years: i32) -> Result<Date> {
     let year = from
         .year()
         .checked_add(years)
-        .ok_or(Error::Validation(ValidationError::DateOutOfRange))?;
+        .ok_or(ValidationError::DateOutOfRange)?;
     place_day_or_next(year, from.month(), from.day())
 }
 
@@ -581,11 +581,11 @@ fn place_day_or_next(year: i32, month: Month, day: u8) -> Result<Date> {
     if let Ok(date) = Date::from_calendar_date(year, month, day) {
         return Ok(date);
     }
-    let first = Date::from_calendar_date(year, month, 1)
-        .map_err(|_| Error::Validation(ValidationError::DateOutOfRange))?;
+    let first =
+        Date::from_calendar_date(year, month, 1).map_err(|_| ValidationError::DateOutOfRange)?;
     first
         .checked_add(Duration::days(i64::from(day) - 1))
-        .ok_or(Error::Validation(ValidationError::DateOutOfRange))
+        .ok_or(ValidationError::DateOutOfRange.into())
 }
 
 /// A template as stored: every column of `recurring_templates` but
@@ -774,19 +774,20 @@ fn validated_fields(
 
     let name = input.name.trim();
     if name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
+        return Err(ValidationError::NameRequired {
             field: "template name",
-        }));
+        }
+        .into());
     }
     if input.amount_minor <= 0 {
-        return Err(Error::Validation(ValidationError::AmountNotPositive));
+        return Err(ValidationError::AmountNotPositive.into());
     }
 
     let day_of_month = match input.cadence {
         RecurringCadence::Monthly => Some(require_day_of_month(input.day_of_month)?),
         RecurringCadence::Weekly | RecurringCadence::Yearly => {
             if input.day_of_month.is_some() {
-                return Err(Error::Validation(ValidationError::DayOfMonthInvalid));
+                return Err(ValidationError::DayOfMonthInvalid.into());
             }
             None
         }
@@ -844,9 +845,9 @@ fn validated_fields(
 /// [`ValidationError::DayOfMonthInvalid`] when `day` is `None` or outside
 /// 1–31.
 fn require_day_of_month(day: Option<u8>) -> Result<u8> {
-    let day = day.ok_or(Error::Validation(ValidationError::DayOfMonthInvalid))?;
+    let day = day.ok_or(ValidationError::DayOfMonthInvalid)?;
     if !(1..=31).contains(&day) {
-        return Err(Error::Validation(ValidationError::DayOfMonthInvalid));
+        return Err(ValidationError::DayOfMonthInvalid.into());
     }
     Ok(day)
 }

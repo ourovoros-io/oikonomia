@@ -107,8 +107,8 @@ pub enum Error {
 
     /// The caller broke a rule; the reason carries its own code and the
     /// values the UI fills into its wording.
-    #[error("{0}")]
-    Validation(ValidationError),
+    #[error(transparent)]
+    Validation(#[from] ValidationError),
 
     /// A statement or a transaction on the vault database failed.
     #[error("{operation}: {detail}")]

@@ -131,9 +131,10 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
     let code = input.code.trim();
     let name = input.name.trim();
     if code.is_empty() || name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
+        return Err(ValidationError::NameRequired {
             field: "code and name",
-        }));
+        }
+        .into());
     }
 
     // An archived entity counts as missing here, as it does when an entity
@@ -193,14 +194,15 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
     let code = input.code.trim();
     let name = input.name.trim();
     if code.is_empty() || name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
+        return Err(ValidationError::NameRequired {
             field: "code and name",
-        }));
+        }
+        .into());
     }
 
     let account = get_account(conn, input.id)?;
     if account.is_system && !input.is_active {
-        return Err(Error::Validation(ValidationError::SystemAccountProtected));
+        return Err(ValidationError::SystemAccountProtected.into());
     }
 
     let updated = conn
@@ -242,7 +244,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
 pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
     let account = get_account(conn, id)?;
     if account.is_system {
-        return Err(Error::Validation(ValidationError::SystemAccountProtected));
+        return Err(ValidationError::SystemAccountProtected.into());
     }
 
     conn.execute(
@@ -270,7 +272,7 @@ fn account_write_error(err: &rusqlite::Error) -> Error {
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
         {
-            Error::Validation(ValidationError::AccountCodeTaken)
+            ValidationError::AccountCodeTaken.into()
         }
         other => Error::database("write account", other),
     }

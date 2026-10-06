@@ -442,7 +442,7 @@ pub fn replace_simple_entry(
 
     let original = get_entry(&tx, original_id)?;
     if original.entry.entity_id != input.entity_id {
-        return Err(Error::Validation(ValidationError::WrongBook));
+        return Err(ValidationError::WrongBook.into());
     }
 
     void_entry_in_tx(&tx, original_id, locale)?;
@@ -498,9 +498,7 @@ pub fn set_account_opening_balance(
     let account = get_account(conn, account_id)?;
     if account.account_type != AccountType::Asset && account.account_type != AccountType::Liability
     {
-        return Err(Error::Validation(
-            ValidationError::OpeningBalanceAccountType,
-        ));
+        return Err(ValidationError::OpeningBalanceAccountType.into());
     }
     ensure_active(&account)?;
 
@@ -510,7 +508,7 @@ pub fn set_account_opening_balance(
         .checked_sub(current)
         .ok_or(Error::MoneyOverflow)?;
     if delta == 0 {
-        return Err(Error::Validation(ValidationError::OpeningBalanceUnchanged));
+        return Err(ValidationError::OpeningBalanceUnchanged.into());
     }
 
     // Prefer the system Opening Balances account; fall back to any active
@@ -522,7 +520,7 @@ pub fn set_account_opening_balance(
         .iter()
         .find(|candidate| is_active_equity(candidate) && candidate.is_system)
         .or_else(|| accounts.iter().find(is_active_equity))
-        .ok_or(Error::Validation(ValidationError::NoEquityAccount))?;
+        .ok_or(ValidationError::NoEquityAccount)?;
 
     // A debit-normal account grows by debiting: a positive delta debits the
     // account and credits equity; every other combination flips the sides.
@@ -693,7 +691,7 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
     hidden: bool,
 ) -> Result<PostedEntryView> {
     if input.amount_minor <= 0 {
-        return Err(Error::Validation(ValidationError::AmountNotPositive));
+        return Err(ValidationError::AmountNotPositive.into());
     }
 
     let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
@@ -1081,7 +1079,7 @@ fn simple_entry_sides(
 ) -> Result<(AccountId, AccountId)> {
     let (debit, credit) = simple_entry_role_accounts(conn, input)?;
     if debit.id == credit.id {
-        return Err(Error::Validation(ValidationError::SameAccount));
+        return Err(ValidationError::SameAccount.into());
     }
 
     for account in [&debit, &credit] {
@@ -1111,9 +1109,10 @@ fn ensure_in_book(account: &Account, entity_id: EntityId) -> Result<()> {
 /// is.
 fn ensure_active(account: &Account) -> Result<()> {
     if !account.is_active {
-        return Err(Error::Validation(ValidationError::AccountInactive {
+        return Err(ValidationError::AccountInactive {
             code: account.code.clone(),
-        }));
+        }
+        .into());
     }
     Ok(())
 }
@@ -1136,17 +1135,19 @@ fn simple_entry_role_accounts(
 ) -> Result<(Account, Account)> {
     use AccountType::{Asset, Expense, Income, Liability};
 
-    let account_in = |id: Option<AccountId>, role: AccountRole, allowed: &[AccountType]| {
-        let id = id.ok_or(Error::Validation(ValidationError::AccountRequired { role }))?;
-        let account = get_account(conn, id)?;
-        if !allowed.contains(&account.account_type) {
-            return Err(Error::Validation(ValidationError::AccountWrongType {
-                role,
-                code: account.code.clone(),
-            }));
-        }
-        Ok(account)
-    };
+    let account_in =
+        |id: Option<AccountId>, role: AccountRole, allowed: &[AccountType]| -> Result<Account> {
+            let id = id.ok_or(ValidationError::AccountRequired { role })?;
+            let account = get_account(conn, id)?;
+            if !allowed.contains(&account.account_type) {
+                return Err(ValidationError::AccountWrongType {
+                    role,
+                    code: account.code.clone(),
+                }
+                .into());
+            }
+            Ok(account)
+        };
 
     match input.kind {
         SimpleEntryKind::Expense => Ok((
@@ -1198,7 +1199,7 @@ fn simple_entry_role_accounts(
                     &[Asset, Liability],
                 )?,
             )),
-            None => Err(Error::Validation(ValidationError::BillStatusRequired)),
+            None => Err(ValidationError::BillStatusRequired.into()),
         },
         SimpleEntryKind::Transfer => Ok((
             account_in(
@@ -1228,10 +1229,10 @@ fn simple_entry_role_accounts(
 fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
     let view = get_entry(conn, id)?;
     if view.is_voided {
-        return Err(Error::Validation(ValidationError::EntryAlreadyVoided));
+        return Err(ValidationError::EntryAlreadyVoided.into());
     }
     if view.entry.status != EntryStatus::Posted {
-        return Err(Error::Validation(ValidationError::EntryNotPosted));
+        return Err(ValidationError::EntryNotPosted.into());
     }
 
     let reverse_lines: Vec<CreateJournalLine> = view

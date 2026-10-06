@@ -19,7 +19,10 @@
 
 use crate::db::{collect_rows, stored_date};
 use crate::domain::{AccountType, EntityId};
-use crate::error::{DatabaseContext, Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Result, ValidationError};
+// Named only by the documentation below.
+#[cfg(doc)]
+use crate::error::Error;
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, add_minor, normal_balance, parse_account_type, subtract_minor,
 };
@@ -108,7 +111,7 @@ pub fn cash_flow_series(
     let from = parse_date(from)?;
     let to = parse_date(to)?;
     if from > to {
-        return Err(Error::Validation(ValidationError::DateRangeInverted));
+        return Err(ValidationError::DateRangeInverted.into());
     }
     // Only checks that the entity exists. An archived entity passes, so its
     // series can still be read.
@@ -189,7 +192,7 @@ pub fn activity_window(
     let to = to.map(parse_date).transpose()?;
     if let (Some(start), Some(end)) = (from, to) {
         if start > end {
-            return Err(Error::Validation(ValidationError::DateRangeInverted));
+            return Err(ValidationError::DateRangeInverted.into());
         }
         return Ok((start, end));
     }

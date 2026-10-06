@@ -69,9 +69,10 @@ pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
 /// - [`Error::Database`] on database errors.
 pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
     if secs < MIN_LOCK_TIMEOUT_SECS {
-        return Err(Error::Validation(ValidationError::LockTimeoutTooShort {
+        return Err(ValidationError::LockTimeoutTooShort {
             min_secs: MIN_LOCK_TIMEOUT_SECS,
-        }));
+        }
+        .into());
     }
 
     conn.execute(

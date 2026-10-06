@@ -184,7 +184,7 @@ impl Vault {
     /// A failed attempt removes what it created.
     pub fn init(&mut self, password: &str) -> Result<()> {
         if self.header.is_some() || vault_db_path(&self.data_dir).exists() {
-            return Err(Error::Validation(ValidationError::VaultAlreadyInitialized));
+            return Err(ValidationError::VaultAlreadyInitialized.into());
         }
 
         validate_password(password)?;
@@ -457,9 +457,10 @@ impl fmt::Debug for Vault {
 /// has fewer than [`MIN_PASSWORD_LEN`] characters.
 fn validate_password(password: &str) -> Result<()> {
     if password.chars().count() < MIN_PASSWORD_LEN {
-        return Err(Error::Validation(ValidationError::PasswordTooShort {
+        return Err(ValidationError::PasswordTooShort {
             min: MIN_PASSWORD_LEN,
-        }));
+        }
+        .into());
     }
     Ok(())
 }

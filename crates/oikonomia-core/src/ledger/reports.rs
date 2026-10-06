@@ -399,7 +399,7 @@ pub fn dashboard_summary(
     let to = parse_date(to)?;
     let assets_as_of = parse_date(assets_as_of)?;
     if from > to {
-        return Err(Error::Validation(ValidationError::DateRangeInverted));
+        return Err(ValidationError::DateRangeInverted.into());
     }
 
     let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], assets_as_of)?;
@@ -495,7 +495,7 @@ fn profit_and_loss_filtered(
     let from = parse_date(from)?;
     let to = parse_date(to)?;
     if from > to {
-        return Err(Error::Validation(ValidationError::DateRangeInverted));
+        return Err(ValidationError::DateRangeInverted.into());
     }
     // Only checks that the entity exists; an archived one passes.
     get_entity(conn, entity_id)?;

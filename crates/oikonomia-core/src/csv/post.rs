@@ -116,9 +116,10 @@ pub fn post_import_rows(
     let entity_id = first.entity_id;
     for row in rows {
         if row.entity_id != entity_id {
-            return Err(Error::Validation(ValidationError::Internal {
+            return Err(ValidationError::Internal {
                 detail: "import rows must belong to a single entity".into(),
-            }));
+            }
+            .into());
         }
     }
     let _entity = get_entity(conn, entity_id)?;

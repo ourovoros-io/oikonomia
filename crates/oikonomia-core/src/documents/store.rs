@@ -125,20 +125,19 @@ const _: () = assert!(MAX_DOCUMENT_BYTES as u64 == MAX_DOCUMENT_MEGABYTES * 1024
 /// or unsupported MIME types.
 pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Result<()> {
     if size_bytes == 0 {
-        return Err(Error::Validation(ValidationError::FileEmpty));
+        return Err(ValidationError::FileEmpty.into());
     }
     if size_bytes > MAX_DOCUMENT_BYTES as u64 {
-        return Err(Error::Validation(ValidationError::FileTooLarge {
+        return Err(ValidationError::FileTooLarge {
             max_mb: MAX_DOCUMENT_MEGABYTES,
-        }));
+        }
+        .into());
     }
     if filename.trim().is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
-            field: "filename",
-        }));
+        return Err(ValidationError::NameRequired { field: "filename" }.into());
     }
     if !is_allowed_mime(mime) {
-        return Err(Error::Validation(ValidationError::FileTypeUnsupported));
+        return Err(ValidationError::FileTypeUnsupported.into());
     }
     Ok(())
 }
@@ -176,7 +175,7 @@ pub fn save_document(
 
     let entry = get_entry(conn, entry_id)?;
     if entry.entry.entity_id != entity_id {
-        return Err(Error::Validation(ValidationError::WrongBook));
+        return Err(ValidationError::WrongBook.into());
     }
 
     let clash: i64 = conn
@@ -187,9 +186,10 @@ pub fn save_document(
         )
         .database("check document name is free")?;
     if clash > 0 {
-        return Err(Error::Validation(ValidationError::NameTaken {
+        return Err(ValidationError::NameTaken {
             name: name.to_owned(),
-        }));
+        }
+        .into());
     }
 
     // Validation caps the size at `MAX_DOCUMENT_BYTES`, so the length always
@@ -246,9 +246,10 @@ fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
     );
 
     if unique_violation {
-        Error::Validation(ValidationError::NameTaken {
+        ValidationError::NameTaken {
             name: name.to_owned(),
-        })
+        }
+        .into()
     } else {
         Error::database("insert document", err)
     }
@@ -277,7 +278,7 @@ pub fn attach_document(
 ) -> Result<DocumentMeta> {
     let entry = get_entry(conn, entry_id)?;
     if entry.entry.entity_id != entity_id {
-        return Err(Error::Validation(ValidationError::WrongBook));
+        return Err(ValidationError::WrongBook.into());
     }
 
     save_document(conn, entity_id, entry_id, filename, mime_type, data)

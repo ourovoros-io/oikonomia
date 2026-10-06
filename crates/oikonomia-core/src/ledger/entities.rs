@@ -161,9 +161,10 @@ pub fn count_entities(conn: &Connection) -> Result<u64> {
 pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Entity> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
+        return Err(ValidationError::NameRequired {
             field: "entity name",
-        }));
+        }
+        .into());
     }
 
     ensure_unique_name(conn, name, Some(id))?;
@@ -237,24 +238,26 @@ pub fn delete_entity(conn: &Connection, id: EntityId) -> Result<()> {
 fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let name = input.name.trim();
     if name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
+        return Err(ValidationError::NameRequired {
             field: "entity name",
-        }));
+        }
+        .into());
     }
 
     // An ISO 4217 code is three ASCII letters. Checking the letters makes the
     // byte length a character count too, so "12$" and "€" are both refused.
     let currency = input.base_currency.trim();
     if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_alphabetic()) {
-        return Err(Error::Validation(ValidationError::CurrencyInvalid));
+        return Err(ValidationError::CurrencyInvalid.into());
     }
     let currency = currency.to_ascii_uppercase();
 
     let month = input.fiscal_year_start_month.unwrap_or(1);
     if !(1..=12).contains(&month) {
-        return Err(Error::Validation(ValidationError::Internal {
+        return Err(ValidationError::Internal {
             detail: "fiscal_year_start_month must be 1-12".into(),
-        }));
+        }
+        .into());
     }
 
     ensure_unique_name(conn, name, None)?;
@@ -410,9 +413,10 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
     };
 
     if count > 0 {
-        return Err(Error::Validation(ValidationError::NameTaken {
+        return Err(ValidationError::NameTaken {
             name: name.to_owned(),
-        }));
+        }
+        .into());
     }
 
     Ok(())
