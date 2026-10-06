@@ -12,7 +12,9 @@ publish = false
 # This crate deliberately does NOT inherit the workspace lints: the workspace
 # forbids `unsafe` code, and this crate exists to hold the single audited
 # exception (one AppKit setter call) behind a safe function. Keeping it here
-# means every other crate still carries the workspace-wide guarantee.
+# means every other crate still carries the workspace-wide guarantee. The
+# empty table says so to Cargo, which otherwise warns that it is missing.
+[lints]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
