@@ -144,19 +144,19 @@ fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
 
 fn normalize(text: &str) -> String {
     // Common OCR / PDF quirks before line-oriented parsing.
-    let mut t = text.replace('\r', "\n");
+    let text = text.replace('\r', "\n");
     // No-break space, narrow no-break space, thin space
-    t = t.replace(['\u{00a0}', '\u{202f}', '\u{2009}'], " ");
+    let text = text.replace(['\u{00a0}', '\u{202f}', '\u{2009}'], " ");
     // Euro symbol variants — standalone tokens only, so EUROBANK stays intact.
     // Before the number joins, so "EUR1 234,56" starts its amount at a symbol
     // and not at the tail of a word.
-    t = replace_eur_token(&t);
+    let text = replace_eur_token(&text);
     // OCR and PDF extraction split numbers with spaces: "72, 53", "1 234,56".
-    t = collapse_spaced_decimals(&t);
+    let text = collapse_spaced_decimals(&text);
 
-    t.lines()
+    text.lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty())
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -168,21 +168,21 @@ fn normalize(text: &str) -> String {
 fn replace_eur_token(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let is_eur = i + 2 < chars.len()
-            && chars[i].eq_ignore_ascii_case(&'e')
-            && chars[i + 1].eq_ignore_ascii_case(&'u')
-            && chars[i + 2].eq_ignore_ascii_case(&'r');
-        let boundary_before = i == 0 || !chars[i - 1].is_alphabetic();
-        let boundary_after = i + 3 >= chars.len() || !chars[i + 3].is_alphabetic();
+    let mut index = 0;
+    while index < chars.len() {
+        let is_eur = index + 2 < chars.len()
+            && chars[index].eq_ignore_ascii_case(&'e')
+            && chars[index + 1].eq_ignore_ascii_case(&'u')
+            && chars[index + 2].eq_ignore_ascii_case(&'r');
+        let boundary_before = index == 0 || !chars[index - 1].is_alphabetic();
+        let boundary_after = index + 3 >= chars.len() || !chars[index + 3].is_alphabetic();
 
         if is_eur && boundary_before && boundary_after {
             out.push('€');
-            i += 3;
+            index += 3;
         } else {
-            out.push(chars[i]);
-            i += 1;
+            out.push(chars[index]);
+            index += 1;
         }
     }
     out
@@ -458,24 +458,24 @@ fn parse_bank_transfer(text: &str, locale: Locale) -> InvoiceReading {
 
 fn find_transfer_principal(text: &str) -> Option<i64> {
     let lines: Vec<&str> = text.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
+    for (index, line) in lines.iter().enumerate() {
         let folded_line = folded(line);
         if is_transfer_fee_line(&folded_line) {
             continue;
         }
         if folded_line.contains(TRANSFER_PRINCIPAL_LABEL)
-            && let Some(amount) = amount_on_line_or_next(&lines, i)
+            && let Some(amount) = amount_on_line_or_next(&lines, index)
         {
             return Some(amount);
         }
     }
-    for (i, line) in lines.iter().enumerate() {
+    for (index, line) in lines.iter().enumerate() {
         let folded_line = folded(line);
         if is_transfer_fee_line(&folded_line) {
             continue;
         }
         if is_transfer_amount_label(&folded_line)
-            && let Some(amount) = amount_on_line_or_next(&lines, i)
+            && let Some(amount) = amount_on_line_or_next(&lines, index)
         {
             return Some(amount);
         }
@@ -548,7 +548,7 @@ fn find_transfer_fee(text: &str) -> Option<i64> {
 
 fn find_transfer_payee(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
+    for (index, line) in lines.iter().enumerate() {
         let folded_line = folded(line);
         let beneficiary = folded_line.contains(BENEFICIARY_LABEL)
             || BENEFICIARY_NAME_LABELS
@@ -562,7 +562,7 @@ fn find_transfer_payee(text: &str) -> Option<String> {
         {
             return Some(name);
         }
-        if let Some(next) = lines.get(i + 1)
+        if let Some(next) = lines.get(index + 1)
             && is_plausible_payee(next)
         {
             return Some(next.trim().to_owned());
@@ -598,12 +598,12 @@ fn is_bank_counterparty(folded_name: &str) -> bool {
 
 fn find_transfer_reference(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
+    for (index, line) in lines.iter().enumerate() {
         let folded_line = folded(line);
         if !folded_line.contains(TRANSFER_REFERENCE_LABEL) {
             continue;
         }
-        for candidate in [*line, lines.get(i + 1).copied().unwrap_or("")] {
+        for candidate in [*line, lines.get(index + 1).copied().unwrap_or("")] {
             if let Some(code) = transfer_code_token(candidate) {
                 return Some(code);
             }
@@ -613,8 +613,8 @@ fn find_transfer_reference(text: &str) -> Option<String> {
 }
 
 fn transfer_code_token(line: &str) -> Option<String> {
-    for tok in line.split_whitespace() {
-        let token = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+    for word in line.split_whitespace() {
+        let token = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
         if is_transfer_code(token) {
             return Some(token.to_ascii_uppercase());
         }
@@ -714,15 +714,15 @@ const IDENTIFIER_LINE_MARKERS: &[&str] = &["iban", "α.φ.μ", "αφμ", "mark"]
 fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
     // 1) Strong labeled totals always win — even when PDF extract is jumbled.
     //    Frequency scoring before them could pick the day of a date as euros.
-    if let Some(v) = find_labeled_total(text) {
-        return Some(v);
+    if let Some(total) = find_labeled_total(text) {
+        return Some(total);
     }
 
     // 2) Utility bills: vote among € amounts (with date tokens masked).
     if is_utility_bill(folded_text)
-        && let Some(v) = find_utility_payment_total(text)
+        && let Some(total) = find_utility_payment_total(text)
     {
-        return Some(v);
+        return Some(total);
     }
 
     // 3) Line containing "σύνολα" / "totals" — take the largest plausible amount
@@ -732,12 +732,12 @@ fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
             continue;
         }
         if contains_any(&folded_line, TOTALS_ROW_LABELS)
-            && let Some(v) = money_amounts_on_line(line)
+            && let Some(largest) = money_amounts_on_line(line)
                 .into_iter()
-                .filter(|a| is_plausible_money(*a) && *a > 0)
+                .filter(|amount| is_plausible_money(*amount) && *amount > 0)
                 .max()
         {
-            return Some(v);
+            return Some(largest);
         }
     }
 
@@ -748,34 +748,34 @@ fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
         if is_noise_amount_line(&folded_line) {
             continue;
         }
-        let mut w = 1;
+        let mut line_weight = 1;
         // `αξία` on invoices means line-value; `Ημερομηνία Αξίας` is a value
         // date and must not boost a clock (`7:00` → 700 minor).
         if !is_value_date_line(&folded_line) && contains_any(&folded_line, VALUE_WORDS) {
-            w += 3;
+            line_weight += 3;
         }
         if folded_line.contains('€') {
-            w += 4;
+            line_weight += 4;
         }
         if contains_any(&folded_line, IDENTIFIER_LINE_MARKERS) {
-            w = 0;
+            line_weight = 0;
         }
-        if w == 0 {
+        if line_weight == 0 {
             continue;
         }
-        for a in money_amounts_on_line(line) {
-            if is_plausible_money(a) {
+        for amount in money_amounts_on_line(line) {
+            if is_plausible_money(amount) {
                 // Prefer amounts with cents over bare whole euros (less ID/date-like).
-                let mut score = w;
-                if a % 100 != 0 {
+                let mut score = line_weight;
+                if amount % 100 != 0 {
                     score += 2;
                 }
-                weighted.push((a, score));
+                weighted.push((amount, score));
             }
         }
     }
-    weighted.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
-    weighted.first().map(|(v, _)| *v)
+    weighted.sort_by(|left, right| right.1.cmp(&left.1).then(right.0.cmp(&left.0)));
+    weighted.first().map(|(amount, _)| *amount)
 }
 
 /// Labels that name the amount to pay. A line with one decides the total.
@@ -834,7 +834,7 @@ const VALUE_DATE_LABELS: &[&str] = &["ημερομηνια αξιας", "value d
 
 fn find_labeled_total(text: &str) -> Option<i64> {
     let lines: Vec<&str> = text.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
+    for (index, line) in lines.iter().enumerate() {
         let folded_line = folded(line);
         if is_noise_amount_line(&folded_line) {
             continue;
@@ -843,7 +843,7 @@ fn find_labeled_total(text: &str) -> Option<i64> {
             continue;
         }
         // Same line first, then next line (labels and values often split in PDF extract).
-        for candidate in [*line, lines.get(i + 1).copied().unwrap_or("")] {
+        for candidate in [*line, lines.get(index + 1).copied().unwrap_or("")] {
             if candidate.is_empty() {
                 continue;
             }
@@ -851,12 +851,12 @@ fn find_labeled_total(text: &str) -> Option<i64> {
             if is_noise_amount_line(&folded_candidate) && candidate != *line {
                 continue;
             }
-            if let Some(v) = money_amounts_on_line(candidate)
+            if let Some(largest) = money_amounts_on_line(candidate)
                 .into_iter()
-                .filter(|a| is_plausible_money(*a) && *a > 0)
+                .filter(|amount| is_plausible_money(*amount) && *amount > 0)
                 .max()
             {
-                return Some(v);
+                return Some(largest);
             }
         }
     }
@@ -868,8 +868,8 @@ fn find_labeled_total(text: &str) -> Option<i64> {
 fn find_utility_payment_total(text: &str) -> Option<i64> {
     use std::collections::HashMap;
 
-    let mut score: HashMap<i64, i32> = HashMap::new();
-    let mut freq: HashMap<i64, i32> = HashMap::new();
+    let mut scores: HashMap<i64, i32> = HashMap::new();
+    let mut occurrences: HashMap<i64, i32> = HashMap::new();
 
     for line in text.lines() {
         let folded_line = folded(line);
@@ -882,70 +882,70 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
             continue;
         }
 
-        let short = line.chars().count() <= 40;
+        let is_short = line.chars().count() <= 40;
         let has_euro = line.contains('€');
         let has_date = line_has_date(line);
-        let mostly_amount = is_amount_only_line(line);
-        let pay_label = contains_any(&folded_line, PAYMENT_LABELS);
+        let is_amount_only = is_amount_only_line(line);
+        let has_payment_label = contains_any(&folded_line, PAYMENT_LABELS);
 
-        for a in amounts {
-            if !is_plausible_money(a) {
+        for amount in amounts {
+            if !is_plausible_money(amount) {
                 continue;
             }
             // Bare whole-euro integers (e.g. day-of-month 26 → €26) are almost never
             // the printed payment total on Greek utilities — those show cents.
-            let has_cents = a % 100 != 0;
-            if !has_cents && !mostly_amount && !pay_label {
+            let has_cents = amount % 100 != 0;
+            if !has_cents && !is_amount_only && !has_payment_label {
                 continue;
             }
 
-            let mut s = 1;
+            let mut score = 1;
             if has_euro {
-                s += 12;
+                score += 12;
             }
             if has_cents {
-                s += 16;
+                score += 16;
             } else {
-                s -= 8;
+                score -= 8;
             }
-            if mostly_amount {
-                s += 18;
+            if is_amount_only {
+                score += 18;
             }
             if has_date && has_euro {
-                s += 14;
+                score += 14;
             }
-            if short && has_euro {
-                s += 8;
+            if is_short && has_euro {
+                score += 8;
             }
-            if pay_label {
-                s += 25;
+            if has_payment_label {
+                score += 25;
             }
             // Typical monthly utility total band
-            if (1_000..=50_000).contains(&a) {
-                s += 6;
+            if (1_000..=50_000).contains(&amount) {
+                score += 6;
             }
             // Zone prices / large one-offs are often noise
-            if a >= 100_000 {
-                s -= 10;
+            if amount >= 100_000 {
+                score -= 10;
             }
 
-            *score.entry(a).or_insert(0) += s;
-            *freq.entry(a).or_insert(0) += 1;
+            *scores.entry(amount).or_insert(0) += score;
+            *occurrences.entry(amount).or_insert(0) += 1;
         }
     }
 
     // Frequency bonus (payment total is printed several times on Greek power bills)
-    for (a, f) in &freq {
-        if *f >= 2 {
-            *score.entry(*a).or_insert(0) += f * 10;
+    for (amount, count) in &occurrences {
+        if *count >= 2 {
+            *scores.entry(*amount).or_insert(0) += count * 10;
         }
     }
 
-    score
+    scores
         .into_iter()
-        .filter(|(_, s)| *s > 0)
-        .max_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)))
-        .map(|(a, _)| a)
+        .filter(|(_, score)| *score > 0)
+        .max_by(|left, right| left.1.cmp(&right.1).then(left.0.cmp(&right.0)))
+        .map(|(amount, _)| amount)
 }
 
 fn is_noise_amount_line(folded_line: &str) -> bool {
@@ -988,10 +988,12 @@ fn is_amount_only_line(line: &str) -> bool {
 }
 
 fn line_has_date(line: &str) -> bool {
-    line.split_whitespace().any(|token| {
-        let t =
-            token.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
-        parse_eu_date(t).or_else(|| parse_iso_date(t)).is_some()
+    line.split_whitespace().any(|word| {
+        let token =
+            word.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
+        parse_eu_date(token)
+            .or_else(|| parse_iso_date(token))
+            .is_some()
     })
 }
 
