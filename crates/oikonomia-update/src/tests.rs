@@ -19,7 +19,8 @@ use httptest::responders::status_code;
 use httptest::{Expectation, Server, matchers::request};
 use minisign::{KeyPair, SecretKey};
 use sha2::{Digest, Sha256};
-use std::io::Cursor;
+use std::io::{Cursor, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -1317,4 +1318,111 @@ fn artifact_redirect_to_a_host_off_the_allow_list_is_refused() {
 
     assert_eq!(err.code(), "update_artifact_url");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
+}
+/// Reads from `stream` up to the blank line that ends an HTTP request head.
+fn read_request_head(stream: &mut TcpStream) {
+    let mut head = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        stream.read_exact(&mut byte).expect("request head");
+        head.push(byte[0]);
+    }
+}
+
+/// Answers the first request on a fresh loopback port with `total_bytes` zero
+/// bytes, written `piece_bytes` at a time with `pause` before each write.
+///
+/// httptest sends a body in one piece; this server exists for the tests that
+/// need a body to arrive slowly or to be larger than is worth holding twice.
+fn serve_zero_bytes(total_bytes: usize, piece_bytes: usize, pause: Duration) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let address = listener.local_addr().expect("address");
+
+    std::thread::spawn(move || {
+        let (mut stream, _peer) = listener.accept().expect("accept");
+        read_request_head(&mut stream);
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {total_bytes}\r\nConnection: close\r\n\r\n"
+        )
+        .expect("response head");
+
+        let piece = vec![0_u8; piece_bytes];
+        let mut remaining = total_bytes;
+        while remaining > 0 {
+            std::thread::sleep(pause);
+            let length = remaining.min(piece_bytes);
+            // A client that stops at its size cap closes the connection with
+            // bytes still unsent; that ends this server, it is not a failure.
+            if stream.write_all(&piece[..length]).is_err() {
+                return;
+            }
+            remaining -= length;
+        }
+    });
+
+    address
+}
+
+/// Serves a signed 0.2.0 manifest on `server` whose artifact is `payload` at
+/// `artifact_address`, and returns a config for an app at 0.1.0 that may
+/// fetch from both.
+fn config_for_artifact_at(
+    server: &Server,
+    keys: (&str, &SecretKey),
+    artifact_address: SocketAddr,
+    payload: &[u8],
+    cache: &Path,
+) -> ClientConfig {
+    let (public_key, secret_key) = keys;
+    let body = static_manifest(
+        "0.2.0",
+        "notes",
+        &format!("http://{artifact_address}/Oikonomia.AppImage"),
+        &sign(secret_key, payload),
+        &sha256_hex(payload),
+    );
+    let signature = sign(secret_key, body.as_bytes());
+    serve_signed_manifest(server, &body, &signature);
+
+    let feed_host = server_url(server, "/").host_str().expect("host").to_owned();
+    ClientConfig::for_test(
+        server_url(server, "/latest.json"),
+        public_key,
+        "0.1.0",
+        "linux-x86_64",
+        cache.to_path_buf(),
+        HostPolicy::test_http_hosts([feed_host, artifact_address.ip().to_string()]),
+        Duration::from_millis(500),
+    )
+    .expect("config")
+}
+
+fn available_offer(config: &ClientConfig) -> VerifiedOffer {
+    match perform_check(config) {
+        CheckOutcome::Available(offer) => offer,
+        outcome => panic!("expected an offer, got {outcome:?}"),
+    }
+}
+
+#[test]
+fn artifact_download_may_outlast_the_feed_deadline_while_bytes_keep_arriving() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    // Four writes 300 ms apart: 1.2 s in all, against a 500 ms feed deadline.
+    let payload = [0_u8; 4];
+    let artifact_address = serve_zero_bytes(payload.len(), 1, Duration::from_millis(300));
+    let config = config_for_artifact_at(
+        &server,
+        (&pk, &sk),
+        artifact_address,
+        &payload,
+        cache.path(),
+    );
+    let offer = available_offer(&config);
+
+    let path = download_and_verify(&config, &offer).expect("slow download");
+
+    assert_eq!(std::fs::read(&path).expect("read"), payload);
 }

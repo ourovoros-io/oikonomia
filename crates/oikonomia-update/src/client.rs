@@ -22,12 +22,30 @@ use url::Url;
 pub const UPDATE_FEED_URL: &str =
     "https://github.com/ourovoros-io/oikonomia/releases/latest/download/latest.json";
 
+/// Bounds the feed body held in memory.
 const MAX_MANIFEST_BYTES: usize = 1_048_576;
+
+/// Bounds the detached feed signature held in memory.
 const MAX_SIGNATURE_BYTES: usize = 16_384;
+
+/// Bounds the artifact held in memory while it is verified.
 const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
+
 /// Bounds how many redirects one fetch follows before it is given up.
 pub(crate) const MAX_REDIRECTS: u8 = 5;
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Bounds one whole feed or signature request: connecting, then everything up
+/// to the last byte of the body. A redirect starts a new request with a new
+/// deadline. ureq cannot interrupt a DNS lookup, which may add to this.
+const METADATA_DEADLINE: Duration = Duration::from_secs(20);
+
+/// Bounds opening the connection for one artifact request.
+const ARTIFACT_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Bounds each socket read of an artifact response. A download that stalls
+/// for this long fails; one that keeps delivering bytes has no time limit,
+/// because an artifact of up to [`MAX_ARTIFACT_BYTES`] can take minutes.
+const ARTIFACT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `{os}-{arch}` used by Tauri static manifests (`linux-x86_64`, `darwin-aarch64`).
 #[must_use]
@@ -76,7 +94,7 @@ pub struct ClientConfig {
     public_key: PublicKey,
     current_version: Version,
     platform: String,
-    timeout: Duration,
+    metadata_deadline: Duration,
     cache_dir: PathBuf,
     host_policy: HostPolicy,
     install_route: InstallRoute,
@@ -108,7 +126,7 @@ impl ClientConfig {
             current_updater_platform(),
             cache_dir,
             host_policy,
-            DEFAULT_TIMEOUT,
+            METADATA_DEADLINE,
         )?;
         Ok(Self {
             install_route,
@@ -123,7 +141,7 @@ impl ClientConfig {
         platform: String,
         cache_dir: PathBuf,
         host_policy: HostPolicy,
-        timeout: Duration,
+        metadata_deadline: Duration,
     ) -> Result<Self> {
         let public_key = parse_public_key(public_key)?;
         let current_version = current_version.trim().trim_start_matches('v');
@@ -134,7 +152,7 @@ impl ClientConfig {
             public_key,
             current_version,
             platform,
-            timeout,
+            metadata_deadline,
             cache_dir,
             host_policy,
             install_route: InstallRoute::InApp,
@@ -159,7 +177,7 @@ impl ClientConfig {
         platform: impl Into<String>,
         cache_dir: PathBuf,
         host_policy: HostPolicy,
-        timeout: Duration,
+        metadata_deadline: Duration,
     ) -> Result<Self> {
         Self::new(
             feed_url,
@@ -168,7 +186,7 @@ impl ClientConfig {
             platform.into(),
             cache_dir,
             host_policy,
-            timeout,
+            metadata_deadline,
         )
     }
 
@@ -246,6 +264,38 @@ struct RawPlatform {
     sha256: String,
 }
 
+/// What a fetch is for. That fixes its size cap, its time limits, and whether
+/// the request tells the server which copy of the app is asking.
+#[derive(Debug, Clone, Copy)]
+enum Resource {
+    /// The `latest.json` feed.
+    Manifest,
+    /// The detached minisign signature over the feed.
+    ManifestSignature,
+    /// The platform artifact a verified manifest names.
+    Artifact,
+}
+
+impl Resource {
+    fn max_bytes(self) -> usize {
+        match self {
+            Self::Manifest => MAX_MANIFEST_BYTES,
+            Self::ManifestSignature => MAX_SIGNATURE_BYTES,
+            Self::Artifact => MAX_ARTIFACT_BYTES,
+        }
+    }
+
+    /// Only the feed endpoints are told the version and platform: a feed
+    /// server may answer 204 from them. The artifact URL comes from the
+    /// manifest and is fetched exactly as signed.
+    fn names_this_copy(self) -> bool {
+        match self {
+            Self::Manifest | Self::ManifestSignature => true,
+            Self::Artifact => false,
+        }
+    }
+}
+
 enum FetchFail {
     Network,
     Denied,
@@ -267,8 +317,7 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
 /// Runs the check and keeps the cause of a failure, which [`perform_check`]
 /// logs and reduces to [`CheckOutcome::Failed`].
 pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome> {
-    let (final_url, body, status) =
-        fetch_bytes(config, &config.feed_url, MAX_MANIFEST_BYTES, true)?;
+    let (final_url, body, status) = fetch_bytes(config, &config.feed_url, Resource::Manifest)?;
     if status == 204 {
         return Ok(CheckOutcome::UpToDate);
     }
@@ -278,7 +327,7 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 
     let signature_url = signature_url_for(&final_url);
     let (_sig_url, signature_bytes, sig_status) =
-        fetch_bytes(config, &signature_url, MAX_SIGNATURE_BYTES, true)?;
+        fetch_bytes(config, &signature_url, Resource::ManifestSignature)?;
     if sig_status != 200 {
         return Err(UpdateError::ManifestSignature);
     }
@@ -375,8 +424,7 @@ fn download_and_verify_inner(
     {
         return Err(UpdateError::ArtifactUrl);
     }
-    let (_url, bytes, status) =
-        fetch_bytes(config, &offer.artifact_url, MAX_ARTIFACT_BYTES, false)?;
+    let (_url, bytes, status) = fetch_bytes(config, &offer.artifact_url, Resource::Artifact)?;
     if status != 200 {
         return Err(UpdateError::Network);
     }
@@ -505,17 +553,16 @@ fn signature_url_for(feed: &Url) -> Url {
 fn fetch_bytes(
     config: &ClientConfig,
     url: &Url,
-    max_bytes: usize,
-    attach_identity: bool,
+    resource: Resource,
 ) -> std::result::Result<(Url, Vec<u8>, u16), UpdateError> {
     let mut url = url.clone();
-    if attach_identity {
+    if resource.names_this_copy() {
         attach_version_os_arch(&mut url, config);
     }
     if !config.host_policy.is_allowed_fetch_url(&url) {
         return Err(UpdateError::ArtifactUrl);
     }
-    match fetch_once(config, &url, max_bytes) {
+    match fetch_once(config, &url, resource) {
         Ok((bytes, status)) => Ok((url, bytes, status)),
         Err(FetchFail::Denied) => Err(UpdateError::ArtifactUrl),
         Err(FetchFail::TooLarge | FetchFail::Network) => Err(UpdateError::Network),
@@ -525,13 +572,9 @@ fn fetch_bytes(
 fn fetch_once(
     config: &ClientConfig,
     start: &Url,
-    max_bytes: usize,
+    resource: Resource,
 ) -> std::result::Result<(Vec<u8>, u16), FetchFail> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(config.timeout)
-        .redirects(0)
-        .user_agent(&format!("Oikonomia/{}", config.current_version))
-        .build();
+    let agent = agent_for(config, resource);
 
     let mut url = start.clone();
     let mut redirects_followed = 0_u8;
@@ -550,7 +593,7 @@ fn fetch_once(
 
         match response.status() {
             200 => {
-                let bytes = read_capped(response, max_bytes)?;
+                let bytes = read_capped(response, resource.max_bytes())?;
                 return Ok((bytes, 200));
             }
             204 => return Ok((Vec::new(), 204)),
@@ -568,6 +611,29 @@ fn fetch_once(
             _ => return Err(FetchFail::Network),
         }
     }
+}
+
+/// Builds the agent for one fetch, with the time limits `resource` calls for.
+fn agent_for(config: &ClientConfig, resource: Resource) -> ureq::Agent {
+    let builder = ureq::AgentBuilder::new()
+        .redirects(0)
+        .user_agent(&format!("Oikonomia/{}", config.current_version));
+
+    let builder = match resource {
+        // `timeout` is ureq's overall deadline, but `timeout_connect` takes
+        // precedence over it and defaults to 30 seconds (`AgentBuilder`
+        // docs), so the connect phase is bounded by the same value.
+        Resource::Manifest | Resource::ManifestSignature => builder
+            .timeout_connect(config.metadata_deadline)
+            .timeout(config.metadata_deadline),
+        // No overall deadline: it would also cap how long reading the body
+        // may take, and the artifact is far larger than the feed.
+        Resource::Artifact => builder
+            .timeout_connect(ARTIFACT_CONNECT_TIMEOUT)
+            .timeout_read(ARTIFACT_READ_TIMEOUT),
+    };
+
+    builder.build()
 }
 
 fn is_redirect(code: u16) -> bool {
