@@ -1,4 +1,4 @@
-//! Ledger schema for the encrypted vault database, and its migrations.
+//! The schema of the encrypted vault database, and its migrations.
 //!
 //! `vault_meta.schema_version` records the last migration a vault has run.
 //! [`migrate`] runs every step of [`MIGRATIONS`] above that version, in order.
@@ -16,16 +16,19 @@
 //! 2. Append `(N, migrate_vN)` to [`MIGRATIONS`] and set
 //!    [`CURRENT_SCHEMA_VERSION`] to `N`.
 //! 3. Add `tests/migration_vN.rs` that takes a vault from `N - 1` to `N`.
+//! 4. Name the new version in the Schema section of `AGENTS.md`.
 //!
 //! Never edit a step that has shipped: a vault that already ran it will not
 //! run it again, so the change would reach new vaults only.
+
+use std::collections::HashSet;
 
 use rusqlite::{Connection, Transaction};
 
 use crate::db::collect_rows;
 use crate::error::{Error, Result};
 
-/// Latest schema version applied by migrations.
+/// The schema version [`migrate`] brings a vault to.
 pub const CURRENT_SCHEMA_VERSION: i64 = 7;
 
 /// One schema change, made through the transaction the runner opened for it.
@@ -44,7 +47,10 @@ const MIGRATIONS: &[(i64, Migration)] = &[
     (7, migrate_v7),
 ];
 
-/// Applies pending migrations. Safe to call on every unlock.
+/// Applies the migrations a vault has not run yet.
+///
+/// A vault already at [`CURRENT_SCHEMA_VERSION`] is left untouched, so this is
+/// called on every unlock.
 ///
 /// # Errors
 ///
@@ -53,7 +59,8 @@ const MIGRATIONS: &[(i64, Migration)] = &[
 ///   does not know its schema. Nothing is changed.
 /// - [`Error::VaultCorrupt`] when existing data cannot satisfy a constraint a
 ///   step adds (the v5 step and journal lines that are not debit XOR credit).
-/// - [`Error::Io`] on SQL failures.
+/// - [`Error::Io`] when the schema version cannot be read or a statement of a
+///   step fails.
 ///
 /// A failed step is rolled back and the steps before it stay applied.
 pub fn migrate(conn: &Connection) -> Result<()> {
@@ -81,6 +88,12 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 }
 
 /// Runs `step` and records `target` as the vault's version, atomically.
+///
+/// # Errors
+///
+/// The error of `step`, or [`Error::Io`] when the transaction cannot be
+/// opened, the version cannot be written, or the commit fails. In every case
+/// the vault is as it was before the call.
 fn apply_migration(conn: &Connection, target: i64, step: Migration) -> Result<()> {
     // Dropping the transaction on an early return rolls it back.
     let tx = conn
@@ -109,6 +122,7 @@ fn migrate_v3(tx: &Transaction<'_>) -> Result<()> {
         .map_err(|err| Error::Io(err.to_string()))
 }
 
+/// The tables and indexes [`migrate_v2`] creates.
 const SCHEMA_V2: &str = r"
 CREATE TABLE IF NOT EXISTS entities (
     id TEXT PRIMARY KEY NOT NULL,
@@ -166,6 +180,8 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 ";
 
+/// The `documents` table as [`migrate_v3`] creates it; [`migrate_v4`]
+/// rebuilds it with stricter constraints.
 const SCHEMA_V3: &str = r"
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY NOT NULL,
@@ -183,16 +199,18 @@ CREATE INDEX IF NOT EXISTS idx_documents_entity ON documents(entity_id);
 CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
 ";
 
-/// v4: documents must be linked (`entry_id NOT NULL`) and uniquely named per
-/// book (`UNIQUE(entity_id, filename)`). `SQLite` cannot add constraints in
-/// place, so the table is rebuilt after cleaning existing data.
+/// v4: every document is linked to an entry and uniquely named in its book.
 ///
-/// The whole rebuild (orphan delete, dedup renames, table rebuild) and the
-/// version bump share the runner's transaction: `SQLite` DDL is
-/// transactional, so a crash mid-migration rolls back wholesale rather than
-/// leave `documents_v4` half-built with `schema_version` still at 3. That
-/// shape would make every later unlock re-enter this function and fail
-/// forever on `documents_v4` already existing (a bricked vault).
+/// The constraints are `entry_id NOT NULL` and `UNIQUE(entity_id, filename)`.
+/// `SQLite` cannot add a constraint in place, so the table is rebuilt after
+/// the existing data is cleaned: documents without an entry are deleted and
+/// duplicate names get a numeric suffix.
+///
+/// The clean-up, the rebuild and the version bump share the runner's
+/// transaction. `SQLite` DDL is transactional, so a crash part-way rolls all
+/// of it back. Otherwise `documents_v4` could be left half-built with
+/// `schema_version` still at 3, and every later unlock would run this step
+/// again and fail on the table that already exists.
 fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
     let deleted = tx
         .execute("DELETE FROM documents WHERE entry_id IS NULL", [])
@@ -230,12 +248,15 @@ fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
     .map_err(|err| Error::Io(err.to_string()))
 }
 
-/// v5: `journal_lines` must be debit XOR credit. `SQLite` cannot add a CHECK
-/// in place, so the table is rebuilt. Existing data is copied only if every
-/// line already satisfies the invariant — a violating row is a corrupt book
-/// and must fail the migration rather than be silently dropped.
+/// v5: every journal line is a debit or a credit, never both and never
+/// neither.
+///
+/// `SQLite` cannot add a `CHECK` in place, so the table is rebuilt. Existing
+/// lines are copied only if every one already satisfies the rule: a line that
+/// does not is a corrupt book, and the step fails with
+/// [`Error::VaultCorrupt`] instead of dropping it.
 fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
-    let bad: i64 = tx
+    let violations: i64 = tx
         .query_row(
             "
             SELECT COUNT(1) FROM journal_lines
@@ -245,9 +266,9 @@ fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
             |row| row.get(0),
         )
         .map_err(|err| Error::Io(err.to_string()))?;
-    if bad > 0 {
+    if violations > 0 {
         return Err(Error::VaultCorrupt(format!(
-            "cannot migrate to v5: {bad} journal line(s) are not debit XOR credit"
+            "cannot migrate to v5: {violations} journal line(s) are not debit XOR credit"
         )));
     }
 
@@ -275,13 +296,13 @@ fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
     .map_err(|err| Error::Io(err.to_string()))
 }
 
-/// v6: per-entry owner-only hidden flag on `journal_entries`.
+/// v6: the `hidden` flag on `journal_entries`.
 ///
-/// `0` = visible (default), `1` = hidden: left out of the journal CSV export
-/// and of the accountant profit and loss
-/// ([`crate::ledger::profit_and_loss_export`]). The owner still sees hidden
-/// rows in list/get/register. Existing pre-v6 rows become visible via
-/// `DEFAULT 0`. Not extra encryption.
+/// `0` is visible and `1` is hidden: left out of the journal CSV export and
+/// of the accountant profit and loss
+/// ([`crate::ledger::profit_and_loss_export`]). Inside the app the owner still
+/// sees a hidden entry. Entries that existed before this step become visible
+/// through `DEFAULT 0`. The flag is not a second layer of encryption.
 fn migrate_v6(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
         "
@@ -292,10 +313,10 @@ fn migrate_v6(tx: &Transaction<'_>) -> Result<()> {
     .map_err(|err| Error::Io(err.to_string()))
 }
 
-/// v7: local-only recurring entry templates in the encrypted vault.
+/// v7: the `recurring_templates` table.
 ///
-/// No calendar sync, no network, no auto-post. `next_date` is advanced only
-/// after an explicit user post. Role-account columns match
+/// A template is posted only when the user asks, and `next_date` moves only
+/// after such a post. The five role-account columns are those of
 /// [`crate::ledger::PostSimpleEntry`].
 fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
@@ -329,10 +350,16 @@ fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
     .map_err(|err| Error::Io(err.to_string()))
 }
 
-/// Give later-created duplicates a numeric suffix; the oldest keeps its name.
+/// Renames documents so that no two in one book share a filename.
+///
+/// The oldest document of a name keeps it. Each later one gets the lowest
+/// numeric suffix, from 2, that gives a name no older document of the book
+/// has ([`suffixed_name`]).
+///
+/// # Errors
+///
+/// [`Error::Io`] when the documents cannot be read or a rename fails.
 fn dedup_document_names(conn: &Connection) -> Result<()> {
-    use std::collections::HashSet;
-
     let rows: Vec<(String, String, String)> = {
         let mut stmt = conn
             .prepare(
@@ -349,10 +376,10 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
     let mut taken: HashSet<(String, String)> = HashSet::new();
     for (id, entity_id, filename) in rows {
         let mut name = filename.clone();
-        let mut n = 2;
+        let mut suffix = 2;
         while taken.contains(&(entity_id.clone(), name.clone())) {
-            name = suffixed_name(&filename, n);
-            n += 1;
+            name = suffixed_name(&filename, suffix);
+            suffix += 1;
         }
         if name != filename {
             log::info!("v4 migration: renamed duplicate document to {name}");
@@ -367,11 +394,15 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// `invoice.pdf` + 2 → `invoice (2).pdf`; extensionless names get ` (2)`.
-fn suffixed_name(filename: &str, n: usize) -> String {
+/// Returns `filename` with ` (suffix)` before its last extension:
+/// `invoice.pdf` and 2 give `invoice (2).pdf`.
+///
+/// A name with no extension, or with nothing before its only dot
+/// (`.hidden`), gets the suffix at the end.
+fn suffixed_name(filename: &str, suffix: usize) -> String {
     match filename.rsplit_once('.') {
-        Some((stem, extension)) if !stem.is_empty() => format!("{stem} ({n}).{extension}"),
-        _ => format!("{filename} ({n})"),
+        Some((stem, extension)) if !stem.is_empty() => format!("{stem} ({suffix}).{extension}"),
+        _ => format!("{filename} ({suffix})"),
     }
 }
 
