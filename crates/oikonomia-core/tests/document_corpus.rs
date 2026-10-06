@@ -15,6 +15,7 @@ use oikonomia_core::documents::{
 };
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::prefs::Locale;
+use oikonomia_core::ui_text::UiTextCode;
 use serde::{Deserialize, Serialize};
 
 const CORPUS_REL: &str = "testdata/documents";
@@ -287,10 +288,6 @@ fn is_private_row(entry: &ManifestEntry) -> bool {
         || entry.golden.starts_with("private/")
 }
 
-fn dump_enabled() -> bool {
-    std::env::var_os("DUMP_DOCUMENT_GOLDENS").is_some()
-}
-
 fn write_golden(path: &Path, suggestion: &DocumentSuggestion) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("golden dir");
@@ -376,14 +373,7 @@ fn golden_corpus_matches_parser() {
 
         let bytes = fs::read(&input_path).expect("fixture bytes");
         let suggestion = suggest_for(entry, &bytes);
-        let golden_path = root.join(&entry.golden);
-
-        if dump_enabled() && !golden_path.is_file() {
-            write_golden(&golden_path, &suggestion);
-            continue;
-        }
-
-        let golden = load_golden(&golden_path);
+        let golden = load_golden(&root.join(&entry.golden));
         assert_against_golden(&entry.id, &suggestion, &golden);
         compared += 1;
     }
@@ -441,11 +431,18 @@ fn text_mime_analyze_path_matches_invoice_reader() {
     assert_eq!(transfer_analyze.reference, transfer_parse.reference);
 }
 
+/// Writes a starter golden for every manifest row that has none.
+///
+/// A generator, not a check: it writes into `testdata/`, so it never runs
+/// with the suite. Run it by hand after adding a fixture, then review every
+/// field of the new file before committing it:
+///
+/// ```text
+/// cargo test -p oikonomia-core --test document_corpus write_missing_goldens -- --ignored
+/// ```
 #[test]
+#[ignore = "generator: writes golden files into testdata; run by hand"]
 fn write_missing_goldens() {
-    if !dump_enabled() {
-        return;
-    }
     let manifest = load_manifest();
     let root = corpus_root();
     for entry in &manifest.documents {
@@ -494,15 +491,89 @@ fn jpeg_ocr_smoke() {
     )
     .expect("analyze jpeg");
 
-    let golden_path = root.join("golden/english_total_jpeg.json");
-    if golden_path.is_file() {
-        let golden = load_golden(&golden_path);
-        // OCR is best-effort: lock fields only when the golden exists and OCR
-        // produced a comparable amount. Missing amount is not a CI failure.
-        if suggestion.amount_minor.is_some() {
-            assert_against_golden("english-total-jpeg", &suggestion, &golden);
-        }
-    }
+    let golden = load_golden(&root.join("golden/english_total_jpeg.json"));
+    assert_against_golden("english-total-jpeg", &suggestion, &golden);
+}
+
+/// A one-page PDF whose only content is an image stream marked as a JPEG
+/// and holding `image_bytes`.
+fn scanned_pdf(image_bytes: &[u8]) -> Vec<u8> {
+    use pdf_extract::{Document, Object, Stream, dictionary};
+
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+
+    let image_id = doc.add_object(Stream::new(
+        dictionary! { "Type" => "XObject", "Subtype" => "Image", "Filter" => "DCTDecode" },
+        image_bytes.to_vec(),
+    ));
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image_id } },
+        "MediaBox" => vec![0.into(), 0.into(), 100.into(), 100.into()],
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page_id.into()],
+            "Count" => 1,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog_id);
+
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("serialize test pdf");
+    bytes
+}
+
+fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
+    analyze_document_bytes(
+        "scan.pdf",
+        "application/pdf",
+        pdf,
+        &AnalyzeContext {
+            template: ChartTemplate::Blank,
+            accounts: &[],
+            default_currency: "EUR",
+            locale: Locale::En,
+        },
+        Some(model_dir),
+    )
+    .expect("analyze pdf")
+}
+
+/// Runs in this file because it loads the real models: the engine is one
+/// per process, and once loaded it hides a missing model directory from the
+/// unit tests that check for one.
+#[test]
+fn a_scanned_pdf_is_read_through_its_image_or_says_why_not() {
+    let Some(model_dir) = bundled_ocr_dir() else {
+        assert!(!analyzer_status(None).ocr_available);
+        return;
+    };
+    let root = corpus_root();
+    let jpeg = fs::read(root.join("synthetic/image/english_total.jpg")).expect("jpeg");
+
+    let read = analyze_pdf(&scanned_pdf(&jpeg), model_dir.as_path());
+    let golden = load_golden(&root.join("golden/english_total_jpeg.json"));
+    assert_against_golden("english-total-jpeg-in-pdf", &read, &golden);
+    assert_eq!(
+        read.notes.first().map(|note| note.code),
+        Some(UiTextCode::OcrPdfImage)
+    );
+
+    let unreadable = analyze_pdf(&scanned_pdf(b"not a jpeg"), model_dir.as_path());
+    assert_eq!(
+        unreadable
+            .notes
+            .iter()
+            .map(|note| note.code)
+            .collect::<Vec<_>>(),
+        [UiTextCode::OcrFailed]
+    );
 }
 
 /// The accounts a suggestion points at, as chart codes, and the entry kind.

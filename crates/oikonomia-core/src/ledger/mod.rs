@@ -1,4 +1,17 @@
 //! Persistence and queries for double-entry books.
+//!
+//! # Overflow
+//!
+//! Amounts are `i64` minor units. A balance or total that does not fit is
+//! never clamped or wrapped, because a wrong figure would be reported as a
+//! right one: every addition and subtraction on amounts in this module is
+//! checked and returns [`Error::MoneyOverflow`](crate::error::Error::MoneyOverflow).
+//!
+//! Totals that `SQLite` adds up with `SUM` are covered too, by a different
+//! route: `SUM` over integers raises an error on overflow instead of wrapping
+//! (<https://www.sqlite.org/lang_aggfunc.html#sumunc>), so the query fails.
+//! That failure is reported as [`Error::Io`](crate::error::Error::Io), not as
+//! `MoneyOverflow`.
 
 mod accounts;
 mod balance;

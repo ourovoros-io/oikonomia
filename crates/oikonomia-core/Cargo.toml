@@ -14,6 +14,9 @@ argon2 = { workspace = true }
 base64 = { workspace = true }
 csv = { workspace = true }
 directories = { workspace = true }
+# The decoders lopdf uses, declared so the PDF budget can count decoded bytes
+# with a cap; both are already in the build through lopdf.
+flate2 = "1"
 image = { workspace = true }
 log = "0.4"
 ocrs = { workspace = true }
@@ -25,12 +28,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
-tracing = { workspace = true }
 uuid = { workspace = true }
+weezl = "0.1"
 zeroize = { workspace = true }
 
 [dev-dependencies]
 rand = { workspace = true }
+# `limits` lets a test lower SQLite's bound-variable limit on its connection.
+rusqlite = { workspace = true, features = ["limits"] }
 tempfile = { workspace = true }
 
 [lints]

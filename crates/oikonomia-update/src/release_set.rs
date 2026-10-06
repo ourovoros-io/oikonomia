@@ -9,9 +9,11 @@ use thiserror::Error;
 
 /// Whether the Windows installer in a draft is published.
 ///
-/// The release workflow always builds it, to prove the build. It is withheld
-/// until it is code-signed: an unsigned installer shows the "Windows
-/// protected your PC" warning.
+/// The release workflow always builds it. Promotion publishes it only when
+/// the repository's `WINDOWS_SIGNING` variable records a deliberate choice
+/// (today only `none`: shipped without Authenticode, so a first install
+/// shows the "Windows protected your PC" warning). The in-app update of
+/// either kind is verified with the updater minisign key, not Authenticode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowsBuild {
     /// Leave the installer out of the feed and delete it from the release.
@@ -189,6 +191,49 @@ fn platforms(windows: WindowsBuild) -> Vec<FeedPlatform> {
     }
 }
 
+/// The platform keys `latest.json` holds for this release, no more and no
+/// fewer, in a stable order.
+#[must_use]
+pub fn feed_platform_keys(windows: WindowsBuild) -> Vec<&'static str> {
+    platforms(windows)
+        .iter()
+        .map(|platform| platform.key)
+        .collect()
+}
+
+/// One installer the update client can be asked to download.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpdaterArtifactKind {
+    /// Feed key, for example `windows-x86_64`.
+    pub platform: &'static str,
+    /// File-name suffix of the artifact that key installs.
+    pub suffix: &'static str,
+}
+
+/// Every artifact a client downloads, Windows included.
+///
+/// Promotion can withhold Windows, but the Windows release job still builds
+/// the installer. The size gate has to recognize it there, before a feed
+/// exists.
+#[must_use]
+pub const fn updater_artifact_kinds() -> &'static [UpdaterArtifactKind] {
+    const KINDS: [UpdaterArtifactKind; 3] = [
+        UpdaterArtifactKind {
+            platform: MACOS.key,
+            suffix: MACOS.suffix,
+        },
+        UpdaterArtifactKind {
+            platform: LINUX.key,
+            suffix: LINUX.suffix,
+        },
+        UpdaterArtifactKind {
+            platform: WINDOWS.key,
+            suffix: WINDOWS.suffix,
+        },
+    ];
+    &KINDS
+}
+
 /// The `(platform key, file name)` pairs for `latest.json`.
 ///
 /// Every platform in the set needs exactly one artifact among `file_names`.
@@ -294,8 +339,9 @@ pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
 mod tests {
     use super::{
         CHECKSUMS_FILE, FIXED_LINUX_APPIMAGE, FIXED_LINUX_DEB, FIXED_MACOS_DMG,
-        FIXED_WINDOWS_SETUP, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets,
-        feed_entries, fixed_name_copies, fixed_names, is_published_asset,
+        FIXED_WINDOWS_SETUP, ReleaseSetError, UpdaterArtifactKind, WindowsBuild, checksum_line,
+        checksummed_assets, feed_entries, feed_platform_keys, fixed_name_copies, fixed_names,
+        is_published_asset, updater_artifact_kinds,
     };
     use crate::client::current_updater_platform;
 
@@ -337,6 +383,79 @@ mod tests {
             Some(&("windows-x86_64", "Oikonomia_0.2.0_x64-setup.exe"))
         );
         assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn updater_artifact_kinds_are_the_feed_suffixes_including_windows() {
+        assert_eq!(
+            updater_artifact_kinds(),
+            &[
+                UpdaterArtifactKind {
+                    platform: "darwin-aarch64",
+                    suffix: ".app.tar.gz",
+                },
+                UpdaterArtifactKind {
+                    platform: "linux-x86_64",
+                    suffix: ".AppImage",
+                },
+                UpdaterArtifactKind {
+                    platform: "windows-x86_64",
+                    suffix: "-setup.exe",
+                },
+            ]
+        );
+
+        let entries = feed_entries(&DRAFT, WindowsBuild::Published).expect("entries");
+        for (key, name) in entries {
+            assert!(
+                updater_artifact_kinds()
+                    .iter()
+                    .any(|kind| { kind.platform == key && name.ends_with(kind.suffix) }),
+                "{key} {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn feed_platform_keys_follow_the_windows_choice() {
+        assert_eq!(
+            feed_platform_keys(WindowsBuild::Withheld),
+            ["darwin-aarch64", "linux-x86_64"]
+        );
+        assert_eq!(
+            feed_platform_keys(WindowsBuild::Published),
+            ["darwin-aarch64", "linux-x86_64", "windows-x86_64"]
+        );
+
+        // The keys a verifier expects are exactly the ones assembly fills.
+        let entries = feed_entries(&DRAFT, WindowsBuild::Published).expect("entries");
+        let keys: Vec<&str> = entries.iter().map(|(key, _)| *key).collect();
+        assert_eq!(keys, feed_platform_keys(WindowsBuild::Published));
+    }
+
+    #[test]
+    fn fixed_names_with_windows_are_the_four_site_downloads() {
+        assert_eq!(
+            fixed_names(WindowsBuild::Published),
+            [
+                FIXED_MACOS_DMG,
+                FIXED_LINUX_APPIMAGE,
+                FIXED_LINUX_DEB,
+                FIXED_WINDOWS_SETUP
+            ]
+        );
+    }
+
+    #[test]
+    fn checksum_file_covers_all_four_downloads_when_windows_is_published() {
+        let mut release = DRAFT.to_vec();
+        release.extend(fixed_names(WindowsBuild::Published));
+        let listed = checksummed_assets(&release, WindowsBuild::Published);
+
+        for name in fixed_names(WindowsBuild::Published) {
+            assert!(listed.contains(&name), "{name} missing from SHA256SUMS");
+        }
+        assert!(listed.contains(&"Oikonomia_0.2.0_x64-setup.exe.sig"));
     }
 
     #[test]

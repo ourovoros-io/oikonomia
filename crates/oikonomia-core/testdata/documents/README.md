@@ -60,7 +60,7 @@ documents/
 3. Emit a starter golden (review every field before committing):
 
    ```bash
-   DUMP_DOCUMENT_GOLDENS=1 cargo test -p oikonomia-core --test document_corpus -- write_missing_goldens
+   cargo test -p oikonomia-core --test document_corpus write_missing_goldens -- --ignored
    ```
 
 4. Trim the JSON to the fields you want to lock. The harness asserts a field
@@ -79,7 +79,10 @@ parser rule). Include those tokens in a fixture when you want that lock.
 `synthetic/image/english_total.jpg` exercises `analyze_document_bytes` on
 `image/jpeg`. Bundled `ocrs` models (`text-detection.rten`,
 `text-recognition.rten`) are **not** in this crate and are not downloaded by
-CI. If `analyzer_status` reports models missing, the smoke test skips.
+CI; they are checked in under `apps/desktop/src-tauri/resources/ocr`. When they
+are present the smoke test compares the suggestion with
+`golden/english_total_jpeg.json`, whatever OCR returned. If `analyzer_status`
+reports models missing, the smoke test only checks that status.
 
 ## Private local run
 

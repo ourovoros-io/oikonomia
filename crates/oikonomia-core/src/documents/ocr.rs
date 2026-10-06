@@ -3,17 +3,17 @@
 //! Models are small (~12 MB total) and run entirely on-device. No network,
 //! no Ollama, no external services.
 //!
-//! Receipts: best-effort preprocessing (upscale, contrast) before OCR.
+//! Receipts: best-effort preprocessing (resampling into a bounded size,
+//! contrast) before OCR.
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use image::imageops::{self, FilterType};
-use image::{DynamicImage, ImageReader, RgbImage};
+use image::{DynamicImage, ImageReader, Limits, RgbImage};
 use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
 use rten::Model;
-use tracing::info;
 
 use crate::error::{Error, Result};
 
@@ -90,10 +90,10 @@ pub fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
         )));
     }
 
-    info!(
-        detection = %paths.detection.display(),
-        recognition = %paths.recognition.display(),
-        "loading bundled OCR models"
+    log::info!(
+        "loading bundled OCR models from {} and {}",
+        paths.detection.display(),
+        paths.recognition.display()
     );
 
     let detection = Model::load_file(&paths.detection)
@@ -115,25 +115,88 @@ pub fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
 /// Run OCR on an image (PNG/JPEG/WebP bytes) and return plain text lines joined.
 ///
 /// Applies best-effort preprocessing for phone photos / receipts: orientation is
-/// left as stored; small images are upscaled; mild contrast boost.
+/// left as stored; the image is resampled into a bounded size; mild contrast
+/// boost.
 ///
 /// # Errors
 ///
-/// Decode failure or OCR runtime error.
+/// Missing models, an image that does not decode or is over the decoding
+/// limits, an image with a zero side or too elongated to read, or an OCR
+/// runtime error.
 pub fn ocr_image_bytes(paths: &OcrModelPaths, data: &[u8]) -> Result<String> {
     ensure_engine(paths)?;
 
-    let dyn_img = ImageReader::new(Cursor::new(data))
-        .with_guessed_format()
-        .map_err(|e| Error::Analysis(format!("image format: {e}")))?
-        .decode()
-        .map_err(|e| Error::Analysis(format!("decode image: {e}")))?;
-
-    let prepared = preprocess_for_receipt(&dyn_img);
-    run_ocr_on_rgb(paths, &prepared)
+    let prepared = prepare_image(data)?;
+    run_ocr_on_rgb(&prepared)
 }
 
-/// Scale a dimension, clamped into the valid non-zero range.
+/// Short side an image is scaled up towards, so a small photo or screenshot
+/// gives recognition more pixels per line of text.
+const UPSCALE_SHORT_SIDE: u32 = 1200;
+
+/// The most an image is enlarged by.
+///
+/// Enlarging adds no detail, and the recognizer misreads text that gets too
+/// large. At this factor the corpus image `english_total.jpg` (768 x 104) is
+/// read correctly, which `jpeg_ocr_smoke` in `tests/document_corpus.rs`
+/// checks when the models are present.
+const MAX_UPSCALE: f64 = 1.5;
+
+/// Longest side a prepared image may have. Together with the shape of an
+/// image it bounds the work and memory of every later step: no prepared
+/// image is larger than 2800 x 2800.
+const MAX_LONG_SIDE: u32 = 2800;
+
+/// The long side an image over [`MAX_LONG_SIDE`] is scaled down to.
+const CAPPED_LONG_SIDE: u32 = 2400;
+
+/// Largest ratio of long side to short side that is read. At
+/// [`CAPPED_LONG_SIDE`] a narrower image has a short side under 120 px
+/// (2400 / 20), too narrow to hold a readable line of receipt text.
+const MAX_ASPECT_RATIO: u32 = 20;
+
+/// Pixel data the decoder may allocate: 256 MiB holds an RGB image of 89
+/// megapixels. Set here so the bound does not depend on the defaults of the
+/// `image` crate. The greyscale copy made from the decoded image adds at
+/// most half as much again, and nothing when the image is 8-bit grey.
+const MAX_DECODE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Longest side the decoder accepts. An image that fits
+/// [`MAX_DECODE_BYTES`] at 4:3 has a long side under 11,000 px; this leaves
+/// room for wider shapes.
+const MAX_DECODED_SIDE: u32 = 16_384;
+
+/// Decodes image bytes and prepares the picture for OCR.
+fn prepare_image(data: &[u8]) -> Result<RgbImage> {
+    // The header is read first, so a shape that would be refused after
+    // decoding is refused before any pixel is decoded.
+    let (width, height) = image_reader(data)?
+        .into_dimensions()
+        .map_err(|err| Error::Analysis(format!("image dimensions: {err}")))?;
+    ocr_scale(width, height)?;
+
+    let decoded = image_reader(data)?
+        .decode()
+        .map_err(|err| Error::Analysis(format!("decode image: {err}")))?;
+
+    preprocess_for_receipt(decoded)
+}
+
+/// A reader over `data` with its format guessed and the decoding limits set.
+fn image_reader(data: &[u8]) -> Result<ImageReader<Cursor<&[u8]>>> {
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_DECODED_SIDE);
+    limits.max_image_height = Some(MAX_DECODED_SIDE);
+    limits.max_alloc = Some(MAX_DECODE_BYTES);
+
+    let mut reader = ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .map_err(|err| Error::Analysis(format!("image format: {err}")))?;
+    reader.limits(limits);
+    Ok(reader)
+}
+
+/// Scales a dimension, clamped into the valid non-zero range.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -143,35 +206,75 @@ fn scaled_side(side: u32, scale: f64) -> u32 {
     ((f64::from(side) * scale).round() as u32).max(1)
 }
 
-fn preprocess_for_receipt(img: &DynamicImage) -> RgbImage {
-    // Convert to luma then back to RGB — OCR is greyscale; colour UIs (screenshots)
-    // confuse detection less after this.
-    let mut luma = img.to_luma8();
-    let (width, height) = luma.dimensions();
+/// The factor an image of this size is resampled by before OCR.
+///
+/// - Long side over [`MAX_LONG_SIDE`]: scaled down to [`CAPPED_LONG_SIDE`].
+/// - Otherwise, short side under [`UPSCALE_SHORT_SIDE`]: scaled up towards
+///   it, by at most [`MAX_UPSCALE`] and stopping where the long side reaches
+///   [`MAX_LONG_SIDE`].
+/// - Otherwise 1: the image is kept as it is.
+///
+/// So the long side of the result never exceeds [`MAX_LONG_SIDE`].
+///
+/// # Errors
+///
+/// A side of zero, or a shape more elongated than [`MAX_ASPECT_RATIO`].
+fn ocr_scale(width: u32, height: u32) -> Result<f64> {
+    let short_side = width.min(height);
+    let long_side = width.max(height);
 
-    // Phone photos / desktop screenshots: upscale small images; cap huge ones.
-    let min_side = width.min(height);
-    let max_side = width.max(height);
-    if min_side > 0 && min_side < 1200 {
-        let scale = 1200.0 / f64::from(min_side);
-        luma = imageops::resize(
-            &luma,
-            scaled_side(width, scale),
-            scaled_side(height, scale),
-            FilterType::Lanczos3,
-        );
-    } else if max_side > 2800 {
-        let scale = 2400.0 / f64::from(max_side);
-        luma = imageops::resize(
-            &luma,
-            scaled_side(width, scale),
-            scaled_side(height, scale),
-            FilterType::Triangle,
-        );
+    if short_side == 0 {
+        return Err(Error::Analysis(format!(
+            "image has a zero side: {width}x{height}"
+        )));
+    }
+    if u64::from(long_side) > u64::from(short_side) * u64::from(MAX_ASPECT_RATIO) {
+        return Err(Error::Analysis(format!(
+            "image is too elongated to read: {width}x{height}"
+        )));
     }
 
-    // Contrast + mild unsharp-ish stretch helps faded thermal receipts and UI screenshots.
-    // Also lift dark-mode UIs (near-black bg, light text) by auto-inverting when mean is low.
+    let scale = if long_side > MAX_LONG_SIDE {
+        f64::from(CAPPED_LONG_SIDE) / f64::from(long_side)
+    } else if short_side < UPSCALE_SHORT_SIDE {
+        let to_short_target = f64::from(UPSCALE_SHORT_SIDE) / f64::from(short_side);
+        let to_long_limit = f64::from(MAX_LONG_SIDE) / f64::from(long_side);
+        to_short_target.min(to_long_limit).min(MAX_UPSCALE)
+    } else {
+        1.0
+    };
+    Ok(scale)
+}
+
+fn preprocess_for_receipt(img: DynamicImage) -> Result<RgbImage> {
+    // Convert to luma then back to RGB — OCR is greyscale; colour UIs (screenshots)
+    // confuse detection less after this. An 8-bit grey image is taken as it
+    // is, without a copy.
+    let mut luma = img.into_luma8();
+    let (width, height) = luma.dimensions();
+
+    let scale = ocr_scale(width, height)?;
+    let target = (scaled_side(width, scale), scaled_side(height, scale));
+    if target != (width, height) {
+        // Lanczos keeps text edges sharp when enlarging; a triangle filter
+        // is enough, and cheaper, when shrinking.
+        let filter = if scale > 1.0 {
+            FilterType::Lanczos3
+        } else {
+            FilterType::Triangle
+        };
+        luma = imageops::resize(&luma, target.0, target.1, filter);
+    }
+
+    Ok(contrast_stretched(&luma))
+}
+
+/// Raises the contrast of a greyscale image and returns it as RGB.
+///
+/// Helps faded thermal receipts and UI screenshots. A dark image (dark-mode
+/// screenshot: near-black background, light text) is inverted first, so OCR
+/// always sees dark text on a light ground.
+fn contrast_stretched(luma: &image::GrayImage) -> RgbImage {
     let mut sum: u64 = 0;
     for pixel in luma.pixels() {
         sum += u64::from(pixel[0]);
@@ -181,7 +284,7 @@ fn preprocess_for_receipt(img: &DynamicImage) -> RgbImage {
     let mean = sum
         .checked_div(count)
         .map_or(128, |m| u8::try_from(m).unwrap_or(u8::MAX));
-    let invert = mean < 90; // dark-mode screenshot → invert for black-on-white OCR
+    let invert = mean < 90;
 
     let mut rgb = RgbImage::new(luma.width(), luma.height());
     let contrast = 1.35_f32;
@@ -205,8 +308,8 @@ fn preprocess_for_receipt(img: &DynamicImage) -> RgbImage {
     rgb
 }
 
-fn run_ocr_on_rgb(paths: &OcrModelPaths, img: &RgbImage) -> Result<String> {
-    let _ = paths; // engine already loaded
+/// Runs the engine that [`ensure_engine`] loaded on a prepared image.
+fn run_ocr_on_rgb(img: &RgbImage) -> Result<String> {
     let img_source = ImageSource::from_bytes(img.as_raw(), img.dimensions())
         .map_err(|e| Error::Analysis(format!("image source: {e}")))?;
 
@@ -267,8 +370,86 @@ fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<Str
 #[cfg(test)]
 #[expect(clippy::panic, reason = "test poisons a local mutex on purpose")]
 mod tests {
-    use super::recover_option_mutex;
+    use super::{prepare_image, recover_option_mutex};
+    use std::io::Cursor;
     use std::sync::Mutex;
+
+    /// A white PNG of the given size.
+    fn png(width: u32, height: u32) -> Vec<u8> {
+        let image = image::GrayImage::from_pixel(width, height, image::Luma([255]));
+        let mut bytes = Cursor::new(Vec::new());
+
+        assert!(
+            image::DynamicImage::ImageLuma8(image)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .is_ok(),
+            "the test image must encode"
+        );
+        bytes.into_inner()
+    }
+
+    /// The prepared size of a PNG of the given size, or the error message.
+    fn prepared_size(width: u32, height: u32) -> Result<(u32, u32), String> {
+        prepare_image(&png(width, height))
+            .map(|image| image.dimensions())
+            .map_err(|err| err.to_string())
+    }
+
+    /// Whether preparing a PNG of the given size fails with `reason`.
+    fn is_refused_as(width: u32, height: u32, reason: &str) -> bool {
+        prepared_size(width, height).is_err_and(|message| message.contains(reason))
+    }
+
+    #[test]
+    fn a_slightly_small_image_is_scaled_up_to_the_short_side_target() {
+        assert_eq!(prepared_size(1000, 1500), Ok((1200, 1800)));
+        assert_eq!(prepared_size(1500, 1000), Ok((1800, 1200)));
+    }
+
+    #[test]
+    fn a_small_image_is_enlarged_by_the_largest_factor_only() {
+        assert_eq!(prepared_size(600, 800), Ok((900, 1200)));
+        assert_eq!(prepared_size(768, 104), Ok((1152, 156)));
+    }
+
+    #[test]
+    fn an_image_already_large_enough_keeps_its_size() {
+        assert_eq!(prepared_size(1200, 1600), Ok((1200, 1600)));
+        assert_eq!(prepared_size(2000, 2800), Ok((2000, 2800)));
+    }
+
+    #[test]
+    fn a_huge_image_is_scaled_down_to_the_capped_long_side() {
+        assert_eq!(prepared_size(1500, 3000), Ok((1200, 2400)));
+    }
+
+    #[test]
+    fn upscaling_a_narrow_image_stops_at_the_long_side_limit() {
+        // Scaling 1000 x 2500 to a 1200 short side would make it 3000 long.
+        assert_eq!(prepared_size(1000, 2500), Ok((1120, 2800)));
+        assert_eq!(prepared_size(2500, 1000), Ok((2800, 1120)));
+    }
+
+    #[test]
+    fn a_narrow_image_that_is_already_too_long_is_scaled_down() {
+        assert_eq!(prepared_size(400, 4000), Ok((240, 2400)));
+    }
+
+    #[test]
+    fn an_extremely_elongated_image_is_refused() {
+        assert!(is_refused_as(10, 300, "too elongated"));
+        assert!(is_refused_as(300, 10, "too elongated"));
+        // The ratio limit itself is still accepted.
+        assert_eq!(prepared_size(100, 2000), Ok((140, 2800)));
+    }
+
+    #[test]
+    fn an_image_with_a_side_over_the_decoder_limit_is_refused() {
+        // The limit applies when the header is read, before any pixel.
+        assert!(is_refused_as(17_000, 1_000, "image dimensions"));
+        assert!(is_refused_as(1_000, 17_000, "image dimensions"));
+        assert!(is_refused_as(1, 60_000, "image dimensions"));
+    }
 
     #[test]
     fn recover_option_mutex_clears_poison() {

@@ -55,14 +55,7 @@ impl HostPolicy {
     /// Linux in-app updates are `AppImage` only; `.deb` stays a manual download.
     #[must_use]
     pub fn is_allowed_artifact_url(&self, url: &Url) -> bool {
-        if !self.is_allowed_fetch_url(url) {
-            return false;
-        }
-        let path = url.path();
-        if path_ends_with_ignore_ascii_case(path, ".deb") {
-            return false;
-        }
-        true
+        self.is_allowed_fetch_url(url) && !path_ends_with_ignore_ascii_case(url.path(), ".deb")
     }
 }
 
@@ -133,9 +126,10 @@ mod tests {
 
     #[test]
     fn production_allows_release_assets_redirect_host() {
-        // GitHub 302s release-asset downloads to release-assets.githubusercontent.com;
-        // the client follows redirects and re-checks policy on every hop, so this
-        // host must be allowed for both the manifest fetch and the artifact itself.
+        // GitHub answers a release-asset download with a 302 to
+        // release-assets.githubusercontent.com. `fetch_once` in `client.rs`
+        // follows it and checks `is_allowed_fetch_url` on every hop, so the
+        // manifest, its signature and the artifact all need this host allowed.
         let policy = HostPolicy::production();
         let url = Url::parse(
             "https://release-assets.githubusercontent.com/github-production-release-asset/000000000/abc123def",

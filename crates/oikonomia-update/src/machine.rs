@@ -89,8 +89,9 @@ impl UpdateMachine {
 
     /// Downloads and verifies the artifact, then execs via `installer`.
     ///
-    /// Illegal state is a hard error. Hash/sig/network failure becomes Failed
-    /// (and the partial file is deleted). `installer` is not called on verify failure.
+    /// Illegal state is a hard error. Hash/sig/network failure becomes Failed;
+    /// the artifact is verified in memory before it is written, so such a
+    /// failure leaves no file. `installer` is not called on verify failure.
     /// The artifact is deleted afterwards unless an installer process is still
     /// running from it.
     ///
