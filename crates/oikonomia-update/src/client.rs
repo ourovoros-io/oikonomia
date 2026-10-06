@@ -818,6 +818,38 @@ pub trait ArtifactInstaller {
 }
 
 #[cfg(test)]
+mod tests {
+    use super::write_new_private_file;
+
+    #[test]
+    fn artifact_write_refuses_a_path_that_already_exists() {
+        let cache = tempfile::tempdir().expect("temporary directory");
+        let path = cache.path().join("artifact.AppImage");
+        std::fs::write(&path, b"planted").expect("existing file");
+
+        let err = write_new_private_file(&path, b"verified").expect_err("exists");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&path).expect("read"), b"planted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn artifact_write_does_not_follow_a_link_at_its_path() {
+        let cache = tempfile::tempdir().expect("temporary directory");
+        let outside_dir = tempfile::tempdir().expect("temporary directory");
+        let outside = outside_dir.path().join("victim");
+        let path = cache.path().join("artifact.AppImage");
+        std::os::unix::fs::symlink(&outside, &path).expect("plant link");
+
+        let err = write_new_private_file(&path, b"verified").expect_err("link");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(!outside.exists(), "the write followed the planted link");
+    }
+}
+
+#[cfg(test)]
 mod properties {
     use oikonomia_test_support::PROPERTY_CASES;
     use proptest::prelude::*;
