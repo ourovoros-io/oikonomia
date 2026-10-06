@@ -567,19 +567,41 @@ fn artifact_file_name(url: &Url) -> String {
     }
 }
 
-/// Removes files left by earlier installs. Best effort: an installer that is
-/// still running keeps its file, which the next download clears.
+/// Removes the files earlier installs left in `cache_dir`.
+///
+/// Best effort: a file that cannot be removed, such as an installer that is
+/// still running on Windows, stays until a later download clears it. Every
+/// failure is logged and none is returned, because a leftover file does not
+/// stand in the way of the download that follows: its own file name is new.
 ///
 /// Symbolic links are removed too, never followed: `file_type` describes the
-/// entry itself.
-fn purge_cache(cache_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(cache_dir) else {
-        return;
+/// entry itself. Directories are left alone; this crate creates none here.
+pub(crate) fn purge_cache(cache_dir: &Path) {
+    let entries = match std::fs::read_dir(cache_dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!(
+                "updater cache could not be listed at {}: {err}",
+                cache_dir.display()
+            );
+            return;
+        }
     };
-    for entry in entries.flatten() {
-        let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
-        if !is_directory {
-            let _ = std::fs::remove_file(entry.path());
+
+    for entry in entries {
+        match entry {
+            Ok(entry) => {
+                let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+                if !is_directory {
+                    delete_artifact(&entry.path());
+                }
+            }
+            Err(err) => {
+                log::warn!(
+                    "updater cache entry could not be read in {}: {err}",
+                    cache_dir.display()
+                );
+            }
         }
     }
 }

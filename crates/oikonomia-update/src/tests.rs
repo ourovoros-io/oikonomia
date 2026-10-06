@@ -2061,3 +2061,44 @@ fn a_missing_manifest_is_a_network_failure_not_a_signature_one() {
 
     assert_eq!(check_error_code(&config), "update_network");
 }
+
+#[cfg(unix)]
+#[test]
+fn purging_the_cache_logs_a_file_it_cannot_remove() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let warnings = captured_warnings();
+    let cache = cache_dir();
+    let stuck = cache.path().join("stuck-installer.AppImage");
+    std::fs::write(&stuck, b"old").expect("leftover file");
+    // Without write permission on the directory nothing in it can be removed.
+    std::fs::set_permissions(cache.path(), std::fs::Permissions::from_mode(0o500))
+        .expect("read-only directory");
+
+    crate::client::purge_cache(cache.path());
+
+    std::fs::set_permissions(cache.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("restore the directory");
+    if !stuck.exists() {
+        // Root ignores directory permissions, so the removal succeeded and
+        // there is no failure to observe.
+        return;
+    }
+    assert_eq!(warnings.mentioning(&stuck).len(), 1);
+}
+
+#[test]
+fn purging_the_cache_removes_files_and_says_nothing() {
+    let warnings = captured_warnings();
+    let cache = cache_dir();
+    let leftover = cache.path().join("leftover.AppImage");
+    std::fs::write(&leftover, b"old").expect("leftover file");
+    let kept = cache.path().join("a-directory");
+    std::fs::create_dir(&kept).expect("directory");
+
+    crate::client::purge_cache(cache.path());
+
+    assert_eq!(leftover_files(cache.path()), vec![kept.clone()]);
+    assert_eq!(warnings.mentioning(&leftover), Vec::<String>::new());
+    assert_eq!(warnings.mentioning(&kept), Vec::<String>::new());
+}
