@@ -6,19 +6,15 @@
 //! with `SUM` are kept below the limit, because that overflow fails the query
 //! before the code under test runs.
 
-#![expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod common;
 
-use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
+use oikonomia_core::domain::{ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, account_register, balance_sheet,
-    cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
+    account_register, balance_sheet, cash_flow_series, dashboard_summary, profit_and_loss,
     trial_balance,
 };
-use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
 
 /// Two of these add up to one more than `i64::MAX`.
 const HALF: i64 = i64::MAX / 2 + 1;
@@ -31,70 +27,16 @@ const SALARY: &str = "4000";
 const FREELANCE: &str = "4100";
 const FOOD: &str = "5100";
 
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
-
-fn book(conn: &Connection) -> EntityId {
-    create_entity(
-        conn,
-        &CreateEntity {
-            name: "Large".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity")
-    .id
-}
-
-fn account(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
-    list_accounts(conn, entity_id)
-        .expect("accounts")
-        .iter()
-        .find(|account| account.code == code)
-        .map(|account| account.id)
-        .expect(code)
-}
-
-/// Posts `amount_minor` on `date`, debiting `debit` and crediting `credit`.
+/// Posts `amount` on `date`, debiting the first code of `sides` and crediting
+/// the second.
 fn post(conn: &Connection, entity_id: EntityId, date: &str, sides: (&str, &str), amount: i64) {
-    let (debit, credit) = sides;
-    post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: date.into(),
-            description: format!("{debit} to {credit}"),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: account(conn, entity_id, debit),
-                    debit_minor: amount,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: account(conn, entity_id, credit),
-                    debit_minor: 0,
-                    credit_minor: amount,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post");
+    common::post_two_line(conn, entity_id, date, sides, amount);
 }
 
 /// Income of `i64::MAX` and expenses of `-i64::MAX` (a refund), so that
 /// income minus expenses overflows while each side fits.
 fn book_whose_net_overflows(conn: &Connection) -> EntityId {
-    let entity_id = book(conn);
+    let entity_id = common::book(conn, "Large", ChartTemplate::Personal);
     post(conn, entity_id, "2026-03-10", (CHECKING, SALARY), i64::MAX);
     post(
         conn,
@@ -109,7 +51,7 @@ fn book_whose_net_overflows(conn: &Connection) -> EntityId {
 /// Two asset accounts of `HALF` each, funded from two liability accounts, so
 /// that only totals across accounts overflow.
 fn book_whose_asset_total_overflows(conn: &Connection) -> EntityId {
-    let entity_id = book(conn);
+    let entity_id = common::book(conn, "Large", ChartTemplate::Personal);
     post(conn, entity_id, "2026-03-10", (CHECKING, CREDIT_CARD), HALF);
     post(
         conn,
@@ -123,9 +65,9 @@ fn book_whose_asset_total_overflows(conn: &Connection) -> EntityId {
 
 #[test]
 fn profit_and_loss_refuses_a_total_income_that_overflows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = book(conn);
+    let entity_id = common::book(conn, "Large", ChartTemplate::Personal);
     post(conn, entity_id, "2026-03-10", (CHECKING, SALARY), HALF);
     post(conn, entity_id, "2026-03-20", (SAVINGS, FREELANCE), HALF);
 
@@ -136,7 +78,7 @@ fn profit_and_loss_refuses_a_total_income_that_overflows() {
 
 #[test]
 fn profit_and_loss_refuses_a_net_income_that_overflows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_net_overflows(conn);
 
@@ -147,7 +89,7 @@ fn profit_and_loss_refuses_a_net_income_that_overflows() {
 
 #[test]
 fn balance_sheet_refuses_a_section_total_that_overflows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_asset_total_overflows(conn);
 
@@ -161,7 +103,7 @@ fn balance_sheet_refuses_a_section_total_that_overflows() {
 
 #[test]
 fn trial_balance_refuses_column_totals_that_overflow() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_asset_total_overflows(conn);
 
@@ -175,7 +117,7 @@ fn trial_balance_refuses_column_totals_that_overflow() {
 
 #[test]
 fn trial_balance_refuses_an_unclosed_net_income_that_overflows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_net_overflows(conn);
 
@@ -189,7 +131,7 @@ fn trial_balance_refuses_an_unclosed_net_income_that_overflows() {
 
 #[test]
 fn dashboard_refuses_a_net_income_that_overflows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_net_overflows(conn);
 
@@ -203,9 +145,9 @@ fn dashboard_refuses_a_net_income_that_overflows() {
 
 #[test]
 fn cash_flow_refuses_a_running_total_that_overflows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = book(conn);
+    let entity_id = common::book(conn, "Large", ChartTemplate::Personal);
     post(conn, entity_id, "2026-03-10", (CHECKING, SALARY), HALF);
     post(conn, entity_id, "2026-03-20", (SAVINGS, FREELANCE), HALF);
 
@@ -219,7 +161,7 @@ fn cash_flow_refuses_a_running_total_that_overflows() {
 
 #[test]
 fn cash_flow_refuses_a_net_that_overflows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_net_overflows(conn);
 
@@ -233,13 +175,13 @@ fn cash_flow_refuses_a_net_that_overflows() {
 
 #[test]
 fn account_register_refuses_a_running_balance_that_overflows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = book(conn);
+    let entity_id = common::book(conn, "Large", ChartTemplate::Personal);
     post(conn, entity_id, "2026-03-10", (CHECKING, SALARY), HALF);
     post(conn, entity_id, "2026-03-20", (CHECKING, FREELANCE), HALF);
 
-    let register = account_register(conn, account(conn, entity_id, CHECKING), None, None);
+    let register = account_register(conn, common::account(conn, entity_id, CHECKING), None, None);
 
     assert_eq!(register.map(|lines| lines.len()), Err(Error::MoneyOverflow));
 }
@@ -248,7 +190,7 @@ fn account_register_refuses_a_running_balance_that_overflows() {
 /// `SUM` over the two asset accounts fails the query rather than wrapping.
 #[test]
 fn a_total_sqlite_adds_up_fails_the_query_instead_of_wrapping() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_asset_total_overflows(conn);
 
@@ -262,9 +204,9 @@ fn a_total_sqlite_adds_up_fails_the_query_instead_of_wrapping() {
 
 #[test]
 fn amounts_at_the_limit_still_report() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = book(conn);
+    let entity_id = common::book(conn, "Large", ChartTemplate::Personal);
     post(conn, entity_id, "2026-03-10", (CHECKING, SALARY), i64::MAX);
 
     let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl");

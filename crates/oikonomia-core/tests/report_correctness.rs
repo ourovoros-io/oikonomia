@@ -5,7 +5,9 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
-use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
+mod common;
+
+use oikonomia_core::domain::{ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
@@ -14,18 +16,9 @@ use oikonomia_core::ledger::{
     set_account_opening_balance, set_entry_hidden, trial_balance, void_entry,
 };
 use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
 
 fn setup_entity(conn: &Connection) -> EntityId {
     setup_entity_fy(conn, 1)
@@ -44,15 +37,6 @@ fn setup_entity_fy(conn: &Connection, fiscal_year_start_month: u8) -> EntityId {
     )
     .expect("entity")
     .id
-}
-
-fn account_id(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
-    list_accounts(conn, entity_id)
-        .expect("accounts")
-        .iter()
-        .find(|a| a.code == code)
-        .map(|a| a.id)
-        .expect(code)
 }
 
 fn line<'a>(lines: &'a [ReportLine], code: &str) -> &'a ReportLine {
@@ -81,40 +65,15 @@ fn post_expense(
     date: &str,
     minor: i64,
 ) -> oikonomia_core::domain::JournalEntryId {
-    let checking = account_id(conn, entity_id, "1010");
-    let food = account_id(conn, entity_id, "5100");
-
-    let view = post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: date.into(),
-            description: format!("spend {minor} on {date}"),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: food,
-                    debit_minor: minor,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: checking,
-                    debit_minor: 0,
-                    credit_minor: minor,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post");
-    view.entry.id
+    common::post_two_line(conn, entity_id, date, ("5100", "1010"), minor)
+        .entry
+        .id
 }
 
 #[test]
 fn pnl_respects_date_range() {
     let (_dir, vault) = {
-        let (dir, vault) = setup_vault();
+        let (dir, vault) = common::vault();
         (dir, vault)
     };
     let conn = vault.connection().expect("conn");
@@ -129,7 +88,7 @@ fn pnl_respects_date_range() {
 
 #[test]
 fn trial_balance_respects_as_of() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-01-15", 1_000);
@@ -142,7 +101,7 @@ fn trial_balance_respects_as_of() {
 
 #[test]
 fn balance_sheet_balances_for_past_as_of() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-01-15", 1_000);
@@ -162,7 +121,7 @@ fn balance_sheet_balances_for_past_as_of() {
 
 #[test]
 fn balance_sheet_balances_after_fiscal_year_boundary() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-06-01", 1_000);
@@ -196,7 +155,7 @@ fn balance_sheet_balances_after_fiscal_year_boundary() {
 
 #[test]
 fn balance_sheet_balances_when_activity_is_before_fy_start_month() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity_fy(conn, 7);
     post_expense(conn, entity_id, "2026-03-15", 1_000);
@@ -241,34 +200,9 @@ fn post_income(
     date: &str,
     minor: i64,
 ) -> oikonomia_core::domain::JournalEntryId {
-    let checking = account_id(conn, entity_id, "1010");
-    let salary = account_id(conn, entity_id, "4000");
-
-    let view = post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: date.into(),
-            description: format!("earn {minor} on {date}"),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: checking,
-                    debit_minor: minor,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: salary,
-                    debit_minor: 0,
-                    credit_minor: minor,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post income");
-    view.entry.id
+    common::post_two_line(conn, entity_id, date, ("1010", "4000"), minor)
+        .entry
+        .id
 }
 
 fn post_transfer(
@@ -277,34 +211,9 @@ fn post_transfer(
     date: &str,
     minor: i64,
 ) -> oikonomia_core::domain::JournalEntryId {
-    let checking = account_id(conn, entity_id, "1010");
-    let savings = account_id(conn, entity_id, "1020");
-
-    let view = post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: date.into(),
-            description: format!("move {minor} on {date}"),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: savings,
-                    debit_minor: minor,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: checking,
-                    debit_minor: 0,
-                    credit_minor: minor,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post transfer");
-    view.entry.id
+    common::post_two_line(conn, entity_id, date, ("1020", "1010"), minor)
+        .entry
+        .id
 }
 
 fn post_unpaid_bill(
@@ -313,39 +222,14 @@ fn post_unpaid_bill(
     date: &str,
     minor: i64,
 ) -> oikonomia_core::domain::JournalEntryId {
-    let food = account_id(conn, entity_id, "5100");
-    let payable = account_id(conn, entity_id, "2050");
-
-    let view = post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: date.into(),
-            description: format!("bill {minor} on {date}"),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: food,
-                    debit_minor: minor,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: payable,
-                    debit_minor: 0,
-                    credit_minor: minor,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post bill");
-    view.entry.id
+    common::post_two_line(conn, entity_id, date, ("5100", "2050"), minor)
+        .entry
+        .id
 }
 
 #[test]
 fn trial_balance_folds_prior_year_pnl_like_balance_sheet() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-06-01", 1_000);
@@ -392,7 +276,7 @@ fn trial_balance_folds_prior_year_pnl_like_balance_sheet() {
 
 #[test]
 fn historical_pnl_and_as_of_reports_agree_across_years() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_income(conn, entity_id, "2025-06-01", 5_000);
@@ -460,7 +344,7 @@ fn historical_pnl_and_as_of_reports_agree_across_years() {
 
 #[test]
 fn voided_entry_leaves_no_trace_in_trial_balance() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let entry_id = post_expense(conn, entity_id, "2026-01-15", 1_000);
@@ -478,7 +362,7 @@ fn voided_entry_leaves_no_trace_in_trial_balance() {
 
 #[test]
 fn randomized_entries_keep_reports_consistent() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let accounts = list_accounts(conn, entity_id).expect("accounts");
@@ -540,7 +424,7 @@ fn randomized_entries_keep_reports_consistent() {
 
 #[test]
 fn pnl_window_is_inclusive_on_both_ends() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-02-28", 100);
@@ -555,7 +439,7 @@ fn pnl_window_is_inclusive_on_both_ends() {
 
 #[test]
 fn pnl_single_day_is_a_valid_window() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-03-14", 100);
@@ -570,7 +454,7 @@ fn pnl_single_day_is_a_valid_window() {
 
 #[test]
 fn pnl_rejects_inverted_and_invalid_dates() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
 
@@ -588,7 +472,7 @@ fn pnl_rejects_inverted_and_invalid_dates() {
 
 #[test]
 fn reports_reject_unknown_entity() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let missing = EntityId::new();
 
@@ -608,7 +492,7 @@ fn reports_reject_unknown_entity() {
 
 #[test]
 fn empty_books_reports_are_zero_and_balanced() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
 
@@ -632,7 +516,7 @@ fn empty_books_reports_are_zero_and_balanced() {
 
 #[test]
 fn as_of_is_inclusive_and_excludes_the_next_day() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-03-15", 1_000);
@@ -653,7 +537,7 @@ fn as_of_is_inclusive_and_excludes_the_next_day() {
 
 #[test]
 fn transfers_do_not_move_pnl_and_keep_the_balance_sheet_balanced() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_income(conn, entity_id, "2026-03-01", 10_000);
@@ -673,7 +557,7 @@ fn transfers_do_not_move_pnl_and_keep_the_balance_sheet_balanced() {
 
 #[test]
 fn unpaid_bill_is_expense_and_liability_not_an_asset_hit() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_unpaid_bill(conn, entity_id, "2026-03-10", 7_253);
@@ -691,12 +575,12 @@ fn unpaid_bill_is_expense_and_liability_not_an_asset_hit() {
 
 #[test]
 fn opening_balance_is_equity_not_pnl() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     set_account_opening_balance(
         conn,
-        account_id(conn, entity_id, "1010"),
+        common::account(conn, entity_id, "1010"),
         250_000,
         "2026-01-01",
         Locale::En,
@@ -717,7 +601,7 @@ fn opening_balance_is_equity_not_pnl() {
 
 #[test]
 fn reports_do_not_leak_across_entities() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let a = setup_entity(conn);
     let b = create_entity(
@@ -746,7 +630,7 @@ fn reports_do_not_leak_across_entities() {
 
 #[test]
 fn fy_start_date_is_current_period_the_day_before_is_retained_earnings() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2025-12-31", 1_000);
@@ -765,7 +649,7 @@ fn fy_start_date_is_current_period_the_day_before_is_retained_earnings() {
 
 #[test]
 fn july_fy_start_day_is_current_period() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity_fy(conn, 7);
     post_expense(conn, entity_id, "2026-06-30", 1_000);
@@ -783,7 +667,7 @@ fn july_fy_start_day_is_current_period() {
 
 #[test]
 fn voided_entry_leaves_no_trace_on_pnl_or_balance_sheet() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let id = post_expense(conn, entity_id, "2026-03-15", 1_000);
@@ -801,7 +685,7 @@ fn voided_entry_leaves_no_trace_on_pnl_or_balance_sheet() {
 
 #[test]
 fn hidden_entries_stay_on_in_app_reports() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let id = post_expense(conn, entity_id, "2026-03-15", 1_000);
@@ -820,7 +704,7 @@ fn hidden_entries_stay_on_in_app_reports() {
 
 #[test]
 fn pnl_omits_accounts_with_no_period_activity() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-03-15", 1_000);
@@ -833,7 +717,7 @@ fn pnl_omits_accounts_with_no_period_activity() {
 
 #[test]
 fn ytd_pnl_matches_balance_sheet_net_income_and_dashboard() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_income(conn, entity_id, "2026-01-10", 8_000);
@@ -856,7 +740,7 @@ fn ytd_pnl_matches_balance_sheet_net_income_and_dashboard() {
 
 #[test]
 fn company_chart_synthetic_re_does_not_use_the_posted_re_account() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = create_entity(
         conn,
@@ -883,7 +767,7 @@ fn company_chart_synthetic_re_does_not_use_the_posted_re_account() {
 
 #[test]
 fn randomized_multi_year_entries_keep_tb_bs_and_ytd_pnl_aligned() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let accounts = list_accounts(conn, entity_id).expect("accounts");
@@ -977,7 +861,7 @@ fn randomized_multi_year_entries_keep_tb_bs_and_ytd_pnl_aligned() {
 
 #[test]
 fn randomized_ledgers_with_voids_keep_the_series_equal_to_the_dashboard() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     let accounts = list_accounts(conn, entity_id).expect("accounts");
@@ -1030,7 +914,7 @@ fn randomized_ledgers_with_voids_keep_the_series_equal_to_the_dashboard() {
 
 #[test]
 fn only_the_synthetic_rows_carry_the_synthetic_marker() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-06-01", 1_000);
@@ -1070,7 +954,7 @@ fn only_the_synthetic_rows_carry_the_synthetic_marker() {
 
 #[test]
 fn a_report_line_serializes_its_marker_as_a_snake_case_code() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = setup_entity(conn);
     post_expense(conn, entity_id, "2026-06-01", 1_000);

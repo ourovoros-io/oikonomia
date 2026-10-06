@@ -1,82 +1,42 @@
 //! End-to-end ledger flow against an encrypted vault.
 
+mod common;
+
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::error::{Error, ValidationError};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, balance_sheet, count_entities, create_entity,
-    delete_entity, list_accounts, list_entities, post_entry, profit_and_loss, trial_balance,
-    void_entry,
+    CreateEntity, balance_sheet, count_entities, create_entity, delete_entity, list_accounts,
+    list_entities, profit_and_loss, trial_balance, void_entry,
 };
 use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
-use tempfile::tempdir;
 
 #[test]
 fn personal_books_expense_and_reports() {
-    let dir = tempdir().unwrap();
-    let mut vault = Vault::open_path(dir.path()).unwrap();
-    vault.init("correct horse battery staple").unwrap();
-
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().unwrap();
 
-    let entity = create_entity(
-        conn,
-        &CreateEntity {
-            name: "Personal".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .unwrap();
+    let entity_id = common::book(conn, "Personal", ChartTemplate::Personal);
 
-    let accounts = list_accounts(conn, entity.id).unwrap();
+    let accounts = list_accounts(conn, entity_id).unwrap();
     assert_ne!(accounts, [] as [oikonomia_core::domain::Account; 0]);
 
-    let checking = accounts.iter().find(|a| a.code == "1010").unwrap();
-    let food = accounts.iter().find(|a| a.code == "5100").unwrap();
-
-    let entry = post_entry(
-        conn,
-        &PostJournal {
-            entity_id: entity.id,
-            entry_date: "2026-03-15".into(),
-            description: "Groceries".into(),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: food.id,
-                    debit_minor: 2_500,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: checking.id,
-                    debit_minor: 0,
-                    credit_minor: 2_500,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .unwrap();
+    let entry = common::post_two_line(conn, entity_id, "2026-03-15", ("5100", "1010"), 2_500);
     assert!(!entry.is_voided);
 
-    let tb = trial_balance(conn, entity.id, "2026-03-31").unwrap();
+    let tb = trial_balance(conn, entity_id, "2026-03-31").unwrap();
     assert_eq!(tb.total_debits, tb.total_credits);
     assert!(tb.total_debits >= 2_500);
 
-    let pnl = profit_and_loss(conn, entity.id, "2026-01-01", "2026-03-31").unwrap();
+    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-03-31").unwrap();
     assert_eq!(pnl.total_expenses, 2_500);
     assert_eq!(pnl.net_income, -2_500);
 
-    let bs = balance_sheet(conn, entity.id, "2026-03-31").unwrap();
+    let bs = balance_sheet(conn, entity_id, "2026-03-31").unwrap();
     assert_eq!(bs.total_assets, bs.total_liabilities_equity);
 
     assert!(void_entry(conn, entry.entry.id, Locale::En).is_ok());
 
-    let pnl2 = profit_and_loss(conn, entity.id, "2026-01-01", "2026-03-31").unwrap();
+    let pnl2 = profit_and_loss(conn, entity_id, "2026-01-01", "2026-03-31").unwrap();
     assert_eq!(pnl2.total_expenses, 0);
 
     let entities = list_entities(conn).unwrap();
@@ -93,9 +53,14 @@ fn personal_books_expense_and_reports() {
         },
         Locale::En,
     );
-    assert!(dup.is_err());
+    assert_eq!(
+        dup,
+        Err(Error::Validation(ValidationError::NameTaken {
+            name: "personal".into()
+        }))
+    );
 
-    assert!(delete_entity(conn, entity.id).is_ok());
+    assert!(delete_entity(conn, entity_id).is_ok());
     assert_eq!(
         list_entities(conn).unwrap(),
         [] as [oikonomia_core::domain::Entity; 0]
@@ -104,12 +69,8 @@ fn personal_books_expense_and_reports() {
 
 #[test]
 fn a_vault_holds_any_number_of_entities() {
-    let dir = tempdir().expect("temp dir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault
-        .init("correct horse battery staple")
-        .expect("init vault");
-    let conn = vault.connection().expect("connection");
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().unwrap();
 
     for name in ["Personal", "Company", "Side project"] {
         let created = create_entity(
@@ -130,12 +91,8 @@ fn a_vault_holds_any_number_of_entities() {
 
 #[test]
 fn a_base_currency_is_three_ascii_letters_stored_in_capitals() {
-    let dir = tempdir().expect("temp dir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault
-        .init("correct horse battery staple")
-        .expect("init vault");
-    let conn = vault.connection().expect("connection");
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().unwrap();
     let book = |name: &str, base_currency: &str| {
         create_entity(
             conn,

@@ -2,16 +2,9 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
-use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
-use oikonomia_core::vault::Vault;
-use tempfile::TempDir;
+mod common;
 
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
+use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 
 fn schema_version(conn: &rusqlite::Connection) -> i64 {
     conn.query_row(
@@ -40,7 +33,7 @@ fn current_schema_is_v7() {
 
 #[test]
 fn v6_vault_gains_recurring_templates() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     assert!(table_exists(conn, "recurring_templates"));
 
@@ -71,7 +64,7 @@ fn v6_vault_gains_recurring_templates() {
 
 #[test]
 fn migrate_is_safe_on_fresh_v7_vault() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     migrate(conn).expect("idempotent");
     migrate(conn).expect("idempotent again");

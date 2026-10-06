@@ -1,6 +1,6 @@
 //! v4 → v5: `journal_lines` debit XOR credit CHECK.
 
-#![expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod common;
 
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
@@ -9,19 +9,10 @@ use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
 };
 use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
-use tempfile::TempDir;
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
 
 #[test]
 fn v5_rejects_double_sided_journal_line() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     assert_eq!(CURRENT_SCHEMA_VERSION, 7);
 
@@ -82,7 +73,7 @@ fn v5_rejects_double_sided_journal_line() {
 
 #[test]
 fn v5_migrates_existing_balanced_lines() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     conn.execute("ALTER TABLE journal_entries DROP COLUMN hidden", [])
         .expect("pre-v6 shape");
@@ -102,7 +93,7 @@ fn v5_migrates_existing_balanced_lines() {
 
 #[test]
 fn v5_migrate_aborts_on_xor_violating_v4_rows() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity = create_entity(
         conn,
@@ -185,7 +176,7 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
 
 #[test]
 fn migrate_is_safe_on_fresh_v5_vault() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     migrate(conn).expect("idempotent");
     migrate(conn).expect("idempotent again");

@@ -2,27 +2,21 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
+use common::PASSWORD;
 use oikonomia_core::csv::{export_journal_csv, parse_journal_export};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, EntryStatus, JournalEntryId};
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, account_register, create_entity,
-    get_entry, list_accounts, list_entries, post_simple_entry, profit_and_loss,
-    profit_and_loss_export, replace_simple_entry, set_entry_hidden, void_entry,
+    EntryFilter, PostSimpleEntry, account_register, get_entry, list_accounts, list_entries,
+    post_simple_entry, profit_and_loss, profit_and_loss_export, replace_simple_entry,
+    set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
-
-const PASSWORD: &str = "correct horse battery staple";
-
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init(PASSWORD).expect("init");
-    (dir, vault)
-}
 
 struct Book {
     entity_id: EntityId,
@@ -31,29 +25,12 @@ struct Book {
 }
 
 fn create_book(conn: &Connection, name: &str, template: ChartTemplate) -> Book {
-    let entity = create_entity(
-        conn,
-        &CreateEntity {
-            name: name.into(),
-            base_currency: "EUR".into(),
-            chart_template: template,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity");
-    let accounts = list_accounts(conn, entity.id).expect("accounts");
-    let by_code = |code: &str| {
-        accounts
-            .iter()
-            .find(|a| a.code == code)
-            .map(|a| a.id)
-            .expect(code)
-    };
+    let entity_id = common::book(conn, name, template);
+
     Book {
-        entity_id: entity.id,
-        wallet: by_code("1010"),
-        expense: by_code("5100"),
+        entity_id,
+        wallet: common::account(conn, entity_id, "1010"),
+        expense: common::account(conn, entity_id, "5100"),
     }
 }
 
@@ -70,18 +47,8 @@ fn expense(
     amount_minor: i64,
 ) -> PostSimpleEntry {
     PostSimpleEntry {
-        entity_id,
-        kind: SimpleEntryKind::Expense,
-        bill_status: None,
-        entry_date: date.into(),
         description: description.into(),
-        reference: None,
-        amount_minor,
-        category_account_id: Some(expense),
-        wallet_account_id: Some(wallet),
-        payable_account_id: None,
-        from_account_id: None,
-        to_account_id: None,
+        ..common::simple_expense(entity_id, expense, wallet, date, amount_minor)
     }
 }
 
@@ -105,7 +72,7 @@ fn entry_hidden_flag(conn: &Connection, id: JournalEntryId) -> i64 {
 
 #[test]
 fn export_omits_hidden_keeps_visible_posted_and_voided() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
 
@@ -200,7 +167,7 @@ fn export_omits_hidden_keeps_visible_posted_and_voided() {
 
 #[test]
 fn pnl_includes_hidden_export_omits() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
     let transport = list_accounts(conn, book.entity_id)
@@ -276,7 +243,7 @@ fn pnl_includes_hidden_export_omits() {
 
 #[test]
 fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
 
@@ -324,7 +291,7 @@ fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
 
 #[test]
 fn unhide_puts_entry_back_in_export() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
 
@@ -361,7 +328,7 @@ fn unhide_puts_entry_back_in_export() {
 
 #[test]
 fn hidden_persists_across_reopen_and_backup_restore() {
-    let (dir, mut vault) = setup();
+    let (dir, mut vault) = common::vault();
     let book;
     let entry_id;
     {
@@ -424,7 +391,7 @@ fn hidden_persists_across_reopen_and_backup_restore() {
 
 #[test]
 fn hidden_works_for_personal_and_company_entities() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let personal = create_book(conn, "Household", ChartTemplate::Personal);
     let company = create_book(conn, "Acme Ltd", ChartTemplate::Company);
@@ -478,7 +445,7 @@ fn hidden_works_for_personal_and_company_entities() {
 
 #[test]
 fn set_hidden_missing_id_is_not_found() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let err = set_entry_hidden(conn, JournalEntryId::new(), true).expect_err("missing");
     assert!(matches!(err, Error::NotFound(_)), "{err:?}");
@@ -486,7 +453,7 @@ fn set_hidden_missing_id_is_not_found() {
 
 #[test]
 fn set_hidden_allows_draft_rows() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Drafts", ChartTemplate::Personal);
     let id = JournalEntryId::new();
@@ -509,7 +476,7 @@ fn set_hidden_allows_draft_rows() {
 
 #[test]
 fn register_includes_hidden_and_exposes_flag() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Register", ChartTemplate::Personal);
     let hidden = post_simple_entry(
@@ -537,7 +504,7 @@ fn register_includes_hidden_and_exposes_flag() {
 
 #[test]
 fn replacing_hidden_entry_keeps_replacement_hidden_and_omits_from_export() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
 

@@ -3,38 +3,14 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
 use oikonomia_core::default_accounts::default_accounts_for_entity;
 use oikonomia_core::domain::{AccountType, ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
-    CreateAccount, CreateEntity, UpdateAccount, archive_account, create_account, create_entity,
-    list_accounts, update_account,
+    CreateAccount, UpdateAccount, archive_account, create_account, list_accounts, update_account,
 };
-use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
-
-fn new_entity(conn: &Connection, template: ChartTemplate) -> EntityId {
-    create_entity(
-        conn,
-        &CreateEntity {
-            name: "Defaults".into(),
-            base_currency: "EUR".into(),
-            chart_template: template,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity")
-    .id
-}
 
 /// The code of each role's default, in the order of the response fields.
 fn default_codes(conn: &Connection, entity_id: EntityId) -> Vec<Option<String>> {
@@ -60,9 +36,9 @@ fn default_codes(conn: &Connection, entity_id: EntityId) -> Vec<Option<String>> 
 #[test]
 fn renaming_every_stored_account_keeps_every_default() {
     for template in [ChartTemplate::Personal, ChartTemplate::Company] {
-        let (_dir, vault) = setup_vault();
+        let (_dir, vault) = common::vault();
         let conn = vault.connection().expect("conn");
-        let entity_id = new_entity(conn, template);
+        let entity_id = common::book(conn, "Defaults", template);
 
         let before = default_codes(conn, entity_id);
 
@@ -90,9 +66,9 @@ fn renaming_every_stored_account_keeps_every_default() {
 
 #[test]
 fn archiving_the_seeded_wallet_moves_the_default_on() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = new_entity(conn, ChartTemplate::Personal);
+    let entity_id = common::book(conn, "Defaults", ChartTemplate::Personal);
 
     let checking = list_accounts(conn, entity_id)
         .expect("accounts")
@@ -109,9 +85,9 @@ fn archiving_the_seeded_wallet_moves_the_default_on() {
 
 #[test]
 fn a_blank_book_defaults_to_the_users_own_accounts_by_type() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = new_entity(conn, ChartTemplate::Blank);
+    let entity_id = common::book(conn, "Defaults", ChartTemplate::Blank);
 
     assert_eq!(default_codes(conn, entity_id), vec![None; 8]);
 

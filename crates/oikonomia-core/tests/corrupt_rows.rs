@@ -4,22 +4,20 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
 use std::fmt::Debug;
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateRecurringTemplate, EntryFilter, PostSimpleEntry, RecurringCadence,
-    SimpleEntryKind, account_register, activity_window, balance_sheet, cash_flow_series,
-    create_entity, create_recurring_template, get_entity, get_entry, get_recurring_template,
-    list_accounts, list_entities, list_entries, list_recurring_templates, post_simple_entry,
-    trial_balance,
+    CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleEntryKind, account_register,
+    activity_window, balance_sheet, cash_flow_series, create_recurring_template, get_entity,
+    get_entry, get_recurring_template, list_accounts, list_entities, list_entries,
+    list_recurring_templates, post_simple_entry, trial_balance,
 };
-use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
 
 /// A date that sorts inside 2026 as text but is not on the calendar, so
 /// range filters still select the row and the reader has to parse it.
@@ -32,59 +30,17 @@ struct Book {
     entry_id: JournalEntryId,
 }
 
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
-
 /// A personal book with one posted expense on 2026-02-10.
 fn book(conn: &Connection) -> Book {
-    let entity = create_entity(
-        conn,
-        &CreateEntity {
-            name: "Damaged".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity");
+    let entity_id = common::book(conn, "Damaged", ChartTemplate::Personal);
+    let checking = common::account(conn, entity_id, "1010");
+    let food = common::account(conn, entity_id, "5100");
 
-    let accounts = list_accounts(conn, entity.id).expect("accounts");
-    let by_code = |code: &str| {
-        accounts
-            .iter()
-            .find(|account| account.code == code)
-            .map(|account| account.id)
-            .expect(code)
-    };
-    let checking = by_code("1010");
-    let food = by_code("5100");
-
-    let posted = post_simple_entry(
-        conn,
-        &PostSimpleEntry {
-            entity_id: entity.id,
-            kind: SimpleEntryKind::Expense,
-            bill_status: None,
-            entry_date: "2026-02-10".into(),
-            description: "groceries".into(),
-            reference: None,
-            amount_minor: 1_500,
-            category_account_id: Some(food),
-            wallet_account_id: Some(checking),
-            payable_account_id: None,
-            from_account_id: None,
-            to_account_id: None,
-        },
-    )
-    .expect("post");
+    let expense = common::simple_expense(entity_id, food, checking, "2026-02-10", 1_500);
+    let posted = post_simple_entry(conn, &expense).expect("post");
 
     Book {
-        entity_id: entity.id,
+        entity_id,
         checking,
         food,
         entry_id: posted.entry.id,
@@ -131,7 +87,7 @@ fn assert_corrupt<T: Debug>(result: Result<T, Error>, column: &str) {
 
 #[test]
 fn an_unparseable_entry_date_is_corrupt_wherever_entries_are_read() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = book(conn);
     damage(
@@ -164,7 +120,7 @@ fn an_unparseable_entry_date_is_corrupt_wherever_entries_are_read() {
 
 #[test]
 fn an_unparseable_line_id_or_entry_status_is_corrupt() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = book(conn);
 
@@ -183,7 +139,7 @@ fn an_unparseable_line_id_or_entry_status_is_corrupt() {
 /// before any parsing, and names the column as the query selects it.
 #[test]
 fn text_where_an_amount_belongs_is_corrupt() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = book(conn);
     damage(
@@ -200,7 +156,7 @@ fn text_where_an_amount_belongs_is_corrupt() {
 
 #[test]
 fn an_unknown_account_type_is_corrupt() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = book(conn);
     damage(
@@ -215,7 +171,7 @@ fn an_unknown_account_type_is_corrupt() {
 
 #[test]
 fn an_unknown_chart_template_is_corrupt() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = book(conn);
     damage(conn, "UPDATE entities SET chart_template = 'household'");
@@ -227,7 +183,7 @@ fn an_unknown_chart_template_is_corrupt() {
 #[test]
 fn a_fiscal_year_start_month_off_the_calendar_is_corrupt() {
     for month in [0, 13, 300] {
-        let (_dir, vault) = setup();
+        let (_dir, vault) = common::vault();
         let conn = vault.connection().expect("conn");
         let book = book(conn);
         damage(
@@ -255,7 +211,7 @@ fn a_damaged_recurring_template_is_corrupt() {
     ];
 
     for (column, value) in damaged_columns {
-        let (_dir, vault) = setup();
+        let (_dir, vault) = common::vault();
         let conn = vault.connection().expect("conn");
         let book = book(conn);
         monthly_template(conn, &book);
@@ -274,7 +230,7 @@ fn a_damaged_recurring_template_is_corrupt() {
 
 #[test]
 fn a_sound_book_still_reads_back() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = book(conn);
     monthly_template(conn, &book);

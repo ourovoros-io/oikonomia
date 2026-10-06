@@ -3,33 +3,17 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
-use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
+mod common;
+
+use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::ledger::SimpleEntryKind::{Bill, Expense, Income, Transfer};
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity,
-    dashboard_summary, list_accounts, list_entries, post_simple_entry, previous_window, void_entry,
+    dashboard_summary, list_entries, post_simple_entry, previous_window, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::{format_date, parse_date};
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
-
-fn account(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
-    list_accounts(conn, entity_id)
-        .expect("accounts")
-        .iter()
-        .find(|a| a.code == code)
-        .map(|a| a.id)
-        .expect(code)
-}
 
 fn base(entity_id: EntityId, kind: SimpleEntryKind, date: &str, minor: i64) -> PostSimpleEntry {
     PostSimpleEntry {
@@ -60,46 +44,46 @@ fn post(conn: &Connection, input: &PostSimpleEntry) -> JournalEntryId {
 /// expense.
 fn seed_august_ledger(conn: &Connection, e: EntityId) {
     let mut salary = base(e, Income, "2026-08-03", 100_000);
-    salary.category_account_id = Some(account(conn, e, "4000"));
-    salary.wallet_account_id = Some(account(conn, e, "1010"));
+    salary.category_account_id = Some(common::account(conn, e, "4000"));
+    salary.wallet_account_id = Some(common::account(conn, e, "1010"));
     post(conn, &salary);
 
     let mut groceries = base(e, Expense, "2026-08-05", 2_500);
-    groceries.category_account_id = Some(account(conn, e, "5100"));
-    groceries.wallet_account_id = Some(account(conn, e, "1010"));
+    groceries.category_account_id = Some(common::account(conn, e, "5100"));
+    groceries.wallet_account_id = Some(common::account(conn, e, "1010"));
     post(conn, &groceries);
 
     // Checking → savings: must not touch income/expenses.
     let mut move_savings = base(e, Transfer, "2026-08-06", 30_000);
-    move_savings.from_account_id = Some(account(conn, e, "1010"));
-    move_savings.to_account_id = Some(account(conn, e, "1020"));
+    move_savings.from_account_id = Some(common::account(conn, e, "1010"));
+    move_savings.to_account_id = Some(common::account(conn, e, "1020"));
     post(conn, &move_savings);
 
     // On the credit card: expense counts, assets untouched.
     let mut card = base(e, Expense, "2026-08-07", 4_000);
-    card.category_account_id = Some(account(conn, e, "5600"));
-    card.wallet_account_id = Some(account(conn, e, "2000"));
+    card.category_account_id = Some(common::account(conn, e, "5600"));
+    card.wallet_account_id = Some(common::account(conn, e, "2000"));
     post(conn, &card);
 
     // Voided: must vanish everywhere.
     let mut mistake = base(e, Expense, "2026-08-08", 9_999);
-    mistake.category_account_id = Some(account(conn, e, "5100"));
-    mistake.wallet_account_id = Some(account(conn, e, "1010"));
+    mistake.category_account_id = Some(common::account(conn, e, "5100"));
+    mistake.wallet_account_id = Some(common::account(conn, e, "1010"));
     let voided = post(conn, &mistake);
     void_entry(conn, voided, Locale::En).expect("void");
 
     // OCR-style bill posted with a future due date (Aug 13 > "today" Aug 10).
     let mut due_bill = base(e, Bill, "2026-08-13", 7_253);
     due_bill.bill_status = Some(SimpleBillStatus::Unpaid);
-    due_bill.category_account_id = Some(account(conn, e, "5300"));
-    due_bill.payable_account_id = Some(account(conn, e, "2050"));
+    due_bill.category_account_id = Some(common::account(conn, e, "5300"));
+    due_bill.payable_account_id = Some(common::account(conn, e, "2050"));
     post(conn, &due_bill);
 
     // Future-dated expense PAID from checking: counts for the month, but must
     // not move "assets as of today".
     let mut future_paid = base(e, Expense, "2026-08-20", 1_000);
-    future_paid.category_account_id = Some(account(conn, e, "5900"));
-    future_paid.wallet_account_id = Some(account(conn, e, "1010"));
+    future_paid.category_account_id = Some(common::account(conn, e, "5900"));
+    future_paid.wallet_account_id = Some(common::account(conn, e, "1010"));
     post(conn, &future_paid);
 }
 
@@ -107,7 +91,7 @@ fn seed_august_ledger(conn: &Connection, e: EntityId) {
 /// as of "today" (2026-08-10 here).
 #[test]
 fn dashboard_numbers_hand_checked() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let e = create_entity(
         conn,
@@ -162,40 +146,25 @@ fn dashboard_numbers_hand_checked() {
     assert_eq!(visible, 6);
 }
 
-fn probe_book(conn: &Connection, name: &str) -> EntityId {
-    create_entity(
-        conn,
-        &CreateEntity {
-            name: name.into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity")
-    .id
-}
-
 fn income_on(conn: &Connection, e: EntityId, date: &str, minor: i64) {
     let mut entry = base(e, Income, date, minor);
-    entry.category_account_id = Some(account(conn, e, "4000"));
-    entry.wallet_account_id = Some(account(conn, e, "1010"));
+    entry.category_account_id = Some(common::account(conn, e, "4000"));
+    entry.wallet_account_id = Some(common::account(conn, e, "1010"));
     post(conn, &entry);
 }
 
 fn expense_on(conn: &Connection, e: EntityId, date: &str, minor: i64) {
     let mut entry = base(e, Expense, date, minor);
-    entry.category_account_id = Some(account(conn, e, "5100"));
-    entry.wallet_account_id = Some(account(conn, e, "1010"));
+    entry.category_account_id = Some(common::account(conn, e, "5100"));
+    entry.wallet_account_id = Some(common::account(conn, e, "1010"));
     post(conn, &entry);
 }
 
 #[test]
 fn arc_metrics_hand_checked() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = probe_book(conn, "Probe");
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     seed_august_ledger(conn, e);
 
     let s = dashboard_summary(conn, e, "2026-08-01", "2026-08-31", "2026-08-10").expect("summary");
@@ -229,18 +198,18 @@ fn arc_metrics_hand_checked() {
 
 #[test]
 fn net_vs_previous_compares_with_the_previous_calendar_month() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
 
-    let grew = probe_book(conn, "Grew");
+    let grew = common::book(conn, "Grew", ChartTemplate::Personal);
     income_on(conn, grew, "2026-07-10", 50_000);
     income_on(conn, grew, "2026-08-10", 60_000);
 
-    let shrank = probe_book(conn, "Shrank");
+    let shrank = common::book(conn, "Shrank", ChartTemplate::Personal);
     income_on(conn, shrank, "2026-07-10", 50_000);
     income_on(conn, shrank, "2026-08-10", 40_000);
 
-    let recovered = probe_book(conn, "Recovered");
+    let recovered = common::book(conn, "Recovered", ChartTemplate::Personal);
     expense_on(conn, recovered, "2026-07-10", 10_000);
     income_on(conn, recovered, "2026-08-10", 5_000);
 
@@ -260,13 +229,13 @@ fn net_vs_previous_compares_with_the_previous_calendar_month() {
 
 #[test]
 fn arc_metrics_are_empty_when_there_is_nothing_to_divide_by() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let summary = |entity: EntityId| {
         dashboard_summary(conn, entity, "2026-08-01", "2026-08-31", "2026-08-31").expect("summary")
     };
 
-    let empty = summary(probe_book(conn, "Empty"));
+    let empty = summary(common::book(conn, "Empty", ChartTemplate::Personal));
     assert_eq!(
         (
             empty.savings_rate_bps,
@@ -277,7 +246,7 @@ fn arc_metrics_are_empty_when_there_is_nothing_to_divide_by() {
     );
     assert!(empty.top_expense.is_none());
 
-    let spender = probe_book(conn, "Spender");
+    let spender = common::book(conn, "Spender", ChartTemplate::Personal);
     expense_on(conn, spender, "2026-08-05", 2_500);
     let spent = summary(spender);
     assert_eq!(
@@ -287,7 +256,7 @@ fn arc_metrics_are_empty_when_there_is_nothing_to_divide_by() {
     );
     assert_eq!(spent.top_expense.expect("top").share_bps, 10_000);
 
-    let earner = probe_book(conn, "Earner");
+    let earner = common::book(conn, "Earner", ChartTemplate::Personal);
     income_on(conn, earner, "2026-08-03", 1_000);
     let earned = summary(earner);
     assert_eq!(

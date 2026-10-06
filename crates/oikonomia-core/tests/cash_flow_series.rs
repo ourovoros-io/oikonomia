@@ -3,101 +3,41 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
-use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
+mod common;
+
+use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CashFlowGranularity, CashFlowSeries, CreateEntity, CreateJournalLine, PostJournal,
-    activity_window, cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry,
+    CashFlowGranularity, CashFlowSeries, activity_window, cash_flow_series, dashboard_summary,
     set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
 use time::Date;
 
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
-
-fn book(conn: &Connection) -> EntityId {
-    create_entity(
-        conn,
-        &CreateEntity {
-            name: "Probe".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity")
-    .id
-}
-
-fn account(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
-    list_accounts(conn, entity_id)
-        .expect("accounts")
-        .iter()
-        .find(|a| a.code == code)
-        .map(|a| a.id)
-        .expect(code)
-}
-
-/// Posts `minor` debited to `debit_code` and credited to `credit_code`.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a test helper that names both accounts, the date and the amount; tracked for the API pass"
-)]
+/// Posts `minor` debited to the first code of `sides` and credited to the second.
 fn post(
     conn: &Connection,
     entity_id: EntityId,
     date: &str,
-    debit_code: &str,
-    credit_code: &str,
+    sides: (&str, &str),
     minor: i64,
 ) -> JournalEntryId {
-    post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: date.into(),
-            description: format!("{debit_code} from {credit_code}: {minor} on {date}"),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: account(conn, entity_id, debit_code),
-                    debit_minor: minor,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: account(conn, entity_id, credit_code),
-                    debit_minor: 0,
-                    credit_minor: minor,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post")
-    .entry
-    .id
+    common::post_two_line(conn, entity_id, date, sides, minor)
+        .entry
+        .id
 }
 
 /// Food paid from checking.
 fn expense(conn: &Connection, entity_id: EntityId, date: &str, minor: i64) -> JournalEntryId {
-    post(conn, entity_id, date, "5100", "1010", minor)
+    post(conn, entity_id, date, ("5100", "1010"), minor)
 }
 
 /// Salary into checking.
 fn income(conn: &Connection, entity_id: EntityId, date: &str, minor: i64) -> JournalEntryId {
-    post(conn, entity_id, date, "1010", "4000", minor)
+    post(conn, entity_id, date, ("1010", "4000"), minor)
 }
 
 fn date(s: &str) -> Date {
@@ -132,16 +72,16 @@ fn assert_contiguous(s: &CashFlowSeries) {
 
 #[test]
 fn totals_match_the_dashboard_for_the_same_window() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     income(conn, e, "2026-08-03", 100_000);
     expense(conn, e, "2026-08-05", 2_500);
-    post(conn, e, "2026-08-06", "1020", "1010", 30_000); // transfer
-    post(conn, e, "2026-08-07", "5600", "2000", 4_000); // card expense
+    post(conn, e, "2026-08-06", ("1020", "1010"), 30_000); // transfer
+    post(conn, e, "2026-08-07", ("5600", "2000"), 4_000); // card expense
     let voided = expense(conn, e, "2026-08-08", 9_999);
     void_entry(conn, voided, Locale::En).expect("void");
-    post(conn, e, "2026-08-13", "5300", "2050", 7_253); // unpaid bill
+    post(conn, e, "2026-08-13", ("5300", "2050"), 7_253); // unpaid bill
     expense(conn, e, "2026-08-20", 1_000);
     income(conn, e, "2026-02-14", 3_000);
     expense(conn, e, "2026-11-30", 450);
@@ -192,9 +132,9 @@ fn totals_match_the_dashboard_for_the_same_window() {
 
 #[test]
 fn a_month_is_bucketed_per_day_and_covers_the_window_exactly() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     income(conn, e, "2026-08-03", 100_000);
     expense(conn, e, "2026-08-05", 2_500);
 
@@ -233,9 +173,9 @@ fn a_month_is_bucketed_per_day_and_covers_the_window_exactly() {
 
 #[test]
 fn ninety_two_days_is_daily_and_ninety_three_is_monthly() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
 
     let quarter = series(conn, e, "2026-07-01", "2026-09-30");
     assert_eq!(quarter.granularity, CashFlowGranularity::Day);
@@ -258,9 +198,9 @@ fn ninety_two_days_is_daily_and_ninety_three_is_monthly() {
 
 #[test]
 fn monthly_buckets_are_clipped_to_the_window() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
 
     let s = series(conn, e, "2026-01-15", "2026-12-10");
     assert_eq!(s.granularity, CashFlowGranularity::Month);
@@ -282,9 +222,9 @@ fn monthly_buckets_are_clipped_to_the_window() {
 
 #[test]
 fn an_entry_on_a_bucket_boundary_lands_in_exactly_one_bucket() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     expense(conn, e, "2026-01-31", 1_000);
     expense(conn, e, "2026-02-01", 2_000);
     income(conn, e, "2026-01-01", 500);
@@ -320,9 +260,9 @@ fn an_entry_on_a_bucket_boundary_lands_in_exactly_one_bucket() {
 
 #[test]
 fn an_empty_window_returns_zero_valued_buckets() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
 
     let s = series(conn, e, "2026-08-01", "2026-08-07");
     assert_eq!(s.buckets.len(), 7);
@@ -340,9 +280,9 @@ fn an_empty_window_returns_zero_valued_buckets() {
 
 #[test]
 fn inverted_and_malformed_windows_are_validation_errors() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
 
     assert!(matches!(
         cash_flow_series(conn, e, "2026-08-31", "2026-08-01"),
@@ -356,7 +296,7 @@ fn inverted_and_malformed_windows_are_validation_errors() {
 
 #[test]
 fn an_unknown_book_is_not_found() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
 
     assert_eq!(
@@ -367,9 +307,9 @@ fn an_unknown_book_is_not_found() {
 
 #[test]
 fn voided_entries_and_their_reversals_contribute_nothing() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     let spent = expense(conn, e, "2026-08-08", 9_999);
     let earned = income(conn, e, "2026-08-09", 5_000);
     void_entry(conn, spent, Locale::En).expect("void expense");
@@ -389,10 +329,10 @@ fn voided_entries_and_their_reversals_contribute_nothing() {
 
 #[test]
 fn transfers_move_neither_side_and_hidden_entries_still_count() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
-    post(conn, e, "2026-08-06", "1020", "1010", 30_000);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
+    post(conn, e, "2026-08-06", ("1020", "1010"), 30_000);
     let hidden = expense(conn, e, "2026-08-07", 1_200);
     set_entry_hidden(conn, hidden, true).expect("hide");
 
@@ -406,9 +346,9 @@ fn transfers_move_neither_side_and_hidden_entries_still_count() {
 
 #[test]
 fn an_open_window_spans_the_books_active_entries() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     let today = date("2026-09-15");
 
     assert_eq!(
@@ -437,9 +377,9 @@ fn an_open_window_spans_the_books_active_entries() {
 
 #[test]
 fn a_one_sided_window_never_runs_backwards() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     let today = date("2026-09-15");
     expense(conn, e, "2026-03-05", 100);
     income(conn, e, "2026-08-20", 100);
@@ -456,9 +396,9 @@ fn a_one_sided_window_never_runs_backwards() {
 
 #[test]
 fn an_empty_book_falls_back_to_today_for_the_open_side() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     let today = date("2026-09-15");
 
     assert_eq!(
@@ -473,9 +413,9 @@ fn an_empty_book_falls_back_to_today_for_the_open_side() {
 
 #[test]
 fn an_explicit_inverted_window_is_a_validation_error() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let e = book(conn);
+    let e = common::book(conn, "Probe", ChartTemplate::Personal);
     let today = date("2026-09-15");
 
     assert!(matches!(

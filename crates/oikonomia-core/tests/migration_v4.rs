@@ -2,17 +2,10 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
-use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
-use oikonomia_core::vault::Vault;
-use rusqlite::Connection;
-use tempfile::TempDir;
+mod common;
 
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
+use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
+use rusqlite::Connection;
 
 /// Rebuild the v3 documents shape (nullable `entry_id`, no unique index) and
 /// seed it with an orphan and a same-book name clash.
@@ -49,7 +42,7 @@ fn downgrade_to_v3_with_bad_data(conn: &Connection) {
 
 #[test]
 fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     downgrade_to_v3_with_bad_data(conn);
 
@@ -106,7 +99,7 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
 
 #[test]
 fn migrate_is_idempotent_after_v4() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     downgrade_to_v3_with_bad_data(conn);
 
