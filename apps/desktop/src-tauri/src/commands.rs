@@ -1,7 +1,7 @@
 //! Tauri command handlers (thin wrappers over core + state).
 
 use crate::error::{CommandError, CommandResult, DesktopError};
-use crate::state::AppState;
+use crate::state::{AppState, GatedVault, VaultGuard};
 use base64::Engine;
 use oikonomia_core::csv::{
     CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewInput,
@@ -20,11 +20,11 @@ use oikonomia_core::domain::{
 use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplate,
-    DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary, EntryFilter, PnL, PostJournal, PostSimpleEntry,
-    PostedEntryView, RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance,
-    UpdateAccount, UpdateRecurringTemplate, VoidResult, account_balance, account_register,
-    activity_window, archive_account, archive_entity, balance_sheet, cash_flow_series,
-    create_account, create_entity, create_recurring_template, dashboard_summary, delete_entity,
+    DashboardSummary, EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView,
+    RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
+    UpdateRecurringTemplate, VoidResult, account_balance, account_register, activity_window,
+    archive_account, archive_entity, balance_sheet, cash_flow_series, create_account,
+    create_entity, create_recurring_template, dashboard_summary, delete_entity,
     delete_recurring_template, get_entity, get_entry, get_lock_timeout_secs,
     get_recurring_template, list_accounts, list_entities, list_entries, list_recurring_templates,
     post_entry, post_recurring_template, post_simple_entry, profit_and_loss,
@@ -37,11 +37,10 @@ use oikonomia_core::prefs::{
     save_ui_prefs, store_locale,
 };
 use oikonomia_core::util::{format_date, utc_today};
-use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
+use oikonomia_core::vault::{BACKUP_EXTENSION, VaultStatus, default_backup_file_name};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use zeroize::Zeroizing;
 
 /// Where users send questions and bug reports. Every support pointer the app
@@ -64,14 +63,15 @@ pub struct AppInfo {
 
 /// Return vault lock lifecycle status.
 ///
-/// Async so the frontend's activity heartbeat never blocks the main thread,
-/// even while a long operation (rekey, analysis save) holds the vault mutex.
+/// Async so that the probe waits for the vault mutex on the blocking pool,
+/// not on the main thread, while a long operation such as a rekey holds it.
+/// A probe does not count as activity; the idle heartbeat is [`vault_touch`].
 #[tauri::command]
 pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
     let vault = state.vault();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let guard = crate::state::lock_vault(&vault);
+        let guard = vault.acquire();
         Ok(guard.status())
     }))
     .await
@@ -93,13 +93,11 @@ pub async fn vault_init(
     state: State<'_, AppState>,
     password: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
-    let status = with_vault_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         vault.init(&password)?;
         Ok(vault.status())
     })
-    .await?;
-    state.sync_watchdog_gate(status);
-    Ok(status)
+    .await
 }
 
 /// Unlock an existing vault. The password is wiped when the command returns.
@@ -108,32 +106,17 @@ pub async fn vault_unlock(
     state: State<'_, AppState>,
     password: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
-    let (status, secs) = with_vault_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         vault.unlock(&password)?;
-
-        // Refresh the watchdog's timeout cache from the now-readable settings.
-        // A failed read falls back to the default, but never silently.
-        let secs = match vault.connection().and_then(get_lock_timeout_secs) {
-            Ok(secs) => secs,
-            Err(err) => {
-                log::warn!("could not read lock timeout after unlock, using default: {err}");
-                DEFAULT_LOCK_TIMEOUT_SECS
-            }
-        };
-
-        Ok((vault.status(), secs))
+        Ok(vault.status())
     })
-    .await?;
-
-    state.set_lock_timeout_cache(secs);
-    state.sync_watchdog_gate(status);
-    Ok(status)
+    .await
 }
 
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
-    use super::{require_granted_path, stored_text_locale};
+    use super::{dropped_file_name, require_granted_path, stored_text_locale};
     use crate::state::AppState;
     use oikonomia_core::prefs::{Locale, UiPrefs, save_ui_prefs};
 
@@ -163,8 +146,63 @@ mod tests {
         state.grant_paths([archive.clone()]);
         assert_eq!(
             require_granted_path(&state, text).expect("granted path"),
-            archive
+            archive.canonicalize().expect("canonical")
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_granted_path_comes_back_with_its_links_resolved() {
+        let dir = temp_dir("path-resolved");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        let real = dir.join("statement-2026.csv");
+        std::fs::write(&real, b"date,amount\n").expect("write");
+        let link = dir.join("link.csv");
+        std::os::unix::fs::symlink(&real, &link).expect("link");
+        state.grant_paths([link.clone()]);
+        let named = link.to_str().expect("utf-8 path");
+
+        let accepted = require_granted_path(&state, named).expect("granted");
+
+        assert_eq!(accepted, real.canonicalize().expect("canonical"));
+        // The document keeps the name it was dropped under.
+        assert_eq!(dropped_file_name(named), "link.csv");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dropped_document_is_named_by_the_last_component_of_its_path() {
+        let dropped = std::path::Path::new("inbox").join("bill.pdf");
+
+        assert_eq!(
+            dropped_file_name(dropped.to_str().expect("utf-8 path")),
+            "bill.pdf"
+        );
+        assert_eq!(dropped_file_name("bill.pdf"), "bill.pdf");
+        // A path with no file name still gets one.
+        assert_eq!(dropped_file_name(""), "document");
+    }
+
+    #[test]
+    fn reading_the_ledger_language_does_not_wait_for_a_preferences_write() {
+        let dir = temp_dir("locale-no-lock");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        let (sender, receiver) = std::sync::mpsc::channel();
+
+        std::thread::scope(|scope| {
+            let writer = state.lock_prefs();
+            scope.spawn(|| {
+                let _ = sender.send(stored_text_locale(&state));
+            });
+
+            // The bound only turns a blocked reader into a failure instead of
+            // a hung test; a reader that does not lock answers at once.
+            let read = receiver.recv_timeout(std::time::Duration::from_secs(5));
+            drop(writer);
+
+            assert_eq!(read.ok(), Some(Locale::En));
+        });
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -194,20 +232,20 @@ mod tests {
 
 /// Change the master password (requires the current password). Both
 /// passwords are wiped when the command returns.
+///
+/// Returns the status the vault is left in. The watchdog follows it whatever
+/// it is, so this does not depend on whether core unlocks a locked vault as
+/// part of the change.
 #[tauri::command]
 pub async fn vault_change_password(
     state: State<'_, AppState>,
     old: Zeroizing<String>,
     new: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
-    let vault = state.vault();
-    state.touch();
-
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = crate::state::lock_vault(&vault);
-        guard.change_password(&old, &new)?;
-        Ok(guard.status())
-    }))
+    with_vault_blocking(&state, move |vault| {
+        vault.change_password(&old, &new)?;
+        Ok(vault.status())
+    })
     .await
 }
 
@@ -222,7 +260,6 @@ pub async fn vault_lock(
         Ok(vault.status())
     })
     .await?;
-    state.sync_watchdog_gate(status);
     let _ = app.emit("vault-locked", ());
     Ok(status)
 }
@@ -244,11 +281,15 @@ pub async fn vault_backup(
     state: State<'_, AppState>,
 ) -> CommandResult<Option<String>> {
     let file_name = default_backup_file_name();
-    let filter_label = crate::tray::backup_filter_label(load_ui_prefs(state.data_dir()).locale);
+    let data_dir = state.data_dir().to_path_buf();
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
             use tauri_plugin_dialog::DialogExt;
+
+            // Read in here because it is file I/O, which stays off the
+            // async workers.
+            let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale);
             Ok(app
                 .dialog()
                 .file()
@@ -281,9 +322,12 @@ pub async fn vault_backup(
 ///
 /// `path` is the archive to unpack. When `path` is `None`, a native open
 /// dialog chooses the file (the in-app path). A concrete path is accepted only
-/// if [`vault_pick_backup`] returned it, so the webview cannot name arbitrary
-/// files. Decrypt is not performed; the owner unlocks afterwards with the
-/// existing master password.
+/// if the user granted it ([`AppState::grant_paths`]), so the webview cannot
+/// name arbitrary files. The grant is not tied to this command: besides the
+/// path [`vault_pick_backup`] returned, any file the user dropped on a window
+/// or picked for a CSV import passes the check, and is then rejected only if
+/// it is not a backup archive. Decrypt is not performed; the owner unlocks
+/// afterwards with the existing master password.
 ///
 /// Existing vault files are not overwritten unless `replace` is `true`.
 /// An uninitialized data directory accepts `replace: false`.
@@ -342,11 +386,15 @@ async fn pick_backup_path(
     app: &tauri::AppHandle,
     state: &AppState,
 ) -> CommandResult<Option<PathBuf>> {
-    let filter_label = crate::tray::backup_filter_label(load_ui_prefs(state.data_dir()).locale);
+    let data_dir = state.data_dir().to_path_buf();
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
             use tauri_plugin_dialog::DialogExt;
+
+            // Read in here because it is file I/O, which stays off the
+            // async workers.
+            let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale);
             Ok(app
                 .dialog()
                 .file()
@@ -380,9 +428,6 @@ async fn lock_vault_session(
         Ok(was_unlocked)
     })
     .await?;
-    // Always park: restore (and any other session lock) leaves the vault
-    // closed even when it was already locked.
-    state.sync_watchdog_gate(VaultStatus::Locked);
     if was_unlocked {
         let _ = app.emit("vault-locked", ());
     }
@@ -770,21 +815,7 @@ pub async fn entry_post_simple_with_document(
     data_base64: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
-    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
-    // file cannot balloon memory (same gate as document_analyze).
-    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
-    if data_base64.len() > max_base64_len {
-        return Err(document_too_large_error());
-    }
-
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| {
-            CommandError::desktop(
-                DesktopError::FileDataInvalid,
-                format!("invalid file data: {e}"),
-            )
-        })?;
+    let data = decode_document_base64(&data_base64)?;
 
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
@@ -811,18 +842,13 @@ pub async fn entry_post_simple_with_document_path(
     path: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
+    let filename = dropped_file_name(&path);
     let path = require_granted_path(&state, &path)?;
 
     let vault = state.vault();
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("document")
-            .to_owned();
-
         // Reject oversized/unsupported files from metadata alone before reading.
         let meta = std::fs::metadata(&path).map_err(|e| {
             CommandError::desktop(
@@ -840,7 +866,7 @@ pub async fn entry_post_simple_with_document_path(
             )
         })?;
 
-        let guard = crate::state::lock_vault(&vault);
+        let guard = vault.acquire();
         let conn = guard.connection()?;
         let (view, _meta) = post_simple_entry_with_document(
             conn,
@@ -1056,35 +1082,12 @@ pub async fn csv_export_journal(
     })
     .await?;
 
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
-        let app = app.clone();
-        move || {
-            use tauri_plugin_dialog::DialogExt;
-            Ok(app
-                .dialog()
-                .file()
-                .add_filter("CSV", &["csv"])
-                .set_file_name(&file_name)
-                .blocking_save_file())
-        }
-    }))
-    .await?;
-
-    let Some(file_path) = picked else {
-        return Ok(None);
+    let target = SaveTarget {
+        filter: Some(("CSV", &["csv"])),
+        file_name,
+        complete_path: ensure_csv_path,
     };
-    let dest = ensure_csv_path(file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid save location: {e}"),
-        )
-    })?);
-
-    std::fs::write(&dest, csv_text.as_bytes()).map_err(|e| {
-        CommandError::desktop(DesktopError::SaveFailed, format!("could not save CSV: {e}"))
-    })?;
-
-    Ok(Some(dest.display().to_string()))
+    save_with_dialog(&app, target, csv_text.into_bytes()).await
 }
 
 /// Native Open dialog for a `.csv` file. `None` if cancelled. The chosen path
@@ -1175,7 +1178,11 @@ pub async fn report_balance_sheet(
     .await
 }
 
-/// Client-built PDF bytes; native Save dialog writes them. No vault, no write gate.
+/// Saves PDF bytes the webview built to a path chosen in a native Save
+/// dialog. Returns the path written, or `None` if the user cancelled.
+///
+/// The vault is not opened, so this also works while it is locked. The call
+/// counts as activity for the idle watchdog.
 #[tauri::command]
 pub async fn report_export_pdf(
     app: tauri::AppHandle,
@@ -1186,33 +1193,12 @@ pub async fn report_export_pdf(
     let data = decode_pdf_export_bytes(&bytes_base64)?;
     state.touch();
 
-    let file_name = pdf_export_file_name(suggested_name.as_deref());
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        use tauri_plugin_dialog::DialogExt;
-        Ok(app
-            .dialog()
-            .file()
-            .add_filter("PDF", &["pdf"])
-            .set_file_name(&file_name)
-            .blocking_save_file())
-    }))
-    .await?;
-
-    let Some(file_path) = picked else {
-        return Ok(None);
+    let target = SaveTarget {
+        filter: Some(("PDF", &["pdf"])),
+        file_name: pdf_export_file_name(suggested_name.as_deref()),
+        complete_path: ensure_pdf_path,
     };
-    let dest = ensure_pdf_path(file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid save location: {e}"),
-        )
-    })?);
-
-    std::fs::write(&dest, &data).map_err(|e| {
-        CommandError::desktop(DesktopError::SaveFailed, format!("could not save PDF: {e}"))
-    })?;
-
-    Ok(Some(dest.display().to_string()))
+    save_with_dialog(&app, target, data).await
 }
 
 /// Decoded PDF cap for a monthly expense report (webview-generated).
@@ -1222,12 +1208,25 @@ fn decode_pdf_export_bytes(bytes_base64: &str) -> CommandResult<Vec<u8>> {
     decode_capped_base64(bytes_base64, MAX_PDF_EXPORT_BYTES)
 }
 
-/// Reject on inflated base64 length before decode so a huge payload cannot balloon memory.
+/// Decodes a document the webview picked, up to the size core stores
+/// ([`oikonomia_core::documents::MAX_DOCUMENT_BYTES`]). The drop path applies
+/// the same cap from the file's metadata, before reading it.
+fn decode_document_base64(data_base64: &str) -> CommandResult<Vec<u8>> {
+    decode_capped_base64(data_base64, oikonomia_core::documents::MAX_DOCUMENT_BYTES)
+}
+
+/// Decodes base64 from the webview into at most `max_decoded` bytes.
+///
+/// Surrounding whitespace is ignored for the size check and the decode alike.
+/// The encoded length is checked first, so a huge payload is refused before
+/// it is decoded into memory. That check alone lets through up to three
+/// bytes over the cap, because it allows one more base64 group than the cap
+/// needs, so the decoded length is checked as well.
 fn decode_capped_base64(bytes_base64: &str, max_decoded: usize) -> CommandResult<Vec<u8>> {
     let trimmed = bytes_base64.trim();
     let max_base64_len = max_decoded / 3 * 4 + 4;
     if trimmed.len() > max_base64_len {
-        return Err(pdf_too_large_error(max_decoded));
+        return Err(too_large_error(max_decoded));
     }
 
     let data = base64::engine::general_purpose::STANDARD
@@ -1240,22 +1239,16 @@ fn decode_capped_base64(bytes_base64: &str, max_decoded: usize) -> CommandResult
         })?;
 
     if data.len() > max_decoded {
-        return Err(pdf_too_large_error(max_decoded));
+        return Err(too_large_error(max_decoded));
     }
     Ok(data)
 }
 
-fn pdf_too_large_error(max_decoded: usize) -> CommandError {
-    too_large_error(max_decoded / (1024 * 1024))
-}
+/// The error for a payload over a cap of `max_decoded` bytes, with the code
+/// and parameter core uses for a stored document that is too large.
+fn too_large_error(max_decoded: usize) -> CommandError {
+    let max_megabytes = max_decoded / (1024 * 1024);
 
-/// The error for a picked document over the size cap, with the same code and
-/// parameters core uses for a stored document that is too large.
-fn document_too_large_error() -> CommandError {
-    too_large_error(oikonomia_core::documents::MAX_DOCUMENT_BYTES / (1024 * 1024))
-}
-
-fn too_large_error(max_megabytes: usize) -> CommandError {
     CommandError::from(CoreError::Validation(ValidationError::FileTooLarge {
         max_mb: u64::try_from(max_megabytes).unwrap_or(u64::MAX),
     }))
@@ -1292,9 +1285,54 @@ fn ensure_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod pdf_export_tests {
     use super::{
-        decode_capped_base64, decode_pdf_export_bytes, ensure_pdf_path, pdf_export_file_name,
+        decode_capped_base64, decode_document_base64, decode_pdf_export_bytes, ensure_pdf_path,
+        pdf_export_file_name,
     };
     use base64::Engine;
+    use oikonomia_core::documents::MAX_DOCUMENT_BYTES;
+
+    fn encoded(length: usize) -> String {
+        base64::engine::general_purpose::STANDARD.encode(vec![7_u8; length])
+    }
+
+    #[test]
+    fn capped_decode_accepts_exactly_the_cap_and_refuses_one_byte_more() {
+        // Caps of every length modulo three, since base64 works in threes.
+        for cap in [3_usize, 4, 5, 6] {
+            let at_cap = decode_capped_base64(&encoded(cap), cap).expect("at the cap");
+            assert_eq!(at_cap.len(), cap, "cap {cap}");
+
+            let over = decode_capped_base64(&encoded(cap + 1), cap).expect_err("one over");
+            assert_eq!(over.code, "file_too_large", "cap {cap}");
+        }
+    }
+
+    #[test]
+    fn capped_decode_ignores_surrounding_whitespace_at_the_cap() {
+        let padded = format!("\n  {}  \r\n", encoded(4));
+
+        assert_eq!(decode_capped_base64(&padded, 4).expect("padded").len(), 4);
+
+        let padded_over = format!("\n  {}  \r\n", encoded(5));
+        let over = decode_capped_base64(&padded_over, 4).expect_err("one over");
+        assert_eq!(over.code, "file_too_large");
+    }
+
+    #[test]
+    fn a_picked_document_is_capped_at_the_size_core_stores() {
+        let at_cap = format!("  {}\n", encoded(MAX_DOCUMENT_BYTES));
+        assert_eq!(
+            decode_document_base64(&at_cap).expect("at the cap").len(),
+            MAX_DOCUMENT_BYTES
+        );
+
+        let over = decode_document_base64(&encoded(MAX_DOCUMENT_BYTES + 1)).expect_err("over");
+        assert_eq!(over.code, "file_too_large");
+        assert_eq!(over.params.get("max_mb").map(String::as_str), Some("8"));
+
+        let invalid = decode_document_base64("not-valid-base64!!!").expect_err("invalid");
+        assert_eq!(invalid.code, "file_data_invalid");
+    }
 
     #[test]
     fn decode_pdf_export_rejects_invalid_base64() {
@@ -1401,12 +1439,14 @@ pub async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandRes
 #[tauri::command]
 pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
     with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        set_lock_timeout_secs(conn, secs)
+        set_lock_timeout_secs(vault.connection()?, secs)?;
+
+        // Under the same guard as the stored value, so that two changes
+        // cannot leave the watchdog's copy and the vault disagreeing.
+        vault.set_lock_timeout_cache(secs);
+        Ok(())
     })
-    .await?;
-    state.set_lock_timeout_cache(secs);
-    Ok(())
+    .await
 }
 
 /// The language that text written into the user's books must be in.
@@ -1416,39 +1456,65 @@ pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) ->
 /// before the vault closure so the plaintext preferences file is not touched
 /// while the vault lock is held.
 ///
-/// The read happens under the prefs lock: the preferences file is written
-/// without an atomic rename, so an unlocked read during a language change
-/// could see a partial file, fall back to English and seed a book in the wrong
-/// language for good. The guard drops when this function returns, before the
-/// caller enters the vault closure or awaits.
+/// The read takes no lock. [`save_ui_prefs`] writes a temporary file and
+/// renames it over the preferences file, so a read during a language change
+/// sees the old or the new file, complete. [`AppState::lock_prefs`] is for a
+/// load-change-save, which this is not, and taking it here would make every
+/// caller wait behind a save's fsync.
 fn stored_text_locale(state: &AppState) -> Locale {
-    let prefs_guard = state.lock_prefs();
-    let locale = load_ui_prefs(state.data_dir()).locale;
-    drop(prefs_guard);
+    load_ui_prefs(state.data_dir()).locale
+}
 
-    locale
+/// Runs preferences work on the blocking pool with the shared state.
+///
+/// The plaintext preferences file is read and written with blocking I/O, and
+/// a save ends in an fsync. A synchronous command would do that on the main
+/// thread, which also runs the event loop, and an async one on a runtime
+/// worker, so every settings command goes through here.
+async fn with_prefs_blocking<T, F>(app: tauri::AppHandle, work: F) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&tauri::AppHandle, &AppState) -> CommandResult<T> + Send + 'static,
+{
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        // `Manager::state` panics when the state is not managed, which is the
+        // case after a failed start (`crate::startup`) while the hidden
+        // webview is still running.
+        let Some(state) = app.try_state::<AppState>() else {
+            return Err(CommandError::desktop(
+                DesktopError::TaskFailed,
+                "application state is not set up",
+            ));
+        };
+        work(&app, &state)
+    }))
+    .await
 }
 
 /// Get the native UI locale. Plaintext preference: readable before unlock so
 /// tray chrome and dialogs match the user's language before a password.
 #[tauri::command]
-pub fn settings_get_locale(state: State<'_, AppState>) -> Locale {
-    load_ui_prefs(state.data_dir()).locale
+pub async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale> {
+    with_prefs_blocking(
+        app,
+        |_app, state| Ok(load_ui_prefs(state.data_dir()).locale),
+    )
+    .await
 }
 
 /// Persist the native UI locale, then rebuild the tray menu and refresh the
 /// quick-add window title when that window exists.
 #[tauri::command]
-pub fn settings_set_locale(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    locale: Locale,
-) -> CommandResult<()> {
-    let prefs_guard = state.lock_prefs();
-    store_locale(state.data_dir(), locale)?;
-    drop(prefs_guard);
-    crate::tray::apply_locale(&app, locale);
-    Ok(())
+pub async fn settings_set_locale(app: tauri::AppHandle, locale: Locale) -> CommandResult<()> {
+    with_prefs_blocking(app, move |app, state| {
+        let prefs_guard = state.lock_prefs();
+        store_locale(state.data_dir(), locale)?;
+        drop(prefs_guard);
+
+        crate::tray::apply_locale(app, locale);
+        Ok(())
+    })
+    .await
 }
 
 /// The app language, chosen from the system on the very first run.
@@ -1461,46 +1527,54 @@ pub fn settings_set_locale(
 /// as after a change in Settings. Works before a vault exists and while
 /// locked, and is safe to call on every launch.
 #[tauri::command]
-pub fn settings_resolve_locale(
+pub async fn settings_resolve_locale(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
     system_languages: Vec<String>,
 ) -> CommandResult<Locale> {
-    let prefs_guard = state.lock_prefs();
-    let resolution = resolve_locale(state.data_dir(), &system_languages)?;
-    drop(prefs_guard);
+    with_prefs_blocking(app, move |app, state| {
+        let prefs_guard = state.lock_prefs();
+        let resolution = resolve_locale(state.data_dir(), &system_languages)?;
+        drop(prefs_guard);
 
-    // The tray was built at startup from the stored language, English on a
-    // first run, so it only needs a rebuild when this call stored a new one.
-    if resolution.newly_stored {
-        crate::tray::apply_locale(&app, resolution.locale);
-    }
+        // The tray was built at startup from the stored language, English on
+        // a first run, so it only needs a rebuild when this call stored a new
+        // one.
+        if resolution.newly_stored {
+            crate::tray::apply_locale(app, resolution.locale);
+        }
 
-    Ok(resolution.locale)
+        Ok(resolution.locale)
+    })
+    .await
 }
 
 /// Full plaintext UI prefs (locale, tray last-used). Safe before unlock.
 #[tauri::command]
-pub fn settings_get_ui_prefs(state: State<'_, AppState>) -> UiPrefs {
-    load_ui_prefs(state.data_dir())
+pub async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResult<UiPrefs> {
+    with_prefs_blocking(app, |_app, state| Ok(load_ui_prefs(state.data_dir()))).await
 }
 
 /// Remember last entity + role accounts after a successful tray post.
 #[tauri::command]
-pub fn settings_remember_quick_add(
-    state: State<'_, AppState>,
+pub async fn settings_remember_quick_add(
+    app: tauri::AppHandle,
     entity_id: String,
     kind: String,
     accounts: LastRoleAccounts,
 ) -> CommandResult<()> {
-    let _guard = state.lock_prefs();
-    let mut prefs = load_ui_prefs(state.data_dir());
-    prefs.last_entity_id = Some(entity_id.clone());
-    prefs
-        .last_accounts_by_entity_kind
-        .insert(last_accounts_key(&entity_id, &kind), accounts);
-    save_ui_prefs(state.data_dir(), &prefs)?;
-    Ok(())
+    with_prefs_blocking(app, move |_app, state| {
+        let _prefs_guard = state.lock_prefs();
+
+        let mut prefs = load_ui_prefs(state.data_dir());
+        prefs
+            .last_accounts_by_entity_kind
+            .insert(last_accounts_key(&entity_id, &kind), accounts);
+        prefs.last_entity_id = Some(entity_id);
+
+        save_ui_prefs(state.data_dir(), &prefs)?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1521,9 +1595,11 @@ pub fn document_analyzer_status(state: State<'_, AppState>) -> AnalyzerStatus {
     analyzer_status(Some(state.ocr_model_dir().as_path()))
 }
 
-/// Store a dropped file in the encrypted vault and return a draft entry suggestion.
+/// Analyze a picked file and return a draft entry suggestion.
 ///
-/// Analysis is fully offline (bundled OCR + heuristics). Nothing is sent to the network.
+/// Nothing is stored: the file reaches the vault only when the entry is
+/// posted ([`entry_post_simple_with_document`]). Analysis is fully offline
+/// (bundled OCR + heuristics). Nothing is sent to the network.
 #[tauri::command]
 pub async fn document_analyze(
     state: State<'_, AppState>,
@@ -1532,21 +1608,7 @@ pub async fn document_analyze(
     mime_type: String,
     data_base64: String,
 ) -> CommandResult<DocumentSuggestion> {
-    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
-    // file cannot balloon memory (the drop path gates on fs metadata the same way).
-    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
-    if data_base64.len() > max_base64_len {
-        return Err(document_too_large_error());
-    }
-
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| {
-            CommandError::desktop(
-                DesktopError::FileDataInvalid,
-                format!("invalid file data: {e}"),
-            )
-        })?;
+    let data = decode_document_base64(&data_base64)?;
 
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
@@ -1568,6 +1630,7 @@ pub async fn document_analyze_path(
     entity_id: EntityId,
     path: String,
 ) -> CommandResult<DocumentSuggestion> {
+    let filename = dropped_file_name(&path);
     let path = require_granted_path(&state, &path)?;
 
     let vault = state.vault();
@@ -1576,12 +1639,6 @@ pub async fn document_analyze_path(
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("document")
-            .to_owned();
-
         // Reject oversized/unsupported drops from metadata alone — a stray
         // 10 GB drop must not be read into memory before failing the size cap.
         let meta = std::fs::metadata(&path).map_err(|e| {
@@ -1608,31 +1665,48 @@ pub async fn document_analyze_path(
 
 /// Accept a webview-supplied path only if the user handed it to the app
 /// through a native drop or dialog ([`AppState::grant_paths`]).
+///
+/// Returns the resolved path that was checked, which is the one to open
+/// ([`AppState::granted_path`]).
 fn require_granted_path(state: &AppState, path: &str) -> CommandResult<PathBuf> {
-    let path = PathBuf::from(path);
-    if state.path_is_granted(&path) {
-        Ok(path)
-    } else {
-        Err(CommandError::desktop(
+    state.granted_path(Path::new(path)).ok_or_else(|| {
+        CommandError::desktop(
             DesktopError::PathNotGranted,
             "file path was not chosen through the app",
-        ))
-    }
+        )
+    })
+}
+
+/// The name a dropped document is stored and typed under: the last component
+/// of the path as the user dropped it.
+///
+/// Taken before the path is resolved, because a dropped link keeps its own
+/// name and extension while the file it points to may be named anything.
+fn dropped_file_name(dropped_path: &str) -> String {
+    Path::new(dropped_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("document")
+        .to_owned()
 }
 
 /// Run vault work on the blocking pool: no command ever waits for the vault
 /// mutex on the main thread or an async runtime worker (e.g. while a rekey
 /// holds it for seconds).
+///
+/// Whatever status `f` leaves the vault in, the guard brings the idle
+/// watchdog in line with it before the vault mutex is released
+/// ([`crate::state::VaultGuard`]), so no command updates the watchdog itself.
 async fn with_vault_blocking<T, F>(state: &State<'_, AppState>, f: F) -> CommandResult<T>
 where
     T: Send + 'static,
-    F: FnOnce(&mut Vault) -> Result<T, CoreError> + Send + 'static,
+    F: FnOnce(&mut VaultGuard<'_>) -> Result<T, CoreError> + Send + 'static,
 {
     let vault = state.vault();
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = crate::state::lock_vault(&vault);
+        let mut guard = vault.acquire();
         f(&mut guard).map_err(CommandError::from)
     }))
     .await
@@ -1655,7 +1729,7 @@ async fn await_blocking<T>(
 /// nothing: the file is stored only when the entry is posted
 /// (`entry_post_simple_with_document`), keeping the no-orphan invariant.
 fn analyze_readonly(
-    vault: &Mutex<Vault>,
+    vault: &GatedVault,
     model_dir: &Path,
     entity_id: EntityId,
     filename: &str,
@@ -1667,7 +1741,7 @@ fn analyze_readonly(
     oikonomia_core::documents::validate_document_file(filename, &mime, data.len() as u64)?;
 
     let (accounts, entity) = {
-        let guard = crate::state::lock_vault(vault);
+        let guard = vault.acquire();
         let conn = guard.connection()?;
         (
             suggest_accounts_for_entity(conn, entity_id)?,
@@ -1755,21 +1829,7 @@ pub async fn document_attach(
     mime_type: String,
     data_base64: String,
 ) -> CommandResult<DocumentMeta> {
-    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
-    // file cannot balloon memory (same gate as document_analyze).
-    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
-    if data_base64.len() > max_base64_len {
-        return Err(document_too_large_error());
-    }
-
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| {
-            CommandError::desktop(
-                DesktopError::FileDataInvalid,
-                format!("invalid file data: {e}"),
-            )
-        })?;
+    let data = decode_document_base64(&data_base64)?;
 
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
@@ -1778,49 +1838,82 @@ pub async fn document_attach(
     .await
 }
 
-/// Export a document to a user-chosen path. This is the only path by which
-/// decrypted bytes reach disk, and it always goes through an explicit
-/// native save dialog.
+/// Export a stored document, decrypted, to a path chosen in a native Save
+/// dialog. Returns the path written, or `None` if the user cancelled.
+///
+/// Like the journal CSV export ([`csv_export_journal`]) and the report PDF
+/// ([`report_export_pdf`]), this writes plaintext to disk, and like them only
+/// to a path the user picked in the dialog ([`save_with_dialog`]).
 #[tauri::command]
 pub async fn document_export(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<Option<String>> {
-    use tauri_plugin_dialog::DialogExt;
-
     let (meta, data) = with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         get_document(conn, document_id)
     })
     .await?;
 
-    // The blocking dialog must stay off the async runtime workers.
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        Ok(app
-            .dialog()
-            .file()
-            .set_file_name(meta.filename.as_str())
-            .blocking_save_file())
-    }))
-    .await?;
-
-    let Some(file_path) = picked else {
-        return Ok(None);
+    let target = SaveTarget {
+        filter: None,
+        file_name: meta.filename,
+        complete_path: std::convert::identity,
     };
-    let path = file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid save location: {e}"),
-        )
-    })?;
+    save_with_dialog(&app, target, data).await
+}
 
-    std::fs::write(&path, &data).map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveFailed,
-            format!("could not save file: {e}"),
-        )
-    })?;
+/// What a native Save dialog offers, and how the chosen path is completed.
+struct SaveTarget {
+    /// File type filter as a label and its extensions; `None` offers every file.
+    filter: Option<(&'static str, &'static [&'static str])>,
+    /// File name the dialog suggests.
+    file_name: String,
+    /// Applied to the chosen path before writing, to add a missing extension.
+    complete_path: fn(PathBuf) -> PathBuf,
+}
 
-    Ok(Some(path.display().to_string()))
+/// Asks where to save with a native dialog, then writes `bytes` there.
+///
+/// Both steps run in one task on the blocking pool. The dialog blocks until
+/// the user answers, and the write is file I/O of up to tens of megabytes;
+/// neither may hold an async worker.
+///
+/// Returns the path written, or `None` if the user cancelled.
+async fn save_with_dialog(
+    app: &tauri::AppHandle,
+    target: SaveTarget,
+    bytes: Vec<u8>,
+) -> CommandResult<Option<String>> {
+    let app = app.clone();
+
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+
+        let mut dialog = app.dialog().file().set_file_name(&target.file_name);
+        if let Some((label, extensions)) = target.filter {
+            dialog = dialog.add_filter(label, extensions);
+        }
+        let Some(picked) = dialog.blocking_save_file() else {
+            return Ok(None);
+        };
+
+        let chosen = picked.into_path().map_err(|err| {
+            CommandError::desktop(
+                DesktopError::SaveLocationInvalid,
+                format!("invalid save location: {err}"),
+            )
+        })?;
+        let destination = (target.complete_path)(chosen);
+
+        std::fs::write(&destination, &bytes).map_err(|err| {
+            CommandError::desktop(
+                DesktopError::SaveFailed,
+                format!("could not save file: {err}"),
+            )
+        })?;
+        Ok(Some(destination.display().to_string()))
+    }))
+    .await
 }

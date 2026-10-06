@@ -9,8 +9,8 @@ use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, UpdateAccount, account_balance,
-    create_entity, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
-    set_account_opening_balance, trial_balance, update_account, void_entry,
+    archive_account, create_entity, list_accounts, list_entries, post_simple_entry,
+    replace_simple_entry, set_account_opening_balance, trial_balance, update_account, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
@@ -264,4 +264,70 @@ fn update_account_cannot_deactivate_system_accounts() {
         .find(|a| a.id == system.id)
         .expect("still there");
     assert!(after.is_active, "system account must stay active");
+}
+fn account_by_code(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
+    list_accounts(conn, entity_id)
+        .expect("accounts")
+        .iter()
+        .find(|account| account.code == code)
+        .map(|account| account.id)
+        .expect(code)
+}
+
+#[test]
+fn an_entry_on_an_archived_account_can_still_be_voided() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let posted = post_simple_entry(conn, &expense(entity_id, &acc, 4_200)).expect("post");
+    archive_account(conn, acc.food).expect("archive");
+
+    let voided = void_entry(conn, posted.entry.id, Locale::En).expect("void");
+
+    assert_eq!(voided.original_id, posted.entry.id);
+    assert_eq!(account_balance(conn, acc.food, "2026-12-31"), Ok(0));
+    assert_eq!(account_balance(conn, acc.checking, "2026-12-31"), Ok(0));
+}
+
+#[test]
+fn an_entry_on_an_archived_account_can_be_moved_to_an_active_one() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let other_expenses = account_by_code(conn, entity_id, "5900");
+    let posted = post_simple_entry(conn, &expense(entity_id, &acc, 4_200)).expect("post");
+    archive_account(conn, acc.food).expect("archive");
+
+    let mut moved = expense(entity_id, &acc, 4_200);
+    moved.category_account_id = Some(other_expenses);
+    replace_simple_entry(conn, posted.entry.id, &moved, Locale::En).expect("replace");
+
+    assert_eq!(account_balance(conn, acc.food, "2026-12-31"), Ok(0));
+    assert_eq!(
+        account_balance(conn, other_expenses, "2026-12-31"),
+        Ok(4_200)
+    );
+}
+
+#[test]
+fn a_replacement_cannot_post_to_an_archived_account_and_leaves_the_original() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let posted = post_simple_entry(conn, &expense(entity_id, &acc, 4_200)).expect("post");
+    archive_account(conn, acc.food).expect("archive");
+
+    let still_on_food = expense(entity_id, &acc, 9_900);
+    let refused = replace_simple_entry(conn, posted.entry.id, &still_on_food, Locale::En);
+
+    assert_eq!(
+        refused.map(|view| view.entry.id),
+        Err(Error::Validation(ValidationError::AccountInactive {
+            code: "5100".into()
+        }))
+    );
+    let entries = list_entries(conn, entity_id, &EntryFilter::default()).expect("list");
+    assert_eq!(entries.len(), 1, "the void was rolled back with the post");
+    assert!(!entries[0].is_voided);
+    assert_eq!(account_balance(conn, acc.food, "2026-12-31"), Ok(4_200));
 }

@@ -13,11 +13,13 @@ pub const MIN_LOCK_TIMEOUT_SECS: u64 = 60;
 
 const KEY_LOCK_TIMEOUT: &str = "lock_timeout_secs";
 
-/// Read lock timeout in seconds.
+/// Reads the idle lock timeout in seconds, or
+/// [`DEFAULT_LOCK_TIMEOUT_SECS`] when none has been stored.
 ///
 /// # Errors
 ///
-/// DB errors.
+/// [`Error::VaultCorrupt`] when the stored value is not a whole, non-negative
+/// number of seconds; database errors as [`Error::Io`].
 pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
     let value: Option<String> = conn
         .query_row(
