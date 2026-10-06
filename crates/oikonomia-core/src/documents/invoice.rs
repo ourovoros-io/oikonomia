@@ -4,6 +4,29 @@
 //! rejection, and sales-invoice vs expense detection. Greek bank transfer
 //! receipts (`έμβασμα`) are a separate class: the labeled principal is the
 //! amount, never a clock on `Ημερομηνία Αξίας` or the transfer fee. No network.
+//!
+//! # Reading an amount
+//!
+//! A money token is a run of digits, `,` and `.`. Trailing separators are
+//! sentence punctuation and are dropped first. Then:
+//!
+//! | Separators in the token | Reading | Example |
+//! |-------------------------|---------|---------|
+//! | none, up to five digits | whole euros | `50` is 50,00 |
+//! | both `,` and `.` | the later one is the decimal mark | `1.234,56`, `1,234.56` |
+//! | one kind, once, before 1 or 2 digits | decimal mark | `45,9`, `45.90` |
+//! | one kind, once, before 3 digits | thousands | `1.234`, `1,234` |
+//! | one kind, several times | thousands | `1.234.567` |
+//! | one kind, once, before 4 or more digits | not money | `1,2345` |
+//!
+//! When both kinds appear, the one that is not the decimal mark groups
+//! thousands. Thousands groups must be well formed: one to three leading digits that do
+//! not start with zero, then groups of exactly three. So `0,085` and `0.971`
+//! (a unit price, a conversion factor) are not money, and neither is `1.2.3`.
+//! A fraction has one or two digits, and the whole part at most eight.
+//!
+//! Digits-only tokens with a leading zero, of more than five digits, or in
+//! 1900..=2100 are date fragments, identifiers and years, not money.
 
 use super::analyze::{DocumentSuggestion, EntryKindSuggestion};
 use crate::prefs::Locale;
@@ -1103,7 +1126,7 @@ fn parse_money_token(s: &str) -> Option<i64> {
     }
 
     if s.contains([',', '.']) {
-        decimal_to_minor(&normalize_decimal_separators(s))
+        separated_to_minor(s)
     } else {
         whole_euros_to_minor(s)
     }
@@ -1129,41 +1152,106 @@ fn whole_euros_to_minor(digits: &str) -> Option<i64> {
     whole.checked_mul(100)
 }
 
-/// Rewrite a token with `,` or `.` so that at most one `.` remains, as the
-/// decimal point. Whichever separator comes last is the decimal one when
-/// both appear; a single separator is decimal only before one or two digits.
-fn normalize_decimal_separators(s: &str) -> String {
-    match (s.rfind(','), s.rfind('.')) {
-        // 1.234,56
-        (Some(comma), Some(dot)) if comma > dot => s.replace('.', "").replace(',', "."),
-        // 1,234.56
-        (Some(_), Some(_)) => s.replace(',', ""),
-        (Some(_), None) => match s.split_once(',') {
-            Some((whole, cents)) if !cents.contains(',') && (1..=2).contains(&cents.len()) => {
-                format!("{whole}.{cents}")
-            }
-            // thousands commas only
-            Some(_) | None => s.replace(',', ""),
-        },
-        // dots only: 1860.00 keeps its dot, 1.234.567 loses its separators
-        (None, _) if s.matches('.').count() > 1 => s.replace('.', ""),
-        (None, _) => s.to_owned(),
+/// The role each separator plays in a money token, per the module table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SeparatorRoles {
+    /// The decimal mark, when the token has a fraction.
+    decimal: Option<char>,
+    /// The mark between thousands groups.
+    grouping: char,
+}
+
+/// Decides which separator of `token` is the decimal mark.
+///
+/// Returns `None` for one separator followed by four or more digits, which
+/// is neither a fraction of a cent nor a thousands group.
+fn separator_roles(token: &str) -> Option<SeparatorRoles> {
+    let lone = |mark: char, other: char| {
+        let (_, tail) = token.rsplit_once(mark)?;
+        let only_one = token.matches(mark).count() == 1;
+
+        match tail.len() {
+            1 | 2 if only_one => Some(SeparatorRoles {
+                decimal: Some(mark),
+                grouping: other,
+            }),
+            3 => Some(SeparatorRoles {
+                decimal: None,
+                grouping: mark,
+            }),
+            _ => None,
+        }
+    };
+
+    match (token.rfind(','), token.rfind('.')) {
+        (Some(comma), Some(dot)) if comma > dot => Some(SeparatorRoles {
+            decimal: Some(','),
+            grouping: '.',
+        }),
+        (Some(_), Some(_)) => Some(SeparatorRoles {
+            decimal: Some('.'),
+            grouping: ',',
+        }),
+        (Some(_), None) => lone(',', '.'),
+        (None, Some(_)) => lone('.', ','),
+        (None, None) => None,
     }
 }
 
-/// `whole` or `whole.cents` as minor units.
-fn decimal_to_minor(normalized: &str) -> Option<i64> {
-    let (whole, cents) = match normalized.split_once('.') {
-        Some((whole, cents)) => (whole, Some(cents)),
-        None => (normalized, None),
+/// Reads a token that holds `,` or `.` as minor units, per the module table.
+fn separated_to_minor(token: &str) -> Option<i64> {
+    let roles = separator_roles(token)?;
+
+    let (whole, cents) = match roles.decimal {
+        Some(mark) => {
+            let (whole, cents) = token.rsplit_once(mark)?;
+            (whole, Some(cents))
+        }
+        None => (token, None),
     };
+
+    let whole = if whole.contains(roles.grouping) {
+        join_thousands_groups(whole, roles.grouping)?
+    } else {
+        whole.to_owned()
+    };
+    decimal_to_minor(&whole, cents)
+}
+
+/// Joins `1.234.567` into `1234567` when the groups are well formed: one to
+/// three leading digits that do not start with zero, then groups of three.
+///
+/// The zero rule keeps a three-decimal fraction such as a unit price of
+/// `0,085` from being read as thousands.
+fn join_thousands_groups(whole: &str, grouping: char) -> Option<String> {
+    let mut groups = whole.split(grouping);
+
+    let first = groups.next()?;
+    if !(1..=3).contains(&first.len()) || first.starts_with('0') {
+        return None;
+    }
+
+    let mut joined = first.to_owned();
+    for group in groups {
+        if group.len() != 3 {
+            return None;
+        }
+        joined.push_str(group);
+    }
+    Some(joined)
+}
+
+/// `whole` euros and an optional one or two digits of cents, as minor units.
+fn decimal_to_minor(whole: &str, cents: Option<&str>) -> Option<i64> {
+    let all_digits = |digits: &str| digits.bytes().all(|byte| byte.is_ascii_digit());
+
     // Whole part too long → ID
-    if whole.is_empty() || whole.len() > 8 {
+    if whole.is_empty() || whole.len() > 8 || !all_digits(whole) {
         return None;
     }
 
     let cents = match cents {
-        Some(cents) if cents.is_empty() || cents.len() > 2 => return None,
+        Some(cents) if !(1..=2).contains(&cents.len()) || !all_digits(cents) => return None,
         Some(cents) => format!("{cents:0<2}").parse::<i64>().ok()?,
         None => 0,
     };
@@ -1808,8 +1896,19 @@ mod tests {
             ("1,234", Some(123_400)),
             ("50", Some(5_000)),
             ("99999", Some(9_999_900)),
-            // Three digits after a lone dot is neither cents nor a clear thousands group.
-            ("1.234", None),
+            // One separator before three digits groups thousands, dot or comma.
+            ("1.234", Some(123_400)),
+            ("999.999", Some(99_999_900)),
+            // Unless the whole part is zero or starts with one: a fraction.
+            ("0,085", None),
+            ("0.971", None),
+            ("01,234", None),
+            // Thousands groups hold exactly three digits after the first.
+            ("1.2.3", None),
+            ("1234.567", None),
+            ("1,23,456", None),
+            // More than two decimals is not money.
+            ("1,2345", None),
             // Dates, years and identifiers are not money.
             ("08", None),
             ("2026", None),
@@ -2342,6 +2441,35 @@ mod jumbled_extract {
         );
         assert_eq!(read("Amount due: 45.").amount_minor, Some(4_500));
         assert_eq!(read("Amount due: 45,").amount_minor, Some(4_500));
+    }
+
+    #[test]
+    fn one_separator_before_three_digits_groups_thousands_for_comma_and_dot() {
+        assert_eq!(read("Amount due 1,234").amount_minor, Some(123_400));
+        assert_eq!(read("Amount due 1.234").amount_minor, Some(123_400));
+        assert_eq!(read("Amount due 12.345 €").amount_minor, Some(1_234_500));
+        assert_eq!(read("Amount due 2,500").amount_minor, Some(250_000));
+    }
+
+    #[test]
+    fn a_three_decimal_fraction_is_not_a_thousands_amount() {
+        assert_eq!(read("Amount due 0,085").amount_minor, None);
+        assert_eq!(read("Amount due 0.971").amount_minor, None);
+        assert_eq!(read("Amount due 01,234").amount_minor, None);
+        assert_eq!(
+            read("Unit price 0,085\nAmount due 12,40").amount_minor,
+            Some(1_240)
+        );
+    }
+
+    #[test]
+    fn thousands_groups_must_be_well_formed() {
+        assert_eq!(read("Amount due 1.2.3").amount_minor, None);
+        assert_eq!(read("Amount due 1234.567,00").amount_minor, None);
+        assert_eq!(
+            read("Amount due 1.234.567,00").amount_minor,
+            Some(123_456_700)
+        );
     }
 
     #[test]
