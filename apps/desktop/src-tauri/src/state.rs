@@ -545,15 +545,6 @@ pub const fn should_auto_lock(
     }
 }
 
-/// Whether a watchdog tick that just locked should emit `vault-locked`.
-///
-/// Emit needs `AppHandle`; this returns the decision so tests can assert the
-/// emit path without the Tauri runtime.
-#[must_use]
-pub const fn should_emit_vault_locked(did_lock: bool) -> bool {
-    did_lock
-}
-
 /// Lock the vault from Rust when idle, regardless of webview state (F5).
 ///
 /// The frontend timer is only a fast-path duplicate; this thread guarantees
@@ -642,9 +633,7 @@ fn watch_one_round(
     #[cfg(test)]
     vault.gate.record_tick();
 
-    let locked_now = lock_if_idle(vault, last_activity);
-
-    if should_emit_vault_locked(locked_now) {
+    if lock_if_idle(vault, last_activity) {
         on_locked();
     }
     ControlFlow::Continue(())
@@ -737,7 +726,7 @@ fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 mod tests {
     use super::{
         AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, idle_secs, resolve_ocr_model_dir,
-        run_auto_lock_loop, should_auto_lock, should_emit_vault_locked,
+        run_auto_lock_loop, should_auto_lock,
     };
     use oikonomia_core::ledger::set_lock_timeout_secs;
     use oikonomia_core::vault::VaultStatus;
@@ -854,22 +843,16 @@ mod tests {
     fn auto_lock_when_unlocked_and_idle_meets_timeout() {
         assert!(should_auto_lock(Some(60), 60, VaultStatus::Unlocked));
         assert!(should_auto_lock(Some(61), 60, VaultStatus::Unlocked));
-        assert!(
-            should_emit_vault_locked(true),
-            "a successful idle lock would emit vault-locked"
-        );
     }
 
     #[test]
     fn no_auto_lock_when_idle_below_timeout() {
         assert!(!should_auto_lock(Some(59), 60, VaultStatus::Unlocked));
-        assert!(!should_emit_vault_locked(false));
     }
 
     #[test]
     fn no_auto_lock_after_activity_resets_idle() {
         assert!(!should_auto_lock(Some(0), 60, VaultStatus::Unlocked));
-        assert!(!should_emit_vault_locked(false));
     }
 
     #[test]
@@ -877,10 +860,6 @@ mod tests {
         assert!(!should_auto_lock(Some(120), 60, VaultStatus::Locked));
         assert!(!should_auto_lock(Some(120), 60, VaultStatus::Uninitialized));
         assert!(!should_auto_lock(None, 60, VaultStatus::Locked));
-        assert!(
-            !should_emit_vault_locked(false),
-            "already locked must not emit vault-locked"
-        );
     }
 
     #[test]

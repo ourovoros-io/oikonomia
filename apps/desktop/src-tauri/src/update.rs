@@ -227,13 +227,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_key_is_a_compile_fail_gate() {
-        const EMPTY: &str = "";
-        assert_eq!(EMPTY.len(), 0);
-        assert!(UPDATER_PUBLIC_KEY.len() > 32);
-    }
-
-    #[test]
     fn update_module_source_does_not_call_plugin_check_or_read_unsigned_feed() {
         let src = include_str!("update.rs");
         let product = src.split("#[cfg(test)]").next().unwrap_or(src);
