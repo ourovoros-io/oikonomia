@@ -427,61 +427,57 @@ fn bootstrap_schema(conn: &Connection) -> Result<()> {
 }
 
 #[cfg(test)]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir};
+
+    const PASSWORD: &str = "correct horse battery staple";
+
+    fn init_vault() -> (TempDir, Vault) {
+        let dir = tempdir().expect("tempdir");
+        let mut vault = Vault::open_path(dir.path()).expect("open vault");
+        vault.init(PASSWORD).expect("init");
+        (dir, vault)
+    }
 
     #[test]
     fn init_unlock_lock_wrong_password() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
-
-        let Ok(mut vault) = Vault::open_path(dir.path()) else {
-            return;
-        };
-
+        let dir = tempdir().expect("tempdir");
+        let mut vault = Vault::open_path(dir.path()).expect("open vault");
         assert_eq!(vault.status(), VaultStatus::Uninitialized);
 
-        let password = "correct horse battery staple";
-        assert!(vault.init(password).is_ok());
+        vault.init(PASSWORD).expect("init");
         assert_eq!(vault.status(), VaultStatus::Unlocked);
 
         vault.lock();
         assert_eq!(vault.status(), VaultStatus::Locked);
 
-        assert!(vault.unlock("wrong password!!").is_err());
+        assert_eq!(
+            vault.unlock("wrong password!!"),
+            Err(Error::InvalidPassword)
+        );
         assert_eq!(vault.status(), VaultStatus::Locked);
 
-        assert!(vault.unlock(password).is_ok());
+        vault.unlock(PASSWORD).expect("unlock");
         assert_eq!(vault.status(), VaultStatus::Unlocked);
 
         // File must not start with plaintext `SQLite` magic.
-        let Ok(bytes) = fs::read(vault_db_path(dir.path())) else {
-            return;
-        };
+        let bytes = fs::read(vault_db_path(dir.path())).expect("read database");
         assert!(bytes.len() > 16);
         assert_ne!(&bytes[0..6], b"SQLite");
     }
 
     #[test]
     fn open_enables_sqlcipher_memory_security() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
-        let Ok(mut vault) = Vault::open_path(dir.path()) else {
-            return;
-        };
-        assert!(vault.init("correct horse battery staple").is_ok());
-        let Ok(conn) = vault.connection() else {
-            return;
-        };
+        let (_dir, vault) = init_vault();
+        let conn = vault.connection().expect("unlocked after init");
 
         // SQLCipher reports "1" only once the pragma is on and its guarded
         // allocator has run, i.e. the key was handled under memory security.
         let state: String = conn
             .query_row("PRAGMA cipher_memory_security", [], |row| row.get(0))
-            .unwrap_or_default();
+            .expect("read pragma");
         assert_eq!(
             state, "1",
             "SQLCipher must lock and wipe its key and page buffers"
@@ -491,20 +487,16 @@ mod tests {
     #[cfg(unix)]
     fn mode_of(path: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
-        fs::metadata(path).map_or(0, |meta| meta.permissions().mode() & 0o777)
+        fs::metadata(path).expect("metadata").permissions().mode() & 0o777
     }
 
     #[cfg(unix)]
     #[test]
     fn init_creates_owner_only_directory_and_files() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().expect("tempdir");
         let data_dir = dir.path().join("vault");
-        let Ok(mut vault) = Vault::open_path(&data_dir) else {
-            return;
-        };
-        assert!(vault.init("correct horse battery staple").is_ok());
+        let mut vault = Vault::open_path(&data_dir).expect("open vault");
+        vault.init(PASSWORD).expect("init");
 
         assert_eq!(mode_of(&data_dir), 0o700, "data directory");
         assert_eq!(mode_of(&vault_header_path(&data_dir)), 0o600, "header");
@@ -516,38 +508,27 @@ mod tests {
     fn open_tightens_permissions_of_an_existing_vault() {
         use std::os::unix::fs::PermissionsExt;
 
-        let Ok(dir) = tempdir() else {
-            return;
-        };
-        let Ok(mut vault) = Vault::open_path(dir.path()) else {
-            return;
-        };
-        assert!(vault.init("correct horse battery staple").is_ok());
+        let (dir, vault) = init_vault();
         drop(vault);
 
         // Vaults created before modes were restricted are world-readable.
         for path in [vault_header_path(dir.path()), vault_db_path(dir.path())] {
-            assert!(fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).is_ok());
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("loosen");
         }
 
-        assert!(Vault::open_path(dir.path()).is_ok());
+        Vault::open_path(dir.path()).expect("reopen");
         assert_eq!(mode_of(&vault_header_path(dir.path())), 0o600, "header");
         assert_eq!(mode_of(&vault_db_path(dir.path())), 0o600, "database");
     }
 
     #[test]
     fn discard_partial_init_removes_header_and_db() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().expect("tempdir");
         let header = vault_header_path(dir.path());
         let staged = vault_init_header_path(dir.path());
         let db = vault_db_path(dir.path());
-        if fs::write(&header, b"{}").is_err()
-            || fs::write(&staged, b"{}").is_err()
-            || fs::write(&db, b"x").is_err()
-        {
-            return;
+        for (path, bytes) in [(&header, &b"{}"[..]), (&staged, b"{}"), (&db, b"x")] {
+            fs::write(path, bytes).expect("write");
         }
 
         discard_partial_init(dir.path());
@@ -556,9 +537,7 @@ mod tests {
         assert!(!staged.exists(), "staged init header must be removed");
         assert!(!db.exists(), "orphan db must be removed");
 
-        let Ok(vault) = Vault::open_path(dir.path()) else {
-            return;
-        };
+        let vault = Vault::open_path(dir.path()).expect("open");
         assert_eq!(vault.status(), VaultStatus::Uninitialized);
     }
 }

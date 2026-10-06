@@ -98,6 +98,7 @@ fn set_owner_only_mode(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(all(test, unix))]
+#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use std::fs;
     use std::io::Write;
@@ -108,17 +109,15 @@ mod tests {
     use super::*;
 
     fn mode_of(path: &Path) -> u32 {
-        fs::metadata(path).map_or(0, |meta| meta.permissions().mode() & 0o777)
+        fs::metadata(path).expect("metadata").permissions().mode() & 0o777
     }
 
     #[test]
     fn private_dir_is_created_with_parents_at_owner_only_mode() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().expect("tempdir");
         let nested = dir.path().join("outer").join("inner");
 
-        assert!(create_private_dir(&nested).is_ok());
+        create_private_dir(&nested).expect("create nested");
 
         assert_eq!(mode_of(&nested), 0o700);
         assert_eq!(mode_of(&dir.path().join("outer")), 0o700);
@@ -126,34 +125,28 @@ mod tests {
 
     #[test]
     fn existing_dir_is_tightened() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().expect("tempdir");
         let loose = dir.path().join("loose");
-        assert!(fs::create_dir(&loose).is_ok());
-        assert!(fs::set_permissions(&loose, fs::Permissions::from_mode(0o755)).is_ok());
+        fs::create_dir(&loose).expect("create");
+        fs::set_permissions(&loose, fs::Permissions::from_mode(0o755)).expect("loosen");
 
-        assert!(create_private_dir(&loose).is_ok());
+        create_private_dir(&loose).expect("tighten");
 
         assert_eq!(mode_of(&loose), 0o700);
     }
 
     #[test]
     fn private_file_truncates_and_tightens_a_stale_file() {
-        let Ok(dir) = tempdir() else {
-            return;
-        };
+        let dir = tempdir().expect("tempdir");
         let path = dir.path().join("stale");
-        assert!(fs::write(&path, b"old contents").is_ok());
-        assert!(fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).is_ok());
+        fs::write(&path, b"old contents").expect("stale file");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("loosen");
 
-        let Ok(mut file) = create_private_file(&path) else {
-            return;
-        };
-        assert!(file.write_all(b"new").is_ok());
+        let mut file = create_private_file(&path).expect("recreate");
+        file.write_all(b"new").expect("write");
         drop(file);
 
-        assert_eq!(fs::read(&path).unwrap_or_default(), b"new");
+        assert_eq!(fs::read(&path).expect("read"), b"new");
         assert_eq!(mode_of(&path), 0o600);
     }
 }
