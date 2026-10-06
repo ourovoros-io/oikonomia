@@ -38,7 +38,8 @@
 //! tell the UI.
 
 use std::collections::HashSet;
-use std::ops::{Deref, DerefMut};
+use std::ops::{ControlFlow, Deref, DerefMut};
+use std::panic::AssertUnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -563,51 +564,107 @@ pub const fn should_emit_vault_locked(did_lock: bool) -> bool {
 /// instead of waking every poll interval, so a locked session can stay
 /// open (or hidden to tray) without a periodic wakeup. Unlock notifies;
 /// lock notifies so an in-flight poll wait parks immediately.
-pub fn spawn_auto_lock(app: tauri::AppHandle, handles: WatchdogHandles) {
-    std::thread::spawn(move || {
-        run_auto_lock_loop(handles, AUTO_LOCK_POLL_INTERVAL, || {
-            use tauri::Emitter;
-            let _ = app.emit("vault-locked", ());
-        });
-    });
+///
+/// The thread is named `auto-lock` and runs until the process exits, so its
+/// handle is not kept: there is no point at which it could be joined.
+///
+/// # Errors
+///
+/// Returns the operating system's error when the thread cannot be started.
+/// The app must not run without the watchdog, so the caller fails startup.
+pub fn spawn_auto_lock(app: tauri::AppHandle, handles: WatchdogHandles) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("auto-lock".into())
+        .spawn(move || {
+            run_auto_lock_loop(&handles, AUTO_LOCK_POLL_INTERVAL, || {
+                use tauri::Emitter;
+                let _ = app.emit("vault-locked", ());
+            });
+        })?;
+
+    Ok(())
 }
 
 /// Idle watchdog loop. `on_locked` runs with no mutex held, each time the
 /// watchdog locked the vault or has a forced lock to announce.
 fn run_auto_lock_loop(
-    handles: WatchdogHandles,
+    handles: &WatchdogHandles,
     poll_interval: Duration,
     mut on_locked: impl FnMut(),
 ) {
+    loop {
+        // A panic that ended this thread would end auto-lock for the rest of
+        // the process, with nothing to show for it. Each round is therefore
+        // contained and the loop goes on.
+        //
+        // `AssertUnwindSafe`: the handles are mutexes that recover from
+        // poisoning and atomics, and `on_locked` is called again only to
+        // announce a later lock.
+        let round = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            watch_one_round(handles, poll_interval, &mut on_locked)
+        }));
+
+        match round {
+            Ok(ControlFlow::Break(())) => return,
+            Ok(ControlFlow::Continue(())) => {}
+            Err(_panic) => lock_after_panic(&handles.vault),
+        }
+    }
+}
+
+/// One pass of the watchdog: wait until the vault is unlocked, wait one poll
+/// interval, lock if idle. `Break` ends the loop.
+fn watch_one_round(
+    handles: &WatchdogHandles,
+    poll_interval: Duration,
+    on_locked: &mut impl FnMut(),
+) -> ControlFlow<()> {
     let WatchdogHandles {
         vault,
         last_activity,
     } = handles;
 
-    loop {
-        match vault.gate.wait_for_work() {
-            Wake::Shutdown => return,
-            Wake::AnnounceLock => {
-                on_locked();
-                continue;
-            }
-            Wake::Poll => {}
-        }
-
-        match vault.gate.wait_poll_interval(poll_interval) {
-            GatePhase::Shutdown => return,
-            GatePhase::Parked => continue,
-            GatePhase::Running => {}
-        }
-
-        #[cfg(test)]
-        vault.gate.record_tick();
-
-        let locked_now = lock_if_idle(&vault, &last_activity);
-
-        if should_emit_vault_locked(locked_now) {
+    match vault.gate.wait_for_work() {
+        Wake::Shutdown => return ControlFlow::Break(()),
+        Wake::AnnounceLock => {
             on_locked();
+            return ControlFlow::Continue(());
         }
+        Wake::Poll => {}
+    }
+
+    match vault.gate.wait_poll_interval(poll_interval) {
+        GatePhase::Shutdown => return ControlFlow::Break(()),
+        GatePhase::Parked => return ControlFlow::Continue(()),
+        GatePhase::Running => {}
+    }
+
+    #[cfg(test)]
+    vault.gate.record_tick();
+
+    let locked_now = lock_if_idle(vault, last_activity);
+
+    if should_emit_vault_locked(locked_now) {
+        on_locked();
+    }
+    ControlFlow::Continue(())
+}
+
+/// Locks the vault after a watchdog round panicked.
+///
+/// How far the round got is unknown, including whether the idle check ran, so
+/// the vault is locked rather than left open on a guess. That also parks the
+/// gate, which keeps a round that panics every time from spinning: the next
+/// one waits for an unlock. The lock is announced by the next round, inside
+/// the containment, in case it was the announcement that panicked.
+fn lock_after_panic(vault: &GatedVault) {
+    // The panic message itself went to the panic hook.
+    log::error!("auto-lock watchdog round panicked; locking the vault");
+
+    let mut guard = vault.lock();
+    if guard.status() == VaultStatus::Unlocked {
+        guard.lock();
+        vault.gate.announce_lock();
     }
 }
 
@@ -860,6 +917,41 @@ mod tests {
     }
 
     #[test]
+    fn watchdog_keeps_locking_after_a_round_panicked() {
+        let (state, dir) = test_state("panic");
+        init_locked_vault(&state);
+        let handles = state.watchdog_handles();
+        let vault = Arc::clone(&handles.vault);
+        let last_activity = Arc::clone(&handles.last_activity);
+
+        // The first announcement panics, as a failing emitter would.
+        let (announced, announcements) = mpsc::channel();
+        let mut calls = 0_u32;
+        let join = std::thread::spawn(move || {
+            run_auto_lock_loop(&handles, Duration::from_millis(20), move || {
+                calls += 1;
+                let _ = announced.send(calls);
+                if calls == 1 {
+                    std::panic::resume_unwind(Box::new("emit failed"));
+                }
+            });
+        });
+
+        for round in 1..=2_u32 {
+            vault.lock().unlock(TEST_PASSWORD).expect("unlock");
+            last_activity.store(0, Ordering::Relaxed);
+
+            // The bound only fails the test if the watchdog is gone.
+            let got = announcements.recv_timeout(Duration::from_secs(5));
+            assert_eq!(got.ok(), Some(round), "auto-lock round {round}");
+        }
+
+        assert_eq!(vault.lock().status(), VaultStatus::Locked);
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn auto_lock_poll_interval_is_five_seconds() {
         assert_eq!(AUTO_LOCK_POLL_INTERVAL, Duration::from_secs(5));
     }
@@ -1101,7 +1193,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let handles = state.watchdog_handles();
         let join = std::thread::spawn(move || {
-            run_auto_lock_loop(handles, poll, move || {
+            run_auto_lock_loop(&handles, poll, move || {
                 let _ = tx.send(());
             });
         });

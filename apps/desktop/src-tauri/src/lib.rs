@@ -58,7 +58,7 @@ pub fn run() {
 
         // Rust-side idle lock: guarantees the vault locks even if the
         // webview throttles timers or stalls entirely.
-        state::spawn_auto_lock(app.handle().clone(), watchdog);
+        state::spawn_auto_lock(app.handle().clone(), watchdog)?;
 
         if cfg!(debug_assertions) {
             app.handle().plugin(
