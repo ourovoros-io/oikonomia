@@ -190,6 +190,10 @@ jobs:
       # beforeBuildCommand already runs `npm run build` in web/ (no web/dist placeholder).
       # Signing/notarization use the env vars below when secrets exist; this job
       # never reaches here if they are missing.
+      # tauriScript is set in every job: projectPath has no package.json, and
+      # without it the action runs `npm install -g @tauri-apps/cli@v2`, so an
+      # unpinned CLI would build the release and hold the signing keys. This
+      # is the CLI `npm ci` installed from web/package-lock.json.
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -212,6 +216,7 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
+          tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
 
       # Tauri notarizes and staples the .app and signs the .dmg with the same
       # identity, but does not notarize the .dmg. This step proves the app is
@@ -391,6 +396,7 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
+          tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
           args: --bundles deb,appimage
 
       - name: Smoke-test the bundled app
@@ -464,6 +470,7 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
+          tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
           args: --bundles nsis
 
       # The installer is the Windows updater artifact: the app downloads it,

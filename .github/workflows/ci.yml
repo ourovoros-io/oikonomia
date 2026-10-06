@@ -159,11 +159,13 @@ jobs:
       # Each runner builds in its default shell: on Windows that is
       # PowerShell, which finds Strawberry Perl for the vendored OpenSSL
       # build; Git Bash would put its own, incomplete perl first.
+      # The Tauri CLI is the one `npm ci` installed from web/package-lock.json,
+      # started through node so one command line works in both shells.
       - name: Build the installers (Linux)
         if: runner.os == 'Linux'
         run: |
           printf '{"bundle": {"createUpdaterArtifacts": false}}' > "${RUNNER_TEMP}/smoke-config.json"
-          npx --yes @tauri-apps/cli@^2 build --bundles deb,appimage --config "${RUNNER_TEMP}/smoke-config.json"
+          node web/node_modules/@tauri-apps/cli/tauri.js build --bundles deb,appimage --config "${RUNNER_TEMP}/smoke-config.json"
 
       - name: Build the installers (Windows)
         if: runner.os == 'Windows'
@@ -171,7 +173,7 @@ jobs:
         run: |
           $config = Join-Path $env:RUNNER_TEMP 'smoke-config.json'
           '{"bundle": {"createUpdaterArtifacts": false}}' | Set-Content -Path $config -Encoding ascii
-          npx --yes '@tauri-apps/cli@^2' build --bundles nsis --config $config
+          node web/node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $config
 
       - name: Smoke-test the installed app (Windows)
         if: runner.os == 'Windows'
