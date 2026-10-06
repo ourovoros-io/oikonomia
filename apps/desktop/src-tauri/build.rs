@@ -1,14 +1,22 @@
 //! Runs the Tauri build step and refuses to compile without an updater key.
 
+/// Runs the Tauri build step, then checks the updater key.
 fn main() {
     tauri_build::build();
     enforce_baked_updater_public_key();
 }
 
-/// Empty `plugins.updater.pubkey` must fail the desktop crate compile.
+/// Fails the build when `plugins.updater.pubkey` in `tauri.conf.json` is
+/// empty.
 ///
-/// Ops bakes the minisign **public** key only. The private key is not in this
-/// repository. A future blank-out is a CI fail.
+/// Only the minisign public key is in this repository; the private key is
+/// not. A shipped build without the public key could not verify an update,
+/// so a blank value has to stop the build, not reach a release.
+///
+/// # Panics
+///
+/// Panics, which fails the build, when the configuration cannot be read or
+/// parsed, or the key is empty.
 #[expect(clippy::expect_used, reason = "empty updater pubkey must fail compile")]
 fn enforce_baked_updater_public_key() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json");

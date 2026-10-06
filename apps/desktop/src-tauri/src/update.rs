@@ -1,9 +1,15 @@
-//! Unlock-screen `update_check` / `update_install` IPC.
+//! The update commands, `update_check` and `update_install`.
 //!
-//! The webview cannot pass a feed URL, endpoint, or public key. HTTP runs on
-//! the blocking pool (`ureq` inside `oikonomia-update`). Install execs the
-//! already-verified local path via [`crate::update_exec::VerifiedPathInstaller`].
-//! `setup()` never starts a check.
+//! This is the app's only path to the network, and it runs only on the
+//! user's click: nothing here starts a check when the app starts.
+//!
+//! The webview supplies nothing. The feed URL, the endpoint and the public
+//! key are compiled in (`oikonomia-update`, `crate::update_key`), so a
+//! compromised page cannot point the updater elsewhere. HTTP is `ureq`
+//! inside `oikonomia-update`, called on the blocking pool. An install hands
+//! the downloaded and verified file to
+//! [`crate::update_exec::VerifiedPathInstaller`], which replaces the running
+//! copy.
 
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
@@ -17,12 +23,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
-/// Where a downloaded update waits to be installed: a directory of its own
-/// under this user's cache location.
+/// Returns where a downloaded update waits to be installed: a directory of
+/// its own under this user's cache location.
 ///
 /// Not the system temporary directory. On Linux that is shared by every
 /// account, and whoever creates the directory first could swap the verified
 /// file before it is installed. Not the vault data directory either.
+///
+/// # Errors
+///
+/// Returns `task_failed` when the system names no cache directory. No task
+/// is involved; `crate::error` lists this among the codes used more broadly
+/// than their name.
 fn updater_cache_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
     let cache = app.path().app_cache_dir().map_err(|err| {
         CommandError::desktop(
@@ -33,11 +45,21 @@ fn updater_cache_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
     Ok(cache.join("updater"))
 }
 
-/// User-clicked check from unlock. Fetches `latest.json` plus a detached
-/// `latest.json.sig`, verifies with the baked minisign key, allow-lists the
-/// artifact URL. Does not download the artifact.
+/// Checks for a newer version, on the user's click, and returns the update
+/// status.
 ///
-/// HTTP is `ureq` on the blocking pool so the async runtime is not stalled.
+/// Needs no vault; the unlock screen offers it. Fetches `latest.json` and its
+/// detached signature `latest.json.sig`, verifies the signature with the
+/// compiled-in minisign key, and checks the artifact URL against the
+/// allow-list. Does not download the artifact. A check that cannot complete
+/// is the status `Failed`, not an error.
+///
+/// HTTP is `ureq` on the blocking pool, so the async runtime is not stalled.
+///
+/// # Errors
+///
+/// Returns `task_failed` when the system names no cache directory or the
+/// blocking task panics.
 #[tauri::command]
 pub(crate) async fn update_check(
     app: tauri::AppHandle,
@@ -200,7 +222,9 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
+    /// An installer that counts its calls and fails each one.
     struct SpyInstaller {
+        /// How many times `install` was called.
         calls: AtomicUsize,
     }
 

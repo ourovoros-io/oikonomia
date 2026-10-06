@@ -8,13 +8,16 @@
 
 use std::collections::BTreeMap;
 
+/// The text of `tauri.conf.json`, read at compile time.
 const CONFIG: &str = include_str!("../tauri.conf.json");
 
+/// Returns `tauri.conf.json` parsed.
 fn config() -> serde_json::Value {
     serde_json::from_str(CONFIG).expect("tauri.conf.json is valid JSON")
 }
 
-/// CSP directives as `name -> sources`.
+/// Returns the content security policy as a map from directive name to its
+/// sources.
 fn csp_directives() -> BTreeMap<String, Vec<String>> {
     let csp = config()["app"]["security"]["csp"]
         .as_str()
