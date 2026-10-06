@@ -1,5 +1,6 @@
 //! Feed fetch, signed-manifest check, and artifact download. No Tauri types.
 
+use crate::artifact_limit::MAX_ARTIFACT_BYTES;
 use crate::error::{Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
@@ -24,7 +25,6 @@ pub const UPDATE_FEED_URL: &str =
 
 const MAX_MANIFEST_BYTES: usize = 1_048_576;
 const MAX_SIGNATURE_BYTES: usize = 16_384;
-const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
 const MAX_REDIRECTS: u8 = 5;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
 
