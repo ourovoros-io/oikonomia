@@ -1737,8 +1737,9 @@ const DESCRIPTION_HEADERS: &[&str] = &["περιγραφη", "description"];
 /// Column headings that follow the description heading in a table header.
 const QUANTITY_HEADERS: &[&str] = &["ποσοτητα", "quantity"];
 
-/// Markers of a document that states it carries no VAT.
-const VAT_EXEMPT_MARKERS: &[&str] = &["χωρις φπα", "0%"];
+/// Wording of a document that states it carries no VAT ("without VAT"). A
+/// rate of zero says the same; [`states_a_zero_rate`] finds that.
+const VAT_EXEMPT_MARKERS: &[&str] = &["χωρις φπα"];
 
 /// Customer name from the "Στοιχεία Πελάτη" block of a sales invoice.
 fn sales_invoice_customer(text: &str) -> Option<String> {
@@ -1884,11 +1885,37 @@ fn build_notes(
     if unpaid {
         notes.push(UiText::new(UiTextCode::InvoiceUnpaid));
     }
-    if contains_any(folded_text, VAT_EXEMPT_MARKERS) {
+    if contains_any(folded_text, VAT_EXEMPT_MARKERS) || states_a_zero_rate(folded_text) {
         notes.push(UiText::new(UiTextCode::InvoiceVatExempt));
     }
 
     notes
+}
+
+/// Whether `text` holds a percentage whose number is zero: `0%`, `0,0%`,
+/// `0.00%`.
+///
+/// The number is every digit, `,` and `.` directly before the `%` sign, so
+/// the `0%` that ends `10%`, `20%` or `10,0%` is part of a larger number and
+/// does not count. A space between the number and the sign is not skipped:
+/// `0 %` is not read as a rate here.
+fn states_a_zero_rate(text: &str) -> bool {
+    let is_number_char = |c: &char| c.is_ascii_digit() || matches!(c, ',' | '.');
+
+    // Every piece but the last is the text before one `%` sign.
+    let mut before_each_sign = text.split('%');
+    before_each_sign.next_back();
+
+    before_each_sign.any(|before| {
+        let mut digits = before
+            .chars()
+            .rev()
+            .take_while(is_number_char)
+            .filter(char::is_ascii_digit)
+            .peekable();
+
+        digits.peek().is_some() && digits.all(|digit| digit == '0')
+    })
 }
 
 #[cfg(test)]
@@ -2494,6 +2521,55 @@ mod tests {
                 UiText::new(UiTextCode::InvoiceVatExempt),
             ]
         );
+    }
+
+    /// Whether `text` gets the note that the document carries no VAT.
+    fn is_noted_vat_exempt(text: &str) -> bool {
+        build_notes(
+            Some(1000),
+            EntryKindSuggestion::Expense,
+            false,
+            &folded(text),
+        )
+        .contains(&UiText::new(UiTextCode::InvoiceVatExempt))
+    }
+
+    #[test]
+    fn a_zero_vat_rate_adds_the_vat_exempt_note() {
+        for text in [
+            "VAT 0%",
+            "VAT 0% 0,00",
+            "ΦΠΑ 0%",
+            "Φ.Π.Α.0%",
+            "VAT (0%)",
+            "0% VAT",
+            "ΦΠΑ 0,0%",
+            "VAT 0.00%",
+            "Χωρίς ΦΠΑ",
+            "ΧΩΡΙΣ ΦΠΑ",
+        ] {
+            assert!(is_noted_vat_exempt(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_rate_that_only_ends_in_zero_adds_no_vat_exempt_note() {
+        for text in [
+            "VAT 10%",
+            "VAT 20%",
+            "ΦΠΑ 10%",
+            "ΦΠΑ 20% 24,00",
+            "VAT 10,0%",
+            "VAT 20.0%",
+            "Discount 100%",
+            "Λιγνίτης 30%",
+            "VAT 24%",
+            "no rate at all",
+            "%",
+            ",%",
+        ] {
+            assert!(!is_noted_vat_exempt(text), "{text:?}");
+        }
     }
 
     #[test]
