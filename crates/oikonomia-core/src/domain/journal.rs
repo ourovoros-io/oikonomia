@@ -1,20 +1,53 @@
-//! Journal entries and lines with double-entry validation.
+//! Journal entries, their lines, and the rule that makes an entry postable.
+//!
+//! # Model
+//!
+//! A [`JournalEntry`] is the header of one transaction: its book, date and
+//! description. Its [`JournalLine`]s say where the money moved, each naming
+//! one account and an amount on one side.
+//!
+//! A line has both a `debit` and a `credit` field, of which exactly one is
+//! greater than zero. Both are [`Money`], so neither can be negative, but the
+//! type alone does not stop a line with both sides filled or both empty;
+//! [`validate_lines_for_post`] does.
+//!
+//! # The posting rule
+//!
+//! [`validate_lines_for_post`] is the double-entry invariant, checked on the
+//! lines alone before anything is written:
+//!
+//! 1. there are at least two lines;
+//! 2. every line has an amount on exactly one side;
+//! 3. the debits and the credits add up to the same total.
+//!
+//! Everything that needs the database (the accounts exist, belong to the
+//! entry's entity and, except for the reversing entry of a void, are active)
+//! is checked in [`crate::ledger`], which calls this function as part of
+//! every post.
+//!
+//! # Lifecycle
+//!
+//! The date, description and lines of a posted entry do not change, and an
+//! entry is removed only together with its whole entity. A mistake is
+//! corrected by a void, which posts a second entry with the sides swapped and
+//! links the two (see [`crate::ledger::void_entry`]), so the book keeps both.
+//! Of the fields of a [`JournalEntry`], only `hidden` changes after posting.
 
-use super::account::AccountId;
-use super::entity::EntityId;
+use crate::domain::account::AccountId;
+use crate::domain::entity::EntityId;
 use crate::error::{Error, Result};
 use crate::money::Money;
 use serde::{Deserialize, Serialize};
 use time::Date;
 use uuid::Uuid;
 
-/// Stable journal entry id.
+/// Identifies one [`JournalEntry`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct JournalEntryId(pub Uuid);
 
 impl JournalEntryId {
-    /// Generate a new random entry id.
+    /// Returns a new random (version 4) id.
     #[must_use]
     pub fn new() -> Self {
         Self(Uuid::new_v4())
@@ -22,18 +55,20 @@ impl JournalEntryId {
 }
 
 impl Default for JournalEntryId {
+    /// Returns a new random id, the same as [`JournalEntryId::new`], not a
+    /// fixed value.
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Stable journal line id.
+/// Identifies one [`JournalLine`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct JournalLineId(pub Uuid);
 
 impl JournalLineId {
-    /// Generate a new random line id.
+    /// Returns a new random (version 4) id.
     #[must_use]
     pub fn new() -> Self {
         Self(Uuid::new_v4())
@@ -41,71 +76,123 @@ impl JournalLineId {
 }
 
 impl Default for JournalLineId {
+    /// Returns a new random id, the same as [`JournalLineId::new`], not a
+    /// fixed value.
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Lifecycle of a journal entry.
+/// Whether a journal entry counts towards balances.
+///
+/// Serialized in `snake_case`, which is also how the status is stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryStatus {
-    /// Editable; does not affect balances.
+    /// Not posted, so left out of balances and reports. Core reads a stored
+    /// draft but has no function that creates one.
     Draft,
-    /// Immutable; affects balances. Correct via void/reverse.
+    /// Posted: it counts towards balances and is corrected only by a void.
     Posted,
 }
 
-/// Header for a multi-line journal entry.
+/// The header of a journal entry; its lines are [`JournalLine`]s.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalEntry {
-    /// Primary key.
+    /// The entry's own id.
     pub id: JournalEntryId,
-    /// Owning entity.
+    /// The entity whose journal this entry is in.
     pub entity_id: EntityId,
-    /// Accounting date.
+    /// The accounting date, serialized as `YYYY-MM-DD`.
     #[serde(with = "crate::util::serde_date")]
     pub entry_date: Date,
-    /// User-facing description.
+    /// What the entry is for, as the user wrote it or as core generated it.
+    /// It may be empty.
     pub description: String,
-    /// Optional external reference (check #, invoice #).
+    /// An outside reference such as a check or invoice number, if any.
     pub reference: Option<String>,
-    /// Draft vs posted.
+    /// Whether the entry is a draft or posted.
     pub status: EntryStatus,
-    /// Owner-only visibility flag. Hidden rows stay in the book and in
-    /// list/get/register; [`crate::csv::export_journal_csv`] omits them.
-    /// Not extra encryption.
+    /// `true` when the owner marked the entry hidden. A hidden entry stays in
+    /// the book and in every in-app list and balance;
+    /// [`crate::csv::export_journal_csv`] and
+    /// [`crate::ledger::profit_and_loss_export`] leave it out. It is not an
+    /// extra layer of encryption.
     pub hidden: bool,
 }
 
-/// One debit or credit line on a journal entry.
+/// One debit or credit of one account, as part of a [`JournalEntry`].
+///
+/// Exactly one of `debit` and `credit` is greater than zero on a line that
+/// [`validate_lines_for_post`] accepts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalLine {
-    /// Primary key.
+    /// The line's own id.
     pub id: JournalLineId,
-    /// Parent entry.
+    /// The entry this line is part of.
     pub entry_id: JournalEntryId,
-    /// Account to debit or credit.
+    /// The account the amount is debited or credited to.
     pub account_id: AccountId,
-    /// Debit amount (minor units); exclusive with credit.
+    /// The amount debited, or zero when the line is a credit.
     pub debit: Money,
-    /// Credit amount (minor units); exclusive with debit.
+    /// The amount credited, or zero when the line is a debit.
     pub credit: Money,
-    /// Optional line memo.
+    /// A note on this line alone, if any.
     pub memo: Option<String>,
 }
 
-/// Validate lines before posting a journal entry.
+/// Checks that `lines` can be posted as one journal entry.
 ///
-/// Rules:
-/// - at least two lines
-/// - each line is debit XOR credit (exactly one side non-zero)
-/// - total debits equal total credits
+/// The lines pass when there are at least two of them, each has an amount
+/// greater than zero on exactly one side, and the debits and credits add up
+/// to the same total. Nothing else is looked at: not the accounts, not the
+/// ids, not the memos.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::domain::{
+///     AccountId, JournalEntryId, JournalLine, JournalLineId, validate_lines_for_post,
+/// };
+/// use oikonomia_core::{Error, Money};
+///
+/// # fn line(entry_id: JournalEntryId, debit: i64, credit: i64) -> Result<JournalLine, Error> {
+/// #     Ok(JournalLine {
+/// #         id: JournalLineId::new(),
+/// #         entry_id,
+/// #         account_id: AccountId::new(),
+/// #         debit: Money::from_minor(debit)?,
+/// #         credit: Money::from_minor(credit)?,
+/// #         memo: None,
+/// #     })
+/// # }
+/// let entry = JournalEntryId::new();
+///
+/// // 45.00 of groceries paid from the bank: one debit, one credit.
+/// let balanced = [line(entry, 4_500, 0)?, line(entry, 0, 4_500)?];
+/// assert_eq!(validate_lines_for_post(&balanced), Ok(()));
+///
+/// let unbalanced = [line(entry, 4_500, 0)?, line(entry, 0, 4_000)?];
+/// assert_eq!(
+///     validate_lines_for_post(&unbalanced),
+///     Err(Error::UnbalancedEntry { debits: 4_500, credits: 4_000 })
+/// );
+/// # Ok::<(), Error>(())
+/// ```
 ///
 /// # Errors
 ///
-/// Returns [`Error::TooFewLines`], [`Error::InvalidLineAmounts`],
-/// [`Error::UnbalancedEntry`], or [`Error::MoneyOverflow`] when a rule fails.
+/// The first failure is returned. The line count is checked first, then the
+/// lines one at a time in order, each for its sides and then for the running
+/// totals, and the balance last:
+///
+/// - [`Error::TooFewLines`] when there are fewer than two lines.
+/// - [`Error::InvalidLineAmounts`] for a line whose debit and credit are both
+///   zero or both greater than zero.
+/// - [`Error::MoneyOverflow`] when adding a line takes the total of the
+///   debits or of the credits past `i64::MAX`.
+/// - [`Error::UnbalancedEntry`], carrying both totals, when the total of the
+///   debits differs from the total of the credits.
 pub fn validate_lines_for_post(lines: &[JournalLine]) -> Result<()> {
     if lines.len() < 2 {
         return Err(Error::TooFewLines);
@@ -115,19 +202,20 @@ pub fn validate_lines_for_post(lines: &[JournalLine]) -> Result<()> {
     let mut credits: i64 = 0;
 
     for line in lines {
-        let d = line.debit.amount_minor();
-        let c = line.credit.amount_minor();
+        let debit = line.debit.amount_minor();
+        let credit = line.credit.amount_minor();
 
-        let debit_side = d > 0;
-        let credit_side = c > 0;
-
-        if debit_side == credit_side {
-            // both zero or both non-zero
+        // `Money` is never negative, so "greater than zero" is "has an
+        // amount". A postable line has an amount on one side and not the
+        // other; equal answers mean both sides or neither.
+        let has_debit = debit > 0;
+        let has_credit = credit > 0;
+        if has_debit == has_credit {
             return Err(Error::InvalidLineAmounts);
         }
 
-        debits = debits.checked_add(d).ok_or(Error::MoneyOverflow)?;
-        credits = credits.checked_add(c).ok_or(Error::MoneyOverflow)?;
+        debits = debits.checked_add(debit).ok_or(Error::MoneyOverflow)?;
+        credits = credits.checked_add(credit).ok_or(Error::MoneyOverflow)?;
     }
 
     if debits != credits {
@@ -141,6 +229,7 @@ pub fn validate_lines_for_post(lines: &[JournalLine]) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// A line with fresh ids and the given amounts on its two sides.
     fn journal_line(debit: i64, credit: i64) -> JournalLine {
         let debit = Money::from_minor(debit).unwrap();
         let credit = Money::from_minor(credit).unwrap();
@@ -181,7 +270,6 @@ mod tests {
 
     #[test]
     fn both_sides_rejected() {
-        // first line both debit and credit non-zero
         let lines = vec![journal_line(50, 50), journal_line(0, 50)];
         assert_eq!(
             validate_lines_for_post(&lines),
@@ -221,6 +309,7 @@ mod properties {
         ]
     }
 
+    /// A line with fresh ids and the given amounts on its two sides.
     fn journal_line(debit: i64, credit: i64) -> JournalLine {
         JournalLine {
             id: JournalLineId::new(),
