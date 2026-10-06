@@ -35,8 +35,14 @@ pub(super) const MAX_PDF_DECODED_BYTES: usize = 32 * 1024 * 1024;
 /// How much is read from a decoder at a time while counting.
 const DECODE_CHUNK_BYTES: usize = 64 * 1024;
 
-/// Whether `document` has at most [`MAX_PDF_PAGES`] pages and its streams
-/// decode to at most [`MAX_PDF_DECODED_BYTES`].
+/// Whether `document` has at most [`MAX_PDF_PAGES`] pages, its streams
+/// decode to at most [`MAX_PDF_DECODED_BYTES`], and its form `XObject`s and
+/// page tree nest within the limits of [`pdf_nesting`](super::pdf_nesting).
+///
+/// The last check matters as much as the others: pdf-extract recurses into
+/// every form a page invokes and up every `/Parent` link with no limit, so a
+/// form that invokes itself, or a page that is its own parent, overflows the
+/// stack. That aborts the process; no panic handler can catch it.
 pub(super) fn within_budget(document: &lopdf::Document) -> bool {
     if document.get_pages().len() > MAX_PDF_PAGES {
         return false;
@@ -52,7 +58,7 @@ pub(super) fn within_budget(document: &lopdf::Document) -> bool {
         };
         remaining -= decoded;
     }
-    true
+    super::pdf_nesting::nesting_within_limits(document)
 }
 
 /// The most bytes `stream` occupies at any stage of decoding, or `None`

@@ -7,6 +7,7 @@ mod brands;
 mod invoice;
 mod ocr;
 mod pdf_budget;
+mod pdf_nesting;
 mod pdf_repair;
 mod store;
 

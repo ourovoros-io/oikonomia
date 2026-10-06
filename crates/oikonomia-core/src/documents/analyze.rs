@@ -520,8 +520,10 @@ enum PdfLoad {
 /// malformed document can panic inside them; that makes the document
 /// unreadable, not the app. The closures passed here only read borrowed
 /// data and return owned values, so nothing is left half-updated when one
-/// unwinds. A failed allocation aborts instead of unwinding and is not
-/// caught: the budget is what keeps allocations small.
+/// unwinds. Two failures abort instead of unwinding and are not caught: a
+/// failed allocation and a stack overflow. The budget is what keeps
+/// allocations small and recursion shallow; only a [`BudgetedPdf`] reaches
+/// pdf-extract.
 fn contain_panics<T>(work: impl FnOnce() -> T) -> Option<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).ok()
 }
@@ -1297,6 +1299,22 @@ mod tests {
         ));
 
         assert_eq!(notes, [UiText::new(UiTextCode::OcrModelsMissing)]);
+    }
+
+    /// The fixtures make pdf-extract recurse until the stack overflows,
+    /// which aborts the process; the budget refuses both before extraction.
+    #[test]
+    fn a_pdf_that_nests_without_end_is_over_budget_and_never_extracted() {
+        for pdf in [
+            &include_bytes!("../../testdata/hostile/xobject_self_loop.pdf")[..],
+            include_bytes!("../../testdata/hostile/page_parent_loop.pdf"),
+        ] {
+            assert!(matches!(load_pdf(pdf), PdfLoad::OverBudget));
+            assert_eq!(
+                read_pdf_text(pdf, None),
+                ExtractedText::Unread(UiTextCode::PdfOverBudget)
+            );
+        }
     }
 
     #[test]
