@@ -75,14 +75,26 @@ fn a_vault_from_a_newer_build_is_refused_and_left_untouched() {
     );
 }
 
+fn table_exists(conn: &Connection, name: &str) -> bool {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |row| row.get(0),
+        )
+        .expect("sqlite_master");
+    count == 1
+}
+
 #[test]
-fn a_failed_step_keeps_the_version_of_the_last_step_that_committed() {
+fn a_step_that_fails_part_way_is_undone_and_the_steps_before_it_stay() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
     reset_to_v1(conn);
-    // A view named `documents` makes the v3 step fail: it cannot be indexed.
-    conn.execute_batch("CREATE VIEW documents AS SELECT 1 AS entity_id, 1 AS entry_id")
-        .expect("create the view");
+    // The v3 step creates `documents` and one index before it reaches the
+    // index whose name this table takes, so it fails with work to undo.
+    conn.execute_batch("CREATE TABLE idx_documents_entry (occupied INTEGER)")
+        .expect("occupy the index name");
 
     let failed = migrate(conn);
 
@@ -92,6 +104,13 @@ fn a_failed_step_keeps_the_version_of_the_last_step_that_committed() {
         2,
         "the v2 step committed, so the next unlock resumes at v3"
     );
+    assert!(table_exists(conn, "journal_entries"), "v2 stays applied");
+    assert!(!table_exists(conn, "documents"), "v3 left nothing behind");
+
+    conn.execute_batch("DROP TABLE idx_documents_entry")
+        .expect("free the index name");
+    migrate(conn).expect("the next run resumes at v3");
+    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
 }
 
 #[test]
