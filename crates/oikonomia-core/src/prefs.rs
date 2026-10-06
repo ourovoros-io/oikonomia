@@ -38,24 +38,62 @@ const MAX_SYSTEM_LANGUAGES: usize = 16;
 const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
 
 impl Locale {
-    /// The supported language a system language tag names, if any.
+    /// Every supported language, in declaration order.
+    ///
+    /// Code that must treat each language (detecting the system language,
+    /// tests over the wording tables) iterates this list instead of naming
+    /// the variants again. A test checks the list against the enum, so a new
+    /// variant cannot be left out of it.
+    pub const ALL: &'static [Self] = &[Self::En, Self::El, Self::Fr, Self::De];
+
+    /// Returns the app language for the system's preferred languages, most
+    /// preferred first.
+    ///
+    /// The first tag naming a supported language wins; tags for other
+    /// languages are skipped. Only the primary subtag of a tag counts,
+    /// compared without regard to ASCII case, and both `-` and `_` separate
+    /// subtags. The result is English when no tag matches, so an empty list,
+    /// empty strings and arbitrary text are all accepted. Only the first 16
+    /// tags are read, and a tag longer than 35 characters is skipped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::prefs::Locale;
+    ///
+    /// assert_eq!(Locale::from_system_languages(&["el-GR", "en-US"]), Locale::El);
+    /// assert_eq!(Locale::from_system_languages(&["ja-JP", "de_CH"]), Locale::De);
+    /// assert_eq!(Locale::from_system_languages(&["ja-JP"]), Locale::En);
+    /// assert_eq!(Locale::from_system_languages::<&str>(&[]), Locale::En);
+    /// ```
+    #[must_use]
+    pub fn from_system_languages<S: AsRef<str>>(tags: &[S]) -> Self {
+        tags.iter()
+            .take(MAX_SYSTEM_LANGUAGES)
+            .find_map(|tag| Self::from_language_tag(tag.as_ref()))
+            .unwrap_or_default()
+    }
+
+    /// Returns the supported language a system language tag names, if any.
     ///
     /// Only the primary language subtag counts, compared without regard to
-    /// case, and both `-` and `_` separate subtags (`el-GR`, `EL_gr`).
+    /// ASCII case, and both `-` and `_` separate subtags (`el-GR`, `EL_gr`).
     fn from_language_tag(tag: &str) -> Option<Self> {
-        // Bounded check: never scan past the limit of an absurd input.
+        // `nth` stops at the limit, so an absurdly long input is never
+        // walked to its end.
         if tag.chars().nth(MAX_SYSTEM_LANGUAGE_TAG_CHARS).is_some() {
             return None;
         }
 
         let primary = tag.trim().split(['-', '_']).next()?;
 
-        [Self::En, Self::El, Self::Fr, Self::De]
-            .into_iter()
+        Self::ALL
+            .iter()
+            .copied()
             .find(|locale| primary.eq_ignore_ascii_case(locale.code()))
     }
 
-    /// The lowercase language code, matching the serialized form.
+    /// Returns the lowercase language code, which is also the serialized form.
     const fn code(self) -> &'static str {
         match self {
             Self::En => "en",
@@ -63,21 +101,6 @@ impl Locale {
             Self::Fr => "fr",
             Self::De => "de",
         }
-    }
-
-    /// Pick the app language from the system's preferred languages, most
-    /// preferred first.
-    ///
-    /// The first tag naming a supported language wins; tags for other
-    /// languages are skipped. English when nothing matches, so an empty list,
-    /// empty strings and garbage are all safe. At most the first 16 tags are
-    /// read and tags longer than 35 characters are ignored.
-    #[must_use]
-    pub fn from_system_languages<S: AsRef<str>>(tags: &[S]) -> Self {
-        tags.iter()
-            .take(MAX_SYSTEM_LANGUAGES)
-            .find_map(|tag| Self::from_language_tag(tag.as_ref()))
-            .unwrap_or_default()
     }
 }
 
@@ -324,8 +347,40 @@ fn remove_stale_temporary(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oikonomia_test_support::listed_variants;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
+
+    listed_variants! {
+        units listed_locales for Locale {
+            Locale::En,
+            Locale::El,
+            Locale::Fr,
+            Locale::De,
+        }
+    }
+
+    /// Fails unless `Locale::ALL` is the variants in the `listed_locales`
+    /// list above, in that order. The compiler checks that list against the
+    /// enum with an exhaustive `match`, so a language added to the enum but
+    /// left out of the list does not compile.
+    #[test]
+    fn all_lists_every_locale_once_in_declaration_order() {
+        assert_eq!(Locale::ALL, listed_locales::variants());
+        listed_locales::assert_every_position_once(
+            Locale::ALL.iter().map(listed_locales::position).collect(),
+        );
+    }
+
+    #[test]
+    fn every_locale_code_is_its_serialized_form_and_is_detected() {
+        for locale in Locale::ALL {
+            let serialized = serde_json::to_value(locale).unwrap();
+
+            assert_eq!(serialized, serde_json::Value::from(locale.code()));
+            assert_eq!(Locale::from_system_languages(&[locale.code()]), *locale);
+        }
+    }
 
     #[test]
     fn missing_file_yields_defaults() {

@@ -247,6 +247,29 @@ pub enum DocumentTopic {
     OtherIncome,
 }
 
+impl DocumentTopic {
+    /// Every topic, in declaration order.
+    ///
+    /// A test checks the list against the enum, so a new topic cannot be left
+    /// out of it.
+    pub const ALL: &'static [Self] = &[
+        Self::Utilities,
+        Self::Bills,
+        Self::Housing,
+        Self::Subscription,
+        Self::Food,
+        Self::Transport,
+        Self::Software,
+        Self::Health,
+        Self::Tax,
+        Self::OtherExpense,
+        Self::Sales,
+        Self::Freelance,
+        Self::Salary,
+        Self::OtherIncome,
+    ];
+}
+
 /// Template account codes that cover a document topic, best first.
 ///
 /// An empty list means the template has no account for the topic, so the
@@ -306,6 +329,7 @@ fn company_topic_codes(topic: DocumentTopic) -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oikonomia_test_support::listed_variants;
 
     const TEMPLATES: [ChartTemplate; 3] = [
         ChartTemplate::Blank,
@@ -313,22 +337,39 @@ mod tests {
         ChartTemplate::Company,
     ];
 
-    const TOPICS: [DocumentTopic; 14] = [
-        DocumentTopic::Utilities,
-        DocumentTopic::Bills,
-        DocumentTopic::Housing,
-        DocumentTopic::Subscription,
-        DocumentTopic::Food,
-        DocumentTopic::Transport,
-        DocumentTopic::Software,
-        DocumentTopic::Health,
-        DocumentTopic::Tax,
-        DocumentTopic::OtherExpense,
-        DocumentTopic::Sales,
-        DocumentTopic::Freelance,
-        DocumentTopic::Salary,
-        DocumentTopic::OtherIncome,
-    ];
+    listed_variants! {
+        units listed_topics for DocumentTopic {
+            DocumentTopic::Utilities,
+            DocumentTopic::Bills,
+            DocumentTopic::Housing,
+            DocumentTopic::Subscription,
+            DocumentTopic::Food,
+            DocumentTopic::Transport,
+            DocumentTopic::Software,
+            DocumentTopic::Health,
+            DocumentTopic::Tax,
+            DocumentTopic::OtherExpense,
+            DocumentTopic::Sales,
+            DocumentTopic::Freelance,
+            DocumentTopic::Salary,
+            DocumentTopic::OtherIncome,
+        }
+    }
+
+    /// Fails unless `DocumentTopic::ALL` is the variants in the
+    /// `listed_topics` list above, in that order. The compiler checks that
+    /// list against the enum with an exhaustive `match`, so a topic added to
+    /// the enum but left out of the list does not compile.
+    #[test]
+    fn all_lists_every_topic_once_in_declaration_order() {
+        assert_eq!(DocumentTopic::ALL, listed_topics::variants());
+        listed_topics::assert_every_position_once(
+            DocumentTopic::ALL
+                .iter()
+                .map(listed_topics::position)
+                .collect(),
+        );
+    }
 
     /// The type a topic's accounts must have.
     fn topic_type(topic: DocumentTopic) -> AccountType {
@@ -385,7 +426,7 @@ mod tests {
     #[test]
     fn every_topic_code_exists_in_its_template_with_the_topics_type() {
         for template in TEMPLATES {
-            for topic in TOPICS {
+            for &topic in DocumentTopic::ALL {
                 for code in document_topic_codes(template, topic) {
                     assert_code_has_type(template, code, topic_type(topic), &format!("{topic:?}"));
                 }
@@ -455,7 +496,7 @@ mod tests {
     #[test]
     fn no_seeded_name_falls_back_to_its_code() {
         for template in [ChartTemplate::Personal, ChartTemplate::Company] {
-            for locale in [Locale::En, Locale::El, Locale::Fr, Locale::De] {
+            for &locale in Locale::ALL {
                 for account in template_accounts(template, locale) {
                     assert_ne!(account.name, account.code, "{template:?} {locale:?}");
                 }

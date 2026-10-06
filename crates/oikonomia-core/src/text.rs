@@ -545,8 +545,6 @@ pub const fn electricity_supplier_merchant(locale: Locale) -> &'static str {
 mod tests {
     use super::*;
 
-    const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
-
     const BILL_KINDS: [BillKind; 5] = [
         BillKind::Electricity,
         BillKind::Gas,
@@ -715,7 +713,7 @@ mod tests {
 
     #[test]
     fn generated_text_is_safe_for_spreadsheets_and_the_pdf_font() {
-        for locale in LOCALES {
+        for &locale in Locale::ALL {
             let mut generated = forms(locale);
             generated.push(opening_balance_description(locale, "Cash"));
             generated.push(void_description(locale, "Groceries"));
