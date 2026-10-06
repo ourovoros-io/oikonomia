@@ -1,4 +1,58 @@
-//! Exec the already-verified updater artifact. No HTTP. No plugin `check`.
+//! Installs an update that is already downloaded and verified.
+//!
+//! Nothing here touches the network. `oikonomia-update` fetches and verifies
+//! the manifest, downloads the artifact and verifies it, and then hands a
+//! local path to an [`ArtifactInstaller`]. This module is that installer: it
+//! puts the verified file in place of the running copy.
+//!
+//! # Install kinds
+//!
+//! An update is installed the way the running copy was installed
+//! ([`InstallKind`]):
+//!
+//! - **macOS**, any copy: `MacApp`. The artifact is an `.app.tar.gz`,
+//!   unpacked beside the bundle and swapped in. The app restarts.
+//! - **Linux**, a copy that runs from inside an `AppImage`: `AppImage`. The
+//!   artifact is an `.AppImage`, staged beside the image and renamed over
+//!   it. The app restarts.
+//! - **Linux**, any other copy: `PackageManaged`. Never installed here.
+//! - **Windows**, any copy: `WindowsInstaller`. The artifact is the per-user
+//!   `.exe` installer, which is started; the app exits and the installer
+//!   starts the new version.
+//! - **Any other system**: `PackageManaged`. Never installed here.
+//!
+//! A macOS copy that does not run from an `.app` bundle, such as a build run
+//! from a source tree, is still `MacApp`; its install fails, because there is
+//! no bundle to replace. The bundle formats are the ones `tauri.conf.json`
+//! builds: there is no `.msi` and no `.rpm`, and a `.deb` is never an
+//! artifact this code accepts.
+//!
+//! # A package-managed copy never reaches an installer
+//!
+//! A copy installed from a `.deb` does not own its files; the system package
+//! manager does, and only it may replace them. Three checks keep this module
+//! from writing over such a copy, each sufficient alone:
+//!
+//! 1. [`InstallKind::route`] reports such a copy as
+//!    [`InstallRoute::PackageManager`], so the update machine never offers an
+//!    in-app install for it.
+//! 2. [`install_verified_artifact`] refuses the kind before it looks at the
+//!    file.
+//! 3. Each platform's `run_platform_installer` accepts only that platform's
+//!    own kind.
+//!
+//! The classification itself is the delicate part on Linux, where a copy
+//! started from another program's `AppImage` inherits that program's
+//! environment ([`AppImageRuntime::own_image`]).
+//!
+//! # Errors
+//!
+//! A wrong kind is [`UpdateError::InstallNotAvailable`] and a wrong file type
+//! is [`UpdateError::ArtifactUrl`]. Every other failure is
+//! [`UpdateError::ArtifactIntegrity`], whatever went wrong: the update crate
+//! has no variant for a failed install step (`crate::error` lists this among
+//! the codes used more broadly than their name). Most paths log the cause
+//! first, but only a debug build keeps a log.
 
 use oikonomia_update::{ArtifactInstaller, InstallHandoff, InstallRoute, Result, UpdateError};
 use std::path::{Path, PathBuf};
@@ -25,8 +79,10 @@ pub(crate) enum InstallKind {
 }
 
 impl InstallKind {
-    /// The kind of the running copy. Only Linux looks at how the copy runs;
-    /// macOS and Windows are classified by the system alone.
+    /// Returns the kind of the running copy.
+    ///
+    /// Only Linux looks at how the copy runs; macOS and Windows are classified by
+    /// the system alone.
     pub(crate) fn detect() -> Self {
         let runtime = AppImageRuntime {
             image: std::env::var_os("APPIMAGE").map(PathBuf::from),
@@ -36,9 +92,12 @@ impl InstallKind {
         Self::classify(std::env::consts::OS, &runtime)
     }
 
+    /// Returns the kind of a copy on the system named `os`, given what the
+    /// `AppImage` runtime told it.
+    ///
     /// A Linux copy is an `AppImage` only when it runs from inside one.
-    /// Otherwise it was installed from a package (or built locally) and does
-    /// not own its own files.
+    /// Otherwise it was installed from a package, or built locally, and does not
+    /// own its own files.
     fn classify(os: &str, runtime: &AppImageRuntime) -> Self {
         match os {
             "macos" => Self::MacApp,
@@ -51,7 +110,8 @@ impl InstallKind {
         }
     }
 
-    /// Whether the update machine may offer an in-app install.
+    /// Returns whether the update machine may offer an in-app install for a copy
+    /// of this kind, or must point the user to the package manager.
     pub(crate) fn route(&self) -> InstallRoute {
         match self {
             Self::MacApp | Self::AppImage(_) | Self::WindowsInstaller => InstallRoute::InApp,
@@ -71,7 +131,7 @@ struct AppImageRuntime {
 }
 
 impl AppImageRuntime {
-    /// The image this process runs from, if any.
+    /// Returns the image this process runs from, if it runs from one.
     ///
     /// `APPIMAGE` alone proves nothing: a program started from another
     /// `AppImage` (a terminal, a launcher) inherits that one's variables, and
@@ -98,13 +158,17 @@ impl AppImageRuntime {
     }
 }
 
-/// Installs by execing the local verified file. Never fetches `latest.json`.
+/// The installer the update machine calls with a verified local file.
+///
+/// It never fetches anything; it only replaces the running copy, in the way
+/// its kind says.
 pub(crate) struct VerifiedPathInstaller {
+    /// How the running copy was installed.
     kind: InstallKind,
 }
 
 impl VerifiedPathInstaller {
-    /// Installer for a copy of the given kind.
+    /// Creates the installer for a copy of the given kind.
     pub(crate) fn new(kind: InstallKind) -> Self {
         Self { kind }
     }
@@ -145,6 +209,12 @@ pub(crate) fn install_verified_artifact(
     run_platform_installer(kind, artifact)
 }
 
+/// Replaces the running `AppImage` with `artifact`.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::InstallNotAvailable`] for any other kind, and
+/// [`UpdateError::ArtifactIntegrity`] when the image cannot be replaced.
 #[cfg(target_os = "linux")]
 fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
     let InstallKind::AppImage(current) = kind else {
@@ -154,6 +224,12 @@ fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<Install
     Ok(InstallHandoff::Replaced)
 }
 
+/// Starts the installer at `artifact`, which replaces the app once it exits.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::InstallNotAvailable`] for any other kind, and
+/// [`UpdateError::ArtifactIntegrity`] when the installer cannot be started.
 #[cfg(target_os = "windows")]
 fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
     let InstallKind::WindowsInstaller = kind else {
@@ -163,6 +239,14 @@ fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<Install
     Ok(InstallHandoff::InstallerStarted)
 }
 
+/// Replaces the app bundle this process runs from with the one archived in
+/// `artifact`.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::InstallNotAvailable`] for any other kind, or when
+/// the running copy is the bundle a failed update set aside, and
+/// [`UpdateError::ArtifactIntegrity`] when the bundle cannot be replaced.
 #[cfg(target_os = "macos")]
 fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
     let InstallKind::MacApp = kind else {
@@ -176,6 +260,11 @@ fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<Install
     Ok(InstallHandoff::Replaced)
 }
 
+/// Refuses every install: this system has no in-app update.
+///
+/// # Errors
+///
+/// Always returns [`UpdateError::InstallNotAvailable`].
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 fn run_platform_installer(_kind: &InstallKind, _artifact: &Path) -> Result<InstallHandoff> {
     Err(UpdateError::InstallNotAvailable)
@@ -300,10 +389,17 @@ fn remove_file_if_present(path: &Path) -> std::io::Result<()> {
 #[cfg(target_os = "windows")]
 const NSIS_UPDATE_ARGS: [&str; 3] = ["/P", "/UPDATE", "/R"];
 
-/// Starts the installer and returns at once. The installer replaces files the
-/// running app holds open, so the caller must exit, not restart. The install
-/// is per user (`bundle.windows.nsis.installMode`), so it needs no elevation
-/// and a plain process spawn is enough.
+/// Starts the installer and returns at once.
+///
+/// The installer replaces files the running app holds open, so the caller
+/// must exit, not restart. The install is per user
+/// (`bundle.windows.nsis.installMode`), so it needs no elevation and a plain
+/// process spawn is enough.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ArtifactIntegrity`] when the process cannot be
+/// started.
 #[cfg(target_os = "windows")]
 fn spawn_windows_installer(artifact: &Path) -> Result<()> {
     Command::new(artifact)
@@ -460,6 +556,8 @@ fn macos_app_bundle_path(executable: &Path) -> Result<PathBuf> {
     }
 }
 
+/// Returns whether the file name of `path` ends with `suffix`, ignoring ASCII
+/// case. A path with no UTF-8 file name ends with nothing.
 fn path_ends_with_ignore_ascii_case(path: &Path, suffix: &str) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -497,6 +595,7 @@ mod tests {
         dir
     }
 
+    /// Returns one copy of each kind that may install in the app.
     fn installable_kinds() -> [InstallKind; 3] {
         [
             InstallKind::MacApp,
@@ -505,6 +604,7 @@ mod tests {
         ]
     }
 
+    /// What a process sees when no `AppImage` runtime started it.
     const NO_APPIMAGE: AppImageRuntime = AppImageRuntime {
         image: None,
         mount: None,
@@ -514,12 +614,17 @@ mod tests {
     /// A directory laid out like a mounted image, with the app's executable
     /// in it, and the image file next to it.
     struct MountedImage {
+        /// The temporary directory that holds everything below.
         dir: PathBuf,
+        /// The image file.
         image: PathBuf,
+        /// The directory standing in for the mounted image.
         mount: PathBuf,
+        /// The app's executable inside the mount.
         executable: PathBuf,
     }
 
+    /// Creates a [`MountedImage`] in a fresh directory.
     fn mounted_image() -> MountedImage {
         let dir = temp_dir();
         let image = dir.join("Oikonomia.AppImage");
@@ -846,6 +951,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Packs `entries` of the directory `staging` into the gzipped tar `archive`.
     #[cfg(target_os = "macos")]
     fn archive_of(staging: &std::path::Path, entries: &[&str], archive: &std::path::Path) {
         let status = std::process::Command::new("tar")
@@ -1071,7 +1177,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Names of the entries in `dir`, sorted.
+    /// Returns the names of the entries of `dir`, sorted.
     #[cfg(unix)]
     fn entries_of(dir: &std::path::Path) -> Vec<String> {
         let mut names: Vec<String> = std::fs::read_dir(dir)
