@@ -13,7 +13,8 @@
 //!
 //! One gap remains. lopdf decompresses object streams and cross-reference
 //! streams while it loads a file, before this check can run, and that step
-//! has no limit either.
+//! has no limit either. The only bound on it is the 8 MiB cap on the file
+//! itself, which the analyzer checks before it hands lopdf anything.
 
 use std::borrow::Cow;
 use std::io::Read;
@@ -22,7 +23,9 @@ use std::io::Read;
 use pdf_extract as lopdf;
 
 /// Most pages a PDF may have. Bills, receipts and statements are far
-/// shorter; every page costs a pass of text extraction.
+/// shorter, and every page costs a pass of text extraction.
+///
+/// The reason for 50 in particular is not recorded.
 pub(super) const MAX_PDF_PAGES: usize = 50;
 
 /// Most bytes the streams of one PDF may decode to, all streams together.
@@ -32,7 +35,11 @@ pub(super) const MAX_PDF_PAGES: usize = 50;
 /// again each time, one at a time.
 pub(super) const MAX_PDF_DECODED_BYTES: usize = 32 * 1024 * 1024;
 
-/// How much is read from a decoder at a time while counting.
+/// How much is read from a decoder at a time while counting. It is also how
+/// far past the budget one stage of one stream can get before it is cut off.
+///
+/// The reason for 64 KiB in particular is not recorded; it is small beside
+/// the budget and large enough that counting is not slow.
 const DECODE_CHUNK_BYTES: usize = 64 * 1024;
 
 /// Length of the header that zlib puts before raw deflate data.
@@ -45,7 +52,14 @@ const ASCII85_BASE: u32 = 85;
 const ASCII85_GROUP_DIGITS: usize = 5;
 
 /// Whether `document` has at most [`MAX_PDF_PAGES`] pages and its streams
-/// decode to at most [`MAX_PDF_DECODED_BYTES`].
+/// decode to at most [`MAX_PDF_DECODED_BYTES`] in total.
+///
+/// Every stream object counts, whether or not a page uses it. The check
+/// stops at the first stream that takes the total over the budget.
+///
+/// It calls into lopdf for the page list and the filter names, so the
+/// caller runs it inside its panic boundary (`contain_panics` in the
+/// analyzer).
 pub(super) fn within_budget(document: &lopdf::Document) -> bool {
     if document.get_pages().len() > MAX_PDF_PAGES {
         return false;

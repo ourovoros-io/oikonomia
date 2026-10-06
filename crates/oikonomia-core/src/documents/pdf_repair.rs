@@ -1,14 +1,35 @@
 //! Width-preserving repair of stale PDF cross-reference offsets.
 //!
-//! Some PDF post-processors — bank statement stampers and signers are the
-//! usual culprits — shift bytes after the cross-reference data was written
-//! and leave stale offsets behind at two levels: the `startxref` / trailer
-//! `/Prev` pointers to the tables, and the per-object offsets inside the
-//! tables themselves. Desktop viewers rebuild silently; lopdf rejects the
-//! file ("invalid file trailer") or reads garbage objects.
+//! Some PDF post-processors, bank statement stampers and signers among them,
+//! shift bytes after the cross-reference data was written and leave stale
+//! offsets behind at two levels: the `startxref` and trailer `/Prev` pointers
+//! to the tables, and the per-object offsets inside the tables. Desktop
+//! viewers rebuild the tables silently; lopdf rejects the file ("invalid
+//! file trailer") or reads the wrong objects.
 //!
-//! Every rewrite here is padded with leading zeros to the original digit
-//! width, so no byte moves and untouched offsets stay valid.
+//! [`repair_xref_offsets`] fixes both levels in a copy of the file:
+//!
+//! 1. Each table pointer that lands on neither a table nor an object header
+//!    is pointed at the nearest `xref` keyword.
+//! 2. Each in-use entry of each classic table whose offset is not the header
+//!    of its own object is pointed at the nearest `N G obj` header of that
+//!    object and generation.
+//!
+//! Every rewrite is padded with leading zeros to the width of the digits it
+//! replaces, so no byte moves and every offset that was right stays right. A
+//! value that needs more digits than the original has cannot be written this
+//! way: for a table pointer the whole repair is given up, and for an entry
+//! that one entry is left as it was.
+//!
+//! Only classic tables are repaired. The entries of a cross-reference stream
+//! are compressed and are not touched, though a pointer to such a stream is
+//! recognized as valid.
+//!
+//! The repair reads untrusted bytes, so its work is bounded: by
+//! [`MAX_REPAIR_BYTES`], [`MAX_XREF_POINTERS`] and [`MAX_REPAIRED_ENTRIES`],
+//! and by indexing the object headers in one pass. It indexes with `get`
+//! throughout and cannot panic on any input; a property test feeds it
+//! arbitrary bytes.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -25,13 +46,15 @@ const XREF_KEYWORD: &[u8] = b"xref";
 /// The keyword that ends an object header, `N G obj`.
 const OBJECT_KEYWORD: &[u8] = b"obj";
 
-/// How many `startxref` and `/Prev` pointers are examined. Each one is an
-/// incremental update of the file; real documents have a handful.
+/// How many `startxref` and `/Prev` pointers are examined. Each one belongs
+/// to one incremental update of the file, and real documents have a handful.
+///
+/// The reason for 256 in particular is not recorded.
 const MAX_XREF_POINTERS: usize = 256;
 
 /// How many table entries one repair rewrites. A statement or invoice has
 /// far fewer objects, and the bound keeps a crafted table from costing more
-/// than it is worth.
+/// than it is worth. `repair_stops_at_the_entry_cap` pins the cut-off.
 const MAX_REPAIRED_ENTRIES: usize = 65_536;
 
 /// Returns a patched copy of `data` if any stale xref offset was repaired.
@@ -94,8 +117,11 @@ pub(crate) fn repair_xref_offsets(data: &[u8]) -> Option<Vec<u8>> {
     repaired_any.then_some(patched)
 }
 
-/// Overwrites `span` with `value`, zero-padded to the span's width.
-/// Fails (false) when the value needs more digits than the span holds.
+/// Overwrites `span` of `patched` with `value`, zero-padded to the span's
+/// width.
+///
+/// Returns `false`, leaving the bytes alone, when the value needs more
+/// digits than the span holds or the span is outside `patched`.
 fn patch_span(patched: &mut [u8], span: Range<usize>, value: usize) -> bool {
     let width = span.len();
     let formatted = format!("{value:0width$}");
@@ -208,14 +234,18 @@ struct Entry {
     end: usize,
 }
 
-/// Number of whitespace bytes at `at`; zero when `at` is past the end.
+/// Number of whitespace bytes starting at `at`; zero when `at` is past the
+/// end.
 fn leading_whitespace(data: &[u8], at: usize) -> usize {
     data.get(at..)
         .map_or(0, |rest| count_while(rest, u8::is_ascii_whitespace))
 }
 
-/// Parses one xref entry at `at`: offset digits, generation digits, and the
-/// `n`/`f` keyword.
+/// Parses the table entry at `at`: offset digits, generation digits and the
+/// `n` or `f` keyword, with any whitespace between them.
+///
+/// Returns `None` when `at` does not hold an entry, which is how the walk
+/// over a table finds its end.
 fn read_entry(data: &[u8], at: usize) -> Option<Entry> {
     let (offset_span, after) = read_digits(data, at)?;
 
@@ -238,6 +268,8 @@ fn read_entry(data: &[u8], at: usize) -> Option<Entry> {
     })
 }
 
+/// The run of ASCII digits starting at `at`: its byte range and the position
+/// after it. `None` when there is no digit at `at`.
 fn read_digits(data: &[u8], at: usize) -> Option<(Range<usize>, usize)> {
     let len = count_while(data.get(at..)?, u8::is_ascii_digit);
     if len == 0 {
@@ -246,6 +278,11 @@ fn read_digits(data: &[u8], at: usize) -> Option<(Range<usize>, usize)> {
     Some((at..at + len, at + len))
 }
 
+/// The number written in ASCII digits at `at`, and the position of the next
+/// byte that is not whitespace after it.
+///
+/// `None` when there is no digit at `at` or the number does not fit a
+/// `usize`.
 fn read_number(data: &[u8], at: usize) -> Option<(usize, usize)> {
     let (span, after) = read_digits(data, at)?;
     let value = parse_ascii_usize(data.get(span)?)?;
@@ -253,8 +290,8 @@ fn read_number(data: &[u8], at: usize) -> Option<(usize, usize)> {
     Some((value, after + leading_whitespace(data, after)))
 }
 
-/// Does `offset` (after optional whitespace) hold the header of exactly
-/// `object` at generation `generation`?
+/// Whether `offset`, after optional whitespace, holds the header of exactly
+/// `object` at `generation`.
 fn object_header_at(data: &[u8], offset: usize, object: usize, generation: usize) -> bool {
     let at = offset + leading_whitespace(data, offset);
 
@@ -349,9 +386,12 @@ fn nearest_header(
         .min_by_key(|offset| offset.abs_diff(claimed))
 }
 
-/// Positions of standalone `xref` keywords (classic tables). The `xref`
-/// inside `startxref` is preceded by `t`, so requiring leading whitespace
-/// excludes it.
+/// Positions of the standalone `xref` keywords, which open the classic
+/// tables, in ascending order.
+///
+/// The keyword must have whitespace or the file start before it and
+/// whitespace or the file end after it. The `xref` inside `startxref` has a
+/// `t` before it and is not counted.
 fn xref_keyword_positions(data: &[u8]) -> Vec<usize> {
     let mut positions = Vec::new();
 
@@ -376,8 +416,11 @@ fn xref_keyword_positions(data: &[u8]) -> Vec<usize> {
     positions
 }
 
-/// Byte ranges of the digit runs after every `startxref` keyword and every
-/// trailer `/Prev` key.
+/// Byte ranges of the digits after every `startxref` keyword and every
+/// trailer `/Prev` key: all `startxref` ones first, then all `/Prev` ones,
+/// each group in file order.
+///
+/// A keyword with no digits after it has no span.
 fn claimed_offset_spans(data: &[u8]) -> Vec<Range<usize>> {
     let mut spans = Vec::new();
 
@@ -413,6 +456,7 @@ fn offset_points_at_table(data: &[u8], offset: usize) -> bool {
     rest.starts_with(XREF_KEYWORD) || parse_object_header(rest).is_some()
 }
 
+/// Position of the first `needle` in `data` at or after `from`.
 fn find_from(data: &[u8], needle: &[u8], from: usize) -> Option<usize> {
     data.get(from..)?
         .windows(needle.len())
@@ -420,10 +464,13 @@ fn find_from(data: &[u8], needle: &[u8], from: usize) -> Option<usize> {
         .map(|position| from + position)
 }
 
+/// How many bytes at the start of `data` satisfy `matches`.
 fn count_while(data: &[u8], matches: impl Fn(&u8) -> bool) -> usize {
     data.iter().take_while(|byte| matches(byte)).count()
 }
 
+/// The number `digits` spell in ASCII, or `None` when they are not digits or
+/// the number does not fit a `usize`.
 fn parse_ascii_usize(digits: &[u8]) -> Option<usize> {
     std::str::from_utf8(digits).ok()?.parse().ok()
 }
