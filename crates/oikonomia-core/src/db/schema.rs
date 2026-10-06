@@ -47,6 +47,9 @@ const MIGRATIONS: &[(i64, Migration)] = &[
 ///
 /// # Errors
 ///
+/// - [`Error::VaultCorrupt`] when the vault's schema version is newer than
+///   [`CURRENT_SCHEMA_VERSION`]: it was written by a later build, and this one
+///   does not know its schema. Nothing is changed.
 /// - [`Error::VaultCorrupt`] when existing data cannot satisfy a constraint a
 ///   step adds (the v5 step and journal lines that are not debit XOR credit).
 /// - [`Error::Io`] on SQL failures.
@@ -60,6 +63,13 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             |row| row.get(0),
         )
         .map_err(|err| Error::Io(err.to_string()))?;
+
+    if version > CURRENT_SCHEMA_VERSION {
+        return Err(Error::VaultCorrupt(format!(
+            "vault schema version {version} is newer than this build supports \
+             ({CURRENT_SCHEMA_VERSION})"
+        )));
+    }
 
     for (target, step) in MIGRATIONS {
         if version < *target {

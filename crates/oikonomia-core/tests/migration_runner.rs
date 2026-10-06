@@ -53,6 +53,29 @@ fn reset_to_v1(conn: &Connection) {
 }
 
 #[test]
+fn a_vault_from_a_newer_build_is_refused_and_left_untouched() {
+    let (_dir, mut vault) = setup_vault();
+    let newer = CURRENT_SCHEMA_VERSION + 1;
+    let conn = vault.connection().expect("conn");
+    set_schema_version(conn, newer);
+
+    let refused = migrate(conn);
+
+    assert!(
+        matches!(&refused, Err(Error::VaultCorrupt(detail)) if detail.contains("newer")),
+        "{refused:?}"
+    );
+    assert_eq!(schema_version(conn), newer);
+
+    vault.lock();
+    let unlocked = vault.unlock(PASSWORD);
+    assert!(
+        matches!(&unlocked, Err(Error::VaultCorrupt(detail)) if detail.contains("newer")),
+        "unlock runs the same check: {unlocked:?}"
+    );
+}
+
+#[test]
 fn a_failed_step_keeps_the_version_of_the_last_step_that_committed() {
     let (_dir, vault) = setup_vault();
     let conn = vault.connection().expect("conn");
