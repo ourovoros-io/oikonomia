@@ -802,21 +802,7 @@ pub async fn entry_post_simple_with_document(
     data_base64: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
-    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
-    // file cannot balloon memory (same gate as document_analyze).
-    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
-    if data_base64.len() > max_base64_len {
-        return Err(document_too_large_error());
-    }
-
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| {
-            CommandError::desktop(
-                DesktopError::FileDataInvalid,
-                format!("invalid file data: {e}"),
-            )
-        })?;
+    let data = decode_document_base64(&data_base64)?;
 
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
@@ -1205,12 +1191,25 @@ fn decode_pdf_export_bytes(bytes_base64: &str) -> CommandResult<Vec<u8>> {
     decode_capped_base64(bytes_base64, MAX_PDF_EXPORT_BYTES)
 }
 
-/// Reject on inflated base64 length before decode so a huge payload cannot balloon memory.
+/// Decodes a document the webview picked, up to the size core stores
+/// ([`oikonomia_core::documents::MAX_DOCUMENT_BYTES`]). The drop path applies
+/// the same cap from the file's metadata, before reading it.
+fn decode_document_base64(data_base64: &str) -> CommandResult<Vec<u8>> {
+    decode_capped_base64(data_base64, oikonomia_core::documents::MAX_DOCUMENT_BYTES)
+}
+
+/// Decodes base64 from the webview into at most `max_decoded` bytes.
+///
+/// Surrounding whitespace is ignored for the size check and the decode alike.
+/// The encoded length is checked first, so a huge payload is refused before
+/// it is decoded into memory. That check alone lets through up to three
+/// bytes over the cap, because it allows one more base64 group than the cap
+/// needs, so the decoded length is checked as well.
 fn decode_capped_base64(bytes_base64: &str, max_decoded: usize) -> CommandResult<Vec<u8>> {
     let trimmed = bytes_base64.trim();
     let max_base64_len = max_decoded / 3 * 4 + 4;
     if trimmed.len() > max_base64_len {
-        return Err(pdf_too_large_error(max_decoded));
+        return Err(too_large_error(max_decoded));
     }
 
     let data = base64::engine::general_purpose::STANDARD
@@ -1223,22 +1222,16 @@ fn decode_capped_base64(bytes_base64: &str, max_decoded: usize) -> CommandResult
         })?;
 
     if data.len() > max_decoded {
-        return Err(pdf_too_large_error(max_decoded));
+        return Err(too_large_error(max_decoded));
     }
     Ok(data)
 }
 
-fn pdf_too_large_error(max_decoded: usize) -> CommandError {
-    too_large_error(max_decoded / (1024 * 1024))
-}
+/// The error for a payload over a cap of `max_decoded` bytes, with the code
+/// and parameter core uses for a stored document that is too large.
+fn too_large_error(max_decoded: usize) -> CommandError {
+    let max_megabytes = max_decoded / (1024 * 1024);
 
-/// The error for a picked document over the size cap, with the same code and
-/// parameters core uses for a stored document that is too large.
-fn document_too_large_error() -> CommandError {
-    too_large_error(oikonomia_core::documents::MAX_DOCUMENT_BYTES / (1024 * 1024))
-}
-
-fn too_large_error(max_megabytes: usize) -> CommandError {
     CommandError::from(CoreError::Validation(ValidationError::FileTooLarge {
         max_mb: u64::try_from(max_megabytes).unwrap_or(u64::MAX),
     }))
@@ -1275,9 +1268,54 @@ fn ensure_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod pdf_export_tests {
     use super::{
-        decode_capped_base64, decode_pdf_export_bytes, ensure_pdf_path, pdf_export_file_name,
+        decode_capped_base64, decode_document_base64, decode_pdf_export_bytes, ensure_pdf_path,
+        pdf_export_file_name,
     };
     use base64::Engine;
+    use oikonomia_core::documents::MAX_DOCUMENT_BYTES;
+
+    fn encoded(length: usize) -> String {
+        base64::engine::general_purpose::STANDARD.encode(vec![7_u8; length])
+    }
+
+    #[test]
+    fn capped_decode_accepts_exactly_the_cap_and_refuses_one_byte_more() {
+        // Caps of every length modulo three, since base64 works in threes.
+        for cap in [3_usize, 4, 5, 6] {
+            let at_cap = decode_capped_base64(&encoded(cap), cap).expect("at the cap");
+            assert_eq!(at_cap.len(), cap, "cap {cap}");
+
+            let over = decode_capped_base64(&encoded(cap + 1), cap).expect_err("one over");
+            assert_eq!(over.code, "file_too_large", "cap {cap}");
+        }
+    }
+
+    #[test]
+    fn capped_decode_ignores_surrounding_whitespace_at_the_cap() {
+        let padded = format!("\n  {}  \r\n", encoded(4));
+
+        assert_eq!(decode_capped_base64(&padded, 4).expect("padded").len(), 4);
+
+        let padded_over = format!("\n  {}  \r\n", encoded(5));
+        let over = decode_capped_base64(&padded_over, 4).expect_err("one over");
+        assert_eq!(over.code, "file_too_large");
+    }
+
+    #[test]
+    fn a_picked_document_is_capped_at_the_size_core_stores() {
+        let at_cap = format!("  {}\n", encoded(MAX_DOCUMENT_BYTES));
+        assert_eq!(
+            decode_document_base64(&at_cap).expect("at the cap").len(),
+            MAX_DOCUMENT_BYTES
+        );
+
+        let over = decode_document_base64(&encoded(MAX_DOCUMENT_BYTES + 1)).expect_err("over");
+        assert_eq!(over.code, "file_too_large");
+        assert_eq!(over.params.get("max_mb").map(String::as_str), Some("8"));
+
+        let invalid = decode_document_base64("not-valid-base64!!!").expect_err("invalid");
+        assert_eq!(invalid.code, "file_data_invalid");
+    }
 
     #[test]
     fn decode_pdf_export_rejects_invalid_base64() {
@@ -1541,21 +1579,7 @@ pub async fn document_analyze(
     mime_type: String,
     data_base64: String,
 ) -> CommandResult<DocumentSuggestion> {
-    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
-    // file cannot balloon memory (the drop path gates on fs metadata the same way).
-    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
-    if data_base64.len() > max_base64_len {
-        return Err(document_too_large_error());
-    }
-
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| {
-            CommandError::desktop(
-                DesktopError::FileDataInvalid,
-                format!("invalid file data: {e}"),
-            )
-        })?;
+    let data = decode_document_base64(&data_base64)?;
 
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
@@ -1776,21 +1800,7 @@ pub async fn document_attach(
     mime_type: String,
     data_base64: String,
 ) -> CommandResult<DocumentMeta> {
-    // Base64 inflates by 4/3: reject oversized picks before decoding so a huge
-    // file cannot balloon memory (same gate as document_analyze).
-    let max_base64_len = oikonomia_core::documents::MAX_DOCUMENT_BYTES / 3 * 4 + 4;
-    if data_base64.len() > max_base64_len {
-        return Err(document_too_large_error());
-    }
-
-    let data = base64::engine::general_purpose::STANDARD
-        .decode(data_base64.trim())
-        .map_err(|e| {
-            CommandError::desktop(
-                DesktopError::FileDataInvalid,
-                format!("invalid file data: {e}"),
-            )
-        })?;
+    let data = decode_document_base64(&data_base64)?;
 
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
