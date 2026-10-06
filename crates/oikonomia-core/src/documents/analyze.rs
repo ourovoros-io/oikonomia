@@ -7,13 +7,17 @@
 //!
 //! # Getting the text
 //!
-//! [`read_document_text`] sorts the file by MIME type, then by extension:
+//! [`read_document_text`] sorts the file by three tests, in this order:
 //!
-//! - an image goes to OCR ([`ocr_image`]);
-//! - plain text is taken as it is, decoded as UTF-8 with invalid bytes
-//!   replaced;
-//! - a PDF goes through [`read_pdf_text`], described below;
-//! - anything else has no text.
+//! 1. an `image/*` type goes to OCR ([`ocr_image`]);
+//! 2. a `text/plain` type or a `.txt` name is taken as it is, decoded as
+//!    UTF-8 with invalid bytes replaced;
+//! 3. a type containing `pdf` or a `.pdf` name goes through
+//!    [`read_pdf_text`], described below.
+//!
+//! Anything else has no text. The order means a name can decide before a
+//! type does: a file sent as `application/pdf` and named `notes.txt` is
+//! read as plain text.
 //!
 //! # Reading a PDF
 //!
@@ -431,12 +435,12 @@ enum ExtractedText {
 
 /// Extracts the text of a file, choosing how by its kind.
 ///
-/// `mime` is already lowercased. An `image/*` type is read with OCR.
-/// `text/plain` or a `.txt` name is decoded as UTF-8, invalid bytes
-/// replaced. A type containing `pdf` or a `.pdf` name is read as a PDF. The
-/// type is tested before the name, in that order, so an image named
-/// `scan.pdf` is an image. Anything else is unread, with the note that no
-/// text was found.
+/// `mime` is already lowercased. Three tests run in order: an `image/*` type
+/// is read with OCR; `text/plain` or a `.txt` name is decoded as UTF-8,
+/// invalid bytes replaced; a type containing `pdf` or a `.pdf` name is read
+/// as a PDF. So an image named `scan.pdf` is an image, and a file sent as
+/// `application/pdf` and named `notes.txt` is plain text. Anything else is
+/// unread, with the note that no text was found.
 fn read_document_text(
     filename: &str,
     mime: &str,

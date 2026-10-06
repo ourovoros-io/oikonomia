@@ -74,13 +74,13 @@ const BRANDS: &[(&str, &str, Option<Service>)] = &[
 /// How strongly a keyword points at a service: the scale of
 /// [`SERVICE_KEYWORDS`].
 ///
-/// Totals are compared between services, so what matters is the order of
-/// the four levels, not their size. A bill names other services in passing:
+/// A service's score is the sum of the weights of its keywords that the text
+/// holds, and the highest sum wins. A bill names other services in passing:
 /// an electricity bill carries the national energy-mix table, which lists
 /// natural gas. Such a word is a [`MENTION`](weight::MENTION), the lowest
-/// level, so that it loses to any stronger keyword of the bill's own
-/// service. Against another `MENTION` it only ties, and
-/// [`SERVICE_KEYWORDS`] says how a tie ends.
+/// level, so one mention loses to any one stronger keyword of the bill's own
+/// service. Sums can still tie or overtake: two mentions equal one
+/// [`TERM`](weight::TERM), and [`SERVICE_KEYWORDS`] says how a tie ends.
 ///
 /// The four values are 1 to 4, the smallest whole numbers in that order.
 mod weight {

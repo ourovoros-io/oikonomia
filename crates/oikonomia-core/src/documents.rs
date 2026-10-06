@@ -12,8 +12,8 @@
 //! cannot read: the suggestion then holds a note that says why. The stages,
 //! in order, and the file under `documents/` that owns each:
 //!
-//! 1. **Kind** (`analyze.rs`). The MIME type, then the file extension, sorts
-//!    the file: image, plain text, PDF, or nothing readable.
+//! 1. **Kind** (`analyze.rs`). The MIME type and the file extension sort the
+//!    file: image, plain text, PDF, or nothing readable.
 //! 2. **PDF budget** (`analyze.rs`, `pdf_budget.rs`). A PDF is parsed once. A
 //!    file over 8 MiB, over 50 pages, or whose streams decode to over 32 MiB
 //!    is not read at all.

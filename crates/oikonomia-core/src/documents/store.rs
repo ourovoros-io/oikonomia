@@ -114,7 +114,7 @@ const MAX_DOCUMENT_MEGABYTES: u64 = 8;
 // The two limits must never drift apart.
 const _: () = assert!(MAX_DOCUMENT_BYTES as u64 == MAX_DOCUMENT_MEGABYTES * 1024 * 1024);
 
-/// Validate a candidate document before its bytes are loaded or stored.
+/// Validates a candidate document before its bytes are loaded or stored.
 ///
 /// Shared by [`save_document`] and the drop-path command so oversized or
 /// unsupported files are rejected from a `stat` alone, before any read.
@@ -293,8 +293,8 @@ pub fn attach_document(
 ///
 /// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry).
 /// - Every error of [`save_document`].
-/// - [`Error::NotFound`] from [`save_analysis_json`]; the document was
-///   written in the same transaction, so this means the write was lost.
+/// - [`Error::NotFound`] from [`save_analysis_json`], if the row written a
+///   moment earlier in the same transaction cannot be found.
 /// - [`Error::Io`] when the transaction cannot be opened or committed.
 #[expect(
     clippy::too_many_arguments,
@@ -540,7 +540,7 @@ pub(super) fn has_extension(filename: &str, extension: &str) -> bool {
         .is_some_and(|found| found.eq_ignore_ascii_case(extension))
 }
 
-/// Pick the expense account a document most likely belongs to.
+/// Picks the expense account a document most likely belongs to.
 ///
 /// The merchant and description hints choose a topic; the topic is mapped to a
 /// seeded account by template code, so the account's name never matters. With
@@ -562,7 +562,7 @@ pub(super) fn match_expense_account(
     )
 }
 
-/// Pick the income account a document most likely belongs to (sales, freelance,
+/// Picks the income account a document most likely belongs to (sales, freelance,
 /// salary), by the same rule as [`match_expense_account`].
 #[must_use]
 pub(super) fn match_income_account(

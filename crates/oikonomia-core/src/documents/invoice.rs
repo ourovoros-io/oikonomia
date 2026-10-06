@@ -10,8 +10,8 @@
 //!
 //! 1. The text is normalized ([`normalize`]).
 //! 2. A folded copy is made ([`folded`]): lowercase, Greek accents removed.
-//!    Every label and marker in this module is written in that form, and a
-//!    test checks that each one is.
+//!    Every label and marker constant in this module is written in that
+//!    form, and a test checks that each one is.
 //! 3. A Greek bank transfer receipt (`έμβασμα`) is recognized by its wording
 //!    and read by rules of its own ([`parse_bank_transfer`]): the labelled
 //!    principal is the amount, never the fee and never a clock time on the
@@ -105,9 +105,9 @@
 //!    only. Every amount collects points from each line it is printed on.
 //!    It prefers an amount with cents, on a short line with a `€`, beside a
 //!    payment label, printed more than once.
-//! 3. **Totals row**. The first line with the word `σύνολα` or `totals`. It
-//!    prefers the largest amount on that row, since the row lists net, VAT
-//!    and gross.
+//! 3. **Totals row**. The first line with the word `σύνολα` or `totals`
+//!    that has a plausible amount. It prefers the largest amount on that
+//!    row, since the row lists net, VAT and gross.
 //! 4. **Weighted fallback**. Every plausible amount on every line that is
 //!    not an identifier line (IBAN, tax number, MARK). It prefers a line
 //!    with a value word (`αξία`, `value`, `total`) and a `€`, then an amount
@@ -144,7 +144,8 @@
 //!   `5 120,50` is spelled like `1 234,56`, so a quantity column directly
 //!   before a three-digit price reads as one amount, 5 120,50. A labelled
 //!   total on the document still decides
-//!   (`a_lone_digit_before_three_digits_reads_as_thousands`).
+//!   (`a_lone_digit_before_three_digits_reads_as_thousands` in
+//!   `amounts_and_dates`).
 //! - **A space before the separator is not joined.** `72, 53` is joined;
 //!   `72 ,53` is not, and reads as 72,00.
 //! - **Labels are matched as substrings.** `subtotal` contains `total`, so
@@ -160,6 +161,8 @@
 //!   is not a thousands amount.
 //! - **A whole amount of 1900 to 2100 euros needs decimals.** `2026` is a
 //!   year; `2026,00` is an amount.
+//! - **Any zero percentage counts as a zero VAT rate.** The VAT-exempt note
+//!   is added for `0%` anywhere in the text, beside a VAT label or not.
 //! - **Dates are day first.** `03/04/2026` is 3 April. A month-first date
 //!   is misread, or refused when its "month" is over 12.
 
@@ -297,7 +300,6 @@ fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
 /// trailing whitespace.
 fn normalize(text: &str) -> String {
     let text = text.replace('\r', "\n");
-    // No-break space, narrow no-break space, thin space
     let text = text.replace(['\u{00a0}', '\u{202f}', '\u{2009}'], " ");
     // Euro symbol variants — standalone tokens only, so EUROBANK stays intact.
     // Before the number joins, so "EUR1 234,56" starts its amount at a symbol
@@ -321,7 +323,7 @@ fn normalize(text: &str) -> String {
 /// is a boundary.
 fn replace_eur_token(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
-    let mut out = String::with_capacity(text.len());
+    let mut replaced = String::with_capacity(text.len());
     let mut index = 0;
     while index < chars.len() {
         let is_eur = index + 2 < chars.len()
@@ -332,15 +334,18 @@ fn replace_eur_token(text: &str) -> String {
         let boundary_after = index + 3 >= chars.len() || !chars[index + 3].is_alphabetic();
 
         if is_eur && boundary_before && boundary_after {
-            out.push('€');
+            replaced.push('€');
             index += 3;
         } else {
-            out.push(chars[index]);
+            replaced.push(chars[index]);
             index += 1;
         }
     }
-    out
+    replaced
 }
+
+/// Digits in a thousands group: `1.234.567`, `1 234 567`.
+const THOUSANDS_GROUP_DIGITS: usize = 3;
 
 /// Joins the pieces of a number that OCR or PDF extraction split with a space.
 ///
@@ -378,22 +383,22 @@ fn collapse_spaced_decimals_on_line(line: &str) -> String {
     // or extend a number; the output below copies them from `chars`.
     let numbers: Vec<char> = mask_time_tokens(&mask_date_tokens(line)).chars().collect();
 
-    let mut out = String::with_capacity(line.len());
+    let mut joined = String::with_capacity(line.len());
     let mut index = 0;
     while let Some(&original) = chars.get(index) {
         if numbers.get(index).is_some_and(char::is_ascii_digit) {
-            index = push_spaced_number(&numbers, index, &mut out);
+            index = push_spaced_number(&numbers, index, &mut joined);
         } else {
-            out.push(original);
+            joined.push(original);
             index += 1;
         }
     }
-    out
+    joined
 }
 
-/// Appends the number starting at `start` to `out` with its inner spaces
+/// Appends the number starting at `start` to `joined` with its inner spaces
 /// removed, and returns the index after it.
-fn push_spaced_number(numbers: &[char], start: usize, out: &mut String) -> usize {
+fn push_spaced_number(numbers: &[char], start: usize, joined: &mut String) -> usize {
     let may_group_thousands = starts_own_token(numbers, start);
     let mut has_separator = false;
     // Digits since the start of the number, the last join or the last separator.
@@ -402,13 +407,13 @@ fn push_spaced_number(numbers: &[char], start: usize, out: &mut String) -> usize
 
     while let Some(&current) = numbers.get(index) {
         if current.is_ascii_digit() {
-            out.push(current);
+            joined.push(current);
             group_digits += 1;
             index += 1;
         } else if let Some(next_digit) = digit_after_separator(numbers, index)
             && (next_digit == index + 1 || !has_separator || group_digits == THOUSANDS_GROUP_DIGITS)
         {
-            out.push(current);
+            joined.push(current);
             has_separator = true;
             group_digits = 0;
             index = next_digit;
@@ -454,9 +459,6 @@ fn digit_after_separator(numbers: &[char], index: usize) -> Option<usize> {
         space_then_digit.then_some(index + 2)
     }
 }
-
-/// Digits in a thousands group: `1.234.567`, `1 234 567`.
-const THOUSANDS_GROUP_DIGITS: usize = 3;
 
 /// Whether `index` holds one space followed by exactly three digits.
 fn is_thousands_group(numbers: &[char], index: usize) -> bool {
@@ -511,11 +513,21 @@ const UTILITY_MARKERS: &[&str] = &[
     "myon",
     "κωδικος παροχης",
     "υδρευσ",
-    "power business",
+    POWER_BUSINESS_TARIFF,
 ];
+
+/// A business electricity tariff, printed on bills whose supplier is not
+/// named in the text.
+const POWER_BUSINESS_TARIFF: &str = "power business";
 
 /// The heading of the counterparty block on a sales invoice.
 const CUSTOMER_BLOCK_LABEL: &str = "στοιχεια πελατη";
+
+/// The English heading of an invoice the book's owner issued.
+const SALES_INVOICE_WORDS: &str = "sales invoice";
+
+/// The word that marks a line or a name as holding a bank account number.
+const IBAN_WORD: &str = "iban";
 
 /// The word "invoice", in Greek and in English.
 const INVOICE_WORDS: &[&str] = &[INVOICE_WORD_GREEK, "invoice"];
@@ -584,7 +596,7 @@ fn classify_kind(folded_text: &str) -> (EntryKindSuggestion, bool) {
     }
 
     // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
-    let sales = is_sales_invoice(folded_text) || folded_text.contains("sales invoice");
+    let sales = is_sales_invoice(folded_text) || folded_text.contains(SALES_INVOICE_WORDS);
     let purchase = contains_any(folded_text, PURCHASE_MARKERS);
     let unpaid = contains_any(folded_text, UNPAID_MARKERS);
 
@@ -803,7 +815,7 @@ fn is_plausible_payee(name: &str) -> bool {
         return false;
     }
     let folded_name = folded(trimmed);
-    if is_bank_counterparty(&folded_name) || folded_name.contains("iban") {
+    if is_bank_counterparty(&folded_name) || folded_name.contains(IBAN_WORD) {
         return false;
     }
 
@@ -964,7 +976,7 @@ const TOTAL_WORD: &str = "total";
 /// skips a line with one.
 ///
 /// They are matched as substrings, so `mark` also matches `supermarket`.
-const IDENTIFIER_LINE_MARKERS: &[&str] = &["iban", "α.φ.μ", "αφμ", "mark"];
+const IDENTIFIER_LINE_MARKERS: &[&str] = &[IBAN_WORD, "α.φ.μ", "αφμ", "mark"];
 
 /// Weights of the fallback, stage 4 of [`find_total_amount`].
 ///
@@ -1136,7 +1148,6 @@ fn find_labeled_total(text: &str) -> Option<i64> {
         if !contains_any(&folded_line, TOTAL_LABELS) {
             continue;
         }
-        // Same line first, then next line (labels and values often split in PDF extract).
         for candidate in [*line, lines.get(index + 1).copied().unwrap_or("")] {
             if candidate.is_empty() {
                 continue;
@@ -1255,8 +1266,8 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
             if !is_plausible_money(amount) {
                 continue;
             }
-            let has_cents = has_cents(amount);
-            if !has_cents && !is_amount_only && !has_payment_label {
+            let amount_has_cents = has_cents(amount);
+            if !amount_has_cents && !is_amount_only && !has_payment_label {
                 continue;
             }
 
@@ -1264,7 +1275,7 @@ fn find_utility_payment_total(text: &str) -> Option<i64> {
             if has_euro {
                 score += utility_vote::EURO_MARK;
             }
-            if has_cents {
+            if amount_has_cents {
                 score += utility_vote::CENTS;
             } else {
                 score += utility_vote::WHOLE_EUROS;
@@ -1366,32 +1377,33 @@ fn line_has_date(line: &str) -> bool {
 /// Characters in an ISO date, `YYYY-MM-DD`.
 const ISO_DATE_CHARS: usize = 10;
 
-/// Blank out EU/ISO date tokens so day/month numbers are not parsed as euros.
+/// Blanks out day-first and ISO date tokens, so the numbers of a date are
+/// not read as euros.
 ///
-/// Real PDF extracts often put `13/08/2026 72,53 €` on one line — without this,
-/// `13`, `08`, and `2026` become €13 / €8 / €2026 candidates. Bank receipts
-/// also print unpadded `27/8/2026`, which must not become €27 / €8.
+/// Extraction often puts `13/08/2026 72,53 €` on one line, where `13`, `08`
+/// and `2026` would each be an amount. Bank receipts also print unpadded
+/// dates such as `27/8/2026`.
 ///
 /// A token only has to be written like a date ([`DateShape`]): `31/02/2026`
 /// is not a date, and its digits are still not money.
 fn mask_date_tokens(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
-    let mut out = String::with_capacity(line.len());
+    let mut masked = String::with_capacity(line.len());
     let mut index = 0;
 
     while let Some(&current) = chars.get(index) {
         if is_iso_date_at(&chars, index) {
-            out.push_str(&" ".repeat(ISO_DATE_CHARS));
+            masked.push_str(&" ".repeat(ISO_DATE_CHARS));
             index += ISO_DATE_CHARS;
         } else if let Some(len) = eu_date_len_at(&chars, index) {
-            out.push_str(&" ".repeat(len));
+            masked.push_str(&" ".repeat(len));
             index += len;
         } else {
-            out.push(current);
+            masked.push(current);
             index += 1;
         }
     }
-    out
+    masked
 }
 
 /// Whether the ten characters from `start` are written `dddd-dd-dd`.
@@ -1462,22 +1474,23 @@ fn eu_date_len_at(chars: &[char], start: usize) -> Option<usize> {
     eu_date_shape(&token).map(|_| end - start)
 }
 
-/// Blank out `h:mm` / `hh:mm` clocks so `7:00` is not parsed as €7.00.
+/// Blanks out clock times (`h:mm`, `hh:mm`, `hh:mm:ss`), so `7:00` is not
+/// read as 7,00.
 fn mask_time_tokens(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
-    let mut out = String::with_capacity(line.len());
+    let mut masked = String::with_capacity(line.len());
     let mut index = 0;
 
     while let Some(&current) = chars.get(index) {
         if let Some(len) = time_len_at(&chars, index) {
-            out.push_str(&" ".repeat(len));
+            masked.push_str(&" ".repeat(len));
             index += len;
         } else {
-            out.push(current);
+            masked.push(current);
             index += 1;
         }
     }
-    out
+    masked
 }
 
 /// Length of the `H:MM`, `HH:MM` or `HH:MM:SS` time starting at `start`, if
@@ -1564,19 +1577,19 @@ fn largest_plausible_amount(line: &str) -> Option<i64> {
 /// Blanks out percentages (`24%`, `13,5 %`) so a rate is never an amount.
 fn mask_percent_tokens(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
-    let mut out = String::with_capacity(line.len());
+    let mut masked = String::with_capacity(line.len());
     let mut index = 0;
 
     while let Some(&current) = chars.get(index) {
         if let Some(len) = percent_len_at(&chars, index) {
-            out.push_str(&" ".repeat(len));
+            masked.push_str(&" ".repeat(len));
             index += len;
         } else {
-            out.push(current);
+            masked.push(current);
             index += 1;
         }
     }
-    out
+    masked
 }
 
 /// Length of the percentage that starts at `index`: a number, any spaces
@@ -1860,10 +1873,10 @@ const DATE_LABELS: &[&str] = &["ημερομην", "date", "εκδοσ", "ληξ
 
 /// The years a document date may have.
 ///
-/// A token outside this range is not a date, so it is not blanked either and
-/// its numbers can be read as money. The reason for 1990 as the start is not
-/// recorded; `a_day_the_month_does_not_have_is_not_a_date` and the other
-/// date tests use years inside the range only.
+/// A day-first token with a year outside this range is not a date, so it is
+/// not blanked either and its numbers can be read as money. An ISO-shaped
+/// token is blanked by its shape whatever its year, and is then not a date.
+/// The reason for 1990 as the start is not recorded.
 const DOCUMENT_YEARS: RangeInclusive<i32> = 1990..=2100;
 
 /// What a two-digit year is counted from: `26` is 2026.
@@ -1986,14 +1999,9 @@ const SUPPLY_CODE_CHARS: RangeInclusive<usize> = 8..=24;
 /// Fewest characters of an RF payment code, the `RF` included.
 const MIN_RF_CODE_CHARS: usize = 10;
 
-/// Lengths of a run of digits that can be a reference.
-const REFERENCE_DIGITS: RangeInclusive<usize> = 6..=20;
-
-/// Fewest digits of a reference that no label names.
-const MIN_UNLABELLED_REFERENCE_DIGITS: usize = 10;
-
-/// Supply / meter code next to its label (e.g. NGS000000001). PDF extraction
-/// often puts the value on the line after the label.
+/// The supply or meter code beside the first supply label that has one
+/// (`NGS000000001`), on the label's line or the next: extraction often puts
+/// the value on the line after its label.
 fn labelled_supply_code(lines: &[&str]) -> Option<String> {
     for (index, line) in lines.iter().enumerate() {
         if !contains_any(&folded(line), SUPPLY_CODE_LABELS) {
@@ -2008,7 +2016,7 @@ fn labelled_supply_code(lines: &[&str]) -> Option<String> {
     None
 }
 
-/// An unlabelled NGS supply code anywhere in the body.
+/// The first supply code anywhere that starts with `NGS`, labelled or not.
 fn bare_ngs_supply_code(lines: &[&str]) -> Option<String> {
     lines
         .iter()
@@ -2016,8 +2024,9 @@ fn bare_ngs_supply_code(lines: &[&str]) -> Option<String> {
         .find(|code| code.to_ascii_uppercase().starts_with("NGS"))
 }
 
-/// RF payment code on Greek utility bills: a token of its own, or glued to
-/// neighbouring text by PDF extraction.
+/// The RF payment code of a Greek utility bill on `line`, in upper case: a
+/// word of its own, or the run that starts at the first `RF` when
+/// extraction glued the code to its neighbours.
 fn rf_payment_code(line: &str) -> Option<String> {
     let token = line
         .split_whitespace()
@@ -2054,8 +2063,8 @@ fn is_rf_then_digits(upper: &str) -> bool {
 /// same table row as the MARK.
 const MARK_LABELS: &[&str] = &["μαρκ", "mark", "α.α", "αα "];
 
-/// MARK number on Greek invoices: a long digit string on the MARK / Α.Α.
-/// line or the one after it.
+/// The MARK number of a Greek invoice: a run of digits on the first MARK or
+/// `Α.Α.` line that has one on it or on the line below.
 fn mark_number(lines: &[&str]) -> Option<String> {
     for (index, line) in lines.iter().enumerate() {
         if !contains_any(&folded(line), MARK_LABELS) {
@@ -2073,7 +2082,8 @@ fn mark_number(lines: &[&str]) -> Option<String> {
 /// Labels of an invoice or reference number.
 const REFERENCE_LABELS: &[&str] = &["invoice", "αρ. παραστατ", "αριθμος", "number", "ref"];
 
-/// A long number on a line that names it as an invoice or reference number.
+/// The run of digits on the first line that names an invoice or reference
+/// number and has one.
 fn labelled_reference_number(lines: &[&str]) -> Option<String> {
     lines.iter().find_map(|line| {
         if contains_any(&folded(line), REFERENCE_LABELS) {
@@ -2084,8 +2094,12 @@ fn labelled_reference_number(lines: &[&str]) -> Option<String> {
     })
 }
 
-/// Fallback: the longest digit run that looks like an invoice id (10–20
-/// digits); the first one wins a tie.
+/// Fewest digits of a reference that no label names.
+const MIN_UNLABELLED_REFERENCE_DIGITS: usize = 10;
+
+/// The longest run of digits anywhere that can be an unlabelled reference:
+/// [`MIN_UNLABELLED_REFERENCE_DIGITS`] to 20 digits. The first one wins a
+/// tie. This is the last resort of [`find_invoice_reference`].
 fn longest_reference_number(lines: &[&str]) -> Option<String> {
     let mut longest: Option<String> = None;
     for number in lines.iter().filter_map(|line| long_digit_token(line)) {
@@ -2099,6 +2113,9 @@ fn longest_reference_number(lines: &[&str]) -> Option<String> {
     }
     longest
 }
+
+/// Lengths of a run of digits that can be a reference.
+const REFERENCE_DIGITS: RangeInclusive<usize> = 6..=20;
 
 /// The longest run of digits on `line` whose length is in
 /// [`REFERENCE_DIGITS`]; the last such run on a tie.
@@ -2148,14 +2165,13 @@ fn alnum_supply_code(line: &str) -> Option<String> {
             && token.chars().any(|c| c.is_ascii_digit())
             && token.chars().all(|c| c.is_ascii_alphanumeric())
         {
-            // Skip pure RF payment refs (handled separately) and obvious words.
+            // An RF payment code has this shape too, and has a step of its own.
             if is_rf_then_digits(&token.to_ascii_uppercase()) {
                 continue;
             }
             return Some(token.to_owned());
         }
     }
-    // Also scan without whitespace (jumbled extract: "NGS000000001" alone is fine).
     let mut run = String::new();
     for character in line.chars() {
         if character.is_ascii_alphanumeric() {
@@ -2194,9 +2210,10 @@ fn supply_code_from_run(run: &str) -> Option<String> {
 /// 2. a known biller ([`known_brand`]);
 /// 3. on a utility bill of no known brand, a generic supplier name in
 ///    `locale`: natural gas, or electricity for a "Power Business" tariff;
-/// 4. the value of the first `Επωνυμία` (legal name) line: what follows its
-///    colon, or, on a line that starts with the label, what follows the
-///    label;
+/// 4. the first `Επωνυμία` (legal name) line: what follows its colon, or
+///    else the line without the label words at its start. When the label is
+///    neither followed by a colon nor at the start, the whole line is
+///    returned, label included;
 /// 5. the first line of [`MERCHANT_LINE_CHARS`] characters that has a letter
 ///    and does not hold the Greek word for "invoice".
 ///
@@ -2216,7 +2233,7 @@ fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Option<String
         if contains_any(folded_text, GAS_SUPPLY_MARKERS) {
             return Some(natural_gas_merchant(locale).into());
         }
-        if folded_text.contains("power business") {
+        if folded_text.contains(POWER_BUSINESS_TARIFF) {
             return Some(electricity_supplier_merchant(locale).into());
         }
     }
@@ -2256,9 +2273,6 @@ const MERCHANT_LINE_CHARS: RangeInclusive<usize> = 5..=80;
 /// Fewest characters of an unlabelled line taken as the customer's name.
 const MIN_CUSTOMER_LINE_CHARS: usize = 5;
 
-/// Fewest letters and spaces of a line-item description.
-const MIN_DESCRIPTION_CHARS: usize = 4;
-
 /// Markers of a natural gas bill whose supplier is not a known brand.
 const GAS_SUPPLY_MARKERS: &[&str] = &[
     "φυσικου αεριου",
@@ -2277,6 +2291,10 @@ const ISSUER_NAME_STEM: &str = "επων";
 /// "Invoice" in Greek. Also part of tariff names ("Σταθερό Τιμολόγιο"), so
 /// on its own it does not make a document an invoice.
 const INVOICE_WORD_GREEK: &str = "τιμολογιο";
+
+/// The English label of a name line in a customer block, at the line's
+/// start.
+const NAME_LABEL: &str = "name";
 
 /// Headings that open the customer block of a sales invoice.
 const CUSTOMER_BLOCK_STARTS: &[&str] = &[CUSTOMER_BLOCK_LABEL, "customer"];
@@ -2316,7 +2334,7 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
             continue;
         }
 
-        if (folded_line.contains(ISSUER_NAME_LABEL) || folded_line.starts_with("name"))
+        if (folded_line.contains(ISSUER_NAME_LABEL) || folded_line.starts_with(NAME_LABEL))
             && let Some(name) = value_after_colon(line)
             && name.chars().count() >= MIN_NAME_CHARS
         {
@@ -2343,6 +2361,9 @@ fn value_after_colon(line: &str) -> Option<String> {
 
     (!value.is_empty()).then(|| value.to_owned())
 }
+
+/// Fewest letters and spaces of a line-item description.
+const MIN_DESCRIPTION_CHARS: usize = 4;
 
 /// The description to suggest. The first of these that applies:
 ///
@@ -2414,10 +2435,9 @@ fn find_description(
 /// The parts of the confidence that [`score_confidence`] adds up.
 ///
 /// The figure is a rough guide for the user, not a probability. An amount
-/// weighs most, then a date, then a reference. With every part present the
-/// sum is 0.9, under [`CEILING`](confidence::CEILING), so the ceiling does
-/// not bind today; it states that a heuristic reading is never reported as
-/// certain.
+/// weighs most, then a date, then a reference. The parts sum to 0.9, under
+/// [`CEILING`](confidence::CEILING), so the ceiling does not bind; it states
+/// that a heuristic reading is never reported as certain.
 ///
 /// Why each part has the value it has is not recorded, and no test checks
 /// the figure.
@@ -2444,23 +2464,23 @@ fn score_confidence(
     reference: Option<&String>,
     kind: EntryKindSuggestion,
 ) -> f32 {
-    let mut confidence = confidence::BASE;
+    let mut score = confidence::BASE;
     if amount.is_some() {
-        confidence += confidence::AMOUNT;
+        score += confidence::AMOUNT;
     }
     if date.is_some() {
-        confidence += confidence::DATE;
+        score += confidence::DATE;
     }
     if reference.is_some() {
-        confidence += confidence::REFERENCE;
+        score += confidence::REFERENCE;
     }
     if matches!(
         kind,
         EntryKindSuggestion::Income | EntryKindSuggestion::Bill
     ) {
-        confidence += confidence::CLASSIFIED_KIND;
+        score += confidence::CLASSIFIED_KIND;
     }
-    confidence.min(confidence::CEILING)
+    score.min(confidence::CEILING)
 }
 
 /// The reader's notes for a document that is not a transfer receipt, in the
@@ -2500,6 +2520,9 @@ fn build_notes(
 /// the `0%` that ends `10%`, `20%` or `10,0%` is part of a larger number and
 /// does not count. A space between the number and the sign is not skipped:
 /// `0 %` is not read as a rate here.
+///
+/// Any percentage counts, not only one beside a VAT label: a discount of
+/// `0%` is taken as a zero rate too.
 fn states_a_zero_rate(text: &str) -> bool {
     let is_number_char = |c: &char| c.is_ascii_digit() || matches!(c, ',' | '.');
 
@@ -2536,7 +2559,11 @@ mod tests {
     /// the module has to be added here to be checked.
     const LABEL_SETS: &[(&str, &[&str])] = &[
         ("UTILITY_MARKERS", UTILITY_MARKERS),
+        ("POWER_BUSINESS_TARIFF", &[POWER_BUSINESS_TARIFF]),
         ("CUSTOMER_BLOCK_LABEL", &[CUSTOMER_BLOCK_LABEL]),
+        ("SALES_INVOICE_WORDS", &[SALES_INVOICE_WORDS]),
+        ("IBAN_WORD", &[IBAN_WORD]),
+        ("NAME_LABEL", &[NAME_LABEL]),
         ("INVOICE_WORDS", INVOICE_WORDS),
         ("UTILITY_UNPAID_MARKERS", UTILITY_UNPAID_MARKERS),
         ("PURCHASE_MARKERS", PURCHASE_MARKERS),
@@ -2701,7 +2728,7 @@ mod tests {
     }
 
     #[test]
-    fn time_token_lengths() {
+    fn a_clock_time_is_measured_only_where_one_starts() {
         let cases = [
             ("9:05", 0, Some(4)),
             ("09:05", 0, Some(5)),
@@ -2730,7 +2757,7 @@ mod tests {
     }
 
     #[test]
-    fn money_tokens_in_both_decimal_conventions() {
+    fn a_money_token_is_read_by_the_separator_table() {
         let cases = [
             ("45,90", Some(4_590)),
             ("45.90", Some(4_590)),
@@ -2787,7 +2814,7 @@ mod tests {
     }
 
     #[test]
-    fn greek_service_invoice_total_and_kind() {
+    fn a_greek_sales_invoice_reads_as_unpaid_income_from_its_customer() {
         let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/greek_sales_invoice.txt"),
             crate::prefs::Locale::En,
@@ -2876,7 +2903,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_afm_as_money() {
+    fn a_tax_number_is_not_money() {
         assert_eq!(parse_money_token("000000000"), None);
         assert_eq!(parse_money_token("900000000000001"), None);
         assert_eq!(parse_money_token("1860,00"), Some(186_000));
@@ -2948,7 +2975,7 @@ mod tests {
     }
 
     #[test]
-    fn zenith_electricity_bill_total() {
+    fn an_electricity_bill_total_is_found_by_the_utility_vote() {
         let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/zenith_electricity.txt"),
             crate::prefs::Locale::En,
@@ -3215,7 +3242,7 @@ mod tests {
     }
 
     #[test]
-    fn ngs_gas_bill_payment_total() {
+    fn a_gas_bill_reads_its_payment_total_not_its_deposit() {
         let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/ngs_gas_bill.txt"),
             crate::prefs::Locale::En,
@@ -3279,13 +3306,13 @@ mod tests {
 }
 
 #[cfg(test)]
-mod jumbled_extract {
+mod amounts_and_dates {
     use super::*;
 
     /// Synthetic jumbled layout (the shape `pdf_extract` produces on a
     /// text-layer utility PDF). Placeholders only — not a live dump.
     #[test]
-    fn parse_jumbled_ngs_extract_fixture() {
+    fn a_jumbled_gas_bill_extract_reads_like_the_tidy_one() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/ngs_gas_jumbled_extract.txt"
@@ -3531,7 +3558,7 @@ mod jumbled_extract {
 
     #[test]
     #[ignore = "needs tests/fixtures/local_gas_bill.pdf, a private bill that is not in the tree"]
-    fn parse_local_gas_pdf_bytes() {
+    fn a_private_gas_bill_pdf_reads_its_payment_total() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/local_gas_bill.pdf"
