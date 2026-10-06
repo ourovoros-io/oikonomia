@@ -1,7 +1,7 @@
 //! Tauri command handlers (thin wrappers over core + state).
 
 use crate::error::{CommandError, CommandResult, DesktopError};
-use crate::state::{AppState, GatedVault};
+use crate::state::{AppState, GatedVault, VaultGuard};
 use base64::Engine;
 use oikonomia_core::csv::{
     CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewInput,
@@ -37,7 +37,7 @@ use oikonomia_core::prefs::{
     save_ui_prefs, store_locale,
 };
 use oikonomia_core::util::{format_date, utc_today};
-use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
+use oikonomia_core::vault::{BACKUP_EXTENSION, VaultStatus, default_backup_file_name};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager, State};
@@ -71,7 +71,7 @@ pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStat
     let vault = state.vault();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let guard = vault.lock();
+        let guard = vault.acquire();
         Ok(guard.status())
     }))
     .await
@@ -153,7 +153,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn a_granted_path_comes_back_resolved_so_the_checked_file_is_the_opened_file() {
+    fn a_granted_path_comes_back_with_its_links_resolved() {
         let dir = temp_dir("path-resolved");
         let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
         let real = dir.join("statement-2026.csv");
@@ -866,7 +866,7 @@ pub async fn entry_post_simple_with_document_path(
             )
         })?;
 
-        let guard = vault.lock();
+        let guard = vault.acquire();
         let conn = guard.connection()?;
         let (view, _meta) = post_simple_entry_with_document(
             conn,
@@ -1439,12 +1439,14 @@ pub async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandRes
 #[tauri::command]
 pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
     with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        set_lock_timeout_secs(conn, secs)
+        set_lock_timeout_secs(vault.connection()?, secs)?;
+
+        // Under the same guard as the stored value, so that two changes
+        // cannot leave the watchdog's copy and the vault disagreeing.
+        vault.set_lock_timeout_cache(secs);
+        Ok(())
     })
-    .await?;
-    state.set_lock_timeout_cache(secs);
-    Ok(())
+    .await
 }
 
 /// The language that text written into the user's books must be in.
@@ -1698,13 +1700,13 @@ fn dropped_file_name(dropped_path: &str) -> String {
 async fn with_vault_blocking<T, F>(state: &State<'_, AppState>, f: F) -> CommandResult<T>
 where
     T: Send + 'static,
-    F: FnOnce(&mut Vault) -> Result<T, CoreError> + Send + 'static,
+    F: FnOnce(&mut VaultGuard<'_>) -> Result<T, CoreError> + Send + 'static,
 {
     let vault = state.vault();
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = vault.lock();
+        let mut guard = vault.acquire();
         f(&mut guard).map_err(CommandError::from)
     }))
     .await
@@ -1739,7 +1741,7 @@ fn analyze_readonly(
     oikonomia_core::documents::validate_document_file(filename, &mime, data.len() as u64)?;
 
     let (accounts, entity) = {
-        let guard = vault.lock();
+        let guard = vault.acquire();
         let conn = guard.connection()?;
         (
             suggest_accounts_for_entity(conn, entity_id)?,
