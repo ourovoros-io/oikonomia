@@ -38,9 +38,10 @@ The updater keypair is generated offline; its private half never touches the rep
 
 Tauri app updates are signed with minisign.
 
-1. On a machine with `@tauri-apps/cli` installed (or via `npx @tauri-apps/cli signer generate`):
+1. From the repository root, with the Tauri CLI pinned in `web/package-lock.json` (not `npx @tauri-apps/cli`, which fetches whatever version is current):
    ```
-   npx @tauri-apps/cli signer generate
+   (cd web && npm ci)
+   node web/node_modules/@tauri-apps/cli/tauri.js signer generate
    ```
    This prompts for a password (optional) and outputs `skey.txt` (private) and `pubkey.txt` (public).
 

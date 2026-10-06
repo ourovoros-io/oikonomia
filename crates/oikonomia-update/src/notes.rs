@@ -1,52 +1,35 @@
-//! Release notes are plain text. The webview must not navigate on them.
+//! Release notes are plain text.
+//!
+//! The notes come from the signed manifest, so they are the publisher's own
+//! words, but they are still text from the network on their way to a
+//! webview. [`sanitize_notes`] escapes every character HTML gives meaning
+//! to, so that whatever renders the notes shows them as text and cannot be
+//! made to build an element or a link from them.
+//!
+//! Nothing is removed. Deleting what looks like a tag would take real text
+//! with it (in `if a<b then ...` everything after the `<` reads as one), and
+//! escaping alone already leaves no markup.
 
-/// Strips HTML tags and escapes the remainder so notes cannot carry markup.
+/// Escapes `input` so that it carries no HTML markup.
 ///
-/// `<a href="...">` becomes the link text only. Remaining `&`, `<`, `>`, quotes
-/// are escaped. The result is safe to show as text.
+/// `&`, `<`, `>`, `"` and `'` become character references and every other
+/// character is kept. The result therefore never contains a raw `<`, `>` or
+/// `"`; a property test holds it to that.
 #[must_use]
-pub fn sanitize_notes(input: &str) -> String {
-    let mut stripped = String::new();
-    let mut in_tag = false;
-    let mut pending_lt = false;
-    for ch in input.chars() {
-        if pending_lt {
-            pending_lt = false;
-            if ch.is_ascii_alphabetic() || ch == '/' || ch == '!' || ch == '?' {
-                in_tag = true;
-            } else {
-                stripped.push('<');
-                stripped.push(ch);
-                continue;
-            }
-        }
-        if ch == '<' {
-            pending_lt = true;
-            continue;
-        }
-        if ch == '>' && in_tag {
-            in_tag = false;
-            continue;
-        }
-        if !in_tag {
-            stripped.push(ch);
-        }
-    }
-    if pending_lt {
-        stripped.push('<');
-    }
+pub(crate) fn sanitize_notes(input: &str) -> String {
+    let mut escaped = String::with_capacity(input.len());
 
-    let mut escaped = String::new();
-    for ch in stripped.chars() {
-        match ch {
+    for character in input.chars() {
+        match character {
             '&' => escaped.push_str("&amp;"),
             '<' => escaped.push_str("&lt;"),
             '>' => escaped.push_str("&gt;"),
             '"' => escaped.push_str("&quot;"),
             '\'' => escaped.push_str("&#39;"),
-            _ => escaped.push(ch),
+            _ => escaped.push(character),
         }
     }
+
     escaped
 }
 
@@ -55,26 +38,53 @@ mod tests {
     use super::sanitize_notes;
 
     #[test]
-    fn html_anchor_becomes_text() {
+    fn an_anchor_becomes_inert_text() {
         let notes = sanitize_notes("See <a href=\"https://evil.example\">notes</a>");
-        assert_eq!(notes, "See notes");
-        assert!(!notes.contains("href"));
-        assert!(!notes.contains("evil.example"));
+
+        assert_eq!(
+            notes,
+            "See &lt;a href=&quot;https://evil.example&quot;&gt;notes&lt;/a&gt;"
+        );
     }
 
     #[test]
-    fn leftover_brackets_are_escaped() {
-        let notes = sanitize_notes("1 < 2 & 3");
-        assert_eq!(notes, "1 &lt; 2 &amp; 3");
+    fn brackets_ampersands_and_quotes_are_escaped() {
+        assert_eq!(sanitize_notes("1 < 2 & 3"), "1 &lt; 2 &amp; 3");
+        assert_eq!(sanitize_notes("it's \"new\""), "it&#39;s &quot;new&quot;");
+    }
+
+    #[test]
+    fn a_comparison_written_without_spaces_keeps_its_text() {
+        assert_eq!(
+            sanitize_notes("if a<b then the total is right"),
+            "if a&lt;b then the total is right"
+        );
+    }
+
+    #[test]
+    fn text_without_markup_characters_is_unchanged() {
+        let plain = "Faster imports.\nΝέα έκδοση: 0.2.0";
+
+        assert_eq!(sanitize_notes(plain), plain);
     }
 }
 
 #[cfg(test)]
 mod properties {
+    use super::sanitize_notes;
     use oikonomia_test_support::PROPERTY_CASES;
     use proptest::prelude::*;
 
-    use super::sanitize_notes;
+    /// Reverses [`sanitize_notes`], for the round-trip property only.
+    fn unescape(escaped: &str) -> String {
+        // `&amp;` last: replacing it first would turn `&amp;lt;` into `<`.
+        escaped
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&#39;", "'")
+            .replace("&amp;", "&")
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
@@ -91,6 +101,13 @@ mod properties {
             let notes = sanitize_notes(&input);
 
             prop_assert!(!notes.contains(['<', '>', '"']), "{:?}", notes);
+        }
+
+        #[test]
+        fn sanitizing_loses_no_text(input in "[<>\"'&/!?a-z =;#0-9]{0,40}") {
+            let notes = sanitize_notes(&input);
+
+            prop_assert_eq!(unescape(&notes), input);
         }
     }
 }
