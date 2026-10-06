@@ -1,28 +1,103 @@
 //! Bank CSV reader: delimiter detection, headers, quoted fields, per-row errors.
+//!
+//! Bank exports agree on little, so the reader settles each question with a
+//! fixed rule and reports what it could not read instead of guessing. A
+//! problem with the file as a whole is an `Err`; a problem with one row is a
+//! [`CsvRowOutcome::Invalid`] in the result, so one bad line does not cost
+//! the user the rest of the statement.
+//!
+//! # Delimiter
+//!
+//! Comma or semicolon. The first non-empty line decides: semicolon when it
+//! has more semicolons than commas outside double quotes, comma otherwise.
+//! Tabs and other delimiters are not detected. Fields may be quoted as in
+//! RFC 4180, cells are trimmed, and a row may have fewer cells than the
+//! header; a missing cell reads as empty.
+//!
+//! # Column detection
+//!
+//! Without an explicit [`CsvColumnMapping`], each header is lowercased and
+//! stripped of spaces, `_` and `-`, then tested in this order. The first
+//! test that passes names the column:
+//!
+//! | Order | Column | Header |
+//! |-------|--------|--------|
+//! | 1 | Date | Contains `date` anywhere (`Booking date`, `ValueDate`). |
+//! | 2 | Amount | `amount`, `value`, `sum`, `transactionamount`, `betrag`, `montant`, `importo` |
+//! | 3 | Debit | `debit`, `withdrawal`, `outflow`, `addebito` |
+//! | 4 | Credit | `credit`, `deposit`, `inflow`, `accredito` |
+//! | 5 | Direction | `type`, `dc`, `d/c`, `debitcredit`, `drcr`, `transactiontype` |
+//! | 6 | Reference | `reference`, `ref`, `check`, `cheque`, `checkno`, `chequeno`, `fitid` |
+//! | 7 | Description | `description`, `memo`, `narration`, `details`, `payee`, `particulars`, `narrative`, `libelle`, `libellé`, `beschreibung`, `descrizione`, `transaction`, `name` |
+//!
+//! Rows 2 to 7 match the whole header, not a part of it. When several
+//! headers name the same column, the leftmost wins and the others are not
+//! read.
+//!
+//! A file needs a date column and at least one of amount, debit and credit.
+//! When an amount column is present the debit and credit columns are not
+//! read, and a direction column is read only beside an amount column.
+//!
+//! An explicit mapping replaces all of this: its header names are matched
+//! whole, without regard to ASCII case, and a column it leaves out is not
+//! read.
+//!
+//! # Dates
+//!
+//! | Form | Example | |
+//! |------|---------|-|
+//! | `YYYY-MM-DD` | `2026-03-05` | Accepted. |
+//! | `YYYY/MM/DD` | `2026/03/05` | Accepted. |
+//! | `DD/MM/YYYY` | `05/03/2026`, `5/3/2026` | Accepted. |
+//! | `MM/DD/YYYY` | `03/13/2026` | Not supported. |
+//! | `DD-MM-YYYY`, `DD.MM.YYYY` | `05.03.2026` | Rejected. |
+//! | Two-digit year, month name, time of day | `05/03/26`, `5 Mar 2026` | Rejected. |
+//!
+//! Day and month may be written without a leading zero; the year is the
+//! segment with four characters. The result is always `YYYY-MM-DD`.
+//!
+//! A slash date with the year last is always read day first. A US date is
+//! rejected only when that reading is impossible (`03/13/2026`, month 13).
+//! `03/04/2026` cannot be told apart from the European form and is read as
+//! 3 April; a US statement has to be converted before import.
 
 use std::fs;
 use std::path::Path;
 
 use csv::{ReaderBuilder, StringRecord, Trim};
+use time::{Date, Month};
 
-use super::amount::parse_signed_minor;
-use super::{CsvColumnMapping, CsvError, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow};
+use crate::csv::amount::parse_signed_minor;
+use crate::csv::{CsvColumnMapping, CsvError, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow};
 use crate::error::Error;
 use crate::ledger::SimpleEntryKind;
 use crate::ui_text::{UiText, UiTextCode};
 use crate::util::format_date;
-use time::{Date, Month};
 
+/// Result of a step that can only fail for a reason about the CSV itself.
 type CsvResult<T> = std::result::Result<T, CsvError>;
 
-/// Read a UTF-8 CSV file, rejecting oversized or non-file paths.
+/// Parsed bank CSV plus header metadata for the Map columns UI.
+#[derive(Debug, Clone)]
+pub struct ParsedBankCsv {
+    /// Trimmed header names, file order.
+    pub headers: Vec<String>,
+    /// Auto-detected mapping (aliases), even when the caller overrode columns.
+    pub detected_mapping: CsvColumnMapping,
+    /// Data rows in file order.
+    pub rows: Vec<CsvRowOutcome>,
+}
+
+/// Reads a CSV file as UTF-8 text, without a leading byte-order mark.
 ///
-/// Strips a leading UTF-8 BOM. Does not post or inspect the ledger.
+/// Does not parse the text and does not touch the ledger.
 ///
 /// # Errors
 ///
-/// [`Error::Io`] on filesystem failures; [`Error::CsvParse`] when the file is
-/// too large or not UTF-8.
+/// - [`Error::Io`] when `path` cannot be inspected or read, or is not a
+///   regular file.
+/// - [`Error::CsvParse`] when the file is larger than [`MAX_CSV_BYTES`] or is
+///   not valid UTF-8.
 pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
     let meta = fs::metadata(path).map_err(|err| Error::Io(err.to_string()))?;
     if !meta.is_file() {
@@ -36,108 +111,56 @@ pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
     Ok(text.trim_start_matches('\u{feff}').to_owned())
 }
 
-/// Parse `YYYY-MM-DD` or `DD/MM/YYYY` (day and month may be unpadded).
+/// Parses a date cell written as `YYYY-MM-DD`, `YYYY/MM/DD` or `DD/MM/YYYY`
+/// and returns it as `YYYY-MM-DD`.
 ///
-/// A four-digit first segment with `/` is treated as `YYYY/MM/DD`. US
-/// `MM/DD/YYYY` is not supported — `03/13/2026` is rejected (month 13).
+/// Day and month may be unpadded. US `MM/DD/YYYY` is not supported:
+/// `03/13/2026` is rejected (month 13), and `03/04/2026` is read as 3 April.
 ///
 /// # Errors
 ///
 /// [`CsvError::MissingDate`] when the cell is empty or only whitespace;
-/// [`CsvError::InvalidDate`] when it is not a valid calendar date.
+/// [`CsvError::InvalidDate`], carrying the trimmed cell, when it is not in
+/// one of the three forms or is not a date of the calendar.
 pub fn parse_csv_date(raw: &str) -> CsvResult<String> {
-    let s = raw.trim();
-    if s.is_empty() {
+    let cell = raw.trim();
+    if cell.is_empty() {
         return Err(CsvError::MissingDate);
     }
 
-    if let Some(parts) = split_three(s, '-')
-        && parts[0].len() == 4
+    if let Some([year, month, day]) = split_three(cell, '-')
+        && year.len() == 4
     {
-        return Ok(format_date(calendar_date(parts[0], parts[1], parts[2], s)?));
+        return Ok(format_date(calendar_date(year, month, day, cell)?));
     }
-    if let Some(parts) = split_three(s, '/')
-        && parts[0].len() == 4
+    if let Some([year, month, day]) = split_three(cell, '/')
+        && year.len() == 4
     {
-        return Ok(format_date(calendar_date(parts[0], parts[1], parts[2], s)?));
+        return Ok(format_date(calendar_date(year, month, day, cell)?));
     }
-    if let Some(parts) = split_three(s, '/')
-        && parts[2].len() == 4
+    if let Some([day, month, year]) = split_three(cell, '/')
+        && year.len() == 4
     {
-        return Ok(format_date(calendar_date(parts[2], parts[1], parts[0], s)?));
+        return Ok(format_date(calendar_date(year, month, day, cell)?));
     }
-    Err(CsvError::InvalidDate(s.to_owned()))
+    Err(CsvError::InvalidDate(cell.to_owned()))
 }
 
-fn split_three(s: &str, sep: char) -> Option<[&str; 3]> {
-    let mut parts = s.split(sep);
-    let a = parts.next()?;
-    let b = parts.next()?;
-    let c = parts.next()?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some([a, b, c])
-}
-
-fn calendar_date(year: &str, month: &str, day: &str, raw: &str) -> CsvResult<Date> {
-    let year: i32 = year
-        .parse()
-        .map_err(|_| CsvError::InvalidDate(raw.to_owned()))?;
-    let month_num: u8 = month
-        .parse()
-        .map_err(|_| CsvError::InvalidDate(raw.to_owned()))?;
-    let day_num: u8 = day
-        .parse()
-        .map_err(|_| CsvError::InvalidDate(raw.to_owned()))?;
-    let month = Month::try_from(month_num).map_err(|_| CsvError::InvalidDate(raw.to_owned()))?;
-    Date::from_calendar_date(year, month, day_num)
-        .map_err(|_| CsvError::InvalidDate(raw.to_owned()))
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Column {
-    Date,
-    Description,
-    Amount,
-    Debit,
-    Credit,
-    Reference,
-    Direction,
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct ColumnMap {
-    date: Option<usize>,
-    description: Option<usize>,
-    amount: Option<usize>,
-    debit: Option<usize>,
-    credit: Option<usize>,
-    reference: Option<usize>,
-    direction: Option<usize>,
-}
-
-/// Parsed bank CSV plus header metadata for the Map columns UI.
-#[derive(Debug, Clone)]
-pub struct ParsedBankCsv {
-    /// Trimmed header names, file order.
-    pub headers: Vec<String>,
-    /// Auto-detected mapping (aliases), even when the caller overrode columns.
-    pub detected_mapping: CsvColumnMapping,
-    /// Data rows in file order.
-    pub rows: Vec<CsvRowOutcome>,
-}
-
-/// Parse a bank CSV into per-row outcomes. Never writes to the ledger.
+/// Parses a bank CSV into per-row outcomes. Never writes to the ledger.
 ///
 /// Accepts comma or semicolon delimiters and RFC 4180 quoted fields.
-/// `exponent` is the entity currency's minor-unit exponent (2 for EUR).
-/// `mapping` overrides header auto-detect when `Some`.
+/// `exponent` is the minor-unit exponent of the book's currency (2 for EUR).
+/// `mapping` replaces header auto-detection when `Some`.
 ///
 /// # Errors
 ///
-/// File-level problems (empty, missing date/amount headers, invalid mapping).
-/// Malformed **rows** are returned as [`CsvRowOutcome::Invalid`], not as `Err`.
+/// [`Error::CsvParse`] for a problem with the file as a whole: the text is
+/// empty, the header row cannot be read or has no name in it, no date
+/// column or no amount, debit or credit column is detected, or `mapping`
+/// is incomplete, contradictory or names a header the file does not have.
+///
+/// A malformed **row** is not an error. It is returned as
+/// [`CsvRowOutcome::Invalid`] in its place among the rows.
 pub fn parse_bank_csv(
     text: &str,
     exponent: u8,
@@ -191,39 +214,118 @@ pub fn parse_bank_csv(
     })
 }
 
+/// The role a column plays in a bank statement.
+#[derive(Debug, Clone, Copy)]
+enum Column {
+    /// Booking date.
+    Date,
+    /// Free text: payee, memo, narration.
+    Description,
+    /// Signed amount.
+    Amount,
+    /// Money out, in a file with separate columns per direction.
+    Debit,
+    /// Money in, in a file with separate columns per direction.
+    Credit,
+    /// Reference or check number.
+    Reference,
+    /// Which way the money moved, for a file whose amounts are unsigned.
+    Direction,
+}
+
+/// Where each role is in a record, as 0-based cell indexes.
+///
+/// `None` means the role has no column and is not read.
+#[derive(Debug, Clone, Copy, Default)]
+struct ColumnMap {
+    /// Booking date. Always `Some` once a map has passed
+    /// [`require_auto_map`] or [`resolve_user_mapping`].
+    date: Option<usize>,
+    /// Description; a row of a file without one gets an empty description.
+    description: Option<usize>,
+    /// Signed amount. When `Some`, `debit` and `credit` are not read.
+    amount: Option<usize>,
+    /// Money out.
+    debit: Option<usize>,
+    /// Money in.
+    credit: Option<usize>,
+    /// Reference or check number.
+    reference: Option<usize>,
+    /// Direction of the amount. Read only when `amount` is `Some`.
+    direction: Option<usize>,
+}
+
+/// Splits `text` on `separator` into exactly three segments, or returns
+/// `None` when there are fewer or more.
+fn split_three(text: &str, separator: char) -> Option<[&str; 3]> {
+    let mut segments = text.split(separator);
+    let first = segments.next()?;
+    let second = segments.next()?;
+    let third = segments.next()?;
+    if segments.next().is_some() {
+        return None;
+    }
+    Some([first, second, third])
+}
+
+/// Builds the calendar date from its three segments as written.
+///
+/// # Errors
+///
+/// [`CsvError::InvalidDate`] carrying `raw` when a segment is not a number
+/// or the three do not name a day that exists (`31/02`).
+fn calendar_date(year: &str, month: &str, day: &str, raw: &str) -> CsvResult<Date> {
+    let invalid = || CsvError::InvalidDate(raw.to_owned());
+
+    let year: i32 = year.parse().map_err(|_| invalid())?;
+    let month: u8 = month.parse().map_err(|_| invalid())?;
+    let day: u8 = day.parse().map_err(|_| invalid())?;
+
+    let month = Month::try_from(month).map_err(|_| invalid())?;
+    Date::from_calendar_date(year, month, day).map_err(|_| invalid())
+}
+
+/// Picks comma or semicolon from the first non-empty line of `text`.
+///
+/// Semicolon needs strictly more occurrences than comma outside double
+/// quotes, so a file with neither, or a tie, is read as comma-separated.
 fn detect_delimiter(text: &str) -> u8 {
     let Some(line) = text.lines().find(|line| !line.trim().is_empty()) else {
         return b',';
     };
-    let mut comma = 0u32;
-    let mut semi = 0u32;
+    let mut commas = 0u32;
+    let mut semicolons = 0u32;
     let mut in_quotes = false;
-    for c in line.chars() {
-        if c == '"' {
+    for character in line.chars() {
+        if character == '"' {
             in_quotes = !in_quotes;
-        } else if c == ',' && !in_quotes {
-            comma = comma.saturating_add(1);
-        } else if c == ';' && !in_quotes {
-            semi = semi.saturating_add(1);
+        } else if character == ',' && !in_quotes {
+            commas = commas.saturating_add(1);
+        } else if character == ';' && !in_quotes {
+            semicolons = semicolons.saturating_add(1);
         }
     }
-    if semi > comma { b';' } else { b',' }
+    if semicolons > commas { b';' } else { b',' }
 }
 
+/// Detects the column of each role from the header names.
+///
+/// The leftmost header of a role wins; a later one of the same role is left
+/// unread.
 fn auto_map_headers(headers: &StringRecord) -> ColumnMap {
     let mut map = ColumnMap::default();
-    for (idx, name) in headers.iter().enumerate() {
+    for (index, name) in headers.iter().enumerate() {
         let Some(kind) = classify_header(name) else {
             continue;
         };
         match kind {
-            Column::Date if map.date.is_none() => map.date = Some(idx),
-            Column::Description if map.description.is_none() => map.description = Some(idx),
-            Column::Amount if map.amount.is_none() => map.amount = Some(idx),
-            Column::Debit if map.debit.is_none() => map.debit = Some(idx),
-            Column::Credit if map.credit.is_none() => map.credit = Some(idx),
-            Column::Reference if map.reference.is_none() => map.reference = Some(idx),
-            Column::Direction if map.direction.is_none() => map.direction = Some(idx),
+            Column::Date if map.date.is_none() => map.date = Some(index),
+            Column::Description if map.description.is_none() => map.description = Some(index),
+            Column::Amount if map.amount.is_none() => map.amount = Some(index),
+            Column::Debit if map.debit.is_none() => map.debit = Some(index),
+            Column::Credit if map.credit.is_none() => map.credit = Some(index),
+            Column::Reference if map.reference.is_none() => map.reference = Some(index),
+            Column::Direction if map.direction.is_none() => map.direction = Some(index),
             Column::Date
             | Column::Description
             | Column::Amount
@@ -236,6 +338,12 @@ fn auto_map_headers(headers: &StringRecord) -> ColumnMap {
     map
 }
 
+/// Checks that a detected map has the columns a row cannot do without.
+///
+/// # Errors
+///
+/// [`Error::CsvParse`] from [`CsvError::MissingDateColumn`] or, when none
+/// of amount, debit and credit was found, [`CsvError::MissingAmountColumn`].
 fn require_auto_map(map: ColumnMap) -> crate::error::Result<ColumnMap> {
     if map.date.is_none() {
         return Err(CsvError::MissingDateColumn.into());
@@ -246,8 +354,11 @@ fn require_auto_map(map: ColumnMap) -> crate::error::Result<ColumnMap> {
     Ok(map)
 }
 
+/// Turns a map of cell indexes back into header names, for the UI to show
+/// what was detected.
 fn mapping_from_headers(headers: &StringRecord, map: ColumnMap) -> CsvColumnMapping {
-    let name = |idx: Option<usize>| idx.map(|i| headers.get(i).unwrap_or("").to_owned());
+    let name =
+        |column: Option<usize>| column.map(|index| headers.get(index).unwrap_or("").to_owned());
     CsvColumnMapping {
         date: name(map.date),
         description: name(map.description),
@@ -259,18 +370,35 @@ fn mapping_from_headers(headers: &StringRecord, map: ColumnMap) -> CsvColumnMapp
     }
 }
 
+/// Returns the trimmed value, or `None` when it is absent or blank.
+///
+/// A mapping field the UI sends as an empty string means "not mapped".
 fn trimmed_nonempty(value: Option<&str>) -> Option<&str> {
-    value.map(str::trim).filter(|s| !s.is_empty())
+    value.map(str::trim).filter(|text| !text.is_empty())
 }
 
+/// Returns the index of the first header equal to `name`, ignoring ASCII
+/// case and surrounding whitespace.
+///
+/// # Errors
+///
+/// [`CsvError::InvalidMapping`] naming the header when the file has none.
 fn header_index(headers: &StringRecord, name: &str) -> CsvResult<usize> {
     let needle = name.trim();
     headers
         .iter()
-        .position(|h| h.eq_ignore_ascii_case(needle))
+        .position(|header| header.eq_ignore_ascii_case(needle))
         .ok_or_else(|| CsvError::InvalidMapping(format!("CSV has no column named '{name}'")))
 }
 
+/// Resolves an explicit mapping to cell indexes.
+///
+/// # Errors
+///
+/// [`Error::CsvParse`] from [`CsvError::InvalidMapping`] when the mapping
+/// has no date or no description, sets both an amount and a debit or credit
+/// column, sets neither an amount nor both of debit and credit, or names a
+/// header the file does not have.
 fn resolve_user_mapping(
     headers: &StringRecord,
     mapping: &CsvColumnMapping,
@@ -290,8 +418,8 @@ fn resolve_user_mapping(
     let direction = trimmed_nonempty(mapping.direction.as_deref());
 
     let has_amount = amount.is_some();
-    let has_dc = debit.is_some() || credit.is_some();
-    if has_amount && has_dc {
+    let has_debit_or_credit = debit.is_some() || credit.is_some();
+    if has_amount && has_debit_or_credit {
         return Err(CsvError::InvalidMapping(
             "CSV mapping cannot set both amount and debit/credit".into(),
         )
@@ -304,21 +432,32 @@ fn resolve_user_mapping(
         .into());
     }
 
+    let optional_index =
+        |name: Option<&str>| name.map(|name| header_index(headers, name)).transpose();
+
     Ok(ColumnMap {
         date: Some(header_index(headers, date)?),
         description: Some(header_index(headers, description)?),
-        amount: amount.map(|n| header_index(headers, n)).transpose()?,
-        debit: debit.map(|n| header_index(headers, n)).transpose()?,
-        credit: credit.map(|n| header_index(headers, n)).transpose()?,
-        reference: reference.map(|n| header_index(headers, n)).transpose()?,
-        direction: direction.map(|n| header_index(headers, n)).transpose()?,
+        amount: optional_index(amount)?,
+        debit: optional_index(debit)?,
+        credit: optional_index(credit)?,
+        reference: optional_index(reference)?,
+        direction: optional_index(direction)?,
     })
 }
 
+/// Names the role of a header, or returns `None` for one that has none.
+///
+/// The header is compared in lowercase with spaces, `_` and `-` removed, so
+/// `Booking Date`, `booking_date` and `BOOKING-DATE` are one header. The
+/// tests run in the order of the table in the module doc; `date` is the only
+/// one that matches a part of the header.
 fn classify_header(raw: &str) -> Option<Column> {
-    let spaced = raw.trim().to_lowercase().replace(['_', '-'], " ");
-    let n: String = spaced.split_whitespace().collect::<Vec<_>>().join(" ");
-    let compact: String = n.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact: String = raw
+        .to_lowercase()
+        .chars()
+        .filter(|character| !character.is_whitespace() && !matches!(character, '_' | '-'))
+        .collect();
 
     if compact.contains("date") {
         return Some(Column::Date);
@@ -374,6 +513,8 @@ fn classify_header(raw: &str) -> Option<Column> {
     None
 }
 
+/// Reads one record into its outcome; a row that cannot be used becomes
+/// [`CsvRowOutcome::Invalid`] with the reason worded for the UI.
 fn parse_record(
     source_row: u32,
     record: &StringRecord,
@@ -422,23 +563,29 @@ fn row_problem(source_row: u32, err: &CsvError) -> UiText {
     }
 }
 
+/// Reads one record into a bank row.
+///
+/// # Errors
+///
+/// The [`CsvError`] of the first cell that cannot be read, in the order
+/// date, amount; [`CsvError::ZeroAmount`] for an amount of zero, which a
+/// simple entry cannot carry.
 fn parse_record_inner(
     source_row: u32,
     record: &StringRecord,
     columns: ColumnMap,
     exponent: u8,
 ) -> CsvResult<ParsedBankRow> {
-    let Some(date_idx) = columns.date else {
+    let Some(date_index) = columns.date else {
         return Err(CsvError::MissingDate);
     };
-    let date_raw = record_cell(record, date_idx);
-    let entry_date = parse_csv_date(date_raw)?;
+    let entry_date = parse_csv_date(record_cell(record, date_index))?;
     let description = columns
         .description
-        .map(|idx| record_cell(record, idx).trim().to_owned())
+        .map(|index| record_cell(record, index).trim().to_owned())
         .unwrap_or_default();
-    let reference = columns.reference.and_then(|idx| {
-        let value = record_cell(record, idx).trim();
+    let reference = columns.reference.and_then(|index| {
+        let value = record_cell(record, index).trim();
         if value.is_empty() {
             None
         } else {
@@ -468,60 +615,81 @@ fn parse_record_inner(
     })
 }
 
+/// Returns the signed amount of a record: negative for money out.
+///
+/// With an amount column, its own sign counts unless a direction cell says
+/// otherwise. With debit and credit columns the sign written in a cell is
+/// ignored: a debit is money out and a credit is money in, and a row with
+/// both is their difference, credit minus debit.
+///
+/// `abs` cannot overflow in here: [`parse_signed_minor`] negates a magnitude
+/// that fits an `i64`, so it never returns `i64::MIN`.
 fn signed_amount(record: &StringRecord, columns: ColumnMap, exponent: u8) -> CsvResult<i64> {
-    if let Some(idx) = columns.amount {
-        let mut signed = parse_signed_minor(record_cell(record, idx), exponent)?;
-        if let Some(dir_idx) = columns.direction {
-            signed = apply_direction(signed, record_cell(record, dir_idx))?;
-        }
-        return Ok(signed);
+    if let Some(amount_index) = columns.amount {
+        let signed = parse_signed_minor(record_cell(record, amount_index), exponent)?;
+        return match columns.direction {
+            Some(direction_index) => apply_direction(signed, record_cell(record, direction_index)),
+            None => Ok(signed),
+        };
     }
 
     let debit = optional_signed(record, columns.debit, exponent)?;
     let credit = optional_signed(record, columns.credit, exponent)?;
     match (debit, credit) {
         (None, None) => Err(CsvError::MissingAmount),
-        (Some(d), None) => Ok(-d.abs()),
-        (None, Some(c)) => Ok(c.abs()),
-        (Some(d), Some(c)) => d
+        (Some(debit), None) => Ok(-debit.abs()),
+        (None, Some(credit)) => Ok(credit.abs()),
+        (Some(debit), Some(credit)) => debit
             .abs()
             .checked_neg()
-            .and_then(|out| out.checked_add(c.abs()))
+            .and_then(|money_out| money_out.checked_add(credit.abs()))
             .ok_or(CsvError::AmountOverflow),
     }
 }
 
+/// Parses the amount in column `index`, or returns `None` when there is no
+/// such column or its cell is blank.
 fn optional_signed(
     record: &StringRecord,
-    idx: Option<usize>,
+    index: Option<usize>,
     exponent: u8,
 ) -> CsvResult<Option<i64>> {
-    let Some(idx) = idx else {
+    let Some(index) = index else {
         return Ok(None);
     };
-    let raw = record_cell(record, idx).trim();
+    let raw = record_cell(record, index).trim();
     if raw.is_empty() {
         return Ok(None);
     }
     parse_signed_minor(raw, exponent).map(Some)
 }
 
+/// Gives `signed` the sign its direction cell names, whatever sign it had.
+///
+/// A blank cell leaves the amount as it is. The words are matched whole and
+/// without regard to case: `d`, `dr`, `debit`, `withdrawal`, `expense` and
+/// `out` mean money out; `c`, `cr`, `credit`, `deposit`, `income` and `in`
+/// mean money in.
+///
+/// # Errors
+///
+/// [`CsvError::InvalidType`] carrying the trimmed cell for any other word.
 fn apply_direction(signed: i64, raw: &str) -> CsvResult<i64> {
-    let n = raw.trim().to_lowercase();
-    if n.is_empty() {
+    let direction = raw.trim().to_lowercase();
+    if direction.is_empty() {
         return Ok(signed);
     }
     if matches!(
-        n.as_str(),
+        direction.as_str(),
         "d" | "dr" | "debit" | "withdrawal" | "expense" | "out"
     ) {
         return signed
             .checked_abs()
-            .map(|v| -v)
+            .map(|magnitude| -magnitude)
             .ok_or(CsvError::AmountOverflow);
     }
     if matches!(
-        n.as_str(),
+        direction.as_str(),
         "c" | "cr" | "credit" | "deposit" | "income" | "in"
     ) {
         return signed.checked_abs().ok_or(CsvError::AmountOverflow);
@@ -529,8 +697,10 @@ fn apply_direction(signed: i64, raw: &str) -> CsvResult<i64> {
     Err(CsvError::InvalidType(raw.trim().to_owned()))
 }
 
-fn record_cell(record: &StringRecord, idx: usize) -> &str {
-    record.get(idx).unwrap_or("")
+/// Returns the cell at `index`, or an empty string for a record that is
+/// shorter than the header.
+fn record_cell(record: &StringRecord, index: usize) -> &str {
+    record.get(index).unwrap_or("")
 }
 
 #[cfg(test)]
@@ -733,6 +903,44 @@ mod tests {
         assert_eq!(parse_csv_date("2026/03/05").expect("ymd"), "2026-03-05");
         assert!(parse_csv_date("03/13/2026").is_err());
         assert!(parse_csv_date("32/01/2026").is_err());
+    }
+
+    #[test]
+    fn date_forms_outside_the_three_documented_ones_are_rejected() {
+        for cell in [
+            "05.03.2026",
+            "05-03-2026",
+            "05/03/26",
+            "5 Mar 2026",
+            "2026-03-05 10:00",
+            "2026-02-30",
+        ] {
+            assert_eq!(
+                parse_csv_date(cell),
+                Err(CsvError::InvalidDate(cell.to_owned())),
+                "{cell}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_slash_date_with_the_year_last_is_read_day_first() {
+        assert_eq!(parse_csv_date("03/04/2026").unwrap(), "2026-04-03");
+    }
+
+    #[test]
+    fn headers_are_classified_in_the_documented_order() {
+        let detected = parse_bank_csv(
+            "Value Date,Booking-date,Transaction_Amount,Name,Memo\n2026-03-05,2026-03-06,1.00,a,b\n",
+            2,
+            None,
+        )
+        .unwrap()
+        .detected_mapping;
+
+        assert_eq!(detected.date.as_deref(), Some("Value Date"));
+        assert_eq!(detected.amount.as_deref(), Some("Transaction_Amount"));
+        assert_eq!(detected.description.as_deref(), Some("Name"));
     }
 
     fn column_mapping(
