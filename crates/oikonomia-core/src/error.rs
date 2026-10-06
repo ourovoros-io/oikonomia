@@ -39,6 +39,7 @@
 //! [`source`](std::error::Error::source): no variant has one.
 
 use crate::csv::CsvError;
+use std::collections::BTreeMap;
 use std::fmt::Display;
 use thiserror::Error;
 
@@ -273,6 +274,69 @@ impl Error {
             Self::Csv(reason) => reason.code(),
         }
     }
+
+    /// Returns the values the UI substitutes into the localized text, by name.
+    ///
+    /// Every variant decides here what it sends, in a match with no wildcard
+    /// arm, so a new variant that carries data does not compile until its
+    /// parameters are chosen:
+    ///
+    /// - an unbalanced entry sends `debits` and `credits`, in minor units;
+    /// - a missing record sends `resource`, a [`Resource::identifier`];
+    /// - a vault from a newer build sends `found` and `supported`;
+    /// - a failure below the crate sends `operation` and never its `detail`,
+    ///   which may hold operating-system text and is for logs;
+    /// - a validation or CSV error sends its own
+    ///   ([`ValidationError::params`], [`CsvError::params`]);
+    /// - a corrupt vault and an invalid backup send nothing: the reason is
+    ///   for the log, and the copy is one sentence each.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::Error;
+    /// use oikonomia_core::error::Resource;
+    ///
+    /// let params = Error::NotFound(Resource::JournalEntry).params();
+    ///
+    /// assert_eq!(params["resource"], "journal_entry");
+    /// ```
+    #[must_use]
+    pub fn params(&self) -> BTreeMap<&'static str, String> {
+        match self {
+            Self::UnbalancedEntry { debits, credits } => BTreeMap::from([
+                ("credits", credits.to_string()),
+                ("debits", debits.to_string()),
+            ]),
+            Self::Validation(reason) => reason.params(),
+            Self::Csv(reason) => reason.params(),
+            Self::Database { operation, .. }
+            | Self::Io { operation, .. }
+            | Self::Serialization { operation, .. }
+            | Self::Crypto { operation, .. }
+            | Self::Analysis { operation, .. } => {
+                BTreeMap::from([("operation", (*operation).to_owned())])
+            }
+            Self::VaultTooNew { found, supported } => BTreeMap::from([
+                ("found", found.to_string()),
+                ("supported", supported.to_string()),
+            ]),
+            Self::NotFound(resource) => {
+                BTreeMap::from([("resource", resource.identifier().to_owned())])
+            }
+            Self::VaultUninitialized
+            | Self::VaultLocked
+            | Self::InvalidPassword
+            | Self::TooFewLines
+            | Self::InvalidLineAmounts
+            | Self::AccountWrongEntity
+            | Self::MoneyOverflow
+            | Self::NegativeMoney
+            | Self::VaultCorrupt(_)
+            | Self::BackupInvalid(_)
+            | Self::RestoreWouldOverwrite => BTreeMap::new(),
+        }
+    }
 }
 
 /// Constructors for the variants that wrap a lower-level failure.
@@ -323,6 +387,7 @@ mod tests {
     use super::{BackupDefect, Error, Resource, ValidationError, VaultCorruption};
     use crate::csv::CsvError;
     use oikonomia_test_support::listed_variants;
+    use std::collections::BTreeMap;
 
     /// One value of every variant, in the order of the enum.
     fn every_variant() -> Vec<Error> {
@@ -430,6 +495,126 @@ mod tests {
     #[test]
     fn a_csv_error_gives_its_own_code() {
         assert_eq!(Error::from(CsvError::Empty).code(), "csv_empty");
+    }
+
+    #[test]
+    fn an_unbalanced_entry_sends_both_totals() {
+        let error = Error::UnbalancedEntry {
+            debits: 100,
+            credits: 50,
+        };
+
+        assert_eq!(
+            error.params(),
+            BTreeMap::from([("credits", "50".to_owned()), ("debits", "100".to_owned())])
+        );
+    }
+
+    #[test]
+    fn a_missing_record_sends_what_was_not_found() {
+        assert_eq!(
+            Error::NotFound(Resource::RecurringTemplate).params(),
+            BTreeMap::from([("resource", "recurring_template".to_owned())])
+        );
+    }
+
+    #[test]
+    fn a_vault_from_a_newer_build_sends_both_versions() {
+        let error = Error::VaultTooNew {
+            found: 9,
+            supported: 7,
+        };
+
+        assert_eq!(
+            error.params(),
+            BTreeMap::from([("found", "9".to_owned()), ("supported", "7".to_owned())])
+        );
+    }
+
+    #[test]
+    fn a_lower_level_failure_sends_its_operation_and_never_its_detail() {
+        let failures = [
+            Error::database("insert journal entry", "disk on fire"),
+            Error::io("insert journal entry", "disk on fire"),
+            Error::serialization("insert journal entry", "disk on fire"),
+            Error::crypto("insert journal entry", "disk on fire"),
+            Error::analysis("insert journal entry", "disk on fire"),
+        ];
+
+        for error in failures {
+            assert_eq!(
+                error.params(),
+                BTreeMap::from([("operation", "insert journal entry".to_owned())]),
+                "{error:?}"
+            );
+            assert_eq!(error.to_string(), "insert journal entry: disk on fire");
+        }
+    }
+
+    #[test]
+    fn a_wrapped_error_sends_the_parameters_of_what_it_wraps() {
+        let validation = ValidationError::PasswordTooShort { min: 12 };
+        let csv = CsvError::InvalidDate("31/31".into());
+
+        assert_eq!(
+            Error::from(validation.clone()).params(),
+            validation.params()
+        );
+        assert_eq!(Error::from(csv.clone()).params(), csv.params());
+    }
+
+    #[test]
+    fn a_reason_for_the_log_is_not_a_parameter() {
+        let corrupt = Error::VaultCorrupt(VaultCorruption::Column {
+            column: "accounts.id".into(),
+            detail: "not an id".into(),
+        });
+        let invalid = Error::BackupInvalid(BackupDefect::EmptyMember {
+            name: "vault.db".into(),
+        });
+
+        assert_eq!(corrupt.params(), BTreeMap::new());
+        assert_eq!(invalid.params(), BTreeMap::new());
+    }
+
+    /// The parameter names the shared fixture pins for each code that has any.
+    fn pinned_params() -> BTreeMap<String, Vec<String>> {
+        serde_json::from_str(include_str!("../../../web/src/lib/errorCodeParams.json"))
+            .expect("errorCodeParams.json parses")
+    }
+
+    /// The validation and CSV samples are checked by the tests of their own
+    /// modules, which know every variant of those enums.
+    #[test]
+    fn the_params_fixture_lists_exactly_the_params_each_code_sends() {
+        let pinned = pinned_params();
+
+        for sample in every_variant() {
+            if matches!(sample, Error::Validation(_) | Error::Csv(_)) {
+                continue;
+            }
+            let sent: Vec<String> = sample
+                .params()
+                .keys()
+                .map(|name| (*name).to_owned())
+                .collect();
+            let listed = pinned.get(sample.code()).cloned().unwrap_or_default();
+
+            assert_eq!(sent, listed, "errorCodeParams.json for {}", sample.code());
+        }
+    }
+
+    /// With the per-code checks of the three enums, this makes the fixture
+    /// exactly what Rust sends: no entry for a code that does not exist.
+    #[test]
+    fn the_params_fixture_names_no_code_rust_does_not_have() {
+        for code in pinned_params().keys() {
+            let known = Error::ALL_CODES.contains(&code.as_str())
+                || ValidationError::ALL_CODES.contains(&code.as_str())
+                || CsvError::ALL_CODES.contains(&code.as_str());
+
+            assert!(known, "errorCodeParams.json lists unknown code {code}");
+        }
     }
 
     #[test]

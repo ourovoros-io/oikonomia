@@ -29,6 +29,8 @@ afterEach(() => {
  * them, and an entry here that Rust stops sending fails the test below.
  */
 const UNWORDED_PARAMS: Record<string, string[]> = {
+  analysis: ['operation'],
+  crypto: ['operation'],
   csv_invalid_amount: ['value'],
   csv_invalid_date: ['value'],
   csv_invalid_integer: ['value'],
@@ -36,7 +38,13 @@ const UNWORDED_PARAMS: Record<string, string[]> = {
   csv_invalid_status: ['value'],
   csv_invalid_type: ['value'],
   csv_missing_column: ['column'],
+  database: ['operation'],
+  io: ['operation'],
   name_required: ['field'],
+  not_found: ['resource'],
+  serialization: ['operation'],
+  unbalanced_entry: ['credits', 'debits'],
+  vault_too_new: ['found', 'supported'],
 }
 
 describe('command error localization', () => {

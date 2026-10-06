@@ -2,6 +2,8 @@
   "account_inactive": ["code"],
   "account_required": ["role"],
   "account_wrong_type": ["code", "role"],
+  "analysis": ["operation"],
+  "crypto": ["operation"],
   "csv_invalid_amount": ["value"],
   "csv_invalid_date": ["value"],
   "csv_invalid_integer": ["value"],
@@ -9,10 +11,16 @@
   "csv_invalid_status": ["value"],
   "csv_invalid_type": ["value"],
   "csv_missing_column": ["column"],
+  "database": ["operation"],
   "file_too_large": ["max_mb"],
   "invalid_date": ["value"],
+  "io": ["operation"],
   "lock_timeout_too_short": ["min_secs"],
   "name_required": ["field"],
   "name_taken": ["name"],
-  "password_too_short": ["min"]
+  "not_found": ["resource"],
+  "password_too_short": ["min"],
+  "serialization": ["operation"],
+  "unbalanced_entry": ["credits", "debits"],
+  "vault_too_new": ["found", "supported"]
 }
