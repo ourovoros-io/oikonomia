@@ -1,13 +1,35 @@
-//! Journal CSV export (current entity) and a parser for round-trip tests.
+//! Journal CSV export of one entity, and the parser that reads it back.
+//!
+//! The export is one row per journal line, with amounts as integer minor
+//! units so that no spreadsheet or locale reformats them on the way.
+//!
+//! # Formula guard
+//!
+//! The file is opened in spreadsheet apps, and its text cells come from
+//! bank memos, OCR and the user: a cell that starts with `=`, `+`, `-`, `@`,
+//! a tab or a carriage return is run as a formula there
+//! (<https://owasp.org/www-community/attacks/CSV_Injection>). Every text
+//! cell (description, reference, account code, account name) is therefore
+//! written through `neutralize_formula`, which puts an apostrophe in front
+//! of such a cell. The other columns need no guard: the date and the status
+//! are written by this crate, and the amounts are non-negative integers.
+//!
+//! The guard is reversible. A cell that already starts with an apostrophe
+//! is guarded as well, so a leading apostrophe in the file always means
+//! "one was added", and `restore_formula` removes exactly that one.
+//! [`parse_journal_export`] applies it, so a parsed export equals the
+//! ledger text. Both directions are pinned by a property test over
+//! arbitrary strings.
 
 use std::borrow::Cow;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use csv::{ReaderBuilder, Trim, Writer};
+use csv::{ReaderBuilder, StringRecord, Trim, Writer};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use super::CsvError;
+use crate::csv::CsvError;
 use crate::domain::EntityId;
 use crate::error::{Error, Result};
 use crate::ledger::get_entity;
@@ -19,6 +41,11 @@ pub(super) const DEBIT_MINOR_COLUMN: &str = "debit_minor";
 pub(super) const CREDIT_MINOR_COLUMN: &str = "credit_minor";
 
 /// `posted` or `voided` in the export `status` column.
+///
+/// The two words are the file format: this crate writes them and
+/// [`parse_journal_export`] accepts no other. Nothing matches on the enum
+/// exhaustively, here or in the desktop crate, which does not use it; a
+/// third status would be a change to the export format first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JournalCsvStatus {
@@ -49,78 +76,39 @@ pub struct JournalCsvLine {
     pub status: JournalCsvStatus,
 }
 
-/// Leading characters that Excel, `LibreOffice` and Numbers read as the start
-/// of a formula.
-const FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
-
-/// The prefix that makes a spreadsheet app read a cell as literal text.
-const TEXT_GUARD: char = '\'';
-
-/// Makes a text cell inert for spreadsheet apps.
+/// Returns the file name to suggest when saving an export,
+/// `oikonomia-journal-<entity>-YYYY-MM-DD.csv`.
 ///
-/// A bank memo or OCR'd line can start with `=`; exported as-is it becomes a
-/// live `HYPERLINK`/DDE formula on the accountant's machine. A leading
-/// apostrophe turns the cell into literal text.
-///
-/// A cell that already starts with an apostrophe is guarded too. Otherwise
-/// the ledger text `'=foo` and the guarded form of `=foo` would be the same
-/// exported cell, and [`restore_formula`] could not tell them apart.
-fn neutralize_formula(cell: &str) -> Cow<'_, str> {
-    if cell.starts_with(FORMULA_TRIGGERS) || cell.starts_with(TEXT_GUARD) {
-        Cow::Owned(format!("{TEXT_GUARD}{cell}"))
-    } else {
-        Cow::Borrowed(cell)
-    }
-}
-
-/// Exact inverse of [`neutralize_formula`], so a parsed export equals the
-/// ledger: strips one apostrophe when what follows is a cell that
-/// `neutralize_formula` would have guarded.
-fn restore_formula(cell: &str) -> &str {
-    cell.strip_prefix(TEXT_GUARD)
-        .filter(|rest| rest.starts_with(FORMULA_TRIGGERS) || rest.starts_with(TEXT_GUARD))
-        .unwrap_or(cell)
-}
-
-/// Suggested filename for the native save dialog.
+/// `<entity>` is `entity_name` reduced to lowercase ASCII letters, digits
+/// and single hyphens, or `entity` when nothing is left of it.
 #[must_use]
 pub fn default_journal_export_file_name(entity_name: &str) -> String {
     let slug = sanitize_file_stem(entity_name);
     format!("oikonomia-journal-{slug}-{}.csv", local_iso_date())
 }
 
-fn sanitize_file_stem(name: &str) -> String {
-    let mut out = String::new();
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
-        } else if matches!(c, ' ' | '-' | '_') && !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    let trimmed = out.trim_matches('-');
-    if trimmed.is_empty() {
-        "entity".to_owned()
-    } else {
-        trimmed.to_owned()
-    }
-}
-
-/// Render the current entity's posted journal (including voided rows) as CSV.
+/// Renders the posted journal of an entity, voided entries included, as CSV
+/// text.
 ///
 /// Columns: `date`, `description`, `reference`, `account_code`, `account_name`,
 /// `debit_minor`, `credit_minor`, `status`. Amounts are **integer minor units**,
-/// never floating point. `status` is `posted` or `voided`.
+/// never floating point. `status` is `posted` or `voided`. One row is written
+/// per journal line, ordered by entry date, then creation time, then line.
+///
+/// Text cells that a spreadsheet would run as a formula are prefixed with an
+/// apostrophe; [`parse_journal_export`] removes it again.
 ///
 /// Hidden entries are omitted. Voided-but-visible rows still export;
 /// hidden-and-voided do not. There is no "include hidden" switch in v1.
 ///
 /// # Errors
 ///
-/// Unknown entity or database failures.
+/// - [`Error::NotFound`] when the entity does not exist.
+/// - [`Error::Io`] on database errors.
+/// - [`Error::CsvParse`] when the CSV writer reports an error.
 pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<String> {
     let _entity = get_entity(conn, entity_id)?;
-    let mut stmt = conn
+    let mut statement = conn
         .prepare(
             "
             SELECT je.entry_date, je.description, je.reference,
@@ -146,13 +134,13 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut rows = stmt
+    let mut rows = statement
         .query([entity_id.0.to_string()])
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut buf = Vec::new();
+    let mut csv_bytes = Vec::new();
     {
-        let mut writer = Writer::from_writer(&mut buf);
+        let mut writer = Writer::from_writer(&mut csv_bytes);
         writer
             .write_record([
                 "date",
@@ -198,7 +186,9 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             .map_err(|err| Error::CsvParse(err.to_string()))?;
     }
 
-    String::from_utf8(buf).map_err(|_| CsvError::NotUtf8.into())
+    // Every cell came from a `String`, so this cannot fail; the conversion
+    // is checked anyway because the alternative is an `unsafe` one.
+    String::from_utf8(csv_bytes).map_err(|_| CsvError::NotUtf8.into())
 }
 
 /// Writes [`export_journal_csv`] to `path`, appending `.csv` when missing,
@@ -206,12 +196,13 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
 ///
 /// The export is the journal in plaintext, so the file is readable only by
 /// its owner (on Unix), and it is written under a temporary name and renamed
-/// into place so `path` never holds half an export.
+/// into place so `path` never holds half an export. The directory of `path`
+/// must exist.
 ///
 /// # Errors
 ///
-/// Whatever [`export_journal_csv`] returns, or [`Error::Io`] when the file
-/// cannot be written.
+/// - Every error of [`export_journal_csv`]; nothing is written then.
+/// - [`Error::Io`] when the file cannot be created, written or renamed.
 pub fn write_journal_csv_file(
     conn: &Connection,
     entity_id: EntityId,
@@ -223,18 +214,21 @@ pub fn write_journal_csv_file(
     Ok(dest)
 }
 
-/// Append `.csv` when the path has no CSV extension.
+/// Returns `path` with `.csv` appended unless its extension already is
+/// `csv` in any case.
+///
+/// The extension is appended, never replaced: `journal.txt` becomes
+/// `journal.txt.csv`. A path with no file name gets `journal.csv`.
 #[must_use]
 pub fn ensure_csv_path(path: PathBuf) -> PathBuf {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("csv") => path,
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) if extension.eq_ignore_ascii_case("csv") => path,
         _ => {
-            let mut name = path.file_name().map_or_else(
-                || std::ffi::OsString::from("journal"),
-                std::ffi::OsString::from,
-            );
+            let mut name = path
+                .file_name()
+                .map_or_else(|| OsString::from("journal"), OsString::from);
             name.push(".csv");
-            match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            match path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
                 Some(parent) => parent.join(name),
                 None => PathBuf::from(name),
             }
@@ -242,11 +236,18 @@ pub fn ensure_csv_path(path: PathBuf) -> PathBuf {
     }
 }
 
-/// Parse a CSV produced by [`export_journal_csv`].
+/// Parses CSV text produced by [`export_journal_csv`] back into its lines,
+/// undoing the formula guard on the text cells.
+///
+/// Columns are found by header name, without regard to ASCII case and in any
+/// order; extra columns are ignored.
 ///
 /// # Errors
 ///
-/// Missing headers, invalid integers, or unknown status.
+/// [`Error::CsvParse`] in every case: the text is empty, the header row or
+/// a record cannot be read, one of the eight columns is missing, a `status`
+/// cell is neither `posted` nor `voided`, or a `debit_minor` or
+/// `credit_minor` cell is not an integer.
 pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -262,53 +263,118 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
         .headers()
         .map_err(|err| Error::CsvParse(err.to_string()))?
         .clone();
-    let date_i = require_col(&headers, "date")?;
-    let desc_i = require_col(&headers, "description")?;
-    let ref_i = require_col(&headers, "reference")?;
-    let code_i = require_col(&headers, "account_code")?;
-    let name_i = require_col(&headers, "account_name")?;
-    let debit_i = require_col(&headers, DEBIT_MINOR_COLUMN)?;
-    let credit_i = require_col(&headers, CREDIT_MINOR_COLUMN)?;
-    let status_i = require_col(&headers, "status")?;
+    let date_column = require_column(&headers, "date")?;
+    let description_column = require_column(&headers, "description")?;
+    let reference_column = require_column(&headers, "reference")?;
+    let code_column = require_column(&headers, "account_code")?;
+    let name_column = require_column(&headers, "account_name")?;
+    let debit_column = require_column(&headers, DEBIT_MINOR_COLUMN)?;
+    let credit_column = require_column(&headers, CREDIT_MINOR_COLUMN)?;
+    let status_column = require_column(&headers, "status")?;
 
-    let mut out = Vec::new();
+    let mut lines = Vec::new();
     for record in reader.records() {
         let record = record.map_err(|err| Error::CsvParse(err.to_string()))?;
-        let reference = restore_formula(record.get(ref_i).unwrap_or("").trim());
-        let status_raw = record.get(status_i).unwrap_or("").trim();
-        let status = match status_raw {
+        let cell = |column: usize| record.get(column).unwrap_or("");
+
+        let reference = restore_formula(cell(reference_column).trim());
+        let status = match cell(status_column).trim() {
             "posted" => JournalCsvStatus::Posted,
             "voided" => JournalCsvStatus::Voided,
             other => {
                 return Err(Error::CsvParse(format!("unknown journal status: {other}")));
             }
         };
-        out.push(JournalCsvLine {
-            date: record.get(date_i).unwrap_or("").to_owned(),
-            description: restore_formula(record.get(desc_i).unwrap_or("")).to_owned(),
-            reference: if reference.is_empty() {
-                None
-            } else {
-                Some(reference.to_owned())
-            },
-            account_code: restore_formula(record.get(code_i).unwrap_or("")).to_owned(),
-            account_name: restore_formula(record.get(name_i).unwrap_or("")).to_owned(),
-            debit_minor: parse_i64(record.get(debit_i).unwrap_or(""))?,
-            credit_minor: parse_i64(record.get(credit_i).unwrap_or(""))?,
+        lines.push(JournalCsvLine {
+            date: cell(date_column).to_owned(),
+            description: restore_formula(cell(description_column)).to_owned(),
+            // The export writes a missing reference as an empty cell.
+            reference: (!reference.is_empty()).then(|| reference.to_owned()),
+            account_code: restore_formula(cell(code_column)).to_owned(),
+            account_name: restore_formula(cell(name_column)).to_owned(),
+            debit_minor: parse_minor_units(cell(debit_column))?,
+            credit_minor: parse_minor_units(cell(credit_column))?,
             status,
         });
     }
-    Ok(out)
+    Ok(lines)
 }
 
-fn require_col(headers: &csv::StringRecord, name: &str) -> Result<usize> {
+/// Leading characters that spreadsheet apps read as the start of a formula
+/// (<https://owasp.org/www-community/attacks/CSV_Injection>).
+const FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
+
+/// The prefix that makes a spreadsheet app read a cell as literal text.
+const TEXT_GUARD: char = '\'';
+
+/// Makes a text cell inert for spreadsheet apps.
+///
+/// A bank memo or OCR'd line can start with `=`; exported as-is it becomes a
+/// live `HYPERLINK`/DDE formula on the accountant's machine. A leading
+/// apostrophe turns the cell into literal text.
+///
+/// A cell that already starts with an apostrophe is guarded too. Otherwise
+/// the ledger text `'=foo` and the guarded form of `=foo` would be the same
+/// exported cell, and [`restore_formula`] could not tell them apart.
+fn neutralize_formula(cell: &str) -> Cow<'_, str> {
+    if cell.starts_with(FORMULA_TRIGGERS) || cell.starts_with(TEXT_GUARD) {
+        Cow::Owned(format!("{TEXT_GUARD}{cell}"))
+    } else {
+        Cow::Borrowed(cell)
+    }
+}
+
+/// Exact inverse of [`neutralize_formula`], so a parsed export equals the
+/// ledger: strips one apostrophe when what follows is a cell that
+/// `neutralize_formula` would have guarded.
+fn restore_formula(cell: &str) -> &str {
+    cell.strip_prefix(TEXT_GUARD)
+        .filter(|rest| rest.starts_with(FORMULA_TRIGGERS) || rest.starts_with(TEXT_GUARD))
+        .unwrap_or(cell)
+}
+
+/// Reduces an entity name to a file-name stem that is safe on every
+/// platform: lowercase ASCII letters and digits, with each run of spaces,
+/// hyphens and underscores as one hyphen.
+///
+/// Every other character is dropped, so a name in a non-Latin script comes
+/// out empty and the stem falls back to `entity`.
+fn sanitize_file_stem(name: &str) -> String {
+    let mut stem = String::new();
+    for character in name.chars() {
+        if character.is_ascii_alphanumeric() {
+            stem.push(character.to_ascii_lowercase());
+        } else if matches!(character, ' ' | '-' | '_') && !stem.ends_with('-') {
+            stem.push('-');
+        }
+    }
+    let trimmed = stem.trim_matches('-');
+    if trimmed.is_empty() {
+        "entity".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// Returns the index of the header equal to `name`, ignoring ASCII case.
+///
+/// # Errors
+///
+/// [`Error::CsvParse`] naming the column when the export has none.
+fn require_column(headers: &StringRecord, name: &str) -> Result<usize> {
     headers
         .iter()
-        .position(|h| h.eq_ignore_ascii_case(name))
+        .position(|header| header.eq_ignore_ascii_case(name))
         .ok_or_else(|| Error::CsvParse(format!("journal CSV is missing column {name}")))
 }
 
-fn parse_i64(raw: &str) -> Result<i64> {
+/// Parses a `debit_minor` or `credit_minor` cell.
+///
+/// # Errors
+///
+/// [`Error::CsvParse`] carrying the cell when it is not an integer that
+/// fits an `i64`.
+fn parse_minor_units(raw: &str) -> Result<i64> {
     raw.trim()
         .parse()
         .map_err(|_| Error::CsvParse(format!("invalid integer: {raw}")))
