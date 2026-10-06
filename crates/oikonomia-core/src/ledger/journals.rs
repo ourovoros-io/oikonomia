@@ -198,10 +198,15 @@ const LISTED_ENTRIES_PREDICATE: &str = "
 
 /// The values [`LISTED_ENTRIES_PREDICATE`] binds, normalized from an [`EntryFilter`].
 struct ListedEntries {
+    /// `?1`: the entity whose entries are listed.
     entity: String,
+    /// `?2`: inclusive lower date bound as `YYYY-MM-DD`, if any.
     date_from: Option<String>,
+    /// `?3`: inclusive upper date bound as `YYYY-MM-DD`, if any.
     date_to: Option<String>,
+    /// `?4`: case-folded `LIKE` pattern for the text search, if any.
     pattern: Option<String>,
+    /// `?5`: an account that a listed entry must have a line on, if any.
     account: Option<String>,
 }
 
@@ -413,7 +418,7 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 }
 
 /// Whether a new entry may post to an archived account.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy)]
 enum ArchivedAccounts {
     /// The rule for every entry the user writes.
     Refuse,
@@ -444,8 +449,9 @@ fn insert_posted_entry(
     for raw in &input.lines {
         let account = get_account(conn, raw.account_id)?;
         ensure_in_book(&account, input.entity_id)?;
-        if archived == ArchivedAccounts::Refuse {
-            ensure_active(&account)?;
+        match archived {
+            ArchivedAccounts::Refuse => ensure_active(&account)?,
+            ArchivedAccounts::Accept => {}
         }
 
         let debit = Money::from_minor(raw.debit_minor)?;
@@ -744,6 +750,7 @@ fn simple_entry_role_accounts(
 /// - [`ValidationError::EntryAlreadyVoided`] when the entry is voided or is
 ///   itself a reversing entry.
 /// - [`ValidationError::EntryNotPosted`] when the entry is a draft.
+/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
 /// - [`Error::Io`] on database errors.
 ///
 /// An archived account is not an error here: the reversing entry posts to the

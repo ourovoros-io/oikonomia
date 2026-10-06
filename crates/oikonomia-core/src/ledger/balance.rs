@@ -14,8 +14,10 @@ use crate::util::format_date;
 /// # Errors
 ///
 /// [`Error::MoneyOverflow`] when the difference does not fit in `i64`. Totals
-/// read from the journal are never negative, so their difference always fits;
-/// the check covers a caller that passes a negative total.
+/// read from the journal are sums of `debit_minor` and `credit_minor`, which
+/// the schema's `CHECK (... >= 0)` keeps non-negative; two values in
+/// `0..=i64::MAX` always have a difference that fits. The check covers a
+/// caller that passes a negative total.
 pub fn normal_balance(account_type: AccountType, debits: i64, credits: i64) -> Result<i64> {
     if account_type.is_debit_normal() {
         subtract_minor(debits, credits)
