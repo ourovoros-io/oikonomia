@@ -99,17 +99,53 @@ pub struct LastRoleAccounts {
 
 /// Non-secret UI preferences.
 ///
-/// Unknown or missing fields fall back to defaults so older and newer app
-/// versions can share the same file.
+/// Older and newer builds share one file, so loading is forgiving in three
+/// ways: a key this build does not know is ignored, a missing key takes its
+/// default, and a `locale` value this build does not know takes the default
+/// locale without affecting the other fields. Any other value of the wrong
+/// shape still fails the whole file, which then loads as the defaults.
+///
+/// Saving writes only the fields below, so a key or a locale value this build
+/// could not read is not carried over to the saved file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct UiPrefs {
     /// Native locale for tray menu, window titles, and file-dialog filters.
+    #[serde(deserialize_with = "known_locale_or_default")]
     pub locale: Locale,
     /// Last entity used in the tray quick-add panel.
     pub last_entity_id: Option<String>,
     /// Map key: `"{entity_id}:{kind}"` (kind = expense|income|bill|transfer).
     pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
+}
+
+/// Reads a stored locale, taking any value this build does not know as the
+/// default locale.
+///
+/// A build with more languages may have written the file. Failing here would
+/// fail the whole [`UiPrefs`], and the next save would then overwrite the
+/// stored entity and account choices with defaults.
+fn known_locale_or_default<'de, D>(deserializer: D) -> std::result::Result<Locale, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    /// A stored locale value: a language of this build, or anything else.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StoredLocale {
+        /// One of the values [`Locale`] serializes to.
+        Known(Locale),
+        /// Any other JSON value, read and discarded.
+        Unknown(serde::de::IgnoredAny),
+    }
+
+    match StoredLocale::deserialize(deserializer)? {
+        StoredLocale::Known(locale) => Ok(locale),
+        StoredLocale::Unknown(serde::de::IgnoredAny) => {
+            log::warn!("stored locale is not one this build knows; using the default");
+            Ok(Locale::default())
+        }
+    }
 }
 
 /// Build the map key for last-used accounts.
@@ -135,33 +171,47 @@ pub fn load_ui_prefs(data_dir: &Path) -> UiPrefs {
         return UiPrefs::default();
     };
 
-    serde_json::from_str(&text).unwrap_or_else(|err| {
+    decode_ui_prefs(&text, &path)
+}
+
+/// Decodes the text of the preferences file at `path`, giving the defaults
+/// (and logging why) when the text is not a [`UiPrefs`].
+fn decode_ui_prefs(text: &str, path: &Path) -> UiPrefs {
+    serde_json::from_str(text).unwrap_or_else(|err| {
         log::warn!("ignoring corrupt ui prefs at {}: {err}", path.display());
         UiPrefs::default()
     })
 }
 
-/// The locale stored on disk, or `None` when none was ever stored.
+/// Returns the locale stored on disk, or `None` when none was ever stored.
 ///
-/// `UiPrefs::locale` defaults to English, which cannot tell "never chosen"
-/// from "chose English", so this reads whether the preferences file is a JSON
-/// object with a `locale` key. Any value counts as stored; the returned
-/// locale is then what [`load_ui_prefs`] reports, exactly as before. A
-/// missing, empty or corrupt file counts as never stored.
+/// [`UiPrefs::locale`] defaults to English, which cannot tell "never chosen"
+/// from "chose English", so this checks whether the preferences file is a
+/// JSON object with a `locale` key. Any value under that key counts as
+/// stored, including one this build cannot read; the locale returned is the
+/// one [`load_ui_prefs`] gives for the same text. A missing file, text that
+/// is not JSON, and JSON that is not an object all count as never stored.
+///
+/// The file is read once, so the key check and the returned locale describe
+/// the same contents.
 #[must_use]
 pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
-    let text = fs::read_to_string(ui_prefs_path(data_dir)).ok()?;
+    let path = ui_prefs_path(data_dir);
+    let text = fs::read_to_string(&path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
 
     value
         .as_object()?
         .contains_key("locale")
-        .then(|| load_ui_prefs(data_dir).locale)
+        .then(|| decode_ui_prefs(&text, &path).locale)
 }
 
-/// Persist `locale`, keeping every other stored preference.
+/// Stores `locale`, keeping every other preference this build can read.
 ///
-/// Callers hold the prefs lock: the file is rewritten in place.
+/// This loads the file, changes the one field and saves the result with
+/// [`save_ui_prefs`], which replaces the file by renaming a temporary one over
+/// it. Callers hold the prefs lock so that no other writer saves between the
+/// load and the save.
 ///
 /// # Errors
 ///
@@ -574,10 +624,16 @@ mod tests {
     fn an_unreadable_stored_locale_value_still_counts_as_chosen() {
         let dir = tempdir().unwrap();
 
-        // Today this loads as English; it must not be treated as a first run.
+        // The value loads as the default locale, but the key is present, so
+        // this is not a first run and the system language is not consulted.
         let json = r#"{ "locale": "klingon", "last_entity_id": "ent-1" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
+
+        assert_eq!(
+            load_ui_prefs(dir.path()).last_entity_id.as_deref(),
+            Some("ent-1")
+        );
 
         let resolved = resolve_locale(dir.path(), &["el-GR"]);
         assert_eq!(
@@ -591,6 +647,57 @@ mod tests {
             fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
             before
         );
+    }
+
+    #[test]
+    fn a_locale_this_build_does_not_know_costs_only_the_locale() {
+        let dir = tempdir().unwrap();
+
+        // Written by a build with a fifth language, Spanish.
+        let json = r#"{
+            "locale": "es",
+            "last_entity_id": "ent-1",
+            "last_accounts_by_entity_kind": {
+                "ent-1:expense": { "category_account_id": "cat-1" }
+            }
+        }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        let mut last_accounts = BTreeMap::new();
+        last_accounts.insert(
+            "ent-1:expense".to_string(),
+            LastRoleAccounts {
+                category_account_id: Some("cat-1".into()),
+                ..LastRoleAccounts::default()
+            },
+        );
+        let expected = UiPrefs {
+            locale: Locale::En,
+            last_entity_id: Some("ent-1".into()),
+            last_accounts_by_entity_kind: last_accounts,
+        };
+        assert_eq!(load_ui_prefs(dir.path()), expected);
+
+        // The next save must not wipe what this build could read.
+        assert!(store_locale(dir.path(), Locale::De).is_ok());
+        assert_eq!(
+            load_ui_prefs(dir.path()),
+            UiPrefs {
+                locale: Locale::De,
+                ..expected
+            }
+        );
+    }
+
+    #[test]
+    fn a_wrongly_shaped_value_other_than_the_locale_still_fails_the_whole_file() {
+        let dir = tempdir().unwrap();
+
+        let json = r#"{ "locale": "el", "last_entity_id": 7 }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
+        assert_eq!(stored_locale(dir.path()), Some(Locale::En));
     }
 
     #[test]
@@ -688,11 +795,19 @@ mod tests {
     fn a_null_locale_counts_as_stored_and_is_not_rewritten() {
         let dir = tempdir().unwrap();
 
-        // Today `null` fails the enum, so the whole file reads as corrupt
-        // and loads as the defaults (English); the key still counts as stored.
-        // Both are pinned here, not endorsed.
-        assert!(fs::write(ui_prefs_path(dir.path()), r#"{"locale": null}"#).is_ok());
+        // `null` is not a language, so the field loads as the default locale
+        // and the rest of the file loads normally; the key counts as stored.
+        let json = r#"{"locale": null, "last_entity_id": "ent-1"}"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
+
+        assert_eq!(
+            load_ui_prefs(dir.path()),
+            UiPrefs {
+                last_entity_id: Some("ent-1".into()),
+                ..UiPrefs::default()
+            }
+        );
 
         let resolved = resolve_locale(dir.path(), &["el-GR"]);
         assert_eq!(
@@ -712,8 +827,8 @@ mod tests {
     fn a_wrong_case_locale_counts_as_stored_and_is_not_rewritten() {
         let dir = tempdir().unwrap();
 
-        // The enum is lowercase-only, so "EL" does not parse: the file loads
-        // as the defaults (English), but the key counts as chosen.
+        // The stored spelling is lowercase only, so "EL" is not a known value:
+        // the locale loads as the default, but the key counts as chosen.
         assert!(fs::write(ui_prefs_path(dir.path()), r#"{"locale": "EL"}"#).is_ok());
         let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
 
