@@ -1,17 +1,57 @@
-//! Ledger schema for the encrypted vault database.
+//! Ledger schema for the encrypted vault database, and its migrations.
+//!
+//! `vault_meta.schema_version` records the last migration a vault has run.
+//! [`migrate`] runs every step of [`MIGRATIONS`] above that version, in order.
+//! Each step runs in a transaction of its own, and the runner writes the
+//! step's version inside that same transaction. A step is therefore either
+//! applied and recorded, or not applied at all: a crash or an error part-way
+//! can never leave a half-built schema that the next unlock would try to
+//! build again on top of itself.
+//!
+//! # Adding a migration
+//!
+//! 1. Write `fn migrate_vN(tx: &Transaction<'_>) -> Result<()>` that makes the
+//!    change through `tx`. It must not begin, commit or roll back a
+//!    transaction, and must not write `schema_version`; the runner does both.
+//! 2. Append `(N, migrate_vN)` to [`MIGRATIONS`] and set
+//!    [`CURRENT_SCHEMA_VERSION`] to `N`.
+//! 3. Add `tests/migration_vN.rs` that takes a vault from `N - 1` to `N`.
+//!
+//! Never edit a step that has shipped: a vault that already ran it will not
+//! run it again, so the change would reach new vaults only.
 
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction};
 
 use crate::error::{Error, Result};
 
 /// Latest schema version applied by migrations.
 pub const CURRENT_SCHEMA_VERSION: i64 = 7;
 
-/// Apply pending migrations. Safe to call on every unlock.
+/// One schema change, made through the transaction the runner opened for it.
+type Migration = fn(&Transaction<'_>) -> Result<()>;
+
+/// Every migration with the version it brings a vault to, oldest first.
+///
+/// Versions start at 2 (a new vault is written at 1) and have no gaps; the
+/// last one is [`CURRENT_SCHEMA_VERSION`].
+const MIGRATIONS: &[(i64, Migration)] = &[
+    (2, migrate_v2),
+    (3, migrate_v3),
+    (4, migrate_v4),
+    (5, migrate_v5),
+    (6, migrate_v6),
+    (7, migrate_v7),
+];
+
+/// Applies pending migrations. Safe to call on every unlock.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] on SQL failures.
+/// - [`Error::VaultCorrupt`] when existing data cannot satisfy a constraint a
+///   step adds (the v5 step and journal lines that are not debit XOR credit).
+/// - [`Error::Io`] on SQL failures.
+///
+/// A failed step is rolled back and the steps before it stay applied.
 pub fn migrate(conn: &Connection) -> Result<()> {
     let version: i64 = conn
         .query_row(
@@ -21,41 +61,41 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    if version < 2 {
-        conn.execute_batch(SCHEMA_V2)
-            .map_err(|err| Error::Io(err.to_string()))?;
+    for (target, step) in MIGRATIONS {
+        if version < *target {
+            apply_migration(conn, *target, *step)?;
+        }
     }
-
-    if version < 3 {
-        conn.execute_batch(SCHEMA_V3)
-            .map_err(|err| Error::Io(err.to_string()))?;
-    }
-
-    if version < 4 {
-        migrate_v4(conn)?;
-    }
-
-    if version < 5 {
-        migrate_v5(conn)?;
-    }
-
-    if version < 6 {
-        migrate_v6(conn)?;
-    }
-
-    if version < 7 {
-        migrate_v7(conn)?;
-    }
-
-    if version < CURRENT_SCHEMA_VERSION {
-        conn.execute(
-            "UPDATE vault_meta SET schema_version = ?1 WHERE id = 1",
-            [CURRENT_SCHEMA_VERSION],
-        )
-        .map_err(|err| Error::Io(err.to_string()))?;
-    }
-
     Ok(())
+}
+
+/// Runs `step` and records `target` as the vault's version, atomically.
+fn apply_migration(conn: &Connection, target: i64, step: Migration) -> Result<()> {
+    // Dropping the transaction on an early return rolls it back.
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    step(&tx)?;
+    tx.execute(
+        "UPDATE vault_meta SET schema_version = ?1 WHERE id = 1",
+        [target],
+    )
+    .map_err(|err| Error::Io(err.to_string()))?;
+
+    tx.commit().map_err(|err| Error::Io(err.to_string()))
+}
+
+/// v2: the ledger tables (entities, accounts, journal) and app settings.
+fn migrate_v2(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute_batch(SCHEMA_V2)
+        .map_err(|err| Error::Io(err.to_string()))
+}
+
+/// v3: documents stored in the vault.
+fn migrate_v3(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute_batch(SCHEMA_V3)
+        .map_err(|err| Error::Io(err.to_string()))
 }
 
 const SCHEMA_V2: &str = r"
@@ -136,17 +176,13 @@ CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
 /// book (`UNIQUE(entity_id, filename)`). `SQLite` cannot add constraints in
 /// place, so the table is rebuilt after cleaning existing data.
 ///
-/// The whole rebuild (orphan delete, dedup renames, table rebuild, and the
-/// version bump) runs in one transaction: `SQLite` DDL is transactional, so a
-/// crash mid-migration must roll back wholesale rather than leave
-/// `documents_v4` half-built with `schema_version` still at 3 — that shape
-/// would make every subsequent unlock re-enter this function and fail
+/// The whole rebuild (orphan delete, dedup renames, table rebuild) and the
+/// version bump share the runner's transaction: `SQLite` DDL is
+/// transactional, so a crash mid-migration rolls back wholesale rather than
+/// leave `documents_v4` half-built with `schema_version` still at 3. That
+/// shape would make every later unlock re-enter this function and fail
 /// forever on `documents_v4` already existing (a bricked vault).
-fn migrate_v4(conn: &Connection) -> Result<()> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-
+fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
     let deleted = tx
         .execute("DELETE FROM documents WHERE entry_id IS NULL", [])
         .map_err(|err| Error::Io(err.to_string()))?;
@@ -154,7 +190,7 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
         log::info!("v4 migration: deleted {deleted} unlinked document(s)");
     }
 
-    dedup_document_names(&tx)?;
+    dedup_document_names(tx)?;
 
     tx.execute_batch(
         "
@@ -179,24 +215,15 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
-
-    // Bump the version inside the same transaction: a crash after the
-    // rebuild but before the version write must not strand a vault where
-    // re-running the migration hits "documents_v4 already exists".
-    tx.execute("UPDATE vault_meta SET schema_version = 4 WHERE id = 1", [])
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(())
+    .map_err(|err| Error::Io(err.to_string()))
 }
 
 /// v5: `journal_lines` must be debit XOR credit. `SQLite` cannot add a CHECK
 /// in place, so the table is rebuilt. Existing data is copied only if every
 /// line already satisfies the invariant — a violating row is a corrupt book
 /// and must fail the migration rather than be silently dropped.
-fn migrate_v5(conn: &Connection) -> Result<()> {
-    let bad: i64 = conn
+fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
+    let bad: i64 = tx
         .query_row(
             "
             SELECT COUNT(1) FROM journal_lines
@@ -211,10 +238,6 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
             "cannot migrate to v5: {bad} journal line(s) are not debit XOR credit"
         )));
     }
-
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
 
     tx.execute_batch(
         "
@@ -235,13 +258,9 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
         ALTER TABLE journal_lines_v5 RENAME TO journal_lines;
         CREATE INDEX IF NOT EXISTS idx_lines_entry ON journal_lines(entry_id);
         CREATE INDEX IF NOT EXISTS idx_lines_account ON journal_lines(account_id);
-        UPDATE vault_meta SET schema_version = 5 WHERE id = 1;
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
-
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(())
+    .map_err(|err| Error::Io(err.to_string()))
 }
 
 /// v6: per-entry owner-only hidden flag on `journal_entries`.
@@ -249,22 +268,14 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
 /// `0` = visible (default), `1` = hidden from CSV export. The owner still
 /// sees hidden rows in list/get/register. Existing pre-v6 rows become
 /// visible via `DEFAULT 0`. Not extra encryption.
-fn migrate_v6(conn: &Connection) -> Result<()> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-
+fn migrate_v6(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
         "
         ALTER TABLE journal_entries
             ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
-        UPDATE vault_meta SET schema_version = 6 WHERE id = 1;
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
-
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(())
+    .map_err(|err| Error::Io(err.to_string()))
 }
 
 /// v7: local-only recurring entry templates in the encrypted vault.
@@ -272,11 +283,7 @@ fn migrate_v6(conn: &Connection) -> Result<()> {
 /// No calendar sync, no network, no auto-post. `next_date` is advanced only
 /// after an explicit user post. Role-account columns match
 /// [`crate::ledger::PostSimpleEntry`].
-fn migrate_v7(conn: &Connection) -> Result<()> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-
+fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS recurring_templates (
@@ -303,13 +310,9 @@ fn migrate_v7(conn: &Connection) -> Result<()> {
             ON recurring_templates(entity_id);
         CREATE INDEX IF NOT EXISTS idx_recurring_entity_next
             ON recurring_templates(entity_id, next_date);
-        UPDATE vault_meta SET schema_version = 7 WHERE id = 1;
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
-
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(())
+    .map_err(|err| Error::Io(err.to_string()))
 }
 
 /// Give later-created duplicates a numeric suffix; the oldest keeps its name.
@@ -366,7 +369,15 @@ fn suffixed_name(filename: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::suffixed_name;
+    use super::{CURRENT_SCHEMA_VERSION, MIGRATIONS, suffixed_name};
+
+    #[test]
+    fn migrations_run_from_two_to_the_current_version_without_gaps() {
+        let versions: Vec<i64> = MIGRATIONS.iter().map(|(target, _)| *target).collect();
+        let expected: Vec<i64> = (2..=CURRENT_SCHEMA_VERSION).collect();
+
+        assert_eq!(versions, expected);
+    }
 
     #[test]
     fn suffixed_name_inserts_before_extension() {
