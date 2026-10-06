@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tempfile::TempDir;
 use url::Url;
 
 struct SpyInstaller {
@@ -70,7 +71,7 @@ fn serve_newer_release(
     secret_key: &SecretKey,
     artifact_path: &'static str,
     payload: &'static [u8],
-    cache: PathBuf,
+    cache: &Path,
 ) -> ClientConfig {
     let artifact = server_url(server, artifact_path);
     let body = static_manifest(
@@ -114,8 +115,10 @@ fn sha256_hex(data: &[u8]) -> String {
     to_hex(&hasher.finalize())
 }
 
-fn cache_dir() -> PathBuf {
-    tempfile::tempdir().expect("tmpdir").keep()
+/// Returns a fresh cache directory. The caller holds the handle for the whole
+/// test: dropping it removes the directory.
+fn cache_dir() -> TempDir {
+    tempfile::tempdir().expect("temporary directory")
 }
 
 fn server_url(server: &Server, path: &str) -> Url {
@@ -133,7 +136,7 @@ fn config(
     feed_path: &str,
     public_key: &str,
     current_version: &str,
-    cache: PathBuf,
+    cache: &Path,
     timeout: Duration,
 ) -> ClientConfig {
     let feed_url = server_url(server, feed_path);
@@ -142,7 +145,7 @@ fn config(
         public_key,
         current_version,
         "linux-x86_64",
-        cache,
+        cache.to_path_buf(),
         policy_for(server),
         timeout,
     )
@@ -261,7 +264,7 @@ fn offline_dns_check_is_failed_no_file_no_exec() {
         &pk,
         "0.1.0",
         "linux-x86_64",
-        cache.clone(),
+        cache.path().to_path_buf(),
         HostPolicy::test_http_hosts(["no-such-host.invalid"]),
         Duration::from_millis(400),
     )
@@ -270,7 +273,7 @@ fn offline_dns_check_is_failed_no_file_no_exec() {
     let mut machine = UpdateMachine::new();
     let status = machine.check(&config);
     assert_eq!(status, UpdateStatus::Failed);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
     assert_eq!(installer.calls.load(Ordering::SeqCst), 0);
 }
 
@@ -290,7 +293,7 @@ fn timeout_check_is_failed_no_file_no_exec() {
         &pk,
         "0.1.0",
         "linux-x86_64",
-        cache.clone(),
+        cache.path().to_path_buf(),
         HostPolicy::test_http_hosts(["127.0.0.1"]),
         Duration::from_millis(200),
     )
@@ -298,7 +301,7 @@ fn timeout_check_is_failed_no_file_no_exec() {
     let mut machine = UpdateMachine::new();
     let status = machine.check(&config);
     assert_eq!(status, UpdateStatus::Failed);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -328,12 +331,12 @@ fn same_version_is_up_to_date_no_download() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::UpToDate);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -350,12 +353,12 @@ fn http_204_is_up_to_date_no_download() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::UpToDate);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -380,7 +383,7 @@ fn signed_update_is_available_without_install() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let (installer, _calls) = spy(false);
@@ -394,7 +397,7 @@ fn signed_update_is_available_without_install() {
         }
     );
     assert_eq!(installer.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -423,12 +426,12 @@ fn missing_manifest_sig_is_failed() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -453,12 +456,12 @@ fn bad_manifest_sig_is_failed() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -474,12 +477,12 @@ fn truncated_json_after_valid_sig_is_failed() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -502,12 +505,12 @@ fn host_not_allow_listed_is_failed_no_file() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -530,12 +533,12 @@ fn file_url_artifact_is_failed() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -564,7 +567,7 @@ fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let (installer, calls) = spy(false);
@@ -577,7 +580,7 @@ fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
     assert_eq!(outcome, InstallOutcome::Failed);
     assert_eq!(machine.status(), UpdateStatus::Failed);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -607,7 +610,7 @@ fn artifact_sig_mismatch_deletes_partial_and_does_not_exec() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let (installer, calls) = spy(false);
@@ -620,7 +623,7 @@ fn artifact_sig_mismatch_deletes_partial_and_does_not_exec() {
     assert_eq!(outcome, InstallOutcome::Failed);
     assert_eq!(machine.status(), UpdateStatus::Failed);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -628,12 +631,13 @@ fn install_from_idle_is_hard_error() {
     let mut machine = UpdateMachine::new();
     let (pk, _sk) = test_keys();
     let server = Server::run();
+    let cache = cache_dir();
     let config = config(
         &server,
         "/latest.json",
         &pk,
         "0.1.0",
-        cache_dir(),
+        cache.path(),
         Duration::from_secs(1),
     );
     let (installer, _calls) = spy(false);
@@ -650,12 +654,13 @@ fn install_from_failed_is_hard_error() {
         Expectation::matching(request::method_path("GET", "/latest.json"))
             .respond_with(status_code(500)),
     );
+    let cache = cache_dir();
     let config = config(
         &server,
         "/latest.json",
         &pk,
         "0.1.0",
-        cache_dir(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
@@ -671,12 +676,13 @@ fn install_from_checking_is_hard_error() {
     machine.begin_check();
     let (pk, _sk) = test_keys();
     let server = Server::run();
+    let cache = cache_dir();
     let config = config(
         &server,
         "/latest.json",
         &pk,
         "0.1.0",
-        cache_dir(),
+        cache.path(),
         Duration::from_secs(1),
     );
     let (installer, _calls) = spy(false);
@@ -699,12 +705,13 @@ fn html_notes_are_plain_text() {
     );
     let sig = sign(&sk, body.as_bytes());
     serve_signed_manifest(&server, &body, &sig);
+    let cache = cache_dir();
     let config = config(
         &server,
         "/latest.json",
         &pk,
         "0.1.0",
-        cache_dir(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
@@ -746,7 +753,7 @@ fn successful_install_calls_exec_once() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let (installer, calls) = spy(false);
@@ -762,11 +769,11 @@ fn successful_install_calls_exec_once() {
         .clone()
         .expect("installer received a path");
     assert!(
-        exec_path.starts_with(&cache),
+        exec_path.starts_with(cache.path()),
         "exec path must be the wrapper-verified cache file, got {}",
         exec_path.display()
     );
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -782,7 +789,7 @@ fn downloaded_artifact_keeps_the_file_extension_of_its_url() {
         &sk,
         "/Oikonomia_0.2.0_x64-setup.exe",
         b"installer",
-        cache.clone(),
+        cache.path(),
     );
     let (installer, _calls) = spy(false);
     let mut machine = UpdateMachine::new();
@@ -803,7 +810,7 @@ fn downloaded_artifact_keeps_the_file_extension_of_its_url() {
         name.ends_with("-Oikonomia_0.2.0_x64-setup.exe"),
         "unexpected artifact name {name}"
     );
-    assert_eq!(exec_path.parent(), Some(cache.as_path()));
+    assert_eq!(exec_path.parent(), Some(cache.path()));
 }
 
 #[test]
@@ -818,14 +825,14 @@ fn artifact_name_from_a_hostile_url_cannot_leave_the_cache_directory() {
         &sk,
         "/dir/..%5C..%5Cevil%20name.exe",
         b"installer",
-        cache.clone(),
+        cache.path(),
     );
     let mut machine = UpdateMachine::new();
     machine.check(&config);
     let offer = machine.require_available().expect("offer").clone();
     let path = download_and_verify(&config, &offer).expect("download");
 
-    assert_eq!(path.parent(), Some(cache.as_path()));
+    assert_eq!(path.parent(), Some(cache.path()));
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -849,7 +856,7 @@ fn a_running_installer_keeps_its_artifact_and_the_next_download_clears_it() {
         &sk,
         "/Oikonomia-setup.exe",
         b"installer",
-        cache.clone(),
+        cache.path(),
     );
     let (installer, _calls) = spy_with_handoff(false, InstallHandoff::InstallerStarted);
     let mut machine = UpdateMachine::new();
@@ -861,13 +868,13 @@ fn a_running_installer_keeps_its_artifact_and_the_next_download_clears_it() {
         outcome,
         InstallOutcome::Installed(InstallHandoff::InstallerStarted)
     );
-    assert_eq!(leftover_files(&cache).len(), 1);
+    assert_eq!(leftover_files(cache.path()).len(), 1);
 
-    let stale = cache.join("stale-from-an-earlier-install.exe");
+    let stale = cache.path().join("stale-from-an-earlier-install.exe");
     std::fs::write(&stale, b"old").expect("stale file");
     let offer = machine.require_available().expect("offer").clone();
     let fresh = download_and_verify(&config, &offer).expect("download");
-    assert_eq!(leftover_files(&cache), vec![fresh]);
+    assert_eq!(leftover_files(cache.path()), vec![fresh]);
 }
 
 #[cfg(unix)]
@@ -884,7 +891,7 @@ fn cache_is_private_and_a_planted_link_cannot_redirect_the_download() {
         &sk,
         "/Oikonomia.AppImage",
         b"appimage",
-        cache.clone(),
+        cache.path(),
     );
     let mut machine = UpdateMachine::new();
     machine.check(&config);
@@ -892,12 +899,13 @@ fn cache_is_private_and_a_planted_link_cannot_redirect_the_download() {
 
     // Someone planted a link where the artifact will be written, pointing
     // at a file outside the cache, and loosened the directory.
-    let outside = cache_dir().join("victim");
+    let outside_dir = cache_dir();
+    let outside = outside_dir.path().join("victim");
     let first = download_and_verify(&config, &offer).expect("first download");
     let planted = first.clone();
     std::fs::remove_file(&first).expect("clear");
     std::os::unix::fs::symlink(&outside, &planted).expect("plant link");
-    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o777)).expect("loosen");
+    std::fs::set_permissions(cache.path(), std::fs::Permissions::from_mode(0o777)).expect("loosen");
 
     let path = download_and_verify(&config, &offer).expect("download");
 
@@ -906,7 +914,7 @@ fn cache_is_private_and_a_planted_link_cannot_redirect_the_download() {
     assert!(metadata.file_type().is_file());
     assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     assert_eq!(std::fs::read(&path).expect("read"), b"appimage");
-    let cache_mode = std::fs::metadata(&cache)
+    let cache_mode = std::fs::metadata(cache.path())
         .expect("cache")
         .permissions()
         .mode();
@@ -916,7 +924,7 @@ fn cache_is_private_and_a_planted_link_cannot_redirect_the_download() {
 #[test]
 fn artifact_write_refuses_a_path_that_already_exists() {
     let cache = cache_dir();
-    let path = cache.join("artifact.AppImage");
+    let path = cache.path().join("artifact.AppImage");
     std::fs::write(&path, b"planted").expect("existing file");
 
     let err = crate::client::write_new_private_file(&path, b"verified").expect_err("exists");
@@ -929,8 +937,9 @@ fn artifact_write_refuses_a_path_that_already_exists() {
 #[test]
 fn artifact_write_does_not_follow_a_link_at_its_path() {
     let cache = cache_dir();
-    let outside = cache_dir().join("victim");
-    let path = cache.join("artifact.AppImage");
+    let outside_dir = cache_dir();
+    let outside = outside_dir.path().join("victim");
+    let path = cache.path().join("artifact.AppImage");
     std::os::unix::fs::symlink(&outside, &path).expect("plant link");
 
     let err = crate::client::write_new_private_file(&path, b"verified").expect_err("link");
@@ -950,7 +959,7 @@ fn package_managed_copy_reports_the_version_and_refuses_to_install() {
         &sk,
         "/Oikonomia.AppImage",
         b"appimage",
-        cache.clone(),
+        cache.path(),
     )
     .with_install_route(InstallRoute::PackageManager);
     let (installer, calls) = spy(false);
@@ -970,7 +979,7 @@ fn package_managed_copy_reports_the_version_and_refuses_to_install() {
         .expect_err("a package-managed copy must not install");
     assert_eq!(err.code(), "update_install_not_allowed");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -998,7 +1007,7 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
@@ -1006,7 +1015,7 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
     let offer = machine.require_available().expect("offer").clone();
     let err = download_and_verify(&config, &offer).expect_err("hash");
     assert_eq!(err.code(), "update_artifact_integrity");
-    assert_eq!(leftover_files(&cache), Vec::<PathBuf>::new());
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 #[test]
@@ -1056,7 +1065,7 @@ fn promoted_feed_round_trips_through_check_and_download() {
         "/latest.json",
         &pk,
         "0.1.0",
-        cache.clone(),
+        cache.path(),
         Duration::from_secs(2),
     );
 
@@ -1066,5 +1075,5 @@ fn promoted_feed_round_trips_through_check_and_download() {
     };
     let path = download_and_verify(&config, &offer).expect("download");
     assert!(path.exists());
-    assert_eq!(leftover_files(&cache).len(), 1);
+    assert_eq!(leftover_files(cache.path()).len(), 1);
 }
