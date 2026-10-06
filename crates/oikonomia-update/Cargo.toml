@@ -23,7 +23,7 @@ url = { version = "2", features = ["serde"] }
 
 [dev-dependencies]
 httptest = "0.16"
-minisign = "0.9"
+minisign = "0.10"
 oikonomia-test-support = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }

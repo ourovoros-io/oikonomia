@@ -22,6 +22,8 @@ use std::io::Read;
 // The same lopdf as pdf-extract uses; see `analyze`.
 use pdf_extract as lopdf;
 
+use crate::documents::pdf_nesting::nesting_within_limits;
+
 /// Most pages a PDF may have. Bills, receipts and statements are far
 /// shorter, and every page costs a pass of text extraction.
 ///
@@ -51,15 +53,23 @@ const ASCII85_BASE: u32 = 85;
 /// Digits in a full `ASCII85` group, which encodes four bytes.
 const ASCII85_GROUP_DIGITS: usize = 5;
 
-/// Whether `document` has at most [`MAX_PDF_PAGES`] pages and its streams
-/// decode to at most [`MAX_PDF_DECODED_BYTES`] in total.
+/// Whether `document` has at most [`MAX_PDF_PAGES`] pages, its streams
+/// decode to at most [`MAX_PDF_DECODED_BYTES`] in total, and its form
+/// `XObject`s and page tree nest within the limits of
+/// [`pdf_nesting`](crate::documents::pdf_nesting).
 ///
-/// Every stream object counts, whether or not a page uses it. The check
-/// stops at the first stream that takes the total over the budget.
+/// Every stream object counts, whether or not a page uses it. The checks
+/// run in that order and stop at the first that fails, so the nesting walk
+/// only ever reads a document whose streams fit the budget.
 ///
-/// It calls into lopdf for the page list and the filter names, so the
-/// caller runs it inside its panic boundary (`contain_panics` in the
-/// analyzer).
+/// The last check matters as much as the others: pdf-extract recurses into
+/// every form a page invokes and up every `/Parent` link with no limit, so a
+/// form that invokes itself, or a page that is its own parent, overflows the
+/// stack. That aborts the process; no panic handler can catch it.
+///
+/// It calls into lopdf for the page list, the filter names and the form
+/// contents, so the caller runs it inside its panic boundary
+/// (`contain_panics` in `pdf_load`).
 pub(super) fn within_budget(document: &lopdf::Document) -> bool {
     if document.get_pages().len() > MAX_PDF_PAGES {
         return false;
@@ -75,7 +85,7 @@ pub(super) fn within_budget(document: &lopdf::Document) -> bool {
         };
         remaining -= decoded;
     }
-    true
+    nesting_within_limits(document)
 }
 
 /// The most bytes `stream` occupies at any stage of decoding, or `None`

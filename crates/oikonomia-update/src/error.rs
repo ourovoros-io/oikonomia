@@ -44,6 +44,12 @@ pub enum UpdateError {
     #[error("update artifact failed verification")]
     ArtifactIntegrity,
 
+    /// The artifact is larger than this copy is willing to download. Only
+    /// the artifact gets this code: an oversized manifest or signature is a
+    /// broken feed and stays [`UpdateError::Network`].
+    #[error("update artifact is larger than this copy can download")]
+    ArtifactTooLarge,
+
     /// Build-time feed URL failed to parse (programming error).
     #[error("update feed url is invalid")]
     InvalidFeedUrl,
@@ -62,6 +68,7 @@ impl UpdateError {
         "update_missing_platform",
         "update_artifact_url",
         "update_artifact_integrity",
+        "update_artifact_too_large",
         "update_invalid_feed_url",
     ];
 
@@ -77,6 +84,7 @@ impl UpdateError {
             Self::MissingPlatform => "update_missing_platform",
             Self::ArtifactUrl => "update_artifact_url",
             Self::ArtifactIntegrity => "update_artifact_integrity",
+            Self::ArtifactTooLarge => "update_artifact_too_large",
             Self::InvalidFeedUrl => "update_invalid_feed_url",
         }
     }
@@ -97,6 +105,7 @@ mod tests {
             UpdateError::MissingPlatform,
             UpdateError::ArtifactUrl,
             UpdateError::ArtifactIntegrity,
+            UpdateError::ArtifactTooLarge,
             UpdateError::InvalidFeedUrl,
         }
     }

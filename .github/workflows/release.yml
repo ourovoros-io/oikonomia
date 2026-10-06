@@ -5,9 +5,12 @@
 # the disk image; any failed check fails the release. The linux
 # job builds the .deb and the AppImage and smoke-tests both. The windows job
 # builds the NSIS installer, checks its updater signature against the app's
-# public key, and smoke-tests it. It is not Authenticode-signed: that needs
-# the repository variable WINDOWS_SIGNING=none, a deliberate opt-in checked
-# before anything is built (see scripts/require-windows-signing-mode.sh).
+# public key, and smoke-tests it. The installer is not Authenticode-signed:
+# that needs the repository variable WINDOWS_SIGNING=none, a deliberate
+# opt-in checked before anything is built (see
+# scripts/require-windows-signing-mode.sh). Each job also refuses an updater
+# artifact larger than the client will download (`assemble_feed check-sizes`
+# reads `MAX_ARTIFACT_BYTES` from oikonomia-update).
 # Every job adds to the same draft; the jobs run one after another so they
 # cannot race to create it.
 #
@@ -220,6 +223,12 @@ jobs:
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
           args: -- --locked
 
+      # The macOS updater artifact is the .app.tar.gz. Fail here, before
+      # notarization, when it is larger than the client will download.
+      # The binary reads MAX_ARTIFACT_BYTES; this step does not repeat it.
+      - name: Reject a macOS updater artifact over the client's download limit
+        run: cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- check-sizes --dir target/release/bundle
+
       # Tauri notarizes and staples the .app and signs the .dmg with the same
       # identity, but does not notarize the .dmg. This step proves the app is
       # Developer ID signed by this team, hardened, notarized and stapled, then
@@ -400,6 +409,11 @@ jobs:
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
           args: --bundles deb,appimage -- --locked
 
+      # The Linux updater artifact is the AppImage. The .deb is a manual
+      # download and is not checked. The binary reads MAX_ARTIFACT_BYTES.
+      - name: Reject a Linux updater artifact over the client's download limit
+        run: cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- check-sizes --dir target/release/bundle
+
       - name: Smoke-test the bundled app
         timeout-minutes: 15
         run: ./scripts/smoke-linux.sh
@@ -450,11 +464,48 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install --profile minimal --no-self-update
 
+      # The bundler's own fetch has no retry and no integrity check.
+      - name: Fetch the WebView2 bootstrapper (retried, signature-checked)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:LOCALAPPDATA 'tauri'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $exe = Join-Path $dir 'MicrosoftEdgeWebview2Setup.exe'
+          foreach ($i in 1..5) {
+            try {
+              Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $exe
+              break
+            }
+            catch {
+              if ($i -eq 5) { throw }
+              Start-Sleep -Seconds (10 * $i)
+            }
+          }
+          $sig = Get-AuthenticodeSignature -FilePath $exe
+          if ($null -eq $sig.SignerCertificate) {
+            Remove-Item $exe -Force
+            Write-Host "::error::WebView2 bootstrapper signature $($sig.Status); signer certificate missing"
+            exit 1
+          }
+          $signerCn = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          $issuerCn = $sig.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $true)
+          $issuerOk = $issuerCn.StartsWith('Microsoft Code Signing PCA') -or $issuerCn.StartsWith('Microsoft Windows Code Signing PCA')
+          if ($sig.Status -ne 'Valid' -or $signerCn -cne 'Microsoft Corporation' -or -not $issuerOk) {
+            Remove-Item $exe -Force
+            Write-Host "::error::WebView2 bootstrapper signature $($sig.Status); signer CN '$signerCn'; issuer CN '$issuerCn'"
+            exit 1
+          }
+          $sha256 = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash
+          Write-Host "WebView2 bootstrapper ok: $((Get-Item $exe).Length) bytes, signer CN $signerCn, issuer CN $issuerCn, thumbprint $($sig.SignerCertificate.Thumbprint), sha256 $sha256"
+
       # NSIS only: the update path and the Promote workflow know no MSI.
       # No bundle.windows.certificateThumbprint or signCommand is configured,
       # so Tauri does no Authenticode signing (WINDOWS_SIGNING=none). It
       # still signs the installer for the updater with the minisign key
       # below (bundle.createUpdaterArtifacts) and uploads the .sig.
+      # tauriScript pins the CLI whose bundler skips a bootstrapper already
+      # present in %LOCALAPPDATA%\tauri.
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -472,6 +523,13 @@ jobs:
           uploadWorkflowArtifacts: true
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
           args: --bundles nsis -- --locked
+
+      # The NSIS setup is the Windows updater artifact. Fail in this job,
+      # before the signature check, when it is over the client's cap.
+      # The binary reads MAX_ARTIFACT_BYTES; this step does not repeat it.
+      - name: Reject a Windows updater artifact over the client's download limit
+        shell: pwsh
+        run: cargo run --quiet --locked -p oikonomia-update --bin assemble_feed -- check-sizes --dir target/release/bundle
 
       # The installer is the Windows updater artifact: the app downloads it,
       # checks its sha256 and this .sig against the baked public key, then
