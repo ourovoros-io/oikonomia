@@ -13,7 +13,9 @@ repos:
         pass_filenames: false
       - id: cargo-clippy
         name: cargo clippy -D warnings
-        entry: cargo clippy --all-targets --all-features -- -D warnings
+        # --workspace: default-members is core only, so without it three of
+        # the four crates are never linted.
+        entry: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
