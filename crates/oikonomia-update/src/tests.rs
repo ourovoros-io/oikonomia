@@ -1751,7 +1751,7 @@ fn artifact_over_the_size_cap_is_refused_and_leaves_no_file() {
 
     let err = download_and_verify(&config, &offer).expect_err("over the cap");
 
-    assert_eq!(err.code(), "update_network");
+    assert_eq!(err.code(), "update_artifact_too_large");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 

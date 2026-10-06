@@ -393,9 +393,10 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
 ///
 /// Returns [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect
 /// from it, is off the allow-list; [`UpdateError::ArtifactIntegrity`] when the
-/// hash or the signature does not match; and [`UpdateError::Network`] when the
-/// download fails or exceeds the size cap, or when the cache directory or the
-/// file cannot be written.
+/// hash or the signature does not match; [`UpdateError::ArtifactTooLarge`]
+/// when the artifact exceeds its size cap; and
+/// [`UpdateError::Network`] when the download fails, or when the cache
+/// directory or the file cannot be written.
 pub fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
     if let Err(err) = prepare_cache_dir(&config.cache_dir) {
         log::warn!("updater cache create failed: {err}");
@@ -570,9 +571,13 @@ fn fetch_bytes(config: &ClientConfig, url: &Url, resource: Resource) -> Result<F
         attach_version_os_arch(&mut request_url, config);
     }
 
-    fetch_once(config, &request_url, resource).map_err(|fail| match fail {
-        FetchFail::Denied => UpdateError::ArtifactUrl,
-        FetchFail::TooLarge | FetchFail::Network => UpdateError::Network,
+    fetch_once(config, &request_url, resource).map_err(|fail| match (fail, resource) {
+        (FetchFail::Denied, _) => UpdateError::ArtifactUrl,
+        // Retrying cannot help, so the user must not be told to check the
+        // connection.
+        (FetchFail::TooLarge, Resource::Artifact) => UpdateError::ArtifactTooLarge,
+        (FetchFail::TooLarge, Resource::Manifest | Resource::ManifestSignature)
+        | (FetchFail::Network, _) => UpdateError::Network,
     })
 }
 
