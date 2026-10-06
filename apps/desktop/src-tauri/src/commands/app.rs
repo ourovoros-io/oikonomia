@@ -45,10 +45,10 @@ pub(crate) fn open_support_email(app: tauri::AppHandle) -> CommandResult<()> {
 
     app.opener()
         .open_url(support_mailto(env!("CARGO_PKG_VERSION")), None::<&str>)
-        .map_err(|e| {
+        .map_err(|err| {
             CommandError::desktop(
                 DesktopError::MailClientFailed,
-                format!("could not open the mail client: {e}"),
+                format!("could not open the mail client: {err}"),
             )
         })
 }

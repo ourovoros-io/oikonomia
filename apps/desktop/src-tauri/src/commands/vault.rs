@@ -140,11 +140,11 @@ pub(crate) async fn vault_backup(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let dest = with_backup_extension(dialog_path(file_path, "save")?);
+    let destination = with_backup_extension(dialog_path(file_path, "save")?);
 
     with_vault_blocking(&state, move |vault| {
-        vault.backup_to(&dest)?;
-        Ok(dest.display().to_string())
+        vault.backup_to(&destination)?;
+        Ok(destination.display().to_string())
     })
     .await
     .map(Some)
@@ -266,8 +266,8 @@ async fn lock_vault_session(
 }
 
 fn with_backup_extension(path: std::path::PathBuf) -> std::path::PathBuf {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) if ext == BACKUP_EXTENSION => path,
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) if extension == BACKUP_EXTENSION => path,
         _ => {
             let mut name = path.file_name().map_or_else(
                 || std::ffi::OsString::from("oikonomia"),
@@ -275,7 +275,10 @@ fn with_backup_extension(path: std::path::PathBuf) -> std::path::PathBuf {
             );
             name.push(".");
             name.push(BACKUP_EXTENSION);
-            match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            match path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
                 Some(parent) => parent.join(name),
                 None => std::path::PathBuf::from(name),
             }

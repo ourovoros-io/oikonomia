@@ -103,15 +103,18 @@ fn pdf_export_file_name(suggested_name: Option<&str>) -> String {
 }
 
 fn ensure_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
-    match path.extension().and_then(|ext| ext.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("pdf") => path,
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) if extension.eq_ignore_ascii_case("pdf") => path,
         _ => {
             let mut name = path.file_name().map_or_else(
                 || std::ffi::OsString::from("oikonomia-expenses"),
                 std::ffi::OsString::from,
             );
             name.push(".pdf");
-            match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            match path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
                 Some(parent) => parent.join(name),
                 None => std::path::PathBuf::from(name),
             }

@@ -94,22 +94,22 @@ fn bundle_targets_are_exactly_the_formats_the_updater_and_release_know() {
 
 #[test]
 fn bundle_identity_belongs_to_ourovoros() {
-    let conf = config();
-    assert_eq!(conf["identifier"], "io.ourovoros.oikonomia");
-    assert_eq!(conf["bundle"]["publisher"], "Ourovoros.io");
+    let settings = config();
+    assert_eq!(settings["identifier"], "io.ourovoros.oikonomia");
+    assert_eq!(settings["bundle"]["publisher"], "Ourovoros.io");
     assert_eq!(
-        conf["bundle"]["copyright"],
+        settings["bundle"]["copyright"],
         "Copyright (c) 2026 Ourovoros.io"
     );
     // Tauri's bundle.category takes the shorthand name ("Finance"); if
     // `cargo tauri build --bundles app` rejects it, switch BOTH the config
     // and this assertion to "public.app-category.finance".
-    assert_eq!(conf["bundle"]["category"], "Finance");
-    assert_eq!(conf["bundle"]["macOS"]["minimumSystemVersion"], "12.0");
+    assert_eq!(settings["bundle"]["category"], "Finance");
+    assert_eq!(settings["bundle"]["macOS"]["minimumSystemVersion"], "12.0");
     assert!(
-        conf["bundle"]["shortDescription"]
+        settings["bundle"]["shortDescription"]
             .as_str()
-            .is_some_and(|s| !s.is_empty()),
+            .is_some_and(|text| !text.is_empty()),
         "shortDescription must be set"
     );
 }
@@ -197,9 +197,12 @@ fn no_licensing_commands_are_registered() {
 
 #[test]
 fn versions_are_in_sync_everywhere() {
-    let conf = config();
+    let settings = config();
     let workspace = env!("CARGO_PKG_VERSION");
-    assert_eq!(conf["version"], workspace, "tauri.conf.json vs workspace");
+    assert_eq!(
+        settings["version"], workspace,
+        "tauri.conf.json vs workspace"
+    );
 
     let package: serde_json::Value =
         serde_json::from_str(include_str!("../../../../web/package.json"))

@@ -85,7 +85,7 @@ pub(crate) async fn entry_post_simple_with_document(
     let data = decode_document_base64(&data_base64)?;
 
     with_connection(&state, move |conn| {
-        let (view, _meta) = post_simple_entry_with_document(
+        let (view, _document) = post_simple_entry_with_document(
             conn,
             &input,
             &filename,
@@ -117,29 +117,29 @@ pub(crate) async fn entry_post_simple_with_document_path(
         let path = require_granted_path(&grants, &path)?;
 
         // Reject oversized/unsupported files from metadata alone before reading.
-        let meta = std::fs::metadata(&path).map_err(|e| {
+        let metadata = std::fs::metadata(&path).map_err(|err| {
             CommandError::desktop(
                 DesktopError::FileUnreadable,
-                format!("could not read the dropped file: {e}"),
+                format!("could not read the dropped file: {err}"),
             )
         })?;
-        let mime = oikonomia_core::documents::resolve_mime("", &filename);
-        oikonomia_core::documents::validate_document_file(&filename, &mime, meta.len())?;
+        let mime_type = oikonomia_core::documents::resolve_mime("", &filename);
+        oikonomia_core::documents::validate_document_file(&filename, &mime_type, metadata.len())?;
 
-        let data = std::fs::read(&path).map_err(|e| {
+        let data = std::fs::read(&path).map_err(|err| {
             CommandError::desktop(
                 DesktopError::FileUnreadable,
-                format!("could not read the dropped file: {e}"),
+                format!("could not read the dropped file: {err}"),
             )
         })?;
 
         let guard = vault.acquire();
         let conn = guard.connection()?;
-        let (view, _meta) = post_simple_entry_with_document(
+        let (view, _document) = post_simple_entry_with_document(
             conn,
             &input,
             &filename,
-            &mime,
+            &mime_type,
             &data,
             analysis_json.as_deref(),
         )?;

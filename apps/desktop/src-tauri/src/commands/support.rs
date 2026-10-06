@@ -36,10 +36,10 @@ pub(super) fn decode_capped_base64(
 
     let data = base64::engine::general_purpose::STANDARD
         .decode(trimmed)
-        .map_err(|e| {
+        .map_err(|err| {
             CommandError::desktop(
                 DesktopError::FileDataInvalid,
-                format!("invalid file data: {e}"),
+                format!("invalid file data: {err}"),
             )
         })?;
 
@@ -114,10 +114,13 @@ pub(super) fn dropped_file_name(dropped_path: &str) -> String {
 /// mutex on the main thread or an async runtime worker (e.g. while a rekey
 /// holds it for seconds).
 ///
-/// Whatever status `f` leaves the vault in, the guard brings the idle
+/// Whatever status `work` leaves the vault in, the guard brings the idle
 /// watchdog in line with it before the vault mutex is released
 /// ([`crate::state::VaultGuard`]), so no command updates the watchdog itself.
-pub(super) async fn with_vault_blocking<T, F>(state: &State<'_, AppState>, f: F) -> CommandResult<T>
+pub(super) async fn with_vault_blocking<T, F>(
+    state: &State<'_, AppState>,
+    work: F,
+) -> CommandResult<T>
 where
     T: Send + 'static,
     F: FnOnce(&mut VaultGuard<'_>) -> Result<T, CoreError> + Send + 'static,
@@ -127,7 +130,7 @@ where
 
     run_blocking(move || {
         let mut guard = vault.acquire();
-        f(&mut guard).map_err(CommandError::from)
+        work(&mut guard).map_err(CommandError::from)
     })
     .await
 }
@@ -290,7 +293,7 @@ mod tests {
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
+                .map_or(0, |since_epoch| since_epoch.as_nanos())
         ));
         std::fs::create_dir_all(&dir).expect("tmpdir");
         dir

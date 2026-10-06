@@ -364,11 +364,11 @@ fn position_quick_add(
         clippy::cast_possible_truncation,
         reason = "a rounded screen coordinate; Tauri positions are whole i32 pixels"
     )]
-    let pos = PhysicalPosition {
+    let position = PhysicalPosition {
         x: x.round() as i32,
         y: y.round() as i32,
     };
-    let _ = window.set_position(tauri::Position::Physical(pos));
+    let _ = window.set_position(tauri::Position::Physical(position));
 }
 
 /// Create (if needed), position, show, and focus the quick-add panel.

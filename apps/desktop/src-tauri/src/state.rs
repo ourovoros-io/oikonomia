@@ -301,14 +301,15 @@ impl GatedVault {
     /// Reads the stored idle timeout into the cache after an unlock.
     fn refresh_lock_timeout_cache(&self, vault: &Vault) {
         // A failed read falls back to the default, but never silently.
-        let secs = match vault.connection().and_then(get_lock_timeout_secs) {
-            Ok(secs) => secs,
+        let timeout_secs = match vault.connection().and_then(get_lock_timeout_secs) {
+            Ok(timeout_secs) => timeout_secs,
             Err(err) => {
                 log::warn!("could not read lock timeout after unlock, using default: {err}");
                 DEFAULT_LOCK_TIMEOUT_SECS
             }
         };
-        self.lock_timeout_secs.store(secs, Ordering::Relaxed);
+        self.lock_timeout_secs
+            .store(timeout_secs, Ordering::Relaxed);
     }
 }
 
@@ -332,8 +333,10 @@ impl VaultGuard<'_> {
     ///
     /// On the guard so that the cache is written with the vault held, in the
     /// same order as the stored values it mirrors.
-    pub(crate) fn set_lock_timeout_cache(&self, secs: u64) {
-        self.gated.lock_timeout_secs.store(secs, Ordering::Relaxed);
+    pub(crate) fn set_lock_timeout_cache(&self, timeout_secs: u64) {
+        self.gated
+            .lock_timeout_secs
+            .store(timeout_secs, Ordering::Relaxed);
     }
 }
 
@@ -751,7 +754,7 @@ pub(crate) fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ocr");
     let beside_executable = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("resources/ocr")));
+        .and_then(|executable| executable.parent().map(|dir| dir.join("resources/ocr")));
 
     let candidates = ocr_model_dir_candidates(resource_dir, &dev, beside_executable);
     first_dir_with_models(candidates).unwrap_or(dev)
@@ -816,7 +819,7 @@ mod tests {
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
+                .map_or(0, |since_epoch| since_epoch.as_nanos())
         ));
         let models = resource_dir.join("resources").join("ocr");
         fs::create_dir_all(&models).expect("models dir");
@@ -1245,7 +1248,7 @@ mod tests {
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
+                .map_or(0, |since_epoch| since_epoch.as_nanos())
         ));
         fs::create_dir_all(&dir).expect("tmpdir");
         let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
@@ -1263,24 +1266,25 @@ mod tests {
         state: &AppState,
         poll: Duration,
     ) -> (std::thread::JoinHandle<()>, mpsc::Receiver<()>) {
-        let (tx, rx) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
         let handles = state.watchdog_handles();
         let join = std::thread::spawn(move || {
             run_auto_lock_loop(&handles, poll, move || {
-                let _ = tx.send(());
+                let _ = sender.send(());
             });
         });
-        (join, rx)
+        (join, receiver)
     }
 
     fn shutdown_watchdog(vault: &GatedVault, join: std::thread::JoinHandle<()>) {
         vault.gate.shutdown();
-        let (tx, rx) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
         std::thread::spawn(move || {
             let _ = join.join();
-            let _ = tx.send(());
+            let _ = sender.send(());
         });
-        rx.recv_timeout(Duration::from_secs(2))
+        receiver
+            .recv_timeout(Duration::from_secs(2))
             .expect("watchdog thread should exit after shutdown");
     }
 }

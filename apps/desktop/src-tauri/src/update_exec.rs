@@ -430,7 +430,9 @@ fn only_app_bundle(root: &Path) -> Option<PathBuf> {
         .ok()?
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "app") && path.is_dir());
+        .filter(|path| {
+            path.extension().is_some_and(|extension| extension == "app") && path.is_dir()
+        });
 
     let bundle = bundles.next()?;
     bundles.next().is_none().then_some(bundle)
@@ -447,8 +449,10 @@ fn macos_app_bundle_path(executable: &Path) -> Result<PathBuf> {
     let contents = macos_dir.parent().ok_or(UpdateError::ArtifactIntegrity)?;
     let bundle = contents.parent().ok_or(UpdateError::ArtifactIntegrity)?;
 
-    let is_bundle_layout =
-        macos_dir.ends_with("Contents/MacOS") && bundle.extension().is_some_and(|ext| ext == "app");
+    let is_bundle_layout = macos_dir.ends_with("Contents/MacOS")
+        && bundle
+            .extension()
+            .is_some_and(|extension| extension == "app");
     if is_bundle_layout {
         Ok(bundle.to_path_buf())
     } else {

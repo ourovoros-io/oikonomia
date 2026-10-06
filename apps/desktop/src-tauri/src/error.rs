@@ -278,7 +278,8 @@ mod tests {
         assert_eq!(codes.len(), DesktopError::ALL.len());
         for code in codes {
             assert!(
-                code.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                code.chars()
+                    .all(|letter| letter.is_ascii_lowercase() || letter == '_'),
                 "{code}"
             );
         }

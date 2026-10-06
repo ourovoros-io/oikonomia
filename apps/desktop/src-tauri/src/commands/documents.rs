@@ -79,23 +79,23 @@ pub(crate) async fn document_analyze_path(
 
         // Reject oversized/unsupported drops from metadata alone — a stray
         // 10 GB drop must not be read into memory before failing the size cap.
-        let meta = std::fs::metadata(&path).map_err(|e| {
+        let metadata = std::fs::metadata(&path).map_err(|err| {
             CommandError::desktop(
                 DesktopError::FileUnreadable,
-                format!("could not read dropped file: {e}"),
+                format!("could not read dropped file: {err}"),
             )
         })?;
-        let mime = oikonomia_core::documents::resolve_mime("", &filename);
-        oikonomia_core::documents::validate_document_file(&filename, &mime, meta.len())?;
+        let mime_type = oikonomia_core::documents::resolve_mime("", &filename);
+        oikonomia_core::documents::validate_document_file(&filename, &mime_type, metadata.len())?;
 
-        let data = std::fs::read(&path).map_err(|e| {
+        let data = std::fs::read(&path).map_err(|err| {
             CommandError::desktop(
                 DesktopError::FileUnreadable,
-                format!("could not read dropped file: {e}"),
+                format!("could not read dropped file: {err}"),
             )
         })?;
         analyze_readonly(
-            &vault, &model_dir, entity_id, &filename, &mime, &data, locale,
+            &vault, &model_dir, entity_id, &filename, &mime_type, &data, locale,
         )
     })
     .await
@@ -117,8 +117,8 @@ fn analyze_readonly(
     data: &[u8],
     locale: Locale,
 ) -> CommandResult<DocumentSuggestion> {
-    let mime = oikonomia_core::documents::resolve_mime(mime_type, filename);
-    oikonomia_core::documents::validate_document_file(filename, &mime, data.len() as u64)?;
+    let mime_type = oikonomia_core::documents::resolve_mime(mime_type, filename);
+    oikonomia_core::documents::validate_document_file(filename, &mime_type, data.len() as u64)?;
 
     let (accounts, entity) = {
         let guard = vault.acquire();
@@ -131,7 +131,7 @@ fn analyze_readonly(
 
     let suggestion = analyze_document_bytes(
         filename,
-        &mime,
+        &mime_type,
         data,
         &AnalyzeContext {
             template: entity.chart_template,
@@ -224,11 +224,12 @@ pub(crate) async fn document_export(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<Option<String>> {
-    let (meta, data) = with_connection(&state, move |conn| get_document(conn, document_id)).await?;
+    let (document, data) =
+        with_connection(&state, move |conn| get_document(conn, document_id)).await?;
 
     let target = SaveTarget {
         filter: None,
-        file_name: meta.filename,
+        file_name: document.filename,
         complete_path: std::convert::identity,
     };
     save_with_dialog(&app, target, data).await
