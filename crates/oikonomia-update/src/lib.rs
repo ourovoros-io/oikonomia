@@ -8,8 +8,9 @@
 //!
 //! The crate also holds the release-side half of the same contract
 //! ([`assemble_manifest`], the release-set functions and the `assemble_feed`
-//! binary), so that the feed is written, and checked before publication, by
-//! the code that reads it.
+//! binary). The client's tests parse what the release side writes, and the
+//! release side checks signatures and digests before publication with the
+//! functions the client checks them with, so the two cannot drift apart.
 //!
 //! # Trust root
 //!

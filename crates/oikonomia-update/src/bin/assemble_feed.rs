@@ -2,13 +2,14 @@
 //!
 //! The promote workflow runs this instead of doing the same work in shell, so
 //! that the rules for a release live in tested Rust (`release_set`, `feed`,
-//! `verify`) and the feed is checked before publication by the code that
-//! will read it in the application. Each subcommand does one step:
+//! `verify`) and signatures and digests are checked before publication by
+//! the functions the application checks them with. Each subcommand does one
+//! step:
 //!
 //! - `assemble` writes `latest.json` from the artifacts in a directory;
 //! - `verify` checks a file against a detached minisign signature;
 //! - `verify-feed` checks every artifact a feed names against its hash and
-//!   its minisign signature, as the app does before installing;
+//!   its minisign signature;
 //! - `unpublished` lists the draft assets that must not be published;
 //! - `fixed-copies` writes the version-free copies the website links to;
 //! - `fixed-names` prints the version-free names a release must carry;
@@ -56,7 +57,7 @@ enum CliError {
     #[error("{}", USAGE)]
     Usage,
 
-    /// A file or directory could not be read, written or copied.
+    /// A file or directory could not be read, written or listed.
     #[error("cannot {action} {}", path.display())]
     Io {
         /// What was being done, as a verb: `read`, `write`, `list`.
@@ -244,14 +245,16 @@ fn describe(error: &CliError) -> String {
     line
 }
 
-/// Writes `feed` entries for the artifacts in `--dir` to `--out`.
+/// Writes `latest.json` for the artifacts in `--dir` to `--out`.
 ///
 /// # Errors
 ///
 /// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] for a file
-/// that cannot be read or written, [`CliError::ReleaseSet`] when a platform
-/// has no artifact or several, and [`CliError::Update`] when the version or
-/// an artifact is not fit for a feed.
+/// that cannot be read or written, [`CliError::FileNameNotUtf8`] for such a
+/// name in the directory, [`CliError::ReleaseSet`] when a platform has no
+/// artifact or several, [`CliError::Update`] when the version or an artifact
+/// is not fit for a feed, and [`CliError::Output`] when the result line
+/// cannot be printed.
 fn run_assemble(args: &[String]) -> CliResult<()> {
     let version = required_flag(args, "--version")?;
     let base_url = required_flag(args, "--base-url")?;
@@ -305,8 +308,9 @@ fn feed_artifact(directory: &Path, platform: &str, file_name: &str) -> CliResult
 /// # Errors
 ///
 /// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] for a file
-/// that cannot be read, and [`CliError::Update`] when the key is not a
-/// minisign key or the signature does not verify.
+/// that cannot be read, [`CliError::Update`] when the key is not a minisign
+/// key or the signature does not verify, and [`CliError::Output`] when the
+/// result line cannot be printed.
 fn run_verify(args: &[String]) -> CliResult<()> {
     let manifest = Path::new(required_flag(args, "--manifest")?);
     let signature_path = Path::new(required_flag(args, "--sig")?);
@@ -320,19 +324,24 @@ fn run_verify(args: &[String]) -> CliResult<()> {
     print_line("manifest signature ok")
 }
 
-/// Checks a feed against the files in `--dir` the way the app will: the feed
-/// holds exactly the platforms this release publishes, and every file it
-/// names hashes to its `sha256` and carries a minisign signature that
-/// verifies with `--pubkey`, the key baked into the app. Run before anything
-/// is public, so a feed whose artifact the app would refuse never ships.
+/// Checks the artifacts a feed names against the files in `--dir`.
+///
+/// The feed must hold exactly the platforms this release publishes, and
+/// every file it names must hash to its `sha256` and carry a minisign
+/// signature that verifies with `--pubkey`, the key baked into the app. Both
+/// are checked with the functions the app uses. Run before anything is
+/// public, so a release whose artifact fails either check never ships.
+///
+/// It does not repeat the client's other checks: the version and the URL
+/// allow-list are not looked at here.
 ///
 /// # Errors
 ///
 /// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] or
 /// [`CliError::Feed`] for a feed that cannot be read or parsed,
 /// [`CliError::FeedPlatforms`] when its platforms are not the published
-/// ones, and whatever [`verify_feed_entry`] returns for the first entry that
-/// fails.
+/// ones, whatever [`verify_feed_entry`] returns for the first entry that
+/// fails, and [`CliError::Output`] when a result line cannot be printed.
 fn run_verify_feed(args: &[String]) -> CliResult<()> {
     let manifest = Path::new(required_flag(args, "--manifest")?);
     let directory = Path::new(required_flag(args, "--dir")?);
@@ -441,8 +450,10 @@ fn unpublished_assets(args: &[String]) -> Vec<&str> {
 /// # Errors
 ///
 /// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] for a file
-/// that cannot be read or written, and [`CliError::NothingToChecksum`] when
-/// the directory holds no published file.
+/// that cannot be read or written, [`CliError::FileNameNotUtf8`] for such a
+/// name in the directory, [`CliError::NothingToChecksum`] when the directory
+/// holds no published file, and [`CliError::Output`] when the result line
+/// cannot be printed.
 fn run_checksums(args: &[String]) -> CliResult<()> {
     let directory = Path::new(required_flag(args, "--dir")?);
     let out = Path::new(required_flag(args, "--out")?);
@@ -469,15 +480,18 @@ fn run_checksums(args: &[String]) -> CliResult<()> {
     print_line(format_args!("wrote {}", out.display()))
 }
 
-/// Copies each versioned download in `--dir` to its version-free name and
-/// prints the fixed names, one per line. Fails when any source is missing or
+/// Copies each versioned download in `--dir` to its version-free name.
+///
+/// Prints the fixed names, one per line. Fails when any source is missing or
 /// ambiguous, so a release never publishes without every site link.
 ///
 /// # Errors
 ///
 /// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] when the
-/// directory cannot be listed, [`CliError::ReleaseSet`] when a download has
-/// no source or several, and [`CliError::Copy`] when a copy fails.
+/// directory cannot be listed, [`CliError::FileNameNotUtf8`] for such a name
+/// in it, [`CliError::ReleaseSet`] when a download has no source or several,
+/// [`CliError::Copy`] when a copy fails, and [`CliError::Output`] when a name
+/// cannot be printed.
 fn run_fixed_copies(args: &[String]) -> CliResult<()> {
     let directory = Path::new(required_flag(args, "--dir")?);
 
@@ -494,9 +508,10 @@ fn run_fixed_copies(args: &[String]) -> CliResult<()> {
     Ok(())
 }
 
-/// Prints, one per line, the version-free names the release must carry. The
-/// workflow compares what it made and what the draft holds against this list,
-/// so the names live in `release_set` only.
+/// Prints, one per line, the version-free names the release must carry.
+///
+/// The workflow compares what it made and what the draft holds against this
+/// list, so the names live in `release_set` only.
 ///
 /// # Errors
 ///
@@ -591,6 +606,7 @@ fn utf8_file_name(name: OsString, directory: &Path) -> CliResult<String> {
 fn print_line(line: impl std::fmt::Display) -> CliResult<()> {
     writeln!(std::io::stdout(), "{line}").map_err(CliError::Output)
 }
+
 #[cfg(test)]
 mod tests {
     use super::{CliError, USAGE, describe, run, unpublished_assets, utf8_file_name};
@@ -908,58 +924,73 @@ mod tests {
 
     /// A manifest, its detached signature and the public key that made it.
     fn signed_manifest(dir: &Path) -> (PathBuf, PathBuf, String) {
-        let KeyPair { pk, sk } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
         let body = br#"{"version":"0.2.0"}"#;
-        let signature = minisign::sign(None, &sk, Cursor::new(body), None, None).expect("sign");
+        let signature =
+            minisign::sign(None, &secret_key, Cursor::new(body), None, None).expect("sign");
 
         let manifest = dir.join("latest.json");
-        let sig = dir.join("latest.json.sig");
+        let signature_path = dir.join("latest.json.sig");
         std::fs::write(&manifest, body).expect("manifest");
-        std::fs::write(&sig, signature.into_string()).expect("signature");
-        (manifest, sig, pk.to_box().expect("public box").to_string())
+        std::fs::write(&signature_path, signature.into_string()).expect("signature");
+        (
+            manifest,
+            signature_path,
+            public_key.to_box().expect("public box").to_string(),
+        )
     }
 
-    fn verify(manifest: &Path, sig: &Path, pubkey: &str) -> Result<(), String> {
+    fn verify(manifest: &Path, signature_path: &Path, public_key_text: &str) -> Result<(), String> {
         run_text(&[
             "verify",
             "--manifest",
             text(manifest),
             "--sig",
-            text(sig),
+            text(signature_path),
             "--pubkey",
-            pubkey,
+            public_key_text,
         ])
     }
 
     #[test]
     fn verify_accepts_a_manifest_signed_with_the_given_key() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let (manifest, sig, pubkey) = signed_manifest(dir.path());
+        let (manifest, signature_path, public_key_text) = signed_manifest(dir.path());
 
-        assert_eq!(verify(&manifest, &sig, &pubkey), Ok(()));
+        assert_eq!(verify(&manifest, &signature_path, &public_key_text), Ok(()));
     }
 
     #[test]
     fn verify_rejects_a_changed_manifest_another_key_and_bad_inputs() {
         let dir = tempfile::tempdir().expect("temp dir");
-        let (manifest, sig, pubkey) = signed_manifest(dir.path());
+        let (manifest, signature_path, public_key_text) = signed_manifest(dir.path());
         let other = tempfile::tempdir().expect("temp dir");
-        let (_, _, other_pubkey) = signed_manifest(other.path());
+        let (_, _, other_public_key_text) = signed_manifest(other.path());
 
-        let err = verify(&manifest, &sig, &other_pubkey).expect_err("another key");
+        let err =
+            verify(&manifest, &signature_path, &other_public_key_text).expect_err("another key");
         assert_eq!(err, "update manifest signature is invalid");
 
-        let err = verify(&manifest, &sig, "not a key").expect_err("bad key");
+        let err = verify(&manifest, &signature_path, "not a key").expect_err("bad key");
         assert_eq!(err, "updater public key is missing or invalid");
 
-        let err = verify(&manifest, &dir.path().join("gone.sig"), &pubkey).expect_err("no sig");
+        let err =
+            verify(&manifest, &dir.path().join("gone.sig"), &public_key_text).expect_err("no sig");
         assert!(err.contains("gone.sig"), "{err}");
 
         std::fs::write(&manifest, br#"{"version":"9.9.9"}"#).expect("tamper");
-        let err = verify(&manifest, &sig, &pubkey).expect_err("tampered");
+        let err = verify(&manifest, &signature_path, &public_key_text).expect_err("tampered");
         assert_eq!(err, "update manifest signature is invalid");
 
-        let err = verify(&dir.path().join("gone.json"), &sig, &pubkey).expect_err("no manifest");
+        let err = verify(
+            &dir.path().join("gone.json"),
+            &signature_path,
+            &public_key_text,
+        )
+        .expect_err("no manifest");
         assert!(err.contains("gone.json"), "{err}");
     }
 
@@ -971,12 +1002,12 @@ mod tests {
 
     /// A draft whose feed artifacts carry real signatures, written the way
     /// `tauri signer` writes a `.sig`: base64 of the minisign signature file.
-    fn signed_draft(sk: &minisign::SecretKey) -> tempfile::TempDir {
+    fn signed_draft(secret_key: &minisign::SecretKey) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("temp dir");
         for name in [MAC, APPIMAGE, SETUP] {
             let bytes = format!("bytes of {name}");
             std::fs::write(dir.path().join(name), &bytes).expect("artifact");
-            sign_into(sk, dir.path(), name, bytes.as_bytes());
+            sign_into(secret_key, dir.path(), name, bytes.as_bytes());
         }
         for name in [DMG, DEB] {
             std::fs::write(dir.path().join(name), format!("bytes of {name}")).expect("download");
@@ -984,18 +1015,24 @@ mod tests {
         dir
     }
 
-    fn sign_into(sk: &minisign::SecretKey, dir: &Path, name: &str, bytes: &[u8]) {
-        let signature = minisign::sign(None, sk, Cursor::new(bytes), None, None).expect("sign");
+    fn sign_into(secret_key: &minisign::SecretKey, dir: &Path, name: &str, bytes: &[u8]) {
+        let signature =
+            minisign::sign(None, secret_key, Cursor::new(bytes), None, None).expect("sign");
         let wrapped = base64::engine::general_purpose::STANDARD.encode(signature.into_string());
         std::fs::write(dir.join(format!("{name}.sig")), wrapped).expect("signature");
     }
 
-    fn public_text(pk: &minisign::PublicKey) -> String {
-        let text = pk.to_box().expect("public box").to_string();
+    fn public_text(public_key: &minisign::PublicKey) -> String {
+        let text = public_key.to_box().expect("public box").to_string();
         base64::engine::general_purpose::STANDARD.encode(text)
     }
 
-    fn verify_feed(dir: &Path, feed: &Path, pubkey: &str, extra: &[&str]) -> Result<(), String> {
+    fn verify_feed(
+        dir: &Path,
+        feed: &Path,
+        public_key_text: &str,
+        extra: &[&str],
+    ) -> Result<(), String> {
         let mut list = vec![
             "verify-feed",
             "--manifest",
@@ -1003,7 +1040,7 @@ mod tests {
             "--dir",
             text(dir),
             "--pubkey",
-            pubkey,
+            public_key_text,
         ];
         list.extend_from_slice(extra);
         run_text(&list)
@@ -1011,51 +1048,64 @@ mod tests {
 
     #[test]
     fn verify_feed_accepts_every_artifact_assemble_named() {
-        let KeyPair { pk, sk } = KeyPair::generate_unencrypted_keypair().expect("keypair");
-        let draft = signed_draft(&sk);
-        let pubkey = public_text(&pk);
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
         let feed = draft.path().join("latest.json");
 
         assemble(draft.path(), &feed, &[]).expect("assemble");
-        assert_eq!(verify_feed(draft.path(), &feed, &pubkey, &[]), Ok(()));
+        assert_eq!(
+            verify_feed(draft.path(), &feed, &public_key_text, &[]),
+            Ok(())
+        );
 
         assemble(draft.path(), &feed, &["--with-windows"]).expect("assemble with windows");
         assert_eq!(
-            verify_feed(draft.path(), &feed, &pubkey, &["--with-windows"]),
+            verify_feed(draft.path(), &feed, &public_key_text, &["--with-windows"]),
             Ok(())
         );
     }
 
     #[test]
     fn verify_feed_refuses_a_feed_without_the_published_platforms() {
-        let KeyPair { pk, sk } = KeyPair::generate_unencrypted_keypair().expect("keypair");
-        let draft = signed_draft(&sk);
-        let pubkey = public_text(&pk);
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
         let feed = draft.path().join("latest.json");
 
         // Windows is published but the feed has no entry for it.
         assemble(draft.path(), &feed, &[]).expect("assemble");
-        let err = verify_feed(draft.path(), &feed, &pubkey, &["--with-windows"])
+        let err = verify_feed(draft.path(), &feed, &public_key_text, &["--with-windows"])
             .expect_err("windows missing");
         assert!(err.contains("windows-x86_64"), "{err}");
 
         // Windows is withheld but the feed still offers it.
         assemble(draft.path(), &feed, &["--with-windows"]).expect("assemble");
-        let err = verify_feed(draft.path(), &feed, &pubkey, &[]).expect_err("windows extra");
+        let err =
+            verify_feed(draft.path(), &feed, &public_key_text, &[]).expect_err("windows extra");
         assert!(err.starts_with("feed platforms are"), "{err}");
     }
 
     #[test]
     fn verify_feed_refuses_a_changed_installer() {
-        let KeyPair { pk, sk } = KeyPair::generate_unencrypted_keypair().expect("keypair");
-        let draft = signed_draft(&sk);
-        let pubkey = public_text(&pk);
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
         let feed = draft.path().join("latest.json");
 
         assemble(draft.path(), &feed, &["--with-windows"]).expect("assemble");
         std::fs::write(draft.path().join(SETUP), b"another installer").expect("swap");
 
-        let err = verify_feed(draft.path(), &feed, &pubkey, &["--with-windows"])
+        let err = verify_feed(draft.path(), &feed, &public_key_text, &["--with-windows"])
             .expect_err("changed installer");
         assert_eq!(
             err,
@@ -1065,10 +1115,13 @@ mod tests {
 
     #[test]
     fn verify_feed_refuses_an_installer_signed_with_another_key() {
-        let KeyPair { pk, sk } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
         let other = KeyPair::generate_unencrypted_keypair().expect("other keypair");
-        let draft = signed_draft(&sk);
-        let pubkey = public_text(&pk);
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
         let feed = draft.path().join("latest.json");
 
         // Same bytes, so the hash still matches; only the signer differs.
@@ -1080,7 +1133,7 @@ mod tests {
         );
         assemble(draft.path(), &feed, &["--with-windows"]).expect("assemble");
 
-        let err = verify_feed(draft.path(), &feed, &pubkey, &["--with-windows"])
+        let err = verify_feed(draft.path(), &feed, &public_key_text, &["--with-windows"])
             .expect_err("wrong signer");
         assert_eq!(
             err,

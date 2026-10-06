@@ -12,6 +12,10 @@
 //! Installing ── finish_install(Failed) ──▶ Failed
 //! ```
 //!
+//! The docs here name states as the webview sees them, by their
+//! [`UpdateStatus`] names: Available is [`State::Installable`] and
+//! `AvailableManually` is [`State::Manual`].
+//!
 //! The state is one private enum, [`State`], and the offer lives inside the
 //! only variant that may use it. "Available but without an offer" therefore
 //! has no representation, and the [`UpdateStatus`] the webview sees is
@@ -135,6 +139,21 @@ impl UpdateMachine {
     }
 }
 
+#[cfg(test)]
+impl UpdateMachine {
+    /// Runs a whole check in one call and returns the status it led to.
+    ///
+    /// Test-only: it performs the request between begin and finish, which a
+    /// caller that shares the machine behind a lock must not do.
+    pub(crate) fn check(&mut self, config: &crate::client::ClientConfig) -> UpdateStatus {
+        if self.begin_check() == CheckStart::Started {
+            let outcome = crate::client::perform_check(config);
+            self.finish_check(outcome);
+        }
+        self.status()
+    }
+}
+
 /// Whether [`UpdateMachine::begin_check`] started a check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use = "a refused check must not be run or finished"]
@@ -171,19 +190,4 @@ enum State {
     Installing,
     /// The last check or install failed.
     Failed,
-}
-
-#[cfg(test)]
-impl UpdateMachine {
-    /// Runs a whole check in one call and returns the status it led to.
-    ///
-    /// Test-only: it performs the request between begin and finish, which a
-    /// caller that shares the machine behind a lock must not do.
-    pub(crate) fn check(&mut self, config: &crate::client::ClientConfig) -> UpdateStatus {
-        if self.begin_check() == CheckStart::Started {
-            let outcome = crate::client::perform_check(config);
-            self.finish_check(outcome);
-        }
-        self.status()
-    }
 }

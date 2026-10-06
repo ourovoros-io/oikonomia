@@ -258,10 +258,11 @@ pub fn checksum_line(sha256_hex: &str, file_name: &str) -> String {
     format!("{sha256_hex}  {file_name}\n")
 }
 
-/// Returns whether `file_name` belongs in the published release: a feed
-/// artifact, a manual download, the signature of either, the feed itself,
-/// the checksum file, or a version-free copy. Everything else in the draft
-/// is deleted before publishing.
+/// Returns whether `file_name` belongs in the published release.
+///
+/// That is a feed artifact, a manual download, the signature of either, the
+/// feed itself, the checksum file, or a version-free copy. Everything else
+/// in the draft is deleted before publishing.
 #[must_use]
 pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
     if FEED_FILES.contains(&file_name) || file_name == CHECKSUMS_FILE {
@@ -336,6 +337,7 @@ fn only_versioned_file<'a>(
         }),
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::{

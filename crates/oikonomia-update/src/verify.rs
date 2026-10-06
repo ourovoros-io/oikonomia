@@ -21,6 +21,33 @@ use sha2::{Digest, Sha256};
 /// The number of bytes in a SHA-256 digest.
 const SHA256_BYTES: usize = 32;
 
+/// Verifies `data` against a minisign signature with the key in `public_key`.
+///
+/// This is the client's own check, offered to the release lane so that a
+/// feed is tested before it is published with the code that will read it.
+/// The key and the signature are each accepted as a minisign file or as the
+/// base64 of one; the key is passed as text so that no type of the minisign
+/// library appears in this crate's interface.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or
+/// not a minisign public key, and [`UpdateError::ManifestSignature`] when
+/// `signature` is empty, is not a minisign signature, or does not verify
+/// `data` with that key.
+pub fn verify_signature(public_key: &str, data: &[u8], signature: &str) -> Result<()> {
+    let public_key = parse_public_key(public_key)?;
+
+    verify_minisign(&public_key, data, signature)
+}
+
+/// Returns the lowercase hex SHA-256 of `bytes`, the form `latest.json` and
+/// `SHA256SUMS` hold.
+#[must_use]
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    to_hex(&sha256(bytes))
+}
+
 /// Parses the updater public key: a minisign public-key file, or the base64
 /// of one as the Tauri signer writes it.
 ///
@@ -55,33 +82,6 @@ pub(crate) fn verify_minisign(public_key: &PublicKey, data: &[u8], signature: &s
     public_key
         .verify(data, &signature, false)
         .map_err(|_| UpdateError::ManifestSignature)
-}
-
-/// Verifies `data` against a minisign signature with the key in `public_key`.
-///
-/// This is the client's own check, offered to the release lane so that a
-/// feed is tested before it is published with the code that will read it.
-/// The key and the signature are each accepted as a minisign file or as the
-/// base64 of one; the key is passed as text so that no type of the minisign
-/// library appears in this crate's interface.
-///
-/// # Errors
-///
-/// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or
-/// not a minisign public key, and [`UpdateError::ManifestSignature`] when
-/// `signature` is empty, is not a minisign signature, or does not verify
-/// `data` with that key.
-pub fn verify_signature(public_key: &str, data: &[u8], signature: &str) -> Result<()> {
-    let public_key = parse_public_key(public_key)?;
-
-    verify_minisign(&public_key, data, signature)
-}
-
-/// Returns the lowercase hex SHA-256 of `bytes`, the form `latest.json` and
-/// `SHA256SUMS` hold.
-#[must_use]
-pub fn sha256_hex(bytes: &[u8]) -> String {
-    to_hex(&sha256(bytes))
 }
 
 /// Returns the SHA-256 of `bytes`.
@@ -241,10 +241,9 @@ mod tests {
 
 #[cfg(test)]
 mod properties {
+    use super::{parse_sha256_hex, to_hex};
     use oikonomia_test_support::PROPERTY_CASES;
     use proptest::prelude::*;
-
-    use super::{parse_sha256_hex, to_hex};
 
     fn hex(digest: [u8; 32], uppercase: bool) -> String {
         let lowercase = to_hex(&digest);

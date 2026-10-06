@@ -8,15 +8,16 @@
 use crate::error::{Result, UpdateError};
 use semver::Version;
 
-/// Parses a `SemVer` version, ignoring surrounding whitespace and leading
-/// `v` characters (release tags are written `v0.2.0`).
+/// Parses a `SemVer` version, ignoring surrounding whitespace and one
+/// leading `v` (release tags are written `v0.2.0`).
 ///
 /// # Errors
 ///
 /// Returns [`UpdateError::InvalidVersion`] when what remains is not `SemVer`.
 /// An empty string is not.
 pub(crate) fn parse_version(text: &str) -> Result<Version> {
-    let text = text.trim().trim_start_matches('v');
+    let text = text.trim();
+    let text = text.strip_prefix('v').unwrap_or(text);
 
     Version::parse(text).map_err(|_| UpdateError::InvalidVersion {
         version: text.to_owned(),
@@ -38,7 +39,16 @@ mod tests {
 
     #[test]
     fn text_that_is_not_semver_is_refused_with_what_was_read() {
-        for text in ["", "  ", "v", "1.2", "latest", "0.2.0 beta"] {
+        for text in [
+            "",
+            "  ",
+            "v",
+            "1.2",
+            "latest",
+            "0.2.0 beta",
+            "vv1.0.0",
+            "V1.0.0",
+        ] {
             let err = parse_version(text).expect_err(text);
 
             assert_eq!(err.code(), "update_invalid_version", "{text:?}");
@@ -51,11 +61,10 @@ mod tests {
 
 #[cfg(test)]
 mod properties {
+    use super::parse_version;
     use oikonomia_test_support::PROPERTY_CASES;
     use proptest::prelude::*;
     use semver::Version;
-
-    use super::parse_version;
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]

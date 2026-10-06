@@ -71,10 +71,9 @@ mod tests {
 
 #[cfg(test)]
 mod properties {
+    use super::sanitize_notes;
     use oikonomia_test_support::PROPERTY_CASES;
     use proptest::prelude::*;
-
-    use super::sanitize_notes;
 
     /// Reverses [`sanitize_notes`], for the round-trip property only.
     fn unescape(escaped: &str) -> String {

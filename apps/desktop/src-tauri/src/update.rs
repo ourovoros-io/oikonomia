@@ -33,9 +33,11 @@ fn updater_cache_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
     Ok(cache.join("updater"))
 }
 
-/// User-clicked check from unlock. Fetches `latest.json` plus a detached
-/// `latest.json.sig`, verifies with the baked minisign key, allow-lists the
-/// artifact URL. Does not download the artifact.
+/// Checks for a newer version when the user asks for it on the unlock screen.
+///
+/// Fetches `latest.json` plus a detached `latest.json.sig`, verifies with the
+/// baked minisign key, allow-lists the artifact URL. Does not download the
+/// artifact.
 ///
 /// HTTP is `ureq` on the blocking pool so the async runtime is not stalled.
 #[tauri::command]
@@ -180,13 +182,16 @@ impl Drop for PendingInstall<'_> {
     }
 }
 
-/// Install is only legal from [`UpdateStatus::Available`]. Downloads outside the
-/// vault data dir, verifies hash and signature, then execs that verified path.
+/// Installs the update the last check offered.
+///
+/// Downloads into the updater cache, outside the vault data dir, verifies hash
+/// and signature in memory, writes the verified file, then execs that path.
 /// A copy replaced in place restarts into the new version. On Windows the
 /// installer process replaces the files, so the app exits and the installer
 /// starts the new version.
 ///
-/// From Idle / Failed / Checking this is a typed hard error, not a silent no-op.
+/// From any state but [`UpdateStatus::Available`] this is a typed hard error,
+/// not a silent no-op.
 #[tauri::command]
 pub(crate) async fn update_install(
     app: tauri::AppHandle,
@@ -223,7 +228,8 @@ pub(crate) async fn update_install(
     }
 }
 
-/// Shared install path used by IPC. Download → verify on disk → exec that path.
+/// Runs the install for the IPC command: downloads, verifies in memory,
+/// writes the verified file, then execs that path.
 ///
 /// Does not call a plugin check and does not read an unsigned feed URL.
 ///

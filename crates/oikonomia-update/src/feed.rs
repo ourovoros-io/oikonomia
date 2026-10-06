@@ -31,7 +31,8 @@ pub struct FeedArtifact {
 }
 
 impl FeedArtifact {
-    /// Checks that no text field is empty or only whitespace.
+    /// Checks that the platform, the file name and the signature are not
+    /// empty or only whitespace.
     ///
     /// # Errors
     ///
@@ -48,30 +49,6 @@ impl FeedArtifact {
             None => Ok(()),
         }
     }
-}
-
-/// One platform's entry as it is written into the manifest.
-#[derive(Serialize)]
-struct ManifestPlatform {
-    /// Where the app downloads the artifact from.
-    url: String,
-    /// The minisign signature over the artifact.
-    signature: String,
-    /// The lowercase hex SHA-256 of the artifact.
-    sha256: String,
-}
-
-/// The manifest as it is written. The client's reading side is
-/// `RawManifest` in `client.rs`; a property test there parses what this
-/// writes.
-#[derive(Serialize)]
-struct Manifest {
-    /// The published version, without a leading `v`.
-    version: String,
-    /// The release notes as given. The client escapes them when it reads.
-    notes: String,
-    /// The artifact of each platform, by platform key, in sorted order.
-    platforms: BTreeMap<String, ManifestPlatform>,
 }
 
 /// Builds the exact `latest.json` body the update client parses.
@@ -126,6 +103,30 @@ pub fn assemble_manifest(
         platforms,
     };
     serde_json::to_string_pretty(&manifest).map_err(|_| UpdateError::ManifestParse)
+}
+
+/// One platform's entry as it is written into the manifest.
+#[derive(Serialize)]
+struct ManifestPlatform {
+    /// Where the app downloads the artifact from.
+    url: String,
+    /// The minisign signature over the artifact.
+    signature: String,
+    /// The lowercase hex SHA-256 of the artifact.
+    sha256: String,
+}
+
+/// The manifest as it is written. The client's reading side is
+/// `RawManifest` in `client.rs`; a property test there parses what this
+/// writes.
+#[derive(Serialize)]
+struct Manifest {
+    /// The published version, without a leading `v`.
+    version: String,
+    /// The release notes as given. The client escapes them when it reads.
+    notes: String,
+    /// The artifact of each platform, by platform key, in sorted order.
+    platforms: BTreeMap<String, ManifestPlatform>,
 }
 
 #[cfg(test)]

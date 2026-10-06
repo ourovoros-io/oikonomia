@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// `kind` is the discriminant the webview matches on. The variants that
 /// report a newer version carry its version and escaped notes only, never a
 /// URL, a signature or a key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UpdateStatus {
     /// No check has been requested this session.

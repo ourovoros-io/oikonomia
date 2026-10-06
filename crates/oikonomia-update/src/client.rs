@@ -38,7 +38,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use url::Url;
 
-/// `latest.json` of the newest published release in the source repository.
+/// The URL of `latest.json` in the newest published release of the source
+/// repository.
+///
 /// GitHub resolves `releases/latest` to published, non-prerelease releases
 /// only, so a draft awaiting promotion is never offered.
 /// Trust is the baked minisign key, not GitHub.
@@ -72,19 +74,24 @@ pub(crate) const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
 /// host to add a hop, and the limit ends a redirect loop.
 pub(crate) const MAX_REDIRECTS: u8 = 5;
 
-/// Bounds one whole feed or signature request: connecting, then everything up
-/// to the last byte of the body. A redirect starts a new request with a new
-/// deadline. A slow DNS lookup may exceed it: ureq cannot interrupt one
-/// (`AgentBuilder::timeout` docs).
+/// The time limit of one whole feed or signature request.
+///
+/// It covers connecting and then everything up to the last byte of the
+/// body. A redirect starts a new request with a new deadline. A slow DNS
+/// lookup may exceed it: ureq cannot interrupt one (`AgentBuilder::timeout`
+/// docs).
 const METADATA_DEADLINE: Duration = Duration::from_secs(20);
 
-/// Bounds opening the connection for one artifact request. The DNS lookup
-/// before it is not bounded, for the reason given above.
+/// The time limit for opening the connection of one artifact request.
+///
+/// The DNS lookup before it is not bounded, for the reason given above.
 const ARTIFACT_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Bounds each socket read of an artifact response. A download that stalls
-/// for this long fails; one that keeps delivering bytes has no time limit,
-/// because an artifact of up to [`MAX_ARTIFACT_BYTES`] can take minutes.
+/// The time limit of each socket read of an artifact response.
+///
+/// A download that stalls for this long fails; one that keeps delivering
+/// bytes has no time limit, because an artifact of up to
+/// [`MAX_ARTIFACT_BYTES`] can take minutes.
 const ARTIFACT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// How this copy of the app receives a new version.
@@ -147,9 +154,10 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
-    /// Builds the configuration the desktop uses: the feed URL and host
-    /// allow-list built into this crate, and the platform this binary was
-    /// compiled for.
+    /// Builds the configuration the desktop uses.
+    ///
+    /// The feed URL and the host allow-list are the ones built into this
+    /// crate, and the platform is the one this binary was compiled for.
     ///
     /// `public_key` is the updater minisign key, as the key file or the
     /// base64 of it. `current_version` is the running version, with or
@@ -323,8 +331,8 @@ pub trait ArtifactInstaller {
 pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
     match perform_check_inner(config) {
         Ok(outcome) => outcome,
-        Err(err) => {
-            log_failure("update check failed", &err);
+        Err(error) => {
+            log_failure("update check failed", &error);
             CheckOutcome::Failed
         }
     }
@@ -350,8 +358,8 @@ pub fn install_offer(
 ) -> InstallOutcome {
     let path = match download_and_verify(config, offer) {
         Ok(path) => path,
-        Err(err) => {
-            log_failure("update install verify failed", &err);
+        Err(error) => {
+            log_failure("update install verify failed", &error);
             return InstallOutcome::Failed;
         }
     };
@@ -364,8 +372,8 @@ pub fn install_offer(
         Ok(InstallHandoff::InstallerStarted) => {
             InstallOutcome::Installed(InstallHandoff::InstallerStarted)
         }
-        Err(err) => {
-            log_failure("update install exec failed", &err);
+        Err(error) => {
+            log_failure("update install exec failed", &error);
             delete_artifact(&path);
             InstallOutcome::Failed
         }
@@ -388,8 +396,9 @@ pub(crate) fn current_updater_platform() -> String {
 ///
 /// # Errors
 ///
-/// Returns [`UpdateError::ArtifactUrl`] when the feed URL, a redirect from
-/// it, or the artifact URL in the manifest is off the allow-list;
+/// Returns [`UpdateError::ArtifactUrl`] when the feed URL or a redirect from
+/// it is off the allow-list, or the artifact URL in the manifest does not
+/// parse, is off the allow-list or ends in `.deb`;
 /// [`UpdateError::Network`] when the feed or its signature cannot be fetched;
 /// [`UpdateError::ResponseTooLarge`] when either exceeds its size limit;
 /// [`UpdateError::ManifestSignature`] when the signature is absent or does
@@ -472,9 +481,9 @@ pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) 
 
     match download_and_verify_into(config, offer, &destination) {
         Ok(()) => Ok(destination),
-        Err(err) => {
+        Err(error) => {
             delete_artifact(&destination);
-            Err(err)
+            Err(error)
         }
     }
 }
@@ -483,17 +492,20 @@ pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) 
 ///
 /// Best effort: a file that cannot be removed, such as an installer that is
 /// still running on Windows, stays until a later download clears it. Every
-/// failure is logged and none is returned, because a leftover file does not
-/// stand in the way of the download that follows: its own file name is new.
+/// failure is logged and none is returned. A leftover of another release
+/// does not stand in the way of the download that follows, whose file name
+/// starts with its own digest. A leftover of the same release that cannot be
+/// removed does: the write refuses the existing path and the install fails
+/// with [`UpdateError::CacheIo`].
 ///
 /// Symbolic links are removed too, never followed: `file_type` describes the
 /// entry itself. Directories are left alone; this crate creates none here.
 pub(crate) fn purge_cache(cache_dir: &Path) {
     let entries = match std::fs::read_dir(cache_dir) {
         Ok(entries) => entries,
-        Err(err) => {
+        Err(error) => {
             log::warn!(
-                "updater cache could not be listed at {}: {err}",
+                "updater cache could not be listed at {}: {error}",
                 cache_dir.display()
             );
             return;
@@ -508,9 +520,9 @@ pub(crate) fn purge_cache(cache_dir: &Path) {
                     delete_artifact(&entry.path());
                 }
             }
-            Err(err) => {
+            Err(error) => {
                 log::warn!(
-                    "updater cache entry could not be read in {}: {err}",
+                    "updater cache entry could not be read in {}: {error}",
                     cache_dir.display()
                 );
             }
@@ -527,20 +539,21 @@ pub(crate) fn purge_cache(cache_dir: &Path) {
 pub(crate) fn delete_artifact(path: &Path) {
     match std::fs::remove_file(path) {
         Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
             log::warn!(
-                "updater artifact removal failed for {}: {err}",
+                "updater artifact removal failed for {}: {error}",
                 path.display()
             );
         }
     }
 }
 
-/// Writes `bytes` to a file that must not exist yet. `create_new` refuses an
-/// existing path, a symbolic link included, so the write cannot be
-/// redirected to a file outside the cache. On Unix the file is created with
-/// mode `0600`.
+/// Writes `bytes` to a file that must not exist yet.
+///
+/// `create_new` refuses an existing path, a symbolic link included, so the
+/// write cannot be redirected to a file outside the cache. On Unix the file
+/// is created with mode `0600`.
 ///
 /// # Errors
 ///
@@ -634,7 +647,7 @@ enum Fetched {
 }
 
 /// Why a fetch ended without a body or a 204.
-enum FetchFail {
+enum FetchFailure {
     /// No response arrived, a redirect could not be followed, or the body
     /// could not be read to its end.
     Network,
@@ -821,15 +834,15 @@ fn fetch(config: &ClientConfig, url: &Url, resource: Resource) -> Result<Fetched
         append_identity_query(&mut request_url, config);
     }
 
-    fetch_following_redirects(config, request_url, resource).map_err(|fail| match fail {
-        FetchFail::Denied => UpdateError::ArtifactUrl,
-        FetchFail::TooLarge => UpdateError::ResponseTooLarge,
+    fetch_following_redirects(config, request_url, resource).map_err(|failure| match failure {
+        FetchFailure::Denied => UpdateError::ArtifactUrl,
+        FetchFailure::TooLarge => UpdateError::ResponseTooLarge,
         // A feed published without its signature is a feed that cannot be
         // trusted, which is a different finding from a server in trouble.
-        FetchFail::Status(404) if matches!(resource, Resource::ManifestSignature) => {
+        FetchFailure::Status(404) if matches!(resource, Resource::ManifestSignature) => {
             UpdateError::ManifestSignature
         }
-        FetchFail::Status(_) | FetchFail::Network => UpdateError::Network,
+        FetchFailure::Status(_) | FetchFailure::Network => UpdateError::Network,
     })
 }
 
@@ -839,24 +852,24 @@ fn fetch_following_redirects(
     config: &ClientConfig,
     mut url: Url,
     resource: Resource,
-) -> std::result::Result<Fetched, FetchFail> {
+) -> std::result::Result<Fetched, FetchFailure> {
     let agent = agent_for(config, resource);
 
     let mut redirects_followed = 0_u8;
     loop {
         if !config.host_policy.is_allowed_fetch_url(&url) {
-            return Err(FetchFail::Denied);
+            return Err(FetchFailure::Denied);
         }
 
         // With `redirects(0)` ureq 2 hands a 3xx back as `Ok` (`connect` in
         // its `unit.rs`) and reports only a status of 400 or above as
         // `Error::Status` (the docs of that variant), so redirects are
         // followed here, one policy check per hop.
-        let response = agent.get(url.as_str()).call().map_err(|err| {
-            log::warn!("update fetch failed: {err}");
-            match err {
-                ureq::Error::Status(status, _) => FetchFail::Status(status),
-                ureq::Error::Transport(_) => FetchFail::Network,
+        let response = agent.get(url.as_str()).call().map_err(|error| {
+            log::warn!("update fetch failed: {error}");
+            match error {
+                ureq::Error::Status(status, _) => FetchFailure::Status(status),
+                ureq::Error::Transport(_) => FetchFailure::Network,
             }
         })?;
 
@@ -868,18 +881,18 @@ fn fetch_following_redirects(
             204 => return Ok(Fetched::NoContent),
             status if is_redirect(status) => {
                 if redirects_followed == MAX_REDIRECTS {
-                    return Err(FetchFail::Network);
+                    return Err(FetchFailure::Network);
                 }
                 redirects_followed += 1;
 
                 let Some(location) = response.header("Location") else {
-                    return Err(FetchFail::Network);
+                    return Err(FetchFailure::Network);
                 };
                 // A relative `Location` is resolved against the URL that
                 // sent it, as a browser does.
-                url = url.join(location).map_err(|_| FetchFail::Network)?;
+                url = url.join(location).map_err(|_| FetchFailure::Network)?;
             }
-            status => return Err(FetchFail::Status(status)),
+            status => return Err(FetchFailure::Status(status)),
         }
     }
 }
@@ -936,7 +949,7 @@ fn append_identity_query(url: &mut Url, config: &ClientConfig) {
 fn read_capped(
     response: ureq::Response,
     max_bytes: usize,
-) -> std::result::Result<Vec<u8>, FetchFail> {
+) -> std::result::Result<Vec<u8>, FetchFailure> {
     let mut reader = response.into_reader();
     let mut body = Vec::new();
     let mut chunk = [0_u8; 8192];
@@ -945,14 +958,15 @@ fn read_capped(
         let count = match reader.read(&mut chunk) {
             Ok(0) => return Ok(body),
             Ok(count) => count,
-            Err(_) => return Err(FetchFail::Network),
+            Err(_) => return Err(FetchFailure::Network),
         };
         if body.len().saturating_add(count) > max_bytes {
-            return Err(FetchFail::TooLarge);
+            return Err(FetchFailure::TooLarge);
         }
         body.extend_from_slice(&chunk[..count]);
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::write_new_private_file;
@@ -987,11 +1001,10 @@ mod tests {
 
 #[cfg(test)]
 mod properties {
-    use oikonomia_test_support::PROPERTY_CASES;
-    use proptest::prelude::*;
-
     use super::RawManifest;
     use crate::feed::{FeedArtifact, assemble_manifest};
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
 
     fn artifact() -> impl Strategy<Value = FeedArtifact> {
         (

@@ -26,9 +26,9 @@ pub type Result<T> = std::result::Result<T, UpdateError>;
 /// A failure of the update check, the install, or the release-side feed
 /// assembly.
 ///
-/// The enum is exhaustive on purpose. The crate is not published, and its one
-/// consumer maps every variant to a code, so a new variant should stop that
-/// crate from compiling until it is handled.
+/// The enum is exhaustive on purpose. The crate is not published, and the
+/// desktop crate maps every variant to a code, so a new variant should stop
+/// that crate from compiling until it is handled.
 #[derive(Debug, Error)]
 pub enum UpdateError {
     /// An install was begun while the machine held no offer this copy may
@@ -45,8 +45,9 @@ pub enum UpdateError {
     /// A request did not end in a usable response: the host could not be
     /// reached, the request timed out, the status was neither 200 nor 204
     /// (but see [`Self::ManifestSignature`] for a signature that is not
-    /// there), a redirect had no usable `Location`, there were more redirects
-    /// than the limit, or the body could not be read to its end.
+    /// there), an artifact request was answered 204, a redirect had no usable
+    /// `Location`, there were more redirects than the limit, or the body could
+    /// not be read to its end.
     #[error("update server could not be reached or answered with an error")]
     Network,
 
