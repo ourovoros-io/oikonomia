@@ -29,10 +29,10 @@ pub use machine::UpdateMachine;
 pub use notes::sanitize_notes;
 pub use release_set::{
     CHECKSUMS_FILE, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets, feed_entries,
-    fixed_name_copies, fixed_names, is_published_asset,
+    feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
 };
 pub use status::UpdateStatus;
-pub use verify::{parse_public_key, verify_manifest_bytes};
+pub use verify::{parse_public_key, verify_manifest_bytes, verify_minisign};
 
 #[cfg(test)]
 mod tests;
