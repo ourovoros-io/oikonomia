@@ -5,6 +5,18 @@
 //! new contents visible, so a crash leaves either the old file or the new
 //! one. The sibling sits in the destination's directory because a rename is
 //! only atomic within one filesystem.
+//!
+//! Two kinds of removal are kept apart by name. `remove_*` returns the
+//! error, for a step whose failure must stop the caller. `discard_*` logs
+//! it, for cleanup on a path that is already returning an error or that
+//! leaves nothing worse than a stale file behind.
+//!
+//! Every write here creates its file through `vault::permissions`, so a
+//! file this module creates is owner-only before its first byte is written.
+//!
+//! `local_iso_date` is here as well: the backup and the export, the two
+//! callers outside the vault proper, both stamp their default file name
+//! with it.
 
 use std::fs::{self, File};
 use std::io::{self, Write};
