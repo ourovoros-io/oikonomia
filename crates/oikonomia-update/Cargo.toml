@@ -25,6 +25,7 @@ url = { version = "2", features = ["serde"] }
 httptest = "0.16"
 minisign = "0.9"
 oikonomia-test-support = { workspace = true }
+proptest = { workspace = true }
 tempfile = { workspace = true }
 
 [lints]

@@ -2815,3 +2815,70 @@ mod jumbled_extract {
         );
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// Words, amounts and dates an invoice reader looks for, in the scripts
+    /// the app supports.
+    const FRAGMENTS: [&str; 20] = [
+        "Total",
+        "ΣΥΝΟΛΟ",
+        "Σύνολο",
+        "Montant",
+        "Betrag",
+        "IBAN",
+        "RF",
+        "GR",
+        "€",
+        "EUR",
+        "1.234,56",
+        "1,234.56",
+        "12/03/2026",
+        "2026-03-12",
+        ":",
+        "：",
+        "ΦΠΑ",
+        "Rechnung",
+        "N°",
+        "\u{feff}",
+    ];
+
+    /// Lines built from [`FRAGMENTS`], which reach the parsing code that
+    /// arbitrary text almost never does.
+    fn invoice_like_text() -> impl Strategy<Value = String> {
+        let fragment = prop::sample::select(FRAGMENTS.to_vec());
+        let separator = prop::sample::select(vec!["", " ", "\n", "\t"]);
+
+        prop::collection::vec((fragment, separator), 0..40).prop_map(|pieces| {
+            pieces
+                .into_iter()
+                .flat_map(|(fragment, separator)| [fragment, separator])
+                .collect()
+        })
+    }
+
+    const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn reading_any_text_returns_instead_of_panicking(text in any::<String>()) {
+            for locale in LOCALES {
+                let _ = parse_invoice_text(&text, locale);
+            }
+        }
+
+        #[test]
+        fn reading_invoice_like_text_returns_instead_of_panicking(text in invoice_like_text()) {
+            for locale in LOCALES {
+                let _ = parse_invoice_text(&text, locale);
+            }
+        }
+    }
+}

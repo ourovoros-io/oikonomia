@@ -624,3 +624,62 @@ mod tests {
         assert!(repair_xref_offsets(data).is_none());
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// The byte sequences the repair searches a file for.
+    const FRAGMENTS: [&[u8]; 12] = [
+        b"xref\n",
+        b"startxref\n",
+        b"/Prev ",
+        b"trailer\n",
+        b"1 0 obj",
+        b"endobj\n",
+        b"0000000009 00000 n \n",
+        b"0000000000 65535 f \n",
+        b"0 2\n",
+        b"7",
+        b"99999999999999999999",
+        b"%%EOF",
+    ];
+
+    /// Files built from [`FRAGMENTS`] and stray bytes, which reach the repair
+    /// code that arbitrary bytes almost never do.
+    fn pdf_like_bytes() -> impl Strategy<Value = Vec<u8>> {
+        let piece = prop_oneof![
+            4 => prop::sample::select(FRAGMENTS.to_vec()).prop_map(<[u8]>::to_vec),
+            1 => prop::collection::vec(any::<u8>(), 0..8),
+        ];
+
+        prop::collection::vec(piece, 0..24).prop_map(|pieces| pieces.concat())
+    }
+
+    /// Checks the one thing every repair promises: a file of the same length.
+    fn assert_repair_keeps_the_length(data: &[u8]) -> Result<(), TestCaseError> {
+        if let Some(repaired) = repair_xref_offsets(data) {
+            prop_assert_eq!(repaired.len(), data.len());
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn repairing_any_bytes_keeps_the_length(
+            data in prop::collection::vec(any::<u8>(), 0..512),
+        ) {
+            assert_repair_keeps_the_length(&data)?;
+        }
+
+        #[test]
+        fn repairing_pdf_like_bytes_keeps_the_length(data in pdf_like_bytes()) {
+            assert_repair_keeps_the_length(&data)?;
+        }
+    }
+}

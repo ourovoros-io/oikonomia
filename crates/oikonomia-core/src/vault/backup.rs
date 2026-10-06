@@ -1444,3 +1444,59 @@ mod tests {
         (dir, vault)
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    /// Bytes of three kinds: anything; the magic and version followed by
+    /// anything; and well-formed members cut off at an arbitrary byte.
+    fn archive_bytes() -> impl Strategy<Value = Vec<u8>> {
+        let anything = prop::collection::vec(any::<u8>(), 0..512);
+        let past_the_version = anything.clone().prop_map(|rest| {
+            let mut bytes = MAGIC.to_vec();
+            bytes.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+            bytes.extend(rest);
+            bytes
+        });
+
+        let name = prop::sample::select(vec![MEMBER_HEADER, MEMBER_DB, "other"]);
+        let member = (name, prop::collection::vec(any::<u8>(), 0..64));
+        let cut_members = (
+            prop::collection::vec(member, 0..4),
+            any::<prop::sample::Index>(),
+        )
+            .prop_map(|(members, cut)| {
+                let members: Vec<(&str, &[u8])> = members
+                    .iter()
+                    .map(|(name, data)| (*name, data.as_slice()))
+                    .collect();
+                let mut bytes = encode_members(&members).unwrap();
+                bytes.truncate(cut.index(bytes.len() + 1));
+                bytes
+            });
+
+        prop_oneof![anything, past_the_version, cut_members]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn unpacking_any_bytes_returns_instead_of_panicking(bytes in archive_bytes()) {
+            let dir = TempDir::new().unwrap();
+            let archive = dir.path().join("archive");
+            fs::write(&archive, &bytes).unwrap();
+
+            let _ = unpack_archive_to_staging(
+                &archive,
+                &dir.path().join("header"),
+                &dir.path().join("database"),
+            );
+        }
+    }
+}

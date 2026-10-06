@@ -2,7 +2,13 @@
 //!
 //! A dev-dependency only: nothing here is compiled into the application.
 //! It holds [`listed_variants!`], which the tests of the hand-written `ALL`
-//! lists are built on.
+//! lists are built on, and [`PROPERTY_CASES`], the size of a property test.
+
+/// The number of cases each property test runs.
+///
+/// Miri interprets every case, which is far slower than running it, so only
+/// a few cases run there.
+pub const PROPERTY_CASES: u32 = if cfg!(miri) { 8 } else { 256 };
 
 /// Lists the variants of an enumeration once and derives from that single list
 /// everything a code-list guard needs.

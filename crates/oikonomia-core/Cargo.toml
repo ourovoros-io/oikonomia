@@ -34,6 +34,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 oikonomia-test-support = { workspace = true }
+proptest = { workspace = true }
 rand = { workspace = true }
 # `limits` lets a test lower SQLite's bound-variable limit on its connection.
 rusqlite = { workspace = true, features = ["limits"] }

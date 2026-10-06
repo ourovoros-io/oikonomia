@@ -106,3 +106,48 @@ pub(crate) fn to_hex(bytes: &[u8]) -> String {
 pub fn verify_manifest_bytes(key: &PublicKey, body: &[u8], signature: &str) -> Result<()> {
     verify_minisign(key, body, signature)
 }
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::parse_sha256_hex;
+
+    fn hex(digest: [u8; 32], uppercase: bool) -> String {
+        digest
+            .iter()
+            .map(|byte| {
+                if uppercase {
+                    format!("{byte:02X}")
+                } else {
+                    format!("{byte:02x}")
+                }
+            })
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn a_digest_written_as_hex_parses_back(
+            digest in any::<[u8; 32]>(),
+            uppercase in any::<bool>(),
+        ) {
+            let parsed = parse_sha256_hex(&hex(digest, uppercase));
+
+            prop_assert!(matches!(parsed, Ok(bytes) if bytes == digest), "{:?}", parsed);
+        }
+
+        #[test]
+        fn parsing_any_text_returns_instead_of_panicking(text in any::<String>()) {
+            let _ = parse_sha256_hex(&text);
+        }
+
+        #[test]
+        fn parsing_any_64_characters_returns_instead_of_panicking(text in "\\PC{64}") {
+            let _ = parse_sha256_hex(&text);
+        }
+    }
+}
