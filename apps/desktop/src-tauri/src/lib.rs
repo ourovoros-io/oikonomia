@@ -1,10 +1,7 @@
 //! Tauri application entry: thin IPC over `oikonomia-core`.
 
 // Tauri commands take `State<'_, T>` by value (framework convention).
-// Shell startup uses expect/process::exit via the Tauri runtime.
 #![allow(clippy::needless_pass_by_value)]
-#![allow(clippy::expect_used)]
-#![allow(clippy::exit)]
 
 mod commands;
 #[cfg(test)]
@@ -36,7 +33,7 @@ use tauri::Manager;
 /// Panics if the Tauri runtime itself cannot be built.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    with_desktop_plugins(
+    let builder = with_desktop_plugins(
         with_single_instance(tauri::Builder::default()).plugin(nav_guard::plugin()),
     )
     .setup(|app| {
@@ -48,10 +45,18 @@ pub fn run() {
         Ok(())
     })
     .invoke_handler(ipc_commands())
-    .on_window_event(on_window_event)
-    .build(tauri::generate_context!())
-    .expect("failed to start Oikonomia")
-    .run(on_run_event);
+    .on_window_event(on_window_event);
+
+    #[expect(
+        clippy::expect_used,
+        reason = "without a runtime there is no window or dialog to report through, \
+                  so the panic message is the report"
+    )]
+    let app = builder
+        .build(tauri::generate_context!())
+        .expect("failed to start Oikonomia");
+
+    app.run(on_run_event);
 }
 
 /// Sets up the state, the tray and the idle watchdog.
