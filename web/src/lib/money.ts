@@ -229,5 +229,5 @@ export function parseEuropeanDateToISO(input: string): string | null {
   }
 
   if (m < 1 || m > 12 || d < 1 || d > daysInMonth(y, m)) return null
-  return `${y}-${pad2(m)}-${pad2(d)}`
+  return `${String(y).padStart(4, '0')}-${pad2(m)}-${pad2(d)}`
 }
