@@ -1,12 +1,14 @@
 //! Tauri command handlers (thin wrappers over core + state).
 
 mod app;
+mod entities;
 mod support;
 mod vault;
 
 // A command is a function plus a hidden macro that `generate_handler!`
 // looks up beside it; a glob carries both, a named re-export does not.
 pub(crate) use self::app::*;
+pub(crate) use self::entities::*;
 pub(crate) use self::vault::*;
 
 use crate::commands::support::{
@@ -27,22 +29,18 @@ use oikonomia_core::documents::{
     analyze_document_bytes, analyzer_status, attach_document, delete_document, get_document,
     list_documents, post_simple_entry_with_document, suggest_accounts_for_entity,
 };
-use oikonomia_core::domain::{
-    Account, AccountId, Entity, EntityId, JournalEntryId, RecurringTemplateId,
-};
+use oikonomia_core::domain::{Account, AccountId, EntityId, JournalEntryId, RecurringTemplateId};
 use oikonomia_core::ledger::{
-    BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplate,
-    DashboardSummary, EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView,
-    RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
-    UpdateRecurringTemplate, VoidResult, account_balance, account_register, activity_window,
-    archive_account, archive_entity, balance_sheet, cash_flow_series, create_account,
-    create_entity, create_recurring_template, dashboard_summary, delete_entity,
+    BalanceSheet, CashFlowSeries, CreateAccount, CreateRecurringTemplate, DashboardSummary,
+    EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView, RecurringPostResult,
+    RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount, UpdateRecurringTemplate,
+    VoidResult, account_balance, account_register, activity_window, archive_account, balance_sheet,
+    cash_flow_series, create_account, create_recurring_template, dashboard_summary,
     delete_recurring_template, get_entity, get_entry, get_lock_timeout_secs,
-    get_recurring_template, list_accounts, list_entities, list_entries, list_recurring_templates,
-    post_entry, post_recurring_template, post_simple_entry, profit_and_loss,
-    profit_and_loss_export, replace_simple_entry, set_account_opening_balance, set_entry_hidden,
-    set_lock_timeout_secs, trial_balance, update_account, update_entity, update_recurring_template,
-    void_entry,
+    get_recurring_template, list_accounts, list_entries, list_recurring_templates, post_entry,
+    post_recurring_template, post_simple_entry, profit_and_loss, profit_and_loss_export,
+    replace_simple_entry, set_account_opening_balance, set_entry_hidden, set_lock_timeout_secs,
+    trial_balance, update_account, update_recurring_template, void_entry,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, resolve_locale,
@@ -52,69 +50,6 @@ use oikonomia_core::util::{format_date, utc_today};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
-
-// --- Entities --------------------------------------------------------------
-
-/// List non-archived entities.
-#[tauri::command]
-pub(crate) async fn entity_list(state: State<'_, AppState>) -> CommandResult<Vec<Entity>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        list_entities(conn)
-    })
-    .await
-}
-
-/// Create entity with chart template.
-#[tauri::command]
-pub(crate) async fn entity_create(
-    state: State<'_, AppState>,
-    input: CreateEntity,
-) -> CommandResult<Entity> {
-    // The seeded account names are written in the language the app is set to
-    // now. It comes from the stored preference, never from the webview.
-    let locale = stored_text_locale(&state);
-
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        create_entity(conn, &input, locale)
-    })
-    .await
-}
-
-/// Rename entity.
-#[tauri::command]
-pub(crate) async fn entity_update(
-    state: State<'_, AppState>,
-    id: EntityId,
-    name: String,
-) -> CommandResult<Entity> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        update_entity(conn, id, &name)
-    })
-    .await
-}
-
-/// Archive entity (soft-hide).
-#[tauri::command]
-pub(crate) async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        archive_entity(conn, id)
-    })
-    .await
-}
-
-/// Permanently delete an entity and all of its books data.
-#[tauri::command]
-pub(crate) async fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        delete_entity(conn, id)
-    })
-    .await
-}
 
 // --- Accounts --------------------------------------------------------------
 
