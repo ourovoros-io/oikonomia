@@ -1719,7 +1719,7 @@ fn manifest_one_byte_over_the_size_cap_is_refused() {
         Duration::from_secs(2),
     );
 
-    assert_eq!(check_error_code(&config), "update_network");
+    assert_eq!(check_error_code(&config), "update_response_too_large");
 }
 
 #[test]
@@ -1742,7 +1742,7 @@ fn manifest_signature_over_the_size_cap_is_refused() {
         Duration::from_secs(2),
     );
 
-    assert_eq!(check_error_code(&config), "update_network");
+    assert_eq!(check_error_code(&config), "update_response_too_large");
 }
 
 #[test]
@@ -1752,7 +1752,7 @@ fn artifact_over_the_size_cap_is_refused_and_leaves_no_file() {
     let cache = cache_dir();
     let artifact_address = serve_zero_bytes(MAX_ARTIFACT_BYTES + 1, 1 << 20, Duration::ZERO);
     // The manifest describes other bytes: read in full, the download would
-    // end as an integrity error, not a network one.
+    // end as an integrity error, not a size one.
     let config = config_for_artifact_at(
         &server,
         (&pk, &sk),
@@ -1764,7 +1764,7 @@ fn artifact_over_the_size_cap_is_refused_and_leaves_no_file() {
 
     let err = download_and_verify(&config, &offer).expect_err("over the cap");
 
-    assert_eq!(err.code(), "update_network");
+    assert_eq!(err.code(), "update_response_too_large");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -1975,4 +1975,66 @@ fn a_leading_v_in_the_feed_version_does_not_reach_the_status() {
             notes: "notes".into(),
         }
     );
+}
+
+#[test]
+fn a_running_version_that_is_not_semver_is_refused_as_an_invalid_version() {
+    let (pk, _sk) = test_keys();
+    let cache = cache_dir();
+
+    let err = ClientConfig::for_test(
+        Url::parse("http://127.0.0.1/latest.json").expect("url"),
+        &pk,
+        "nightly",
+        "linux-x86_64",
+        cache.path().to_path_buf(),
+        HostPolicy::test_http_hosts(["127.0.0.1"]),
+        Duration::from_secs(1),
+    )
+    .expect_err("not semver");
+
+    assert_eq!(err.code(), "update_invalid_version");
+}
+
+#[test]
+fn a_signed_manifest_whose_version_is_not_semver_fails_as_an_invalid_version() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let (body, signature) = signed_manifest(&server, &sk, "next");
+    serve_signed_manifest(&server, &body, &signature);
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    assert_eq!(check_error_code(&config), "update_invalid_version");
+}
+
+#[test]
+fn a_cache_directory_that_cannot_be_created_fails_as_a_cache_error() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let parent = cache_dir();
+    // A file where the cache directory should be: `create_dir_all` refuses.
+    let blocked = parent.path().join("updater");
+    std::fs::write(&blocked, b"not a directory").expect("file");
+    let config = serve_newer_release(
+        &server,
+        &pk,
+        &sk,
+        "/Oikonomia.AppImage",
+        b"appimage",
+        &blocked,
+    );
+    let offer = available_offer(&config);
+
+    let err = download_and_verify(&config, &offer).expect_err("no cache directory");
+
+    assert_eq!(err.code(), "update_cache_io");
+    assert!(std::error::Error::source(&err).is_some());
 }

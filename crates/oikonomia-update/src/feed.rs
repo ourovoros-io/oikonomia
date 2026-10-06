@@ -6,6 +6,7 @@
 
 use crate::error::{Result, UpdateError};
 use crate::verify::parse_sha256_hex;
+use crate::version::parse_version;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -22,6 +23,26 @@ pub struct FeedArtifact {
     pub sha256_hex: String,
 }
 
+impl FeedArtifact {
+    /// Checks that no text field is empty or only whitespace.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UpdateError::InvalidFeedInput`] naming the first empty field.
+    fn require_fields(&self) -> Result<()> {
+        let fields = [
+            ("platform", &self.platform),
+            ("file name", &self.file_name),
+            ("signature", &self.signature),
+        ];
+
+        match fields.iter().find(|(_, value)| value.trim().is_empty()) {
+            Some((field, _)) => Err(UpdateError::InvalidFeedInput { field }),
+            None => Ok(()),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct ManifestPlatform {
     url: String,
@@ -36,32 +57,36 @@ struct Manifest {
     platforms: BTreeMap<String, ManifestPlatform>,
 }
 
-/// Build the exact `latest.json` body the update client parses.
+/// Builds the exact `latest.json` body the update client parses.
+///
+/// `version` may carry the leading `v` of a release tag; the manifest holds
+/// the version without it. `base_url` is the release download URL the file
+/// names are appended to, with or without a trailing slash.
 ///
 /// # Errors
 ///
-/// [`UpdateError::ManifestParse`] when there are no artifacts, or an entry has
-/// an empty platform/file/signature. [`UpdateError::ArtifactIntegrity`] when
-/// `sha256_hex` is malformed (not 64 hex characters).
+/// Returns [`UpdateError::InvalidVersion`] when `version` is not `SemVer`,
+/// which the client would refuse; [`UpdateError::InvalidFeedInput`] when
+/// there are no artifacts or an artifact has an empty platform, file name or
+/// signature; and [`UpdateError::ArtifactIntegrity`] when a `sha256_hex` is
+/// not 64 hex characters. [`UpdateError::ManifestParse`] stands for a failure
+/// to serialize the manifest, which its fields (strings, and a map keyed by
+/// strings) give `serde_json` no reason for.
 pub fn assemble_manifest(
     version: &str,
     notes: &str,
     base_url: &str,
     artifacts: &[FeedArtifact],
 ) -> Result<String> {
-    if artifacts.is_empty() || version.trim().is_empty() {
-        return Err(UpdateError::ManifestParse);
+    let version = parse_version(version)?;
+    if artifacts.is_empty() {
+        return Err(UpdateError::InvalidFeedInput { field: "artifacts" });
     }
 
     let base = base_url.trim_end_matches('/');
     let mut platforms = BTreeMap::new();
     for artifact in artifacts {
-        if artifact.platform.trim().is_empty()
-            || artifact.file_name.trim().is_empty()
-            || artifact.signature.trim().is_empty()
-        {
-            return Err(UpdateError::ManifestParse);
-        }
+        artifact.require_fields()?;
         parse_sha256_hex(&artifact.sha256_hex)?;
         platforms.insert(
             artifact.platform.clone(),
@@ -74,7 +99,7 @@ pub fn assemble_manifest(
     }
 
     let manifest = Manifest {
-        version: version.trim().trim_start_matches('v').to_owned(),
+        version: version.to_string(),
         notes: notes.to_owned(),
         platforms,
     };
@@ -112,15 +137,72 @@ mod tests {
         assert_eq!(platform["sha256"], "ab".repeat(32));
     }
 
-    #[test]
-    fn assemble_rejects_empty_inputs() {
-        assert!(assemble_manifest("1.0.0", "", "https://example.com", &[]).is_err());
-        let bad_sha = vec![FeedArtifact {
+    fn artifact() -> FeedArtifact {
+        FeedArtifact {
             platform: "darwin-aarch64".to_owned(),
             file_name: "a.tar.gz".to_owned(),
             signature: "SIG".to_owned(),
+            sha256_hex: "ab".repeat(32),
+        }
+    }
+
+    fn error_of(version: &str, artifacts: &[FeedArtifact]) -> String {
+        assemble_manifest(version, "", "https://example.com", artifacts)
+            .expect_err("refused")
+            .to_string()
+    }
+
+    #[test]
+    fn assemble_names_the_input_that_is_empty() {
+        assert_eq!(error_of("1.0.0", &[]), "feed input is empty: artifacts");
+
+        let no_platform = FeedArtifact {
+            platform: " ".to_owned(),
+            ..artifact()
+        };
+        assert_eq!(
+            error_of("1.0.0", &[no_platform]),
+            "feed input is empty: platform"
+        );
+
+        let no_file_name = FeedArtifact {
+            file_name: String::new(),
+            ..artifact()
+        };
+        assert_eq!(
+            error_of("1.0.0", &[no_file_name]),
+            "feed input is empty: file name"
+        );
+
+        let no_signature = FeedArtifact {
+            signature: "\n".to_owned(),
+            ..artifact()
+        };
+        assert_eq!(
+            error_of("1.0.0", &[no_signature]),
+            "feed input is empty: signature"
+        );
+    }
+
+    #[test]
+    fn assemble_refuses_a_version_the_client_could_not_read() {
+        assert_eq!(error_of("", &[artifact()]), "version \"\" is not semver");
+        assert_eq!(
+            error_of("v1.0", &[artifact()]),
+            "version \"1.0\" is not semver"
+        );
+    }
+
+    #[test]
+    fn assemble_refuses_a_digest_that_is_not_sha256_hex() {
+        let bad_sha = FeedArtifact {
             sha256_hex: "zz".to_owned(),
-        }];
-        assert!(assemble_manifest("1.0.0", "", "https://example.com", &bad_sha).is_err());
+            ..artifact()
+        };
+
+        let err = assemble_manifest("1.0.0", "", "https://example.com", &[bad_sha])
+            .expect_err("bad digest");
+
+        assert_eq!(err.code(), "update_artifact_integrity");
     }
 }

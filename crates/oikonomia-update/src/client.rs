@@ -4,6 +4,7 @@ use crate::error::{Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
 use crate::verify::{parse_public_key, parse_sha256_hex, to_hex, verify_minisign};
+use crate::version::parse_version;
 use minisign_verify::PublicKey;
 use semver::Version;
 use serde::Deserialize;
@@ -109,7 +110,7 @@ impl ClientConfig {
     /// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or invalid,
     /// [`UpdateError::InvalidFeedUrl`] when the feed constant does not parse,
     /// [`UpdateError::ArtifactUrl`] when the feed constant is not on the production
-    /// allow-list, or [`UpdateError::ManifestParse`] when `current_version` is not
+    /// allow-list, or [`UpdateError::InvalidVersion`] when `current_version` is not
     /// `SemVer`.
     pub fn production(
         public_key: &str,
@@ -151,9 +152,7 @@ impl ClientConfig {
         metadata_deadline: Duration,
     ) -> Result<Self> {
         let public_key = parse_public_key(public_key)?;
-        let current_version = current_version.trim().trim_start_matches('v');
-        let current_version =
-            Version::parse(current_version).map_err(|_| UpdateError::ManifestParse)?;
+        let current_version = parse_version(current_version)?;
         Ok(Self {
             feed_url,
             public_key,
@@ -336,9 +335,22 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
     match perform_check_inner(config) {
         Ok(outcome) => outcome,
         Err(err) => {
-            log::warn!("update check failed: {err}");
+            log_failure("update check failed", &err);
             CheckOutcome::Failed
         }
+    }
+}
+
+/// Logs `error` under `context`, with its cause when it has one.
+///
+/// The message of an [`UpdateError`] leaves the cause out, so that it does
+/// not repeat it when a caller prints the chain. A failure that is only
+/// logged has no such caller, and without the cause a cache failure would
+/// not say which operation the system refused.
+fn log_failure(context: &str, error: &UpdateError) {
+    match std::error::Error::source(error) {
+        Some(cause) => log::warn!("{context}: {error}: {cause}"),
+        None => log::warn!("{context}: {error}"),
     }
 }
 
@@ -367,8 +379,7 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
     // The version is compared before the platform entry is read: a copy that
     // is already current has no use for an artifact, so a feed that lists
     // none for its platform is not a failure for it.
-    let remote = manifest.version.trim().trim_start_matches('v');
-    let remote = Version::parse(remote).map_err(|_| UpdateError::ManifestParse)?;
+    let remote = parse_version(&manifest.version)?;
     if remote <= config.current_version {
         return Ok(CheckOutcome::UpToDate);
     }
@@ -424,14 +435,13 @@ fn offer_from_manifest(
 ///
 /// Returns [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect
 /// from it, is off the allow-list; [`UpdateError::ArtifactIntegrity`] when the
-/// hash or the signature does not match; and [`UpdateError::Network`] when the
-/// download fails or exceeds the size cap, or when the cache directory or the
-/// file cannot be written.
+/// hash or the signature does not match; [`UpdateError::Network`] when the
+/// download fails or the server answers 204;
+/// [`UpdateError::ResponseTooLarge`] when the artifact exceeds
+/// [`MAX_ARTIFACT_BYTES`]; and [`UpdateError::CacheIo`] when the cache
+/// directory cannot be created or made private, or the file cannot be written.
 pub fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
-    if let Err(err) = prepare_cache_dir(&config.cache_dir) {
-        log::warn!("updater cache create failed: {err}");
-        return Err(UpdateError::Network);
-    }
+    prepare_cache_dir(&config.cache_dir).map_err(UpdateError::CacheIo)?;
     purge_cache(&config.cache_dir);
     let dest = config.cache_dir.join(format!(
         "{}-{}",
@@ -469,11 +479,7 @@ fn download_and_verify_inner(
     }
     verify_minisign(&config.public_key, &bytes, &offer.artifact_signature)
         .map_err(|_| UpdateError::ArtifactIntegrity)?;
-    write_new_private_file(dest, &bytes).map_err(|err| {
-        log::warn!("updater artifact write failed: {err}");
-        UpdateError::Network
-    })?;
-    Ok(())
+    write_new_private_file(dest, &bytes).map_err(UpdateError::CacheIo)
 }
 
 /// Creates the cache directory for this user only.
@@ -603,7 +609,8 @@ fn fetch_bytes(config: &ClientConfig, url: &Url, resource: Resource) -> Result<F
 
     fetch_once(config, &request_url, resource).map_err(|fail| match fail {
         FetchFail::Denied => UpdateError::ArtifactUrl,
-        FetchFail::TooLarge | FetchFail::Network => UpdateError::Network,
+        FetchFail::TooLarge => UpdateError::ResponseTooLarge,
+        FetchFail::Network => UpdateError::Network,
     })
 }
 
@@ -739,7 +746,7 @@ pub fn install_offer(
     let path = match download_and_verify(config, offer) {
         Ok(path) => path,
         Err(err) => {
-            log::warn!("update install verify failed: {err}");
+            log_failure("update install verify failed", &err);
             return InstallOutcome::Failed;
         }
     };
@@ -753,7 +760,7 @@ pub fn install_offer(
             InstallOutcome::Installed(InstallHandoff::InstallerStarted)
         }
         Err(err) => {
-            log::warn!("update install exec failed: {err}");
+            log_failure("update install exec failed", &err);
             delete_artifact(&path);
             InstallOutcome::Failed
         }
@@ -802,7 +809,8 @@ mod properties {
         // notes text must survive the trip, whatever JSON has to escape.
         #[test]
         fn an_assembled_manifest_parses_as_the_manifest_the_client_reads(
-            version in "v?[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
+            // No leading zeros: `SemVer` forbids them in a numeric part.
+            version in "v?(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})\\.(0|[1-9][0-9]{0,2})",
             notes in any::<String>(),
             artifacts in prop::collection::vec(artifact(), 1..4),
         ) {

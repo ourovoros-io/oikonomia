@@ -14,6 +14,7 @@ mod notes;
 pub mod release_set;
 mod status;
 mod verify;
+mod version;
 
 pub use client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
