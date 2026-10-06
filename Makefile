@@ -1,4 +1,4 @@
-.PHONY: app bundle test check smoke
+.PHONY: app bundle test check doc smoke
 
 # Run the desktop app in dev mode (vite + tauri, live reload).
 app:
@@ -15,6 +15,10 @@ smoke:
 # Core library tests.
 test:
 	cargo test -p oikonomia-core --locked
+
+# API docs with rustdoc warnings as errors, as the CI `docs` job runs them.
+doc:
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
 # Local quality gate (a subset of CI).
 check:
