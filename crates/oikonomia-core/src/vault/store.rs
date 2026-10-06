@@ -9,9 +9,11 @@ use rusqlite::{Connection, OpenFlags};
 use super::crypto::{self, VaultKey};
 use super::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
 use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
-use super::permissions::{create_private_dir, create_private_file, restrict_to_owner};
+use super::permissions::{create_private_dir, restrict_to_owner};
 use crate::db::register_fold;
 use crate::error::{Error, Result, ValidationError};
+use crate::vault::files::{discard_database_files, discard_file, write_private_file};
+use crate::vault::paths::vault_init_header_path;
 
 /// Lifecycle status for the vault (serializable to the UI).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -111,8 +113,8 @@ impl Vault {
         let header_path = vault_header_path(&self.data_dir);
         let header_json =
             serde_json::to_string_pretty(&header).map_err(|err| Error::Io(err.to_string()))?;
-        let staged_header = header_path.with_extension("json.init");
-        write_synced(&staged_header, header_json.as_bytes())?;
+        let staged_header = vault_init_header_path(&self.data_dir);
+        write_private_file(&staged_header, header_json.as_bytes())?;
         fs::rename(&staged_header, &header_path).map_err(|err| Error::Io(err.to_string()))?;
 
         let db_path = vault_db_path(&self.data_dir);
@@ -235,7 +237,7 @@ impl Vault {
             let staged_path = vault_staged_header_path(&self.data_dir);
             let header_json = serde_json::to_string_pretty(&new_header)
                 .map_err(|err| Error::Io(err.to_string()))?;
-            write_synced(&staged_path, header_json.as_bytes())?;
+            write_private_file(&staged_path, header_json.as_bytes())?;
 
             // Fold WAL pages into the main file so the rekey covers everything.
             let blocked: i64 = conn
@@ -399,44 +401,12 @@ fn silence_sqlcipher_log(_conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::io::Write;
-
-    let mut file = create_private_file(path)?;
-    file.write_all(bytes)
-        .map_err(|err| Error::Io(err.to_string()))?;
-    file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
-    sync_parent_dir(path);
-    Ok(())
-}
-
-/// Flush the directory entry of `path` so a rename or create survives a crash.
-///
-/// Best effort: Windows cannot open a directory as a file, and the file's own
-/// `sync_all` above already made the contents durable there.
-fn sync_parent_dir(path: &Path) {
-    if let Some(parent) = path.parent()
-        && let Ok(dir) = fs::File::open(parent)
-    {
-        let _ = dir.sync_all();
-    }
-}
-
-fn remove_vault_db_sidecars(db_path: &Path) {
-    let _ = fs::remove_file(db_path);
-    let wal = PathBuf::from(format!("{}-wal", db_path.display()));
-    let shm = PathBuf::from(format!("{}-shm", db_path.display()));
-    let _ = fs::remove_file(wal);
-    let _ = fs::remove_file(shm);
-}
-
 /// A failed first-run must not leave a header without a database — that
 /// shape looks Locked and cannot be initialized or unlocked.
 fn discard_partial_init(data_dir: &Path) {
-    let header_path = vault_header_path(data_dir);
-    remove_vault_db_sidecars(&vault_db_path(data_dir));
-    let _ = fs::remove_file(&header_path);
-    let _ = fs::remove_file(header_path.with_extension("json.init"));
+    discard_database_files(&vault_db_path(data_dir));
+    discard_file(&vault_header_path(data_dir));
+    discard_file(&vault_init_header_path(data_dir));
 }
 
 fn bootstrap_schema(conn: &Connection) -> Result<()> {
@@ -571,7 +541,7 @@ mod tests {
             return;
         };
         let header = vault_header_path(dir.path());
-        let staged = header.with_extension("json.init");
+        let staged = vault_init_header_path(dir.path());
         let db = vault_db_path(dir.path());
         if fs::write(&header, b"{}").is_err()
             || fs::write(&staged, b"{}").is_err()

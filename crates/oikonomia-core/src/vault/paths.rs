@@ -46,9 +46,58 @@ pub fn vault_staged_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json.tmp")
 }
 
+/// Staging path for the header of a vault that is being created.
+///
+/// [`crate::vault::Vault::init`] renames it to [`vault_header_path`] as its
+/// last step, so this file on its own means an unfinished first run.
+#[must_use]
+pub(crate) fn vault_init_header_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("vault.header.json.init")
+}
+
+/// Paths of the write-ahead log and the shared-memory index that `SQLite`
+/// keeps next to `db_path` in WAL mode, in that order.
+#[must_use]
+pub(crate) fn db_sidecar_paths(db_path: &Path) -> [PathBuf; 2] {
+    [
+        with_appended(db_path, "-wal"),
+        with_appended(db_path, "-shm"),
+    ]
+}
+
+/// Returns `path` with `suffix` appended to its last component.
+///
+/// Works on the `OsString`, so a path that is not valid UTF-8 keeps its
+/// bytes; formatting it through `Display` would replace them.
+#[must_use]
+pub(crate) fn with_appended(path: &Path, suffix: &str) -> PathBuf {
+    let mut appended = path.as_os_str().to_os_string();
+    appended.push(suffix);
+    PathBuf::from(appended)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidecars_sit_next_to_the_database() {
+        let [wal, shm] = db_sidecar_paths(Path::new("data/vault.db"));
+        assert_eq!(wal, PathBuf::from("data/vault.db-wal"));
+        assert_eq!(shm, PathBuf::from("data/vault.db-shm"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn sidecar_paths_keep_bytes_that_are_not_utf8() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let data_dir = Path::new(OsStr::from_bytes(b"/tmp/caf\xe9"));
+        let [wal, _shm] = db_sidecar_paths(&vault_db_path(data_dir));
+
+        assert_eq!(wal.as_os_str().as_bytes(), b"/tmp/caf\xe9/vault.db-wal");
+    }
 
     #[test]
     #[expect(clippy::expect_used, reason = "test fails loudly by design")]

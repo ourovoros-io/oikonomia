@@ -10,7 +10,7 @@
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rusqlite::Connection;
 
@@ -18,6 +18,10 @@ use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
 use super::permissions::{create_private_dir, create_private_file};
 use super::store::Vault;
 use crate::error::{Error, Result};
+use crate::vault::files::{
+    discard_database_files, discard_file, rename_synced, sibling_path, sync_parent_dir,
+};
+use crate::vault::paths::db_sidecar_paths;
 
 /// Unencrypted magic. Identifies the file; contains no secrets.
 pub const MAGIC: &[u8; 8] = b"OIKOBACK";
@@ -111,9 +115,11 @@ pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Resu
 
     fs::rename(&header_tmp, &header_dest).map_err(|err| Error::Io(err.to_string()))?;
     fs::rename(&db_tmp, &db_dest).map_err(|err| Error::Io(err.to_string()))?;
-    sync_parent(&header_dest);
+    sync_parent_dir(&header_dest);
 
-    remove_db_sidecars(&db_dest);
+    for sidecar in db_sidecar_paths(&db_dest) {
+        discard_file(&sidecar);
+    }
     let _ = fs::remove_file(vault_staged_header_path(data_dir));
     Ok(())
 }
@@ -179,16 +185,16 @@ fn backup_from_open_connection(conn: &Connection, data_dir: &Path, dest: &Path) 
     }
 
     let snap = data_dir.join(SNAPSHOT_DB_TMP);
-    discard_snapshot(&snap);
+    discard_database_files(&snap);
 
     let vacuum = vacuum_into_encrypted(conn, &snap);
     if let Err(err) = vacuum {
-        discard_snapshot(&snap);
+        discard_database_files(&snap);
         return Err(err);
     }
 
     let packed = write_archive_from_paths(&header_path, &snap, dest);
-    discard_snapshot(&snap);
+    discard_database_files(&snap);
     packed
 }
 
@@ -220,13 +226,8 @@ fn reject_plaintext_sqlite(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn discard_snapshot(path: &Path) {
-    let _ = fs::remove_file(path);
-    remove_db_sidecars(path);
-}
-
 fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> Result<()> {
-    let tmp = sibling_temp(dest, ".tmp")?;
+    let tmp = sibling_path(dest, ".tmp")?;
     let result = (|| {
         if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::create_dir_all(parent).map_err(|err| Error::Io(err.to_string()))?;
@@ -242,9 +243,7 @@ fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> 
         out.sync_all().map_err(|err| Error::Io(err.to_string()))?;
         drop(out);
 
-        fs::rename(&tmp, dest).map_err(|err| Error::Io(err.to_string()))?;
-        sync_parent(dest);
-        Ok(())
+        rename_synced(&tmp, dest)
     })();
 
     if result.is_err() {
@@ -433,34 +432,6 @@ fn read_exact_or_truncated(reader: &mut impl Read, buf: &mut [u8]) -> Result<()>
     })
 }
 
-fn sibling_temp(dest: &Path, suffix: &str) -> Result<PathBuf> {
-    let name = dest
-        .file_name()
-        .ok_or_else(|| Error::Io("backup destination has no file name".into()))?;
-    let mut tmp_name = name.to_os_string();
-    tmp_name.push(suffix);
-    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
-    Ok(match parent {
-        Some(parent) => parent.join(tmp_name),
-        None => PathBuf::from(tmp_name),
-    })
-}
-
-fn sync_parent(path: &Path) {
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty())
-        && let Ok(dir) = File::open(parent)
-    {
-        let _ = dir.sync_all();
-    }
-}
-
-fn remove_db_sidecars(db_path: &Path) {
-    let wal = PathBuf::from(format!("{}-wal", db_path.display()));
-    let shm = PathBuf::from(format!("{}-shm", db_path.display()));
-    let _ = fs::remove_file(wal);
-    let _ = fs::remove_file(shm);
-}
-
 /// Encode an archive from named members. Test helper for truncated/incomplete cases.
 #[cfg(test)]
 fn encode_members(members: &[(&str, &[u8])]) -> Result<Vec<u8>> {
@@ -478,6 +449,8 @@ fn encode_members(members: &[(&str, &[u8])]) -> Result<Vec<u8>> {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::vault::VaultStatus;
     use tempfile::TempDir;

@@ -2,6 +2,7 @@
 
 mod backup;
 mod crypto;
+mod files;
 mod header;
 mod paths;
 mod permissions;
