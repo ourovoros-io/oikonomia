@@ -145,17 +145,11 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 
     conn.execute(
         "
-        INSERT INTO entities (id, name, base_currency, fiscal_year_start_month, chart_template, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        INSERT INTO entities (
+            id, name, base_currency, fiscal_year_start_month, chart_template, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         ",
-        rusqlite::params![
-            id.0.to_string(),
-            name,
-            currency,
-            month,
-            template_s,
-            created,
-        ],
+        rusqlite::params![id.0.to_string(), name, currency, month, template_s, created,],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
