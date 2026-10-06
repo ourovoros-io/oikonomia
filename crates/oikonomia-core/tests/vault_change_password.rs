@@ -42,7 +42,11 @@ fn change_password_rekeys_vault() {
     let (dir, mut vault) = init_vault();
 
     vault.change_password(OLD, NEW).expect("change password");
-    assert_eq!(vault.status(), VaultStatus::Unlocked);
+    assert_eq!(
+        vault.status(),
+        VaultStatus::Unlocked,
+        "a vault that was unlocked stays unlocked"
+    );
 
     vault.lock();
     assert!(
@@ -55,6 +59,55 @@ fn change_password_rekeys_vault() {
     let mut reopened = Vault::open_path(dir.path()).expect("reopen");
     assert!(reopened.unlock(OLD).is_err());
     reopened.unlock(NEW).expect("new password after reopen");
+}
+
+#[test]
+fn change_password_on_a_locked_vault_leaves_it_locked() {
+    let (dir, mut vault) = init_vault();
+    vault.lock();
+
+    vault.change_password(OLD, NEW).expect("change password");
+
+    assert_eq!(
+        vault.status(),
+        VaultStatus::Locked,
+        "changing the password must not open a session nobody asked for"
+    );
+    assert_eq!(vault.unlock(OLD), Err(Error::InvalidPassword));
+    vault.unlock(NEW).expect("new password unlocks");
+
+    let mut reopened = Vault::open_path(dir.path()).expect("reopen");
+    reopened.unlock(NEW).expect("new password after reopen");
+}
+
+#[test]
+fn change_password_on_an_unlocked_vault_keeps_the_session_usable() {
+    let (_dir, mut vault) = init_vault();
+
+    vault.change_password(OLD, NEW).expect("change password");
+
+    assert_eq!(vault.status(), VaultStatus::Unlocked);
+    let schema_version: i64 = vault
+        .connection()
+        .expect("still unlocked")
+        .query_row("SELECT schema_version FROM vault_meta", [], |row| {
+            row.get(0)
+        })
+        .expect("the reopened connection reads under the new key");
+    assert!(schema_version >= 1);
+}
+
+#[test]
+fn a_locked_vault_stays_locked_when_the_old_password_is_wrong() {
+    let (_dir, mut vault) = init_vault();
+    vault.lock();
+
+    assert_eq!(
+        vault.change_password("not the password", NEW),
+        Err(Error::InvalidPassword)
+    );
+    assert_eq!(vault.status(), VaultStatus::Locked);
+    vault.unlock(OLD).expect("old password still valid");
 }
 
 #[test]

@@ -560,6 +560,7 @@ describe('TransactionsPage CSV mapping and preview', () => {
         debit: null,
         credit: null,
         reference: null,
+        direction: null,
       },
     })
     await waitFor(() => {

@@ -21,6 +21,8 @@ export type CsvMapDraft = {
   debit: string
   credit: string
   reference: string
+  /** Detected by Rust and sent back as is; the Map columns step has no control for it. */
+  direction: string
   amountMode: 'amount' | 'debit_credit'
 }
 
@@ -53,6 +55,7 @@ export function draftFromDetected(headers: string[], detected: CsvColumnMapping)
     debit: amountMode === 'debit_credit' ? matchHeader(headers, detected.debit) : '',
     credit: amountMode === 'debit_credit' ? matchHeader(headers, detected.credit) : '',
     reference: matchHeader(headers, detected.reference),
+    direction: matchHeader(headers, detected.direction),
     amountMode,
   }
 }
@@ -67,6 +70,8 @@ export function draftToMapping(draft: CsvMapDraft): CsvColumnMapping {
       debit: orNull(draft.debit),
       credit: orNull(draft.credit),
       reference: orNull(draft.reference),
+      // Debit and credit columns already say which way the money moved.
+      direction: null,
     }
   }
   return {
@@ -76,6 +81,7 @@ export function draftToMapping(draft: CsvMapDraft): CsvColumnMapping {
     debit: null,
     credit: null,
     reference: orNull(draft.reference),
+    direction: orNull(draft.direction),
   }
 }
 
@@ -90,7 +96,8 @@ export function mappingsEqual(a: CsvColumnMapping, b: CsvColumnMapping): boolean
     normHeader(a.amount) === normHeader(b.amount) &&
     normHeader(a.debit) === normHeader(b.debit) &&
     normHeader(a.credit) === normHeader(b.credit) &&
-    normHeader(a.reference) === normHeader(b.reference)
+    normHeader(a.reference) === normHeader(b.reference) &&
+    normHeader(a.direction) === normHeader(b.direction)
   )
 }
 
@@ -102,7 +109,8 @@ export function draftsEqual(a: CsvMapDraft, b: CsvMapDraft): boolean {
     a.amount === b.amount &&
     a.debit === b.debit &&
     a.credit === b.credit &&
-    a.reference === b.reference
+    a.reference === b.reference &&
+    a.direction === b.direction
   )
 }
 

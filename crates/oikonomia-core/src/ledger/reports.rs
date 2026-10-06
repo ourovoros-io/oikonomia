@@ -2,13 +2,14 @@
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use time::Date;
+use time::{Date, Month};
 
-use crate::domain::{AccountType, EntityId};
+use crate::db::{corrupt_column, read_column};
+use crate::domain::{AccountType, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{
-    ACTIVE_ENTRY_PREDICATE, account_type_str, normal_balance, parse_account_type, sum_types_as_of,
-    sum_types_in_range,
+    ACTIVE_ENTRY_PREDICATE, account_type_str, add_minor, normal_balance, parse_account_type,
+    subtract_minor, sum_minor, sum_types_as_of, sum_types_in_range,
 };
 use crate::ledger::entities::get_entity;
 use crate::util::{format_date, parse_date};
@@ -127,7 +128,8 @@ pub struct DashboardSummary {
     pub entity_id: EntityId,
     /// Currency code.
     pub base_currency: String,
-    /// Sum of asset accounts as of `to`.
+    /// Sum of asset accounts as of the `assets_as_of` date given to
+    /// [`dashboard_summary`], which need not be the window's `to`.
     pub cash_like_assets: i64,
     /// Income in period.
     pub income: i64,
@@ -173,51 +175,43 @@ pub struct TopExpense {
 ///
 /// # Errors
 ///
-/// Validation or DB errors.
+/// [`Error::Validation`] for a malformed date;
+/// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
+/// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
+/// that does not parse; database errors as [`Error::Io`].
 pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<TrialBalance> {
     let as_of_d = parse_date(as_of)?;
     let entity = get_entity(conn, entity_id)?;
-    let close = unclosed_pnl(conn, entity_id, as_of_d, entity.fiscal_year_start_month)?;
+    let close = unclosed_pnl(conn, entity_id, as_of_d, fiscal_start_month(&entity)?)?;
 
     let mut lines = Vec::new();
-    let mut total_debits = 0_i64;
-    let mut total_credits = 0_i64;
-
-    let mut push = |line: ReportLine| {
-        if line.debit_minor == 0 && line.credit_minor == 0 {
-            return;
-        }
-        total_debits = total_debits.saturating_add(line.debit_minor);
-        total_credits = total_credits.saturating_add(line.credit_minor);
-        lines.push(line);
-    };
 
     for account_type in [
         AccountType::Asset,
         AccountType::Liability,
         AccountType::Equity,
     ] {
-        for line in as_of_lines(conn, entity_id, account_type, as_of_d)? {
-            push(line);
-        }
+        lines.extend(as_of_lines(conn, entity_id, account_type, as_of_d)?);
     }
 
     if close.prior_net != 0 {
-        push(retained_earnings_line(close.prior_net));
+        lines.push(retained_earnings_line(close.prior_net)?);
     }
 
     for account_type in [AccountType::Income, AccountType::Expense] {
-        for line in period_lines(
+        lines.extend(period_lines(
             conn,
             entity_id,
             account_type,
             close.fy_start,
             as_of_d,
             false,
-        )? {
-            push(line);
-        }
+        )?);
     }
+
+    lines.retain(|line| line.debit_minor != 0 || line.credit_minor != 0);
+    let total_debits = sum_minor(lines.iter().map(|line| line.debit_minor))?;
+    let total_credits = sum_minor(lines.iter().map(|line| line.credit_minor))?;
 
     Ok(TrialBalance {
         entity_id,
@@ -232,7 +226,10 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
 ///
 /// # Errors
 ///
-/// Validation or DB errors.
+/// [`Error::Validation`] for a malformed date or an inverted range;
+/// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
+/// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
+/// that does not parse; database errors as [`Error::Io`].
 pub fn profit_and_loss(
     conn: &Connection,
     entity_id: EntityId,
@@ -248,7 +245,10 @@ pub fn profit_and_loss(
 ///
 /// # Errors
 ///
-/// Validation or DB errors.
+/// [`Error::Validation`] for a malformed date or an inverted range;
+/// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
+/// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
+/// that does not parse; database errors as [`Error::Io`].
 pub fn profit_and_loss_export(
     conn: &Connection,
     entity_id: EntityId,
@@ -289,9 +289,9 @@ fn profit_and_loss_filtered(
         omit_hidden,
     )?;
 
-    let total_income: i64 = income.iter().map(|l| l.balance_minor).sum();
-    let total_expenses: i64 = expenses.iter().map(|l| l.balance_minor).sum();
-    let net_income = total_income.saturating_sub(total_expenses);
+    let total_income = sum_minor(income.iter().map(|line| line.balance_minor))?;
+    let total_expenses = sum_minor(expenses.iter().map(|line| line.balance_minor))?;
+    let net_income = subtract_minor(total_income, total_expenses)?;
 
     Ok(PnL {
         entity_id,
@@ -310,7 +310,10 @@ fn profit_and_loss_filtered(
 ///
 /// # Errors
 ///
-/// Validation or DB errors.
+/// [`Error::Validation`] for a malformed date;
+/// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
+/// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
+/// that does not parse; database errors as [`Error::Io`].
 pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<BalanceSheet> {
     let as_of_d = parse_date(as_of)?;
     let entity = get_entity(conn, entity_id)?;
@@ -318,20 +321,20 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     let assets_lines = as_of_lines(conn, entity_id, AccountType::Asset, as_of_d)?;
     let liab_lines = as_of_lines(conn, entity_id, AccountType::Liability, as_of_d)?;
     let mut equity_lines = as_of_lines(conn, entity_id, AccountType::Equity, as_of_d)?;
-    let close = unclosed_pnl(conn, entity_id, as_of_d, entity.fiscal_year_start_month)?;
+    let close = unclosed_pnl(conn, entity_id, as_of_d, fiscal_start_month(&entity)?)?;
 
     if close.prior_net != 0 {
-        equity_lines.push(retained_earnings_line(close.prior_net));
+        equity_lines.push(retained_earnings_line(close.prior_net)?);
     }
 
     if close.current_net != 0 {
-        equity_lines.push(net_income_line(close.current_net));
+        equity_lines.push(net_income_line(close.current_net)?);
     }
 
-    let total_assets: i64 = assets_lines.iter().map(|l| l.balance_minor).sum();
-    let total_liab: i64 = liab_lines.iter().map(|l| l.balance_minor).sum();
-    let total_equity: i64 = equity_lines.iter().map(|l| l.balance_minor).sum();
-    let total_liabilities_equity = total_liab.saturating_add(total_equity);
+    let total_assets = sum_minor(assets_lines.iter().map(|line| line.balance_minor))?;
+    let total_liab = sum_minor(liab_lines.iter().map(|line| line.balance_minor))?;
+    let total_equity = sum_minor(equity_lines.iter().map(|line| line.balance_minor))?;
+    let total_liabilities_equity = add_minor(total_liab, total_equity)?;
 
     Ok(BalanceSheet {
         entity_id,
@@ -361,7 +364,10 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
 ///
 /// # Errors
 ///
-/// Validation or DB errors.
+/// [`Error::Validation`] for a malformed date or an inverted range;
+/// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
+/// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
+/// that does not parse; database errors as [`Error::Io`].
 pub fn dashboard_summary(
     conn: &Connection,
     entity_id: EntityId,
@@ -383,8 +389,7 @@ pub fn dashboard_summary(
     let count_sql = format!(
         "
         SELECT COUNT(1) FROM journal_entries je
-        WHERE je.entity_id = ?1 AND je.status = 'posted'
-          AND {ACTIVE_ENTRY_PREDICATE}
+        WHERE je.entity_id = ?1 AND {ACTIVE_ENTRY_PREDICATE}
           AND je.entry_date >= ?2 AND je.entry_date <= ?3
         "
     );
@@ -400,26 +405,13 @@ pub fn dashboard_summary(
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let net_income = income.saturating_sub(expenses);
+    let net_income = subtract_minor(income, expenses)?;
     let net_vs_previous_bps = match previous_window(from_d, to_d) {
         Some((previous_from, previous_to)) => {
-            let previous_net = sum_types_in_range(
-                conn,
-                entity_id,
-                &[AccountType::Income],
-                previous_from,
-                previous_to,
-            )?
-            .saturating_sub(sum_types_in_range(
-                conn,
-                entity_id,
-                &[AccountType::Expense],
-                previous_from,
-                previous_to,
-            )?);
+            let previous_net = net_in_range(conn, entity_id, previous_from, previous_to)?;
             ratio_bps(
-                net_income.saturating_sub(previous_net),
-                previous_net.saturating_abs(),
+                subtract_minor(net_income, previous_net)?,
+                previous_net.checked_abs().ok_or(Error::MoneyOverflow)?,
             )
         }
         None => None,
@@ -475,7 +467,7 @@ fn month_index(date: Date) -> i64 {
 fn date_from_month_index(index: i64) -> Option<Date> {
     let year = i32::try_from(index.div_euclid(12)).ok()?;
     let month = u8::try_from(index.rem_euclid(12) + 1).ok()?;
-    Date::from_calendar_date(year, time::Month::try_from(month).ok()?, 1).ok()
+    Date::from_calendar_date(year, Month::try_from(month).ok()?, 1).ok()
 }
 
 /// The Expense account with the largest positive spend in the window; on a tie
@@ -555,8 +547,7 @@ fn account_activity_lines(
                    SUM(jl.credit_minor) AS credits
             FROM journal_lines jl
             JOIN journal_entries je ON je.id = jl.entry_id
-            WHERE je.status = 'posted'
-              AND {ACTIVE_ENTRY_PREDICATE}
+            WHERE {ACTIVE_ENTRY_PREDICATE}
               {hidden_predicate}
               AND (?2 IS NULL OR je.entry_date >= ?2)
               AND je.entry_date <= ?3
@@ -580,13 +571,13 @@ fn account_activity_lines(
                 format_date(to),
                 account_type.map(account_type_str),
             ],
-            map_report_line,
+            |row| Ok(map_report_line(row)),
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut lines = Vec::new();
     for row in rows {
-        lines.push(row.map_err(|err| Error::Io(err.to_string()))?);
+        lines.push(row.map_err(|err| Error::Io(err.to_string()))??);
     }
     Ok(lines)
 }
@@ -637,34 +628,14 @@ fn unclosed_pnl(
     conn: &Connection,
     entity_id: EntityId,
     as_of: Date,
-    fy_start_month: u8,
+    fiscal_start: Month,
 ) -> Result<UnclosedPnl> {
-    let fy_start = fiscal_year_start(as_of, fy_start_month);
-    let current_net = sum_types_in_range(conn, entity_id, &[AccountType::Income], fy_start, as_of)?
-        .saturating_sub(sum_types_in_range(
-            conn,
-            entity_id,
-            &[AccountType::Expense],
-            fy_start,
-            as_of,
-        )?);
+    let fy_start = fiscal_year_start(as_of, fiscal_start);
+    let current_net = net_in_range(conn, entity_id, fy_start, as_of)?;
 
     let prior_net = if let Some(prior_end) = fy_start.previous_day() {
-        let books_start = Date::from_calendar_date(1, time::Month::January, 1).unwrap_or(prior_end);
-        sum_types_in_range(
-            conn,
-            entity_id,
-            &[AccountType::Income],
-            books_start,
-            prior_end,
-        )?
-        .saturating_sub(sum_types_in_range(
-            conn,
-            entity_id,
-            &[AccountType::Expense],
-            books_start,
-            prior_end,
-        )?)
+        let books_start = Date::from_calendar_date(1, Month::January, 1).unwrap_or(prior_end);
+        net_in_range(conn, entity_id, books_start, prior_end)?
     } else {
         0
     };
@@ -676,13 +647,25 @@ fn unclosed_pnl(
     })
 }
 
-fn equity_plug_line(code: &str, name: &str, net: i64, synthetic: SyntheticLine) -> ReportLine {
+/// Income minus expenses between `from` and `to` inclusive.
+fn net_in_range(conn: &Connection, entity_id: EntityId, from: Date, to: Date) -> Result<i64> {
+    let income = sum_types_in_range(conn, entity_id, &[AccountType::Income], from, to)?;
+    let expenses = sum_types_in_range(conn, entity_id, &[AccountType::Expense], from, to)?;
+    subtract_minor(income, expenses)
+}
+
+fn equity_plug_line(
+    code: &str,
+    name: &str,
+    net: i64,
+    synthetic: SyntheticLine,
+) -> Result<ReportLine> {
     let (debit_minor, credit_minor) = if net >= 0 {
         (0, net)
     } else {
-        (net.saturating_neg(), 0)
+        (net.checked_neg().ok_or(Error::MoneyOverflow)?, 0)
     };
-    ReportLine {
+    Ok(ReportLine {
         code: code.into(),
         name: name.into(),
         account_type: AccountType::Equity,
@@ -690,10 +673,10 @@ fn equity_plug_line(code: &str, name: &str, net: i64, synthetic: SyntheticLine) 
         credit_minor,
         balance_minor: net,
         synthetic: Some(synthetic),
-    }
+    })
 }
 
-fn retained_earnings_line(prior_net: i64) -> ReportLine {
+fn retained_earnings_line(prior_net: i64) -> Result<ReportLine> {
     equity_plug_line(
         "RE",
         "Retained Earnings (prior periods)",
@@ -702,7 +685,7 @@ fn retained_earnings_line(prior_net: i64) -> ReportLine {
     )
 }
 
-fn net_income_line(net: i64) -> ReportLine {
+fn net_income_line(net: i64) -> Result<ReportLine> {
     equity_plug_line(
         "NI",
         "Net Income (current period)",
@@ -711,39 +694,49 @@ fn net_income_line(net: i64) -> ReportLine {
     )
 }
 
-fn fiscal_year_start(as_of: Date, start_month: u8) -> Date {
-    let month = match time::Month::try_from(start_month) {
-        Ok(m) => m,
-        Err(_) => time::Month::January,
-    };
-    let year = if as_of.month() as u8 >= start_month {
+/// The month an entity's fiscal year starts in.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] when the stored number is not a calendar month.
+/// [`get_entity`] already refuses such a row; this covers an [`Entity`] built
+/// any other way, since the field is a plain `u8`.
+fn fiscal_start_month(entity: &Entity) -> Result<Month> {
+    Month::try_from(entity.fiscal_year_start_month).map_err(|_| {
+        corrupt_column(
+            "entities.fiscal_year_start_month",
+            format_args!("not a month: {}", entity.fiscal_year_start_month),
+        )
+    })
+}
+
+/// First day of the fiscal year that contains `as_of`.
+fn fiscal_year_start(as_of: Date, start_month: Month) -> Date {
+    let year = if u8::from(as_of.month()) >= u8::from(start_month) {
         as_of.year()
     } else {
         as_of.year() - 1
     };
-    match Date::from_calendar_date(year, month, 1) {
-        Ok(d) => d,
-        Err(_) => as_of,
-    }
+
+    // Day 1 exists in every month, so this fails only when `year` is below
+    // `Date::MIN`'s year. That fiscal year began before the calendar does, and
+    // the calendar's first day is then the earliest date inside it.
+    Date::from_calendar_date(year, start_month, 1).unwrap_or(Date::MIN)
 }
 
-fn map_report_line(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReportLine> {
-    let type_s: String = row.get(2)?;
-    let account_type = parse_account_type(&type_s).map_err(|e| {
-        rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            e.to_string(),
-        )))
-    })?;
-    let debits: i64 = row.get(3)?;
-    let credits: i64 = row.get(4)?;
+/// Maps a row selected as `code, name, account_type, debits, credits`.
+fn map_report_line(row: &rusqlite::Row<'_>) -> Result<ReportLine> {
+    let account_type = parse_account_type(&read_column::<String>(row, 2)?)?;
+    let debits: i64 = read_column(row, 3)?;
+    let credits: i64 = read_column(row, 4)?;
+
     Ok(ReportLine {
-        code: row.get(0)?,
-        name: row.get(1)?,
+        code: read_column(row, 0)?,
+        name: read_column(row, 1)?,
         account_type,
         debit_minor: debits,
         credit_minor: credits,
-        balance_minor: normal_balance(account_type, debits, credits),
+        balance_minor: normal_balance(account_type, debits, credits)?,
         synthetic: None,
     })
 }
@@ -787,6 +780,26 @@ mod tests {
                 .map(listed_lines::position)
                 .collect(),
         );
+    }
+
+    #[test]
+    fn fiscal_year_start_is_the_latest_start_month_on_or_before_the_date() {
+        let start = |as_of: &str, month: Month| {
+            parse_date(as_of).map(|date| format_date(fiscal_year_start(date, month)))
+        };
+
+        assert_eq!(start("2026-03-15", Month::January), Ok("2026-01-01".into()));
+        assert_eq!(start("2026-03-15", Month::April), Ok("2025-04-01".into()));
+        assert_eq!(start("2026-04-01", Month::April), Ok("2026-04-01".into()));
+        assert_eq!(
+            start("2026-12-31", Month::December),
+            Ok("2026-12-01".into())
+        );
+    }
+
+    #[test]
+    fn fiscal_year_start_stops_at_the_first_day_of_the_calendar() {
+        assert_eq!(fiscal_year_start(Date::MIN, Month::February), Date::MIN);
     }
 
     #[test]

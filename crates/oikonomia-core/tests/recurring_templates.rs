@@ -7,10 +7,10 @@ use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleBillStatus,
-    SimpleEntryKind, UpdateRecurringTemplate, create_entity, create_recurring_template,
-    delete_entity, delete_recurring_template, list_accounts, list_entries,
-    list_recurring_templates, list_recurring_templates_as_of, post_recurring_template,
-    update_recurring_template,
+    SimpleEntryKind, UpdateRecurringTemplate, archive_account, create_entity,
+    create_recurring_template, delete_entity, delete_recurring_template, list_accounts,
+    list_entries, list_recurring_templates, list_recurring_templates_as_of,
+    post_recurring_template, update_recurring_template,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
@@ -407,4 +407,81 @@ fn post_rejects_non_positive_override_amount() {
         post_recurring_template(conn, template.id, None, Some(0)),
         Err(Error::Validation(ValidationError::AmountNotPositive))
     ));
+}
+/// A template is checked like the entry it will post, so a template that
+/// could never be posted is refused when it is saved, not at post time.
+#[test]
+fn a_template_must_use_accounts_that_posting_would_accept() {
+    let (_dir, vault) = setup();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, accounts) = entity_with_accounts(conn);
+
+    let other_book = create_entity(
+        conn,
+        &CreateEntity {
+            name: "Other book".into(),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Personal,
+            fiscal_year_start_month: Some(1),
+        },
+        Locale::En,
+    )
+    .expect("other entity");
+    let foreign_checking = list_accounts(conn, other_book.id)
+        .expect("accounts")
+        .iter()
+        .find(|account| account.code == "1010")
+        .map(|account| account.id)
+        .expect("1010");
+
+    let mut another_books_account = monthly_rent(entity_id, &accounts);
+    another_books_account.wallet_account_id = Some(foreign_checking);
+    assert_eq!(
+        create_recurring_template(conn, &another_books_account).map(|template| template.id),
+        Err(Error::AccountWrongEntity)
+    );
+
+    let mut same_account_twice = monthly_rent(entity_id, &accounts);
+    same_account_twice.kind = SimpleEntryKind::Transfer;
+    same_account_twice.category_account_id = None;
+    same_account_twice.wallet_account_id = None;
+    same_account_twice.from_account_id = Some(accounts.checking);
+    same_account_twice.to_account_id = Some(accounts.checking);
+    assert_eq!(
+        create_recurring_template(conn, &same_account_twice).map(|template| template.id),
+        Err(Error::Validation(ValidationError::SameAccount))
+    );
+
+    let saved =
+        create_recurring_template(conn, &monthly_rent(entity_id, &accounts)).expect("create");
+    archive_account(conn, accounts.food).expect("archive");
+    let archived = Err(Error::Validation(ValidationError::AccountInactive {
+        code: "5100".into(),
+    }));
+    assert_eq!(
+        create_recurring_template(conn, &monthly_rent(entity_id, &accounts))
+            .map(|template| template.id),
+        archived
+    );
+
+    let unchanged = UpdateRecurringTemplate {
+        id: saved.id,
+        name: saved.name,
+        kind: saved.kind,
+        bill_status: saved.bill_status,
+        amount_minor: saved.amount_minor,
+        cadence: saved.cadence,
+        day_of_month: saved.day_of_month,
+        category_account_id: saved.category_account_id,
+        wallet_account_id: saved.wallet_account_id,
+        payable_account_id: None,
+        from_account_id: None,
+        to_account_id: None,
+        memo: None,
+        next_date: "2026-03-01".into(),
+    };
+    assert_eq!(
+        update_recurring_template(conn, &unchanged).map(|template| template.id),
+        archived
+    );
 }

@@ -139,7 +139,8 @@ pub fn save_document(
     conn.execute(
         "
         INSERT INTO documents (
-            id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json
+            id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+            analysis_json
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)
         ",
         rusqlite::params![
@@ -153,20 +154,7 @@ pub fn save_document(
             created,
         ],
     )
-    .map_err(|err| {
-        let text = err.to_string();
-        if matches!(
-            err.sqlite_error_code(),
-            Some(rusqlite::ErrorCode::ConstraintViolation)
-        ) && text.contains("UNIQUE")
-        {
-            Error::Validation(ValidationError::NameTaken {
-                name: name.to_owned(),
-            })
-        } else {
-            Error::Io(text)
-        }
-    })?;
+    .map_err(|err| document_insert_error(&err, name))?;
 
     let entry_description = entry.entry.description;
 
@@ -180,6 +168,27 @@ pub fn save_document(
         created_at: created,
         entry_description,
     })
+}
+
+/// Maps a failed insert into `documents` to the error the caller sees.
+///
+/// The table's one `UNIQUE` constraint is `(entity_id, filename)`, so a
+/// unique violation means the name is taken. Any other failure, a primary
+/// key clash included, is a database error.
+fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
+    let unique_violation = matches!(
+        err,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+    );
+
+    if unique_violation {
+        Error::Validation(ValidationError::NameTaken {
+            name: name.to_owned(),
+        })
+    } else {
+        Error::Io(err.to_string())
+    }
 }
 
 /// Validate and store a document linked to an existing entry (no OCR —
@@ -365,23 +374,32 @@ pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
 ///
 /// # Errors
 ///
-/// DB errors.
+/// [`Error::NotFound`] when no document has this id; DB errors otherwise.
 pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE documents SET analysis_json = ?1 WHERE id = ?2",
-        rusqlite::params![json, id.0.to_string()],
-    )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    let updated = conn
+        .execute(
+            "UPDATE documents SET analysis_json = ?1 WHERE id = ?2",
+            rusqlite::params![json, id.0.to_string()],
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    if updated == 0 {
+        return Err(Error::NotFound("document".into()));
+    }
     Ok(())
 }
 
-/// Active accounts useful for auto-matching.
+/// The book's active accounts, for matching a document to an account.
+///
+/// An archived account is left out, so a suggestion never points at one.
 ///
 /// # Errors
 ///
 /// DB errors.
 pub fn suggest_accounts_for_entity(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
-    list_accounts(conn, entity_id)
+    let mut accounts = list_accounts(conn, entity_id)?;
+    accounts.retain(|account| account.is_active);
+    Ok(accounts)
 }
 
 fn is_allowed_mime(mime: &str) -> bool {
@@ -424,7 +442,8 @@ pub fn resolve_mime(mime_type: &str, filename: &str) -> String {
     mime
 }
 
-fn has_extension(filename: &str, ext: &str) -> bool {
+/// Whether `filename` ends in the extension `ext`, in any letter case.
+pub(super) fn has_extension(filename: &str, ext: &str) -> bool {
     std::path::Path::new(filename)
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case(ext))
@@ -752,6 +771,51 @@ mod tests {
         );
         assert!(validate_document_file("  ", "application/pdf", 1_000).is_err());
         assert!(validate_document_file("a.exe", "application/x-msdownload", 1_000).is_err());
+    }
+
+    /// The error of inserting `(id, filename)` twice into a table with the
+    /// constraints of `documents`, differing only where `second` differs.
+    fn clash_error(first: (&str, &str), second: (&str, &str)) -> Option<rusqlite::Error> {
+        let conn = Connection::open_in_memory().ok()?;
+        conn.execute_batch(
+            "CREATE TABLE documents (
+                id TEXT PRIMARY KEY NOT NULL,
+                entity_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                UNIQUE (entity_id, filename)
+            );",
+        )
+        .ok()?;
+
+        let insert = "INSERT INTO documents (id, entity_id, filename) VALUES (?1, 'book', ?2)";
+        conn.execute(insert, [first.0, first.1]).ok()?;
+        conn.execute(insert, [second.0, second.1]).err()
+    }
+
+    #[test]
+    fn a_filename_clash_on_insert_is_a_taken_name() {
+        let err = clash_error(("id-1", "bill.pdf"), ("id-2", "bill.pdf"));
+        assert!(err.is_some(), "the second insert must fail");
+        let Some(err) = err else { return };
+
+        assert_eq!(
+            document_insert_error(&err, "bill.pdf"),
+            Error::Validation(ValidationError::NameTaken {
+                name: "bill.pdf".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_primary_key_clash_on_insert_is_not_a_taken_name() {
+        let err = clash_error(("id-1", "bill.pdf"), ("id-1", "other.pdf"));
+        assert!(err.is_some(), "the second insert must fail");
+        let Some(err) = err else { return };
+
+        assert!(
+            matches!(document_insert_error(&err, "other.pdf"), Error::Io(_)),
+            "{err}"
+        );
     }
 
     /// Code of the expense account suggested for `hints`.

@@ -8,9 +8,10 @@ use super::journals::{
     PostSimpleEntry, PostedEntryView, SimpleBillStatus, SimpleEntryKind, ensure_simple_entry_roles,
     post_simple_entry_unchecked,
 };
+use crate::db::{corrupt_column, read_column, stored_date, stored_uuid};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{Error, Result, ValidationError};
-use crate::util::{format_date, now_utc_string, parse_date, parse_uuid, utc_today};
+use crate::util::{format_date, now_utc_string, parse_date, utc_today};
 
 /// How often a template produces the next occurrence.
 ///
@@ -18,12 +19,12 @@ use crate::util::{format_date, now_utc_string, parse_date, parse_uuid, utc_today
 ///
 /// - **Weekly:** add 7 days. The weekday is implied by `next_date`; there is
 ///   no separate weekday column.
-/// - **Monthly:** one calendar month later on `day_of_month` (1–31). When that
-///   day does not exist (31 in February), overflow to the next valid day:
-///   the 1st of the short month plus (`day_of_month` − 1) days. January 31
-///   → March 3 in a non-leap year (February 1 + 30 days). An overflow date
-///   (day ≠ `day_of_month`) is treated as belonging to the previous month so
-///   the following post lands on the next real 31st (March 3 → March 31).
+/// - **Monthly:** the first occurrence of `day_of_month` (1–31) strictly after
+///   `next_date`, so the date never moves backwards whatever day `next_date`
+///   is on. When the day does not exist in a month (31 in February), the
+///   occurrence overflows to the 1st of that month plus (`day_of_month` − 1)
+///   days: January 31 → March 3 in a non-leap year (February 1 + 30 days).
+///   The following post then lands on the next real 31st (March 3 → March 31).
 /// - **Yearly:** add one calendar year. February 29 on a non-leap year
 ///   overflows the same way (March 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,7 +66,8 @@ pub struct CreateRecurringTemplate {
     pub from_account_id: Option<AccountId>,
     /// Transfer destination.
     pub to_account_id: Option<AccountId>,
-    /// Optional memo stored on the template (used as the posted description).
+    /// Optional note stored on the template. Posting does not read it: a
+    /// posted entry's description is the template's `name`.
     pub memo: Option<String>,
     /// Next occurrence `YYYY-MM-DD`. Advanced only after a successful post.
     pub next_date: String,
@@ -152,11 +154,13 @@ pub struct RecurringPostResult {
     pub template: RecurringTemplateView,
 }
 
-/// List templates for an entity, due first (`next_date` ascending).
+/// Lists templates for an entity, due first (`next_date` ascending), then by
+/// name without regard to case.
 ///
 /// # Errors
 ///
-/// Unknown entity or DB errors.
+/// [`Error::NotFound`] for an unknown entity; [`Error::VaultCorrupt`] for a
+/// stored template that does not parse; database errors as [`Error::Io`].
 pub fn list_recurring_templates(
     conn: &Connection,
     entity_id: EntityId,
@@ -168,7 +172,7 @@ pub fn list_recurring_templates(
 ///
 /// # Errors
 ///
-/// Unknown entity or DB errors.
+/// Those of [`list_recurring_templates`].
 pub fn list_recurring_templates_as_of(
     conn: &Connection,
     entity_id: EntityId,
@@ -184,18 +188,18 @@ pub fn list_recurring_templates_as_of(
                    from_account_id, to_account_id, memo, next_date, bill_status
             FROM recurring_templates
             WHERE entity_id = ?1
-            ORDER BY next_date ASC, name COLLATE NOCASE ASC
+            ORDER BY next_date ASC, fold(name), name
             ",
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let rows = stmt
-        .query_map([entity_id.0.to_string()], map_template_row)
+        .query_map([entity_id.0.to_string()], |row| Ok(map_template_row(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let mut out = Vec::new();
     for row in rows {
-        let stored = row.map_err(|err| Error::Io(err.to_string()))?;
+        let stored = row.map_err(|err| Error::Io(err.to_string()))??;
         out.push(stored.into_view(today));
     }
     Ok(out)
@@ -444,18 +448,20 @@ pub fn template_is_due(next_date: Date, today: Date) -> bool {
     next_date <= today
 }
 
+/// The first occurrence of `day_of_month` strictly after `from`.
+///
+/// The occurrence in `from`'s own month wins when it is still ahead: that is
+/// how an overflow date returns to the real day (March 3 for day 31 steps to
+/// March 31). Otherwise the next month's occurrence is taken, which is always
+/// after `from` because it falls on or after that month's first day.
 fn next_monthly(from: Date, day_of_month: u8) -> Result<Date> {
-    let logical = if from.day() == day_of_month {
-        (from.year(), from.month())
-    } else {
-        previous_month(from.year(), from.month())?
-    };
-    let (year, month) = add_months(logical.0, logical.1, 1)?;
-    place_day_or_next(year, month, day_of_month)
-}
+    let this_month = place_day_or_next(from.year(), from.month(), day_of_month)?;
+    if this_month > from {
+        return Ok(this_month);
+    }
 
-fn previous_month(year: i32, month: Month) -> Result<(i32, Month)> {
-    add_months(year, month, -1)
+    let (year, month) = add_months(from.year(), from.month(), 1)?;
+    place_day_or_next(year, month, day_of_month)
 }
 
 fn add_months(year: i32, month: Month, delta: i32) -> Result<(i32, Month)> {
@@ -710,75 +716,76 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
         WHERE id = ?1
         ",
         [id.0.to_string()],
-        map_template_row,
+        |row| Ok(map_template_row(row)),
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound("recurring template".into()),
         other => Error::Io(other.to_string()),
-    })
+    })?
 }
 
-fn map_template_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredTemplate> {
-    let id = RecurringTemplateId(
-        parse_uuid(&row.get::<_, String>(0)?).map_err(|e| sql_conversion_error(0, &e))?,
-    );
-    let entity_id =
-        EntityId(parse_uuid(&row.get::<_, String>(1)?).map_err(|e| sql_conversion_error(1, &e))?);
-    let kind = parse_kind(&row.get::<_, String>(3)?).map_err(|e| sql_conversion_error(3, &e))?;
-    let cadence =
-        parse_cadence(&row.get::<_, String>(5)?).map_err(|e| sql_conversion_error(5, &e))?;
-    let day_raw: Option<i64> = row.get(6)?;
-    let day_of_month = day_raw
-        .map(|n| u8::try_from(n).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(6, n)))
+/// Maps a row selected as `id, entity_id, name, kind, amount_minor, cadence,
+/// day_of_month`, the five role account ids, then `memo, next_date, bill_status`.
+fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
+    let id = stored_uuid("recurring_templates.id", &read_column::<String>(row, 0)?)?;
+    let entity_id = stored_uuid(
+        "recurring_templates.entity_id",
+        &read_column::<String>(row, 1)?,
+    )?;
+    let kind = parse_kind(&read_column::<String>(row, 3)?)?;
+    let cadence = parse_cadence(&read_column::<String>(row, 5)?)?;
+    let day_of_month = read_column::<Option<i64>>(row, 6)?
+        .map(stored_day_of_month)
         .transpose()?;
-    let next_date =
-        parse_date(&row.get::<_, String>(13)?).map_err(|e| sql_conversion_error(13, &e))?;
-    let bill_raw: Option<String> = row.get(14)?;
-    let bill_status = bill_raw
-        .map(|s| parse_bill_status(&s).map_err(|e| sql_conversion_error(14, &e)))
+    let next_date = stored_date(
+        "recurring_templates.next_date",
+        &read_column::<String>(row, 13)?,
+    )?;
+    let bill_status = read_column::<Option<String>>(row, 14)?
+        .map(|text| parse_bill_status(&text))
         .transpose()?;
 
     Ok(StoredTemplate {
-        id,
-        entity_id,
-        name: row.get(2)?,
+        id: RecurringTemplateId(id),
+        entity_id: EntityId(entity_id),
+        name: read_column(row, 2)?,
         kind,
         bill_status,
-        amount_minor: row.get(4)?,
+        amount_minor: read_column(row, 4)?,
         cadence,
         day_of_month,
-        category_account_id: opt_account_from_row(row, 7)?,
-        wallet_account_id: opt_account_from_row(row, 8)?,
-        payable_account_id: opt_account_from_row(row, 9)?,
-        from_account_id: opt_account_from_row(row, 10)?,
-        to_account_id: opt_account_from_row(row, 11)?,
-        memo: row.get(12)?,
+        category_account_id: stored_account(row, 7, "recurring_templates.category_account_id")?,
+        wallet_account_id: stored_account(row, 8, "recurring_templates.wallet_account_id")?,
+        payable_account_id: stored_account(row, 9, "recurring_templates.payable_account_id")?,
+        from_account_id: stored_account(row, 10, "recurring_templates.from_account_id")?,
+        to_account_id: stored_account(row, 11, "recurring_templates.to_account_id")?,
+        memo: read_column(row, 12)?,
         next_date,
     })
 }
 
-fn opt_account_from_row(
-    row: &rusqlite::Row<'_>,
-    idx: usize,
-) -> rusqlite::Result<Option<AccountId>> {
-    let raw: Option<String> = row.get(idx)?;
-    match raw {
-        None => Ok(None),
-        Some(s) => parse_uuid(&s)
-            .map(|id| Some(AccountId(id)))
-            .map_err(|e| sql_conversion_error(idx, &e)),
-    }
+/// A template's day of the month as stored; the schema's CHECK keeps it in
+/// 1..=31.
+fn stored_day_of_month(stored: i64) -> Result<u8> {
+    u8::try_from(stored)
+        .ok()
+        .filter(|day| (1..=31).contains(day))
+        .ok_or_else(|| {
+            corrupt_column(
+                "recurring_templates.day_of_month",
+                format_args!("not a day of the month: {stored}"),
+            )
+        })
 }
 
-fn sql_conversion_error(col: usize, err: &Error) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        col,
-        rusqlite::types::Type::Text,
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            err.to_string(),
-        )),
-    )
+fn stored_account(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+    column: &str,
+) -> Result<Option<AccountId>> {
+    read_column::<Option<String>>(row, index)?
+        .map(|text| stored_uuid(column, &text).map(AccountId))
+        .transpose()
 }
 
 fn opt_account(id: Option<AccountId>) -> Option<String> {
@@ -800,9 +807,10 @@ fn parse_kind(s: &str) -> Result<SimpleEntryKind> {
         "income" => Ok(SimpleEntryKind::Income),
         "bill" => Ok(SimpleEntryKind::Bill),
         "transfer" => Ok(SimpleEntryKind::Transfer),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown recurring kind: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "recurring_templates.kind",
+            format_args!("unknown recurring kind: {other}"),
+        )),
     }
 }
 
@@ -819,9 +827,10 @@ fn parse_cadence(s: &str) -> Result<RecurringCadence> {
         "monthly" => Ok(RecurringCadence::Monthly),
         "weekly" => Ok(RecurringCadence::Weekly),
         "yearly" => Ok(RecurringCadence::Yearly),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown recurring cadence: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "recurring_templates.cadence",
+            format_args!("unknown recurring cadence: {other}"),
+        )),
     }
 }
 
@@ -838,9 +847,10 @@ fn parse_bill_status(s: &str) -> Result<SimpleBillStatus> {
         "paid" => Ok(SimpleBillStatus::Paid),
         "unpaid" => Ok(SimpleBillStatus::Unpaid),
         "pay_existing" => Ok(SimpleBillStatus::PayExisting),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown recurring bill_status: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "recurring_templates.bill_status",
+            format_args!("unknown recurring bill_status: {other}"),
+        )),
     }
 }
 
@@ -911,6 +921,44 @@ mod tests {
         let next = advance_next_date(date("2024-01-31"), RecurringCadence::Monthly, Some(31))
             .expect("leap jan");
         assert_eq!(next, date("2024-03-02"), "Feb 1 + 30 days in a leap year");
+    }
+
+    #[test]
+    fn monthly_from_a_later_day_than_day_of_month_moves_forward() {
+        let next = advance_next_date(date("2026-01-20"), RecurringCadence::Monthly, Some(15))
+            .expect("mismatch");
+        assert_eq!(next, date("2026-02-15"));
+    }
+
+    #[test]
+    fn monthly_from_an_earlier_day_than_day_of_month_lands_in_the_same_month() {
+        let next = advance_next_date(date("2026-01-10"), RecurringCadence::Monthly, Some(15))
+            .expect("mismatch");
+        assert_eq!(next, date("2026-01-15"));
+    }
+
+    #[test]
+    fn monthly_december_advances_into_january() {
+        let advance = |from: &str, day: u8| {
+            advance_next_date(date(from), RecurringCadence::Monthly, Some(day)).expect("december")
+        };
+        assert_eq!(advance("2026-12-15", 15), date("2027-01-15"));
+        assert_eq!(advance("2026-12-20", 15), date("2027-01-15"));
+        assert_eq!(advance("2026-12-31", 31), date("2027-01-31"));
+    }
+
+    #[test]
+    fn monthly_always_moves_strictly_forward() {
+        let mut from = date("2023-12-01");
+        let end = date("2025-03-01");
+        while from < end {
+            for day in 1..=31 {
+                let next = advance_next_date(from, RecurringCadence::Monthly, Some(day))
+                    .expect("in range");
+                assert!(next > from, "from {from} day {day} gave {next}");
+            }
+            from = from.next_day().expect("in range");
+        }
     }
 
     #[test]

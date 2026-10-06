@@ -12,6 +12,7 @@ use crate::domain::EntityId;
 use crate::error::{Error, Result};
 use crate::ledger::get_entity;
 use crate::util::format_date;
+use crate::vault::files::replace_private_file;
 
 /// Export column header for integer debit minor units.
 pub const DEBIT_MINOR_COLUMN: &str = "debit_minor";
@@ -53,23 +54,32 @@ pub struct JournalCsvLine {
 /// of a formula.
 const FORMULA_TRIGGERS: [char; 6] = ['=', '+', '-', '@', '\t', '\r'];
 
-/// Make a text cell inert for spreadsheet apps.
+/// The prefix that makes a spreadsheet app read a cell as literal text.
+const TEXT_GUARD: char = '\'';
+
+/// Makes a text cell inert for spreadsheet apps.
 ///
 /// A bank memo or OCR'd line can start with `=`; exported as-is it becomes a
 /// live `HYPERLINK`/DDE formula on the accountant's machine. A leading
-/// apostrophe turns the cell into literal text. [`restore_formula`] undoes it.
+/// apostrophe turns the cell into literal text.
+///
+/// A cell that already starts with an apostrophe is guarded too. Otherwise
+/// the ledger text `'=foo` and the guarded form of `=foo` would be the same
+/// exported cell, and [`restore_formula`] could not tell them apart.
 fn neutralize_formula(cell: &str) -> Cow<'_, str> {
-    if cell.starts_with(FORMULA_TRIGGERS) {
-        Cow::Owned(format!("'{cell}"))
+    if cell.starts_with(FORMULA_TRIGGERS) || cell.starts_with(TEXT_GUARD) {
+        Cow::Owned(format!("{TEXT_GUARD}{cell}"))
     } else {
         Cow::Borrowed(cell)
     }
 }
 
-/// Inverse of [`neutralize_formula`], so a parsed export equals the ledger.
+/// Exact inverse of [`neutralize_formula`], so a parsed export equals the
+/// ledger: strips one apostrophe when what follows is a cell that
+/// `neutralize_formula` would have guarded.
 fn restore_formula(cell: &str) -> &str {
-    cell.strip_prefix('\'')
-        .filter(|rest| rest.starts_with(FORMULA_TRIGGERS))
+    cell.strip_prefix(TEXT_GUARD)
+        .filter(|rest| rest.starts_with(FORMULA_TRIGGERS) || rest.starts_with(TEXT_GUARD))
         .unwrap_or(cell)
 }
 
@@ -197,11 +207,17 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
     String::from_utf8(buf).map_err(|_| CsvError::NotUtf8.into())
 }
 
-/// Write [`export_journal_csv`] to `path`, appending `.csv` when missing.
+/// Writes [`export_journal_csv`] to `path`, appending `.csv` when missing,
+/// and returns the path written.
+///
+/// The export is the journal in plaintext, so the file is readable only by
+/// its owner (on Unix), and it is written under a temporary name and renamed
+/// into place so `path` never holds half an export.
 ///
 /// # Errors
 ///
-/// Export or filesystem errors.
+/// Whatever [`export_journal_csv`] returns, or [`Error::Io`] when the file
+/// cannot be written.
 pub fn write_journal_csv_file(
     conn: &Connection,
     entity_id: EntityId,
@@ -209,7 +225,7 @@ pub fn write_journal_csv_file(
 ) -> Result<PathBuf> {
     let dest = ensure_csv_path(path.to_path_buf());
     let text = export_journal_csv(conn, entity_id)?;
-    std::fs::write(&dest, text.as_bytes()).map_err(|err| Error::Io(err.to_string()))?;
+    replace_private_file(&dest, text.as_bytes())?;
     Ok(dest)
 }
 
@@ -340,7 +356,8 @@ mod tests {
             ("\tcmd", "'\tcmd"),
             ("\rcmd", "'\rcmd"),
             ("Groceries", "Groceries"),
-            ("'quoted", "'quoted"),
+            ("'quoted", "''quoted"),
+            ("'=SUM(A1)", "''=SUM(A1)"),
             ("", ""),
         ];
         for (input, want) in cases {
@@ -353,12 +370,44 @@ mod tests {
         let cases = [
             ("'=SUM(A1)", "=SUM(A1)"),
             ("'-5% discount", "-5% discount"),
-            ("'quoted", "'quoted"),
+            ("''quoted", "'quoted"),
+            ("''=SUM(A1)", "'=SUM(A1)"),
             ("Groceries", "Groceries"),
+            // Never written by the export: left as they are.
+            ("'quoted", "'quoted"),
             ("'", "'"),
         ];
         for (input, want) in cases {
             assert_eq!(restore_formula(input), want, "input {input:?}");
+        }
+    }
+
+    #[test]
+    fn neutralize_then_restore_returns_the_original_cell() {
+        let cells = [
+            "",
+            "Groceries",
+            "=SUM(A1)",
+            "+1",
+            "-5% discount",
+            "@user",
+            "\tcmd",
+            "\rcmd",
+            "'",
+            "''",
+            "'quoted",
+            "'=foo",
+            "''=foo",
+            "'-5",
+            "it's fine",
+        ];
+        for cell in cells {
+            let exported = neutralize_formula(cell);
+            assert!(
+                !exported.starts_with(FORMULA_TRIGGERS),
+                "exported {exported:?} still starts a formula"
+            );
+            assert_eq!(restore_formula(&exported), cell, "exported {exported:?}");
         }
     }
 
