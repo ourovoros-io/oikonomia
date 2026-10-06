@@ -40,9 +40,11 @@ pub(crate) struct DocumentContent {
     pub data_base64: String,
 }
 
-/// Returns whether the OCR models shipped with the app were found.
+/// Returns whether the OCR models shipped with the app were found, or the
+/// engine is already loaded.
 ///
-/// Needs no vault.
+/// Needs no vault. Runs on the main thread and takes the OCR engine's mutex,
+/// so a call made while an analysis is running waits for that analysis.
 #[tauri::command]
 #[expect(
     clippy::needless_pass_by_value,

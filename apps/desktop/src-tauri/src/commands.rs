@@ -1,4 +1,8 @@
-//! The IPC layer: every command the webview can invoke.
+//! The IPC layer: the commands the webview can invoke.
+//!
+//! Three commands live with their subject, outside this module:
+//! `update_check` and `update_install` in `crate::update`, and
+//! `donation_addresses` in `crate::donations`. Every other command is here.
 //!
 //! A command is a thin wrapper. It moves its arguments onto the blocking pool,
 //! calls one function of `oikonomia-core`, or a few, and converts the result.
@@ -17,10 +21,11 @@
 //! never run on an async worker, where they would stall every other command
 //! scheduled on it, nor on the main thread, which runs the event loop
 //! ([`support::run_blocking`]). Tauri runs a command declared as a plain `fn`
-//! on the main thread, so only the commands that neither block nor wait for
-//! the vault are synchronous: [`vault_touch`], [`app_info`],
-//! [`open_support_email`], [`open_main_window`], [`quick_add_hide`] and
-//! [`document_analyzer_status`].
+//! on the main thread, so a synchronous command must not wait for the vault.
+//! [`vault_touch`], [`app_info`], [`open_support_email`],
+//! [`open_main_window`] and [`quick_add_hide`] neither block nor take a lock.
+//! [`document_analyzer_status`] is synchronous too, although it takes the OCR
+//! engine's mutex, which an analysis in progress holds for its whole pass.
 //!
 //! **The vault is locked in one place.** A command reaches the vault through
 //! [`support::with_vault_blocking`] or one of the two helpers built for the

@@ -12,15 +12,13 @@
 //! blocking calls must not be used on the main thread, which is where the
 //! setup hook runs.
 
-use std::path::{Path, PathBuf};
-
+use crate::state::AppState;
 use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use oikonomia_core::vault::default_data_dir;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-
-use crate::state::AppState;
 
 /// Process exit code after a failed start.
 const STARTUP_FAILURE_EXIT_CODE: i32 = 1;

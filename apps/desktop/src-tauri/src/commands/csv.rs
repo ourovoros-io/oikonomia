@@ -77,7 +77,7 @@ pub(crate) async fn csv_import_preview(
 /// # Errors
 ///
 /// Returns `validation_internal` when the rows belong to more than one
-/// entity, the
+/// entity, `not_found` when that entity does not exist, the
 /// [simple-entry errors](crate::commands::journal#simple-entry-errors) for a
 /// row that cannot be posted, and the
 /// [common vault errors](crate::commands#common-vault-errors).
@@ -126,9 +126,10 @@ pub(crate) async fn csv_export_journal(
     save_with_dialog(&app, target, csv_text.into_bytes()).await
 }
 
-/// Asks for a `.csv` file with a native open dialog and grants the chosen
-/// path, so that a second preview with a column mapping may pass it back.
-/// Returns `None` if the user cancelled.
+/// Asks for a `.csv` file with a native open dialog.
+///
+/// The chosen path is granted, so that a second preview with a column
+/// mapping may pass it back. Returns `None` if the user cancelled.
 ///
 /// # Errors
 ///

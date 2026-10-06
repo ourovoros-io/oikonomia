@@ -411,6 +411,7 @@ mod tests {
     }
 
     /// Exercises the helper every ledger-text command reads the language with.
+    ///
     /// The commands themselves take a Tauri `State`, which cannot be constructed
     /// in a unit test, so that each of them goes through
     /// `with_localized_connection` or calls this helper inside its blocking

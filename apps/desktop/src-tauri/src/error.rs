@@ -61,11 +61,10 @@
 //!   code the same sentence, so the user sees no difference; what is lost is
 //!   the distinction in the diagnostics.
 
-use std::collections::BTreeMap;
-
 use oikonomia_core::Error as CoreError;
 use oikonomia_update::UpdateError;
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 /// The error payload a Tauri command returns to the webview.
 ///
@@ -88,6 +87,56 @@ pub(crate) struct CommandError {
     /// Named values for the localized text. Empty when there are none; never
     /// holds operating-system error text.
     pub params: BTreeMap<String, String>,
+}
+
+/// The result every fallible command returns.
+pub(crate) type CommandResult<T> = Result<T, CommandError>;
+
+impl CommandError {
+    /// Builds the error for a failure only the shell can produce.
+    ///
+    /// `message` is English and may include the operating-system error. The UI
+    /// must not show it, so it is never copied into `params`.
+    #[must_use]
+    pub(crate) fn desktop(kind: DesktopError, message: impl Into<String>) -> Self {
+        Self {
+            code: kind.code().to_owned(),
+            message: message.into(),
+            params: BTreeMap::new(),
+        }
+    }
+}
+
+impl From<CoreError> for CommandError {
+    fn from(value: CoreError) -> Self {
+        // A validation error also names the values its copy fills in.
+        let params = match &value {
+            CoreError::Validation(reason) => reason
+                .params()
+                .into_iter()
+                .map(|(name, text)| (name.to_owned(), text))
+                .collect(),
+            // The wildcard is forced by `#[non_exhaustive]`; the module doc says
+            // what it costs and which test stands in for the compiler.
+            _ => BTreeMap::new(),
+        };
+
+        Self {
+            code: value.code().to_owned(),
+            message: value.to_string(),
+            params,
+        }
+    }
+}
+
+impl From<UpdateError> for CommandError {
+    fn from(value: UpdateError) -> Self {
+        Self {
+            code: value.code().to_owned(),
+            message: value.to_string(),
+            params: BTreeMap::new(),
+        }
+    }
 }
 
 /// A failure that only the desktop shell can produce (dialogs, files, tasks).
@@ -146,56 +195,6 @@ impl DesktopError {
     }
 }
 
-impl CommandError {
-    /// Builds the error for a failure only the shell can produce.
-    ///
-    /// `message` is English and may include the operating-system error. The UI
-    /// must not show it, so it is never copied into `params`.
-    #[must_use]
-    pub(crate) fn desktop(kind: DesktopError, message: impl Into<String>) -> Self {
-        Self {
-            code: kind.code().to_owned(),
-            message: message.into(),
-            params: BTreeMap::new(),
-        }
-    }
-}
-
-impl From<CoreError> for CommandError {
-    fn from(value: CoreError) -> Self {
-        // A validation error also names the values its copy fills in.
-        let params = match &value {
-            CoreError::Validation(reason) => reason
-                .params()
-                .into_iter()
-                .map(|(name, text)| (name.to_owned(), text))
-                .collect(),
-            // The wildcard is forced by `#[non_exhaustive]`; the module doc says
-            // what it costs and which test stands in for the compiler.
-            _ => BTreeMap::new(),
-        };
-
-        Self {
-            code: value.code().to_owned(),
-            message: value.to_string(),
-            params,
-        }
-    }
-}
-
-impl From<UpdateError> for CommandError {
-    fn from(value: UpdateError) -> Self {
-        Self {
-            code: value.code().to_owned(),
-            message: value.to_string(),
-            params: BTreeMap::new(),
-        }
-    }
-}
-
-/// The result every fallible command returns.
-pub(crate) type CommandResult<T> = Result<T, CommandError>;
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
@@ -219,11 +218,13 @@ mod tests {
         }
     }
 
-    /// Fails unless `DesktopError::ALL` is exactly the set of variants in the
-    /// `listed_desktop_errors` list above, each once. The compiler checks that
-    /// list against the enum with an exhaustive `match`, so a variant added to
-    /// the enum but left out of the list does not compile. It does not check
-    /// the order of `ALL`, nor that the UI has copy for the code;
+    /// Fails unless `DesktopError::ALL` is exactly the listed variants, each
+    /// once.
+    ///
+    /// The compiler checks the `listed_desktop_errors` list above against the
+    /// enum with an exhaustive `match`, so a variant added to the enum but left
+    /// out of the list does not compile. This does not check the order of `ALL`,
+    /// nor that the UI has copy for the code;
     /// `the_shared_fixture_lists_exactly_the_codes_rust_can_emit` does that.
     #[test]
     fn all_lists_every_desktop_variant() {
@@ -406,6 +407,9 @@ mod tests {
         KnownGap,
     }
 
+    /// The text every diagnostic-text variant in `core_errors` carries.
+    const DIAGNOSTIC_TEXT: &str = "disk on fire";
+
     /// One value of every core variant other than `Validation`, with what
     /// its conversion sends.
     ///
@@ -414,7 +418,7 @@ mod tests {
     /// checks it against `CoreError::ALL_CODES` instead, which core's own
     /// tests tie to the variants.
     fn core_errors() -> Vec<(CoreError, CoreParams)> {
-        let text = || "disk on fire".to_owned();
+        let text = || DIAGNOSTIC_TEXT.to_owned();
 
         vec![
             (CoreError::VaultUninitialized, CoreParams::NoData),
@@ -467,34 +471,33 @@ mod tests {
         );
     }
 
+    /// No core variant other than `Validation` sends parameters today.
+    ///
+    /// For a known gap that is expected only for now: when the gap is closed
+    /// this fails, and the variant moves to a class that names what it
+    /// sends. For diagnostic text it is the rule, checked on the serialized
+    /// error as the webview receives it: the text is in `message` and nowhere
+    /// in `params`.
     #[test]
-    fn a_core_error_sends_the_parameters_its_class_says() {
+    fn a_core_error_sends_no_parameters_and_keeps_its_text_in_the_message() {
         for (error, class) in core_errors() {
-            let sent = CommandError::from(error.clone()).params;
+            let sent = serde_json::to_value(CommandError::from(error.clone())).expect("serialize");
 
-            match class {
-                CoreParams::NoData | CoreParams::DiagnosticText => {
-                    assert_eq!(sent, BTreeMap::new(), "{error:?}");
-                }
-                // Expected empty for now; see `CoreParams::KnownGap`. When a
-                // gap is closed this fails, and the variant moves to a class
-                // that names its parameters.
-                CoreParams::KnownGap => {
-                    assert_eq!(sent, BTreeMap::new(), "{error:?} is no longer a gap");
-                }
+            assert_eq!(
+                sent["params"],
+                serde_json::json!({}),
+                "{error:?} ({class:?})"
+            );
+
+            if class == CoreParams::DiagnosticText {
+                let message = sent["message"].as_str().expect("message");
+                assert!(message.contains(DIAGNOSTIC_TEXT), "{error:?}: {message}");
+                assert!(
+                    !sent["params"].to_string().contains(DIAGNOSTIC_TEXT),
+                    "{error:?} leaks its text into the parameters"
+                );
             }
         }
-    }
-
-    #[test]
-    fn the_known_parameter_gaps_are_exactly_two() {
-        let gaps: Vec<&str> = core_errors()
-            .iter()
-            .filter(|(_, class)| *class == CoreParams::KnownGap)
-            .map(|(error, _)| error.code())
-            .collect();
-
-        assert_eq!(gaps, ["unbalanced_entry", "not_found"]);
     }
 
     #[test]

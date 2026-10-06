@@ -37,6 +37,10 @@
 //! also locks the vault, which closes the connection, and has the watchdog
 //! tell the UI.
 
+use oikonomia_core::error::Error as CoreError;
+use oikonomia_core::ledger::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs};
+use oikonomia_core::vault::{Vault, VaultStatus};
+use oikonomia_update::UpdateMachine;
 use std::collections::HashSet;
 use std::ops::{ControlFlow, Deref, DerefMut};
 use std::panic::AssertUnwindSafe;
@@ -44,11 +48,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use oikonomia_core::error::Error as CoreError;
-use oikonomia_core::ledger::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs};
-use oikonomia_core::vault::{Vault, VaultStatus};
-use oikonomia_update::UpdateMachine;
 
 /// How often the watchdog re-checks idle time while the vault is unlocked.
 pub(crate) const AUTO_LOCK_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -170,20 +169,6 @@ impl AppState {
     }
 }
 
-/// Locks the update machine, recovering from poisoning.
-///
-/// The machine holds plain values that are valid whichever statement a panic
-/// interrupted, so the guard is handed out and the flag cleared.
-pub(crate) fn lock_update(machine: &Mutex<UpdateMachine>) -> MutexGuard<'_, UpdateMachine> {
-    match machine.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            machine.clear_poison();
-            poisoned.into_inner()
-        }
-    }
-}
-
 /// The paths the user handed over through a native drop or a native file
 /// dialog.
 ///
@@ -194,7 +179,7 @@ pub(crate) fn lock_update(machine: &Mutex<UpdateMachine>) -> MutexGuard<'_, Upda
 /// Both methods resolve a path through the filesystem, which can block on a
 /// slow or remote volume. Call them on the blocking pool or the main thread,
 /// not on an async worker.
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct PathGrants {
     /// The granted paths, each with its links resolved.
     paths: Arc<Mutex<HashSet<PathBuf>>>,
@@ -246,6 +231,20 @@ impl PathGrants {
     }
 }
 
+/// Locks the update machine, recovering from poisoning.
+///
+/// The machine holds plain values that are valid whichever statement a panic
+/// interrupted, so the guard is handed out and the flag cleared.
+pub(crate) fn lock_update(machine: &Mutex<UpdateMachine>) -> MutexGuard<'_, UpdateMachine> {
+    match machine.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            machine.clear_poison();
+            poisoned.into_inner()
+        }
+    }
+}
+
 /// Seconds since `UNIX_EPOCH` by the wall clock; zero for a clock set before it.
 ///
 /// Idle time is measured on the wall clock on purpose. A monotonic clock does
@@ -272,12 +271,14 @@ const fn idle_secs(now_secs: u64, last_activity_secs: u64) -> Option<u64> {
 /// The vault behind its mutex, with the watchdog state derived from it.
 ///
 /// The gate and the cached timeout are functions of the vault. Outside the
-/// tests they are written only with the vault mutex held: whether the
-/// watchdog polls and the timeout by [`VaultGuard`], the pending
-/// `vault-locked` announcement by the two recoveries that force a lock
-/// ([`Self::acquire`] after poisoning, `lock_after_panic`). So no caller can
-/// change the vault's status and forget them, and two status changes cannot
-/// apply their gate updates in the opposite order.
+/// tests they are set only with the vault mutex held: whether the watchdog
+/// polls and the timeout by [`VaultGuard`], the pending `vault-locked`
+/// announcement by the two recoveries that force a lock ([`Self::acquire`]
+/// after poisoning, `lock_after_panic`). So no caller can change the vault's
+/// status and forget them, and two status changes cannot apply their gate
+/// updates in the opposite order. The one write made without the vault is
+/// the watchdog clearing a pending announcement as it takes it, under the
+/// gate state alone.
 pub(crate) struct GatedVault {
     /// The vault. Locked only through [`Self::acquire`].
     vault: Mutex<Vault>,
@@ -442,38 +443,6 @@ pub(crate) struct WatchdogGate {
     /// Times the watchdog started a poll-interval wait, counted the same way.
     #[cfg(test)]
     poll_waits: AtomicU64,
-}
-
-/// What the gate tells the watchdog.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct GateState {
-    /// Whether the watchdog polls or waits.
-    phase: GatePhase,
-    /// A lock the watchdog still has to report to the UI: one forced by a
-    /// recovery from a panic, which happens where no `AppHandle` is at hand.
-    lock_to_announce: bool,
-}
-
-/// What the watchdog loop does next.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GatePhase {
-    /// The vault is not unlocked; nothing to poll for.
-    Parked,
-    /// The vault is unlocked; check idle time every poll interval.
-    Running,
-    /// The loop should end.
-    Shutdown,
-}
-
-/// Why [`WatchdogGate::wait_for_work`] returned.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Wake {
-    /// The vault is unlocked: start polling.
-    Poll,
-    /// The vault was locked behind the UI's back: emit `vault-locked`.
-    AnnounceLock,
-    /// The loop should end.
-    Shutdown,
 }
 
 impl WatchdogGate {
@@ -652,6 +621,38 @@ impl WatchdogGate {
     }
 }
 
+/// What the gate tells the watchdog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GateState {
+    /// Whether the watchdog polls or waits.
+    phase: GatePhase,
+    /// A lock the watchdog still has to report to the UI: one forced by a
+    /// recovery from a panic, which happens where no `AppHandle` is at hand.
+    lock_to_announce: bool,
+}
+
+/// What the watchdog loop does next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GatePhase {
+    /// The vault is not unlocked; nothing to poll for.
+    Parked,
+    /// The vault is unlocked; check idle time every poll interval.
+    Running,
+    /// The loop should end.
+    Shutdown,
+}
+
+/// Why [`WatchdogGate::wait_for_work`] returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wake {
+    /// The vault is unlocked: start polling.
+    Poll,
+    /// The vault was locked behind the UI's back: emit `vault-locked`.
+    AnnounceLock,
+    /// The loop should end.
+    Shutdown,
+}
+
 /// Returns whether the watchdog should lock the vault now: it is unlocked
 /// and has been idle for the timeout.
 ///
@@ -825,8 +826,7 @@ fn lock_if_idle(vault: &GatedVault, last_activity: &AtomicU64) -> bool {
 /// caller always gets a path; the analyzer then reports the models missing.
 #[must_use]
 pub(crate) fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
-    // Dev layout: apps/desktop/src-tauri/resources/ocr. Also the answer when
-    // no candidate holds the models, so the caller always gets a path.
+    // The source-tree layout: apps/desktop/src-tauri/resources/ocr.
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ocr");
     let beside_executable = std::env::current_exe()
         .ok()
@@ -1095,10 +1095,12 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// The emitter panics on the idle lock, and before the watchdog's
-    /// recovery runs the user has unlocked again. The recovery cannot tell
-    /// how far the round got, so it locks that new session, and the UI, which
-    /// shows it unlocked, has to be told.
+    /// Checks that a session the panic recovery locks is announced to the UI.
+    ///
+    /// The emitter panics on the idle lock, and before the watchdog's recovery
+    /// runs the user has unlocked again. The recovery cannot tell how far the
+    /// round got, so it locks that new session, and the UI, which shows it
+    /// unlocked, has to be told.
     ///
     /// The new session is not idle, so the only thing that can lock it, and
     /// produce the second announcement, is the recovery.
@@ -1239,11 +1241,12 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Checks that a guard updates the gate before it releases the vault.
+    ///
     /// The race this guards against: a status change and its watchdog update
     /// are two writes, and another status change gets in between them, so the
     /// updates land in the wrong order and an unlocked vault is left with a
-    /// parked watchdog. The guard closes it by updating the gate before it
-    /// releases the vault.
+    /// parked watchdog.
     ///
     /// The test holds the gate state, which stops the unlock's guard inside
     /// its gate update, and checks that the vault is still held right then.
@@ -1282,17 +1285,6 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// Waits until `condition`, which another thread makes true, holds. The
-    /// deadline only turns an event that never comes into a failure instead
-    /// of a hung test.
-    fn wait_until(what: &str, condition: impl Fn() -> bool) {
-        let deadline = Instant::now() + GIVE_UP_AFTER;
-
-        while !condition() {
-            assert!(Instant::now() < deadline, "timed out waiting until {what}");
-            std::thread::yield_now();
-        }
-    }
     #[test]
     fn a_poisoned_vault_is_locked_parked_and_announced_to_the_ui() {
         let (state, dir) = test_state("poison");
@@ -1341,9 +1333,9 @@ mod tests {
             .expect("change");
 
         // Whether a change on a locked vault unlocks it is core's decision,
-        // and one that is about to be reversed, so the status is not asserted
-        // here: the watchdog has to agree with the outcome either way. The
-        // timeout read after an unlock has its own test below.
+        // so the status is not asserted here: the watchdog has to agree with
+        // the outcome either way. The timeout read after an unlock has its
+        // own test below.
         let status = vault.acquire().status();
         assert_eq!(
             vault.gate.is_running(),
@@ -1372,6 +1364,19 @@ mod tests {
 
         assert_eq!(vault.lock_timeout_secs.load(Ordering::Relaxed), 120);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Waits until `condition`, which another thread makes true, holds.
+    ///
+    /// The deadline only turns an event that never comes into a failure instead
+    /// of a hung test.
+    fn wait_until(what: &str, condition: impl Fn() -> bool) {
+        let deadline = Instant::now() + GIVE_UP_AFTER;
+
+        while !condition() {
+            assert!(Instant::now() < deadline, "timed out waiting until {what}");
+            std::thread::yield_now();
+        }
     }
 
     /// Opens a state on a fresh directory and returns both.
@@ -1421,7 +1426,7 @@ mod tests {
             let _ = sender.send(());
         });
         receiver
-            .recv_timeout(Duration::from_secs(2))
+            .recv_timeout(GIVE_UP_AFTER)
             .expect("watchdog thread should exit after shutdown");
     }
 }

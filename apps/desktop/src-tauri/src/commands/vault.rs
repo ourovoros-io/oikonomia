@@ -82,7 +82,9 @@ pub(crate) async fn vault_init(
 /// Unlocks the vault with the master password and returns its status.
 ///
 /// Requires an existing vault. Unlocking also brings an older database up to
-/// the current schema. The password is wiped when the command returns.
+/// the current schema. On a vault that is already unlocked this succeeds
+/// without looking at the password, so it cannot serve to check one. The
+/// password is wiped when the command returns.
 ///
 /// # Errors
 ///
@@ -106,10 +108,9 @@ pub(crate) async fn vault_unlock(
 /// Changes the master password, given the current one, and returns the
 /// status the vault is left in.
 ///
-/// Requires an existing vault, locked or unlocked. Both passwords are wiped
-/// when the command returns. The watchdog follows whatever status results, so
-/// this does not depend on whether core unlocks a locked vault as part of the
-/// change.
+/// Requires an existing vault, locked or unlocked; core keeps that state, so
+/// a locked vault stays locked. Both passwords are wiped when the command
+/// returns. The watchdog follows the status that results, whatever it is.
 ///
 /// # Errors
 ///
@@ -118,6 +119,10 @@ pub(crate) async fn vault_unlock(
 /// `invalid_password` when the current password is rejected, `crypto` when a
 /// key cannot be derived, and `io` or `vault_corrupt` when the vault files
 /// cannot be rewritten. Returns `task_failed` when the blocking task panics.
+///
+/// One of these can be returned after the change took effect: when the vault
+/// was unlocked and cannot be reopened under the new key. It is then locked
+/// and opens with the new password.
 #[tauri::command]
 pub(crate) async fn vault_change_password(
     state: State<'_, AppState>,
@@ -296,9 +301,10 @@ pub(crate) async fn vault_pick_backup(
     Ok(Some(path.display().to_string()))
 }
 
-/// Asks for a `.oikonomia-backup` file with a native open dialog and grants
-/// the chosen path, so that [`vault_restore`] accepts it back. Returns `None`
-/// if the user cancelled.
+/// Asks for a `.oikonomia-backup` file with a native open dialog.
+///
+/// The chosen path is granted, so that [`vault_restore`] accepts it back.
+/// Returns `None` if the user cancelled.
 ///
 /// # Errors
 ///

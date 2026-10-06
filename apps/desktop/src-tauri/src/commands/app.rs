@@ -87,8 +87,9 @@ pub(crate) fn quick_add_hide(app: tauri::AppHandle) {
 }
 
 /// Returns a `mailto:` link to [`SUPPORT_EMAIL`] whose subject names the app
-/// version, so every support thread opens with the one fact each report
-/// needs.
+/// version.
+///
+/// Every support thread then opens with the one fact each report needs.
 fn support_mailto(version: &str) -> String {
     let subject = percent_encode(&format!("Oikonomia v{version} support"));
     format!("mailto:{SUPPORT_EMAIL}?subject={subject}")
