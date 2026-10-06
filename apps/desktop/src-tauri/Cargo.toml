@@ -34,6 +34,9 @@ tauri-plugin-opener = "2"
 log = "0.4"
 thiserror = { workspace = true }
 
+[dev-dependencies]
+oikonomia-test-support = { workspace = true }
+
 # Windows and Linux start a new process every time the app is launched. A
 # second launch must surface the first one's window (which may be hidden in
 # the tray) instead of opening the vault twice. macOS already routes a second

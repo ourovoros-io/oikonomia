@@ -4,6 +4,7 @@ members = [
     "crates/oikonomia-core",
     "crates/oikonomia-update",
     "crates/macos-dock-icon",
+    "crates/oikonomia-test-support",
     "apps/desktop/src-tauri",
 ]
 default-members = ["crates/oikonomia-core"]
@@ -17,6 +18,7 @@ license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 oikonomia-core = { path = "crates/oikonomia-core" }
+oikonomia-test-support = { path = "crates/oikonomia-test-support" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
@@ -44,6 +46,7 @@ unreachable_pub = "warn"
 unsafe_op_in_unsafe_fn = "deny"
 trivial_numeric_casts = "warn"
 unused_lifetimes = "warn"
+unused_macro_rules = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

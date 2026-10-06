@@ -129,7 +129,7 @@ mod tests {
     use oikonomia_update::UpdateError;
 
     use super::{CommandError, DesktopError};
-    use crate::test_macros::listed_variants;
+    use oikonomia_test_support::listed_variants;
 
     listed_variants! {
         units listed_desktop_errors for DesktopError {

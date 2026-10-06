@@ -2952,6 +2952,7 @@ dependencies = [
  "log",
  "macos-dock-icon",
  "oikonomia-core",
+ "oikonomia-test-support",
  "oikonomia-update",
  "serde",
  "serde_json",
@@ -2978,6 +2979,7 @@ dependencies = [
  "image",
  "log",
  "ocrs",
+ "oikonomia-test-support",
  "pdf-extract",
  "rand",
  "rten",
@@ -2993,6 +2995,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oikonomia-test-support"
+version = "0.1.0"
+
+[[package]]
 name = "oikonomia-update"
 version = "0.1.0"
 dependencies = [
@@ -3001,6 +3007,7 @@ dependencies = [
  "log",
  "minisign",
  "minisign-verify",
+ "oikonomia-test-support",
  "semver",
  "serde",
  "serde_json",

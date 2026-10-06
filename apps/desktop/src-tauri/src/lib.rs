@@ -8,8 +8,6 @@ mod error;
 mod nav_guard;
 mod startup;
 mod state;
-#[cfg(test)]
-mod test_macros;
 mod tray;
 mod update;
 mod update_exec;

@@ -752,7 +752,7 @@ fn map_report_line(row: &rusqlite::Row<'_>) -> Result<ReportLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_macros::listed_variants;
+    use oikonomia_test_support::listed_variants;
 
     listed_variants! {
         units listed_lines for SyntheticLine {

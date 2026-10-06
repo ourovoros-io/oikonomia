@@ -1,4 +1,8 @@
-//! Macros shared by the unit tests of this crate.
+//! Test support shared by the workspace's crates.
+//!
+//! A dev-dependency only: nothing here is compiled into the application.
+//! It holds [`listed_variants!`], which the tests of the hand-written `ALL`
+//! lists are built on.
 
 /// Lists the variants of an enumeration once and derives from that single list
 /// everything a code-list guard needs.
@@ -26,16 +30,32 @@
 /// written as `Enum::Variant { .. }`. The `units` form takes plain paths,
 /// which are valid both as patterns and as values.
 ///
-/// ```ignore
+/// # Examples
+///
+/// ```
+/// use oikonomia_test_support::listed_variants;
+///
+/// #[derive(Debug, PartialEq)]
+/// enum Role {
+///     Category,
+///     Payment,
+/// }
+///
 /// listed_variants! {
-///     units listed_roles for AccountRole {
-///         AccountRole::Category,
-///         AccountRole::Payment,
+///     units listed_roles for Role {
+///         Role::Category,
+///         Role::Payment,
 ///     }
 /// }
 ///
-/// assert_eq!(listed_roles::COUNT, 2);
+/// fn main() {
+///     assert_eq!(listed_roles::COUNT, 2);
+///     assert_eq!(listed_roles::position(&Role::Payment), 1);
+///     assert_eq!(listed_roles::variants(), [Role::Category, Role::Payment]);
+///     listed_roles::assert_every_position_once(vec![1, 0]);
+/// }
 /// ```
+#[macro_export]
 macro_rules! listed_variants {
     (@one $variant:pat) => {
         ()
@@ -54,7 +74,7 @@ macro_rules! listed_variants {
         $head:pat,
         $($tail:pat,)*
     ) => {
-        $crate::test_macros::listed_variants!(
+        $crate::listed_variants!(
             @arms
             $value,
             [$($arms)* $head => $index,],
@@ -68,12 +88,12 @@ macro_rules! listed_variants {
             use super::$enum;
 
             pub(super) const COUNT: usize = [
-                $($crate::test_macros::listed_variants!(@one $variant)),+
+                $($crate::listed_variants!(@one $variant)),+
             ]
             .len();
 
             pub(super) fn position(value: &$enum) -> usize {
-                $crate::test_macros::listed_variants!(@arms value, [], (0), $($variant,)+)
+                $crate::listed_variants!(@arms value, [], (0), $($variant,)+)
             }
 
             pub(super) fn assert_every_position_once(mut positions: Vec<usize>) {
@@ -91,7 +111,7 @@ macro_rules! listed_variants {
     };
 
     (units $listing:ident for $enum:ident { $($variant:path),+ $(,)? }) => {
-        $crate::test_macros::listed_variants!(
+        $crate::listed_variants!(
             @module
             $listing
             $enum
@@ -105,8 +125,6 @@ macro_rules! listed_variants {
     };
 
     (patterns $listing:ident for $enum:ident { $($variant:pat),+ $(,)? }) => {
-        $crate::test_macros::listed_variants!(@module $listing $enum [] $($variant),+);
+        $crate::listed_variants!(@module $listing $enum [] $($variant),+);
     };
 }
-
-pub(crate) use listed_variants;

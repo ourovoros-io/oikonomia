@@ -359,7 +359,7 @@ impl ValidationError {
 #[cfg(test)]
 mod tests {
     use super::{AccountRole, ValidationError};
-    use crate::test_macros::listed_variants;
+    use oikonomia_test_support::listed_variants;
     use std::collections::{BTreeMap, BTreeSet};
 
     fn params_of(error: &ValidationError) -> Vec<(&'static str, String)> {

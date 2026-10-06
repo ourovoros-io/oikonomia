@@ -743,7 +743,7 @@ mod tests {
     use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
     use crate::documents::pdf_budget::MAX_PDF_DECODED_BYTES;
     use crate::domain::AccountType;
-    use crate::test_macros::listed_variants;
+    use oikonomia_test_support::listed_variants;
 
     /// The parsed form of a test PDF that must load within budget.
     #[expect(clippy::panic, reason = "test fails loudly by design")]
