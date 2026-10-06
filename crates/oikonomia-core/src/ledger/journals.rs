@@ -8,8 +8,8 @@ use time::Date;
 
 use crate::db::{corrupt_column, fold_case, read_column, stored_date, stored_uuid};
 use crate::domain::{
-    AccountId, EntityId, EntryStatus, JournalEntry, JournalEntryId, JournalLine, JournalLineId,
-    validate_lines_for_post,
+    Account, AccountId, EntityId, EntryStatus, JournalEntry, JournalEntryId, JournalLine,
+    JournalLineId, validate_lines_for_post,
 };
 use crate::error::{AccountRole, Error, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
@@ -415,14 +415,7 @@ fn insert_posted_entry(
     let mut lines = Vec::with_capacity(input.lines.len());
     for raw in &input.lines {
         let account = get_account(conn, raw.account_id)?;
-        if account.entity_id != input.entity_id {
-            return Err(Error::AccountWrongEntity);
-        }
-        if !account.is_active {
-            return Err(Error::Validation(ValidationError::AccountInactive {
-                code: account.code.clone(),
-            }));
-        }
+        ensure_postable(&account, input.entity_id)?;
 
         let debit = Money::from_minor(raw.debit_minor)?;
         let credit = Money::from_minor(raw.credit_minor)?;
@@ -511,9 +504,6 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
     }
 
     let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
-    if debit_account == credit_account {
-        return Err(Error::Validation(ValidationError::SameAccount));
-    }
 
     let lines = vec![
         CreateJournalLine {
@@ -561,16 +551,63 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
     Ok(view)
 }
 
-/// Check that role accounts exist and match `kind` (same rules as post).
+/// Checks the role accounts of `input` exactly as [`post_simple_entry`] does.
+///
+/// Posting resolves its accounts through the same [`simple_entry_sides`], so
+/// an input that passes here cannot be refused for its accounts at post time
+/// unless an account changes in between.
+///
+/// # Errors
+///
+/// Those [`simple_entry_sides`] returns.
 pub(crate) fn ensure_simple_entry_roles(conn: &Connection, input: &PostSimpleEntry) -> Result<()> {
     simple_entry_sides(conn, input).map(|_| ())
 }
 
-/// Resolve the (debit, credit) account pair for a simple entry.
+/// Resolves the (debit, credit) account pair for a simple entry.
+///
+/// # Errors
+///
+/// - [`ValidationError::AccountRequired`], [`ValidationError::AccountWrongType`]
+///   or [`ValidationError::BillStatusRequired`] when a role the kind needs is
+///   empty or filled with an account of the wrong type.
+/// - [`ValidationError::SameAccount`] when both sides are one account.
+/// - [`Error::AccountWrongEntity`] or [`ValidationError::AccountInactive`]
+///   when an account belongs to another book or is archived.
+/// - [`Error::NotFound`] for an unknown account id.
 fn simple_entry_sides(
     conn: &Connection,
     input: &PostSimpleEntry,
 ) -> Result<(AccountId, AccountId)> {
+    let (debit, credit) = simple_entry_role_accounts(conn, input)?;
+    if debit.id == credit.id {
+        return Err(Error::Validation(ValidationError::SameAccount));
+    }
+
+    ensure_postable(&debit, input.entity_id)?;
+    ensure_postable(&credit, input.entity_id)?;
+    Ok((debit.id, credit.id))
+}
+
+/// Checks that `account` may take a new posting in the book of `entity_id`.
+fn ensure_postable(account: &Account, entity_id: EntityId) -> Result<()> {
+    if account.entity_id != entity_id {
+        return Err(Error::AccountWrongEntity);
+    }
+    if !account.is_active {
+        return Err(Error::Validation(ValidationError::AccountInactive {
+            code: account.code.clone(),
+        }));
+    }
+    Ok(())
+}
+
+/// Loads the (debit, credit) accounts the kind of `input` maps its roles to,
+/// checking only that each role is filled with an account of an allowed type.
+fn simple_entry_role_accounts(
+    conn: &Connection,
+    input: &PostSimpleEntry,
+) -> Result<(Account, Account)> {
     use crate::domain::AccountType::{Asset, Expense, Income, Liability};
 
     let role =
@@ -583,7 +620,7 @@ fn simple_entry_sides(
                     code: account.code.clone(),
                 }));
             }
-            Ok(id)
+            Ok(account)
         };
 
     match input.kind {
