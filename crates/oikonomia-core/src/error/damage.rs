@@ -169,3 +169,143 @@ pub enum BackupDefect {
     #[error("database in the backup is not encrypted")]
     DatabaseNotEncrypted,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{BackupDefect, VaultCorruption};
+    use oikonomia_test_support::listed_variants;
+    use std::fmt::Display;
+
+    listed_variants! {
+        patterns listed_corruptions for VaultCorruption {
+            VaultCorruption::Column { .. },
+            VaultCorruption::HeaderUnreadable { .. },
+            VaultCorruption::HeaderField { .. },
+            VaultCorruption::UnsupportedFormat { .. },
+            VaultCorruption::MissingMetaTable,
+            VaultCorruption::MissingSchemaVersion,
+            VaultCorruption::HeaderWithoutDatabase,
+            VaultCorruption::DatabaseWithoutHeader,
+            VaultCorruption::EmptyFile { .. },
+            VaultCorruption::UnmergedWriteAheadLog,
+            VaultCorruption::Setting { .. },
+            VaultCorruption::InvalidJournalLines { .. },
+        }
+    }
+
+    /// One value of every reason, in declaration order.
+    fn every_corruption() -> Vec<VaultCorruption> {
+        vec![
+            VaultCorruption::Column {
+                column: "accounts.id".into(),
+                detail: "not an id".into(),
+            },
+            VaultCorruption::HeaderUnreadable {
+                detail: "expected value".into(),
+            },
+            VaultCorruption::HeaderField {
+                field: "salt",
+                detail: "not base64".into(),
+            },
+            VaultCorruption::UnsupportedFormat { version: 2 },
+            VaultCorruption::MissingMetaTable,
+            VaultCorruption::MissingSchemaVersion,
+            VaultCorruption::HeaderWithoutDatabase,
+            VaultCorruption::DatabaseWithoutHeader,
+            VaultCorruption::EmptyFile { file: "vault.db" },
+            VaultCorruption::UnmergedWriteAheadLog,
+            VaultCorruption::Setting {
+                key: "lock_timeout_secs",
+            },
+            VaultCorruption::InvalidJournalLines { count: 1 },
+        ]
+    }
+
+    listed_variants! {
+        patterns listed_defects for BackupDefect {
+            BackupDefect::NotABackup,
+            BackupDefect::UnsupportedVersion { .. },
+            BackupDefect::Truncated,
+            BackupDefect::TrailingData,
+            BackupDefect::EmptyMember { .. },
+            BackupDefect::DuplicateMember { .. },
+            BackupDefect::UnexpectedMember { .. },
+            BackupDefect::MissingMember { .. },
+            BackupDefect::MemberNameLength,
+            BackupDefect::MemberNameNotUtf8,
+            BackupDefect::UnusableHeader(_),
+            BackupDefect::DatabaseNotEncrypted,
+        }
+    }
+
+    /// One value of every defect, in declaration order.
+    fn every_defect() -> Vec<BackupDefect> {
+        vec![
+            BackupDefect::NotABackup,
+            BackupDefect::UnsupportedVersion { version: 99 },
+            BackupDefect::Truncated,
+            BackupDefect::TrailingData,
+            BackupDefect::EmptyMember {
+                name: "vault.db".into(),
+            },
+            BackupDefect::DuplicateMember { name: "vault.db" },
+            BackupDefect::UnexpectedMember {
+                name: "notes.txt".into(),
+            },
+            BackupDefect::MissingMember { name: "vault.db" },
+            BackupDefect::MemberNameLength,
+            BackupDefect::MemberNameNotUtf8,
+            BackupDefect::UnusableHeader(VaultCorruption::MissingMetaTable),
+            BackupDefect::DatabaseNotEncrypted,
+        ]
+    }
+
+    /// Fails unless `message` starts in lowercase and has no trailing period.
+    #[track_caller]
+    fn assert_message_style(reason: &impl Display) {
+        let message = reason.to_string();
+
+        assert!(
+            message
+                .chars()
+                .next()
+                .is_some_and(|first| !first.is_uppercase()),
+            "{message:?} must not be empty or start with a capital"
+        );
+        assert!(
+            !message.ends_with('.'),
+            "{message:?} must not end with a period"
+        );
+    }
+
+    /// The compiler checks the two lists above against the enums with an
+    /// exhaustive `match`; this checks that each has a sample for every
+    /// variant, and the style of every sample's message.
+    #[test]
+    fn every_reason_has_a_lowercase_message_without_a_trailing_period() {
+        let corruptions = every_corruption();
+        let defects = every_defect();
+
+        listed_corruptions::assert_every_position_once(
+            corruptions
+                .iter()
+                .map(listed_corruptions::position)
+                .collect(),
+        );
+        listed_defects::assert_every_position_once(
+            defects.iter().map(listed_defects::position).collect(),
+        );
+        corruptions.iter().for_each(assert_message_style);
+        defects.iter().for_each(assert_message_style);
+    }
+
+    #[test]
+    fn a_damaged_column_reads_as_its_name_and_what_is_wrong() {
+        let reason = VaultCorruption::Column {
+            column: "accounts.id".into(),
+            detail: "not an id: nope".into(),
+        };
+
+        assert_eq!(reason.to_string(), "accounts.id: not an id: nope");
+    }
+}

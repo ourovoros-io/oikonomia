@@ -669,6 +669,29 @@ mod tests {
         }
     }
 
+    /// The validation and CSV samples stand for their enums, whose own tests
+    /// check every variant's message.
+    #[test]
+    fn every_message_starts_in_lowercase_and_has_no_trailing_period() {
+        for error in every_variant() {
+            let message = error.to_string();
+
+            assert!(
+                message
+                    .chars()
+                    .next()
+                    .is_some_and(|first| !first.is_uppercase()),
+                "{}: {message:?} must not be empty or start with a capital",
+                error.code()
+            );
+            assert!(
+                !message.ends_with('.'),
+                "{}: {message:?} must not end with a period",
+                error.code()
+            );
+        }
+    }
+
     #[test]
     fn every_code_is_snake_case() {
         for code in Error::ALL_CODES {
