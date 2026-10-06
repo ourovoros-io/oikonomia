@@ -380,13 +380,17 @@ pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Resu
     Ok(())
 }
 
-/// Active accounts useful for auto-matching.
+/// The book's active accounts, for matching a document to an account.
+///
+/// An archived account is left out, so a suggestion never points at one.
 ///
 /// # Errors
 ///
 /// DB errors.
 pub fn suggest_accounts_for_entity(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
-    list_accounts(conn, entity_id)
+    let mut accounts = list_accounts(conn, entity_id)?;
+    accounts.retain(|account| account.is_active);
+    Ok(accounts)
 }
 
 fn is_allowed_mime(mime: &str) -> bool {
