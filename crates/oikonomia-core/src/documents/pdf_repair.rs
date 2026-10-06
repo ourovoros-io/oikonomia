@@ -64,7 +64,9 @@ pub(crate) fn repair_xref_offsets(data: &[u8]) -> Option<Vec<u8>> {
             continue;
         }
 
-        let nearest = *tables.iter().min_by_key(|p| p.abs_diff(claimed))?;
+        let nearest = *tables
+            .iter()
+            .min_by_key(|position| position.abs_diff(claimed))?;
 
         if !patch_span(&mut patched, span, nearest) {
             return None;
@@ -346,16 +348,19 @@ fn nearest_header(
 fn xref_keyword_positions(data: &[u8]) -> Vec<usize> {
     let mut positions = Vec::new();
 
-    for (i, window) in data.windows(4).enumerate() {
+    for (position, window) in data.windows(4).enumerate() {
         if window != b"xref" {
             continue;
         }
 
-        let preceded_ok = i == 0 || data.get(i - 1).is_some_and(u8::is_ascii_whitespace);
-        let followed_ok = data.get(i + 4).is_none_or(u8::is_ascii_whitespace);
+        let preceded_ok = position
+            .checked_sub(1)
+            .and_then(|before| data.get(before))
+            .is_none_or(u8::is_ascii_whitespace);
+        let followed_ok = data.get(position + 4).is_none_or(u8::is_ascii_whitespace);
 
         if preceded_ok && followed_ok {
-            positions.push(i);
+            positions.push(position);
         }
     }
 
@@ -402,12 +407,12 @@ fn offset_points_at_table(data: &[u8], offset: usize) -> bool {
 fn find_from(data: &[u8], needle: &[u8], from: usize) -> Option<usize> {
     data.get(from..)?
         .windows(needle.len())
-        .position(|w| w == needle)
-        .map(|p| from + p)
+        .position(|window| window == needle)
+        .map(|position| from + position)
 }
 
-fn count_while(data: &[u8], pred: impl Fn(&u8) -> bool) -> usize {
-    data.iter().take_while(|b| pred(b)).count()
+fn count_while(data: &[u8], matches: impl Fn(&u8) -> bool) -> usize {
+    data.iter().take_while(|byte| matches(byte)).count()
 }
 
 fn parse_ascii_usize(digits: &[u8]) -> Option<usize> {

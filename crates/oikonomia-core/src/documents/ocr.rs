@@ -120,16 +120,16 @@ pub(super) fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
     );
 
     let detection = Model::load_file(&paths.detection)
-        .map_err(|e| Error::Analysis(format!("load detection model: {e}")))?;
+        .map_err(|err| Error::Analysis(format!("load detection model: {err}")))?;
     let recognition = Model::load_file(&paths.recognition)
-        .map_err(|e| Error::Analysis(format!("load recognition model: {e}")))?;
+        .map_err(|err| Error::Analysis(format!("load recognition model: {err}")))?;
 
     let engine = OcrEngine::new(OcrEngineParams {
         detection_model: Some(detection),
         recognition_model: Some(recognition),
         ..Default::default()
     })
-    .map_err(|e| Error::Analysis(format!("init OCR engine: {e}")))?;
+    .map_err(|err| Error::Analysis(format!("init OCR engine: {err}")))?;
 
     set_engine(&mut guard, Some(engine));
     Ok(())
@@ -269,11 +269,11 @@ fn ocr_scale(width: u32, height: u32) -> Result<f64> {
     Ok(scale)
 }
 
-fn preprocess_for_receipt(img: DynamicImage) -> Result<RgbImage> {
+fn preprocess_for_receipt(image: DynamicImage) -> Result<RgbImage> {
     // Convert to luma then back to RGB — OCR is greyscale; colour UIs (screenshots)
     // confuse detection less after this. An 8-bit grey image is taken as it
     // is, without a copy.
-    let mut luma = img.into_luma8();
+    let mut luma = image.into_luma8();
     let (width, height) = luma.dimensions();
 
     let scale = ocr_scale(width, height)?;
@@ -306,7 +306,7 @@ fn contrast_stretched(luma: &image::GrayImage) -> RgbImage {
     // A mean of u8 pixels always fits u8; try_from guards the impossible case.
     let mean = sum
         .checked_div(count)
-        .map_or(128, |m| u8::try_from(m).unwrap_or(u8::MAX));
+        .map_or(128, |mean| u8::try_from(mean).unwrap_or(u8::MAX));
     let invert = mean < 90;
 
     let mut rgb = RgbImage::new(luma.width(), luma.height());
@@ -332,9 +332,9 @@ fn contrast_stretched(luma: &image::GrayImage) -> RgbImage {
 }
 
 /// Runs the engine that [`ensure_engine`] loaded on a prepared image.
-fn run_ocr_on_rgb(img: &RgbImage) -> Result<String> {
-    let img_source = ImageSource::from_bytes(img.as_raw(), img.dimensions())
-        .map_err(|e| Error::Analysis(format!("image source: {e}")))?;
+fn run_ocr_on_rgb(image: &RgbImage) -> Result<String> {
+    let image_source = ImageSource::from_bytes(image.as_raw(), image.dimensions())
+        .map_err(|err| Error::Analysis(format!("image source: {err}")))?;
 
     let mut guard = lock_engine();
     let engine = guard
@@ -342,7 +342,7 @@ fn run_ocr_on_rgb(img: &RgbImage) -> Result<String> {
         .ok_or_else(|| Error::Analysis("OCR engine not loaded".into()))?;
 
     let inferred = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        infer_text(engine, img_source)
+        infer_text(engine, image_source)
     }));
 
     if let Ok(result) = inferred {
@@ -353,17 +353,17 @@ fn run_ocr_on_rgb(img: &RgbImage) -> Result<String> {
     }
 }
 
-fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<String> {
+fn infer_text(engine: &mut OcrEngine, image_source: ImageSource<'_>) -> Result<String> {
     let ocr_input = engine
-        .prepare_input(img_source)
-        .map_err(|e| Error::Analysis(format!("OCR prepare: {e}")))?;
+        .prepare_input(image_source)
+        .map_err(|err| Error::Analysis(format!("OCR prepare: {err}")))?;
 
     // Prefer the high-level API when possible for denser text recovery.
     if let Ok(blob) = engine.get_text(&ocr_input) {
         let cleaned = blob
             .lines()
             .map(str::trim)
-            .filter(|l| l.chars().count() > 1)
+            .filter(|line| line.chars().count() > 1)
             .collect::<Vec<_>>()
             .join("\n");
         if cleaned.chars().count() > 8 {
@@ -373,17 +373,17 @@ fn infer_text(engine: &mut OcrEngine, img_source: ImageSource<'_>) -> Result<Str
 
     let word_rects = engine
         .detect_words(&ocr_input)
-        .map_err(|e| Error::Analysis(format!("OCR detect: {e}")))?;
+        .map_err(|err| Error::Analysis(format!("OCR detect: {err}")))?;
     let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
     let line_texts = engine
         .recognize_text(&ocr_input, &line_rects)
-        .map_err(|e| Error::Analysis(format!("OCR recognize: {e}")))?;
+        .map_err(|err| Error::Analysis(format!("OCR recognize: {err}")))?;
 
     let mut lines = Vec::new();
     for line in line_texts.iter().flatten() {
-        let s = line.to_string();
-        if s.chars().count() > 1 {
-            lines.push(s);
+        let text = line.to_string();
+        if text.chars().count() > 1 {
+            lines.push(text);
         }
     }
 
@@ -513,6 +513,6 @@ mod tests {
         assert!(guard.is_none());
         drop(guard);
         assert!(!mutex.is_poisoned());
-        assert!(mutex.lock().is_ok_and(|g| g.is_none()));
+        assert!(mutex.lock().is_ok_and(|guard| guard.is_none()));
     }
 }

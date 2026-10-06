@@ -118,11 +118,11 @@ pub struct AnalyzerStatus {
 #[must_use]
 pub fn analyzer_status(model_dir: Option<&std::path::Path>) -> AnalyzerStatus {
     let paths = model_dir.map(OcrModelPaths::from_dir);
-    let ok = paths.as_ref().is_some_and(ocr_available);
+    let available = paths.as_ref().is_some_and(ocr_available);
     AnalyzerStatus {
-        ocr_available: ok,
+        ocr_available: available,
         offline: true,
-        hint: if ok {
+        hint: if available {
             AnalyzerHint::Ready
         } else {
             AnalyzerHint::ModelsMissing
@@ -246,29 +246,30 @@ fn transfer_fee_note(fee_minor: i64, currency: &str) -> UiText {
     reason = "the analysis source and model ride beside the chart inputs; tracked for the API pass"
 )]
 fn finalize_suggestion(
-    s: &mut DocumentSuggestion,
+    suggestion: &mut DocumentSuggestion,
     template: ChartTemplate,
     accounts: &[Account],
     category_hint: &str,
     source: AnalyzeSource,
     model: Option<String>,
 ) {
-    s.source = source;
-    s.model = model;
+    suggestion.source = source;
+    suggestion.model = model;
 
-    if s.category_account_id.is_none() {
-        s.category_account_id = match s.kind {
+    if suggestion.category_account_id.is_none() {
+        suggestion.category_account_id = match suggestion.kind {
             EntryKindSuggestion::Income => match_income_account(template, accounts, category_hint),
             EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
                 match_expense_account(template, accounts, category_hint)
             }
         };
     }
-    if s.wallet_account_id.is_none() {
-        s.wallet_account_id = default_account_for_role(template, accounts, AccountRole::Payment);
+    if suggestion.wallet_account_id.is_none() {
+        suggestion.wallet_account_id =
+            default_account_for_role(template, accounts, AccountRole::Payment);
     }
-    if s.payable_account_id.is_none() {
-        s.payable_account_id =
+    if suggestion.payable_account_id.is_none() {
+        suggestion.payable_account_id =
             default_account_for_role(template, accounts, AccountRole::BillsPayable);
     }
 
@@ -276,12 +277,15 @@ fn finalize_suggestion(
     // (deactivated or re-coded), any liability suggested above is only a
     // stand-in, and the user must still be told to add a payable account. A
     // blank book seeds none, so there a liability is the legitimate answer.
-    let payable_is_missing = s.payable_account_id.is_none()
+    let payable_is_missing = suggestion.payable_account_id.is_none()
         || (template != ChartTemplate::Blank
             && seeded_account_for_role(template, accounts, AccountRole::BillsPayable).is_none());
 
-    if s.kind == EntryKindSuggestion::Bill && s.bill_unpaid && payable_is_missing {
-        s.notes.push(UiText::new(UiTextCode::AddPayableAccount));
+    let unpaid_bill = suggestion.kind == EntryKindSuggestion::Bill && suggestion.bill_unpaid;
+    if unpaid_bill && payable_is_missing {
+        suggestion
+            .notes
+            .push(UiText::new(UiTextCode::AddPayableAccount));
     }
 }
 
@@ -433,7 +437,7 @@ const MIN_PDF_TEXT_CHARS: usize = 8;
 const MAX_PDF_OCR_IMAGES: usize = 2;
 
 fn should_ocr_pdf_images(text: Option<&str>) -> bool {
-    text.is_none_or(|t| t.chars().count() < MIN_PDF_TEXT_CHARS)
+    text.is_none_or(|text| text.chars().count() < MIN_PDF_TEXT_CHARS)
 }
 
 /// Reads a PDF: its text layer, or failing that its embedded images.
@@ -656,16 +660,16 @@ fn pdf_text_per_page(pdf: &BudgetedPdf) -> Option<String> {
 fn extract_pdf_jpeg_images(pdf: &BudgetedPdf) -> Vec<Vec<u8>> {
     contain_panics(|| {
         let document = &pdf.0;
-        let mut out = Vec::new();
+        let mut jpegs = Vec::new();
 
         for page_id in document.get_pages().into_values() {
-            collect_jpegs_from_page(document, page_id, &mut out);
-            if out.len() >= MAX_PDF_OCR_IMAGES {
-                return out;
+            collect_jpegs_from_page(document, page_id, &mut jpegs);
+            if jpegs.len() >= MAX_PDF_OCR_IMAGES {
+                return jpegs;
             }
         }
-        if !out.is_empty() {
-            return out;
+        if !jpegs.is_empty() {
+            return jpegs;
         }
 
         document
@@ -679,46 +683,48 @@ fn extract_pdf_jpeg_images(pdf: &BudgetedPdf) -> Vec<Vec<u8>> {
 }
 
 fn collect_jpegs_from_page(
-    doc: &lopdf::Document,
+    document: &lopdf::Document,
     page_id: lopdf::ObjectId,
-    out: &mut Vec<Vec<u8>>,
+    jpegs: &mut Vec<Vec<u8>>,
 ) {
-    let Ok(page) = doc.get_dictionary(page_id) else {
+    let Ok(page) = document.get_dictionary(page_id) else {
         return;
     };
-    let Some(resources) = dict_ref_or_inline(doc, page.get(b"Resources").ok()) else {
+    let Some(resources) = dictionary_inline_or_referenced(document, page.get(b"Resources").ok())
+    else {
         return;
     };
-    let Some(xobjects) = dict_ref_or_inline(doc, resources.get(b"XObject").ok()) else {
+    let Some(xobjects) = dictionary_inline_or_referenced(document, resources.get(b"XObject").ok())
+    else {
         return;
     };
     for (_name, object) in xobjects {
-        if let Some(jpeg) = jpeg_from_object(doc, object) {
-            out.push(jpeg);
-            if out.len() >= MAX_PDF_OCR_IMAGES {
+        if let Some(jpeg) = jpeg_from_object(document, object) {
+            jpegs.push(jpeg);
+            if jpegs.len() >= MAX_PDF_OCR_IMAGES {
                 return;
             }
         }
     }
 }
 
-fn dict_ref_or_inline<'a>(
-    doc: &'a lopdf::Document,
-    object: Option<&'a lopdf::Object>,
-) -> Option<&'a lopdf::Dictionary> {
+fn dictionary_inline_or_referenced<'document>(
+    document: &'document lopdf::Document,
+    object: Option<&'document lopdf::Object>,
+) -> Option<&'document lopdf::Dictionary> {
     match object? {
-        lopdf::Object::Dictionary(dict) => Some(dict),
-        lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
+        lopdf::Object::Dictionary(dictionary) => Some(dictionary),
+        lopdf::Object::Reference(id) => document.get_dictionary(*id).ok(),
         _ => None,
     }
 }
 
 /// The stored bytes of an image stream that is a JPEG file. They are a
 /// slice of the uploaded file, so no larger than the upload cap.
-fn jpeg_from_object(doc: &lopdf::Document, object: &lopdf::Object) -> Option<Vec<u8>> {
+fn jpeg_from_object(document: &lopdf::Document, object: &lopdf::Object) -> Option<Vec<u8>> {
     let stream = match object {
         lopdf::Object::Stream(stream) => stream,
-        lopdf::Object::Reference(id) => match doc.objects.get(id) {
+        lopdf::Object::Reference(id) => match document.objects.get(id) {
             Some(lopdf::Object::Stream(stream)) => stream,
             _ => return None,
         },
@@ -733,8 +739,8 @@ fn jpeg_from_object(doc: &lopdf::Document, object: &lopdf::Object) -> Option<Vec
     // Only when `DCTDecode` is the one filter are the stored bytes a JPEG file.
     // In a chain such as `[/FlateDecode /DCTDecode]` they are the outer
     // encoding of one.
-    let jpeg = matches!(stream.filters().ok()?.as_slice(), [b"DCTDecode"]);
-    jpeg.then(|| stream.content.clone())
+    let is_jpeg = matches!(stream.filters().ok()?.as_slice(), [b"DCTDecode"]);
+    is_jpeg.then(|| stream.content.clone())
 }
 
 #[cfg(test)]
@@ -1100,7 +1106,7 @@ mod tests {
     }
 
     fn notes_of(suggestion: Result<DocumentSuggestion>) -> Vec<UiText> {
-        suggestion.map_or_else(|_| Vec::new(), |s| s.notes)
+        suggestion.map_or_else(|_| Vec::new(), |suggestion| suggestion.notes)
     }
 
     fn codes_of(notes: &[UiText]) -> Vec<UiTextCode> {
@@ -1136,13 +1142,18 @@ mod tests {
         );
 
         let eur_notes = notes_of(eur.clone());
-        assert_eq!(eur.map(|s| s.amount_minor), Ok(Some(4590)));
+        assert_eq!(
+            eur.map(|suggestion| suggestion.amount_minor),
+            Ok(Some(4590))
+        );
         assert!(
             !codes_of(&eur_notes).contains(&UiTextCode::AmountAssumesTwoDecimals),
             "a 2-decimal currency needs no warning"
         );
 
-        let amount = jpy.as_ref().map_or(Some(-1), |s| s.amount_minor);
+        let amount = jpy
+            .as_ref()
+            .map_or(Some(-1), |suggestion| suggestion.amount_minor);
         assert_eq!(amount, None, "JPY amount must not be prefilled");
 
         let jpy_notes = notes_of(jpy);

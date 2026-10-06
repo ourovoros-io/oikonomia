@@ -244,13 +244,13 @@ pub fn post_simple_entry_with_document(
     data: &[u8],
     analysis_json: Option<&str>,
 ) -> Result<(PostedEntryView, DocumentMeta)> {
-    let tx = conn
+    let transaction = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let view = post_simple_entry_unchecked(&tx, input)?;
+    let view = post_simple_entry_unchecked(&transaction, input)?;
     let meta = save_document(
-        &tx,
+        &transaction,
         input.entity_id,
         view.entry.id,
         filename,
@@ -258,10 +258,12 @@ pub fn post_simple_entry_with_document(
         data,
     )?;
     if let Some(json) = analysis_json {
-        save_analysis_json(&tx, meta.id, json)?;
+        save_analysis_json(&transaction, meta.id, json)?;
     }
 
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    transaction
+        .commit()
+        .map_err(|err| Error::Io(err.to_string()))?;
     Ok((view, meta))
 }
 
@@ -364,10 +366,10 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
 ///
 /// Not found or DB error.
 pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
-    let n = conn
+    let deleted = conn
         .execute("DELETE FROM documents WHERE id = ?1", [id.0.to_string()])
         .map_err(|err| Error::Io(err.to_string()))?;
-    if n == 0 {
+    if deleted == 0 {
         return Err(Error::NotFound("document".into()));
     }
     Ok(())
@@ -445,11 +447,12 @@ pub fn resolve_mime(mime_type: &str, filename: &str) -> String {
     mime
 }
 
-/// Whether `filename` ends in the extension `ext`, in any letter case.
-pub(super) fn has_extension(filename: &str, ext: &str) -> bool {
+/// Whether `filename` ends in `extension` (given without the dot), in any
+/// letter case.
+pub(super) fn has_extension(filename: &str, extension: &str) -> bool {
     std::path::Path::new(filename)
         .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+        .is_some_and(|found| found.eq_ignore_ascii_case(extension))
 }
 
 /// Pick the expense account a document most likely belongs to.
