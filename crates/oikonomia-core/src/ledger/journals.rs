@@ -56,7 +56,8 @@ pub struct PostedEntryView {
     pub entry: JournalEntry,
     /// Lines.
     pub lines: Vec<JournalLine>,
-    /// True if this entry has been voided.
+    /// True if this entry is out of the active books: it has been voided, or
+    /// it is the reversing entry that a void posted.
     pub is_voided: bool,
 }
 
@@ -353,18 +354,22 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
     })
 }
 
-/// Set the owner-only hidden flag on an existing journal entry.
+/// Sets the owner-only hidden flag on an existing journal entry.
 ///
-/// Hidden is a visibility flag for CSV export, not extra encryption and not
-/// a second password. The owner still sees the row via [`list_entries`],
-/// [`get_entry`], and [`account_register`].
+/// Hidden keeps an entry out of what leaves the app: the journal CSV export
+/// omits it, and so does the accountant profit and loss
+/// ([`profit_and_loss_export`](crate::ledger::profit_and_loss_export)). It is
+/// not extra encryption and not a second password. Inside the app the owner
+/// still sees the row via [`list_entries`], [`get_entry`] and
+/// [`account_register`], and every other report counts it.
 ///
 /// v1: any existing entry the owner can load (draft or posted, including
-/// voided) can be hidden or unhidden. A missing id is [`Error::NotFound`].
+/// voided) can be hidden or unhidden.
 ///
 /// # Errors
 ///
-/// Not found or database errors.
+/// [`Error::NotFound`] for an unknown entry; [`Error::VaultCorrupt`] for a
+/// stored row that does not parse; database errors as [`Error::Io`].
 pub fn set_entry_hidden(
     conn: &Connection,
     id: JournalEntryId,
@@ -382,11 +387,22 @@ pub fn set_entry_hidden(
     get_entry(conn, id)
 }
 
-/// Validate and post a journal entry atomically.
+/// Validates and posts a journal entry atomically.
 ///
 /// # Errors
 ///
-/// Unbalanced, wrong entity, or DB errors.
+/// - [`ValidationError::InvalidDate`] for a malformed entry date.
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`Error::AccountWrongEntity`] for an account of another entity.
+/// - [`ValidationError::AccountInactive`] for an archived account.
+/// - [`Error::NegativeMoney`] for a negative debit or credit.
+/// - [`Error::TooFewLines`] for fewer than two lines.
+/// - [`Error::InvalidLineAmounts`] for a line that is not debit XOR credit.
+/// - [`Error::MoneyOverflow`] when the debits or the credits do not fit in
+///   `i64`.
+/// - [`Error::UnbalancedEntry`] when debits and credits differ.
+/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
+/// - [`Error::Io`] on database errors.
 pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryView> {
     let tx = conn
         .unchecked_transaction()

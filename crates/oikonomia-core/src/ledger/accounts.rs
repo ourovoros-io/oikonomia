@@ -207,11 +207,13 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
     get_account(conn, input.id)
 }
 
-/// Soft-deactivate an account (cannot deactivate system accounts that are protected).
+/// Soft-deactivates an account. Every system account is refused.
 ///
 /// # Errors
 ///
-/// Not found or DB error.
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`ValidationError::SystemAccountProtected`] for a system account.
+/// - [`Error::Io`] on database errors.
 pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
     let account = get_account(conn, id)?;
     if account.is_system {

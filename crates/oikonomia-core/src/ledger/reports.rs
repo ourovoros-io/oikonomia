@@ -128,7 +128,8 @@ pub struct DashboardSummary {
     pub entity_id: EntityId,
     /// Currency code.
     pub base_currency: String,
-    /// Sum of asset accounts as of `to`.
+    /// Sum of asset accounts as of the `assets_as_of` date given to
+    /// [`dashboard_summary`], which need not be the window's `to`.
     pub cash_like_assets: i64,
     /// Income in period.
     pub income: i64,

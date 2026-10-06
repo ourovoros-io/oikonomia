@@ -66,7 +66,8 @@ pub struct CreateRecurringTemplate {
     pub from_account_id: Option<AccountId>,
     /// Transfer destination.
     pub to_account_id: Option<AccountId>,
-    /// Optional memo stored on the template (used as the posted description).
+    /// Optional note stored on the template. Posting does not read it: a
+    /// posted entry's description is the template's `name`.
     pub memo: Option<String>,
     /// Next occurrence `YYYY-MM-DD`. Advanced only after a successful post.
     pub next_date: String,

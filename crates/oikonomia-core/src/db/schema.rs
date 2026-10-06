@@ -275,9 +275,11 @@ fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
 
 /// v6: per-entry owner-only hidden flag on `journal_entries`.
 ///
-/// `0` = visible (default), `1` = hidden from CSV export. The owner still
-/// sees hidden rows in list/get/register. Existing pre-v6 rows become
-/// visible via `DEFAULT 0`. Not extra encryption.
+/// `0` = visible (default), `1` = hidden: left out of the journal CSV export
+/// and of the accountant profit and loss
+/// ([`crate::ledger::profit_and_loss_export`]). The owner still sees hidden
+/// rows in list/get/register. Existing pre-v6 rows become visible via
+/// `DEFAULT 0`. Not extra encryption.
 fn migrate_v6(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
         "

@@ -142,9 +142,15 @@ pub fn cash_flow_series(
 
 /// The window to draw when a date filter leaves one or both bounds empty.
 ///
-/// An empty `from` becomes the book's first active entry date and an empty `to`
-/// its last; with no entries, the open side falls back to the other bound, or
-/// to `today`. A defaulted bound never lands on the wrong side of a given one.
+/// - Both given: the window is `from..=to` as given.
+/// - Only `from` given: `to` is the book's last active entry date, or `today`
+///   when the book has no active entries. If that lands before `from`, `to`
+///   is `from`.
+/// - Only `to` given: `from` is the book's first active entry date, or `to`
+///   itself when the book has no active entries (`today` plays no part). If
+///   the first entry is after `to`, `from` is `to`.
+/// - Neither given: the first and last active entry dates, or `today` for
+///   both when the book has no active entries.
 ///
 /// # Errors
 ///
