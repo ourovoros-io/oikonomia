@@ -55,14 +55,7 @@ impl HostPolicy {
     /// Linux in-app updates are `AppImage` only; `.deb` stays a manual download.
     #[must_use]
     pub fn is_allowed_artifact_url(&self, url: &Url) -> bool {
-        if !self.is_allowed_fetch_url(url) {
-            return false;
-        }
-        let path = url.path();
-        if path_ends_with_ignore_ascii_case(path, ".deb") {
-            return false;
-        }
-        true
+        self.is_allowed_fetch_url(url) && !path_ends_with_ignore_ascii_case(url.path(), ".deb")
     }
 }
 
