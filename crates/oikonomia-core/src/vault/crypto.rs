@@ -96,10 +96,9 @@ mod tests {
     fn derive_is_deterministic() {
         let salt = [7u8; SALT_LEN];
         let header = VaultHeader::new_with_salt(&salt);
-        let a = derive_key("correct horse battery staple", &header);
-        let b = derive_key("correct horse battery staple", &header);
-        assert!(a.is_ok());
-        assert_eq!(a, b);
+        let first = derive_key("correct horse battery staple", &header).unwrap();
+        let second = derive_key("correct horse battery staple", &header).unwrap();
+        assert_eq!(first, second);
     }
 
     #[test]
@@ -122,9 +121,8 @@ mod tests {
     fn different_password_different_key() {
         let salt = [9u8; SALT_LEN];
         let header = VaultHeader::new_with_salt(&salt);
-        let a = derive_key("aaaaaaaaaaaa", &header);
-        let b = derive_key("bbbbbbbbbbbb", &header);
-        assert!(a.is_ok() && b.is_ok());
-        assert_ne!(a.ok(), b.ok());
+        let first = derive_key("aaaaaaaaaaaa", &header).unwrap();
+        let second = derive_key("bbbbbbbbbbbb", &header).unwrap();
+        assert_ne!(first, second);
     }
 }
