@@ -14,7 +14,8 @@ use serde::Serialize;
 /// not log it, and a release build has no logger in any case. It crosses IPC
 /// with the rest of the error, where the frontend may write it to the webview
 /// console (`logCommandError` in `web/src/lib/commandError.ts`).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, thiserror::Error)]
+#[error("{code}: {message}")]
 pub(crate) struct CommandError {
     /// Stable machine code for UI branching and localized text.
     pub code: String,
@@ -26,21 +27,28 @@ pub(crate) struct CommandError {
 }
 
 /// Failures that only the desktop shell can produce (dialogs, files, tasks).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum DesktopError {
     /// File contents sent from the webview were not valid base64.
+    #[error("file_data_invalid: file data from the webview is not valid base64")]
     FileDataInvalid,
     /// A file the user picked or dropped could not be read.
+    #[error("file_unreadable: a picked or dropped file cannot be read")]
     FileUnreadable,
     /// The native dialog returned a location that is not a usable path.
+    #[error("save_location_invalid: the dialog returned a location that is not a path")]
     SaveLocationInvalid,
     /// Writing a file to the chosen location failed.
+    #[error("save_failed: cannot write the file to the chosen location")]
     SaveFailed,
     /// The webview named a path the user never chose in a native dialog.
+    #[error("path_not_granted: the path was not chosen through the app")]
     PathNotGranted,
     /// The system could not open the default mail client.
+    #[error("mail_client_failed: cannot open the default mail client")]
     MailClientFailed,
     /// A background task panicked or was cancelled.
+    #[error("task_failed: a background task panicked or was cancelled")]
     TaskFailed,
 }
 
@@ -269,6 +277,32 @@ mod tests {
         assert_eq!(error.code, "save_failed");
         assert_eq!(error.message, "could not save file: denied");
         assert_eq!(error.params, BTreeMap::new());
+    }
+
+    #[test]
+    fn a_desktop_error_displays_its_code_and_a_lowercase_message() {
+        for kind in DesktopError::ALL {
+            let shown = kind.to_string();
+            let (code, message) = shown.split_once(": ").expect("code: message");
+
+            assert_eq!(code, kind.code(), "{kind:?}");
+            assert!(!message.is_empty(), "{kind:?}");
+            assert_eq!(message, message.to_lowercase(), "{kind:?}");
+            assert!(!message.ends_with('.'), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_command_error_displays_its_code_and_message_and_is_an_error() {
+        let error = CommandError::desktop(DesktopError::SaveFailed, "could not save file: denied");
+
+        assert_eq!(
+            error.to_string(),
+            "save_failed: could not save file: denied"
+        );
+        // Neither type has a lower-level cause to report.
+        assert!(std::error::Error::source(&error).is_none());
+        assert!(std::error::Error::source(&DesktopError::SaveFailed).is_none());
     }
 
     #[test]
