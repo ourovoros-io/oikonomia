@@ -85,10 +85,15 @@ impl Locale {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct LastRoleAccounts {
+    /// The expense or income category last posted to.
     pub category_account_id: Option<String>,
+    /// The bank, cash or card account last paid from or into.
     pub wallet_account_id: Option<String>,
+    /// The liability account the last unpaid bill was booked against.
     pub payable_account_id: Option<String>,
+    /// The account the last transfer left.
     pub from_account_id: Option<String>,
+    /// The account the last transfer arrived in.
     pub to_account_id: Option<String>,
 }
 

@@ -70,10 +70,10 @@ use crate::vault::paths::{
 };
 
 /// Unencrypted magic. Identifies the file; contains no secrets.
-pub const MAGIC: &[u8; 8] = b"OIKOBACK";
+pub(super) const MAGIC: &[u8; 8] = b"OIKOBACK";
 
 /// Archive format version written by this crate.
-pub const FORMAT_VERSION: u16 = 1;
+pub(super) const FORMAT_VERSION: u16 = 1;
 
 /// File extension for portable vault backups (no leading dot).
 pub const BACKUP_EXTENSION: &str = "oikonomia-backup";

@@ -552,13 +552,14 @@ mod tests {
     /// The offsets a table of 20-byte entries holds, in order.
     fn entry_offsets(data: &[u8], entries: usize) -> Vec<usize> {
         let text = String::from_utf8_lossy(data);
-        let table = text
-            .find("xref\n")
+        let (_, table) = text
+            .split_once("xref\n")
             .expect("the fixture has a classic table");
 
-        text[table..]
+        // The first line is the subsection header.
+        table
             .lines()
-            .skip(2)
+            .skip(1)
             .take(entries)
             .filter_map(|entry| entry.get(..10)?.parse().ok())
             .collect()

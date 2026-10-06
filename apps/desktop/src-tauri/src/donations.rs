@@ -94,7 +94,7 @@ pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
 
 /// Donation addresses for the Settings page. Readable while locked.
 #[tauri::command]
-pub fn donation_addresses() -> Vec<DonationAddress> {
+pub(crate) fn donation_addresses() -> Vec<DonationAddress> {
     DONATION_ADDRESSES.to_vec()
 }
 
@@ -198,7 +198,7 @@ mod tests {
         assert!(!has_valid_shape(Coin::Eth, &format!(" {ether}")));
 
         // Truncated, empty, or a character outside the alphabet.
-        assert!(!has_valid_shape(Coin::Eth, &ether[..41]));
+        assert!(!has_valid_shape(Coin::Eth, ether.get(..41).unwrap()));
         assert!(!has_valid_shape(Coin::Btc, ""));
         assert!(!has_valid_shape(
             Coin::Sol,

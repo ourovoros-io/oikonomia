@@ -372,10 +372,8 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
 
 /// `invoice.pdf` + 2 → `invoice (2).pdf`; extensionless names get ` (2)`.
 fn suffixed_name(filename: &str, n: usize) -> String {
-    match filename.rfind('.') {
-        Some(dot) if dot > 0 => {
-            format!("{} ({n}){}", &filename[..dot], &filename[dot..])
-        }
+    match filename.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() => format!("{stem} ({n}).{extension}"),
         _ => format!("{filename} ({n})"),
     }
 }

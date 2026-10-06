@@ -949,7 +949,10 @@ fn randomized_multi_year_entries_keep_tb_bs_and_ytd_pnl_aligned() {
             .map_or(0, |l| l.balance_minor);
         assert_eq!(tb_re, bs_re, "TB RE must match BS RE as of {as_of}");
 
-        let fy_start = format!("{}-01-01", &as_of[..4]);
+        let year = as_of
+            .get(..4)
+            .expect("a date starts with a four-digit year");
+        let fy_start = format!("{year}-01-01");
         let pnl = profit_and_loss(conn, entity_id, &fy_start, as_of).expect("pnl");
         let bs_ni = bs
             .equity

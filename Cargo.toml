@@ -37,10 +37,20 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-missing_docs = "allow"
+rust_2018_idioms = { level = "warn", priority = -1 }
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+trivial_numeric_casts = "warn"
+unused_lifetimes = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+# A byte-offset slice panics inside a multi-byte character; use `get(..)`.
+string_slice = "warn"
 unwrap_used = "deny"
 expect_used = "warn"
 panic = "deny"

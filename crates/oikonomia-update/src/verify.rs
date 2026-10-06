@@ -60,7 +60,7 @@ pub fn verify_minisign(public_key: &PublicKey, data: &[u8], signature: &str) -> 
 /// # Errors
 ///
 /// Returns [`UpdateError::ArtifactIntegrity`] when the string is not 32 bytes of hex.
-pub fn parse_sha256_hex(hex: &str) -> Result<[u8; 32]> {
+pub(crate) fn parse_sha256_hex(hex: &str) -> Result<[u8; 32]> {
     let hex = hex.trim();
     if hex.len() != 64 {
         return Err(UpdateError::ArtifactIntegrity);
@@ -88,7 +88,7 @@ fn hex_nibble(byte: u8) -> Result<u8> {
 
 /// Lowercase hex encoding for cache file names and tests.
 #[must_use]
-pub fn to_hex(bytes: &[u8]) -> String {
+pub(crate) fn to_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

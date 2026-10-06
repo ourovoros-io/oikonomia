@@ -1523,10 +1523,10 @@ fn rf_payment_code(line: &str) -> Option<String> {
         return token;
     }
 
-    // ASCII uppercasing keeps byte offsets, so the index is valid in `upper`.
     let upper = line.to_ascii_uppercase();
     let start = upper.find("RF")?;
-    let glued: String = upper[start..]
+    let glued: String = upper
+        .get(start..)?
         .chars()
         .take_while(char::is_ascii_alphanumeric)
         .collect();
@@ -1775,8 +1775,8 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
 }
 
 fn value_after_colon(line: &str) -> Option<String> {
-    let (idx, ch) = line.char_indices().find(|(_, c)| *c == ':' || *c == '：')?;
-    let v = line[idx + ch.len_utf8()..].trim();
+    let (_, value) = line.split_once([':', '：'])?;
+    let v = value.trim();
     if v.is_empty() {
         None
     } else {

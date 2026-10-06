@@ -9,7 +9,7 @@ use tauri::{Runtime, Url};
 
 /// Deny navigation to anything but the app's own origins in every webview.
 #[must_use]
-pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
+pub(crate) fn plugin<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("nav-guard")
         .on_navigation(|_webview, url| is_app_url(url))
         .build()

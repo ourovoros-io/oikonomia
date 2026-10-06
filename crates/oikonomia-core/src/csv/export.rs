@@ -15,9 +15,9 @@ use crate::util::format_date;
 use crate::vault::files::replace_private_file;
 
 /// Export column header for integer debit minor units.
-pub const DEBIT_MINOR_COLUMN: &str = "debit_minor";
+pub(super) const DEBIT_MINOR_COLUMN: &str = "debit_minor";
 /// Export column header for integer credit minor units.
-pub const CREDIT_MINOR_COLUMN: &str = "credit_minor";
+pub(super) const CREDIT_MINOR_COLUMN: &str = "credit_minor";
 
 /// `posted` or `voided` in the export `status` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

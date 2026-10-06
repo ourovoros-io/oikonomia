@@ -1,7 +1,7 @@
 //! Vault open/create/lock against an on-disk `SQLCipher` database.
 
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{fmt, fs};
 
 use rand::Rng;
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
@@ -323,6 +323,17 @@ impl Vault {
     /// Returns [`Error::VaultLocked`] when not unlocked.
     pub fn connection_mut(&mut self) -> Result<&mut Connection> {
         self.conn.as_mut().ok_or(Error::VaultLocked)
+    }
+}
+
+// Written by hand so that `{:?}` shows where the vault is and what state it is
+// in, and neither the key-derivation parameters nor the open connection.
+impl fmt::Debug for Vault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Vault")
+            .field("data_dir", &self.data_dir)
+            .field("status", &self.status())
+            .finish_non_exhaustive()
     }
 }
 

@@ -42,7 +42,7 @@ pub fn vault_header_path(data_dir: &Path) -> PathBuf {
 /// [`crate::vault::Vault::unlock`] falls back to this file so the vault stays
 /// openable with the new password.
 #[must_use]
-pub fn vault_staged_header_path(data_dir: &Path) -> PathBuf {
+pub(super) fn vault_staged_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json.tmp")
 }
 

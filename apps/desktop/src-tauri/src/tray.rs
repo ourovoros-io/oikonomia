@@ -36,7 +36,7 @@ const _: () = assert!(
 
 /// Tray menu: open the main window.
 #[must_use]
-pub fn tray_open_label(locale: Locale) -> &'static str {
+pub(crate) fn tray_open_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Open Oikonomia",
         Locale::El => "Άνοιγμα Oikonomia",
@@ -47,7 +47,7 @@ pub fn tray_open_label(locale: Locale) -> &'static str {
 
 /// Tray menu: quit the app.
 #[must_use]
-pub fn tray_quit_label(locale: Locale) -> &'static str {
+pub(crate) fn tray_quit_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Quit Oikonomia",
         Locale::El => "Έξοδος από το Oikonomia",
@@ -58,7 +58,7 @@ pub fn tray_quit_label(locale: Locale) -> &'static str {
 
 /// Quick-add companion window title.
 #[must_use]
-pub fn quick_add_title(locale: Locale) -> &'static str {
+pub(crate) fn quick_add_title(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Quick add",
         Locale::El => "Γρήγορη καταχώριση",
@@ -69,7 +69,7 @@ pub fn quick_add_title(locale: Locale) -> &'static str {
 
 /// Native file-dialog filter for `.oikonomia-backup` archives.
 #[must_use]
-pub fn backup_filter_label(locale: Locale) -> &'static str {
+pub(crate) fn backup_filter_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Oikonomia backup",
         Locale::El => "Αντίγραφο ασφαλείας Oikonomia",
@@ -80,7 +80,7 @@ pub fn backup_filter_label(locale: Locale) -> &'static str {
 
 /// Tray tooltip is the brand name in every locale.
 #[must_use]
-pub fn tray_tooltip(_locale: Locale) -> &'static str {
+pub(crate) fn tray_tooltip(_locale: Locale) -> &'static str {
     "Oikonomia"
 }
 
@@ -148,7 +148,7 @@ fn build_menu<R: tauri::Runtime, M: Manager<R>>(app: &M, locale: Locale) -> taur
 }
 
 /// Rebuild the tray menu and refresh the quick-add title after a locale change.
-pub fn apply_locale(app: &AppHandle, locale: Locale) {
+pub(crate) fn apply_locale(app: &AppHandle, locale: Locale) {
     match build_menu(app, locale) {
         Ok(menu) => {
             if let Some(tray) = app.tray_by_id("main")
@@ -168,7 +168,7 @@ pub fn apply_locale(app: &AppHandle, locale: Locale) {
 }
 
 /// Bring the main window back after it was hidden to the tray.
-pub fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     // No state means the start failed: the window is hidden behind the
     // failure message (`crate::startup`), and none of its commands would work.
     if app.try_state::<crate::state::AppState>().is_none() {
@@ -195,7 +195,7 @@ pub fn show_main_window(app: &AppHandle) {
 }
 
 /// Hide the tray quick-add window if it exists (no-op when missing).
-pub fn hide_quick_add(app: &AppHandle) {
+pub(crate) fn hide_quick_add(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(QUICK_ADD_LABEL)
         && let Err(err) = window.hide()
     {
@@ -360,8 +360,10 @@ fn position_quick_add(
 
     let (x, y) = quick_add_origin(click, (f64::from(outer.width), height), work_area);
 
-    // Screen coords are whole pixels after round; i32 is what Tauri expects.
-    #[expect(clippy::cast_possible_truncation)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a rounded screen coordinate; Tauri positions are whole i32 pixels"
+    )]
     let pos = PhysicalPosition {
         x: x.round() as i32,
         y: y.round() as i32,
@@ -370,7 +372,7 @@ fn position_quick_add(
 }
 
 /// Create (if needed), position, show, and focus the quick-add panel.
-pub fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64>>) {
+pub(crate) fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64>>) {
     match ensure_quick_add_window(app) {
         Ok(window) => {
             position_quick_add(app, &window, click);
@@ -386,7 +388,7 @@ pub fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64>>) {
 }
 
 /// Build the tray icon with left-click quick-add and Open / Quit menu.
-pub fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
+pub(crate) fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
     let menu = build_menu(app, locale)?;
 
     let tray = TrayIconBuilder::with_id("main")

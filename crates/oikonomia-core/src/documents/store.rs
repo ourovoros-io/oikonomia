@@ -468,7 +468,7 @@ pub(super) fn has_extension(filename: &str, ext: &str) -> bool {
 /// no recognised topic the template's catch-all is used, then the first active
 /// expense account.
 #[must_use]
-pub fn match_expense_account(
+pub(super) fn match_expense_account(
     template: ChartTemplate,
     accounts: &[Account],
     hints: &str,
@@ -486,7 +486,7 @@ pub fn match_expense_account(
 /// Pick the income account a document most likely belongs to (sales, freelance,
 /// salary), by the same rule as [`match_expense_account`].
 #[must_use]
-pub fn match_income_account(
+pub(super) fn match_income_account(
     template: ChartTemplate,
     accounts: &[Account],
     hints: &str,
@@ -531,6 +531,11 @@ impl Keyword {
     /// Whether this keyword occurs in `lowercased_text` under its rule.
     ///
     /// The caller lowercases the text; keywords are written in lowercase.
+    #[expect(
+        clippy::string_slice,
+        reason = "`match_indices` yields the offset of a match of `needle`, \
+                  so both ends of the match are character boundaries"
+    )]
     pub(crate) fn occurs_in(self, lowercased_text: &str) -> bool {
         let needle = self.text();
 

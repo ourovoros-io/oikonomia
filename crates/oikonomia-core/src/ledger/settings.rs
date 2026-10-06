@@ -9,7 +9,7 @@ use crate::error::{Error, Result, ValidationError};
 pub const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 15 * 60;
 
 /// Shortest idle lock timeout the vault accepts, in seconds.
-pub const MIN_LOCK_TIMEOUT_SECS: u64 = 60;
+pub(super) const MIN_LOCK_TIMEOUT_SECS: u64 = 60;
 
 const KEY_LOCK_TIMEOUT: &str = "lock_timeout_secs";
 
