@@ -1,6 +1,6 @@
 //! Settings commands: the lock timeout and the plaintext preferences.
 
-use crate::commands::support::{await_blocking, with_connection, with_vault_blocking};
+use crate::commands::support::{run_blocking, with_connection, with_vault_blocking};
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
 use oikonomia_core::ledger::{get_lock_timeout_secs, set_lock_timeout_secs};
@@ -44,7 +44,7 @@ where
     T: Send + 'static,
     F: FnOnce(&tauri::AppHandle, &AppState) -> CommandResult<T> + Send + 'static,
 {
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         // `Manager::state` panics when the state is not managed, which is the
         // case after a failed start (`crate::startup`) while the hidden
         // webview is still running.
@@ -55,7 +55,7 @@ where
             ));
         };
         work(&app, &state)
-    }))
+    })
     .await
 }
 

@@ -1,7 +1,7 @@
 //! Vault lifecycle commands: status, unlock, lock, backup and restore.
 
 use crate::commands::support::{
-    await_blocking, dialog_path, require_granted_path, with_vault_blocking,
+    dialog_path, require_granted_path, run_blocking, with_vault_blocking,
 };
 use crate::error::CommandResult;
 use crate::state::AppState;
@@ -20,10 +20,10 @@ use zeroize::Zeroizing;
 pub(crate) async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
     let vault = state.vault();
 
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         let guard = vault.acquire();
         Ok(guard.status())
-    }))
+    })
     .await
 }
 
@@ -119,7 +119,7 @@ pub(crate) async fn vault_backup(
 ) -> CommandResult<Option<String>> {
     let file_name = default_backup_file_name();
     let data_dir = state.data_dir().to_path_buf();
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+    let picked = run_blocking({
         let app = app.clone();
         move || {
             use tauri_plugin_dialog::DialogExt;
@@ -134,7 +134,7 @@ pub(crate) async fn vault_backup(
                 .set_file_name(&file_name)
                 .blocking_save_file())
         }
-    }))
+    })
     .await?;
 
     let Some(file_path) = picked else {
@@ -219,7 +219,7 @@ async fn pick_backup_path(
     state: &AppState,
 ) -> CommandResult<Option<PathBuf>> {
     let data_dir = state.data_dir().to_path_buf();
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+    let picked = run_blocking({
         let app = app.clone();
         move || {
             use tauri_plugin_dialog::DialogExt;
@@ -233,7 +233,7 @@ async fn pick_backup_path(
                 .add_filter(filter_label, &[BACKUP_EXTENSION])
                 .blocking_pick_file())
         }
-    }))
+    })
     .await?;
     let Some(file_path) = picked else {
         return Ok(None);

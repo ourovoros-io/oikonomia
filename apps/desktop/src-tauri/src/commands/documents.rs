@@ -1,7 +1,7 @@
 //! Document analysis and storage commands.
 
 use crate::commands::support::{
-    SaveTarget, await_blocking, decode_document_base64, dropped_file_name, require_granted_path,
+    SaveTarget, decode_document_base64, dropped_file_name, require_granted_path, run_blocking,
     save_with_dialog, stored_text_locale, with_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
@@ -49,11 +49,11 @@ pub(crate) async fn document_analyze(
     let locale = stored_text_locale(&state);
     state.touch();
 
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         analyze_readonly(
             &vault, &model_dir, entity_id, &filename, &mime_type, &data, locale,
         )
-    }))
+    })
     .await
 }
 
@@ -72,7 +72,7 @@ pub(crate) async fn document_analyze_path(
     let locale = stored_text_locale(&state);
     state.touch();
 
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         // Reject oversized/unsupported drops from metadata alone — a stray
         // 10 GB drop must not be read into memory before failing the size cap.
         let meta = std::fs::metadata(&path).map_err(|e| {
@@ -93,7 +93,7 @@ pub(crate) async fn document_analyze_path(
         analyze_readonly(
             &vault, &model_dir, entity_id, &filename, &mime, &data, locale,
         )
-    }))
+    })
     .await
 }
 

@@ -1,7 +1,7 @@
 //! Journal entry commands.
 
 use crate::commands::support::{
-    await_blocking, decode_document_base64, dropped_file_name, require_granted_path,
+    decode_document_base64, dropped_file_name, require_granted_path, run_blocking,
     stored_text_locale, with_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
@@ -114,7 +114,7 @@ pub(crate) async fn entry_post_simple_with_document_path(
     let vault = state.vault();
     state.touch();
 
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         // Reject oversized/unsupported files from metadata alone before reading.
         let meta = std::fs::metadata(&path).map_err(|e| {
             CommandError::desktop(
@@ -143,7 +143,7 @@ pub(crate) async fn entry_post_simple_with_document_path(
             analysis_json.as_deref(),
         )?;
         Ok(view)
-    }))
+    })
     .await
 }
 

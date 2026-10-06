@@ -117,10 +117,10 @@ where
     let vault = state.vault();
     state.touch();
 
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         let mut guard = vault.acquire();
         f(&mut guard).map_err(CommandError::from)
-    }))
+    })
     .await
 }
 
@@ -141,11 +141,28 @@ where
     with_vault_blocking(state, move |vault| work(vault.connection()?)).await
 }
 
-/// Map a blocking-task join failure into a command error.
-pub(super) async fn await_blocking<T>(
-    handle: tauri::async_runtime::JoinHandle<CommandResult<T>>,
-) -> CommandResult<T> {
-    match handle.await {
+/// Runs `work` on the runtime's blocking pool and returns what it returns.
+///
+/// For work that may block a thread: waiting for the vault mutex, a native
+/// dialog, file I/O. An async worker that blocks stalls every other command
+/// scheduled on it.
+///
+/// # Errors
+///
+/// Returns the error `work` returns, and `task_failed` when the task panics
+/// or the runtime drops it.
+///
+/// # Cancel safety
+///
+/// Dropping the returned future does not stop `work`: once the task is
+/// spawned, which happens when the future is first polled, it runs to the
+/// end and its result is discarded.
+pub(super) async fn run_blocking<T, F>(work: F) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> CommandResult<T> + Send + 'static,
+{
+    match tauri::async_runtime::spawn_blocking(work).await {
         Ok(result) => result,
         Err(err) => Err(CommandError::desktop(
             DesktopError::TaskFailed,
@@ -197,7 +214,7 @@ pub(super) async fn save_with_dialog(
 ) -> CommandResult<Option<String>> {
     let app = app.clone();
 
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+    run_blocking(move || {
         use tauri_plugin_dialog::DialogExt;
 
         let mut dialog = app.dialog().file().set_file_name(&target.file_name);
@@ -217,7 +234,7 @@ pub(super) async fn save_with_dialog(
             )
         })?;
         Ok(Some(destination.display().to_string()))
-    }))
+    })
     .await
 }
 

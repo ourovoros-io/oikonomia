@@ -1,8 +1,7 @@
 //! Bank CSV import and journal CSV export commands.
 
 use crate::commands::support::{
-    SaveTarget, await_blocking, dialog_path, require_granted_path, save_with_dialog,
-    with_connection,
+    SaveTarget, dialog_path, require_granted_path, run_blocking, save_with_dialog, with_connection,
 };
 use crate::error::CommandResult;
 use crate::state::AppState;
@@ -91,7 +90,7 @@ pub(crate) async fn csv_export_journal(
 /// Native Open dialog for a `.csv` file. `None` if cancelled. The chosen path
 /// is granted so a re-preview with a column mapping may pass it back.
 async fn pick_csv_path(app: &tauri::AppHandle, state: &AppState) -> CommandResult<Option<PathBuf>> {
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
+    let picked = run_blocking({
         let app = app.clone();
         move || {
             use tauri_plugin_dialog::DialogExt;
@@ -101,7 +100,7 @@ async fn pick_csv_path(app: &tauri::AppHandle, state: &AppState) -> CommandResul
                 .add_filter("CSV", &["csv"])
                 .blocking_pick_file())
         }
-    }))
+    })
     .await?;
     let Some(file_path) = picked else {
         return Ok(None);
