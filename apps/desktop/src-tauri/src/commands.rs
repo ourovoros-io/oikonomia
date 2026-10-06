@@ -63,8 +63,9 @@ pub struct AppInfo {
 
 /// Return vault lock lifecycle status.
 ///
-/// Async so the frontend's activity heartbeat never blocks the main thread,
-/// even while a long operation (rekey, analysis save) holds the vault mutex.
+/// Async so that the probe waits for the vault mutex on the blocking pool,
+/// not on the main thread, while a long operation such as a rekey holds it.
+/// A probe does not count as activity; the idle heartbeat is [`vault_touch`].
 #[tauri::command]
 pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
     let vault = state.vault();
@@ -1165,7 +1166,11 @@ pub async fn report_balance_sheet(
     .await
 }
 
-/// Client-built PDF bytes; native Save dialog writes them. No vault, no write gate.
+/// Saves PDF bytes the webview built to a path chosen in a native Save
+/// dialog. Returns the path written, or `None` if the user cancelled.
+///
+/// The vault is not opened, so this also works while it is locked. The call
+/// counts as activity for the idle watchdog.
 #[tauri::command]
 pub async fn report_export_pdf(
     app: tauri::AppHandle,
@@ -1568,9 +1573,11 @@ pub fn document_analyzer_status(state: State<'_, AppState>) -> AnalyzerStatus {
     analyzer_status(Some(state.ocr_model_dir().as_path()))
 }
 
-/// Store a dropped file in the encrypted vault and return a draft entry suggestion.
+/// Analyze a picked file and return a draft entry suggestion.
 ///
-/// Analysis is fully offline (bundled OCR + heuristics). Nothing is sent to the network.
+/// Nothing is stored: the file reaches the vault only when the entry is
+/// posted ([`entry_post_simple_with_document`]). Analysis is fully offline
+/// (bundled OCR + heuristics). Nothing is sent to the network.
 #[tauri::command]
 pub async fn document_analyze(
     state: State<'_, AppState>,
@@ -1809,9 +1816,12 @@ pub async fn document_attach(
     .await
 }
 
-/// Export a document to a user-chosen path. This is the only path by which
-/// decrypted bytes reach disk, and it always goes through an explicit
-/// native save dialog.
+/// Export a stored document, decrypted, to a path chosen in a native Save
+/// dialog. Returns the path written, or `None` if the user cancelled.
+///
+/// Like the journal CSV export ([`csv_export_journal`]) and the report PDF
+/// ([`report_export_pdf`]), this writes plaintext to disk, and like them only
+/// to a path the user picked in the dialog ([`save_with_dialog`]).
 #[tauri::command]
 pub async fn document_export(
     app: tauri::AppHandle,

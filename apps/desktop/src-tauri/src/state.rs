@@ -549,10 +549,12 @@ pub const fn should_auto_lock(
     }
 }
 
-/// Lock the vault from Rust when idle, regardless of webview state (F5).
+/// Starts the thread that locks the vault when it has been idle, whatever
+/// the webview is doing.
 ///
-/// The frontend timer is only a fast-path duplicate; this thread guarantees
-/// the vault locks even if the webview throttles timers or stalls. Emits
+/// A timer in the webview cannot be what closes the vault: the webview may
+/// throttle timers, stall, or be reloaded. The frontend timer is only a
+/// fast-path duplicate; this thread guarantees the lock. It emits
 /// `vault-locked` so the UI can drop to the unlock screen.
 ///
 /// While the vault is not unlocked the thread parks on [`WatchdogGate`]

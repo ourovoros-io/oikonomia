@@ -9,19 +9,24 @@ use std::process::Command;
 /// whether) it may replace itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InstallKind {
-    /// A macOS `.app` bundle, replaced from a `.app.tar.gz`.
+    /// Any copy on macOS. One that runs from an `.app` bundle is replaced
+    /// from a `.app.tar.gz`; for one that does not, such as a build run from
+    /// a source tree, the install fails (`macos_app_bundle_path`).
     MacApp,
     /// A Linux `AppImage` at this path, replaced by the new `AppImage`.
     AppImage(PathBuf),
-    /// A Windows per-user install, replaced by running the new installer.
+    /// Any copy on Windows, updated by running the new per-user installer.
     WindowsInstaller,
-    /// Files owned by the system package manager (a `.deb`), or a build run
-    /// straight from a source tree. Never replaced by the app.
+    /// A copy the app never replaces. On Linux that is every copy that does
+    /// not run from inside an `AppImage`: files owned by the system package
+    /// manager (a `.deb`), or a build run from a source tree. On a system
+    /// other than macOS, Windows and Linux it is every copy.
     PackageManaged,
 }
 
 impl InstallKind {
-    /// The kind of the running copy.
+    /// The kind of the running copy. Only Linux looks at how the copy runs;
+    /// macOS and Windows are classified by the system alone.
     pub(crate) fn detect() -> Self {
         let runtime = AppImageRuntime {
             image: std::env::var_os("APPIMAGE").map(PathBuf::from),

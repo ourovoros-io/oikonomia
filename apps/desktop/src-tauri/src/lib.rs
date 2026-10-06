@@ -26,7 +26,7 @@ use tauri::Manager;
 ///
 /// A start that fails once the runtime is up (a damaged vault header, an
 /// unreadable data directory) is reported in a native message and ends with a
-/// failure exit code; see [`startup`].
+/// failure exit code (the `startup` module).
 ///
 /// # Panics
 ///
