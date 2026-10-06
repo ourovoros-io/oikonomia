@@ -64,7 +64,12 @@ pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
         coin: Coin::Xmr,
         network: "Monero",
         also_accepts: &[],
-        address: "8ABaPsJS6754dY7YsZLKuHRrYFMtE5BBmi8SwZ7n79ukMAHkN987PZFHPMwaD4QhLegX6MPAjwEup69RbMAEnRcENDdfavg",
+        // One address, split only to fit the line; `concat!` joins it at
+        // compile time.
+        address: concat!(
+            "8ABaPsJS6754dY7YsZLKuHRrYFMtE5BBmi8SwZ7n79ukMAHk",
+            "N987PZFHPMwaD4QhLegX6MPAjwEup69RbMAEnRcENDdfavg",
+        ),
     },
     DonationAddress {
         coin: Coin::Dash,
