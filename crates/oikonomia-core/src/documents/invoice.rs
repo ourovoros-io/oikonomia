@@ -634,7 +634,7 @@ fn is_transfer_code(token: &str) -> bool {
         return false;
     }
     let upper = token.to_ascii_uppercase();
-    if upper.starts_with("RF") && upper.chars().skip(2).all(|c| c.is_ascii_digit()) {
+    if is_rf_then_digits(&upper) {
         return false;
     }
     // IBAN-shaped: two letters then only digits.
@@ -1490,12 +1490,12 @@ const SUPPLY_CODE_LABELS: &[&str] = &["κωδικος παροχης", "supply",
 /// Supply / meter code next to its label (e.g. NGS000000001). PDF extraction
 /// often puts the value on the line after the label.
 fn labelled_supply_code(lines: &[&str]) -> Option<String> {
-    for (i, line) in lines.iter().enumerate() {
+    for (index, line) in lines.iter().enumerate() {
         if !contains_any(&folded(line), SUPPLY_CODE_LABELS) {
             continue;
         }
 
-        let next = lines.get(i + 1).copied().unwrap_or("");
+        let next = lines.get(index + 1).copied().unwrap_or("");
         if let Some(code) = alnum_supply_code(line).or_else(|| alnum_supply_code(next)) {
             return Some(code);
         }
@@ -1533,9 +1533,13 @@ fn rf_payment_code(line: &str) -> Option<String> {
 }
 
 fn is_rf_payment_code(upper: &str) -> bool {
-    upper.len() >= 10
-        && upper.starts_with("RF")
-        && upper.chars().skip(2).all(|c| c.is_ascii_digit())
+    upper.len() >= 10 && is_rf_then_digits(upper)
+}
+
+/// Whether uppercased `upper` is `RF` followed by digits only, whatever its
+/// length. `RF` alone counts: nothing follows it that is not a digit.
+fn is_rf_then_digits(upper: &str) -> bool {
+    upper.starts_with("RF") && upper.chars().skip(2).all(|c| c.is_ascii_digit())
 }
 
 const MARK_LABELS: &[&str] = &["μαρκ", "mark", "α.α", "αα "];
@@ -1543,12 +1547,12 @@ const MARK_LABELS: &[&str] = &["μαρκ", "mark", "α.α", "αα "];
 /// MARK number on Greek invoices: a long digit string on the MARK / Α.Α.
 /// line or the one after it.
 fn mark_number(lines: &[&str]) -> Option<String> {
-    for (i, line) in lines.iter().enumerate() {
+    for (index, line) in lines.iter().enumerate() {
         if !contains_any(&folded(line), MARK_LABELS) {
             continue;
         }
 
-        let next = lines.get(i + 1).copied().unwrap_or("");
+        let next = lines.get(index + 1).copied().unwrap_or("");
         if let Some(number) = long_digit_token(line).or_else(|| long_digit_token(next)) {
             return Some(number);
         }
@@ -1572,81 +1576,88 @@ fn labelled_reference_number(lines: &[&str]) -> Option<String> {
 /// Fallback: the longest digit run that looks like an invoice id (10–20
 /// digits); the first one wins a tie.
 fn longest_reference_number(lines: &[&str]) -> Option<String> {
-    let mut best: Option<String> = None;
+    let mut longest: Option<String> = None;
     for number in lines.iter().filter_map(|line| long_digit_token(line)) {
-        if number.len() >= 10 && best.as_ref().is_none_or(|b| number.len() > b.len()) {
-            best = Some(number);
+        if number.len() >= 10
+            && longest
+                .as_ref()
+                .is_none_or(|longest| number.len() > longest.len())
+        {
+            longest = Some(number);
         }
     }
-    best
+    longest
 }
 
 fn long_digit_token(line: &str) -> Option<String> {
-    let mut best: Option<String> = None;
-    let mut buf = String::new();
+    let mut longest: Option<String> = None;
+    let mut run = String::new();
 
-    let take = |buf: &mut String, best: &mut Option<String>| {
-        if buf.len() >= 6 && buf.len() <= 20 && best.as_ref().is_none_or(|b| buf.len() >= b.len()) {
-            *best = Some(buf.clone());
+    let end_run = |run: &mut String, longest: &mut Option<String>| {
+        if run.len() >= 6
+            && run.len() <= 20
+            && longest
+                .as_ref()
+                .is_none_or(|longest| run.len() >= longest.len())
+        {
+            *longest = Some(run.clone());
         }
-        buf.clear();
+        run.clear();
     };
 
-    for ch in line.chars() {
-        if ch.is_ascii_digit() {
-            buf.push(ch);
+    for character in line.chars() {
+        if character.is_ascii_digit() {
+            run.push(character);
         } else {
-            take(&mut buf, &mut best);
+            end_run(&mut run, &mut longest);
         }
     }
-    take(&mut buf, &mut best);
-    best
+    end_run(&mut run, &mut longest);
+    longest
 }
 
 /// Alphanumeric supply / point-of-delivery codes (e.g. `NGS000000001`).
 fn alnum_supply_code(line: &str) -> Option<String> {
-    for tok in line.split_whitespace() {
-        let t = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
-        if t.len() >= 8
-            && t.len() <= 24
-            && t.chars().any(|c| c.is_ascii_alphabetic())
-            && t.chars().any(|c| c.is_ascii_digit())
-            && t.chars().all(|c| c.is_ascii_alphanumeric())
+    for word in line.split_whitespace() {
+        let token = word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        if token.len() >= 8
+            && token.len() <= 24
+            && token.chars().any(|c| c.is_ascii_alphabetic())
+            && token.chars().any(|c| c.is_ascii_digit())
+            && token.chars().all(|c| c.is_ascii_alphanumeric())
         {
             // Skip pure RF payment refs (handled separately) and obvious words.
-            let up = t.to_ascii_uppercase();
-            if up.starts_with("RF") && up.chars().skip(2).all(|c| c.is_ascii_digit()) {
+            if is_rf_then_digits(&token.to_ascii_uppercase()) {
                 continue;
             }
-            return Some(t.to_owned());
+            return Some(token.to_owned());
         }
     }
     // Also scan without whitespace (jumbled extract: "NGS000000001" alone is fine).
-    let mut buf = String::new();
-    for ch in line.chars() {
-        if ch.is_ascii_alphanumeric() {
-            buf.push(ch);
+    let mut run = String::new();
+    for character in line.chars() {
+        if character.is_ascii_alphanumeric() {
+            run.push(character);
         } else {
-            if let Some(c) = take_supply_buf(&buf) {
-                return Some(c);
+            if let Some(code) = supply_code_from_run(&run) {
+                return Some(code);
             }
-            buf.clear();
+            run.clear();
         }
     }
-    take_supply_buf(&buf)
+    supply_code_from_run(&run)
 }
 
-fn take_supply_buf(buf: &str) -> Option<String> {
-    if buf.len() >= 8
-        && buf.len() <= 24
-        && buf.chars().any(|c| c.is_ascii_alphabetic())
-        && buf.chars().any(|c| c.is_ascii_digit())
+fn supply_code_from_run(run: &str) -> Option<String> {
+    if run.len() >= 8
+        && run.len() <= 24
+        && run.chars().any(|c| c.is_ascii_alphabetic())
+        && run.chars().any(|c| c.is_ascii_digit())
     {
-        let up = buf.to_ascii_uppercase();
-        if up.starts_with("RF") && up.chars().skip(2).all(|c| c.is_ascii_digit()) {
+        if is_rf_then_digits(&run.to_ascii_uppercase()) {
             return None;
         }
-        Some(buf.to_owned())
+        Some(run.to_owned())
     } else {
         None
     }
@@ -1741,16 +1752,16 @@ const VAT_EXEMPT_MARKERS: &[&str] = &["χωρις φπα"];
 
 /// Customer name from the "Στοιχεία Πελάτη" block of a sales invoice.
 fn sales_invoice_customer(text: &str) -> Option<String> {
-    let mut after_client = false;
+    let mut in_customer_block = false;
 
     for line in text.lines() {
         let folded_line = folded(line);
 
         if contains_any(&folded_line, CUSTOMER_BLOCK_STARTS) {
-            after_client = true;
+            in_customer_block = true;
             continue;
         }
-        if !after_client {
+        if !in_customer_block {
             continue;
         }
 
@@ -1776,12 +1787,9 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
 
 fn value_after_colon(line: &str) -> Option<String> {
     let (_, value) = line.split_once([':', '：'])?;
-    let v = value.trim();
-    if v.is_empty() {
-        None
-    } else {
-        Some(v.to_owned())
-    }
+    let value = value.trim();
+
+    (!value.is_empty()).then(|| value.to_owned())
 }
 
 fn find_description(
@@ -1793,9 +1801,9 @@ fn find_description(
 ) -> Option<String> {
     // Outgoing sales invoice: customer-first title.
     if is_sales_invoice(folded_text)
-        && let Some(m) = merchant
+        && let Some(customer) = merchant
     {
-        return Some(customer_invoice_description(locale, m, reference));
+        return Some(customer_invoice_description(locale, customer, reference));
     }
 
     // Recognized biller or utility bill: company-first title with the
@@ -1818,19 +1826,19 @@ fn find_description(
         }
         if after_header {
             // skip table noise / numbers-only
-            let alpha: String = line
+            let words: String = line
                 .chars()
                 .filter(|c| c.is_alphabetic() || c.is_whitespace())
                 .collect();
-            let alpha = alpha.trim();
-            if alpha.chars().count() >= 4 && !contains_any(&folded(alpha), QUANTITY_HEADERS) {
-                return Some(alpha.to_owned());
+            let words = words.trim();
+            if words.chars().count() >= 4 && !contains_any(&folded(words), QUANTITY_HEADERS) {
+                return Some(words.to_owned());
             }
         }
     }
 
-    if let Some(r) = reference {
-        return Some(invoice_reference_description(locale, r, merchant));
+    if let Some(reference) = reference {
+        return Some(invoice_reference_description(locale, reference, merchant));
     }
     if folded_text.contains(INVOICE_WORD_GREEK) {
         return Some(invoice_word(locale).into());
@@ -1844,23 +1852,23 @@ fn score_confidence(
     reference: Option<&String>,
     kind: EntryKindSuggestion,
 ) -> f32 {
-    let mut c = 0.2_f32;
+    let mut confidence = 0.2_f32;
     if amount.is_some() {
-        c += 0.4;
+        confidence += 0.4;
     }
     if date.is_some() {
-        c += 0.15;
+        confidence += 0.15;
     }
     if reference.is_some() {
-        c += 0.1;
+        confidence += 0.1;
     }
     if matches!(
         kind,
         EntryKindSuggestion::Income | EntryKindSuggestion::Bill
     ) {
-        c += 0.05;
+        confidence += 0.05;
     }
-    c.min(0.95)
+    confidence.min(0.95)
 }
 
 fn build_notes(
@@ -2174,7 +2182,8 @@ mod tests {
         }
     }
 
-    /// Load a week-1 corpus fixture so unit tests share the public golden tree.
+    /// Loads a corpus fixture, so the unit tests read the same documents as
+    /// the golden test in `tests/document_corpus.rs`.
     fn corpus_text(relative: &str) -> String {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata/documents")
@@ -2184,22 +2193,26 @@ mod tests {
 
     #[test]
     fn greek_service_invoice_total_and_kind() {
-        let s = parse_invoice_text(
+        let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/greek_sales_invoice.txt"),
             crate::prefs::Locale::En,
         );
-        assert_eq!(s.amount_minor, Some(186_000), "expected €1860.00");
-        assert_eq!(s.kind, EntryKindSuggestion::Income);
-        assert_eq!(s.entry_date.as_deref(), Some("2026-06-25"));
-        assert_eq!(s.reference.as_deref(), Some("900000000000001"));
+        assert_eq!(suggestion.amount_minor, Some(186_000), "expected €1860.00");
+        assert_eq!(suggestion.kind, EntryKindSuggestion::Income);
+        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-06-25"));
+        assert_eq!(suggestion.reference.as_deref(), Some("900000000000001"));
         assert!(
-            s.merchant
+            suggestion
+                .merchant
                 .as_deref()
-                .is_some_and(|m| m.contains("ACME CONSULTING")),
+                .is_some_and(|merchant| merchant.contains("ACME CONSULTING")),
             "merchant={:?}",
-            s.merchant
+            suggestion.merchant
         );
-        assert!(s.bill_unpaid, "Επί πιστώσει should mark unpaid/credit");
+        assert!(
+            suggestion.bill_unpaid,
+            "Επί πιστώσει should mark unpaid/credit"
+        );
     }
 
     #[test]
@@ -2210,8 +2223,13 @@ mod tests {
 Α.Φ.Μ.: 000000000
 Πληρωτέο (€): 200,00
 ";
-        let s = parse_invoice_text(text, crate::prefs::Locale::En);
-        assert_ne!(s.kind, EntryKindSuggestion::Income, "kind={:?}", s.kind);
+        let suggestion = parse_invoice_text(text, crate::prefs::Locale::En);
+        assert_ne!(
+            suggestion.kind,
+            EntryKindSuggestion::Income,
+            "kind={:?}",
+            suggestion.kind
+        );
     }
 
     #[test]
@@ -2222,26 +2240,26 @@ mod tests {
 
     #[test]
     fn settlement_bill_is_not_automatically_unpaid() {
-        let s = parse_invoice_text(
+        let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/dei_settlement.txt"),
             crate::prefs::Locale::En,
         );
         assert!(
-            !s.bill_unpaid,
+            !suggestion.bill_unpaid,
             "εμπρόθεσμο/εκκαθαριστικό/εξόφληση μέσω must not force unpaid"
         );
     }
 
     #[test]
     fn cosmote_pay_via_is_not_unpaid() {
-        let s = parse_invoice_text(
+        let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/cosmote_pay_via.txt"),
             crate::prefs::Locale::En,
         );
-        assert_eq!(s.kind, EntryKindSuggestion::Bill);
+        assert_eq!(suggestion.kind, EntryKindSuggestion::Bill);
         assert!(
-            !s.bill_unpaid,
-            "known-brand εξόφληση μέσω must not force unpaid: {s:?}"
+            !suggestion.bill_unpaid,
+            "known-brand εξόφληση μέσω must not force unpaid: {suggestion:?}"
         );
     }
 
@@ -2294,17 +2312,20 @@ mod tests {
         // Every Greek electricity bill mentions ΔΕΔΔΗΕ (grid operator) and a
         // national energy-mix table that includes natural gas; neither may
         // decide the title.
-        let s = parse_invoice_text(
+        let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/zenith_supplier_vs_grid.txt"),
             crate::prefs::Locale::En,
         );
-        assert_eq!(s.merchant.as_deref(), Some("ZeniΘ"));
-        assert_eq!(s.description.as_deref(), Some("ZeniΘ — Electricity bill"));
+        assert_eq!(suggestion.merchant.as_deref(), Some("ZeniΘ"));
+        assert_eq!(
+            suggestion.description.as_deref(),
+            Some("ZeniΘ — Electricity bill")
+        );
     }
 
     #[test]
     fn sales_invoice_titles_carry_the_customer() {
-        let s = parse_invoice_text(
+        let suggestion = parse_invoice_text(
             "Επωνυμία ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\n\
              Τιμολόγιο Παροχής / Ενδοκοινοτική Παροχή Υπηρεσιών\n\
              900000000000001 Επί πιστώσειB 51 25/06/2026\n\
@@ -2312,14 +2333,14 @@ mod tests {
              Πληρωτέο (€): 1860,00",
             crate::prefs::Locale::En,
         );
-        assert_eq!(s.kind, EntryKindSuggestion::Income);
-        assert_eq!(s.merchant.as_deref(), Some("ACME CONSULTING LTD"));
+        assert_eq!(suggestion.kind, EntryKindSuggestion::Income);
+        assert_eq!(suggestion.merchant.as_deref(), Some("ACME CONSULTING LTD"));
         assert!(
-            s.description
+            suggestion.description
                 .as_deref()
-                .is_some_and(|d| d.starts_with("ACME CONSULTING LTD — Invoice")),
+                .is_some_and(|description| description.starts_with("ACME CONSULTING LTD — Invoice")),
             "description={:?}",
-            s.description
+            suggestion.description
         );
 
         // The issuer's payment footer must not hijack the merchant.
@@ -2333,37 +2354,41 @@ mod tests {
 
     #[test]
     fn zenith_electricity_bill_total() {
-        let s = parse_invoice_text(
+        let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/zenith_electricity.txt"),
             crate::prefs::Locale::En,
         );
         assert_eq!(
-            s.amount_minor,
+            suggestion.amount_minor,
             Some(7_665),
             "expected €76.65, got {:?}",
-            s.amount_minor
+            suggestion.amount_minor
         );
         assert!(
             matches!(
-                s.kind,
+                suggestion.kind,
                 EntryKindSuggestion::Bill | EntryKindSuggestion::Expense
             ),
             "kind={:?}",
-            s.kind
+            suggestion.kind
         );
-        assert_ne!(s.kind, EntryKindSuggestion::Income);
-        assert_eq!(s.entry_date.as_deref(), Some("2026-08-18"));
+        assert_ne!(suggestion.kind, EntryKindSuggestion::Income);
+        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-18"));
         assert!(
-            s.merchant
+            suggestion
+                .merchant
                 .as_deref()
-                .is_some_and(|m| m.to_lowercase().contains("zeni")),
+                .is_some_and(|merchant| merchant.to_lowercase().contains("zeni")),
             "merchant={:?}",
-            s.merchant
+            suggestion.merchant
         );
         assert!(
-            s.reference.as_deref().is_some_and(|r| r.starts_with("RF")),
+            suggestion
+                .reference
+                .as_deref()
+                .is_some_and(|reference| reference.starts_with("RF")),
             "reference={:?}",
-            s.reference
+            suggestion.reference
         );
     }
 
@@ -2572,39 +2597,42 @@ mod tests {
 
     #[test]
     fn ngs_gas_bill_payment_total() {
-        let s = parse_invoice_text(
+        let suggestion = parse_invoice_text(
             &corpus_text("synthetic/text/ngs_gas_bill.txt"),
             crate::prefs::Locale::En,
         );
         assert_eq!(
-            s.amount_minor,
+            suggestion.amount_minor,
             Some(7_253),
             "expected €72.53 (not deposit 60 or subtotal 50.50), got {:?}",
-            s.amount_minor
+            suggestion.amount_minor
         );
-        assert_ne!(s.kind, EntryKindSuggestion::Income);
+        assert_ne!(suggestion.kind, EntryKindSuggestion::Income);
         assert!(
             matches!(
-                s.kind,
+                suggestion.kind,
                 EntryKindSuggestion::Bill | EntryKindSuggestion::Expense
             ),
             "kind={:?}",
-            s.kind
+            suggestion.kind
         );
-        assert_eq!(s.entry_date.as_deref(), Some("2026-08-13"));
+        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-13"));
         assert!(
-            s.merchant.as_deref().is_some_and(
-                |m| m.to_lowercase().contains("gas") || m.to_lowercase().contains("ngs")
-            ),
+            suggestion.merchant.as_deref().is_some_and(|merchant| {
+                let merchant = merchant.to_lowercase();
+                merchant.contains("gas") || merchant.contains("ngs")
+            }),
             "merchant={:?}",
-            s.merchant
+            suggestion.merchant
         );
         assert!(
-            s.reference
-                .as_deref()
-                .is_some_and(|r| { r.contains("NGS") || r.contains("SYN") || r.starts_with("RF") }),
+            suggestion.reference.as_deref().is_some_and(|reference| {
+                reference.contains("NGS")
+                    || reference.contains("SYN")
+                    || reference.starts_with("RF")
+            }),
             "reference={:?}",
-            s.reference
+            suggestion.reference
         );
     }
 
@@ -2644,28 +2672,30 @@ mod jumbled_extract {
             "/tests/fixtures/ngs_gas_jumbled_extract.txt"
         ))
         .expect("fixture extract");
-        let s = parse_invoice_text(&text, crate::prefs::Locale::En);
+        let suggestion = parse_invoice_text(&text, crate::prefs::Locale::En);
         assert_eq!(
-            s.amount_minor,
+            suggestion.amount_minor,
             Some(7_253),
             "expected €72.53 not date/deposit noise, got {:?}",
-            s.amount_minor
+            suggestion.amount_minor
         );
-        assert_ne!(s.kind, EntryKindSuggestion::Income);
-        assert_eq!(s.entry_date.as_deref(), Some("2026-08-13"));
+        assert_ne!(suggestion.kind, EntryKindSuggestion::Income);
+        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-13"));
         assert!(
-            s.reference
-                .as_deref()
-                .is_some_and(|r| { r.contains("NGS") || r.contains("SYN") || r.starts_with("RF") }),
+            suggestion.reference.as_deref().is_some_and(|reference| {
+                reference.contains("NGS")
+                    || reference.contains("SYN")
+                    || reference.starts_with("RF")
+            }),
             "reference={:?}",
-            s.reference
+            suggestion.reference
         );
         assert_eq!(
-            s.merchant.as_deref(),
+            suggestion.merchant.as_deref(),
             Some("Volton"),
             "MyON portal branding identifies the supplier"
         );
-        assert_eq!(s.description.as_deref(), Some("Volton — Gas bill"));
+        assert_eq!(suggestion.description.as_deref(), Some("Volton — Gas bill"));
     }
 
     #[test]
@@ -2889,12 +2919,12 @@ mod jumbled_extract {
         );
         let bytes = std::fs::read(path).expect("the private fixture must be present");
         let text = pdf_extract::extract_text_from_mem(&bytes).expect("pdf text");
-        let s = parse_invoice_text(&text, crate::prefs::Locale::En);
+        let suggestion = parse_invoice_text(&text, crate::prefs::Locale::En);
         assert_eq!(
-            s.amount_minor,
+            suggestion.amount_minor,
             Some(7_253),
             "local pdf_extract amount={:?}\ntext excerpt:\n{}",
-            s.amount_minor,
+            suggestion.amount_minor,
             text.chars().take(800).collect::<String>()
         );
     }
