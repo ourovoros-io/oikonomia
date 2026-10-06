@@ -40,7 +40,7 @@ use oikonomia_core::util::{format_date, utc_today};
 use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use zeroize::Zeroizing;
 
 /// Where users send questions and bug reports. Every support pointer the app
@@ -268,11 +268,15 @@ pub async fn vault_backup(
     state: State<'_, AppState>,
 ) -> CommandResult<Option<String>> {
     let file_name = default_backup_file_name();
-    let filter_label = crate::tray::backup_filter_label(load_ui_prefs(state.data_dir()).locale);
+    let data_dir = state.data_dir().to_path_buf();
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
             use tauri_plugin_dialog::DialogExt;
+
+            // Read in here because it is file I/O, which stays off the
+            // async workers.
+            let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale);
             Ok(app
                 .dialog()
                 .file()
@@ -369,11 +373,15 @@ async fn pick_backup_path(
     app: &tauri::AppHandle,
     state: &AppState,
 ) -> CommandResult<Option<PathBuf>> {
-    let filter_label = crate::tray::backup_filter_label(load_ui_prefs(state.data_dir()).locale);
+    let data_dir = state.data_dir().to_path_buf();
     let picked = await_blocking(tauri::async_runtime::spawn_blocking({
         let app = app.clone();
         move || {
             use tauri_plugin_dialog::DialogExt;
+
+            // Read in here because it is file I/O, which stays off the
+            // async workers.
+            let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale);
             Ok(app
                 .dialog()
                 .file()
@@ -1075,35 +1083,12 @@ pub async fn csv_export_journal(
     })
     .await?;
 
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking({
-        let app = app.clone();
-        move || {
-            use tauri_plugin_dialog::DialogExt;
-            Ok(app
-                .dialog()
-                .file()
-                .add_filter("CSV", &["csv"])
-                .set_file_name(&file_name)
-                .blocking_save_file())
-        }
-    }))
-    .await?;
-
-    let Some(file_path) = picked else {
-        return Ok(None);
+    let target = SaveTarget {
+        filter: Some(("CSV", &["csv"])),
+        file_name,
+        complete_path: ensure_csv_path,
     };
-    let dest = ensure_csv_path(file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid save location: {e}"),
-        )
-    })?);
-
-    std::fs::write(&dest, csv_text.as_bytes()).map_err(|e| {
-        CommandError::desktop(DesktopError::SaveFailed, format!("could not save CSV: {e}"))
-    })?;
-
-    Ok(Some(dest.display().to_string()))
+    save_with_dialog(&app, target, csv_text.into_bytes()).await
 }
 
 /// Native Open dialog for a `.csv` file. `None` if cancelled. The chosen path
@@ -1205,33 +1190,12 @@ pub async fn report_export_pdf(
     let data = decode_pdf_export_bytes(&bytes_base64)?;
     state.touch();
 
-    let file_name = pdf_export_file_name(suggested_name.as_deref());
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        use tauri_plugin_dialog::DialogExt;
-        Ok(app
-            .dialog()
-            .file()
-            .add_filter("PDF", &["pdf"])
-            .set_file_name(&file_name)
-            .blocking_save_file())
-    }))
-    .await?;
-
-    let Some(file_path) = picked else {
-        return Ok(None);
+    let target = SaveTarget {
+        filter: Some(("PDF", &["pdf"])),
+        file_name: pdf_export_file_name(suggested_name.as_deref()),
+        complete_path: ensure_pdf_path,
     };
-    let dest = ensure_pdf_path(file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid save location: {e}"),
-        )
-    })?);
-
-    std::fs::write(&dest, &data).map_err(|e| {
-        CommandError::desktop(DesktopError::SaveFailed, format!("could not save PDF: {e}"))
-    })?;
-
-    Ok(Some(dest.display().to_string()))
+    save_with_dialog(&app, target, data).await
 }
 
 /// Decoded PDF cap for a monthly expense report (webview-generated).
@@ -1444,26 +1408,48 @@ fn stored_text_locale(state: &AppState) -> Locale {
     load_ui_prefs(state.data_dir()).locale
 }
 
+/// Runs preferences work on the blocking pool with the shared state.
+///
+/// The plaintext preferences file is read and written with blocking I/O, and
+/// a save ends in an fsync. A synchronous command would do that on the main
+/// thread, which also runs the event loop, and an async one on a runtime
+/// worker, so every settings command goes through here.
+async fn with_prefs_blocking<T, F>(app: tauri::AppHandle, work: F) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&tauri::AppHandle, &AppState) -> CommandResult<T> + Send + 'static,
+{
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        work(&app, &state)
+    }))
+    .await
+}
+
 /// Get the native UI locale. Plaintext preference: readable before unlock so
 /// tray chrome and dialogs match the user's language before a password.
 #[tauri::command]
-pub fn settings_get_locale(state: State<'_, AppState>) -> Locale {
-    load_ui_prefs(state.data_dir()).locale
+pub async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale> {
+    with_prefs_blocking(
+        app,
+        |_app, state| Ok(load_ui_prefs(state.data_dir()).locale),
+    )
+    .await
 }
 
 /// Persist the native UI locale, then rebuild the tray menu and refresh the
 /// quick-add window title when that window exists.
 #[tauri::command]
-pub fn settings_set_locale(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    locale: Locale,
-) -> CommandResult<()> {
-    let prefs_guard = state.lock_prefs();
-    store_locale(state.data_dir(), locale)?;
-    drop(prefs_guard);
-    crate::tray::apply_locale(&app, locale);
-    Ok(())
+pub async fn settings_set_locale(app: tauri::AppHandle, locale: Locale) -> CommandResult<()> {
+    with_prefs_blocking(app, move |app, state| {
+        let prefs_guard = state.lock_prefs();
+        store_locale(state.data_dir(), locale)?;
+        drop(prefs_guard);
+
+        crate::tray::apply_locale(app, locale);
+        Ok(())
+    })
+    .await
 }
 
 /// The app language, chosen from the system on the very first run.
@@ -1476,46 +1462,54 @@ pub fn settings_set_locale(
 /// as after a change in Settings. Works before a vault exists and while
 /// locked, and is safe to call on every launch.
 #[tauri::command]
-pub fn settings_resolve_locale(
+pub async fn settings_resolve_locale(
     app: tauri::AppHandle,
-    state: State<'_, AppState>,
     system_languages: Vec<String>,
 ) -> CommandResult<Locale> {
-    let prefs_guard = state.lock_prefs();
-    let resolution = resolve_locale(state.data_dir(), &system_languages)?;
-    drop(prefs_guard);
+    with_prefs_blocking(app, move |app, state| {
+        let prefs_guard = state.lock_prefs();
+        let resolution = resolve_locale(state.data_dir(), &system_languages)?;
+        drop(prefs_guard);
 
-    // The tray was built at startup from the stored language, English on a
-    // first run, so it only needs a rebuild when this call stored a new one.
-    if resolution.newly_stored {
-        crate::tray::apply_locale(&app, resolution.locale);
-    }
+        // The tray was built at startup from the stored language, English on
+        // a first run, so it only needs a rebuild when this call stored a new
+        // one.
+        if resolution.newly_stored {
+            crate::tray::apply_locale(app, resolution.locale);
+        }
 
-    Ok(resolution.locale)
+        Ok(resolution.locale)
+    })
+    .await
 }
 
 /// Full plaintext UI prefs (locale, tray last-used). Safe before unlock.
 #[tauri::command]
-pub fn settings_get_ui_prefs(state: State<'_, AppState>) -> UiPrefs {
-    load_ui_prefs(state.data_dir())
+pub async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResult<UiPrefs> {
+    with_prefs_blocking(app, |_app, state| Ok(load_ui_prefs(state.data_dir()))).await
 }
 
 /// Remember last entity + role accounts after a successful tray post.
 #[tauri::command]
-pub fn settings_remember_quick_add(
-    state: State<'_, AppState>,
+pub async fn settings_remember_quick_add(
+    app: tauri::AppHandle,
     entity_id: String,
     kind: String,
     accounts: LastRoleAccounts,
 ) -> CommandResult<()> {
-    let _guard = state.lock_prefs();
-    let mut prefs = load_ui_prefs(state.data_dir());
-    prefs.last_entity_id = Some(entity_id.clone());
-    prefs
-        .last_accounts_by_entity_kind
-        .insert(last_accounts_key(&entity_id, &kind), accounts);
-    save_ui_prefs(state.data_dir(), &prefs)?;
-    Ok(())
+    with_prefs_blocking(app, move |_app, state| {
+        let _prefs_guard = state.lock_prefs();
+
+        let mut prefs = load_ui_prefs(state.data_dir());
+        prefs
+            .last_accounts_by_entity_kind
+            .insert(last_accounts_key(&entity_id, &kind), accounts);
+        prefs.last_entity_id = Some(entity_id);
+
+        save_ui_prefs(state.data_dir(), &prefs)?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1814,40 +1808,70 @@ pub async fn document_export(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<Option<String>> {
-    use tauri_plugin_dialog::DialogExt;
-
     let (meta, data) = with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         get_document(conn, document_id)
     })
     .await?;
 
-    // The blocking dialog must stay off the async runtime workers.
-    let picked = await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        Ok(app
-            .dialog()
-            .file()
-            .set_file_name(meta.filename.as_str())
-            .blocking_save_file())
-    }))
-    .await?;
-
-    let Some(file_path) = picked else {
-        return Ok(None);
+    let target = SaveTarget {
+        filter: None,
+        file_name: meta.filename,
+        complete_path: std::convert::identity,
     };
-    let path = file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid save location: {e}"),
-        )
-    })?;
+    save_with_dialog(&app, target, data).await
+}
 
-    std::fs::write(&path, &data).map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveFailed,
-            format!("could not save file: {e}"),
-        )
-    })?;
+/// What a native Save dialog offers, and how the chosen path is completed.
+struct SaveTarget {
+    /// File type filter as a label and its extensions; `None` offers every file.
+    filter: Option<(&'static str, &'static [&'static str])>,
+    /// File name the dialog suggests.
+    file_name: String,
+    /// Applied to the chosen path before writing, to add a missing extension.
+    complete_path: fn(PathBuf) -> PathBuf,
+}
 
-    Ok(Some(path.display().to_string()))
+/// Asks where to save with a native dialog, then writes `bytes` there.
+///
+/// Both steps run in one task on the blocking pool. The dialog blocks until
+/// the user answers, and the write is file I/O of up to tens of megabytes;
+/// neither may hold an async worker.
+///
+/// Returns the path written, or `None` if the user cancelled.
+async fn save_with_dialog(
+    app: &tauri::AppHandle,
+    target: SaveTarget,
+    bytes: Vec<u8>,
+) -> CommandResult<Option<String>> {
+    let app = app.clone();
+
+    await_blocking(tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+
+        let mut dialog = app.dialog().file().set_file_name(&target.file_name);
+        if let Some((label, extensions)) = target.filter {
+            dialog = dialog.add_filter(label, extensions);
+        }
+        let Some(picked) = dialog.blocking_save_file() else {
+            return Ok(None);
+        };
+
+        let chosen = picked.into_path().map_err(|err| {
+            CommandError::desktop(
+                DesktopError::SaveLocationInvalid,
+                format!("invalid save location: {err}"),
+            )
+        })?;
+        let destination = (target.complete_path)(chosen);
+
+        std::fs::write(&destination, &bytes).map_err(|err| {
+            CommandError::desktop(
+                DesktopError::SaveFailed,
+                format!("could not save file: {err}"),
+            )
+        })?;
+        Ok(Some(destination.display().to_string()))
+    }))
+    .await
 }
