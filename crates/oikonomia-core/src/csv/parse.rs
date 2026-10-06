@@ -255,6 +255,7 @@ fn mapping_from_headers(headers: &StringRecord, map: ColumnMap) -> CsvColumnMapp
         debit: name(map.debit),
         credit: name(map.credit),
         reference: name(map.reference),
+        direction: name(map.direction),
     }
 }
 
@@ -286,6 +287,7 @@ fn resolve_user_mapping(
     let debit = trimmed_nonempty(mapping.debit.as_deref());
     let credit = trimmed_nonempty(mapping.credit.as_deref());
     let reference = trimmed_nonempty(mapping.reference.as_deref());
+    let direction = trimmed_nonempty(mapping.direction.as_deref());
 
     let has_amount = amount.is_some();
     let has_dc = debit.is_some() || credit.is_some();
@@ -309,7 +311,7 @@ fn resolve_user_mapping(
         debit: debit.map(|n| header_index(headers, n)).transpose()?,
         credit: credit.map(|n| header_index(headers, n)).transpose()?,
         reference: reference.map(|n| header_index(headers, n)).transpose()?,
-        direction: None,
+        direction: direction.map(|n| header_index(headers, n)).transpose()?,
     })
 }
 
@@ -741,6 +743,7 @@ mod tests {
             debit: debit.map(str::to_owned),
             credit: credit.map(str::to_owned),
             reference: None,
+            direction: None,
         }
     }
 
@@ -805,6 +808,79 @@ mod tests {
         assert_eq!(row.kind, SimpleEntryKind::Expense);
         assert_eq!(row.amount_minor, 80_000);
         assert!(parsed.detected_mapping.date.is_none());
+    }
+
+    const UNSIGNED_WITH_TYPE: &str = "Date,Payee,Notes,Amount,Type\n\
+        2026-03-15,Rent,flat,800.00,Debit\n\
+        2026-03-16,Salary,march,2500.00,Credit\n";
+
+    fn kinds_of(parsed: &ParsedBankCsv) -> Vec<SimpleEntryKind> {
+        parsed
+            .rows
+            .iter()
+            .map(|row| match row {
+                CsvRowOutcome::Parsed(row) => row.kind,
+                CsvRowOutcome::Invalid { .. } => panic!("expected parsed row, got {row:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn editing_a_mapping_keeps_the_detected_direction_column() {
+        let auto = parse_bank_csv(UNSIGNED_WITH_TYPE, 2, None).expect("auto");
+        let expected = vec![SimpleEntryKind::Expense, SimpleEntryKind::Income];
+        assert_eq!(kinds_of(&auto), expected);
+
+        // What the Map columns step sends back after one edit.
+        let edited = CsvColumnMapping {
+            description: Some("Notes".into()),
+            ..auto.detected_mapping
+        };
+        let mapped = parse_bank_csv(UNSIGNED_WITH_TYPE, 2, Some(&edited)).expect("mapped");
+
+        assert_eq!(kinds_of(&mapped), expected);
+    }
+
+    #[test]
+    fn detected_mapping_names_the_direction_column() {
+        let auto = parse_bank_csv(UNSIGNED_WITH_TYPE, 2, None).expect("auto");
+        assert_eq!(auto.detected_mapping.direction.as_deref(), Some("Type"));
+
+        let unsigned = parse_bank_csv("Date,Payee,Amount\n2026-03-15,Rent,8.00\n", 2, None)
+            .expect("no direction column");
+        assert_eq!(unsigned.detected_mapping.direction, None);
+    }
+
+    #[test]
+    fn a_mapping_without_a_direction_reads_the_amount_sign() {
+        let mapping = column_mapping("Date", "Payee", Some("Amount"), None, None);
+        let mapped = parse_bank_csv(UNSIGNED_WITH_TYPE, 2, Some(&mapping)).expect("mapped");
+
+        assert_eq!(
+            kinds_of(&mapped),
+            vec![SimpleEntryKind::Income, SimpleEntryKind::Income]
+        );
+    }
+
+    #[test]
+    fn a_direction_column_that_is_not_in_the_file_is_rejected() {
+        let mapping = CsvColumnMapping {
+            direction: Some("Nope".into()),
+            ..column_mapping("Date", "Payee", Some("Amount"), None, None)
+        };
+        let err = parse_bank_csv(UNSIGNED_WITH_TYPE, 2, Some(&mapping)).expect_err("unknown");
+        assert!(
+            matches!(err, Error::CsvParse(ref message) if message.contains("Nope")),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_mapping_without_the_direction_key_still_deserializes() {
+        let mapping: CsvColumnMapping =
+            serde_json::from_str(r#"{"date":"Date","description":"Payee","amount":"Amount"}"#)
+                .expect("payload from a UI that predates the field");
+        assert_eq!(mapping.direction, None);
     }
 
     #[test]
