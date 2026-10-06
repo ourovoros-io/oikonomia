@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::coa::{DocumentTopic, document_topic_codes};
+use crate::db::{read_column, stored_uuid};
 use crate::default_accounts::{account_by_codes, first_of_type};
 use crate::documents::store::Keyword::{Prefix, Unit, Word};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId};
@@ -12,7 +13,7 @@ use crate::error::{Error, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
 };
-use crate::util::{now_utc_string, parse_uuid};
+use crate::util::now_utc_string;
 
 /// Document primary key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -264,20 +265,34 @@ pub fn post_simple_entry_with_document(
     Ok((view, meta))
 }
 
-type MetaColumns = (String, String, String, String, String, i64, String, String);
+/// The columns every metadata query selects, in the order
+/// [`map_document_meta`] reads them. `d` is `documents` and `je` the
+/// `journal_entries` row it is joined to.
+const DOCUMENT_META_COLUMNS: &str = "d.id, d.entity_id, d.entry_id, d.filename, d.mime_type, \
+                                     d.size_bytes, d.created_at, je.description";
 
-fn meta_from_columns(raw: MetaColumns) -> Result<DocumentMeta> {
-    let (id_s, entity_s, entry_s, filename, mime_type, size_bytes, created_at, entry_description) =
-        raw;
+/// Reads the [`DOCUMENT_META_COLUMNS`] of `row`, which start at column 0.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] when a stored id is not a UUID or a column holds
+/// a value of the wrong type: the application wrote the row, so the damage
+/// is in the vault and not in what the caller passed. [`Error::Io`] for any
+/// other driver failure.
+fn map_document_meta(row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
+    let id = stored_uuid("documents.id", &read_column::<String>(row, 0)?)?;
+    let entity_id = stored_uuid("documents.entity_id", &read_column::<String>(row, 1)?)?;
+    let entry_id = stored_uuid("documents.entry_id", &read_column::<String>(row, 2)?)?;
+
     Ok(DocumentMeta {
-        id: DocumentId(parse_uuid(&id_s)?),
-        entity_id: EntityId(parse_uuid(&entity_s)?),
-        entry_id: JournalEntryId(parse_uuid(&entry_s)?),
-        filename,
-        mime_type,
-        size_bytes,
-        created_at,
-        entry_description,
+        id: DocumentId(id),
+        entity_id: EntityId(entity_id),
+        entry_id: JournalEntryId(entry_id),
+        filename: read_column(row, 3)?,
+        mime_type: read_column(row, 4)?,
+        size_bytes: read_column(row, 5)?,
+        created_at: read_column(row, 6)?,
+        entry_description: read_column(row, 7)?,
     })
 }
 
@@ -290,40 +305,27 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
     // Order by created_at DESC, rowid DESC for deterministic insertion-recency order.
     // now_utc_string has 1-second granularity, so multiple documents saved in the same
     // second may tie on created_at; rowid tie-break ensures deterministic order.
-    let mut stmt = conn
-        .prepare(
+    let mut statement = conn
+        .prepare(&format!(
             "
-            SELECT d.id, d.entity_id, d.entry_id, d.filename, d.mime_type, d.size_bytes,
-                   d.created_at, je.description
+            SELECT {DOCUMENT_META_COLUMNS}
             FROM documents d
             JOIN journal_entries je ON je.id = d.entry_id
             WHERE d.entity_id = ?1
             ORDER BY d.created_at DESC, d.rowid DESC
-            ",
-        )
+            "
+        ))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let rows = stmt
-        .query_map([entity_id.0.to_string()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, String>(7)?,
-            ))
-        })
+    let rows = statement
+        .query_map([entity_id.0.to_string()], |row| Ok(map_document_meta(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut out = Vec::new();
+    let mut documents = Vec::new();
     for row in rows {
-        let raw = row.map_err(|err| Error::Io(err.to_string()))?;
-        out.push(meta_from_columns(raw)?);
+        documents.push(row.map_err(|err| Error::Io(err.to_string()))??);
     }
-    Ok(out)
+    Ok(documents)
 }
 
 /// One document's metadata plus raw bytes (for viewing/export).
@@ -332,38 +334,28 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
 ///
 /// Not found or DB error.
 pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, Vec<u8>)> {
-    let (raw, data) = conn
-        .query_row(
+    // The blob follows the eight metadata columns.
+    const DATA_COLUMN: usize = 8;
+
+    conn.query_row(
+        &format!(
             "
-            SELECT d.id, d.entity_id, d.entry_id, d.filename, d.mime_type, d.size_bytes,
-                   d.created_at, je.description, d.data
+            SELECT {DOCUMENT_META_COLUMNS}, d.data
             FROM documents d
             JOIN journal_entries je ON je.id = d.entry_id
             WHERE d.id = ?1
-            ",
-            [id.0.to_string()],
-            |row| {
-                Ok((
-                    (
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, i64>(5)?,
-                        row.get::<_, String>(6)?,
-                        row.get::<_, String>(7)?,
-                    ),
-                    row.get::<_, Vec<u8>>(8)?,
-                ))
-            },
-        )
-        .map_err(|err| match err {
-            rusqlite::Error::QueryReturnedNoRows => Error::NotFound("document".into()),
-            other => Error::Io(other.to_string()),
-        })?;
-
-    Ok((meta_from_columns(raw)?, data))
+            "
+        ),
+        [id.0.to_string()],
+        |row| {
+            Ok(map_document_meta(row)
+                .and_then(|meta| Ok((meta, read_column::<Vec<u8>>(row, DATA_COLUMN)?))))
+        },
+    )
+    .map_err(|err| match err {
+        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("document".into()),
+        other => Error::Io(other.to_string()),
+    })?
 }
 
 /// Permanently remove a document blob. Linked entries are unaffected.
@@ -833,6 +825,76 @@ mod tests {
         assert!(
             matches!(document_insert_error(&err, "other.pdf"), Error::Io(_)),
             "{err}"
+        );
+    }
+
+    const STORED_DOCUMENT_ID: &str = "11111111-1111-4111-8111-111111111111";
+    const STORED_ENTITY_ID: &str = "22222222-2222-4222-8222-222222222222";
+
+    /// A database holding one document whose `entry_id` is not an id, and
+    /// the journal entry that text joins to.
+    fn database_with_a_damaged_document() -> Connection {
+        let conn = Connection::open_in_memory().expect("an in-memory database must open");
+        conn.execute_batch(
+            "CREATE TABLE journal_entries (id TEXT PRIMARY KEY NOT NULL, description TEXT NOT NULL);
+             CREATE TABLE documents (
+                id TEXT PRIMARY KEY NOT NULL,
+                entity_id TEXT NOT NULL,
+                entry_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                data BLOB NOT NULL,
+                created_at TEXT NOT NULL
+             );
+             INSERT INTO journal_entries (id, description) VALUES ('damaged', 'Rent');",
+        )
+        .expect("the tables must be created");
+        conn.execute(
+            "INSERT INTO documents
+                (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at)
+             VALUES (?1, ?2, 'damaged', 'bill.pdf', 'application/pdf', 1, x'00', 'unix:1')",
+            [STORED_DOCUMENT_ID, STORED_ENTITY_ID],
+        )
+        .expect("the document row must be inserted");
+        conn
+    }
+
+    #[test]
+    fn a_stored_id_that_does_not_parse_is_a_corrupt_vault_not_a_caller_mistake() {
+        let conn = database_with_a_damaged_document();
+        let damaged = Error::VaultCorrupt("documents.entry_id: not an id: damaged".into());
+
+        let entity_id = EntityId(Uuid::parse_str(STORED_ENTITY_ID).unwrap());
+        assert_eq!(
+            list_documents(&conn, entity_id).map(|documents| documents.len()),
+            Err(damaged.clone())
+        );
+
+        let id = DocumentId(Uuid::parse_str(STORED_DOCUMENT_ID).unwrap());
+        assert_eq!(
+            get_document(&conn, id).map(|(meta, _)| meta.filename),
+            Err(damaged)
+        );
+    }
+
+    #[test]
+    fn a_stored_size_of_the_wrong_type_is_a_corrupt_vault() {
+        let conn = database_with_a_damaged_document();
+        conn.execute(
+            "UPDATE documents SET entry_id = ?1, size_bytes = 'large'",
+            [STORED_ENTITY_ID],
+        )
+        .unwrap();
+        conn.execute("UPDATE journal_entries SET id = ?1", [STORED_ENTITY_ID])
+            .unwrap();
+
+        let id = DocumentId(Uuid::parse_str(STORED_DOCUMENT_ID).unwrap());
+        let read = get_document(&conn, id).map(|(meta, _)| meta.filename);
+
+        assert!(
+            matches!(&read, Err(Error::VaultCorrupt(detail)) if detail.starts_with("size_bytes:")),
+            "{read:?}"
         );
     }
 
