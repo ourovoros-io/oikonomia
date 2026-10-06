@@ -829,7 +829,7 @@ fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, idle_secs, resolve_ocr_model_dir,
+        AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, idle_secs, now_secs, resolve_ocr_model_dir,
         run_auto_lock_loop, should_auto_lock,
     };
     use oikonomia_core::ledger::set_lock_timeout_secs;
@@ -1047,6 +1047,48 @@ mod tests {
         }
 
         assert_eq!(vault.acquire().status(), VaultStatus::Locked);
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The emitter panics on the idle lock, and before the watchdog's
+    /// recovery runs the user has unlocked again. The recovery cannot tell
+    /// how far the round got, so it locks that new session, and the UI, which
+    /// shows it unlocked, has to be told.
+    ///
+    /// The new session is not idle, so the only thing that can lock it, and
+    /// produce the second announcement, is the recovery.
+    #[test]
+    fn a_session_locked_by_the_panic_recovery_is_announced() {
+        let (state, dir) = test_state("recovery");
+        init_locked_vault(&state);
+        let handles = state.watchdog_handles();
+        let vault = Arc::clone(&handles.vault);
+        let last_activity = Arc::clone(&handles.last_activity);
+
+        let (announced, announcements) = mpsc::channel();
+        let unlocker = Arc::clone(&vault);
+        let activity = Arc::clone(&last_activity);
+        let mut calls = 0_u32;
+        let join = std::thread::spawn(move || {
+            run_auto_lock_loop(&handles, SHORT_POLL, move || {
+                calls += 1;
+                if calls == 1 {
+                    unlocker.acquire().unlock(TEST_PASSWORD).expect("unlock");
+                    activity.store(now_secs(), Ordering::Relaxed);
+                    std::panic::resume_unwind(Box::new("emit failed"));
+                }
+                let _ = announced.send(calls);
+            });
+        });
+
+        last_activity.store(0, Ordering::Relaxed);
+        vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
+
+        let got = announcements.recv_timeout(GIVE_UP_AFTER);
+        assert_eq!(got.ok(), Some(2), "the recovery's lock was not announced");
+        assert_eq!(vault.acquire().status(), VaultStatus::Locked);
+
         shutdown_watchdog(&vault, join);
         let _ = fs::remove_dir_all(&dir);
     }
