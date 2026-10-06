@@ -550,7 +550,7 @@ fn file_url_artifact_is_failed() {
 }
 
 #[test]
-fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
+fn artifact_hash_mismatch_leaves_no_file_and_does_not_exec() {
     let (pk, sk) = test_keys();
     let server = Server::run();
     let payload = b"real-bytes";
@@ -592,7 +592,7 @@ fn artifact_hash_mismatch_deletes_partial_and_does_not_exec() {
 }
 
 #[test]
-fn artifact_sig_mismatch_deletes_partial_and_does_not_exec() {
+fn artifact_sig_mismatch_leaves_no_file_and_does_not_exec() {
     let (pk, sk) = test_keys();
     let (_other_pk, other_sk) = test_keys();
     let server = Server::run();

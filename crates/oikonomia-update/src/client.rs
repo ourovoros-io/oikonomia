@@ -36,7 +36,8 @@ pub(crate) const MAX_REDIRECTS: u8 = 5;
 
 /// Bounds one whole feed or signature request: connecting, then everything up
 /// to the last byte of the body. A redirect starts a new request with a new
-/// deadline. ureq cannot interrupt a DNS lookup, which may add to this.
+/// deadline. A slow DNS lookup may exceed it: ureq cannot interrupt one
+/// (`AgentBuilder::timeout` docs).
 const METADATA_DEADLINE: Duration = Duration::from_secs(20);
 
 /// Bounds opening the connection for one artifact request.
@@ -106,8 +107,10 @@ impl ClientConfig {
     /// # Errors
     ///
     /// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or invalid,
-    /// [`UpdateError::InvalidFeedUrl`] when the feed constant does not parse, or
-    /// [`UpdateError::ManifestParse`] when `current_version` is not `SemVer`.
+    /// [`UpdateError::InvalidFeedUrl`] when the feed constant does not parse,
+    /// [`UpdateError::ArtifactUrl`] when the feed constant is not on the production
+    /// allow-list, or [`UpdateError::ManifestParse`] when `current_version` is not
+    /// `SemVer`.
     pub fn production(
         public_key: &str,
         current_version: &str,
@@ -279,9 +282,9 @@ impl Resource {
         }
     }
 
-    /// Only the feed endpoints are told the version and platform: a feed
-    /// server may answer 204 from them. The artifact URL comes from the
-    /// manifest and is fetched exactly as signed.
+    /// Only the feed endpoints are told the version and platform, which is
+    /// what lets a feed server answer 204 to a copy that is current. The
+    /// artifact URL comes from the manifest and is fetched exactly as signed.
     fn names_this_copy(self) -> bool {
         match self {
             Self::Manifest | Self::ManifestSignature => true,
@@ -374,11 +377,17 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
 
 /// Downloads the artifact outside the vault, verifies hash and minisign, then returns the path.
 ///
-/// On any failure the partial file is deleted.
+/// The bytes are held in memory until both checks pass and only then written,
+/// so a failed download or a failed check leaves no file. A file left behind
+/// by a write that failed part-way is removed.
 ///
 /// # Errors
 ///
-/// Returns [`UpdateError::ArtifactIntegrity`] or [`UpdateError::Network`] / [`UpdateError::ArtifactUrl`].
+/// Returns [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect
+/// from it, is off the allow-list; [`UpdateError::ArtifactIntegrity`] when the
+/// hash or the signature does not match; and [`UpdateError::Network`] when the
+/// download fails or exceeds the size cap, or when the cache directory or the
+/// file cannot be written.
 pub fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
     if let Err(err) = prepare_cache_dir(&config.cache_dir) {
         log::warn!("updater cache create failed: {err}");
