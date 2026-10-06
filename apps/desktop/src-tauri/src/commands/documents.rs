@@ -2,7 +2,7 @@
 
 use crate::commands::support::{
     SaveTarget, await_blocking, decode_document_base64, dropped_file_name, require_granted_path,
-    save_with_dialog, stored_text_locale, with_vault_blocking,
+    save_with_dialog, stored_text_locale, with_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::{AppState, GatedVault};
@@ -156,11 +156,7 @@ pub(crate) async fn document_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<Vec<DocumentMeta>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        list_documents(conn, entity_id)
-    })
-    .await
+    with_connection(&state, move |conn| list_documents(conn, entity_id)).await
 }
 
 /// One document's bytes for the in-app viewer. Decrypted content crosses
@@ -170,8 +166,7 @@ pub(crate) async fn document_get(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<DocumentContent> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         let (meta, data) = get_document(conn, document_id)?;
         Ok(DocumentContent {
             meta,
@@ -187,11 +182,7 @@ pub(crate) async fn document_delete(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        delete_document(conn, document_id)
-    })
-    .await
+    with_connection(&state, move |conn| delete_document(conn, document_id)).await
 }
 
 /// Attach a file to an existing posted entry. No OCR pass — analysis only
@@ -211,8 +202,7 @@ pub(crate) async fn document_attach(
 ) -> CommandResult<DocumentMeta> {
     let data = decode_document_base64(&data_base64)?;
 
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         attach_document(conn, entity_id, entry_id, &filename, &mime_type, &data)
     })
     .await
@@ -230,11 +220,7 @@ pub(crate) async fn document_export(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<Option<String>> {
-    let (meta, data) = with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        get_document(conn, document_id)
-    })
-    .await?;
+    let (meta, data) = with_connection(&state, move |conn| get_document(conn, document_id)).await?;
 
     let target = SaveTarget {
         filter: None,

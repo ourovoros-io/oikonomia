@@ -2,7 +2,7 @@
 
 use crate::commands::support::{
     await_blocking, decode_document_base64, dropped_file_name, require_granted_path,
-    stored_text_locale, with_vault_blocking,
+    stored_text_locale, with_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
@@ -29,8 +29,7 @@ pub(crate) async fn entry_list(
     search: Option<String>,
     account_id: Option<AccountId>,
 ) -> CommandResult<Vec<PostedEntryView>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         let filter = EntryFilter {
             text: search,
             date_from: from,
@@ -48,11 +47,7 @@ pub(crate) async fn entry_get(
     state: State<'_, AppState>,
     id: JournalEntryId,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        get_entry(conn, id)
-    })
-    .await
+    with_connection(&state, move |conn| get_entry(conn, id)).await
 }
 
 /// Post a balanced journal entry.
@@ -61,11 +56,7 @@ pub(crate) async fn entry_post(
     state: State<'_, AppState>,
     input: PostJournal,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        post_entry(conn, &input)
-    })
-    .await
+    with_connection(&state, move |conn| post_entry(conn, &input)).await
 }
 
 /// Post a simple-form entry (kind + role accounts); line construction is in core.
@@ -74,11 +65,7 @@ pub(crate) async fn entry_post_simple(
     state: State<'_, AppState>,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        post_simple_entry(conn, &input)
-    })
-    .await
+    with_connection(&state, move |conn| post_simple_entry(conn, &input)).await
 }
 
 /// Post a simple entry together with its analyzed document (one transaction).
@@ -97,8 +84,7 @@ pub(crate) async fn entry_post_simple_with_document(
 ) -> CommandResult<PostedEntryView> {
     let data = decode_document_base64(&data_base64)?;
 
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         let (view, _meta) = post_simple_entry_with_document(
             conn,
             &input,
@@ -171,8 +157,7 @@ pub(crate) async fn entry_replace_simple(
 ) -> CommandResult<PostedEntryView> {
     let locale = stored_text_locale(&state);
 
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         replace_simple_entry(conn, original_id, &input, locale)
     })
     .await
@@ -185,11 +170,7 @@ pub(crate) async fn entry_set_hidden(
     id: JournalEntryId,
     hidden: bool,
 ) -> CommandResult<PostedEntryView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        set_entry_hidden(conn, id, hidden)
-    })
-    .await
+    with_connection(&state, move |conn| set_entry_hidden(conn, id, hidden)).await
 }
 
 /// Void an entry (posts reverse).
@@ -200,9 +181,5 @@ pub(crate) async fn entry_void(
 ) -> CommandResult<VoidResult> {
     let locale = stored_text_locale(&state);
 
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        void_entry(conn, id, locale)
-    })
-    .await
+    with_connection(&state, move |conn| void_entry(conn, id, locale)).await
 }

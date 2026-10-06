@@ -1,6 +1,6 @@
 //! Settings commands: the lock timeout and the plaintext preferences.
 
-use crate::commands::support::{await_blocking, with_vault_blocking};
+use crate::commands::support::{await_blocking, with_connection, with_vault_blocking};
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
 use oikonomia_core::ledger::{get_lock_timeout_secs, set_lock_timeout_secs};
@@ -13,11 +13,7 @@ use tauri::{Manager, State};
 /// Get auto-lock timeout seconds.
 #[tauri::command]
 pub(crate) async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandResult<u64> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        get_lock_timeout_secs(conn)
-    })
-    .await
+    with_connection(&state, get_lock_timeout_secs).await
 }
 
 /// Set auto-lock timeout seconds.

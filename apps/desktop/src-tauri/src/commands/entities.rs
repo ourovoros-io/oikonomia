@@ -1,6 +1,6 @@
 //! Entity (book) commands.
 
-use crate::commands::support::{stored_text_locale, with_vault_blocking};
+use crate::commands::support::{stored_text_locale, with_connection};
 use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::domain::{Entity, EntityId};
@@ -12,11 +12,7 @@ use tauri::State;
 /// List non-archived entities.
 #[tauri::command]
 pub(crate) async fn entity_list(state: State<'_, AppState>) -> CommandResult<Vec<Entity>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        list_entities(conn)
-    })
-    .await
+    with_connection(&state, list_entities).await
 }
 
 /// Create entity with chart template.
@@ -29,11 +25,7 @@ pub(crate) async fn entity_create(
     // now. It comes from the stored preference, never from the webview.
     let locale = stored_text_locale(&state);
 
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        create_entity(conn, &input, locale)
-    })
-    .await
+    with_connection(&state, move |conn| create_entity(conn, &input, locale)).await
 }
 
 /// Rename entity.
@@ -43,29 +35,17 @@ pub(crate) async fn entity_update(
     id: EntityId,
     name: String,
 ) -> CommandResult<Entity> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        update_entity(conn, id, &name)
-    })
-    .await
+    with_connection(&state, move |conn| update_entity(conn, id, &name)).await
 }
 
 /// Archive entity (soft-hide).
 #[tauri::command]
 pub(crate) async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        archive_entity(conn, id)
-    })
-    .await
+    with_connection(&state, move |conn| archive_entity(conn, id)).await
 }
 
 /// Permanently delete an entity and all of its books data.
 #[tauri::command]
 pub(crate) async fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        delete_entity(conn, id)
-    })
-    .await
+    with_connection(&state, move |conn| delete_entity(conn, id)).await
 }

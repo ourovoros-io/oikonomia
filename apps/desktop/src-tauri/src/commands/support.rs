@@ -5,6 +5,7 @@ use crate::state::{AppState, VaultGuard};
 use base64::Engine;
 use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
+use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use tauri::State;
 
@@ -120,6 +121,23 @@ where
         f(&mut guard).map_err(CommandError::from)
     }))
     .await
+}
+
+/// Runs `work` on the blocking pool with the unlocked vault's connection.
+///
+/// This is [`with_vault_blocking`] for the common command that only queries
+/// or writes the ledger and never changes the vault's own state.
+///
+/// # Errors
+///
+/// Returns `vault_locked` when the vault is not unlocked, the error `work`
+/// returns, and `task_failed` when the blocking task panics.
+pub(super) async fn with_connection<T, F>(state: &State<'_, AppState>, work: F) -> CommandResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&Connection) -> Result<T, CoreError> + Send + 'static,
+{
+    with_vault_blocking(state, move |vault| work(vault.connection()?)).await
 }
 
 /// Map a blocking-task join failure into a command error.

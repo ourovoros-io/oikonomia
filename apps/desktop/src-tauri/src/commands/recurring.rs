@@ -1,6 +1,6 @@
 //! Recurring template commands.
 
-use crate::commands::support::with_vault_blocking;
+use crate::commands::support::with_connection;
 use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::domain::{EntityId, RecurringTemplateId};
@@ -17,8 +17,7 @@ pub(crate) async fn recurring_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<Vec<RecurringTemplateView>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         list_recurring_templates(conn, entity_id)
     })
     .await
@@ -30,11 +29,7 @@ pub(crate) async fn recurring_get(
     state: State<'_, AppState>,
     id: RecurringTemplateId,
 ) -> CommandResult<RecurringTemplateView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        get_recurring_template(conn, id)
-    })
-    .await
+    with_connection(&state, move |conn| get_recurring_template(conn, id)).await
 }
 
 /// Create a local recurring template.
@@ -43,11 +38,7 @@ pub(crate) async fn recurring_create(
     state: State<'_, AppState>,
     input: CreateRecurringTemplate,
 ) -> CommandResult<RecurringTemplateView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        create_recurring_template(conn, &input)
-    })
-    .await
+    with_connection(&state, move |conn| create_recurring_template(conn, &input)).await
 }
 
 /// Replace mutable fields on a template.
@@ -56,11 +47,7 @@ pub(crate) async fn recurring_update(
     state: State<'_, AppState>,
     input: UpdateRecurringTemplate,
 ) -> CommandResult<RecurringTemplateView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        update_recurring_template(conn, &input)
-    })
-    .await
+    with_connection(&state, move |conn| update_recurring_template(conn, &input)).await
 }
 
 /// Delete a template. Posted journal entries are left intact.
@@ -69,11 +56,7 @@ pub(crate) async fn recurring_delete(
     state: State<'_, AppState>,
     id: RecurringTemplateId,
 ) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        delete_recurring_template(conn, id)
-    })
-    .await
+    with_connection(&state, move |conn| delete_recurring_template(conn, id)).await
 }
 
 /// Post one journal entry from a template, then advance `next_date`.
@@ -88,8 +71,7 @@ pub(crate) async fn recurring_post(
     entry_date: Option<String>,
     amount_minor: Option<i64>,
 ) -> CommandResult<RecurringPostResult> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         post_recurring_template(conn, id, entry_date.as_deref(), amount_minor)
     })
     .await

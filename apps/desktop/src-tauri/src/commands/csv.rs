@@ -1,7 +1,7 @@
 //! Bank CSV import and journal CSV export commands.
 
 use crate::commands::support::{
-    SaveTarget, await_blocking, require_granted_path, save_with_dialog, with_vault_blocking,
+    SaveTarget, await_blocking, require_granted_path, save_with_dialog, with_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
@@ -35,8 +35,7 @@ pub(crate) async fn csv_import_preview(
         picked
     };
 
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         preview_bank_csv_file(
             conn,
             input.entity_id,
@@ -58,8 +57,7 @@ pub(crate) async fn csv_import_post(
     state: State<'_, AppState>,
     input: CsvImportPostInput,
 ) -> CommandResult<CsvImportPostResult> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         post_import_rows(conn, &input.rows, input.include_duplicates)
     })
     .await
@@ -74,8 +72,7 @@ pub(crate) async fn csv_export_journal(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<Option<String>> {
-    let (csv_text, file_name) = with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    let (csv_text, file_name) = with_connection(&state, move |conn| {
         let entity = get_entity(conn, entity_id)?;
         let text = export_journal_csv(conn, entity_id)?;
         Ok((text, default_journal_export_file_name(&entity.name)))

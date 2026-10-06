@@ -1,6 +1,6 @@
 //! Account commands.
 
-use crate::commands::support::{stored_text_locale, with_vault_blocking};
+use crate::commands::support::{stored_text_locale, with_connection};
 use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::default_accounts::{DefaultAccounts, default_accounts_for_entity};
@@ -17,11 +17,7 @@ pub(crate) async fn account_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<Vec<Account>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        list_accounts(conn, entity_id)
-    })
-    .await
+    with_connection(&state, move |conn| list_accounts(conn, entity_id)).await
 }
 
 /// The default account for each role the entry forms need.
@@ -33,8 +29,7 @@ pub(crate) async fn account_defaults(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<DefaultAccounts> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         default_accounts_for_entity(conn, entity_id)
     })
     .await
@@ -46,11 +41,7 @@ pub(crate) async fn account_create(
     state: State<'_, AppState>,
     input: CreateAccount,
 ) -> CommandResult<Account> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        create_account(conn, &input)
-    })
-    .await
+    with_connection(&state, move |conn| create_account(conn, &input)).await
 }
 
 /// Update account.
@@ -59,11 +50,7 @@ pub(crate) async fn account_update(
     state: State<'_, AppState>,
     input: UpdateAccount,
 ) -> CommandResult<Account> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        update_account(conn, &input)
-    })
-    .await
+    with_connection(&state, move |conn| update_account(conn, &input)).await
 }
 
 /// Archive (deactivate) account.
@@ -72,11 +59,7 @@ pub(crate) async fn account_archive(
     state: State<'_, AppState>,
     id: AccountId,
 ) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        archive_account(conn, id)
-    })
-    .await
+    with_connection(&state, move |conn| archive_account(conn, id)).await
 }
 
 /// Account register.
@@ -87,8 +70,7 @@ pub(crate) async fn account_register_cmd(
     from: Option<String>,
     to: Option<String>,
 ) -> CommandResult<Vec<RegisterLine>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         account_register(conn, account_id, from.as_deref(), to.as_deref())
     })
     .await
@@ -101,8 +83,7 @@ pub(crate) async fn account_balance_cmd(
     account_id: AccountId,
     as_of: String,
 ) -> CommandResult<i64> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         account_balance(conn, account_id, &as_of)
     })
     .await
@@ -119,8 +100,7 @@ pub(crate) async fn account_set_opening_balance(
 ) -> CommandResult<PostedEntryView> {
     let locale = stored_text_locale(&state);
 
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         set_account_opening_balance(conn, account_id, target_minor, &as_of, locale)
     })
     .await

@@ -1,7 +1,7 @@
 //! Report, dashboard and PDF export commands.
 
 use crate::commands::support::{
-    SaveTarget, decode_capped_base64, save_with_dialog, with_vault_blocking,
+    SaveTarget, decode_capped_base64, save_with_dialog, with_connection,
 };
 use crate::error::CommandResult;
 use crate::state::AppState;
@@ -21,11 +21,7 @@ pub(crate) async fn report_trial_balance(
     entity_id: EntityId,
     as_of: String,
 ) -> CommandResult<TrialBalance> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        trial_balance(conn, entity_id, &as_of)
-    })
-    .await
+    with_connection(&state, move |conn| trial_balance(conn, entity_id, &as_of)).await
 }
 
 /// Profit and loss.
@@ -36,8 +32,7 @@ pub(crate) async fn report_pnl(
     from: String,
     to: String,
 ) -> CommandResult<PnL> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         profit_and_loss(conn, entity_id, &from, &to)
     })
     .await
@@ -51,8 +46,7 @@ pub(crate) async fn report_pnl_export(
     from: String,
     to: String,
 ) -> CommandResult<PnL> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         profit_and_loss_export(conn, entity_id, &from, &to)
     })
     .await
@@ -65,11 +59,7 @@ pub(crate) async fn report_balance_sheet(
     entity_id: EntityId,
     as_of: String,
 ) -> CommandResult<BalanceSheet> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        balance_sheet(conn, entity_id, &as_of)
-    })
-    .await
+    with_connection(&state, move |conn| balance_sheet(conn, entity_id, &as_of)).await
 }
 
 /// Saves PDF bytes the webview built to a path chosen in a native Save
@@ -138,8 +128,7 @@ pub(crate) async fn dashboard_summary_cmd(
     to: String,
     assets_as_of: String,
 ) -> CommandResult<DashboardSummary> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         dashboard_summary(conn, entity_id, &from, &to, &assets_as_of)
     })
     .await
@@ -155,8 +144,7 @@ pub(crate) async fn cash_flow_series_cmd(
     from: Option<String>,
     to: Option<String>,
 ) -> CommandResult<CashFlowSeries> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
+    with_connection(&state, move |conn| {
         let (start, end) =
             activity_window(conn, entity_id, from.as_deref(), to.as_deref(), utc_today())?;
         cash_flow_series(conn, entity_id, &format_date(start), &format_date(end))
