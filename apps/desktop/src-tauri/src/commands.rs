@@ -1,5 +1,6 @@
 //! Tauri command handlers (thin wrappers over core + state).
 
+mod accounts;
 mod app;
 mod entities;
 mod support;
@@ -7,6 +8,7 @@ mod vault;
 
 // A command is a function plus a hidden macro that `generate_handler!`
 // looks up beside it; a glob carries both, a named re-export does not.
+pub(crate) use self::accounts::*;
 pub(crate) use self::app::*;
 pub(crate) use self::entities::*;
 pub(crate) use self::vault::*;
@@ -23,24 +25,21 @@ use oikonomia_core::csv::{
     default_journal_export_file_name, ensure_csv_path, export_journal_csv, post_import_rows,
     preview_bank_csv_file,
 };
-use oikonomia_core::default_accounts::{DefaultAccounts, default_accounts_for_entity};
 use oikonomia_core::documents::{
     AnalyzeContext, AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion,
     analyze_document_bytes, analyzer_status, attach_document, delete_document, get_document,
     list_documents, post_simple_entry_with_document, suggest_accounts_for_entity,
 };
-use oikonomia_core::domain::{Account, AccountId, EntityId, JournalEntryId, RecurringTemplateId};
+use oikonomia_core::domain::{AccountId, EntityId, JournalEntryId, RecurringTemplateId};
 use oikonomia_core::ledger::{
-    BalanceSheet, CashFlowSeries, CreateAccount, CreateRecurringTemplate, DashboardSummary,
-    EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView, RecurringPostResult,
-    RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount, UpdateRecurringTemplate,
-    VoidResult, account_balance, account_register, activity_window, archive_account, balance_sheet,
-    cash_flow_series, create_account, create_recurring_template, dashboard_summary,
-    delete_recurring_template, get_entity, get_entry, get_lock_timeout_secs,
-    get_recurring_template, list_accounts, list_entries, list_recurring_templates, post_entry,
-    post_recurring_template, post_simple_entry, profit_and_loss, profit_and_loss_export,
-    replace_simple_entry, set_account_opening_balance, set_entry_hidden, set_lock_timeout_secs,
-    trial_balance, update_account, update_recurring_template, void_entry,
+    BalanceSheet, CashFlowSeries, CreateRecurringTemplate, DashboardSummary, EntryFilter, PnL,
+    PostJournal, PostSimpleEntry, PostedEntryView, RecurringPostResult, RecurringTemplateView,
+    TrialBalance, UpdateRecurringTemplate, VoidResult, activity_window, balance_sheet,
+    cash_flow_series, create_recurring_template, dashboard_summary, delete_recurring_template,
+    get_entity, get_entry, get_lock_timeout_secs, get_recurring_template, list_entries,
+    list_recurring_templates, post_entry, post_recurring_template, post_simple_entry,
+    profit_and_loss, profit_and_loss_export, replace_simple_entry, set_entry_hidden,
+    set_lock_timeout_secs, trial_balance, update_recurring_template, void_entry,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, resolve_locale,
@@ -50,123 +49,6 @@ use oikonomia_core::util::{format_date, utc_today};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
-
-// --- Accounts --------------------------------------------------------------
-
-/// List accounts for an entity.
-#[tauri::command]
-pub(crate) async fn account_list(
-    state: State<'_, AppState>,
-    entity_id: EntityId,
-) -> CommandResult<Vec<Account>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        list_accounts(conn, entity_id)
-    })
-    .await
-}
-
-/// The default account for each role the entry forms need.
-///
-/// Chosen in Rust by the seeded account's template code and type, never by
-/// name, so it is right for a renamed or translated chart.
-#[tauri::command]
-pub(crate) async fn account_defaults(
-    state: State<'_, AppState>,
-    entity_id: EntityId,
-) -> CommandResult<DefaultAccounts> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        default_accounts_for_entity(conn, entity_id)
-    })
-    .await
-}
-
-/// Create account.
-#[tauri::command]
-pub(crate) async fn account_create(
-    state: State<'_, AppState>,
-    input: CreateAccount,
-) -> CommandResult<Account> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        create_account(conn, &input)
-    })
-    .await
-}
-
-/// Update account.
-#[tauri::command]
-pub(crate) async fn account_update(
-    state: State<'_, AppState>,
-    input: UpdateAccount,
-) -> CommandResult<Account> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        update_account(conn, &input)
-    })
-    .await
-}
-
-/// Archive (deactivate) account.
-#[tauri::command]
-pub(crate) async fn account_archive(
-    state: State<'_, AppState>,
-    id: AccountId,
-) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        archive_account(conn, id)
-    })
-    .await
-}
-
-/// Account register.
-#[tauri::command]
-pub(crate) async fn account_register_cmd(
-    state: State<'_, AppState>,
-    account_id: AccountId,
-    from: Option<String>,
-    to: Option<String>,
-) -> CommandResult<Vec<RegisterLine>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        account_register(conn, account_id, from.as_deref(), to.as_deref())
-    })
-    .await
-}
-
-/// Signed normal balance of one account as of a date.
-#[tauri::command]
-pub(crate) async fn account_balance_cmd(
-    state: State<'_, AppState>,
-    account_id: AccountId,
-    as_of: String,
-) -> CommandResult<i64> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        account_balance(conn, account_id, &as_of)
-    })
-    .await
-}
-
-/// Set an account's balance as of a date by posting the difference against
-/// the book's Opening Balances equity account.
-#[tauri::command]
-pub(crate) async fn account_set_opening_balance(
-    state: State<'_, AppState>,
-    account_id: AccountId,
-    target_minor: i64,
-    as_of: String,
-) -> CommandResult<PostedEntryView> {
-    let locale = stored_text_locale(&state);
-
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        set_account_opening_balance(conn, account_id, target_minor, &as_of, locale)
-    })
-    .await
-}
 
 // --- Journal ---------------------------------------------------------------
 
