@@ -4,6 +4,7 @@ mod accounts;
 mod app;
 mod entities;
 mod journal;
+mod recurring;
 mod support;
 mod vault;
 
@@ -13,6 +14,7 @@ pub(crate) use self::accounts::*;
 pub(crate) use self::app::*;
 pub(crate) use self::entities::*;
 pub(crate) use self::journal::*;
+pub(crate) use self::recurring::*;
 pub(crate) use self::vault::*;
 
 use crate::commands::support::{
@@ -32,14 +34,11 @@ use oikonomia_core::documents::{
     analyze_document_bytes, analyzer_status, attach_document, delete_document, get_document,
     list_documents, suggest_accounts_for_entity,
 };
-use oikonomia_core::domain::{EntityId, JournalEntryId, RecurringTemplateId};
+use oikonomia_core::domain::{EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
-    BalanceSheet, CashFlowSeries, CreateRecurringTemplate, DashboardSummary, PnL,
-    RecurringPostResult, RecurringTemplateView, TrialBalance, UpdateRecurringTemplate,
-    activity_window, balance_sheet, cash_flow_series, create_recurring_template, dashboard_summary,
-    delete_recurring_template, get_entity, get_lock_timeout_secs, get_recurring_template,
-    list_recurring_templates, post_recurring_template, profit_and_loss, profit_and_loss_export,
-    set_lock_timeout_secs, trial_balance, update_recurring_template,
+    BalanceSheet, CashFlowSeries, DashboardSummary, PnL, TrialBalance, activity_window,
+    balance_sheet, cash_flow_series, dashboard_summary, get_entity, get_lock_timeout_secs,
+    profit_and_loss, profit_and_loss_export, set_lock_timeout_secs, trial_balance,
 };
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, resolve_locale,
@@ -49,92 +48,6 @@ use oikonomia_core::util::{format_date, utc_today};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{Manager, State};
-
-// --- Recurring templates (local vault only; no auto-post) ------------------
-
-/// List recurring templates for an entity (`due` when `next_date` ≤ UTC today).
-#[tauri::command]
-pub(crate) async fn recurring_list(
-    state: State<'_, AppState>,
-    entity_id: EntityId,
-) -> CommandResult<Vec<RecurringTemplateView>> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        list_recurring_templates(conn, entity_id)
-    })
-    .await
-}
-
-/// Fetch one template.
-#[tauri::command]
-pub(crate) async fn recurring_get(
-    state: State<'_, AppState>,
-    id: RecurringTemplateId,
-) -> CommandResult<RecurringTemplateView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        get_recurring_template(conn, id)
-    })
-    .await
-}
-
-/// Create a local recurring template.
-#[tauri::command]
-pub(crate) async fn recurring_create(
-    state: State<'_, AppState>,
-    input: CreateRecurringTemplate,
-) -> CommandResult<RecurringTemplateView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        create_recurring_template(conn, &input)
-    })
-    .await
-}
-
-/// Replace mutable fields on a template.
-#[tauri::command]
-pub(crate) async fn recurring_update(
-    state: State<'_, AppState>,
-    input: UpdateRecurringTemplate,
-) -> CommandResult<RecurringTemplateView> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        update_recurring_template(conn, &input)
-    })
-    .await
-}
-
-/// Delete a template. Posted journal entries are left intact.
-#[tauri::command]
-pub(crate) async fn recurring_delete(
-    state: State<'_, AppState>,
-    id: RecurringTemplateId,
-) -> CommandResult<()> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        delete_recurring_template(conn, id)
-    })
-    .await
-}
-
-/// Post one journal entry from a template, then advance `next_date`.
-///
-/// Defaults: `entry_date` = template `next_date`, `amount_minor` = template
-/// amount. Overrides apply only to this post (confirm-sheet adjust-before-save);
-/// cadence still steps from the stored `next_date`.
-#[tauri::command]
-pub(crate) async fn recurring_post(
-    state: State<'_, AppState>,
-    id: RecurringTemplateId,
-    entry_date: Option<String>,
-    amount_minor: Option<i64>,
-) -> CommandResult<RecurringPostResult> {
-    with_vault_blocking(&state, move |vault| {
-        let conn = vault.connection()?;
-        post_recurring_template(conn, id, entry_date.as_deref(), amount_minor)
-    })
-    .await
-}
 
 // --- CSV import / export ---------------------------------------------------
 
