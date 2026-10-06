@@ -16,7 +16,7 @@ use rusqlite::types::{Value, ValueRef};
 /// that call the function spell it in their SQL text.
 const FOLD_FUNCTION: &str = "fold";
 
-/// Register the `fold(text)` SQL function on `conn`.
+/// Registers the `fold(text)` SQL function on `conn`.
 ///
 /// Every connection to a vault must call this once after it is opened, before
 /// any query that uses `fold`. The function folds text with [`fold_case`]; a
@@ -52,7 +52,7 @@ pub fn register_fold(conn: &Connection) -> rusqlite::Result<()> {
     )
 }
 
-/// Fold `text` for a case-insensitive comparison.
+/// Folds `text` for a case-insensitive comparison.
 ///
 /// Use this on the Rust side of a comparison, and `fold(...)` on the SQL side
 /// (see [`register_fold`]), so both sides fold the same way. Exactly this:
@@ -79,8 +79,8 @@ pub fn fold_case(text: &str) -> String {
         .collect()
 }
 
-/// The Greek letter without its accent and with sigma in one form; any other
-/// letter is returned as it is. The input is already lowercase.
+/// Returns a Greek letter without its accent and with sigma in one form; any
+/// other letter is returned as it is. The input is already lowercase.
 const fn unaccented_greek(letter: char) -> char {
     match letter {
         'ς' => 'σ',
@@ -100,6 +100,7 @@ mod tests {
     use super::*;
     use rusqlite::types::Value;
 
+    /// The text `SELECT fold(?1)` gives for `sql_text`; `None` is SQL `NULL`.
     fn folded(sql_text: Option<&str>) -> Option<String> {
         let conn = Connection::open_in_memory().expect("memory");
         register_fold(&conn).expect("register");
