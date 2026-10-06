@@ -30,6 +30,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 use crate::db::register_fold;
 use crate::error::{
     CryptoContext, DatabaseContext, Error, Result, SerializationContext, ValidationError,
+    VaultCorruption,
 };
 use crate::vault::backup::recover_interrupted_restore;
 use crate::vault::crypto::{self, VaultKey};
@@ -121,9 +122,7 @@ impl Vault {
                 discard_partial_init(&data_dir);
             }
             if db_path.exists() {
-                return Err(Error::VaultCorrupt(
-                    "database exists without vault header".into(),
-                ));
+                return Err(Error::VaultCorrupt(VaultCorruption::DatabaseWithoutHeader));
             }
             None
         };
@@ -487,7 +486,7 @@ fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result
         )
         .map_err(|err| key_check_error("look for vault metadata table", &err))?;
     if !has_meta_table {
-        return Err(Error::VaultCorrupt("vault_meta table is missing".into()));
+        return Err(Error::VaultCorrupt(VaultCorruption::MissingMetaTable));
     }
 
     conn.query_row("SELECT schema_version FROM vault_meta LIMIT 1", [], |row| {
@@ -495,7 +494,7 @@ fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result
     })
     .optional()
     .map_err(|err| key_check_error("read schema version", &err))?
-    .ok_or_else(|| Error::VaultCorrupt("vault_meta has no schema version".into()))?;
+    .ok_or(Error::VaultCorrupt(VaultCorruption::MissingSchemaVersion))?;
 
     Ok(conn)
 }
@@ -531,13 +530,15 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     if !create {
         let metadata = fs::metadata(path).map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
-                Error::VaultCorrupt("vault database is missing".into())
+                Error::VaultCorrupt(VaultCorruption::HeaderWithoutDatabase)
             } else {
                 Error::io("inspect vault database", err)
             }
         })?;
         if metadata.len() == 0 {
-            return Err(Error::VaultCorrupt("vault database is empty".into()));
+            return Err(Error::VaultCorrupt(VaultCorruption::EmptyFile {
+                file: "vault.db",
+            }));
         }
     }
 
@@ -770,7 +771,7 @@ mod tests {
             .expect_err("a format this build does not know must not open");
         assert_eq!(
             err,
-            Error::VaultCorrupt("unsupported vault format 2".into())
+            Error::VaultCorrupt(VaultCorruption::UnsupportedFormat { version: 2 })
         );
     }
 

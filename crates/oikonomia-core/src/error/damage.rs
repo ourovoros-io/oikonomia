@@ -1,0 +1,171 @@
+//! The ways stored data can be unusable: a damaged vault, a bad backup file.
+//!
+//! [`Error::VaultCorrupt`](crate::Error::VaultCorrupt) and
+//! [`Error::BackupInvalid`](crate::Error::BackupInvalid) each carry one of
+//! these enums in place of a sentence. The set of reasons is small and fixed,
+//! so a test or a caller can match the reason itself and not a substring of
+//! its message. The `Display` text is English diagnostic text for logs.
+//!
+//! Neither reason is sent to the UI as a parameter: the copy for
+//! `vault_corrupt` and for `backup_invalid` is one sentence each, and what
+//! exactly is wrong helps a person reading a log, not the user.
+
+use thiserror::Error;
+
+/// Why stored vault data cannot be used.
+///
+/// The enum is matched exhaustively by the code that words it; see the
+/// [module documentation](crate::error) for the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum VaultCorruption {
+    /// A stored value is not one the application writes there.
+    #[error("{column}: {detail}")]
+    Column {
+        /// Where the value was read: `table.column`, or the column's name in
+        /// the query when the driver refused the value.
+        column: String,
+        /// What is wrong with the value.
+        detail: String,
+    },
+
+    /// The header file is not a vault header.
+    #[error("vault header does not parse: {detail}")]
+    HeaderUnreadable {
+        /// The decoder's own text.
+        detail: String,
+    },
+
+    /// A field of the header holds a value no build writes.
+    #[error("vault header has an unusable {field}: {detail}")]
+    HeaderField {
+        /// The field, in words: `salt`, `key derivation function`.
+        field: &'static str,
+        /// What is wrong with it.
+        detail: String,
+    },
+
+    /// The header was written in a format this build does not read.
+    #[error("unsupported vault format {version}")]
+    UnsupportedFormat {
+        /// The format version the header names.
+        version: u32,
+    },
+
+    /// The database decrypts but has no `vault_meta` table.
+    #[error("vault metadata table is missing")]
+    MissingMetaTable,
+
+    /// The `vault_meta` table has no row to read the schema version from.
+    #[error("vault metadata has no schema version")]
+    MissingSchemaVersion,
+
+    /// The header file exists and the database file does not.
+    #[error("vault header exists without database")]
+    HeaderWithoutDatabase,
+
+    /// The database file exists and the header file does not.
+    #[error("vault database exists without header")]
+    DatabaseWithoutHeader,
+
+    /// A vault file exists and holds nothing.
+    #[error("{file} is empty")]
+    EmptyFile {
+        /// The file's name, such as `vault.db`.
+        file: &'static str,
+    },
+
+    /// The write-ahead log beside a locked vault holds pages that a copy of
+    /// the database file would leave out.
+    #[error(
+        "vault database has changes still in its write-ahead log; \
+         unlock the vault once before backing up"
+    )]
+    UnmergedWriteAheadLog,
+
+    /// A stored application setting is not a value the application writes.
+    #[error("stored setting {key} is not valid")]
+    Setting {
+        /// The key of the setting in `app_settings`.
+        key: &'static str,
+    },
+
+    /// Journal lines break the rule that a line is a debit or a credit and
+    /// never both, so the migration that adds the rule as a constraint
+    /// cannot run.
+    #[error("{count} journal line(s) are not debit xor credit")]
+    InvalidJournalLines {
+        /// How many lines break the rule.
+        count: i64,
+    },
+}
+
+/// Why a file is not a usable Oikonomia backup.
+///
+/// The enum is matched exhaustively by the code that words it; see the
+/// [module documentation](crate::error) for the policy.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum BackupDefect {
+    /// The file does not start with the backup magic.
+    #[error("not an Oikonomia vault backup")]
+    NotABackup,
+
+    /// The archive was written in a format this build does not read.
+    #[error("unsupported backup version {version}")]
+    UnsupportedVersion {
+        /// The format version the archive names.
+        version: u16,
+    },
+
+    /// The file ends before the archive does.
+    #[error("backup is truncated")]
+    Truncated,
+
+    /// The file goes on after the archive ends.
+    #[error("backup has trailing data")]
+    TrailingData,
+
+    /// A member has no contents.
+    #[error("{name} is empty")]
+    EmptyMember {
+        /// The member's name as the archive gives it.
+        name: String,
+    },
+
+    /// A member appears twice.
+    #[error("backup has duplicate {name}")]
+    DuplicateMember {
+        /// The member's name.
+        name: &'static str,
+    },
+
+    /// A member is neither the header nor the database, or its name is not
+    /// a plain file name.
+    #[error("unexpected member {name}")]
+    UnexpectedMember {
+        /// The member's name as the archive gives it.
+        name: String,
+    },
+
+    /// The header or the database is not in the archive.
+    #[error("backup is missing {name}")]
+    MissingMember {
+        /// The member's name.
+        name: &'static str,
+    },
+
+    /// A member's name is empty or longer than the format allows.
+    #[error("invalid member name length")]
+    MemberNameLength,
+
+    /// A member's name is not UTF-8.
+    #[error("member name is not UTF-8")]
+    MemberNameNotUtf8,
+
+    /// The header in the archive is one the vault would call corrupt.
+    #[error("vault header in the backup is not usable: {0}")]
+    UnusableHeader(VaultCorruption),
+
+    /// The database in the archive is a plaintext `SQLite` database.
+    #[error("database in the backup is not encrypted")]
+    DatabaseNotEncrypted,
+}

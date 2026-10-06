@@ -20,7 +20,7 @@
 //! - the value reads, but does not parse (text that is not a date). The
 //!   mapper reports it with [`corrupt_column`] under `table.column`.
 
-use crate::error::{DatabaseContext, Error, Result};
+use crate::error::{DatabaseContext, Error, Result, VaultCorruption};
 use crate::util::{parse_date, parse_uuid};
 use rusqlite::Row;
 use rusqlite::types::FromSql;
@@ -34,7 +34,10 @@ use uuid::Uuid;
 /// calls this, the column's name in the query when [`read_column`] does.
 /// `detail` says what is wrong with the value.
 pub(crate) fn corrupt_column(column: &str, detail: impl Display) -> Error {
-    Error::VaultCorrupt(format!("{column}: {detail}"))
+    Error::VaultCorrupt(VaultCorruption::Column {
+        column: column.to_owned(),
+        detail: detail.to_string(),
+    })
 }
 
 /// Reads column `index` of `row` as `T`.
@@ -104,13 +107,21 @@ mod tests {
     fn a_damaged_value_is_reported_as_a_corrupt_vault_naming_the_column() {
         assert_eq!(
             stored_uuid("accounts.id", "nope"),
-            Err(Error::VaultCorrupt("accounts.id: not an id: nope".into()))
+            Err(corrupt_column("accounts.id", "not an id: nope"))
         );
         assert_eq!(
             stored_date("journal_entries.entry_date", "2026-13-01"),
-            Err(Error::VaultCorrupt(
-                "journal_entries.entry_date: not a date: 2026-13-01".into()
+            Err(corrupt_column(
+                "journal_entries.entry_date",
+                "not a date: 2026-13-01"
             ))
+        );
+        assert_eq!(
+            corrupt_column("a.b", "bad"),
+            Error::VaultCorrupt(VaultCorruption::Column {
+                column: "a.b".into(),
+                detail: "bad".into(),
+            })
         );
         assert_eq!(corrupt_column("a.b", "bad").code(), "vault_corrupt");
     }

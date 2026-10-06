@@ -312,6 +312,7 @@ fn map_account(row: &rusqlite::Row<'_>) -> Result<Account> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::VaultCorruption;
     use crate::util::parse_uuid;
 
     const ENTITY: &str = "11111111-1111-4111-8111-111111111111";
@@ -497,7 +498,11 @@ mod tests {
             let err = list_accounts(&conn, entity()).expect_err("a corrupt row is refused");
 
             assert!(
-                matches!(&err, Error::VaultCorrupt(detail) if detail.starts_with(column)),
+                matches!(
+                    &err,
+                    Error::VaultCorrupt(VaultCorruption::Column { column: named, .. })
+                        if named == column
+                ),
                 "row ({id}, {account_type}, {parent:?}): {err:?}"
             );
         }

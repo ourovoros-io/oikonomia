@@ -9,7 +9,7 @@ mod common;
 use std::fmt::Debug;
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
-use oikonomia_core::error::Error;
+use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
     CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleEntryKind, account_register,
     activity_window, balance_sheet, cash_flow_series, create_recurring_template, get_entity,
@@ -80,7 +80,10 @@ fn damage(conn: &Connection, sql: &str) {
 fn assert_corrupt<T: Debug>(result: Result<T, Error>, column: &str) {
     let err = result.expect_err("a damaged row must be refused");
     assert!(
-        matches!(&err, Error::VaultCorrupt(detail) if detail.starts_with(column)),
+        matches!(
+            &err,
+            Error::VaultCorrupt(VaultCorruption::Column { column: named, .. }) if named == column
+        ),
         "expected a corrupt-vault error naming {column}, got: {err:?}"
     );
 }

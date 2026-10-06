@@ -882,6 +882,7 @@ fn match_account_of_type(
 mod tests {
     use super::*;
     use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
+    use crate::error::VaultCorruption;
 
     #[test]
     fn validate_document_file_gates_size_name_and_mime() {
@@ -976,7 +977,10 @@ mod tests {
     #[test]
     fn a_stored_id_that_does_not_parse_is_a_corrupt_vault_not_a_caller_mistake() {
         let conn = database_with_a_damaged_document();
-        let damaged = Error::VaultCorrupt("documents.entry_id: not an id: damaged".into());
+        let damaged = Error::VaultCorrupt(VaultCorruption::Column {
+            column: "documents.entry_id".into(),
+            detail: "not an id: damaged".into(),
+        });
 
         let entity_id = EntityId(Uuid::parse_str(STORED_ENTITY_ID).unwrap());
         assert_eq!(
@@ -1006,7 +1010,11 @@ mod tests {
         let read = get_document(&conn, id).map(|(meta, _)| meta.filename);
 
         assert!(
-            matches!(&read, Err(Error::VaultCorrupt(detail)) if detail.starts_with("size_bytes:")),
+            matches!(
+                &read,
+                Err(Error::VaultCorrupt(VaultCorruption::Column { column, .. }))
+                    if column == "size_bytes"
+            ),
             "{read:?}"
         );
     }

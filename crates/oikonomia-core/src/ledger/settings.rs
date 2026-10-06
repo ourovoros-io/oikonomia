@@ -8,7 +8,7 @@
 //! The functions here read and write a single row, so none of them opens a
 //! transaction.
 
-use crate::error::{DatabaseContext, Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Result, ValidationError, VaultCorruption};
 use rusqlite::{Connection, OptionalExtension};
 
 /// The idle lock timeout, in seconds, of a vault that has stored none: 15
@@ -51,9 +51,11 @@ pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
     let Some(stored) = stored else {
         return Ok(DEFAULT_LOCK_TIMEOUT_SECS);
     };
-    let seconds: u64 = stored
-        .parse()
-        .map_err(|_| Error::VaultCorrupt("invalid lock_timeout_secs".into()))?;
+    let seconds: u64 = stored.parse().map_err(|_| {
+        Error::VaultCorrupt(VaultCorruption::Setting {
+            key: KEY_LOCK_TIMEOUT,
+        })
+    })?;
 
     Ok(seconds.max(MIN_LOCK_TIMEOUT_SECS))
 }

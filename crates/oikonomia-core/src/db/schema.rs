@@ -22,7 +22,7 @@
 //! run it again, so the change would reach new vaults only.
 
 use crate::db::collect_rows;
-use crate::error::{DatabaseContext, Error, Result};
+use crate::error::{DatabaseContext, Error, Result, VaultCorruption};
 use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
@@ -268,9 +268,9 @@ fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
         )
         .database("count invalid journal lines")?;
     if violations > 0 {
-        return Err(Error::VaultCorrupt(format!(
-            "cannot migrate to v5: {violations} journal line(s) are not debit XOR credit"
-        )));
+        return Err(Error::VaultCorrupt(VaultCorruption::InvalidJournalLines {
+            count: violations,
+        }));
     }
 
     tx.execute_batch(

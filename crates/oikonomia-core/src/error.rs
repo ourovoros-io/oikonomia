@@ -42,11 +42,13 @@ use std::fmt::Display;
 use thiserror::Error;
 
 mod context;
+mod damage;
 mod validation;
 
 pub(crate) use context::{
     AnalysisContext, CryptoContext, DatabaseContext, IoContext, SerializationContext,
 };
+pub use damage::{BackupDefect, VaultCorruption};
 pub use validation::{AccountRole, ValidationError};
 
 /// The result of a fallible operation in `oikonomia-core`.
@@ -151,9 +153,9 @@ pub enum Error {
     },
 
     /// Stored vault data cannot be interpreted: the header, the database or
-    /// a row in it. The text says which.
+    /// a row in it. The reason says which.
     #[error("vault is corrupt: {0}")]
-    VaultCorrupt(String),
+    VaultCorrupt(VaultCorruption),
 
     /// The vault was written by a later build: its schema version is above
     /// the one this build migrates to. The vault is sound and is left
@@ -166,9 +168,9 @@ pub enum Error {
         supported: i64,
     },
 
-    /// A backup file is not a usable Oikonomia backup; the text says why.
+    /// A backup file is not a usable Oikonomia backup; the reason says why.
     #[error("backup is invalid: {0}")]
-    BackupInvalid(String),
+    BackupInvalid(BackupDefect),
 
     /// A restore was refused because vault files exist and replacing them
     /// was not asked for.
@@ -317,7 +319,7 @@ impl Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, ValidationError};
+    use super::{BackupDefect, Error, ValidationError, VaultCorruption};
     use oikonomia_test_support::listed_variants;
 
     /// One value of every variant, in the order of the enum.
@@ -352,12 +354,12 @@ mod tests {
                 operation: "x",
                 detail: "x".into(),
             },
-            Error::VaultCorrupt("x".into()),
+            Error::VaultCorrupt(VaultCorruption::MissingMetaTable),
             Error::VaultTooNew {
                 found: 8,
                 supported: 7,
             },
-            Error::BackupInvalid("x".into()),
+            Error::BackupInvalid(BackupDefect::Truncated),
             Error::RestoreWouldOverwrite,
             Error::NotFound("x".into()),
             Error::Analysis {

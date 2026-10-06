@@ -200,7 +200,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use oikonomia_core::Error as CoreError;
-    use oikonomia_core::error::{AccountRole, ValidationError};
+    use oikonomia_core::error::{AccountRole, BackupDefect, ValidationError, VaultCorruption};
     use oikonomia_update::UpdateError;
 
     use super::{CommandError, DesktopError};
@@ -464,7 +464,10 @@ mod tests {
                 },
                 CoreParams::DiagnosticText,
             ),
-            (CoreError::VaultCorrupt(text()), CoreParams::DiagnosticText),
+            (
+                CoreError::VaultCorrupt(VaultCorruption::HeaderUnreadable { detail: text() }),
+                CoreParams::DiagnosticText,
+            ),
             (
                 CoreError::VaultTooNew {
                     found: 8,
@@ -472,7 +475,10 @@ mod tests {
                 },
                 CoreParams::KnownGap,
             ),
-            (CoreError::BackupInvalid(text()), CoreParams::DiagnosticText),
+            (
+                CoreError::BackupInvalid(BackupDefect::EmptyMember { name: text() }),
+                CoreParams::DiagnosticText,
+            ),
             (CoreError::RestoreWouldOverwrite, CoreParams::NoData),
             (
                 CoreError::NotFound("account".to_owned()),

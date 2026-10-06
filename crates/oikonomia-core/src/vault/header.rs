@@ -19,7 +19,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Error, IoContext, Result};
+use crate::error::{Error, IoContext, Result, VaultCorruption};
 
 /// Version of the on-disk vault format that this build reads and writes.
 pub(super) const VAULT_FORMAT_VERSION: u32 = 1;
@@ -109,14 +109,16 @@ impl VaultHeader {
     /// [`VAULT_FORMAT_VERSION`].
     pub(crate) fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path).io("read vault header")?;
-        let header: Self =
-            serde_json::from_str(&raw).map_err(|err| Error::VaultCorrupt(err.to_string()))?;
+        let header: Self = serde_json::from_str(&raw).map_err(|err| {
+            Error::VaultCorrupt(VaultCorruption::HeaderUnreadable {
+                detail: err.to_string(),
+            })
+        })?;
 
         if header.version != VAULT_FORMAT_VERSION {
-            return Err(Error::VaultCorrupt(format!(
-                "unsupported vault format {}",
-                header.version
-            )));
+            return Err(Error::VaultCorrupt(VaultCorruption::UnsupportedFormat {
+                version: header.version,
+            }));
         }
         Ok(header)
     }

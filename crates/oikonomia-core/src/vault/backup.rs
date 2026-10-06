@@ -112,7 +112,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use crate::error::{DatabaseContext, Error, IoContext, Result};
+use crate::error::{BackupDefect, DatabaseContext, Error, IoContext, Result, VaultCorruption};
 use crate::vault::files::{
     discard_database_files, discard_file, local_iso_date, remove_files_if_present,
     rename_if_present, rename_synced, sibling_path, sync_parent_dir,
@@ -337,16 +337,12 @@ fn unpack_and_verify(archive: &Path, paths: &RestorePaths) -> Result<()> {
     match VaultHeader::load(&paths.unpacked_header) {
         Ok(_header) => {}
         Err(Error::VaultCorrupt(reason)) => {
-            return Err(Error::BackupInvalid(format!(
-                "{MEMBER_HEADER} is not a usable vault header: {reason}"
-            )));
+            return Err(Error::BackupInvalid(BackupDefect::UnusableHeader(reason)));
         }
         Err(other) => return Err(other),
     }
     if is_plaintext_sqlite(&paths.unpacked_db)? {
-        return Err(Error::BackupInvalid(format!(
-            "{MEMBER_DB} is not encrypted"
-        )));
+        return Err(Error::BackupInvalid(BackupDefect::DatabaseNotEncrypted));
     }
     Ok(())
 }
@@ -432,12 +428,8 @@ fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
     match (header_path.is_file(), db_path.is_file()) {
         (true, true) => ensure_no_unmerged_wal(db_path),
         (false, false) => Err(Error::VaultUninitialized),
-        (true, false) => Err(Error::VaultCorrupt(
-            "vault header exists without database".into(),
-        )),
-        (false, true) => Err(Error::VaultCorrupt(
-            "vault database exists without header".into(),
-        )),
+        (true, false) => Err(Error::VaultCorrupt(VaultCorruption::HeaderWithoutDatabase)),
+        (false, true) => Err(Error::VaultCorrupt(VaultCorruption::DatabaseWithoutHeader)),
     }
 }
 
@@ -455,11 +447,7 @@ fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
     };
 
     if wal_len > 0 {
-        return Err(Error::VaultCorrupt(
-            "vault database has changes still in its write-ahead log; \
-             unlock the vault once before backing up"
-                .into(),
-        ));
+        return Err(Error::VaultCorrupt(VaultCorruption::UnmergedWriteAheadLog));
     }
     Ok(())
 }
@@ -472,9 +460,7 @@ fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
 fn backup_from_open_connection(conn: &Connection, data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     if !header_path.is_file() {
-        return Err(Error::VaultCorrupt(
-            "database exists without vault header".into(),
-        ));
+        return Err(Error::VaultCorrupt(VaultCorruption::DatabaseWithoutHeader));
     }
 
     let snapshot = backup_snapshot_db_path(data_dir);
@@ -589,14 +575,14 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
     let mut magic = [0u8; 8];
     read_exact_or_truncated(&mut input, &mut magic)?;
     if &magic != MAGIC {
-        return Err(Error::BackupInvalid("not an Oikonomia vault backup".into()));
+        return Err(Error::BackupInvalid(BackupDefect::NotABackup));
     }
 
     let version = read_u16_le(&mut input)?;
     if version != FORMAT_VERSION {
-        return Err(Error::BackupInvalid(format!(
-            "unsupported backup version {version}"
-        )));
+        return Err(Error::BackupInvalid(BackupDefect::UnsupportedVersion {
+            version,
+        }));
     }
 
     let mut saw_header = false;
@@ -607,49 +593,51 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
         };
         let len = read_u64_le(&mut input)?;
         if len == 0 {
-            return Err(Error::BackupInvalid(format!("{name} is empty")));
+            return Err(Error::BackupInvalid(BackupDefect::EmptyMember { name }));
         }
 
         match name.as_str() {
             MEMBER_HEADER => {
                 if saw_header {
-                    return Err(Error::BackupInvalid(format!(
-                        "backup has duplicate {MEMBER_HEADER}"
-                    )));
+                    return Err(Error::BackupInvalid(BackupDefect::DuplicateMember {
+                        name: MEMBER_HEADER,
+                    }));
                 }
                 write_exact_member(&mut input, header_dest, len)?;
                 saw_header = true;
             }
             MEMBER_DB => {
                 if saw_db {
-                    return Err(Error::BackupInvalid(format!(
-                        "backup has duplicate {MEMBER_DB}"
-                    )));
+                    return Err(Error::BackupInvalid(BackupDefect::DuplicateMember {
+                        name: MEMBER_DB,
+                    }));
                 }
                 write_exact_member(&mut input, db_dest, len)?;
                 saw_db = true;
             }
-            other => {
-                return Err(Error::BackupInvalid(format!("unexpected member {other}")));
+            _ => {
+                return Err(Error::BackupInvalid(BackupDefect::UnexpectedMember {
+                    name,
+                }));
             }
         }
     }
 
     if !saw_header {
-        return Err(Error::BackupInvalid(format!(
-            "backup is missing {MEMBER_HEADER}"
-        )));
+        return Err(Error::BackupInvalid(BackupDefect::MissingMember {
+            name: MEMBER_HEADER,
+        }));
     }
     if !saw_db {
-        return Err(Error::BackupInvalid(format!(
-            "backup is missing {MEMBER_DB}"
-        )));
+        return Err(Error::BackupInvalid(BackupDefect::MissingMember {
+            name: MEMBER_DB,
+        }));
     }
 
     let mut extra = [0u8; 1];
     match input.read(&mut extra) {
         Ok(0) => Ok(()),
-        Ok(_) => Err(Error::BackupInvalid("backup has trailing data".into())),
+        Ok(_) => Err(Error::BackupInvalid(BackupDefect::TrailingData)),
         Err(err) => Err(Error::io("read backup archive", err)),
     }
 }
@@ -667,11 +655,13 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
 /// file cannot be read or the archive cannot be written.
 /// [`Error::BackupInvalid`], from [`copy_exact`], when the file became
 /// shorter after its size was read.
-fn write_member_from_path(archive: &mut impl Write, name: &str, path: &Path) -> Result<()> {
+fn write_member_from_path(archive: &mut impl Write, name: &'static str, path: &Path) -> Result<()> {
     let mut source = File::open(path).io("open vault file for backup")?;
     let len = source.metadata().io("inspect vault file for backup")?.len();
     if len == 0 {
-        return Err(Error::VaultCorrupt(format!("{name} is empty")));
+        return Err(Error::VaultCorrupt(VaultCorruption::EmptyFile {
+            file: name,
+        }));
     }
     write_member_prefix(archive, name, len)?;
     copy_exact(&mut source, archive, len)?;
@@ -688,7 +678,7 @@ fn write_member_from_path(archive: &mut impl Write, name: &str, path: &Path) -> 
 fn write_member_prefix(archive: &mut impl Write, name: &str, len: u64) -> Result<()> {
     let name_bytes = name.as_bytes();
     let name_len = u16::try_from(name_bytes.len())
-        .map_err(|_| Error::BackupInvalid("member name too long".into()))?;
+        .map_err(|_| Error::BackupInvalid(BackupDefect::MemberNameLength))?;
     archive
         .write_all(&name_len.to_le_bytes())
         .io("write backup archive")?;
@@ -726,10 +716,10 @@ fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Resu
         let wanted = usize::try_from(remaining.min(capacity))
             .map_err(|_| Error::io("copy backup member", "length does not fit this platform"))?;
         let read = match reader.read(&mut buffer[..wanted]) {
-            Ok(0) => return Err(Error::BackupInvalid("backup is truncated".into())),
+            Ok(0) => return Err(Error::BackupInvalid(BackupDefect::Truncated)),
             Ok(read) => read,
             Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                return Err(Error::BackupInvalid("backup is truncated".into()));
+                return Err(Error::BackupInvalid(BackupDefect::Truncated));
             }
             Err(err) => return Err(Error::io("read backup member", err)),
         };
@@ -759,14 +749,16 @@ fn read_member_name_or_eof(reader: &mut impl Read) -> Result<Option<String>> {
         return Ok(None);
     };
     if name_len == 0 || name_len > MAX_MEMBER_NAME_LEN {
-        return Err(Error::BackupInvalid("invalid member name length".into()));
+        return Err(Error::BackupInvalid(BackupDefect::MemberNameLength));
     }
     let mut name_bytes = vec![0u8; usize::from(name_len)];
     read_exact_or_truncated(reader, &mut name_bytes)?;
     let name = String::from_utf8(name_bytes)
-        .map_err(|_| Error::BackupInvalid("member name is not UTF-8".into()))?;
+        .map_err(|_| Error::BackupInvalid(BackupDefect::MemberNameNotUtf8))?;
     if name.contains('/') || name.contains('\\') || name.contains('\0') || name.contains("..") {
-        return Err(Error::BackupInvalid(format!("unexpected member {name}")));
+        return Err(Error::BackupInvalid(BackupDefect::UnexpectedMember {
+            name,
+        }));
     }
     Ok(Some(name))
 }
@@ -812,7 +804,7 @@ fn read_u64_le(reader: &mut impl Read) -> Result<u64> {
 fn read_exact_or_truncated(reader: &mut impl Read, buffer: &mut [u8]) -> Result<()> {
     reader.read_exact(buffer).map_err(|err| {
         if err.kind() == io::ErrorKind::UnexpectedEof {
-            Error::BackupInvalid("backup is truncated".into())
+            Error::BackupInvalid(BackupDefect::Truncated)
         } else {
             Error::io("read backup archive", err)
         }
@@ -914,9 +906,9 @@ mod tests {
         let path = dest.path().join("header-only.oikonomia-backup");
         write_file(&path, &header_only);
         let err = restore_from_path(&path, dest.path(), true).expect_err("header-only");
-        assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("vault.db")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::MissingMember { name: MEMBER_DB })
         );
 
         let db_only =
@@ -924,9 +916,11 @@ mod tests {
         let path = dest.path().join("db-only.oikonomia-backup");
         write_file(&path, &db_only);
         let err = restore_from_path(&path, dest.path(), true).expect_err("db-only");
-        assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("vault.header.json")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::MissingMember {
+                name: MEMBER_HEADER
+            })
         );
 
         let valid = encode_members(&[
@@ -937,10 +931,7 @@ mod tests {
         let truncated_path = dest.path().join("truncated.oikonomia-backup");
         write_file(&truncated_path, &valid[..valid.len() - 4]);
         let err = restore_from_path(&truncated_path, dest.path(), true).expect_err("truncated");
-        assert!(
-            matches!(err, Error::BackupInvalid(_)),
-            "truncated must be BackupInvalid, got {err:?}"
-        );
+        assert_eq!(err, Error::BackupInvalid(BackupDefect::Truncated));
     }
 
     #[test]
@@ -1034,10 +1025,7 @@ mod tests {
         let garbage = dest.path().join("garbage.oikonomia-backup");
         write_file(&garbage, b"this is not a backup file at all");
         let err = restore_from_path(&garbage, dest.path(), true).expect_err("garbage");
-        assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("not an Oikonomia")),
-            "got {err:?}"
-        );
+        assert_eq!(err, Error::BackupInvalid(BackupDefect::NotABackup));
 
         let zipish = dest.path().join("random.bin");
         write_file(&zipish, &[0x50, 0x4b, 0x03, 0x04, 0xff, 0x00]);
@@ -1136,9 +1124,9 @@ mod tests {
 
         let err = backup_to_path(image.path(), &dest).expect_err("the log is not in the archive");
 
-        assert!(
-            matches!(err, Error::VaultCorrupt(ref message) if message.contains("unlock")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::VaultCorrupt(VaultCorruption::UnmergedWriteAheadLog)
         );
         assert!(!dest.exists(), "no partial archive");
     }
@@ -1220,7 +1208,7 @@ mod tests {
         let err = restore_from_path(&archive, live.path(), true).expect_err("junk header");
 
         assert!(
-            matches!(err, Error::BackupInvalid(ref message) if message.contains("header")),
+            matches!(err, Error::BackupInvalid(BackupDefect::UnusableHeader(_))),
             "got {err:?}"
         );
         assert_no_restore_files(live.path());
@@ -1241,7 +1229,15 @@ mod tests {
 
         let err = restore_from_path(&archive, live.path(), true).expect_err("newer format");
 
-        assert!(matches!(err, Error::BackupInvalid(_)), "got {err:?}");
+        assert!(
+            matches!(
+                err,
+                Error::BackupInvalid(BackupDefect::UnusableHeader(
+                    VaultCorruption::UnsupportedFormat { .. }
+                ))
+            ),
+            "got {err:?}"
+        );
         assert_opens_with(live.path(), PASSWORD);
     }
 
@@ -1262,9 +1258,9 @@ mod tests {
 
         let err = restore_from_path(&archive, live.path(), true).expect_err("plaintext db");
 
-        assert!(
-            matches!(err, Error::BackupInvalid(ref message) if message.contains("not encrypted")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::DatabaseNotEncrypted)
         );
         assert_no_restore_files(live.path());
         assert_opens_with(live.path(), PASSWORD);
@@ -1470,10 +1466,13 @@ mod tests {
         write_file(&crafted_path, &crafted);
         let err =
             restore_from_path(&crafted_path, restore_dir.path(), true).expect_err("tmp member");
-        let names_the_extra_member =
-            |message: &str| message.contains("trailing") || message.contains("unexpected");
         assert!(
-            matches!(err, Error::BackupInvalid(ref message) if names_the_extra_member(message)),
+            matches!(
+                err,
+                Error::BackupInvalid(
+                    BackupDefect::TrailingData | BackupDefect::UnexpectedMember { .. }
+                )
+            ),
             "got {err:?}"
         );
     }
@@ -1524,9 +1523,9 @@ mod tests {
         let path = dir.path().join("v99.oikonomia-backup");
         write_file(&path, &bytes);
         let err = restore_from_path(&path, dir.path(), true).expect_err("v99");
-        assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("version")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::UnsupportedVersion { version: 99 })
         );
     }
 

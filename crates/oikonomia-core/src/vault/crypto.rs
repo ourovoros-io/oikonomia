@@ -16,13 +16,13 @@
 //! may copy it between stack frames. The heap copy that escapes through
 //! rusqlite is described on [`key_to_sqlcipher_pragma`].
 
-use std::fmt::Write;
+use std::fmt::{Display, Write};
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::Engine;
 use zeroize::Zeroizing;
 
-use crate::error::{CryptoContext, Error, Result};
+use crate::error::{CryptoContext, Error, Result, VaultCorruption};
 use crate::vault::header::{KEY_LEN, SALT_LEN, VaultHeader};
 
 /// 32-byte `SQLCipher` raw key, zeroized on drop.
@@ -37,10 +37,13 @@ pub(super) type VaultKey = Zeroizing<[u8; KEY_LEN]>;
 pub(super) fn decode_salt(header: &VaultHeader) -> Result<[u8; SALT_LEN]> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(header.salt_b64.as_bytes())
-        .map_err(|_| Error::VaultCorrupt("invalid salt encoding".into()))?;
+        .map_err(|_| unusable_field("salt", "not base64"))?;
 
     if bytes.len() != SALT_LEN {
-        return Err(Error::VaultCorrupt("unexpected salt length".into()));
+        return Err(unusable_field(
+            "salt",
+            format_args!("{} bytes, not {SALT_LEN}", bytes.len()),
+        ));
     }
 
     let mut salt = [0u8; SALT_LEN];
@@ -60,14 +63,11 @@ pub(super) fn decode_salt(header: &VaultHeader) -> Result<[u8; SALT_LEN]> {
 /// hash.
 pub(super) fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKey> {
     if header.kdf != "argon2id" {
-        return Err(Error::VaultCorrupt(format!(
-            "unsupported kdf: {}",
-            header.kdf
-        )));
+        return Err(unusable_field("key derivation function", &header.kdf));
     }
 
     if header.output_len != KEY_LEN {
-        return Err(Error::VaultCorrupt("unsupported key length".into()));
+        return Err(unusable_field("key length", header.output_len));
     }
 
     // 8 MiB to 1 GiB of memory, 1 to 8 passes, 1 to 4 lanes. The defaults in
@@ -77,7 +77,7 @@ pub(super) fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKe
         || !(1..=8).contains(&header.t_cost)
         || !(1..=4).contains(&header.p_cost)
     {
-        return Err(Error::VaultCorrupt("argon2 parameters out of range".into()));
+        return Err(unusable_field("argon2 costs", "out of range"));
     }
 
     let salt = decode_salt(header)?;
@@ -130,6 +130,14 @@ pub(super) fn key_to_sqlcipher_pragma(key: &VaultKey) -> Zeroizing<String> {
     }
     hex.push('\'');
     Zeroizing::new(hex)
+}
+
+/// The error for a header field whose value no build writes.
+fn unusable_field(field: &'static str, detail: impl Display) -> Error {
+    Error::VaultCorrupt(VaultCorruption::HeaderField {
+        field,
+        detail: detail.to_string(),
+    })
 }
 
 #[cfg(test)]
