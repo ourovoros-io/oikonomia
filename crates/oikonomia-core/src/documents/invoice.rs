@@ -881,13 +881,15 @@ fn is_noise_amount_line(line_l: &str) -> bool {
     {
         return true;
     }
+    // A percentage marks a rate line, unless the line names the total: a
+    // total is often printed with its VAT rate ("Total incl. VAT 24%").
+    if line_l.contains('%') && !names_a_total(line_l) {
+        return true;
+    }
     // Rate / volume / dimension lines (not payment total)
     line_l.contains("kwh")
         || line_l.contains("gwh")
         || line_l.contains("kva")
-        || line_l.contains("/kwh")
-        || line_l.contains("€/kwh")
-        || line_l.contains("€/kva")
         || line_l.contains("τ.μ")
         || line_l.contains("τμ ")
         || line_l.contains("τιμή ζώνης")
@@ -900,11 +902,16 @@ fn is_noise_amount_line(line_l: &str) -> bool {
         // Gas volume / calorific tables (not the euro total)
         || line_l.contains("κατανάλωση") && line_l.contains('x')
         || line_l.contains("καταναλωση") && (line_l.contains('x') || line_l.contains('×'))
-        || line_l.contains('%')
         || line_l.contains("x0,")
         || line_l.contains("x 0,")
         || line_l.contains("x0.")
         || line_l.contains('×')
+}
+
+/// Whether a lowercased line carries a total label: one of [`TOTAL_LABELS`]
+/// or the bare word `total`, which the weighted fallback also favours.
+fn names_a_total(line_l: &str) -> bool {
+    line_l.contains("total") || TOTAL_LABELS.iter().any(|label| line_l.contains(label))
 }
 
 fn is_value_date_line(line_l: &str) -> bool {
@@ -1101,8 +1108,54 @@ fn is_plausible_money(minor: i64) -> bool {
     (50..=1_000_000_000).contains(&minor)
 }
 
+/// Blanks out percentages (`24%`, `13,5 %`) so a rate is never an amount.
+fn mask_percent_tokens(line: &str) -> String {
+    let chars: Vec<char> = line.chars().collect();
+    let mut out = String::with_capacity(line.len());
+    let mut index = 0;
+
+    while let Some(&current) = chars.get(index) {
+        if let Some(len) = percent_len_at(&chars, index) {
+            out.push_str(&" ".repeat(len));
+            index += len;
+        } else {
+            out.push(current);
+            index += 1;
+        }
+    }
+    out
+}
+
+/// Length of the percentage that starts at `index`: a number, any spaces
+/// after it, and the `%` sign.
+fn percent_len_at(chars: &[char], index: usize) -> Option<usize> {
+    let is_number_char = |c: &char| c.is_ascii_digit() || matches!(c, ',' | '.');
+
+    let continues_a_number = index
+        .checked_sub(1)
+        .and_then(|before| chars.get(before))
+        .is_some_and(is_number_char);
+    if continues_a_number || !chars.get(index)?.is_ascii_digit() {
+        return None;
+    }
+
+    let number_len = chars
+        .get(index..)?
+        .iter()
+        .take_while(|c| is_number_char(c))
+        .count();
+    let spaces = chars
+        .get(index + number_len..)?
+        .iter()
+        .take_while(|c| **c == ' ')
+        .count();
+
+    let percent_at = index + number_len + spaces;
+    (chars.get(percent_at) == Some(&'%')).then_some(percent_at + 1 - index)
+}
+
 fn money_amounts_on_line(line: &str) -> Vec<i64> {
-    let line = mask_time_tokens(&mask_date_tokens(line));
+    let line = mask_percent_tokens(&mask_time_tokens(&mask_date_tokens(line)));
     let mut out = Vec::new();
     let mut buf = String::new();
     for ch in line.chars() {
@@ -2528,6 +2581,34 @@ mod jumbled_extract {
     fn the_digits_of_an_impossible_date_are_still_not_money() {
         assert_eq!(read("Amount due 31/02/2026").amount_minor, None);
         assert_eq!(read("Amount due 2026-02-31").amount_minor, None);
+    }
+
+    #[test]
+    fn a_total_line_that_states_a_vat_rate_is_still_the_total() {
+        assert_eq!(
+            read("TOTAL (incl. 24% VAT) 45,90").amount_minor,
+            Some(4_590)
+        );
+        assert_eq!(
+            read("Total incl. VAT 24%: 124,00\nSubtotal 100,00").amount_minor,
+            Some(12_400)
+        );
+        assert_eq!(
+            read("Amount due (VAT 24 %) 124,00\nNet 100,00").amount_minor,
+            Some(12_400)
+        );
+        // The rate itself is never the amount.
+        assert_eq!(read("Amount due incl. 24% VAT").amount_minor, None);
+        assert_eq!(read("Total 13,5% VAT").amount_minor, None);
+    }
+
+    #[test]
+    fn a_rate_line_without_a_total_label_is_still_skipped() {
+        assert_eq!(
+            read("VAT 24% 24,00\nAmount due 124,00").amount_minor,
+            Some(12_400)
+        );
+        assert_eq!(read("Discount 10% 5,00").amount_minor, None);
     }
 
     #[test]
