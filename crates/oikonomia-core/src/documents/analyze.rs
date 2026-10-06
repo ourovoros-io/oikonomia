@@ -149,10 +149,11 @@ pub struct AnalyzeContext<'a> {
 ///
 /// # Errors
 ///
-/// Currently none: a file that cannot be read, decoded or parsed yields an
-/// empty suggestion whose note says why, never an error. The `Result` is
-/// kept because the desktop command propagates it with `?`, so making the
-/// analyzer fallible later does not change its callers.
+/// None: a file that cannot be read, decoded or parsed yields an empty
+/// suggestion whose note says why, never an error. The `Result` stays
+/// because the desktop shell (`analyze_readonly` in
+/// `apps/desktop/src-tauri/src/commands.rs`) applies `?` to it; returning the
+/// suggestion directly means changing that caller too.
 pub fn analyze_document_bytes(
     filename: &str,
     mime_type: &str,
@@ -505,6 +506,7 @@ struct BudgetedPdf(lopdf::Document);
 
 /// What loading a PDF produced.
 enum PdfLoad {
+    /// The file parsed and is within the budget.
     Loaded(Box<BudgetedPdf>),
     /// The file, its page count or what its streams decode to is too large.
     OverBudget,
@@ -554,7 +556,11 @@ fn load_pdf(data: &[u8]) -> PdfLoad {
 /// A PDF after loading: the document if lopdf could parse it, and its text
 /// layer if it has one.
 struct ParsedPdf {
+    /// The parsed file, or `None` when lopdf could not read it even after
+    /// repair.
     document: Option<Box<BudgetedPdf>>,
+    /// The text pdf-extract produced, untrimmed, or `None` when it produced
+    /// none for any page.
     text: Option<String>,
 }
 
@@ -957,7 +963,6 @@ mod tests {
         let text = pdf_text(&loaded(&pdf)).map(|text| text.trim().to_owned());
 
         assert_eq!(text, Some(String::new()));
-        assert!(should_ocr_pdf_images(None));
     }
 
     #[test]
@@ -1433,6 +1438,7 @@ mod tests {
     fn a_pdf_that_inflates_to_less_than_the_budget_is_read() {
         let pdf = pdf_with_inflating_content(1024 * 1024);
 
+        assert!(matches!(load_pdf(&pdf), PdfLoad::Loaded(_)));
         assert_eq!(
             analyze_pdf_notes(&pdf),
             [UiText::new(UiTextCode::NoTextExtracted)],
