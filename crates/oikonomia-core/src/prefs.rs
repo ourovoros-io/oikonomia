@@ -40,7 +40,7 @@
 //! dark-only, so a `"theme"` key written by an older build is one of the
 //! ignored keys.
 
-use crate::error::{Error, Result};
+use crate::error::{Error, IoContext, Result, SerializationContext};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -311,7 +311,8 @@ pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
 /// # Errors
 ///
 /// Returns [`Error::Io`] when the data directory cannot be created or the
-/// file cannot be written, as [`save_ui_prefs`] does.
+/// file cannot be written, and [`Error::Serialization`] when the preferences
+/// cannot be encoded, as [`save_ui_prefs`] does.
 pub fn store_locale(data_dir: &Path, locale: Locale) -> Result<()> {
     let mut prefs = load_ui_prefs(data_dir);
     prefs.locale = locale;
@@ -342,7 +343,8 @@ pub struct LocaleResolution {
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when a language is chosen and cannot be stored. A
+/// Returns the error of [`store_locale`] when a language is chosen and cannot
+/// be stored. A
 /// call that finds a stored language writes nothing and cannot fail.
 pub fn resolve_locale<S: AsRef<str>>(
     data_dir: &Path,
@@ -377,15 +379,13 @@ pub fn resolve_locale<S: AsRef<str>>(
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`], with the cause in its text, when the data directory
-/// cannot be created, the preferences cannot be encoded as JSON, or the
-/// temporary file cannot be written or renamed into place.
+/// Returns [`Error::Io`] when the data directory cannot be created or the
+/// temporary file cannot be written or renamed into place, and
+/// [`Error::Serialization`] when the preferences cannot be encoded as JSON.
 pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
-    fs::create_dir_all(data_dir)
-        .map_err(|err| Error::Io(format!("could not create data directory: {err}")))?;
+    fs::create_dir_all(data_dir).io("create data directory")?;
 
-    let json = serde_json::to_string_pretty(prefs)
-        .map_err(|err| Error::Io(format!("could not encode ui prefs: {err}")))?;
+    let json = serde_json::to_string_pretty(prefs).serialization("encode preferences")?;
 
     let temporary = ui_prefs_temporary_path(data_dir);
     remove_stale_temporary(&temporary);
@@ -395,7 +395,7 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
 
     staged.map_err(|err| {
         remove_stale_temporary(&temporary);
-        Error::Io(format!("could not write ui prefs: {err}"))
+        Error::io("write preferences file", err)
     })
 }
 
