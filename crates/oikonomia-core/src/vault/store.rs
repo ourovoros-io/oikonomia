@@ -9,7 +9,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 use super::crypto::{self, VaultKey};
 use super::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
 use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
-use super::permissions::{create_private_dir, restrict_to_owner};
+use super::permissions::{create_private_dir, create_private_file, restrict_to_owner};
 use crate::db::register_fold;
 use crate::error::{Error, Result, ValidationError};
 use crate::vault::files::{discard_database_files, discard_file, write_private_file};
@@ -362,6 +362,18 @@ fn key_check_error(err: &rusqlite::Error) -> Error {
     }
 }
 
+/// Opens the `SQLCipher` database at `path` under `key` and proves the key
+/// with a first read.
+///
+/// With `create`, `path` is created empty first, truncating whatever is
+/// there; the caller checks that no database exists. Without it, a missing
+/// or empty file is an error instead of a fresh database.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] when `create` is false and the file is missing or
+/// empty; [`Error::InvalidPassword`] when `key` does not decrypt it;
+/// [`Error::Crypto`] or [`Error::Io`] for everything else.
 fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connection> {
     if !create {
         let meta = fs::metadata(path)
@@ -371,22 +383,17 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
         }
     }
 
-    let flags = if create {
-        OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_CREATE
-            | OpenFlags::SQLITE_OPEN_URI
-    } else {
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI
-    };
+    // SQLite would create the file under the umask, readable by other
+    // accounts until it is tightened. Creating it empty and owner-only first
+    // closes that window: SQLite treats an empty file as a new database, and
+    // its WAL and SHM sidecars copy the database file's mode.
+    if create {
+        drop(create_private_file(path)?);
+    }
 
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI;
     let conn =
         Connection::open_with_flags(path, flags).map_err(|err| Error::Io(err.to_string()))?;
-
-    // SQLite creates the file with the umask; its WAL and SHM sidecars copy
-    // the database file's mode, so tighten it before the first write.
-    if create {
-        restrict_to_owner(path);
-    }
 
     silence_sqlcipher_log(&conn)?;
 

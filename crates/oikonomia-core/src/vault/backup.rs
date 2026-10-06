@@ -203,6 +203,13 @@ fn vacuum_into_encrypted(conn: &Connection, dest: &Path) -> Result<()> {
         .to_str()
         .ok_or_else(|| Error::Io("backup snapshot path is not UTF-8".into()))?;
     let escaped = path.replace('\'', "''");
+
+    // SQLite would create the snapshot under the umask, leaving a copy of the
+    // whole vault readable by other accounts until it is packed and removed.
+    // `VACUUM INTO` accepts a target that exists as long as it is empty
+    // (https://www.sqlite.org/lang_vacuum.html#vacuuminto).
+    drop(create_private_file(dest)?);
+
     conn.execute(&format!("VACUUM INTO '{escaped}'"), [])
         .map_err(|err| Error::Io(err.to_string()))?;
     reject_plaintext_sqlite(dest)
@@ -789,6 +796,17 @@ mod tests {
     fn mode_of(path: &Path) -> u32 {
         use std::os::unix::fs::PermissionsExt;
         fs::metadata(path).expect("metadata").permissions().mode() & 0o777
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn online_snapshot_is_owner_only() {
+        let (dir, vault) = init_vault();
+        let snapshot = dir.path().join(SNAPSHOT_DB_TMP);
+
+        vacuum_into_encrypted(vault.connection().expect("conn"), &snapshot).expect("snapshot");
+
+        assert_eq!(mode_of(&snapshot), 0o600, "a copy of the whole vault");
     }
 
     #[cfg(unix)]

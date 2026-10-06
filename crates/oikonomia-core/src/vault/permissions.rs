@@ -3,6 +3,10 @@
 //! On Unix the data directory is `0700` and every vault file `0600`, so no
 //! other local account can copy the ciphertext for an offline password
 //! search. Windows relies on the per-user ACL of the `AppData` directory.
+//!
+//! A new file gets that mode at creation, not afterwards. A file that
+//! `SQLite` is about to create (the database, a backup snapshot) is created
+//! empty here first, because `SQLite` itself would create it under the umask.
 
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::path::Path;
