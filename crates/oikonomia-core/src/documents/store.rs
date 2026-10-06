@@ -1,4 +1,48 @@
-//! Persist document blobs inside the encrypted vault database.
+//! Document storage in the vault, and the keyword matcher that picks an
+//! account for a document.
+//!
+//! The two halves share this file and nothing else.
+//!
+//! # Storage
+//!
+//! A document is a row of the `documents` table inside the `SQLCipher`
+//! database, so its bytes are encrypted at rest with everything else and no
+//! file sits on disk beside the vault. A document belongs to one book
+//! (`entity_id`), is linked to one journal entry (`entry_id`), and has a
+//! filename that is unique within its book.
+//!
+//! [`validate_document_file`] decides what may be stored from the name, type
+//! and size alone, before any byte is read. [`save_document`],
+//! [`attach_document`] and [`post_simple_entry_with_document`] write,
+//! [`list_documents`] and [`get_document`] read, and [`delete_document`]
+//! removes. Both readers go through [`map_document_meta`]: a row the
+//! application wrote and cannot read back is reported as a corrupt vault, not
+//! as a mistake of the caller.
+//!
+//! # Account matcher
+//!
+//! [`match_expense_account`] and [`match_income_account`] choose the account a
+//! document is filed under. Their input is a hint: the merchant and
+//! description the invoice reader produced, worded in English whatever the
+//! language of the application.
+//!
+//! 1. The hint is lowercased and tested against a keyword table
+//!    ([`EXPENSE_KEYWORDS`] or [`INCOME_KEYWORDS`]), topic by topic, in table
+//!    order. A keyword matches on word boundaries only ([`Keyword`]).
+//! 2. A topic that matches is turned into chart codes by the book's template
+//!    ([`document_topic_codes`]). The first active account of the right type
+//!    that carries one of those codes is the answer.
+//! 3. A topic the chart has no account for is skipped, and the next topic
+//!    that matches is tried.
+//! 4. When no topic is left, the template's catch-all topic is used, and
+//!    after that the first active account of the type.
+//!
+//! Accounts are found by code and type, never by name, so a renamed or
+//! translated account is matched the same. A blank book has no template
+//! codes, so it always gets the first active account of the type.
+//!
+//! Table order decides between topics whenever a hint names two of them.
+//! [`EXPENSE_KEYWORDS`] lists the constraints on that order.
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -15,13 +59,13 @@ use crate::ledger::{
 };
 use crate::util::now_utc_string;
 
-/// Document primary key.
+/// The primary key of a stored document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DocumentId(pub Uuid);
 
 impl DocumentId {
-    /// New random id.
+    /// A new random (version 4) id.
     #[must_use]
     pub fn new() -> Self {
         Self(Uuid::new_v4())
@@ -34,29 +78,34 @@ impl Default for DocumentId {
     }
 }
 
-/// Metadata without raw bytes (for lists / IPC).
+/// A stored document without its bytes, for lists and for the wire.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentMeta {
-    /// Id.
+    /// The document's id.
     pub id: DocumentId,
-    /// Entity book.
+    /// The book the document belongs to.
     pub entity_id: EntityId,
-    /// Linked entry (a document cannot exist without one).
+    /// The journal entry the document is linked to. Every document has one.
     pub entry_id: JournalEntryId,
-    /// Original filename.
+    /// The filename as given at upload, trimmed. Unique within the book.
     pub filename: String,
-    /// MIME type.
+    /// The MIME type as [`resolve_mime`] resolved it at upload.
     pub mime_type: String,
-    /// Byte length.
+    /// Length of the stored bytes.
     pub size_bytes: i64,
     /// Creation instant as the app-wide `unix:<seconds>` ordering key
     /// (see `now_utc_string`); not a display date — the UI formats it.
     pub created_at: String,
-    /// Linked journal entry description (for list decoration without a second query).
+    /// Description of the linked journal entry, read in the same query so a
+    /// list can show it without a second one.
     pub entry_description: String,
 }
 
-/// Max upload size (8 MiB) — keeps vault lean and model latency reasonable.
+/// Largest file that is stored or analyzed: 8 MiB.
+///
+/// The cap bounds what one document adds to the vault and what the analyzer
+/// has to parse or run OCR on. The PDF budget and the PDF repair are sized
+/// from it.
 pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 
 /// [`MAX_DOCUMENT_BYTES`] in whole megabytes, as shown to the user.
@@ -94,12 +143,21 @@ pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Re
     Ok(())
 }
 
-/// Store a document blob linked to `entry_id` (already protected by `SQLCipher`).
+/// Stores a document linked to `entry_id`.
+///
+/// The filename is trimmed and the MIME type resolved with [`resolve_mime`]
+/// before either is checked or stored.
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for invalid files or a duplicate filename in the
-/// book; DB errors otherwise.
+/// - [`Error::Validation`]: the file is empty, larger than
+///   [`MAX_DOCUMENT_BYTES`], has a blank name or an unsupported type
+///   ([`validate_document_file`]); the entry belongs to another book
+///   ([`ValidationError::WrongBook`]); or the book already has a document of
+///   that name ([`ValidationError::NameTaken`]).
+/// - [`Error::NotFound`]: no entry has `entry_id`.
+/// - [`Error::VaultCorrupt`]: the entry's stored row cannot be read back.
+/// - [`Error::Io`]: any other database failure.
 #[expect(
     clippy::too_many_arguments,
     reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
@@ -134,7 +192,8 @@ pub fn save_document(
         }));
     }
 
-    // Validation caps the size at 8 MiB, so the length always fits an i64.
+    // Validation caps the size at `MAX_DOCUMENT_BYTES`, so the length always
+    // fits an i64.
     let size_bytes = i64::try_from(data.len()).unwrap_or(i64::MAX);
 
     let id = DocumentId::new();
@@ -195,13 +254,15 @@ fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
     }
 }
 
-/// Validate and store a document linked to an existing entry (no OCR —
-/// analysis belongs to the drop-zone flow).
+/// Validates and stores a document linked to an existing entry.
+///
+/// No analysis runs here: reading a document belongs to the drop-zone flow.
 ///
 /// # Errors
 ///
-/// [`Error::NotFound`] for a missing entry, [`Error::Validation`] for an
-/// entry in a different book, an invalid file, or a duplicate filename.
+/// The errors of [`save_document`]. The entry is looked up first, so a
+/// missing entry ([`Error::NotFound`]) or one in another book
+/// ([`ValidationError::WrongBook`]) is reported before the file is checked.
 #[expect(
     clippy::too_many_arguments,
     reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
@@ -222,16 +283,19 @@ pub fn attach_document(
     save_document(conn, entity_id, entry_id, filename, mime_type, data)
 }
 
-/// Post a simple entry and store its document in one transaction.
+/// Posts a simple entry and stores its document in one transaction.
 ///
-/// A duplicate filename (or any other failure) rolls back the entry too —
-/// the vault never holds a document without its entry or vice versa from
-/// this path.
+/// Any failure rolls the entry back with the document, a duplicate filename
+/// included, so this path never leaves a document without its entry or an
+/// entry without its document.
 ///
 /// # Errors
 ///
-/// All [`post_simple_entry`](crate::ledger::post_simple_entry) and
-/// [`save_document`] errors.
+/// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry).
+/// - Every error of [`save_document`].
+/// - [`Error::NotFound`] from [`save_analysis_json`]; the document was
+///   written in the same transaction, so this means the write was lost.
+/// - [`Error::Io`] when the transaction cannot be opened or committed.
 #[expect(
     clippy::too_many_arguments,
     reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
@@ -298,11 +362,15 @@ fn map_document_meta(row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
     })
 }
 
-/// All documents for an entity, newest first (metadata only — no blobs).
+/// Lists a book's documents, newest first, without their bytes.
+///
+/// Documents created within the same second (the resolution of the stored
+/// creation time) are ordered by insertion, latest first.
 ///
 /// # Errors
 ///
-/// DB errors.
+/// - [`Error::VaultCorrupt`]: a stored row cannot be read back.
+/// - [`Error::Io`]: any other database failure.
 pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<DocumentMeta>> {
     // Order by created_at DESC, rowid DESC for deterministic insertion-recency order.
     // now_utc_string has 1-second granularity, so multiple documents saved in the same
@@ -330,11 +398,13 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
     Ok(documents)
 }
 
-/// One document's metadata plus raw bytes (for viewing/export).
+/// Returns one document's metadata and its bytes.
 ///
 /// # Errors
 ///
-/// Not found or DB error.
+/// - [`Error::NotFound`]: no document has this id.
+/// - [`Error::VaultCorrupt`]: the stored row cannot be read back.
+/// - [`Error::Io`]: any other database failure.
 pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, Vec<u8>)> {
     // The blob follows the eight metadata columns.
     const DATA_COLUMN: usize = 8;
@@ -360,11 +430,12 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
     })?
 }
 
-/// Permanently remove a document blob. Linked entries are unaffected.
+/// Permanently removes a document. The entry it was linked to is untouched.
 ///
 /// # Errors
 ///
-/// Not found or DB error.
+/// - [`Error::NotFound`]: no document has this id.
+/// - [`Error::Io`]: the database failed.
 pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
     let deleted = conn
         .execute("DELETE FROM documents WHERE id = ?1", [id.0.to_string()])
@@ -375,11 +446,14 @@ pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
     Ok(())
 }
 
-/// Save analysis JSON snapshot on the document row.
+/// Stores the analysis a document was posted with, as JSON, on its row.
+///
+/// The text is stored as given; it is not parsed or checked here.
 ///
 /// # Errors
 ///
-/// [`Error::NotFound`] when no document has this id; DB errors otherwise.
+/// - [`Error::NotFound`]: no document has this id.
+/// - [`Error::Io`]: the database failed.
 pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Result<()> {
     let updated = conn
         .execute(
@@ -400,13 +474,19 @@ pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Resu
 ///
 /// # Errors
 ///
-/// DB errors.
+/// - [`Error::VaultCorrupt`]: a stored account row cannot be read back.
+/// - [`Error::Io`]: any other database failure.
 pub fn suggest_accounts_for_entity(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
     let mut accounts = list_accounts(conn, entity_id)?;
     accounts.retain(|account| account.is_active);
     Ok(accounts)
 }
 
+/// Whether `mime` is a type the vault stores: PDF, PNG, JPEG (also spelled
+/// `image/jpg`), WebP or plain text.
+///
+/// The comparison is exact, so the caller passes a lowercased type without
+/// parameters such as `; charset=utf-8`.
 fn is_allowed_mime(mime: &str) -> bool {
     matches!(
         mime,
@@ -414,9 +494,14 @@ fn is_allowed_mime(mime: &str) -> bool {
     )
 }
 
-/// Infer MIME from the browser-provided type and/or filename extension.
+/// The MIME type to store for a file, from the type the webview reports and
+/// the filename.
 ///
-/// Dropped files in desktop webviews often arrive with an empty `type`.
+/// A reported type the vault stores is kept, with `image/jpg` rewritten to
+/// `image/jpeg`. Otherwise the extension decides: a file dropped into a
+/// desktop webview often arrives with an empty type. When neither is
+/// recognised the reported type is returned trimmed and lowercased, and
+/// [`validate_document_file`] then rejects it.
 #[must_use]
 pub fn resolve_mime(mime_type: &str, filename: &str) -> String {
     let mime = mime_type.trim().to_ascii_lowercase();
@@ -555,7 +640,8 @@ impl Keyword {
     }
 }
 
-/// Words in a document's text that point at a topic, in the order topics are tried.
+/// A keyword table: topics in the order they are tried, each with the words
+/// that point at it.
 type TopicKeywords = [(DocumentTopic, &'static [Keyword])];
 
 /// Expense topics in the order they are tried; the first topic whose keywords
@@ -706,6 +792,22 @@ const EXPENSE_KEYWORDS: &TopicKeywords = &[
     ),
 ];
 
+/// Income topics in the order they are tried, by the rule of
+/// [`EXPENSE_KEYWORDS`]: Sales, Freelance, Salary.
+///
+/// No hint in the tests names two income topics, so no test depends on this
+/// order.
+///
+/// `παροχ` and `τιμολ` are the stems of "Παροχή Υπηρεσιών" (provision of
+/// services) and "Τιμολόγιο" (invoice), the heading of a Greek sales invoice.
+///
+/// `security` and `advise` are the two words of the line item on the sample
+/// sales invoice in the corpus (`greek_sales_invoice.txt`: "security
+/// advise"). They describe that one issuer's service, not sales in general.
+/// The sample itself does not need them: the hint of a sales invoice is its
+/// customer and a generated title, and there `consult` in the customer's name
+/// selects Sales. They can match only when the description of an income
+/// document is a line item.
 const INCOME_KEYWORDS: &TopicKeywords = &[
     (
         DocumentTopic::Sales,
@@ -738,6 +840,11 @@ const INCOME_KEYWORDS: &TopicKeywords = &[
     ),
 ];
 
+/// Picks the account of `account_type` that `hints` point at, by the four
+/// steps in the module documentation.
+///
+/// `hints` may be in any letter case. Returns `None` only when the book has
+/// no active account of the type.
 #[expect(
     clippy::too_many_arguments,
     reason = "the keyword table and its catch-all are passed separately; tracked for the API pass"
@@ -935,7 +1042,7 @@ mod tests {
     ];
 
     #[test]
-    fn english_personal_chart_matches_as_before() {
+    fn the_personal_chart_files_each_topic_under_its_own_account() {
         let accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
         let template = ChartTemplate::Personal;
 
@@ -1000,7 +1107,7 @@ mod tests {
     }
 
     #[test]
-    fn english_company_chart_matches_as_before() {
+    fn the_company_chart_sends_a_topic_it_has_no_account_for_to_the_catch_all() {
         let accounts = seeded_chart_for_tests(ChartTemplate::Company, false);
         let template = ChartTemplate::Company;
 
@@ -1124,7 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn tax_documents_still_resolve_to_taxes_and_syntax_matches_nothing() {
+    fn tax_documents_resolve_to_taxes_and_syntax_matches_nothing() {
         let personal = seeded_chart_for_tests(ChartTemplate::Personal, false);
         let company = seeded_chart_for_tests(ChartTemplate::Company, false);
 
@@ -1228,7 +1335,7 @@ mod tests {
         // ...but it wins over Tax: these are ordinary invoices.
         ("Tax invoice 42", "5350", "5700"),
         ("VAT invoice", "5350", "5700"),
-        // Pinned to what they resolved to before the change.
+        // Titles in the form the invoice reader generates.
         ("Electricity bill", "5300", "5900"),
         ("Gas bill", "5300", "5900"),
         ("Water bill", "5300", "5900"),
