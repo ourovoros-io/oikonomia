@@ -501,14 +501,10 @@ fn jpeg_from_object(doc: &lopdf::Document, object: &lopdf::Object) -> Option<Vec
     if !is_image {
         return None;
     }
-    let filter = stream.dict.get(b"Filter").ok()?;
-    let jpeg = match filter {
-        lopdf::Object::Name(name) if name == b"DCTDecode" => true,
-        lopdf::Object::Array(arr) => arr
-            .iter()
-            .any(|item| matches!(item, lopdf::Object::Name(name) if name == b"DCTDecode")),
-        _ => false,
-    };
+    // Only when `DCTDecode` is the one filter are the stored bytes a JPEG file.
+    // In a chain such as `[/FlateDecode /DCTDecode]` they are the outer
+    // encoding of one.
+    let jpeg = matches!(stream.filters().ok()?.as_slice(), [b"DCTDecode"]);
     if !jpeg || stream.content.len() > MAX_PDF_STREAM_BYTES {
         return None;
     }
@@ -725,11 +721,27 @@ mod tests {
     }
 
     #[test]
-    fn a_jpeg_filter_inside_a_filter_array_counts() {
-        let filters = lopdf::Object::Array(vec![flate(), dct()]);
+    fn a_filter_array_holding_only_the_jpeg_filter_counts() {
+        let filters = lopdf::Object::Array(vec![dct()]);
         let pdf = pdf_with_images(ImagePlacement::PageXObject, &[(filters, b"jpeg-in-array")]);
 
         assert_eq!(extract_pdf_jpeg_images(&pdf), [b"jpeg-in-array".to_vec()]);
+    }
+
+    #[test]
+    fn a_jpeg_wrapped_in_another_filter_is_not_taken_as_a_jpeg() {
+        // The stored bytes of these streams are Flate or ASCII85 data, not a JPEG.
+        let ascii = lopdf::Object::Name(b"ASCII85Decode".to_vec());
+        let pdf = pdf_with_images(
+            ImagePlacement::PageXObject,
+            &[
+                (lopdf::Object::Array(vec![flate(), dct()]), b"deflated-jpeg"),
+                (lopdf::Object::Array(vec![ascii, dct()]), b"ascii-jpeg"),
+                (lopdf::Object::Array(vec![]), b"no-filter"),
+            ],
+        );
+
+        assert_eq!(extract_pdf_jpeg_images(&pdf), [] as [Vec<u8>; 0]);
     }
 
     #[test]
