@@ -24,11 +24,16 @@ pub struct CreateEntity {
     pub fiscal_year_start_month: Option<u8>,
 }
 
-/// List non-archived entities ordered by name.
+/// Lists non-archived entities ordered by name.
+///
+/// Names are ordered by their case fold (the `fold` SQL function every vault
+/// connection registers), so capitals do not sort ahead of small letters in
+/// any script; names that fold alike keep code point order.
 ///
 /// # Errors
 ///
-/// Returns DB errors.
+/// [`Error::VaultCorrupt`] for a stored row that does not parse; database
+/// errors as [`Error::Io`].
 pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
     let mut stmt = conn
         .prepare(
@@ -36,7 +41,7 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
             SELECT id, name, base_currency, fiscal_year_start_month, chart_template
             FROM entities
             WHERE archived_at IS NULL
-            ORDER BY name COLLATE NOCASE
+            ORDER BY fold(name), name
             ",
         )
         .map_err(|err| Error::Io(err.to_string()))?;

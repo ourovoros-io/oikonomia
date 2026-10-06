@@ -153,7 +153,8 @@ pub struct RecurringPostResult {
     pub template: RecurringTemplateView,
 }
 
-/// List templates for an entity, due first (`next_date` ascending).
+/// Lists templates for an entity, due first (`next_date` ascending), then by
+/// name without regard to case.
 ///
 /// # Errors
 ///
@@ -185,7 +186,7 @@ pub fn list_recurring_templates_as_of(
                    from_account_id, to_account_id, memo, next_date, bill_status
             FROM recurring_templates
             WHERE entity_id = ?1
-            ORDER BY next_date ASC, name COLLATE NOCASE ASC
+            ORDER BY next_date ASC, fold(name), name
             ",
         )
         .map_err(|err| Error::Io(err.to_string()))?;
