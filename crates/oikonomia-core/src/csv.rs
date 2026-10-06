@@ -15,16 +15,25 @@
 //! decimals ([`currency_minor_exponent`]). What it accepts, with the result
 //! for a two-decimal currency:
 //!
-//! | Part | Accepted | Example |
-//! |------|----------|---------|
-//! | Negative | A leading or a trailing minus (`-` or U+2212), or parentheses around the cell. | `-25`, `25-`, `(25,00)` → −2500 |
-//! | Positive | No sign, or a leading `+`. | `+25.00` → 2500 |
-//! | Decimal mark | `.` or `,`: the last separator in the cell, followed by at most `exponent` digits. | `1234,5` → 123450 |
-//! | Grouping | The other separator, in groups of three after a first group of one to three digits with no leading zero. | `1.234,56`, `1,234.56` → 123456 |
-//! | Three-digit tail | Read as a thousands group, not a fraction, unless the currency has three decimals. | `1.234` → 123400 |
-//! | Currency | The signs `€ $ £ ¥ ₹ ₺ ₩` anywhere, and three ASCII letters at either end. | `€1.234,56`, `12.00 EUR` |
-//! | Whitespace | Ignored anywhere, so a space can group thousands. | `1 234,56` → 123456 |
-//! | Exponent | None. Scientific notation is not an amount. | `1e3` is rejected |
+//! | Part             | Accepted                      | Example                  |
+//! |------------------|-------------------------------|--------------------------|
+//! | Negative         | Leading `-` or U+2212         | `-25` → −2500            |
+//! |                  | Trailing `-` or U+2212        | `25-` → −2500            |
+//! |                  | Parentheses around the cell   | `(25,00)` → −2500        |
+//! | Positive         | No sign, or a leading `+`     | `+25.00` → 2500          |
+//! | Decimal mark     | `.` or `,`                    | `1234,5` → 123450        |
+//! | Grouping         | The other separator           | `1.234,56` → 123456      |
+//! |                  |                               | `1,234.56` → 123456      |
+//! | Three-digit tail | A thousands group             | `1.234` → 123400         |
+//! | Currency sign    | `€ $ £ ¥ ₹ ₺ ₩`, anywhere     | `€1.234,56` → 123456     |
+//! | Currency code    | Three ASCII letters at an end | `12.00 EUR` → 1200       |
+//! | Whitespace       | Ignored anywhere              | `1 234,56` → 123456      |
+//! | Exponent         | None                          | `1e3` is rejected        |
+//!
+//! The decimal mark is the last separator in the cell and is followed by at
+//! most `exponent` digits. Groups are of three digits after a first group of
+//! one to three with no leading zero. A three-digit tail is a group and not
+//! a fraction unless the currency has three decimals.
 //!
 //! Anything else is rejected, not guessed at: a second sign (`-25-`), a
 //! fraction longer than the currency has (`0.125` in EUR), irregular

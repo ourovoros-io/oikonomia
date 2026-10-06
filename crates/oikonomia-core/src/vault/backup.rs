@@ -1450,8 +1450,10 @@ mod tests {
         write_file(&crafted_path, &crafted);
         let err =
             restore_from_path(&crafted_path, restore_dir.path(), true).expect_err("tmp member");
+        let names_the_extra_member =
+            |message: &str| message.contains("trailing") || message.contains("unexpected");
         assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("trailing") || msg.contains("unexpected")),
+            matches!(err, Error::BackupInvalid(ref message) if names_the_extra_member(message)),
             "got {err:?}"
         );
     }

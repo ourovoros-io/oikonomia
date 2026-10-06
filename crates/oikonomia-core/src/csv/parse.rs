@@ -20,15 +20,21 @@
 //! stripped of spaces, `_` and `-`, then tested in this order. The first
 //! test that passes names the column:
 //!
-//! | Order | Column | Header |
-//! |-------|--------|--------|
-//! | 1 | Date | Contains `date` anywhere (`Booking date`, `ValueDate`). |
-//! | 2 | Amount | `amount`, `value`, `sum`, `transactionamount`, `betrag`, `montant`, `importo` |
-//! | 3 | Debit | `debit`, `withdrawal`, `outflow`, `addebito` |
-//! | 4 | Credit | `credit`, `deposit`, `inflow`, `accredito` |
-//! | 5 | Direction | `type`, `dc`, `d/c`, `debitcredit`, `drcr`, `transactiontype` |
-//! | 6 | Reference | `reference`, `ref`, `check`, `cheque`, `checkno`, `chequeno`, `fitid` |
-//! | 7 | Description | `description`, `memo`, `narration`, `details`, `payee`, `particulars`, `narrative`, `libelle`, `libellé`, `beschreibung`, `descrizione`, `transaction`, `name` |
+//! | Order | Column      | Header                                               |
+//! |-------|-------------|------------------------------------------------------|
+//! | 1     | Date        | Contains `date` (`Booking date`, `ValueDate`)        |
+//! | 2     | Amount      | `amount`, `value`, `sum`, `transactionamount`,       |
+//! |       |             | `betrag`, `montant`, `importo`                       |
+//! | 3     | Debit       | `debit`, `withdrawal`, `outflow`, `addebito`         |
+//! | 4     | Credit      | `credit`, `deposit`, `inflow`, `accredito`           |
+//! | 5     | Direction   | `type`, `dc`, `d/c`, `debitcredit`, `drcr`,          |
+//! |       |             | `transactiontype`                                    |
+//! | 6     | Reference   | `reference`, `ref`, `check`, `cheque`, `checkno`,    |
+//! |       |             | `chequeno`, `fitid`                                  |
+//! | 7     | Description | `description`, `memo`, `narration`, `details`,       |
+//! |       |             | `payee`, `particulars`, `narrative`, `libelle`,      |
+//! |       |             | `libellé`, `beschreibung`, `descrizione`,            |
+//! |       |             | `transaction`, `name`                                |
 //!
 //! Rows 2 to 7 match the whole header, not a part of it. When several
 //! headers name the same column, the leftmost wins and the others are not
@@ -930,13 +936,9 @@ mod tests {
 
     #[test]
     fn headers_are_classified_in_the_documented_order() {
-        let detected = parse_bank_csv(
-            "Value Date,Booking-date,Transaction_Amount,Name,Memo\n2026-03-05,2026-03-06,1.00,a,b\n",
-            2,
-            None,
-        )
-        .unwrap()
-        .detected_mapping;
+        let csv = "Value Date,Booking-date,Transaction_Amount,Name,Memo\n\
+            2026-03-05,2026-03-06,1.00,a,b\n";
+        let detected = parse_bank_csv(csv, 2, None).unwrap().detected_mapping;
 
         assert_eq!(detected.date.as_deref(), Some("Value Date"));
         assert_eq!(detected.amount.as_deref(), Some("Transaction_Amount"));

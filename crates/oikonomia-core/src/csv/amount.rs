@@ -17,26 +17,47 @@
 //! The cell is reduced in this order, for a currency with `exponent`
 //! decimals:
 //!
-//! | Step | Rule | Accepted | Rejected |
-//! |------|------|----------|----------|
-//! | 1 | Whitespace is removed everywhere, including inside the number. | `1 234,56` | An empty or whitespace-only cell is a missing amount. |
-//! | 2 | Parentheses around the whole cell mean negative. | `(25,00)` | |
-//! | 3 | The currency signs `€ $ £ ¥ ₹ ₺ ₩` are removed wherever they stand. | `€25`, `25 $` | Any other sign, such as `₽`. |
-//! | 4 | Three ASCII letters at the start and three at the end are dropped. They are not checked against ISO 4217. | `EUR 25`, `25 USD`, `25 lei` | A code of another length (`25 kr`), non-ASCII letters (`25 zł`), letters in the middle. |
-//! | 5 | One sign is taken: a leading `-`, U+2212 or `+`, or else a trailing `-` or U+2212. | `-25`, `+25`, `25-` | A second sign (`-25-`, `+25-`, `--25`); a trailing `+`. |
-//! | 6 | Step 4 is applied again, so a code may stand on either side of the sign. | `-EUR 25`, `25 EUR-` | |
-//! | 7 | What is left must be digits, `.` and `,`, with at least one digit. | `25`, `.5`, `5.` | `1e3`, `1'234.56`, `25%`, `.` |
+//! | Step | Taken from the cell           | Accepted           | Rejected          |
+//! |------|-------------------------------|--------------------|-------------------|
+//! | 1    | Whitespace, everywhere        | `1 234,56`         | An empty cell     |
+//! | 2    | Parentheses around the cell   | `(25,00)`          |                   |
+//! | 3    | The signs `€ $ £ ¥ ₹ ₺ ₩`     | `€25`, `25 $`      | `₽25`             |
+//! | 4    | Three ASCII letters, each end | `EUR 25`, `25 lei` | `25 kr`, `25 zł`  |
+//! | 5    | One sign                      | `-25`, `+25`, `25-`| `-25-`, `25+`     |
+//! | 6    | Step 4 again                  | `-EUR 25`          |                   |
+//! | 7    | Nothing: digits, `.`, `,` left| `25`, `.5`, `5.`   | `1e3`, `25%`, `.` |
 //!
-//! Parentheses and a minus do not cancel: `(-25)` is negative.
+//! Notes on the steps:
 //!
-//! Then the separators are read:
+//! 1. Whitespace inside the number goes too. A cell that is empty or only
+//!    whitespace is a missing amount, not an invalid one.
+//! 2. Parentheses mean negative. They do not cancel a minus: `(-25)` is
+//!    negative.
+//! 3. The signs are removed wherever they stand.
+//! 4. The letters are not checked against ISO 4217. A code of another
+//!    length, non-ASCII letters, and letters in the middle of the number are
+//!    left in place and fail step 7.
+//! 5. The sign is a leading `-`, U+2212 or `+`, or else a trailing `-` or
+//!    U+2212. A second sign (`-25-`, `+25-`, `--25`) is left in place and
+//!    fails step 7, as does a trailing `+`.
+//! 6. The second pass lets a code stand on either side of the sign
+//!    (`25 EUR-`).
+//! 7. At least one digit is required. `1'234.56` fails here.
 //!
-//! | Shape | Reading | Example (`exponent` 2) |
-//! |-------|---------|------------------------|
-//! | No separator | Whole major units. | `25` → 2500 |
-//! | Last separator followed by exactly three digits, `exponent` not 3 | The whole number is a thousands grouping on that one separator. | `1.234` → 123400, `1,234,567` → 123456700 |
-//! | Last separator followed by at most `exponent` digits | That separator is the decimal mark. The part before it is plain digits, or a thousands grouping on the other separator. | `1234.5` → 123450, `1.234,56` → 123456 |
-//! | Anything else | Rejected. | `1.2345`, `0.125`, `1,234.567` |
+//! Then the separators are read. With `exponent` 2:
+//!
+//! | Shape                               | Reading           | Example             |
+//! |-------------------------------------|-------------------|---------------------|
+//! | No separator                        | Whole major units | `25` → 2500         |
+//! | Three digits after the last one     | Thousands groups  | `1.234` → 123400    |
+//! | Up to `exponent` digits after it    | Decimal mark      | `1.234,56` → 123456 |
+//! | Anything else                       | Rejected          | `1.2345`, `0.125`   |
+//!
+//! In the second row the whole number has to be one grouping on that one
+//! separator (`1,234,567` is 123456700; `1,234.567` is rejected), and the
+//! row does not apply when `exponent` is 3. In the third row the part before
+//! the mark is plain digits (`1234.5` is 123450) or a grouping on the other
+//! separator.
 //!
 //! A thousands grouping is strict: a first group of one to three digits that
 //! does not start with `0`, then groups of exactly three. `1,2,3`, `12,34.56`
