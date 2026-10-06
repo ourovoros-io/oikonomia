@@ -1,8 +1,60 @@
 //! Integer amount parsing for bank CSV. Never uses `f64`.
+//!
+//! A bank writes `1.234,56`, another `1,234.56`, a third `1 234,56 EUR` or
+//! `(25.00)`. The parser reads all of them into signed minor units by
+//! working on the digits as text: the fraction is padded to the currency's
+//! number of decimals and the digits are parsed as one integer, so no value
+//! passes through a float and none is rounded.
+//!
+//! The one thing a cell cannot say is whether `1.234` means one thousand or
+//! one and a bit. The parser does not guess from the rest of the file. It
+//! applies fixed rules, and where a cell fits no rule it is rejected, on the
+//! view that a row the user has to fix is cheaper than an amount silently
+//! off by a factor of a thousand.
+//!
+//! # Grammar
+//!
+//! The cell is reduced in this order, for a currency with `exponent`
+//! decimals:
+//!
+//! | Step | Rule | Accepted | Rejected |
+//! |------|------|----------|----------|
+//! | 1 | Whitespace is removed everywhere, including inside the number. | `1 234,56` | An empty or whitespace-only cell is a missing amount. |
+//! | 2 | Parentheses around the whole cell mean negative. | `(25,00)` | |
+//! | 3 | The currency signs `€ $ £ ¥ ₹ ₺ ₩` are removed wherever they stand. | `€25`, `25 $` | Any other sign, such as `₽`. |
+//! | 4 | Three ASCII letters at the start and three at the end are dropped. They are not checked against ISO 4217. | `EUR 25`, `25 USD`, `25 lei` | A code of another length (`25 kr`), non-ASCII letters (`25 zł`), letters in the middle. |
+//! | 5 | One sign is taken: a leading `-`, U+2212 or `+`, or else a trailing `-` or U+2212. | `-25`, `+25`, `25-` | A second sign (`-25-`, `+25-`, `--25`); a trailing `+`. |
+//! | 6 | Step 4 is applied again, so a code may stand on either side of the sign. | `-EUR 25`, `25 EUR-` | |
+//! | 7 | What is left must be digits, `.` and `,`, with at least one digit. | `25`, `.5`, `5.` | `1e3`, `1'234.56`, `25%`, `.` |
+//!
+//! Parentheses and a minus do not cancel: `(-25)` is negative.
+//!
+//! Then the separators are read:
+//!
+//! | Shape | Reading | Example (`exponent` 2) |
+//! |-------|---------|------------------------|
+//! | No separator | Whole major units. | `25` → 2500 |
+//! | Last separator followed by exactly three digits, `exponent` not 3 | The whole number is a thousands grouping on that one separator. | `1.234` → 123400, `1,234,567` → 123456700 |
+//! | Last separator followed by at most `exponent` digits | That separator is the decimal mark. The part before it is plain digits, or a thousands grouping on the other separator. | `1234.5` → 123450, `1.234,56` → 123456 |
+//! | Anything else | Rejected. | `1.2345`, `0.125`, `1,234.567` |
+//!
+//! A thousands grouping is strict: a first group of one to three digits that
+//! does not start with `0`, then groups of exactly three. `1,2,3`, `12,34.56`
+//! and `012,345` are rejected.
+//!
+//! With `exponent` 3 a three-digit tail is always the fraction, so `12,345`
+//! is 12.345 and never twelve thousand. With `exponent` 0 no digit may
+//! follow a decimal mark, so `1234.56` is rejected.
+//!
+//! There is no exponent notation and no percent sign. Zero is a valid
+//! result here; the row parser is what refuses a zero amount.
 
-use super::CsvError;
+use crate::csv::CsvError;
 
-/// Decimal digits (minor-unit exponent) for an ISO 4217 code.
+/// Returns the number of decimal digits (the minor-unit exponent) of an ISO
+/// 4217 currency code, 2 for a code it does not know.
+///
+/// The code is trimmed and compared without regard to ASCII case.
 ///
 /// This is the one exponent table of the crate: CSV import and the document
 /// analyzer both read it. It lists the codes whose exponent is not 2, as
@@ -25,7 +77,10 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
     }
 }
 
-/// Parse a bank-CSV amount into signed minor units.
+/// Parses a bank-CSV amount into signed minor units of a currency with
+/// `exponent` decimals.
+///
+/// The table in the [`crate::csv`] module doc lists the accepted forms.
 ///
 /// The last `.` or `,` followed by at most `exponent` digits is the decimal
 /// mark, and the digits before it are either unseparated or grouped in
@@ -88,8 +143,19 @@ pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
     }
 }
 
+/// Runs steps 1 to 7 of the grammar in the module doc: returns whether the
+/// amount is negative and the bare digits and separators of its magnitude.
+///
+/// # Errors
+///
+/// [`CsvError::MissingAmount`] when nothing but whitespace is in the cell;
+/// [`CsvError::InvalidAmount`], carrying the cell as written, when anything
+/// other than digits and separators is left over.
 fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
-    let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact: String = raw
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
     if compact.is_empty() {
         return Err(CsvError::MissingAmount);
     }
@@ -101,21 +167,23 @@ fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
     let (signed_negative, unsigned) = strip_sign(strip_letter_code(&without_symbols));
     let body = strip_letter_code(unsigned);
 
-    if body.is_empty()
-        || !body
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
-    {
+    let is_digit_or_separator =
+        |character: char| character.is_ascii_digit() || character == '.' || character == ',';
+    if body.is_empty() || !body.chars().all(is_digit_or_separator) {
         return Err(CsvError::InvalidAmount(raw.to_owned()));
     }
     Ok((parenthesized || signed_negative, body.to_owned()))
 }
 
-/// Accounting notation: an amount wrapped in parentheses is negative.
-fn strip_parentheses(s: &str) -> (bool, &str) {
-    match s.strip_prefix('(').and_then(|rest| rest.strip_suffix(')')) {
+/// Removes one pair of parentheses around `text` and returns whether there
+/// was one. In accounting notation a wrapped amount is negative.
+fn strip_parentheses(text: &str) -> (bool, &str) {
+    let inner = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'));
+    match inner {
         Some(inner) => (true, inner),
-        None => (false, s),
+        None => (false, text),
     }
 }
 
@@ -166,9 +234,9 @@ fn strip_sign(text: &str) -> (bool, &str) {
 ///
 /// A cell that is nothing but three letters is kept, so it is reported as an
 /// invalid amount instead of an empty one.
-fn strip_letter_code(s: &str) -> &str {
-    let Some((code, rest)) = split_leading_letter_code(s) else {
-        return strip_trailing_letter_code(s);
+fn strip_letter_code(text: &str) -> &str {
+    let Some((code, rest)) = split_leading_letter_code(text) else {
+        return strip_trailing_letter_code(text);
     };
     if rest.is_empty() {
         return code;
@@ -176,23 +244,38 @@ fn strip_letter_code(s: &str) -> &str {
     strip_trailing_letter_code(rest)
 }
 
-fn split_leading_letter_code(s: &str) -> Option<(&str, &str)> {
-    let (code, rest) = s.split_at_checked(3)?;
+/// Splits `text` into a three-letter code at its start and the rest, or
+/// returns `None` when it does not start with one.
+///
+/// `split_at_checked` is `None` for a text shorter than three bytes and when
+/// byte 3 falls inside a multi-byte character; in both cases the start is
+/// not three ASCII letters.
+fn split_leading_letter_code(text: &str) -> Option<(&str, &str)> {
+    let (code, rest) = text.split_at_checked(3)?;
     is_letter_code(code).then_some((code, rest))
 }
 
-fn strip_trailing_letter_code(s: &str) -> &str {
+/// Returns `text` without a three-letter code at its end.
+fn strip_trailing_letter_code(text: &str) -> &str {
     // `split_at_checked` is `None` when three bytes from the end falls inside
     // a multi-byte character, which also means the tail is not three letters.
-    let split = s.len().checked_sub(3).and_then(|at| s.split_at_checked(at));
+    let split = text
+        .len()
+        .checked_sub(3)
+        .and_then(|code_start| text.split_at_checked(code_start));
     match split {
         Some((head, code)) if is_letter_code(code) => head,
-        _ => s,
+        _ => text,
     }
 }
 
-fn is_letter_code(s: &str) -> bool {
-    s.len() == 3 && s.bytes().all(|byte| byte.is_ascii_alphabetic())
+/// Whether `text` is exactly three ASCII letters, in either case.
+///
+/// The shape of an ISO 4217 code. The letters are not looked up or compared
+/// with anything: the book's currency, not the cell, decides how the digits
+/// are read, so a cell marked `USD` in a EUR book is read as euros.
+fn is_letter_code(text: &str) -> bool {
+    text.len() == 3 && text.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
 /// Splits an all-ASCII body of digits, `.` and `,` into integer digits and
@@ -346,6 +429,20 @@ mod tests {
         assert_invalid_amount("25 kr", 2);
         assert_invalid_amount("25 Ft", 2);
         assert_invalid_amount("R$ 25,00", 2);
+    }
+
+    #[test]
+    fn the_examples_of_the_grammar_table_hold() {
+        assert_eq!(parse_eur_minor("25 $"), 2_500);
+        assert_eq!(parse_eur_minor("-EUR 25"), -2_500);
+        assert_eq!(parse_eur_minor("(-25)"), -2_500);
+        assert_eq!(parse_eur_minor("1234.5"), 123_450);
+        assert_eq!(parse_eur_minor("1,234,567"), 123_456_700);
+
+        assert_invalid_amount("1e3", 2);
+        assert_invalid_amount("1'234.56", 2);
+        assert_invalid_amount("25%", 2);
+        assert_invalid_amount("1,2,3", 2);
     }
 
     #[test]
