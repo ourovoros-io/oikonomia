@@ -1,16 +1,26 @@
-//! App settings stored inside the encrypted vault.
+//! Application settings kept inside the encrypted vault.
+//!
+//! A setting is one row of the `app_settings` table: a key and a value, both
+//! text. A setting kept here instead of in the preferences file is encrypted
+//! with the books and cannot be read or changed without the master password.
+//! The idle lock timeout is the only one so far.
+//!
+//! The functions here read and write a single row, so none of them opens a
+//! transaction.
 
-use rusqlite::Connection;
-use rusqlite::OptionalExtension;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::error::{Error, Result, ValidationError};
 
-/// Default idle lock timeout: 15 minutes.
+/// The idle lock timeout, in seconds, of a vault that has stored none: 15
+/// minutes.
 pub const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 15 * 60;
 
 /// Shortest idle lock timeout the vault accepts, in seconds.
 pub(super) const MIN_LOCK_TIMEOUT_SECS: u64 = 60;
 
+/// Key of the idle lock timeout in `app_settings`. Its value is the number of
+/// seconds, written in decimal.
 const KEY_LOCK_TIMEOUT: &str = "lock_timeout_secs";
 
 /// Reads the idle lock timeout in seconds, or
@@ -48,11 +58,12 @@ pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
     Ok(seconds.max(MIN_LOCK_TIMEOUT_SECS))
 }
 
-/// Persist lock timeout (minimum 60 seconds).
+/// Stores the idle lock timeout, in seconds, replacing any earlier value.
 ///
 /// # Errors
 ///
-/// Validation or DB errors.
+/// - [`ValidationError::LockTimeoutTooShort`] when `secs` is below 60.
+/// - [`Error::Io`] on database errors.
 pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
     if secs < MIN_LOCK_TIMEOUT_SECS {
         return Err(Error::Validation(ValidationError::LockTimeoutTooShort {
