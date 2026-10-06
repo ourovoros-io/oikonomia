@@ -6,7 +6,11 @@
 //! source of truth, and is omitted.
 //!
 //! An unlocked vault is snapshotted with `VACUUM INTO` so WAL is folded
-//! without closing the session. A locked vault is a quiescent file copy.
+//! without closing the session. A locked vault is copied file by file, which
+//! is only complete when `vault.db-wal` is absent or empty: the database
+//! runs in WAL mode, and after a crash committed transactions can still sit
+//! in that log. Such a vault is refused until it has been unlocked once,
+//! which replays the log into `vault.db`.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -61,7 +65,8 @@ const SNAPSHOT_DB_TMP: &str = "vault.db.backup-tmp";
 ///
 /// [`Error::VaultUninitialized`] when neither vault file exists;
 /// [`Error::VaultCorrupt`] when only one of the two source-of-truth files is
-/// present; [`Error::Io`] on filesystem failures.
+/// present, or when `vault.db-wal` holds pages a file copy would leave out;
+/// [`Error::Io`] on filesystem failures.
 pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     let db_path = vault_db_path(data_dir);
@@ -129,7 +134,7 @@ impl Vault {
     ///
     /// Unlocked: `VACUUM INTO` a temp file (`SQLCipher` keeps the dest keyed with
     /// the live connection's key), then pack it with `vault.header.json`.
-    /// Locked: copy the on-disk pair (no writer).
+    /// Locked: copy the on-disk pair, as [`backup_to_path`] does.
     ///
     /// # Errors
     ///
@@ -163,7 +168,7 @@ impl Vault {
 
 fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
     match (header_path.is_file(), db_path.is_file()) {
-        (true, true) => Ok(()),
+        (true, true) => ensure_no_unmerged_wal(db_path),
         (false, false) => Err(Error::VaultUninitialized),
         (true, false) => Err(Error::VaultCorrupt(
             "vault header exists without database".into(),
@@ -172,6 +177,29 @@ fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
             "vault database exists without header".into(),
         )),
     }
+}
+
+/// Refuses a database whose write-ahead log still holds pages.
+///
+/// `SQLite` removes the log when the last connection closes cleanly, so a
+/// non-empty one next to a locked vault is left from a crash and can hold
+/// committed transactions that are not in `vault.db` yet.
+fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
+    let [wal_path, _shm_path] = db_sidecar_paths(db_path);
+    let wal_len = match fs::metadata(&wal_path) {
+        Ok(meta) => meta.len(),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => 0,
+        Err(err) => return Err(Error::Io(err.to_string())),
+    };
+
+    if wal_len > 0 {
+        return Err(Error::VaultCorrupt(
+            "vault database has changes still in its write-ahead log; \
+             unlock the vault once before backing up"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Consistent snapshot of an open `SQLCipher` connection, packed with the
@@ -708,6 +736,76 @@ mod tests {
             crate::ledger::list_entities(restored.connection().expect("conn")).expect("list");
         assert_eq!(restored_entities.len(), 1);
         assert_eq!(restored_entities[0].name, "Personal");
+    }
+
+    fn create_personal_entity(vault: &Vault) {
+        crate::ledger::create_entity(
+            vault.connection().expect("conn"),
+            &crate::ledger::CreateEntity {
+                name: "Personal".into(),
+                base_currency: "EUR".into(),
+                chart_template: crate::domain::ChartTemplate::Personal,
+                fiscal_year_start_month: Some(1),
+            },
+            crate::prefs::Locale::En,
+        )
+        .expect("entity");
+    }
+
+    /// Copies the vault files as a crash would leave them: the session never
+    /// closed, so committed transactions are still in the write-ahead log.
+    fn crash_image_of(live: &Path) -> TempDir {
+        let image = TempDir::new().expect("crash image dir");
+        let [live_wal, _shm] = db_sidecar_paths(&vault_db_path(live));
+        let [image_wal, _shm] = db_sidecar_paths(&vault_db_path(image.path()));
+        for (from, to) in [
+            (vault_header_path(live), vault_header_path(image.path())),
+            (vault_db_path(live), vault_db_path(image.path())),
+            (live_wal, image_wal.clone()),
+        ] {
+            fs::copy(from, to).expect("copy vault file");
+        }
+        assert!(
+            fs::metadata(&image_wal).expect("wal").len() > 0,
+            "the scenario needs committed pages in the write-ahead log"
+        );
+        image
+    }
+
+    #[test]
+    fn locked_backup_refuses_a_vault_with_unmerged_wal_pages() {
+        let (live, vault) = init_vault();
+        create_personal_entity(&vault);
+        let image = crash_image_of(live.path());
+        let dest = image.path().join("books.oikonomia-backup");
+
+        let err = backup_to_path(image.path(), &dest).expect_err("the log is not in the archive");
+
+        assert!(
+            matches!(err, Error::VaultCorrupt(ref message) if message.contains("unlock")),
+            "got {err:?}"
+        );
+        assert!(!dest.exists(), "no partial archive");
+    }
+
+    #[test]
+    fn unlocking_once_makes_a_crashed_vault_backable() {
+        let (live, vault) = init_vault();
+        create_personal_entity(&vault);
+        let image = crash_image_of(live.path());
+
+        let mut recovered = Vault::open_path(image.path()).expect("open crash image");
+        recovered.unlock(PASSWORD).expect("unlock replays the log");
+        recovered.lock();
+        let (_archive_dir, archive) = backup_of(&recovered);
+
+        let restore_dir = TempDir::new().expect("restore");
+        restore_from_path(&archive, restore_dir.path(), false).expect("restore");
+        let mut restored = Vault::open_path(restore_dir.path()).expect("open restored");
+        restored.unlock(PASSWORD).expect("unlock restored");
+        let entities =
+            crate::ledger::list_entities(restored.connection().expect("conn")).expect("list");
+        assert_eq!(entities.len(), 1, "the logged transaction is in the backup");
     }
 
     #[test]
