@@ -114,13 +114,14 @@ pub(crate) async fn document_analyze_path(
 ) -> CommandResult<DocumentSuggestion> {
     let filename = dropped_file_name(&path);
     let grants = state.path_grants();
+    let path = run_blocking(move || require_granted_path(&grants, &path)).await?;
+
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();
     let data_dir = state.data_dir().to_path_buf();
     state.touch();
 
     run_blocking(move || {
-        let path = require_granted_path(&grants, &path)?;
         let locale = stored_text_locale(&data_dir);
 
         // Reject oversized/unsupported drops from metadata alone — a stray

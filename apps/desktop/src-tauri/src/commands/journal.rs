@@ -197,12 +197,12 @@ pub(crate) async fn entry_post_simple_with_document_path(
 ) -> CommandResult<PostedEntryView> {
     let filename = dropped_file_name(&path);
     let grants = state.path_grants();
+    let path = run_blocking(move || require_granted_path(&grants, &path)).await?;
+
     let vault = state.vault();
     state.touch();
 
     run_blocking(move || {
-        let path = require_granted_path(&grants, &path)?;
-
         // Reject oversized/unsupported files from metadata alone before reading.
         let metadata = std::fs::metadata(&path).map_err(|err| {
             CommandError::desktop(
