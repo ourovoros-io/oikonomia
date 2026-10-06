@@ -168,8 +168,20 @@ mod tests {
         assert_eq!(accepted, real.canonicalize().expect("canonical"));
         // The document keeps the name it was dropped under.
         assert_eq!(dropped_file_name(named), "link.csv");
-        assert_eq!(dropped_file_name(""), "document");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dropped_document_is_named_by_the_last_component_of_its_path() {
+        let dropped = std::path::Path::new("inbox").join("bill.pdf");
+
+        assert_eq!(
+            dropped_file_name(dropped.to_str().expect("utf-8 path")),
+            "bill.pdf"
+        );
+        assert_eq!(dropped_file_name("bill.pdf"), "bill.pdf");
+        // A path with no file name still gets one.
+        assert_eq!(dropped_file_name(""), "document");
     }
 
     #[test]
@@ -1463,7 +1475,15 @@ where
     F: FnOnce(&tauri::AppHandle, &AppState) -> CommandResult<T> + Send + 'static,
 {
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
+        // `Manager::state` panics when the state is not managed, which is the
+        // case after a failed start (`crate::startup`) while the hidden
+        // webview is still running.
+        let Some(state) = app.try_state::<AppState>() else {
+            return Err(CommandError::desktop(
+                DesktopError::TaskFailed,
+                "application state is not set up",
+            ));
+        };
         work(&app, &state)
     }))
     .await
