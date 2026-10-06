@@ -13,7 +13,7 @@ const PRODUCTION_HOSTS: &[&str] = &[
 
 /// Which hosts (and schemes) a check/install may contact.
 #[derive(Debug, Clone)]
-pub struct HostPolicy {
+pub(crate) struct HostPolicy {
     allow_http: bool,
     hosts: Vec<String>,
 }
@@ -21,7 +21,7 @@ pub struct HostPolicy {
 impl HostPolicy {
     /// Production: https only, GitHub release hosts only.
     #[must_use]
-    pub fn production() -> Self {
+    pub(crate) fn production() -> Self {
         let mut hosts = Vec::new();
         for host in PRODUCTION_HOSTS {
             hosts.push((*host).to_owned());
@@ -34,7 +34,7 @@ impl HostPolicy {
 
     /// True when `url` may be fetched (manifest, detached sig, or artifact).
     #[must_use]
-    pub fn is_allowed_fetch_url(&self, url: &Url) -> bool {
+    pub(crate) fn is_allowed_fetch_url(&self, url: &Url) -> bool {
         let scheme_ok = url.scheme() == "https" || (self.allow_http && url.scheme() == "http");
         if !scheme_ok {
             return false;
@@ -54,7 +54,7 @@ impl HostPolicy {
     ///
     /// Linux in-app updates are `AppImage` only; `.deb` stays a manual download.
     #[must_use]
-    pub fn is_allowed_artifact_url(&self, url: &Url) -> bool {
+    pub(crate) fn is_allowed_artifact_url(&self, url: &Url) -> bool {
         if !self.is_allowed_fetch_url(url) {
             return false;
         }
@@ -80,7 +80,7 @@ fn path_ends_with_ignore_ascii_case(path: &str, suffix: &str) -> bool {
 impl HostPolicy {
     /// Local httptest servers. Never used by the desktop production constructor.
     #[must_use]
-    pub fn test_http_hosts(hosts: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub(crate) fn test_http_hosts(hosts: impl IntoIterator<Item = impl Into<String>>) -> Self {
         let mut allowed = Vec::new();
         for host in hosts {
             allowed.push(host.into());

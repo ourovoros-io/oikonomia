@@ -10,9 +10,9 @@
 //! `checksums` writes the release's `SHA256SUMS` file.
 
 use oikonomia_update::{
-    FeedArtifact, WindowsBuild, assemble_manifest, checksum_line, checksummed_assets, feed_entries,
-    feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset, parse_public_key,
-    verify_minisign,
+    FeedArtifact, UpdateError, WindowsBuild, assemble_manifest, checksum_line, checksummed_assets,
+    feed_entries, feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
+    verify_signature,
 };
 use sha2::{Digest, Sha256};
 use std::fmt::Write as FmtWrite;
@@ -227,9 +227,10 @@ fn run_verify(args: &[String]) -> Result<(), String> {
 
     let body = std::fs::read(&manifest).map_err(|e| format!("{manifest}: {e}"))?;
     let signature = std::fs::read_to_string(&sig).map_err(|e| format!("{sig}: {e}"))?;
-    let key = parse_public_key(&pubkey).map_err(|e| format!("pubkey: {e}"))?;
-    oikonomia_update::verify_manifest_bytes(&key, &body, &signature)
-        .map_err(|e| format!("verify: {e}"))?;
+    verify_signature(&pubkey, &body, &signature).map_err(|e| match e {
+        UpdateError::MissingPublicKey => format!("pubkey: {e}"),
+        _ => format!("verify: {e}"),
+    })?;
     writeln!(std::io::stdout(), "manifest signature ok").map_err(|e| e.to_string())
 }
 
@@ -242,7 +243,10 @@ fn run_verify_feed(args: &[String]) -> Result<(), String> {
     let manifest = PathBuf::from(flag_value(args, "--manifest").ok_or(USAGE)?);
     let dir = PathBuf::from(flag_value(args, "--dir").ok_or(USAGE)?);
     let pubkey = flag_value(args, "--pubkey").ok_or(USAGE)?;
-    let key = parse_public_key(&pubkey).map_err(|e| format!("pubkey: {e}"))?;
+    // Checked before any file is read, so a bad key is reported as one.
+    if let Err(e @ UpdateError::MissingPublicKey) = verify_signature(&pubkey, &[], "") {
+        return Err(format!("pubkey: {e}"));
+    }
 
     let body = std::fs::read(&manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
     let feed: serde_json::Value =
@@ -291,7 +295,7 @@ fn run_verify_feed(args: &[String]) -> Result<(), String> {
                 "{platform}: {file_name} does not match the sha256 in the feed"
             ));
         }
-        verify_minisign(&key, &bytes, signature).map_err(|_| {
+        verify_signature(&pubkey, &bytes, signature).map_err(|_| {
             format!("{platform}: the signature of {file_name} does not verify with the public key")
         })?;
         writeln!(stdout, "{platform}: {file_name} hash and signature ok")

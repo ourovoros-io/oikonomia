@@ -9,7 +9,7 @@ use minisign_verify::{PublicKey, Signature};
 /// # Errors
 ///
 /// Returns [`UpdateError::MissingPublicKey`] when `raw` is empty or does not decode.
-pub fn parse_public_key(raw: &str) -> Result<PublicKey> {
+pub(crate) fn parse_public_key(raw: &str) -> Result<PublicKey> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Err(UpdateError::MissingPublicKey);
@@ -32,7 +32,7 @@ pub fn parse_public_key(raw: &str) -> Result<PublicKey> {
 /// # Errors
 ///
 /// Returns [`UpdateError::ManifestSignature`] when the signature is missing or invalid.
-pub fn verify_minisign(public_key: &PublicKey, data: &[u8], signature: &str) -> Result<()> {
+pub(crate) fn verify_minisign(public_key: &PublicKey, data: &[u8], signature: &str) -> Result<()> {
     let signature = signature.trim();
     if signature.is_empty() {
         return Err(UpdateError::ManifestSignature);
@@ -98,13 +98,24 @@ pub(crate) fn to_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// Verify a detached minisign signature over raw manifest bytes.
+/// Verifies `data` against a minisign signature with the key in `public_key`.
+///
+/// This is the client's own check, offered to the release lane so that a
+/// feed is tested before it is published with the code that will read it.
+/// The key and the signature are accepted in the forms [`parse_public_key`]
+/// and [`verify_minisign`] describe; the key is passed as text so that no
+/// type of the minisign library appears in this crate's interface.
 ///
 /// # Errors
 ///
-/// [`UpdateError::ManifestSignature`] when verification fails.
-pub fn verify_manifest_bytes(key: &PublicKey, body: &[u8], signature: &str) -> Result<()> {
-    verify_minisign(key, body, signature)
+/// Returns [`UpdateError::MissingPublicKey`] when `public_key` is empty or
+/// not a minisign public key, and [`UpdateError::ManifestSignature`] when
+/// `signature` is empty, is not a minisign signature, or does not verify
+/// `data` with that key.
+pub fn verify_signature(public_key: &str, data: &[u8], signature: &str) -> Result<()> {
+    let public_key = parse_public_key(public_key)?;
+
+    verify_minisign(&public_key, data, signature)
 }
 
 #[cfg(test)]

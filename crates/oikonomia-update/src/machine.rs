@@ -17,7 +17,7 @@
 //! has no representation, and the [`UpdateStatus`] the webview sees is
 //! derived from the state instead of being stored next to it.
 
-use crate::client::{CheckOutcome, ClientConfig, InstallOutcome, VerifiedOffer, perform_check};
+use crate::client::{CheckOutcome, InstallOutcome, VerifiedOffer};
 use crate::error::{Result, UpdateError};
 use crate::status::UpdateStatus;
 use semver::Version;
@@ -92,15 +92,6 @@ impl UpdateMachine {
             CheckOutcome::AvailableManually { version, notes } => State::Manual { version, notes },
             CheckOutcome::Failed => State::Failed,
         };
-    }
-
-    /// Runs begin + [`perform_check`] + finish under one call (tests / single-threaded).
-    pub fn check(&mut self, config: &ClientConfig) -> UpdateStatus {
-        if self.begin_check() == CheckStart::Started {
-            let outcome = perform_check(config);
-            self.finish_check(outcome);
-        }
-        self.status()
     }
 
     /// Moves from Available to Installing and hands out the offer to install.
@@ -180,4 +171,19 @@ enum State {
     Installing,
     /// The last check or install failed.
     Failed,
+}
+
+#[cfg(test)]
+impl UpdateMachine {
+    /// Runs a whole check in one call and returns the status it led to.
+    ///
+    /// Test-only: it performs the request between begin and finish, which a
+    /// caller that shares the machine behind a lock must not do.
+    pub(crate) fn check(&mut self, config: &crate::client::ClientConfig) -> UpdateStatus {
+        if self.begin_check() == CheckStart::Started {
+            let outcome = crate::client::perform_check(config);
+            self.finish_check(outcome);
+        }
+        self.status()
+    }
 }

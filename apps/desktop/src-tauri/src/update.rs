@@ -253,7 +253,7 @@ mod tests {
     use crate::update_key::UPDATER_PUBLIC_KEY;
     use oikonomia_update::{
         ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallRoute, UpdateError,
-        UpdateMachine, UpdateStatus, parse_public_key,
+        UpdateMachine, UpdateStatus,
     };
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -273,7 +273,13 @@ mod tests {
     #[test]
     fn baked_key_is_a_nonempty_minisign_key() {
         assert!(UPDATER_PUBLIC_KEY.len() > 32);
-        parse_public_key(UPDATER_PUBLIC_KEY).expect("ops minisign public key must decode");
+        ClientConfig::production(
+            UPDATER_PUBLIC_KEY,
+            env!("CARGO_PKG_VERSION"),
+            std::env::temp_dir().join("oiko-update-never-written"),
+            InstallRoute::InApp,
+        )
+        .expect("ops minisign public key must decode");
     }
 
     #[test]

@@ -5,7 +5,7 @@
 /// `<a href="...">` becomes the link text only. Remaining `&`, `<`, `>`, quotes
 /// are escaped. The result is safe to show as text.
 #[must_use]
-pub fn sanitize_notes(input: &str) -> String {
+pub(crate) fn sanitize_notes(input: &str) -> String {
     let mut stripped = String::new();
     let mut in_tag = false;
     let mut pending_lt = false;

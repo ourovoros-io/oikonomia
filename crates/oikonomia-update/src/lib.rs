@@ -7,31 +7,28 @@
 
 mod client;
 mod error;
-pub mod feed;
+mod feed;
 mod hosts;
 mod machine;
 mod notes;
-pub mod release_set;
+mod release_set;
 mod status;
 mod verify;
 mod version;
 
-pub use client::{
+pub use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
-    UPDATE_FEED_URL, VerifiedOffer, current_updater_platform, delete_artifact, download_and_verify,
-    install_offer, perform_check,
+    VerifiedOffer, install_offer, perform_check,
 };
-pub use error::{Result, UpdateError};
-pub use feed::{FeedArtifact, assemble_manifest};
-pub use hosts::HostPolicy;
-pub use machine::{CheckStart, UpdateMachine};
-pub use notes::sanitize_notes;
-pub use release_set::{
-    CHECKSUMS_FILE, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets, feed_entries,
+pub use crate::error::{Result, UpdateError};
+pub use crate::feed::{FeedArtifact, assemble_manifest};
+pub use crate::machine::{CheckStart, UpdateMachine};
+pub use crate::release_set::{
+    ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets, feed_entries,
     feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,
 };
-pub use status::UpdateStatus;
-pub use verify::{parse_public_key, verify_manifest_bytes, verify_minisign};
+pub use crate::status::UpdateStatus;
+pub use crate::verify::verify_signature;
 
 #[cfg(test)]
 mod tests;

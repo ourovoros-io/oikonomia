@@ -75,18 +75,18 @@ const FEED_FILES: [&str; 2] = ["latest.json", "latest.json.sig"];
 /// Name of the checksum file published with every release: one
 /// `<sha256>  <file name>` line per published file, the format
 /// `sha256sum --check` reads.
-pub const CHECKSUMS_FILE: &str = "SHA256SUMS";
+const CHECKSUMS_FILE: &str = "SHA256SUMS";
 
 /// Version-free copy of the macOS disk image. getoikonomia.app links to
 /// `releases/latest/download/<name>`, so these names are a contract with the
 /// site and must not change without it.
-pub const FIXED_MACOS_DMG: &str = "Oikonomia-macos-arm64.dmg";
+const FIXED_MACOS_DMG: &str = "Oikonomia-macos-arm64.dmg";
 /// Version-free copy of the Windows installer, published only with Windows.
-pub const FIXED_WINDOWS_SETUP: &str = "Oikonomia-windows-x64-setup.exe";
+const FIXED_WINDOWS_SETUP: &str = "Oikonomia-windows-x64-setup.exe";
 /// Version-free copy of the Linux `AppImage`.
-pub const FIXED_LINUX_APPIMAGE: &str = "Oikonomia-linux-x86_64.AppImage";
+const FIXED_LINUX_APPIMAGE: &str = "Oikonomia-linux-x86_64.AppImage";
 /// Version-free copy of the Debian package.
-pub const FIXED_LINUX_DEB: &str = "Oikonomia-linux-amd64.deb";
+const FIXED_LINUX_DEB: &str = "Oikonomia-linux-amd64.deb";
 
 /// One version-free copy: the fixed name, which platform it is for, and the
 /// suffix of the versioned file it copies.
@@ -121,7 +121,7 @@ const FIXED_COPIES: [FixedCopy; 4] = [
 
 /// True for one of the version-free copy names, whatever the Windows choice.
 #[must_use]
-pub fn is_fixed_name(file_name: &str) -> bool {
+fn is_fixed_name(file_name: &str) -> bool {
     FIXED_COPIES.iter().any(|copy| copy.name == file_name)
 }
 

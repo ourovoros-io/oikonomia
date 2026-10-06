@@ -2,7 +2,7 @@
 
 #![expect(clippy::panic, reason = "tests fail loudly by design")]
 
-use crate::UPDATE_FEED_URL;
+use crate::client::UPDATE_FEED_URL;
 use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
     MAX_ARTIFACT_BYTES, MAX_MANIFEST_BYTES, MAX_REDIRECTS, MAX_SIGNATURE_BYTES, VerifiedOffer,

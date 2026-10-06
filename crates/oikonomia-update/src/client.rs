@@ -19,7 +19,7 @@ use url::Url;
 /// GitHub resolves `releases/latest` to published, non-prerelease releases
 /// only, so a draft awaiting promotion is never offered.
 /// Trust is the baked minisign key, not GitHub.
-pub const UPDATE_FEED_URL: &str =
+pub(crate) const UPDATE_FEED_URL: &str =
     "https://github.com/ourovoros-io/oikonomia/releases/latest/download/latest.json";
 
 /// Bounds the feed body held in memory.
@@ -51,7 +51,7 @@ const ARTIFACT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `{os}-{arch}` used by Tauri static manifests (`linux-x86_64`, `darwin-aarch64`).
 #[must_use]
-pub fn current_updater_platform() -> String {
+pub(crate) fn current_updater_platform() -> String {
     let os = match std::env::consts::OS {
         "macos" => "darwin",
         other => other,
@@ -103,7 +103,20 @@ pub struct ClientConfig {
 }
 
 impl ClientConfig {
-    /// Production constructor: baked feed URL, production host policy, this binary's platform.
+    /// Builds the configuration the desktop uses: the feed URL and host
+    /// allow-list built into this crate, and the platform this binary was
+    /// compiled for.
+    ///
+    /// `public_key` is the updater minisign key, as the key file or the
+    /// base64 of it. `current_version` is the running version, with or
+    /// without a leading `v`. `install_route` says whether this copy may
+    /// replace itself.
+    ///
+    /// `cache_dir` is where a verified artifact is written and then run from.
+    /// The caller must pass a directory under the user's own cache location:
+    /// never the vault data directory, and never a directory another account
+    /// can write to, such as a shared temporary directory. The directory is
+    /// created on the first install, and on Unix forced to mode `0700`.
     ///
     /// # Errors
     ///
@@ -163,14 +176,6 @@ impl ClientConfig {
             host_policy,
             install_route: InstallRoute::InApp,
         })
-    }
-
-    /// Directory where artifacts are written. Callers pass a directory under
-    /// the user's own cache location: never the vault data dir, and never a
-    /// directory other accounts can write to.
-    #[must_use]
-    pub fn cache_dir(&self) -> &Path {
-        &self.cache_dir
     }
 }
 
@@ -448,7 +453,7 @@ fn offer_from_manifest(
 /// [`UpdateError::ResponseTooLarge`] when the artifact exceeds
 /// [`MAX_ARTIFACT_BYTES`]; and [`UpdateError::CacheIo`] when the cache
 /// directory cannot be created or made private, or the file cannot be written.
-pub fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
+pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
     prepare_cache_dir(&config.cache_dir).map_err(UpdateError::CacheIo)?;
     purge_cache(&config.cache_dir);
     let dest = config.cache_dir.join(format!(
@@ -589,7 +594,7 @@ fn purge_cache(cache_dir: &Path) {
 /// A file that is already gone is not a failure. Any other failure is logged
 /// and not returned: this is cleanup, and it must not replace the outcome of
 /// the step it follows.
-pub fn delete_artifact(path: &Path) {
+pub(crate) fn delete_artifact(path: &Path) {
     match std::fs::remove_file(path) {
         Ok(()) => {}
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
