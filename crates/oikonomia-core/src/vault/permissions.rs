@@ -7,19 +7,33 @@
 //! A new file gets that mode at creation, not afterwards. A file that
 //! `SQLite` is about to create (the database, a backup snapshot) is created
 //! empty here first, because `SQLite` itself would create it under the umask.
+//!
+//! Creating with the mode is what the guarantee rests on, and it fails the
+//! operation when it fails. Tightening something that already exists
+//! (`restrict_to_owner`) is best effort and only logs: a filesystem that
+//! cannot hold a mode must not make an existing vault unopenable.
 
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::path::Path;
 
 use crate::error::{Error, Result};
 
+/// Mode of the data directory: owner may list, enter and write.
 #[cfg(unix)]
 const DIR_MODE: u32 = 0o700;
+/// Mode of every vault file: owner may read and write.
 #[cfg(unix)]
 const FILE_MODE: u32 = 0o600;
 
-/// Create `dir` and any missing parents readable only by the owner. An
-/// existing directory is tightened to the same mode.
+/// Creates `dir` and any missing parents, readable only by the owner.
+///
+/// An existing directory is tightened to the same mode. Existing parents are
+/// left as they are.
+///
+/// # Errors
+///
+/// [`Error::Io`] when the directory cannot be created, including when `dir`
+/// exists and is not a directory.
 pub(crate) fn create_private_dir(dir: &Path) -> Result<()> {
     private_dir_builder()
         .create(dir)
@@ -28,7 +42,12 @@ pub(crate) fn create_private_dir(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Create or truncate `path` so only the owner can read it.
+/// Creates or truncates `path` as a file only the owner can read, and
+/// returns it open for writing.
+///
+/// # Errors
+///
+/// [`Error::Io`] when the file cannot be created or opened for writing.
 pub(crate) fn create_private_file(path: &Path) -> Result<File> {
     let file = private_file_options()
         .open(path)
@@ -39,7 +58,7 @@ pub(crate) fn create_private_file(path: &Path) -> Result<File> {
     Ok(file)
 }
 
-/// Restrict an existing file or directory to its owner.
+/// Restricts an existing file or directory to its owner.
 ///
 /// Best effort: a filesystem that cannot hold the mode (a FAT stick, a file
 /// owned by someone else) must not make the vault unusable, so a failure is
@@ -51,11 +70,12 @@ pub(crate) fn restrict_to_owner(path: &Path) {
     }
 }
 
-/// Windows has no file modes; the per-user ACL of `AppData` already keeps
-/// other accounts out, so there is nothing to tighten.
+/// Does nothing: Windows has no file modes, and the per-user ACL of
+/// `AppData` already keeps other accounts out.
 #[cfg(not(unix))]
 pub(crate) fn restrict_to_owner(_path: &Path) {}
 
+/// Returns a recursive directory builder that creates at [`DIR_MODE`].
 #[cfg(unix)]
 fn private_dir_builder() -> DirBuilder {
     use std::os::unix::fs::DirBuilderExt;
@@ -65,6 +85,8 @@ fn private_dir_builder() -> DirBuilder {
     builder
 }
 
+/// Returns a recursive directory builder; there is no mode to set outside
+/// Unix.
 #[cfg(not(unix))]
 fn private_dir_builder() -> DirBuilder {
     let mut builder = DirBuilder::new();
@@ -72,6 +94,11 @@ fn private_dir_builder() -> DirBuilder {
     builder
 }
 
+/// Returns options that create or truncate a file for writing at
+/// [`FILE_MODE`].
+///
+/// The mode applies only when the file is created, which is why
+/// [`create_private_file`] tightens the path afterwards as well.
 #[cfg(unix)]
 fn private_file_options() -> OpenOptions {
     use std::os::unix::fs::OpenOptionsExt;
@@ -85,6 +112,7 @@ fn private_file_options() -> OpenOptions {
     options
 }
 
+/// Returns options that create or truncate a file for writing.
 #[cfg(not(unix))]
 fn private_file_options() -> OpenOptions {
     let mut options = OpenOptions::new();
@@ -92,6 +120,8 @@ fn private_file_options() -> OpenOptions {
     options
 }
 
+/// Sets `path` to [`DIR_MODE`] when it is a directory and to [`FILE_MODE`]
+/// otherwise.
 #[cfg(unix)]
 fn set_owner_only_mode(path: &Path) -> std::io::Result<()> {
     use std::fs::{Permissions, set_permissions};
