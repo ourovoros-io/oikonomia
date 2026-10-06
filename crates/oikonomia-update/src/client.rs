@@ -24,7 +24,7 @@
 //! nothing unverified can be picked up from the cache, by this process or by
 //! another.
 
-use crate::error::{Result, UpdateError};
+use crate::error::{FeedRefusal, Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
 use crate::verify::{parse_public_key, parse_sha256_hex, sha256, to_hex, verify_minisign};
@@ -380,6 +380,77 @@ pub fn install_offer(
     }
 }
 
+/// Runs the checks an installed copy makes on a feed whose signature has
+/// verified, for each of `platforms`, and downloads nothing.
+///
+/// For the release lane, before a feed is published: a feed this accepts is
+/// one a copy on each of those platforms accepts at steps 4 to 7 of the
+/// check, and one it refuses would be refused by every such copy after
+/// publication. It reads the feed through the client's own parser, version
+/// rule and entry checks, with the host allow-list the application ships
+/// with, so the two cannot disagree.
+///
+/// `manifest` is the body of `latest.json`. Its detached signature is not
+/// looked at here; [`verify_signature`](crate::verify_signature) checks
+/// that. `platforms` are the feed's platform keys to check, such as
+/// `linux-x86_64`.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_update::{FeedRefusal, check_feed_as_client};
+///
+/// let feed = br#"{
+///   "version": "0.2.0",
+///   "platforms": {
+///     "linux-x86_64": {
+///       "url": "https://example.com/Oikonomia.AppImage",
+///       "signature": "signature",
+///       "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+///     }
+///   }
+/// }"#;
+///
+/// let refusal = check_feed_as_client(feed, &["linux-x86_64"]).unwrap_err();
+/// assert!(matches!(refusal, FeedRefusal::Entry { .. }));
+/// assert_eq!(
+///     refusal.to_string(),
+///     "linux-x86_64: installed copies refuse https://example.com/Oikonomia.AppImage"
+/// );
+/// ```
+///
+/// # Errors
+///
+/// Returns [`FeedRefusal::Unreadable`] when the body is not the JSON the
+/// client reads or its version is not `SemVer`,
+/// [`FeedRefusal::MissingPlatform`] for the first of `platforms` the feed
+/// has no entry for, and [`FeedRefusal::Entry`] for the first entry whose
+/// URL does not parse, is off the allow-list or ends in `.deb`, whose
+/// signature is empty, or whose SHA-256 is not 64 hex characters.
+pub fn check_feed_as_client(
+    manifest: &[u8],
+    platforms: &[&str],
+) -> std::result::Result<(), FeedRefusal> {
+    let (manifest, _version) = parse_manifest(manifest).map_err(FeedRefusal::Unreadable)?;
+    let host_policy = HostPolicy::production();
+
+    for &platform in platforms {
+        let Some(entry) = manifest.platforms.get(platform) else {
+            return Err(FeedRefusal::MissingPlatform {
+                platform: platform.to_owned(),
+            });
+        };
+
+        checked_artifact(&host_policy, entry).map_err(|source| FeedRefusal::Entry {
+            platform: platform.to_owned(),
+            url: entry.url.clone(),
+            source,
+        })?;
+    }
+
+    Ok(())
+}
+
 /// Returns the key this binary looks itself up by in a feed: `{os}-{arch}`
 /// in Tauri's spelling, such as `linux-x86_64` or `darwin-aarch64`.
 #[must_use]
@@ -426,13 +497,10 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
     // JSON parser never sees a body the key holder did not sign.
     verify_minisign(&config.public_key, &body, signature)?;
 
-    let manifest: RawManifest =
-        serde_json::from_slice(&body).map_err(|_| UpdateError::ManifestParse)?;
-
     // The version is compared before the platform entry is read: a copy that
     // is already current has no use for an artifact, so a feed that lists
     // none for its platform is not a failure for it.
-    let remote = parse_version(&manifest.version)?;
+    let (manifest, remote) = parse_manifest(&body)?;
     if remote <= config.current_version {
         return Ok(CheckOutcome::UpToDate);
     }
@@ -603,6 +671,19 @@ struct RawPlatform {
     sha256: String,
 }
 
+/// The artifact of one platform entry, after the checks a copy makes before
+/// it offers the entry.
+struct CheckedArtifact {
+    /// Where the artifact is downloaded from. It passed
+    /// [`HostPolicy::is_allowed_artifact_url`].
+    url: Url,
+    /// The minisign signature over the artifact. It is not empty; whether
+    /// it verifies is known only once the artifact is there.
+    signature: String,
+    /// The SHA-256 the artifact must have.
+    sha256: [u8; 32],
+}
+
 /// What a fetch is for. That fixes its size cap, its time limits, and whether
 /// the request tells the server which copy of the app is asking.
 #[derive(Debug, Clone, Copy)]
@@ -673,41 +754,77 @@ fn log_failure(context: &str, error: &UpdateError) {
     }
 }
 
+/// Parses a feed body, and the version it states, the way every copy does.
+///
+/// The caller has verified the detached signature over `body`, or is the
+/// release lane asking what a copy would make of it.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ManifestParse`] when `body` is not the expected
+/// JSON, and [`UpdateError::InvalidVersion`] when its version is not `SemVer`.
+fn parse_manifest(body: &[u8]) -> Result<(RawManifest, Version)> {
+    let manifest: RawManifest =
+        serde_json::from_slice(body).map_err(|_| UpdateError::ManifestParse)?;
+    let version = parse_version(&manifest.version)?;
+
+    Ok((manifest, version))
+}
+
 /// Builds the offer for `version` from this platform's entry in `manifest`.
 ///
 /// # Errors
 ///
 /// Returns [`UpdateError::MissingPlatform`] when the manifest has no entry
-/// for the configured platform; [`UpdateError::ArtifactUrl`] when the entry's
-/// URL does not parse, is off the allow-list or ends in `.deb`;
-/// [`UpdateError::ManifestSignature`] when its signature is empty; and
-/// [`UpdateError::ArtifactIntegrity`] when its SHA-256 is not 64 hex
-/// characters.
+/// for the configured platform, and otherwise what [`checked_artifact`]
+/// returns for the entry.
 fn offer_from_manifest(
     config: &ClientConfig,
     manifest: &RawManifest,
     version: Version,
 ) -> Result<VerifiedOffer> {
-    let platform = manifest
+    let entry = manifest
         .platforms
         .get(&config.platform)
         .ok_or(UpdateError::MissingPlatform)?;
-
-    let artifact_url = Url::parse(&platform.url).map_err(|_| UpdateError::ArtifactUrl)?;
-    if !config.host_policy.is_allowed_artifact_url(&artifact_url) {
-        return Err(UpdateError::ArtifactUrl);
-    }
-    if platform.signature.trim().is_empty() {
-        return Err(UpdateError::ManifestSignature);
-    }
-    let sha256 = parse_sha256_hex(&platform.sha256)?;
+    let artifact = checked_artifact(&config.host_policy, entry)?;
     let notes = sanitize_notes(manifest.notes.as_deref().unwrap_or(""));
 
     Ok(VerifiedOffer {
         version,
         notes,
-        artifact_url,
-        artifact_signature: platform.signature.clone(),
+        artifact_url: artifact.url,
+        artifact_signature: artifact.signature,
+        sha256: artifact.sha256,
+    })
+}
+
+/// Checks one platform entry of a feed against `host_policy` and returns its
+/// artifact.
+///
+/// Both the client and [`check_feed_as_client`] decide through this
+/// function whether an entry may be offered.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::ArtifactUrl`] when the entry's URL does not parse,
+/// is off the allow-list or ends in `.deb`;
+/// [`UpdateError::ManifestSignature`] when its signature is empty; and
+/// [`UpdateError::ArtifactIntegrity`] when its SHA-256 is not 64 hex
+/// characters.
+fn checked_artifact(host_policy: &HostPolicy, entry: &RawPlatform) -> Result<CheckedArtifact> {
+    let url = Url::parse(&entry.url).map_err(|_| UpdateError::ArtifactUrl)?;
+    if !host_policy.is_allowed_artifact_url(&url) {
+        return Err(UpdateError::ArtifactUrl);
+    }
+    if entry.signature.trim().is_empty() {
+        return Err(UpdateError::ManifestSignature);
+    }
+    let sha256 = parse_sha256_hex(&entry.sha256)?;
+
+    Ok(CheckedArtifact {
+        url,
+        signature: entry.signature.clone(),
         sha256,
     })
 }
@@ -969,7 +1086,76 @@ fn read_capped(
 
 #[cfg(test)]
 mod tests {
-    use super::write_new_private_file;
+    use super::{check_feed_as_client, write_new_private_file};
+    use crate::error::{FeedRefusal, UpdateError};
+    use crate::feed::{FeedArtifact, assemble_manifest};
+
+    /// A feed with one entry per name in `file_names`, keyed `platform-0`,
+    /// `platform-1` and so on, under a production release URL.
+    fn feed_naming(file_names: &[&str]) -> String {
+        let artifacts: Vec<FeedArtifact> = file_names
+            .iter()
+            .enumerate()
+            .map(|(index, file_name)| FeedArtifact {
+                platform: format!("platform-{index}"),
+                file_name: (*file_name).to_owned(),
+                signature: "signature".to_owned(),
+                sha256_hex: "ab".repeat(32),
+            })
+            .collect();
+        let base_url = "https://github.com/ourovoros-io/oikonomia/releases/download/v0.2.0";
+
+        assemble_manifest("v0.2.0", "notes", base_url, &artifacts).expect("assemble")
+    }
+
+    #[test]
+    fn a_feed_the_release_lane_assembles_for_github_passes_the_client_checks() {
+        let feed = feed_naming(&["Oikonomia.app.tar.gz", "Oikonomia.AppImage"]);
+
+        let checked = check_feed_as_client(feed.as_bytes(), &["platform-0", "platform-1"]);
+
+        assert!(checked.is_ok(), "{checked:?}");
+    }
+
+    #[test]
+    fn the_client_checks_name_the_platform_a_feed_lacks() {
+        let feed = feed_naming(&["Oikonomia.AppImage"]);
+
+        let refusal = check_feed_as_client(feed.as_bytes(), &["platform-0", "windows-x86_64"])
+            .expect_err("no windows entry");
+
+        assert_eq!(
+            refusal.to_string(),
+            "windows-x86_64: the feed has no entry for this platform"
+        );
+    }
+
+    #[test]
+    fn the_client_checks_refuse_a_debian_package_as_an_in_app_artifact() {
+        let feed = feed_naming(&["Oikonomia.AppImage", "oikonomia.deb"]);
+
+        let refusal = check_feed_as_client(feed.as_bytes(), &["platform-0", "platform-1"])
+            .expect_err("a .deb entry");
+
+        assert!(
+            matches!(
+                &refusal,
+                FeedRefusal::Entry { platform, url, source: UpdateError::ArtifactUrl }
+                    if platform == "platform-1" && url.ends_with("/oikonomia.deb")
+            ),
+            "{refusal:?}"
+        );
+    }
+
+    #[test]
+    fn the_client_checks_refuse_a_body_that_is_not_a_feed() {
+        let refusal = check_feed_as_client(b"not json", &[]).expect_err("not a feed");
+
+        assert!(
+            matches!(refusal, FeedRefusal::Unreadable(UpdateError::ManifestParse)),
+            "{refusal:?}"
+        );
+    }
 
     #[test]
     fn artifact_write_refuses_a_path_that_already_exists() {

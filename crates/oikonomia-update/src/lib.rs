@@ -9,8 +9,9 @@
 //! The crate also holds the release-side half of the same contract
 //! ([`assemble_manifest`], the release-set functions and the `assemble_feed`
 //! binary). The client's tests parse what the release side writes, and the
-//! release side checks signatures and digests before publication with the
-//! functions the client checks them with, so the two cannot drift apart.
+//! release side checks a feed before publication with the functions the
+//! client checks it with ([`verify_signature`], [`sha256_hex`] and
+//! [`check_feed_as_client`]), so the two cannot drift apart.
 //!
 //! # Trust root
 //!
@@ -164,9 +165,9 @@ mod version;
 
 pub use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
-    VerifiedOffer, install_offer, perform_check,
+    VerifiedOffer, check_feed_as_client, install_offer, perform_check,
 };
-pub use crate::error::{Result, UpdateError};
+pub use crate::error::{FeedRefusal, Result, UpdateError};
 pub use crate::feed::{FeedArtifact, assemble_manifest};
 pub use crate::machine::{CheckStart, UpdateMachine};
 pub use crate::release_set::{

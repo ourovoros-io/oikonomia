@@ -11,6 +11,10 @@
 //! come from building a [`ClientConfig`], from
 //! [`UpdateMachine::begin_install`] and from the release-side functions.
 //!
+//! [`FeedRefusal`] is the release lane's: it says which entry of a feed
+//! installed copies would refuse, and wraps the [`UpdateError`] they would
+//! refuse it with. It never crosses IPC and has no code.
+//!
 //! [`perform_check`]: crate::perform_check
 //! [`install_offer`]: crate::install_offer
 //! [`CheckOutcome::Failed`]: crate::CheckOutcome::Failed
@@ -150,6 +154,42 @@ impl UpdateError {
             Self::InvalidFeedInput { .. } => "update_invalid_feed_input",
         }
     }
+}
+
+/// Why installed copies would refuse a feed, as
+/// [`check_feed_as_client`](crate::check_feed_as_client) reports it to the
+/// release lane.
+///
+/// It names the platform and the URL, which [`UpdateError`] does not: the
+/// person promoting a release needs to know which entry to fix. The cause
+/// is the error a copy would end its check with.
+///
+/// Exhaustive on purpose, like [`UpdateError`].
+#[derive(Debug, Error)]
+pub enum FeedRefusal {
+    /// No copy can read the feed: it is not the JSON the client expects, or
+    /// its version is not `SemVer`.
+    #[error("installed copies cannot read the feed")]
+    Unreadable(#[source] UpdateError),
+
+    /// The feed has no entry for a platform that was to be checked.
+    #[error("{platform}: the feed has no entry for this platform")]
+    MissingPlatform {
+        /// The platform key that is missing.
+        platform: String,
+    },
+
+    /// Copies on one platform would refuse their entry.
+    #[error("{platform}: installed copies refuse {url}")]
+    Entry {
+        /// The platform key of the entry.
+        platform: String,
+        /// The artifact URL the entry gives, as written in the feed.
+        url: String,
+        /// What a copy would end its check with.
+        #[source]
+        source: UpdateError,
+    },
 }
 
 #[cfg(test)]

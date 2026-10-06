@@ -8,8 +8,8 @@
 //!
 //! - `assemble` writes `latest.json` from the artifacts in a directory;
 //! - `verify` checks a file against a detached minisign signature;
-//! - `verify-feed` checks every artifact a feed names against its hash and
-//!   its minisign signature;
+//! - `verify-feed` checks that installed copies would accept a feed, and
+//!   every artifact it names against its hash and its minisign signature;
 //! - `unpublished` lists the draft assets that must not be published;
 //! - `fixed-copies` writes the version-free copies the website links to;
 //! - `fixed-names` prints the version-free names a release must carry;
@@ -20,9 +20,9 @@
 //! error and exits with status 1.
 
 use oikonomia_update::{
-    FeedArtifact, ReleaseSetError, UpdateError, WindowsBuild, assemble_manifest, checksum_line,
-    checksummed_assets, feed_entries, feed_platform_keys, fixed_name_copies, fixed_names,
-    is_published_asset, sha256_hex, verify_signature,
+    FeedArtifact, FeedRefusal, ReleaseSetError, UpdateError, WindowsBuild, assemble_manifest,
+    check_feed_as_client, checksum_line, checksummed_assets, feed_entries, feed_platform_keys,
+    fixed_name_copies, fixed_names, is_published_asset, sha256_hex, verify_signature,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -148,6 +148,10 @@ enum CliError {
         /// The directory that was listed.
         directory: PathBuf,
     },
+
+    /// Installed copies would refuse the feed.
+    #[error(transparent)]
+    Refused(#[from] FeedRefusal),
 
     /// The draft does not hold the files the release needs.
     #[error(transparent)]
@@ -326,22 +330,24 @@ fn run_verify(args: &[String]) -> CliResult<()> {
 
 /// Checks the artifacts a feed names against the files in `--dir`.
 ///
-/// The feed must hold exactly the platforms this release publishes, and
-/// every file it names must hash to its `sha256` and carry a minisign
-/// signature that verifies with `--pubkey`, the key baked into the app. Both
-/// are checked with the functions the app uses. Run before anything is
-/// public, so a release whose artifact fails either check never ships.
-///
-/// It does not repeat the client's other checks: the version and the URL
-/// allow-list are not looked at here.
+/// The feed must hold exactly the platforms this release publishes. It must
+/// pass the checks an installed copy makes before it offers an update: a
+/// version it can read, and for each platform an artifact URL on the app's
+/// allow-list. A feed assembled with a wrong `--base-url` fails here and not
+/// in every installed copy. And every file the feed names must hash to its
+/// `sha256` and carry a minisign signature that verifies with `--pubkey`,
+/// the key baked into the app. All of it is checked with the functions the
+/// app uses. Run before anything is public, so a release the app would
+/// refuse never ships.
 ///
 /// # Errors
 ///
 /// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] or
 /// [`CliError::Feed`] for a feed that cannot be read or parsed,
 /// [`CliError::FeedPlatforms`] when its platforms are not the published
-/// ones, whatever [`verify_feed_entry`] returns for the first entry that
-/// fails, and [`CliError::Output`] when a result line cannot be printed.
+/// ones, [`CliError::Refused`] when installed copies would refuse it,
+/// whatever [`verify_feed_entry`] returns for the first entry that fails,
+/// and [`CliError::Output`] when a result line cannot be printed.
 fn run_verify_feed(args: &[String]) -> CliResult<()> {
     let manifest = Path::new(required_flag(args, "--manifest")?);
     let directory = Path::new(required_flag(args, "--dir")?);
@@ -365,6 +371,8 @@ fn run_verify_feed(args: &[String]) -> CliResult<()> {
             wanted,
         });
     }
+
+    check_feed_as_client(&body, &wanted)?;
 
     for (platform, entry) in &feed.platforms {
         let file_name = verify_feed_entry(platform, entry, directory, public_key)?;
@@ -652,13 +660,20 @@ mod tests {
         dir
     }
 
+    /// A release download URL on a host the app may fetch from.
+    const BASE_URL: &str = "https://github.com/o/r/releases/download/v0.2.0/";
+
     fn assemble(dir: &Path, out: &Path, extra: &[&str]) -> Result<(), String> {
+        assemble_from(BASE_URL, dir, out, extra)
+    }
+
+    fn assemble_from(base_url: &str, dir: &Path, out: &Path, extra: &[&str]) -> Result<(), String> {
         let mut list = vec![
             "assemble",
             "--version",
             "v0.2.0",
             "--base-url",
-            "https://github.com/o/r/releases/download/v0.2.0/",
+            base_url,
             "--dir",
             text(dir),
             "--out",
@@ -1143,6 +1158,54 @@ mod tests {
         let err = verify_feed(draft.path(), &feed, "not a key", &["--with-windows"])
             .expect_err("bad key");
         assert_eq!(err, "updater public key is missing or invalid");
+    }
+
+    #[test]
+    fn verify_feed_refuses_a_feed_whose_urls_the_app_would_not_fetch() {
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
+        let feed = draft.path().join("latest.json");
+
+        // Digests and signatures are right; only the host is not one the
+        // installed app will contact.
+        let base_url = "https://downloads.example.com/v0.2.0";
+        assemble_from(base_url, draft.path(), &feed, &[]).expect("assemble");
+
+        let err = verify_feed(draft.path(), &feed, &public_key_text, &[]).expect_err("wrong host");
+        assert_eq!(
+            err,
+            format!(
+                "darwin-aarch64: installed copies refuse {base_url}/{MAC}: \
+                 update url is not allow-listed"
+            )
+        );
+    }
+
+    #[test]
+    fn verify_feed_refuses_a_version_the_app_could_not_read() {
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
+        let feed = draft.path().join("latest.json");
+
+        assemble(draft.path(), &feed, &[]).expect("assemble");
+        let written = std::fs::read_to_string(&feed).expect("feed");
+        let edited = written.replace(r#""version": "0.2.0""#, r#""version": "0.2""#);
+        assert_ne!(edited, written, "the feed must hold the version to edit");
+        std::fs::write(&feed, edited).expect("edit");
+
+        let err = verify_feed(draft.path(), &feed, &public_key_text, &[]).expect_err("version");
+        assert_eq!(
+            err,
+            "installed copies cannot read the feed: version \"0.2\" is not semver"
+        );
     }
 
     #[test]
