@@ -178,7 +178,6 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn windows_data_dir_is_machine_local_not_roaming() {
         let data_dir = default_data_dir().expect("app-data dir must be resolvable");
         let roaming = directories::BaseDirs::new()
@@ -203,7 +202,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn linux_data_dir_is_the_xdg_data_directory() {
         let data_dir = default_data_dir().expect("app-data dir must be resolvable");
         let xdg_data = directories::BaseDirs::new()
