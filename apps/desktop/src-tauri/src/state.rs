@@ -406,6 +406,13 @@ pub(crate) struct WatchdogGate {
     /// reached its gate update.
     #[cfg(test)]
     follow_entries: AtomicU64,
+    /// Times the watchdog started the wait it parks in, counted with `state`
+    /// held, just before the wait releases it.
+    #[cfg(test)]
+    parked_waits: AtomicU64,
+    /// Times the watchdog started a poll-interval wait, counted the same way.
+    #[cfg(test)]
+    poll_waits: AtomicU64,
 }
 
 /// What the gate tells the watchdog.
@@ -453,6 +460,10 @@ impl WatchdogGate {
             ticks: AtomicU64::new(0),
             #[cfg(test)]
             follow_entries: AtomicU64::new(0),
+            #[cfg(test)]
+            parked_waits: AtomicU64::new(0),
+            #[cfg(test)]
+            poll_waits: AtomicU64::new(0),
         }
     }
 
@@ -541,6 +552,9 @@ impl WatchdogGate {
             if state.phase == GatePhase::Running {
                 return Wake::Poll;
             }
+            #[cfg(test)]
+            self.parked_waits.fetch_add(1, Ordering::SeqCst);
+
             state = self.wait(state);
         }
     }
@@ -552,6 +566,9 @@ impl WatchdogGate {
         if state.phase != GatePhase::Running || state.lock_to_announce {
             return state.phase;
         }
+        #[cfg(test)]
+        self.poll_waits.fetch_add(1, Ordering::SeqCst);
+
         let state = self.wait_timeout(state, interval);
         state.phase
     }
@@ -570,6 +587,23 @@ impl WatchdogGate {
     #[cfg(test)]
     fn tick_count(&self) -> u64 {
         self.ticks.load(Ordering::Relaxed)
+    }
+
+    /// Returns how many times the watchdog has started the wait it parks in.
+    ///
+    /// Once a test has read a count, the watchdog is inside that wait or about
+    /// to release `state` into it, so a change the test then makes to the
+    /// gate cannot be missed.
+    #[cfg(test)]
+    fn parked_waits(&self) -> u64 {
+        self.parked_waits.load(Ordering::SeqCst)
+    }
+
+    /// Returns how many poll-interval waits the watchdog has started. The
+    /// same holds for a count read here as for [`Self::parked_waits`].
+    #[cfg(test)]
+    fn poll_waits(&self) -> u64 {
+        self.poll_waits.load(Ordering::SeqCst)
     }
 }
 
@@ -807,8 +841,16 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     const TEST_PASSWORD: &str = "correct horse battery staple";
-    /// Longer than [`AUTO_LOCK_POLL_INTERVAL`] so a still-polling thread would tick.
-    const PAST_POLL: Duration = Duration::from_millis(5_500);
+    /// A poll interval short enough that a test can wait for an idle check.
+    const SHORT_POLL: Duration = Duration::from_millis(20);
+    /// A poll interval no test waits out, so a watchdog that leaves its poll
+    /// wait was woken and did not time out.
+    const NEVER_ELAPSES: Duration = Duration::from_hours(1);
+    /// How long a test waits for another thread before it fails. It only
+    /// turns an event that never comes into a failure instead of a hung
+    /// test, so it is generous: an unlock derives a key, which takes far
+    /// longer on a machine that is busy with other work.
+    const GIVE_UP_AFTER: Duration = Duration::from_mins(1);
 
     #[test]
     fn packaged_ocr_models_resolve_from_the_bundle_resources() {
@@ -967,7 +1009,7 @@ mod tests {
         vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
 
         // The bound only fails the test if no lock ever comes.
-        let locked = emits.recv_timeout(Duration::from_secs(5));
+        let locked = emits.recv_timeout(GIVE_UP_AFTER);
         shutdown_watchdog(&vault, join);
         locked.expect("activity in the future must lock at once");
         assert_eq!(vault.acquire().status(), VaultStatus::Locked);
@@ -1000,7 +1042,7 @@ mod tests {
             last_activity.store(0, Ordering::Relaxed);
 
             // The bound only fails the test if the watchdog is gone.
-            let got = announcements.recv_timeout(Duration::from_secs(5));
+            let got = announcements.recv_timeout(GIVE_UP_AFTER);
             assert_eq!(got.ok(), Some(round), "auto-lock round {round}");
         }
 
@@ -1021,41 +1063,39 @@ mod tests {
         let handles = state.watchdog_handles();
         let vault = Arc::clone(&handles.vault);
         let last_activity = Arc::clone(&handles.last_activity);
-        let (join, emits) = spawn_watchdog(&state, AUTO_LOCK_POLL_INTERVAL);
+        let (join, emits) = spawn_watchdog(&state, SHORT_POLL);
 
-        std::thread::sleep(PAST_POLL);
+        // Parked is a wait that only a notification ends, so once the
+        // watchdog is in it no amount of further waiting could show a poll.
+        wait_until("the watchdog parks on the locked vault", || {
+            vault.gate.parked_waits() >= 1
+        });
         assert_eq!(
             vault.gate.tick_count(),
             0,
-            "locked watchdog must not complete a 5s poll tick"
+            "the watchdog polled a vault that was never unlocked"
         );
         assert_eq!(vault.acquire().status(), VaultStatus::Locked);
+        let parks_before_unlock = vault.gate.parked_waits();
 
-        vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
         last_activity.store(0, Ordering::Relaxed);
-        vault.acquire().set_lock_timeout_cache(60);
+        vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
 
-        std::thread::sleep(PAST_POLL);
+        emits
+            .recv_timeout(GIVE_UP_AFTER)
+            .expect("an idle unlocked session is locked and vault-locked emitted");
         assert!(
             vault.gate.tick_count() >= 1,
             "unlock must unpark and run an idle check"
         );
-        assert_eq!(
-            vault.acquire().status(),
-            VaultStatus::Locked,
-            "idle unlocked session must still auto-lock"
-        );
-        emits
-            .recv_timeout(Duration::from_millis(200))
-            .expect("auto-lock emits vault-locked");
+        assert_eq!(vault.acquire().status(), VaultStatus::Locked);
 
-        let ticks_after_lock = vault.gate.tick_count();
-        std::thread::sleep(PAST_POLL);
-        assert_eq!(
-            vault.gate.tick_count(),
-            ticks_after_lock,
-            "auto-lock must park; no further 5s ticks"
-        );
+        // A watchdog that kept polling the locked vault would never start
+        // this wait again.
+        wait_until("the watchdog parks again after locking", || {
+            vault.gate.parked_waits() > parks_before_unlock
+        });
+        assert!(!vault.gate.is_running());
 
         shutdown_watchdog(&vault, join);
         let _ = fs::remove_dir_all(&dir);
@@ -1070,16 +1110,22 @@ mod tests {
         state.touch();
         vault.acquire().set_lock_timeout_cache(15 * 60);
 
-        let (join, _emits) = spawn_watchdog(&state, AUTO_LOCK_POLL_INTERVAL);
+        // The interval does not elapse, so only the lock's notification can
+        // end the poll wait.
+        let (join, _emits) = spawn_watchdog(&state, NEVER_ELAPSES);
+        wait_until("the watchdog is inside its poll wait", || {
+            vault.gate.poll_waits() >= 1
+        });
 
-        std::thread::sleep(Duration::from_millis(200));
         vault.acquire().lock();
 
-        std::thread::sleep(PAST_POLL);
+        wait_until("the lock ends the poll wait and the watchdog parks", || {
+            vault.gate.parked_waits() >= 1
+        });
         assert_eq!(
             vault.gate.tick_count(),
             0,
-            "lock must park before the unlocked poll wait completes"
+            "a poll wait cut short by a lock must not run an idle check"
         );
 
         shutdown_watchdog(&vault, join);
@@ -1154,7 +1200,7 @@ mod tests {
     /// deadline only turns an event that never comes into a failure instead
     /// of a hung test.
     fn wait_until(what: &str, condition: impl Fn() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + GIVE_UP_AFTER;
 
         while !condition() {
             assert!(Instant::now() < deadline, "timed out waiting until {what}");
@@ -1184,7 +1230,7 @@ mod tests {
             "vault force-locked but watchdog running"
         );
         emits
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(GIVE_UP_AFTER)
             .expect("the forced lock emits vault-locked");
 
         shutdown_watchdog(&vault, join);
