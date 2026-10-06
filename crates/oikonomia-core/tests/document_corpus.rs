@@ -287,10 +287,6 @@ fn is_private_row(entry: &ManifestEntry) -> bool {
         || entry.golden.starts_with("private/")
 }
 
-fn dump_enabled() -> bool {
-    std::env::var_os("DUMP_DOCUMENT_GOLDENS").is_some()
-}
-
 fn write_golden(path: &Path, suggestion: &DocumentSuggestion) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("golden dir");
@@ -376,14 +372,7 @@ fn golden_corpus_matches_parser() {
 
         let bytes = fs::read(&input_path).expect("fixture bytes");
         let suggestion = suggest_for(entry, &bytes);
-        let golden_path = root.join(&entry.golden);
-
-        if dump_enabled() && !golden_path.is_file() {
-            write_golden(&golden_path, &suggestion);
-            continue;
-        }
-
-        let golden = load_golden(&golden_path);
+        let golden = load_golden(&root.join(&entry.golden));
         assert_against_golden(&entry.id, &suggestion, &golden);
         compared += 1;
     }
@@ -441,11 +430,18 @@ fn text_mime_analyze_path_matches_invoice_reader() {
     assert_eq!(transfer_analyze.reference, transfer_parse.reference);
 }
 
+/// Writes a starter golden for every manifest row that has none.
+///
+/// A generator, not a check: it writes into `testdata/`, so it never runs
+/// with the suite. Run it by hand after adding a fixture, then review every
+/// field of the new file before committing it:
+///
+/// ```text
+/// cargo test -p oikonomia-core --test document_corpus write_missing_goldens -- --ignored
+/// ```
 #[test]
+#[ignore = "generator: writes golden files into testdata; run by hand"]
 fn write_missing_goldens() {
-    if !dump_enabled() {
-        return;
-    }
     let manifest = load_manifest();
     let root = corpus_root();
     for entry in &manifest.documents {
@@ -494,15 +490,8 @@ fn jpeg_ocr_smoke() {
     )
     .expect("analyze jpeg");
 
-    let golden_path = root.join("golden/english_total_jpeg.json");
-    if golden_path.is_file() {
-        let golden = load_golden(&golden_path);
-        // OCR is best-effort: lock fields only when the golden exists and OCR
-        // produced a comparable amount. Missing amount is not a CI failure.
-        if suggestion.amount_minor.is_some() {
-            assert_against_golden("english-total-jpeg", &suggestion, &golden);
-        }
-    }
+    let golden = load_golden(&root.join("golden/english_total_jpeg.json"));
+    assert_against_golden("english-total-jpeg", &suggestion, &golden);
 }
 
 /// The accounts a suggestion points at, as chart codes, and the entry kind.

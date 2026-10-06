@@ -2777,16 +2777,14 @@ mod jumbled_extract {
     }
 
     #[test]
+    #[ignore = "needs tests/fixtures/local_gas_bill.pdf, a private bill that is not in the tree"]
     #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
-    fn parse_optional_local_gas_pdf_bytes() {
+    fn parse_local_gas_pdf_bytes() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/local_gas_bill.pdf"
         );
-        let Ok(bytes) = std::fs::read(path) else {
-            // Optional local PDF — never required in the public tree.
-            return;
-        };
+        let bytes = std::fs::read(path).expect("the private fixture must be present");
         let text = pdf_extract::extract_text_from_mem(&bytes).expect("pdf text");
         let s = parse_invoice_text(&text, crate::prefs::Locale::En);
         assert_eq!(
