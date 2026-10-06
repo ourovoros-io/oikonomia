@@ -152,7 +152,7 @@ pub struct AnalyzeContext<'a> {
 /// None: a file that cannot be read, decoded or parsed yields an empty
 /// suggestion whose note says why, never an error. The `Result` stays
 /// because the desktop shell (`analyze_readonly` in
-/// `apps/desktop/src-tauri/src/commands.rs`) applies `?` to it; returning the
+/// `apps/desktop/src-tauri/src/commands/documents.rs`) applies `?` to it; returning the
 /// suggestion directly means changing that caller too.
 pub fn analyze_document_bytes(
     filename: &str,
