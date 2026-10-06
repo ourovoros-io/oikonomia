@@ -623,6 +623,14 @@ fn has_activity(line: &ReportLine) -> bool {
     line.debit_minor != 0 || line.credit_minor != 0
 }
 
+/// The earliest date an entry can have: the first day of year zero.
+///
+/// This is the lower bound of what [`parse_date`] reads, and every stored
+/// entry date went through it. `Date::MIN` would be the wrong bound for the
+/// queries, which compare dates as text: it is written with a leading minus
+/// sign (`-9999-01-01`), and text with a minus sign does not sort by date.
+const BOOKS_START: Date = time::macros::date!(0000 - 01 - 01);
+
 /// Current-FY net income and unclosed P&L from before `fy_start`.
 struct UnclosedPnl {
     fy_start: Date,
@@ -639,11 +647,13 @@ fn unclosed_pnl(
     let fy_start = fiscal_year_start(as_of, fiscal_start);
     let current_net = net_in_range(conn, entity_id, fy_start, as_of)?;
 
-    let prior_net = if let Some(prior_end) = fy_start.previous_day() {
-        let books_start = Date::from_calendar_date(1, Month::January, 1).unwrap_or(prior_end);
-        net_in_range(conn, entity_id, books_start, prior_end)?
-    } else {
-        0
+    let prior_net = match fy_start.previous_day() {
+        Some(prior_end) if prior_end >= BOOKS_START => {
+            net_in_range(conn, entity_id, BOOKS_START, prior_end)?
+        }
+        // The fiscal year holds the first day of the books, so nothing is
+        // before it.
+        _ => 0,
     };
 
     Ok(UnclosedPnl {
