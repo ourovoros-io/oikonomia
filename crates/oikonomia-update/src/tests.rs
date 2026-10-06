@@ -750,8 +750,7 @@ fn html_notes_are_plain_text() {
         notes,
         sanitize_notes("Read <a href=\"https://evil.example/nav\">here</a>")
     );
-    assert!(!notes.contains('<') || notes.contains("&lt;"));
-    assert!(!notes.contains("href"));
+    assert!(!notes.contains(['<', '>', '"']), "{notes}");
 }
 
 #[test]

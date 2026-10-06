@@ -18,17 +18,19 @@ pub enum UpdateStatus {
     UpToDate,
     /// Manifest verified and a newer artifact URL passed the allow-list.
     Available {
-        /// Remote `SemVer` from the signed manifest.
+        /// The published version from the signed manifest, without a
+        /// leading `v`.
         version: String,
-        /// Release notes, HTML-stripped and escaped. Plain text only.
+        /// The release notes with every HTML markup character escaped.
         notes: String,
     },
     /// Manifest verified and a newer version exists, but the system package
     /// manager owns this install. The app reports it and never installs it.
     AvailableManually {
-        /// Remote `SemVer` from the signed manifest.
+        /// The published version from the signed manifest, without a
+        /// leading `v`.
         version: String,
-        /// Release notes, HTML-stripped and escaped. Plain text only.
+        /// The release notes with every HTML markup character escaped.
         notes: String,
     },
     /// `update_install` is downloading, verifying or handing over the
