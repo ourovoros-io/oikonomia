@@ -601,6 +601,8 @@ export type CsvColumnMapping = {
   debit?: string | null
   credit?: string | null
   reference?: string | null
+  /** Says which way the money moved when `amount` is unsigned (a `Type` or `D/C` column). */
+  direction?: string | null
 }
 
 /** One donation address from the Rust table (`donation_addresses`). */
