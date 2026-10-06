@@ -12,7 +12,9 @@ use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
 use super::permissions::{create_private_dir, create_private_file, restrict_to_owner};
 use crate::db::register_fold;
 use crate::error::{Error, Result, ValidationError};
-use crate::vault::files::{discard_database_files, discard_file, write_private_file};
+use crate::vault::files::{
+    discard_database_files, discard_file, rename_synced, write_private_file,
+};
 use crate::vault::paths::vault_init_header_path;
 
 /// Lifecycle status for the vault (serializable to the UI).
@@ -35,7 +37,10 @@ pub struct Vault {
 }
 
 impl Vault {
-    /// Inspect the data directory without opening the database.
+    /// Inspects the data directory without opening the database.
+    ///
+    /// Also clears what an interrupted first run left behind, so the vault
+    /// reads as uninitialized again; see [`Vault::init`].
     ///
     /// # Errors
     ///
@@ -59,11 +64,18 @@ impl Vault {
 
         let header = if header_path.exists() {
             Some(VaultHeader::load(&header_path)?)
-        } else if db_path.exists() {
-            return Err(Error::VaultCorrupt(
-                "database exists without vault header".into(),
-            ));
         } else {
+            // A staged first-run header with no published one marks a first
+            // run that died part-way (see `Vault::init`). Its database holds
+            // nothing but the schema, so the run is thrown away and repeated.
+            if vault_init_header_path(&data_dir).exists() {
+                discard_partial_init(&data_dir);
+            }
+            if db_path.exists() {
+                return Err(Error::VaultCorrupt(
+                    "database exists without vault header".into(),
+                ));
+            }
             None
         };
 
@@ -92,11 +104,22 @@ impl Vault {
         &self.data_dir
     }
 
-    /// Create a new encrypted vault with the given master password.
+    /// Creates a new encrypted vault under the given master password and
+    /// leaves it unlocked.
+    ///
+    /// The header is what makes a vault exist, so it is published last: it is
+    /// staged as `vault.header.json.init`, the database is created and given
+    /// its schema, and only then is the staged header renamed into place. A
+    /// crash before the rename leaves the staged header beside a database
+    /// with no user data, which [`Vault::open_path`] recognizes and discards.
+    /// Publishing the header first would instead leave a header with no
+    /// database: a vault that reads as locked and that no password opens.
     ///
     /// # Errors
     ///
-    /// Weak password, already initialized, crypto, or I/O failures.
+    /// [`Error::Validation`] when a vault already exists or the password is
+    /// too short; [`Error::Crypto`] or [`Error::Io`] when the files cannot be
+    /// created. A failed attempt removes what it created.
     pub fn init(&mut self, password: &str) -> Result<()> {
         if self.header.is_some() || vault_db_path(&self.data_dir).exists() {
             return Err(Error::Validation(ValidationError::VaultAlreadyInitialized));
@@ -110,30 +133,17 @@ impl Vault {
         let header = VaultHeader::new_with_salt(&salt);
         let key = crypto::derive_key(password, &header)?;
 
-        let header_path = vault_header_path(&self.data_dir);
-        let header_json =
-            serde_json::to_string_pretty(&header).map_err(|err| Error::Io(err.to_string()))?;
-        let staged_header = vault_init_header_path(&self.data_dir);
-        write_private_file(&staged_header, header_json.as_bytes())?;
-        fs::rename(&staged_header, &header_path).map_err(|err| Error::Io(err.to_string()))?;
-
-        let db_path = vault_db_path(&self.data_dir);
-        let conn = match open_sqlcipher(&db_path, &key, true) {
-            Ok(conn) => conn,
+        match create_vault_files(&self.data_dir, &header, &key) {
+            Ok(conn) => {
+                self.header = Some(header);
+                self.conn = Some(conn);
+                Ok(())
+            }
             Err(err) => {
                 discard_partial_init(&self.data_dir);
-                return Err(err);
+                Err(err)
             }
-        };
-        if let Err(err) = bootstrap_schema(&conn) {
-            drop(conn);
-            discard_partial_init(&self.data_dir);
-            return Err(err);
         }
-
-        self.header = Some(header);
-        self.conn = Some(conn);
-        Ok(())
     }
 
     /// Unlock an existing vault.
@@ -193,8 +203,7 @@ impl Vault {
         let db_path = vault_db_path(&self.data_dir);
         let conn = open_verified(&db_path, password, &staged)?;
 
-        fs::rename(&staged_path, vault_header_path(&self.data_dir))
-            .map_err(|err| Error::Io(err.to_string()))?;
+        rename_synced(&staged_path, &vault_header_path(&self.data_dir))?;
 
         crate::db::migrate(&conn)?;
         self.header = Some(staged);
@@ -264,7 +273,7 @@ impl Vault {
                 .map_err(|err| Error::Crypto(err.to_string()))?;
             drop(conn);
 
-            fs::rename(&staged_path, &header_path).map_err(|err| Error::Io(err.to_string()))?;
+            rename_synced(&staged_path, &header_path)?;
             Ok(new_header)
         })();
 
@@ -457,11 +466,28 @@ fn silence_sqlcipher_log(_conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// A failed first-run must not leave a header without a database — that
-/// shape looks Locked and cannot be initialized or unlocked.
+/// Writes the files of a new vault in the order [`Vault::init`] documents and
+/// returns the open connection.
+fn create_vault_files(data_dir: &Path, header: &VaultHeader, key: &VaultKey) -> Result<Connection> {
+    let header_json =
+        serde_json::to_string_pretty(header).map_err(|err| Error::Io(err.to_string()))?;
+    let staged_header = vault_init_header_path(data_dir);
+    write_private_file(&staged_header, header_json.as_bytes())?;
+
+    let conn = open_sqlcipher(&vault_db_path(data_dir), key, true)?;
+    bootstrap_schema(&conn)?;
+
+    rename_synced(&staged_header, &vault_header_path(data_dir))?;
+    Ok(conn)
+}
+
+/// Removes what a first run that did not finish left behind: the staged
+/// header and the half-made database.
+///
+/// Safe only while no header is published, which is the one state it is
+/// called in; the published header is never touched.
 fn discard_partial_init(data_dir: &Path) {
     discard_database_files(&vault_db_path(data_dir));
-    discard_file(&vault_header_path(data_dir));
     discard_file(&vault_init_header_path(data_dir));
 }
 
@@ -668,22 +694,62 @@ mod tests {
     }
 
     #[test]
-    fn discard_partial_init_removes_header_and_db() {
+    fn discard_partial_init_removes_the_staged_header_and_the_database() {
         let dir = tempdir().expect("tempdir");
-        let header = vault_header_path(dir.path());
         let staged = vault_init_header_path(dir.path());
         let db = vault_db_path(dir.path());
-        for (path, bytes) in [(&header, &b"{}"[..]), (&staged, b"{}"), (&db, b"x")] {
-            fs::write(path, bytes).expect("write");
+        for path in [&staged, &db] {
+            fs::write(path, b"x").expect("write");
         }
 
         discard_partial_init(dir.path());
 
-        assert!(!header.exists(), "header must not survive a failed init");
         assert!(!staged.exists(), "staged init header must be removed");
         assert!(!db.exists(), "orphan db must be removed");
+    }
 
-        let vault = Vault::open_path(dir.path()).expect("open");
+    #[test]
+    fn init_leaves_no_staged_header() {
+        let (dir, _vault) = init_vault();
+
+        assert!(vault_header_path(dir.path()).exists());
+        assert!(!vault_init_header_path(dir.path()).exists());
+    }
+
+    #[test]
+    fn a_first_run_that_died_before_its_header_was_published_starts_over() {
+        // What a crash inside `init` leaves: the staged header and a database
+        // that holds nothing but the schema, with no published header.
+        let (dir, vault) = init_vault();
+        drop(vault);
+        fs::rename(
+            vault_header_path(dir.path()),
+            vault_init_header_path(dir.path()),
+        )
+        .expect("unpublish header");
+
+        let mut vault = Vault::open_path(dir.path()).expect("open after the crash");
+
         assert_eq!(vault.status(), VaultStatus::Uninitialized);
+        assert!(!vault_db_path(dir.path()).exists(), "half-made database");
+        assert!(
+            !vault_init_header_path(dir.path()).exists(),
+            "staged header"
+        );
+        vault.init(PASSWORD).expect("the first run can be repeated");
+    }
+
+    #[test]
+    fn a_database_without_any_header_is_still_corrupt() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+        fs::remove_file(vault_header_path(dir.path())).expect("lose header");
+
+        let err = Vault::open_path(dir.path())
+            .map(|vault| vault.status())
+            .expect_err("a database with no header must not be discarded");
+
+        assert!(matches!(err, Error::VaultCorrupt(_)), "got {err:?}");
+        assert!(vault_db_path(dir.path()).exists(), "the database stays");
     }
 }
