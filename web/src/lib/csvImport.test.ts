@@ -200,11 +200,39 @@ describe('column mapping helpers', () => {
       debit: '',
       credit: '',
       reference: '',
+      direction: '',
       amountMode: 'amount',
     })
     expect(mapping.description).toBe('Notes')
     expect(mapping.amount).toBe('Amount')
     expect(mapping.debit).toBeNull()
+  })
+
+  test('an edited mapping keeps the detected direction column', () => {
+    const typed = [...headers, 'Type']
+    const draft = draftFromDetected(typed, { ...detected, direction: 'type' })
+    expect(draft.direction).toBe('Type')
+
+    const edited = draftToMapping({ ...draft, description: 'Notes' })
+    expect(edited.direction).toBe('Type')
+    expect(edited.description).toBe('Notes')
+  })
+
+  test('debit and credit columns drop the direction column', () => {
+    const draft = draftFromDetected([...headers, 'Type'], { ...detected, direction: 'Type' })
+    const mapping = draftToMapping({
+      ...draft,
+      amountMode: 'debit_credit',
+      amount: '',
+      debit: 'Out',
+      credit: 'In',
+    })
+    expect(mapping.direction).toBeNull()
+  })
+
+  test('mappingsEqual compares the direction column', () => {
+    expect(mappingsEqual(detected, { ...detected, direction: null })).toBe(true)
+    expect(mappingsEqual(detected, { ...detected, direction: 'Type' })).toBe(false)
   })
 
   test('mappingsEqual ignores ASCII case', () => {
