@@ -4,8 +4,10 @@
 # the signature with codesign, spctl and stapler, and notarizes and staples
 # the disk image; any failed check fails the release. The linux
 # job builds the .deb and the AppImage and smoke-tests both. The windows job
-# builds the NSIS installer and smoke-tests it; it is not code-signed yet, so
-# the Promote workflow withholds it from the published release unless asked.
+# builds the NSIS installer, checks its updater signature against the app's
+# public key, and smoke-tests it. It is not Authenticode-signed: that needs
+# the repository variable WINDOWS_SIGNING=none, a deliberate opt-in checked
+# before anything is built (see scripts/require-windows-signing-mode.sh).
 # Every job adds to the same draft; the jobs run one after another so they
 # cannot race to create it.
 #
@@ -40,9 +42,11 @@
 # Linux — no signing account; .deb + .AppImage carry the updater minisign
 # signature only. The AppImage updates in-app; the .deb is a manual download.
 #
-# Windows — no code-signing certificate yet. The installer carries the updater
-# minisign signature, which the in-app update verifies, but Windows itself
-# shows its unknown-publisher warning on a first install.
+# Windows — no Authenticode certificate yet. Shipping without one is opt-in:
+# the repository variable (not a secret) WINDOWS_SIGNING must be exactly
+# `none`, or the run fails before the first build. The installer carries the
+# updater minisign signature, which the in-app update verifies, but Windows
+# itself shows its unknown-publisher warning on a first install.
 #
 # Tauri updater (minisign), required by both jobs.
 # Official Tauri v2 env names:
@@ -82,8 +86,28 @@ env:
   RELEASE_TAG: ${{ github.ref_type == 'tag' && inputs.dry_run != true && github.ref_name || '' }}
 
 jobs:
+  # Before any approval-gated, hour-long build: a release that cannot ship
+  # its Windows installer must say so now, not after macOS and Linux are on
+  # the draft. Reads the repository variable only; no environment, no
+  # secrets, read-only token.
+  windows-signing-mode:
+    name: windows signing mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require a deliberate Windows signing mode (fail-closed)
+        env:
+          WINDOWS_SIGNING: ${{ vars.WINDOWS_SIGNING }}
+        run: bash ./scripts/require-windows-signing-mode.sh
+
   macos:
     name: macos
+    needs: windows-signing-mode
     runs-on: macos-latest
     environment: release
     steps:
@@ -384,6 +408,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # Checked again here: an Environment `release` variable of the same
+      # name overrides the repository one inside this job.
+      - name: Require a deliberate Windows signing mode (fail-closed)
+        shell: bash
+        env:
+          WINDOWS_SIGNING: ${{ vars.WINDOWS_SIGNING }}
+        run: bash ./scripts/require-windows-signing-mode.sh
+
       - name: Require Tauri updater signing private key (fail-closed)
         shell: bash
         env:
@@ -414,6 +446,10 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       # NSIS only: the update path and the Promote workflow know no MSI.
+      # No bundle.windows.certificateThumbprint or signCommand is configured,
+      # so Tauri does no Authenticode signing (WINDOWS_SIGNING=none). It
+      # still signs the installer for the updater with the minisign key
+      # below (bundle.createUpdaterArtifacts) and uploads the .sig.
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -430,6 +466,35 @@ jobs:
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
           args: --bundles nsis
+
+      # The installer is the Windows updater artifact: the app downloads it,
+      # checks its sha256 and this .sig against the baked public key, then
+      # runs it. Prove here that the .sig exists and verifies with that key,
+      # so a draft never holds a Windows build the app would refuse.
+      # PowerShell, not bash, for the same Strawberry Perl reason as ci.yml.
+      - name: Verify the installer's updater signature with the app's public key
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -Path target/release/bundle/nsis -Filter '*-setup.exe')
+          if ($installers.Count -ne 1) {
+            Write-Host "::error::expected one NSIS installer in target/release/bundle/nsis, found $($installers.Count)"
+            exit 1
+          }
+          $installer = $installers[0].FullName
+          $sig = "$installer.sig"
+          if (-not (Test-Path $sig) -or (Get-Item $sig).Length -eq 0) {
+            Write-Host "::error::$sig is missing or empty; the app could not verify this installer"
+            exit 1
+          }
+          $pubkey = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).plugins.updater.pubkey
+          cargo run --quiet -p oikonomia-update --bin assemble_feed -- verify --manifest $installer --sig $sig --pubkey $pubkey
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::the updater signature of $installer does not verify with plugins.updater.pubkey"
+            exit 1
+          }
+          $authenticode = Get-AuthenticodeSignature -FilePath $installer
+          Write-Host "Updater signature ok. Authenticode status: $($authenticode.Status) (expected NotSigned with WINDOWS_SIGNING=none)"
 
       - name: Smoke-test the bundled app
         shell: pwsh
