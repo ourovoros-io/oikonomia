@@ -436,7 +436,21 @@ mod tests {
             (CoreError::AccountWrongEntity, CoreParams::NoData),
             (CoreError::MoneyOverflow, CoreParams::NoData),
             (CoreError::NegativeMoney, CoreParams::NoData),
+            (
+                CoreError::Database {
+                    operation: "read",
+                    detail: text(),
+                },
+                CoreParams::DiagnosticText,
+            ),
             (CoreError::Io(text()), CoreParams::DiagnosticText),
+            (
+                CoreError::Serialization {
+                    operation: "encode",
+                    detail: text(),
+                },
+                CoreParams::DiagnosticText,
+            ),
             (CoreError::Crypto(text()), CoreParams::DiagnosticText),
             (CoreError::VaultCorrupt(text()), CoreParams::DiagnosticText),
             (CoreError::BackupInvalid(text()), CoreParams::DiagnosticText),

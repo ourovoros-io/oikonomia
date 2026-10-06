@@ -12,7 +12,9 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   account_wrong_entity: 'error.accountWrongEntity',
   money_overflow: 'error.moneyOverflow',
   negative_money: 'error.negativeMoney',
+  database: 'error.io',
   io: 'error.io',
+  serialization: 'error.io',
   crypto: 'error.crypto',
   vault_corrupt: 'error.vaultCorrupt',
   backup_invalid: 'error.backupInvalid',
@@ -132,7 +134,9 @@ function keyFor(map: Record<string, string>, code: string): string | undefined {
  * over these. Every other code is specific enough to show as it is.
  */
 const VAGUE_CODES: ReadonlySet<string> = new Set([
+  'database',
   'io',
+  'serialization',
   'crypto',
   'unknown',
   'task_failed',

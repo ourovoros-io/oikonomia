@@ -22,7 +22,7 @@
 //! run it again, so the change would reach new vaults only.
 
 use crate::db::collect_rows;
-use crate::error::{Error, Result};
+use crate::error::{DatabaseContext, Error, Result};
 use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
@@ -57,7 +57,7 @@ const MIGRATIONS: &[(i64, Migration)] = &[
 ///   does not know its schema. Nothing is changed.
 /// - [`Error::VaultCorrupt`] when existing data cannot satisfy a constraint a
 ///   step adds (the v5 step and journal lines that are not debit XOR credit).
-/// - [`Error::Io`] when the schema version cannot be read or a statement of a
+/// - [`Error::Database`] when the schema version cannot be read or a statement of a
 ///   step fails.
 ///
 /// A failed step is rolled back and the steps before it stay applied.
@@ -68,7 +68,7 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             [],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read schema version")?;
 
     if version > CURRENT_SCHEMA_VERSION {
         return Err(Error::VaultCorrupt(format!(
@@ -89,35 +89,34 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 ///
 /// # Errors
 ///
-/// The error of `step`, or [`Error::Io`] when the transaction cannot be
+/// The error of `step`, or [`Error::Database`] when the transaction cannot be
 /// opened, the version cannot be written, or the commit fails. In every case
 /// the vault is as it was before the call.
 fn apply_migration(conn: &Connection, target: i64, step: Migration) -> Result<()> {
     // Dropping the transaction on an early return rolls it back.
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin migration transaction")?;
 
     step(&tx)?;
     tx.execute(
         "UPDATE vault_meta SET schema_version = ?1 WHERE id = 1",
         [target],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("record schema version")?;
 
-    tx.commit().map_err(|err| Error::Io(err.to_string()))
+    tx.commit().database("commit migration")
 }
 
 /// v2: the ledger tables (entities, accounts, journal) and app settings.
 fn migrate_v2(tx: &Transaction<'_>) -> Result<()> {
-    tx.execute_batch(SCHEMA_V2)
-        .map_err(|err| Error::Io(err.to_string()))
+    tx.execute_batch(SCHEMA_V2).database("create ledger tables")
 }
 
 /// v3: documents stored in the vault.
 fn migrate_v3(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(SCHEMA_V3)
-        .map_err(|err| Error::Io(err.to_string()))
+        .database("create documents table")
 }
 
 /// The tables and indexes [`migrate_v2`] creates.
@@ -214,7 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
 fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
     let deleted = tx
         .execute("DELETE FROM documents WHERE entry_id IS NULL", [])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete unlinked documents")?;
     if deleted > 0 {
         log::info!("v4 migration: deleted {deleted} unlinked document(s)");
     }
@@ -245,7 +244,7 @@ fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))
+    .database("rebuild documents table")
 }
 
 /// v5: every journal line is a debit or a credit, never both and never
@@ -267,7 +266,7 @@ fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
             [],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("count invalid journal lines")?;
     if violations > 0 {
         return Err(Error::VaultCorrupt(format!(
             "cannot migrate to v5: {violations} journal line(s) are not debit XOR credit"
@@ -295,7 +294,7 @@ fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_lines_account ON journal_lines(account_id);
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))
+    .database("rebuild journal lines table")
 }
 
 /// v6: the `hidden` flag on `journal_entries`.
@@ -312,7 +311,7 @@ fn migrate_v6(tx: &Transaction<'_>) -> Result<()> {
             ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))
+    .database("add hidden column to journal entries")
 }
 
 /// v7: the `recurring_templates` table.
@@ -350,7 +349,7 @@ fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
             ON recurring_templates(entity_id, next_date);
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))
+    .database("create recurring templates table")
 }
 
 /// Renames documents so that no two in one book share a filename.
@@ -361,7 +360,7 @@ fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when the documents cannot be read or a rename fails.
+/// [`Error::Database`] when the documents cannot be read or a rename fails.
 fn dedup_document_names(conn: &Connection) -> Result<()> {
     let rows: Vec<(String, String, String)> = {
         let mut stmt = conn
@@ -369,10 +368,10 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
                 "SELECT id, entity_id, filename FROM documents
                  ORDER BY entity_id, created_at ASC, rowid ASC",
             )
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .database("list document names")?;
         let mapped = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .database("list document names")?;
         collect_rows(mapped.map(|row| row.map(Ok)))?
     };
 
@@ -390,7 +389,7 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
                 "UPDATE documents SET filename = ?1 WHERE id = ?2",
                 rusqlite::params![name, id],
             )
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .database("rename duplicate document")?;
         }
         taken.insert((entity_id, name));
     }

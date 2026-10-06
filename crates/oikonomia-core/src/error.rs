@@ -38,10 +38,13 @@
 //! of variants such as [`Error::Io`], and not as a
 //! [`source`](std::error::Error::source): no variant has one.
 
+use std::fmt::Display;
 use thiserror::Error;
 
+mod context;
 mod validation;
 
+pub(crate) use context::DatabaseContext;
 pub use validation::{AccountRole, ValidationError};
 
 /// The result of a fallible operation in `oikonomia-core`.
@@ -103,9 +106,29 @@ pub enum Error {
     #[error("{0}")]
     Validation(ValidationError),
 
+    /// A statement or a transaction on the vault database failed.
+    #[error("{operation}: {detail}")]
+    Database {
+        /// What core was doing, as a lowercase phrase such as
+        /// `insert journal entry`.
+        operation: &'static str,
+        /// The driver's own text. For logs; never sent as a parameter.
+        detail: String,
+    },
+
     /// The filesystem or the database failed; the text is the cause.
     #[error("I/O error: {0}")]
     Io(String),
+
+    /// Encoding or decoding one of the application's own JSON files failed.
+    #[error("{operation}: {detail}")]
+    Serialization {
+        /// What core was doing, as a lowercase phrase such as
+        /// `encode preferences`.
+        operation: &'static str,
+        /// The encoder's own text. For logs; never sent as a parameter.
+        detail: String,
+    },
 
     /// Deriving the vault key or applying a cipher setting to the database
     /// failed; the text is the cause.
@@ -158,7 +181,9 @@ impl Error {
         "account_wrong_entity",
         "money_overflow",
         "negative_money",
+        "database",
         "io",
+        "serialization",
         "crypto",
         "vault_corrupt",
         "backup_invalid",
@@ -200,7 +225,9 @@ impl Error {
             Self::MoneyOverflow => "money_overflow",
             Self::NegativeMoney => "negative_money",
             Self::Validation(reason) => reason.code(),
+            Self::Database { .. } => "database",
             Self::Io(_) => "io",
+            Self::Serialization { .. } => "serialization",
             Self::Crypto(_) => "crypto",
             Self::VaultCorrupt(_) => "vault_corrupt",
             Self::BackupInvalid(_) => "backup_invalid",
@@ -208,6 +235,17 @@ impl Error {
             Self::NotFound(_) => "not_found",
             Self::Analysis(_) => "analysis",
             Self::CsvParse(_) => "csv_parse",
+        }
+    }
+}
+
+/// Constructors for the variants that wrap a lower-level failure.
+impl Error {
+    /// Builds the error for a database failure during `operation`.
+    pub(crate) fn database(operation: &'static str, detail: impl Display) -> Self {
+        Self::Database {
+            operation,
+            detail: detail.to_string(),
         }
     }
 }
@@ -233,7 +271,15 @@ mod tests {
             Error::MoneyOverflow,
             Error::NegativeMoney,
             Error::Validation(ValidationError::SameAccount),
+            Error::Database {
+                operation: "x",
+                detail: "x".into(),
+            },
             Error::Io("x".into()),
+            Error::Serialization {
+                operation: "x",
+                detail: "x".into(),
+            },
             Error::Crypto("x".into()),
             Error::VaultCorrupt("x".into()),
             Error::BackupInvalid("x".into()),
@@ -256,7 +302,9 @@ mod tests {
             Error::MoneyOverflow,
             Error::NegativeMoney,
             Error::Validation(_),
+            Error::Database { .. },
             Error::Io(_),
+            Error::Serialization { .. },
             Error::Crypto(_),
             Error::VaultCorrupt(_),
             Error::BackupInvalid(_),
