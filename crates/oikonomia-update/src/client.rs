@@ -249,12 +249,6 @@ struct RawManifest {
     notes: Option<String>,
     #[serde(default)]
     platforms: HashMap<String, RawPlatform>,
-    #[serde(default)]
-    url: Option<String>,
-    #[serde(default)]
-    signature: Option<String>,
-    #[serde(default)]
-    sha256: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -347,40 +341,25 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 }
 
 fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<VerifiedOffer> {
-    let (url_text, signature, sha256_hex) =
-        if let Some(platform) = manifest.platforms.get(&config.platform) {
-            (
-                platform.url.as_str(),
-                platform.signature.as_str(),
-                platform.sha256.as_str(),
-            )
-        } else {
-            let url = manifest.url.as_deref().ok_or(UpdateError::ManifestParse)?;
-            let signature = manifest
-                .signature
-                .as_deref()
-                .ok_or(UpdateError::ManifestParse)?;
-            let sha256 = manifest
-                .sha256
-                .as_deref()
-                .ok_or(UpdateError::ArtifactIntegrity)?;
-            (url, signature, sha256)
-        };
+    let platform = manifest
+        .platforms
+        .get(&config.platform)
+        .ok_or(UpdateError::ManifestParse)?;
 
-    let artifact_url = Url::parse(url_text).map_err(|_| UpdateError::ArtifactUrl)?;
+    let artifact_url = Url::parse(&platform.url).map_err(|_| UpdateError::ArtifactUrl)?;
     if !config.host_policy.is_allowed_artifact_url(&artifact_url) {
         return Err(UpdateError::ArtifactUrl);
     }
-    if signature.trim().is_empty() {
+    if platform.signature.trim().is_empty() {
         return Err(UpdateError::ManifestSignature);
     }
-    let sha256 = parse_sha256_hex(sha256_hex)?;
+    let sha256 = parse_sha256_hex(&platform.sha256)?;
     let notes = sanitize_notes(manifest.notes.as_deref().unwrap_or(""));
     Ok(VerifiedOffer {
         version: manifest.version.clone(),
         notes,
         artifact_url,
-        artifact_signature: signature.to_owned(),
+        artifact_signature: platform.signature.clone(),
         sha256,
         install_route: config.install_route,
     })

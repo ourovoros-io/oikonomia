@@ -1426,3 +1426,33 @@ fn artifact_download_may_outlast_the_feed_deadline_while_bytes_keep_arriving() {
 
     assert_eq!(std::fs::read(&path).expect("read"), payload);
 }
+#[test]
+fn artifact_fields_outside_the_platform_table_are_not_an_offer() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let payload = b"artifact-bytes";
+    // No entry for this platform; the artifact sits at the top level, a
+    // shape `assemble_manifest` never writes.
+    let body = serde_json::json!({
+        "version": "0.2.0",
+        "notes": "notes",
+        "platforms": {},
+        "url": server_url(&server, "/Oikonomia.AppImage").as_str(),
+        "signature": sign(&sk, payload),
+        "sha256": sha256_hex(payload),
+    })
+    .to_string();
+    let signature = sign(&sk, body.as_bytes());
+    serve_signed_manifest(&server, &body, &signature);
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    assert_eq!(check_error_code(&config), "update_manifest_parse");
+}
