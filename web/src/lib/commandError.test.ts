@@ -304,7 +304,16 @@ describe('command error localization', () => {
   })
 
   // The codes whose copy says little; a screen's own sentence says more.
-  const VAGUE_CODES = ['io', 'crypto', 'unknown', 'task_failed', 'validation_internal', 'analysis']
+  const VAGUE_CODES = [
+    'database',
+    'io',
+    'serialization',
+    'crypto',
+    'unknown',
+    'task_failed',
+    'validation_internal',
+    'analysis',
+  ]
 
   it('lets the screen sentence replace the copy of every vague code', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)

@@ -87,9 +87,11 @@ describe('backupCommandError', () => {
     expect(backupCommandError({ code: 'not_found', message: 'file not found' })).toBe(
       'Backup file not found.',
     )
-    expect(backupCommandError({ code: 'io', message: 'I/O error: disk' })).toBe(
-      'Could not read or write the backup file.',
-    )
+    for (const code of ['io', 'database', 'serialization']) {
+      expect(backupCommandError({ code, message: 'write backup archive: disk' }), code).toBe(
+        'Could not read or write the backup file.',
+      )
+    }
   })
 
   test('logs the raw cause of a file error, which the sentence hides', () => {
