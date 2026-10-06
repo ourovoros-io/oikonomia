@@ -311,7 +311,7 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
 /// Runs the check and keeps the cause of a failure, which [`perform_check`]
 /// logs and reduces to [`CheckOutcome::Failed`].
 pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome> {
-    let (final_url, body, status) = fetch_bytes(config, &config.feed_url, Resource::Manifest)?;
+    let (body, status) = fetch_bytes(config, &config.feed_url, Resource::Manifest)?;
     if status == 204 {
         return Ok(CheckOutcome::UpToDate);
     }
@@ -319,8 +319,10 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
         return Err(UpdateError::Network);
     }
 
-    let signature_url = signature_url_for(&final_url);
-    let (_sig_url, signature_bytes, sig_status) =
+    // Derived from the configured URL, not from the URL that was requested:
+    // `fetch_bytes` appends the identity query itself, once per request.
+    let signature_url = signature_url_for(&config.feed_url);
+    let (signature_bytes, sig_status) =
         fetch_bytes(config, &signature_url, Resource::ManifestSignature)?;
     if sig_status != 200 {
         return Err(UpdateError::ManifestSignature);
@@ -408,7 +410,7 @@ fn download_and_verify_inner(
     {
         return Err(UpdateError::ArtifactUrl);
     }
-    let (_url, bytes, status) = fetch_bytes(config, &offer.artifact_url, Resource::Artifact)?;
+    let (bytes, status) = fetch_bytes(config, &offer.artifact_url, Resource::Artifact)?;
     if status != 200 {
         return Err(UpdateError::Network);
     }
@@ -534,23 +536,16 @@ fn signature_url_for(feed: &Url) -> Url {
     signature
 }
 
-fn fetch_bytes(
-    config: &ClientConfig,
-    url: &Url,
-    resource: Resource,
-) -> std::result::Result<(Url, Vec<u8>, u16), UpdateError> {
-    let mut url = url.clone();
+fn fetch_bytes(config: &ClientConfig, url: &Url, resource: Resource) -> Result<(Vec<u8>, u16)> {
+    let mut request_url = url.clone();
     if resource.names_this_copy() {
-        attach_version_os_arch(&mut url, config);
+        attach_version_os_arch(&mut request_url, config);
     }
-    if !config.host_policy.is_allowed_fetch_url(&url) {
-        return Err(UpdateError::ArtifactUrl);
-    }
-    match fetch_once(config, &url, resource) {
-        Ok((bytes, status)) => Ok((url, bytes, status)),
-        Err(FetchFail::Denied) => Err(UpdateError::ArtifactUrl),
-        Err(FetchFail::TooLarge | FetchFail::Network) => Err(UpdateError::Network),
-    }
+
+    fetch_once(config, &request_url, resource).map_err(|fail| match fail {
+        FetchFail::Denied => UpdateError::ArtifactUrl,
+        FetchFail::TooLarge | FetchFail::Network => UpdateError::Network,
+    })
 }
 
 fn fetch_once(

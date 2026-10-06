@@ -1511,3 +1511,41 @@ fn newer_version_without_this_platform_fails_as_a_missing_platform() {
 
     assert_eq!(check_error_code(&config), "update_missing_platform");
 }
+#[test]
+fn feed_and_signature_requests_each_name_this_copy_once() {
+    const IDENTITY_QUERY: &str = "version=0.1.0&os=linux&arch=x86_64";
+
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let (body, signature) = signed_manifest(&server, &sk, "0.2.0");
+    server.expect(
+        Expectation::matching(httptest::all_of![
+            request::method_path("GET", "/latest.json"),
+            request::query(IDENTITY_QUERY),
+        ])
+        .respond_with(status_code(200).body(body)),
+    );
+    server.expect(
+        Expectation::matching(httptest::all_of![
+            request::method_path("GET", "/latest.json.sig"),
+            request::query(IDENTITY_QUERY),
+        ])
+        .respond_with(status_code(200).body(signature)),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    let status = UpdateMachine::new().check(&config);
+
+    assert!(
+        matches!(status, UpdateStatus::Available { .. }),
+        "got {status:?}"
+    );
+}
