@@ -218,9 +218,7 @@ fn stage_and_swap_appimage(verified: &Path, staging: &Path, current: &Path) -> s
     // truncated image under the launch path.
     staged.file.sync_all()?;
 
-    std::fs::rename(staging, current)?;
-    staged.renamed = true;
-    Ok(())
+    staged.rename_over(current)
 }
 
 /// The file a new image is staged in, removed on drop unless it was renamed
@@ -264,6 +262,14 @@ impl<'a> StagingFile<'a> {
             .file
             .set_permissions(std::fs::Permissions::from_mode(0o755))?;
         Ok(staged)
+    }
+
+    /// Moves the file over `target`. After that it is no longer a staging
+    /// file, and dropping this removes nothing.
+    fn rename_over(mut self, target: &Path) -> std::io::Result<()> {
+        std::fs::rename(self.path, target)?;
+        self.renamed = true;
+        Ok(())
     }
 }
 
