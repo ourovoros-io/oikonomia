@@ -292,6 +292,20 @@ fn preprocess_for_receipt(image: DynamicImage) -> Result<RgbImage> {
     Ok(contrast_stretched(&luma))
 }
 
+/// The grey level halfway between black and white.
+const MID_GREY: u8 = 128;
+
+/// Mean grey level under which an image is taken as light text on a dark
+/// ground and inverted.
+const DARK_IMAGE_MEAN: u8 = 90;
+
+/// How much the distance of a pixel from mid-grey is multiplied by.
+const CONTRAST_GAIN: f32 = 1.35;
+
+/// Exponent applied after the contrast stretch. Under 1, so midtones get
+/// lighter.
+const MIDTONE_GAMMA: f32 = 0.92;
+
 /// Raises the contrast of a greyscale image and returns it as RGB.
 ///
 /// Helps faded thermal receipts and UI screenshots. A dark image (dark-mode
@@ -306,19 +320,18 @@ fn contrast_stretched(luma: &image::GrayImage) -> RgbImage {
     // A mean of u8 pixels always fits u8; try_from guards the impossible case.
     let mean = sum
         .checked_div(count)
-        .map_or(128, |mean| u8::try_from(mean).unwrap_or(u8::MAX));
-    let invert = mean < 90;
+        .map_or(MID_GREY, |mean| u8::try_from(mean).unwrap_or(u8::MAX));
+    let invert = mean < DARK_IMAGE_MEAN;
 
     let mut rgb = RgbImage::new(luma.width(), luma.height());
-    let contrast = 1.35_f32;
     for (x, y, pixel) in luma.enumerate_pixels() {
         let mut value = f32::from(pixel[0]) / 255.0;
         if invert {
             value = 1.0 - value;
         }
         // Contrast around mid-grey, then a soft gamma to open midtones.
-        value = ((value - 0.5) * contrast + 0.5).clamp(0.0, 1.0);
-        value = value.powf(0.92);
+        value = ((value - 0.5) * CONTRAST_GAIN + 0.5).clamp(0.0, 1.0);
+        value = value.powf(MIDTONE_GAMMA);
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -353,6 +366,12 @@ fn run_ocr_on_rgb(image: &RgbImage) -> Result<String> {
     }
 }
 
+/// Most characters of a recognized line that is dropped as noise.
+const NOISE_LINE_CHARS: usize = 1;
+
+/// Most characters of a whole-image reading that is taken as too sparse.
+const SPARSE_TEXT_CHARS: usize = 8;
+
 fn infer_text(engine: &mut OcrEngine, image_source: ImageSource<'_>) -> Result<String> {
     let ocr_input = engine
         .prepare_input(image_source)
@@ -363,10 +382,10 @@ fn infer_text(engine: &mut OcrEngine, image_source: ImageSource<'_>) -> Result<S
         let cleaned = blob
             .lines()
             .map(str::trim)
-            .filter(|line| line.chars().count() > 1)
+            .filter(|line| line.chars().count() > NOISE_LINE_CHARS)
             .collect::<Vec<_>>()
             .join("\n");
-        if cleaned.chars().count() > 8 {
+        if cleaned.chars().count() > SPARSE_TEXT_CHARS {
             return Ok(cleaned);
         }
     }
@@ -382,7 +401,7 @@ fn infer_text(engine: &mut OcrEngine, image_source: ImageSource<'_>) -> Result<S
     let mut lines = Vec::new();
     for line in line_texts.iter().flatten() {
         let text = line.to_string();
-        if text.chars().count() > 1 {
+        if text.chars().count() > NOISE_LINE_CHARS {
             lines.push(text);
         }
     }

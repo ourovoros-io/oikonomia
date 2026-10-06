@@ -35,6 +35,15 @@ pub(super) const MAX_PDF_DECODED_BYTES: usize = 32 * 1024 * 1024;
 /// How much is read from a decoder at a time while counting.
 const DECODE_CHUNK_BYTES: usize = 64 * 1024;
 
+/// Length of the header that zlib puts before raw deflate data.
+const ZLIB_HEADER_BYTES: usize = 2;
+
+/// The base of `ASCII85` digits: `!` is 0 and `u` is 84.
+const ASCII85_BASE: u32 = 85;
+
+/// Digits in a full `ASCII85` group, which encodes four bytes.
+const ASCII85_GROUP_DIGITS: usize = 5;
+
 /// Whether `document` has at most [`MAX_PDF_PAGES`] pages and its streams
 /// decode to at most [`MAX_PDF_DECODED_BYTES`].
 pub(super) fn within_budget(document: &lopdf::Document) -> bool {
@@ -93,7 +102,7 @@ fn inflate(input: &[u8], cap: usize) -> Option<Vec<u8>> {
         return Some(output);
     }
 
-    let raw = input.get(2..).unwrap_or_default();
+    let raw = input.get(ZLIB_HEADER_BYTES..).unwrap_or_default();
     read_capped(flate2::read::DeflateDecoder::new(raw), cap).map(|(output, _)| output)
 }
 
@@ -192,14 +201,14 @@ fn decode_ascii85(input: &[u8], cap: usize) -> Option<Vec<u8>> {
         } else if !(b'!'..=b'u').contains(&byte) {
             break;
         } else {
-            let Some(shifted) = group.checked_mul(85) else {
+            let Some(shifted) = group.checked_mul(ASCII85_BASE) else {
                 return Some(Vec::new());
             };
             // lopdf adds the digit unchecked, which wraps in a release build.
             group = shifted.wrapping_add(u32::from(byte - b'!'));
             digits += 1;
 
-            if digits == 5 {
+            if digits == ASCII85_GROUP_DIGITS {
                 output.extend_from_slice(&group.to_be_bytes());
                 group = 0;
                 digits = 0;
@@ -214,11 +223,11 @@ fn decode_ascii85(input: &[u8], cap: usize) -> Option<Vec<u8>> {
     if digits > 0 {
         // A short final group is padded with the largest digit and yields
         // one byte less than it has digits.
-        for _ in digits..5 {
-            let Some(shifted) = group.checked_mul(85) else {
+        for _ in digits..ASCII85_GROUP_DIGITS {
+            let Some(shifted) = group.checked_mul(ASCII85_BASE) else {
                 return Some(Vec::new());
             };
-            group = shifted.wrapping_add(84);
+            group = shifted.wrapping_add(ASCII85_BASE - 1);
         }
         output.extend_from_slice(group.to_be_bytes().get(..digits - 1)?);
     }

@@ -13,10 +13,17 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-/// Largest input the repair reads. Matches the upload cap
-/// ([`MAX_DOCUMENT_BYTES`](crate::documents::MAX_DOCUMENT_BYTES)), so every
-/// stored document can be repaired and nothing larger is scanned.
-const MAX_REPAIR_BYTES: usize = 8 * 1024 * 1024;
+use crate::documents::store::MAX_DOCUMENT_BYTES;
+
+/// Largest input the repair reads: the upload cap, so every stored document
+/// can be repaired and nothing larger is scanned.
+const MAX_REPAIR_BYTES: usize = MAX_DOCUMENT_BYTES;
+
+/// The keyword that opens a classic cross-reference table.
+const XREF_KEYWORD: &[u8] = b"xref";
+
+/// The keyword that ends an object header, `N G obj`.
+const OBJECT_KEYWORD: &[u8] = b"obj";
 
 /// How many `startxref` and `/Prev` pointers are examined. Each one is an
 /// incremental update of the file; real documents have a handful.
@@ -130,7 +137,7 @@ impl EntryRepair<'_> {
     /// pass has rewritten [`MAX_REPAIRED_ENTRIES`] entries.
     fn repair_table(&mut self, patched: &mut [u8], table: usize) {
         let data = self.data;
-        let mut cursor = table + 4;
+        let mut cursor = table + XREF_KEYWORD.len();
 
         loop {
             cursor += leading_whitespace(data, cursor);
@@ -292,10 +299,10 @@ fn parse_object_header(data: &[u8]) -> Option<(usize, usize)> {
 
     let keyword = data.get(after_generation + gap..)?;
     let ends_token = keyword
-        .get(3)
+        .get(OBJECT_KEYWORD.len())
         .is_none_or(|after| !after.is_ascii_alphanumeric());
 
-    (keyword.starts_with(b"obj") && ends_token).then_some((object, generation))
+    (keyword.starts_with(OBJECT_KEYWORD) && ends_token).then_some((object, generation))
 }
 
 /// Finds every `N G obj` header in one pass over the file.
@@ -348,8 +355,8 @@ fn nearest_header(
 fn xref_keyword_positions(data: &[u8]) -> Vec<usize> {
     let mut positions = Vec::new();
 
-    for (position, window) in data.windows(4).enumerate() {
-        if window != b"xref" {
+    for (position, window) in data.windows(XREF_KEYWORD.len()).enumerate() {
+        if window != XREF_KEYWORD {
             continue;
         }
 
@@ -357,7 +364,9 @@ fn xref_keyword_positions(data: &[u8]) -> Vec<usize> {
             .checked_sub(1)
             .and_then(|before| data.get(before))
             .is_none_or(u8::is_ascii_whitespace);
-        let followed_ok = data.get(position + 4).is_none_or(u8::is_ascii_whitespace);
+        let followed_ok = data
+            .get(position + XREF_KEYWORD.len())
+            .is_none_or(u8::is_ascii_whitespace);
 
         if preceded_ok && followed_ok {
             positions.push(position);
@@ -401,7 +410,7 @@ fn offset_points_at_table(data: &[u8], offset: usize) -> bool {
     };
 
     let rest = rest.trim_ascii_start();
-    rest.starts_with(b"xref") || parse_object_header(rest).is_some()
+    rest.starts_with(XREF_KEYWORD) || parse_object_header(rest).is_some()
 }
 
 fn find_from(data: &[u8], needle: &[u8], from: usize) -> Option<usize> {

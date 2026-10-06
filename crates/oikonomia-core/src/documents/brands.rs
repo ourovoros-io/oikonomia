@@ -55,38 +55,56 @@ const BRANDS: &[(&str, &str, Option<Service>)] = &[
     ("δεδδηε", "ΔΕΔΔΗΕ", Some(Service::Electricity)),
 ];
 
+/// How strongly a keyword points at a service.
+mod weight {
+    /// A word that bills of other services also print.
+    pub(super) const MENTION: u32 = 1;
+    /// A unit or term typical of the service.
+    pub(super) const TERM: u32 = 2;
+    /// A term that only a bill of this service prints.
+    pub(super) const OWN_TERM: u32 = 3;
+    /// The line that names the supply being billed.
+    pub(super) const SUPPLY_LINE: u32 = 4;
+}
+
 /// Keywords of each service in folded form, with their weights, in the order
 /// [`classify_service`] compares them.
 const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
     (
         Service::Electricity,
         &[
-            ("προμηθεια ρευματος", 4),
-            ("kwh", 2),
-            ("δεδδηε", 2),
-            ("ρευμα", 1),
+            ("προμηθεια ρευματος", weight::SUPPLY_LINE),
+            ("kwh", weight::TERM),
+            ("δεδδηε", weight::TERM),
+            ("ρευμα", weight::MENTION),
         ],
     ),
     (
         Service::Gas,
         &[
-            ("προμηθεια φυσικου αεριου", 4),
-            ("ηκασπ", 3),
-            ("χρεωση προμηθειας φ.α", 3),
-            ("φυσικου αεριου", 1),
-            ("φυσικο αεριο", 1),
+            ("προμηθεια φυσικου αεριου", weight::SUPPLY_LINE),
+            ("ηκασπ", weight::OWN_TERM),
+            ("χρεωση προμηθειας φ.α", weight::OWN_TERM),
+            ("φυσικου αεριου", weight::MENTION),
+            ("φυσικο αεριο", weight::MENTION),
         ],
     ),
     (
         Service::Telecom,
         &[
-            ("κινητο", 2),
-            ("σταθερο", 1),
-            ("τηλεφων", 2),
-            ("internet", 1),
+            ("κινητο", weight::TERM),
+            ("σταθερο", weight::MENTION),
+            ("τηλεφων", weight::TERM),
+            ("internet", weight::MENTION),
         ],
     ),
-    (Service::Water, &[("υδρευσ", 3), ("καταναλωση νερου", 3)]),
+    (
+        Service::Water,
+        &[
+            ("υδρευσ", weight::OWN_TERM),
+            ("καταναλωση νερου", weight::OWN_TERM),
+        ],
+    ),
 ];
 
 /// Recognizes a known biller in folded document text

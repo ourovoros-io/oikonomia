@@ -912,13 +912,16 @@ mod tests {
     }
 
     #[test]
-    fn at_most_two_page_images_are_taken() {
+    fn no_more_page_images_are_taken_than_ocr_will_try() {
         let pdf = pdf_with_images(
             ImagePlacement::PageXObject,
             &[(dct(), b"a"), (dct(), b"b"), (dct(), b"c")],
         );
 
-        assert_eq!(extract_pdf_jpeg_images(&loaded(&pdf)).len(), 2);
+        assert_eq!(
+            extract_pdf_jpeg_images(&loaded(&pdf)).len(),
+            MAX_PDF_OCR_IMAGES
+        );
     }
 
     #[test]
@@ -936,7 +939,7 @@ mod tests {
         let mut found = extract_pdf_jpeg_images(&loaded(&pdf));
         found.sort();
 
-        assert_eq!(found.len(), 2);
+        assert_eq!(found.len(), MAX_PDF_OCR_IMAGES);
         assert!(found.iter().all(|jpeg| jpeg.len() == 1));
     }
 
