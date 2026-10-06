@@ -15,7 +15,9 @@ use crate::hosts::HostPolicy;
 use crate::machine::UpdateMachine;
 use crate::notes::sanitize_notes;
 use crate::status::UpdateStatus;
-use crate::verify::{parse_public_key, to_hex};
+use crate::verify::{parse_public_key, to_hex, verify_minisign};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use httptest::responders::status_code;
 use httptest::{Expectation, Server, matchers::request};
 use minisign::{KeyPair, SecretKey};
@@ -469,6 +471,7 @@ fn bad_manifest_sig_is_failed() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
+    assert_eq!(check_error_code(&config), "update_manifest_signature");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -1031,6 +1034,150 @@ fn raw_ed25519_hex_is_not_a_minisign_public_key() {
     const RAW_KEY_HEX: &str = "7d5b038e9ab30eef536cc559baac20e44070adedcdf548af48744029804ec671";
     let err = parse_public_key(RAW_KEY_HEX).expect_err("raw hex key");
     assert_eq!(err.code(), "update_missing_public_key");
+}
+
+/// Signs `data` and returns the four lines of the minisign signature, so a
+/// test can change one of them.
+fn signature_lines(sk: &SecretKey, data: &[u8]) -> Vec<String> {
+    sign(sk, data).lines().map(str::to_owned).collect()
+}
+
+fn joined(lines: &[String]) -> String {
+    let mut text = lines.join("\n");
+    text.push('\n');
+    text
+}
+
+// The signer in these tests (`minisign`) and the verifier in the app
+// (`minisign-verify`) are separate crates that Dependabot bumps on their own.
+// The tests below pin what the verifier refuses, and with which code, so a
+// bump of either one cannot change it unnoticed.
+
+#[test]
+fn one_flipped_byte_fails_the_signature_in_raw_and_tauri_form() {
+    let (pk, sk) = test_keys();
+    let key = parse_public_key(&pk).expect("public key");
+    let artifact = b"artifact bytes".to_vec();
+    let raw = sign(&sk, &artifact);
+    let tauri = STANDARD.encode(&raw);
+    verify_minisign(&key, &artifact, &raw).expect("raw signature verifies");
+    verify_minisign(&key, &artifact, &tauri).expect("tauri signature verifies");
+
+    for index in [0, artifact.len() - 1] {
+        let mut tampered = artifact.clone();
+        tampered[index] ^= 1;
+        for signature in [&raw, &tauri] {
+            let err = verify_minisign(&key, &tampered, signature).expect_err("flipped byte");
+            assert_eq!(err.code(), "update_manifest_signature");
+        }
+    }
+}
+
+#[test]
+fn signature_from_another_key_fails_even_under_this_key_id() {
+    let (pk, sk) = test_keys();
+    let (_other_pk, other_sk) = test_keys();
+    let key = parse_public_key(&pk).expect("public key");
+    let data = b"manifest";
+
+    let err = verify_minisign(&key, data, &sign(&other_sk, data)).expect_err("another key");
+    assert_eq!(err.code(), "update_manifest_signature");
+
+    // A different key id is refused before any Ed25519 check. Give the other
+    // key's signature this key's id so the Ed25519 check is what refuses it.
+    let ours = STANDARD
+        .decode(&signature_lines(&sk, data)[1])
+        .expect("signature line");
+    let mut forged = signature_lines(&other_sk, data);
+    let mut bytes = STANDARD.decode(&forged[1]).expect("signature line");
+    bytes[2..10].copy_from_slice(&ours[2..10]);
+    forged[1] = STANDARD.encode(&bytes);
+    let err = verify_minisign(&key, data, &joined(&forged)).expect_err("forged key id");
+    assert_eq!(err.code(), "update_manifest_signature");
+}
+
+#[test]
+fn changed_trusted_comment_fails_the_signature() {
+    let (pk, sk) = test_keys();
+    let key = parse_public_key(&pk).expect("public key");
+    let data = b"manifest";
+    let mut lines = signature_lines(&sk, data);
+    let changed = "trusted comment: timestamp:0\tfile:latest.json".to_owned();
+    assert_ne!(lines[2], changed);
+    lines[2] = changed;
+
+    let raw = joined(&lines);
+    for signature in [STANDARD.encode(&raw), raw] {
+        let err = verify_minisign(&key, data, &signature).expect_err("changed comment");
+        assert_eq!(err.code(), "update_manifest_signature");
+    }
+}
+
+#[test]
+fn malformed_signature_is_refused() {
+    let (pk, sk) = test_keys();
+    let key = parse_public_key(&pk).expect("public key");
+    let data = b"manifest";
+    let lines = signature_lines(&sk, data);
+    let mut truncated = lines.clone();
+    let keep = truncated[1].len() - 8;
+    truncated[1].truncate(keep);
+    let mut unknown_algorithm = lines.clone();
+    let mut bytes = STANDARD
+        .decode(&unknown_algorithm[1])
+        .expect("signature line");
+    bytes[..2].copy_from_slice(b"XX");
+    unknown_algorithm[1] = STANDARD.encode(&bytes);
+
+    for (case, signature) in [
+        ("no trusted comment", joined(&lines[..2])),
+        ("truncated signature", joined(&truncated)),
+        ("unknown algorithm", joined(&unknown_algorithm)),
+        ("not a signature", "not a signature".to_owned()),
+        ("base64 of text", STANDARD.encode("not a signature")),
+    ] {
+        let err = verify_minisign(&key, data, &signature).expect_err(case);
+        assert_eq!(err.code(), "update_manifest_signature", "{case}");
+    }
+}
+
+/// The feed's sha256 names the tampered bytes, so only the artifact's
+/// signature stands between them and the installer.
+#[test]
+fn artifact_matching_its_hash_but_not_its_signature_is_refused() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let payload = b"real-bytes";
+    let tampered = b"real-bytez";
+    let artifact = server_url(&server, "/Oikonomia.AppImage");
+    let body = static_manifest(
+        "0.2.0",
+        "n",
+        artifact.as_str(),
+        &sign(&sk, payload),
+        &sha256_hex(tampered),
+    );
+    let sig = sign(&sk, body.as_bytes());
+    serve_signed_manifest(&server, &body, &sig);
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/Oikonomia.AppImage"))
+            .respond_with(status_code(200).body(tampered.as_slice())),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+    let mut machine = UpdateMachine::new();
+    machine.check(&config);
+    let offer = machine.require_available().expect("offer").clone();
+    let err = download_and_verify(&config, &offer).expect_err("tampered artifact");
+    assert_eq!(err.code(), "update_artifact_integrity");
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
 /// Proves the promote lane (`assemble_manifest`) and the client (`perform_check`,
