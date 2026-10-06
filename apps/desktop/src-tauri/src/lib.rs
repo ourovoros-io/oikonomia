@@ -65,6 +65,9 @@ fn start(app: &mut tauri::App) -> Result<(), StartupError> {
     // the bare binary, so set the icon at runtime as well.
     macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
 
+    // First, so that the log lines of the steps below reach it.
+    register_debug_logger(app)?;
+
     let resource_dir = app.path().resource_dir().ok();
     let ocr_dir = resolve_ocr_model_dir(resource_dir);
     log::info!("OCR model dir: {}", ocr_dir.display());
@@ -90,17 +93,32 @@ fn start(app: &mut tauri::App) -> Result<(), StartupError> {
 
     app.manage(app_state);
 
-    if cfg!(debug_assertions) {
-        app.handle()
-            .plugin(
-                tauri_plugin_log::Builder::default()
-                    .level(log::LevelFilter::Info)
-                    .build(),
-            )
-            .map_err(StartupError::Shell)?;
+    Ok(())
+}
+
+/// Registers the logger, in a debug build only.
+///
+/// A release build registers none, so there every `log::` call in the shell
+/// and in the crates it links does nothing. That includes the warnings that
+/// say why an update install or a start failed: a release build keeps no
+/// record of them.
+///
+/// It stays that way here because turning it on is a privacy decision. The
+/// plugin's default targets are standard output and a file in the app's log
+/// directory, and the log lines carry file paths and operating-system error
+/// text, so a release build that logged would write those to the user's disk.
+fn register_debug_logger(app: &tauri::App) -> Result<(), StartupError> {
+    if !cfg!(debug_assertions) {
+        return Ok(());
     }
 
-    Ok(())
+    app.handle()
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
+        .map_err(StartupError::Shell)
 }
 
 fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
