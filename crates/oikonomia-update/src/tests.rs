@@ -6,8 +6,8 @@
 use crate::UPDATE_FEED_URL;
 use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
-    MAX_REDIRECTS, VerifiedOffer, delete_artifact, download_and_verify, perform_check,
-    perform_check_inner,
+    MAX_ARTIFACT_BYTES, MAX_MANIFEST_BYTES, MAX_REDIRECTS, MAX_SIGNATURE_BYTES, VerifiedOffer,
+    delete_artifact, download_and_verify, perform_check, perform_check_inner,
 };
 use crate::error::UpdateError;
 use crate::feed::{FeedArtifact, assemble_manifest};
@@ -416,10 +416,12 @@ fn missing_manifest_sig_is_failed() {
     );
     server.expect(
         Expectation::matching(request::method_path("GET", "/latest.json"))
+            .times(2)
             .respond_with(status_code(200).body(body)),
     );
     server.expect(
         Expectation::matching(request::method_path("GET", "/latest.json.sig"))
+            .times(2)
             .respond_with(status_code(404)),
     );
     let cache = cache_dir();
@@ -433,6 +435,10 @@ fn missing_manifest_sig_is_failed() {
     );
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
+    // The fetch reports every status other than 200 and 204 as a network
+    // failure, so a 404 on the signature ends the check before any signature
+    // is looked at.
+    assert_eq!(check_error_code(&config), "update_network");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -1631,4 +1637,171 @@ fn delete_artifact_logs_a_removal_that_fails() {
     delete_artifact(&directory);
 
     assert_eq!(warnings.mentioning(&directory).len(), 1);
+}
+/// Returns a manifest offering 0.2.0, padded with trailing whitespace (which
+/// JSON allows) to exactly `total_bytes`, and the signature over it.
+fn signed_manifest_of_size(
+    server: &Server,
+    secret_key: &SecretKey,
+    total_bytes: usize,
+) -> (String, String) {
+    let (mut body, _signature) = signed_manifest(server, secret_key, "0.2.0");
+    let padding = total_bytes
+        .checked_sub(body.len())
+        .expect("the manifest is smaller than the requested size");
+    body.push_str(&" ".repeat(padding));
+
+    let signature = sign(secret_key, body.as_bytes());
+    (body, signature)
+}
+
+#[test]
+fn manifest_of_exactly_the_size_cap_is_accepted() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let (body, signature) = signed_manifest_of_size(&server, &sk, MAX_MANIFEST_BYTES);
+    serve_signed_manifest(&server, &body, &signature);
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    let status = UpdateMachine::new().check(&config);
+
+    assert!(
+        matches!(status, UpdateStatus::Available { .. }),
+        "got {status:?}"
+    );
+}
+
+#[test]
+fn manifest_one_byte_over_the_size_cap_is_refused() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    // Validly signed, so only its size stands between it and an offer.
+    let (body, _signature) = signed_manifest_of_size(&server, &sk, MAX_MANIFEST_BYTES + 1);
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/latest.json"))
+            .respond_with(status_code(200).body(body)),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    assert_eq!(check_error_code(&config), "update_network");
+}
+
+#[test]
+fn manifest_signature_over_the_size_cap_is_refused() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let (body, mut signature) = signed_manifest(&server, &sk, "0.2.0");
+    // Read in full, this would end as a signature error, not a network one.
+    let padding = MAX_SIGNATURE_BYTES + 1 - signature.len();
+    signature.push_str(&"\n".repeat(padding));
+    serve_signed_manifest(&server, &body, &signature);
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    assert_eq!(check_error_code(&config), "update_network");
+}
+
+#[test]
+fn artifact_over_the_size_cap_is_refused_and_leaves_no_file() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let artifact_address = serve_zero_bytes(MAX_ARTIFACT_BYTES + 1, 1 << 20, Duration::ZERO);
+    // The manifest describes other bytes: read in full, the download would
+    // end as an integrity error, not a network one.
+    let config = config_for_artifact_at(
+        &server,
+        (&pk, &sk),
+        artifact_address,
+        b"artifact-bytes",
+        cache.path(),
+    );
+    let offer = available_offer(&config);
+
+    let err = download_and_verify(&config, &offer).expect_err("over the cap");
+
+    assert_eq!(err.code(), "update_network");
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn older_remote_version_is_up_to_date_and_never_downloaded() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let (body, signature) = signed_manifest(&server, &sk, "0.0.9");
+    serve_signed_manifest(&server, &body, &signature);
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/Oikonomia.AppImage"))
+            .times(0)
+            .respond_with(status_code(500)),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+    let (installer, calls) = spy(false);
+    let mut machine = UpdateMachine::new();
+
+    assert_eq!(machine.check(&config), UpdateStatus::UpToDate);
+
+    let err = machine
+        .install(&config, &installer)
+        .expect_err("an older version must not be installable");
+    assert_eq!(err.code(), "update_install_not_allowed");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn http_204_on_the_manifest_signature_is_a_signature_failure() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let (body, _signature) = signed_manifest(&server, &sk, "0.2.0");
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/latest.json"))
+            .respond_with(status_code(200).body(body)),
+    );
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/latest.json.sig"))
+            .respond_with(status_code(204)),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &pk,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+
+    assert_eq!(check_error_code(&config), "update_manifest_signature");
 }

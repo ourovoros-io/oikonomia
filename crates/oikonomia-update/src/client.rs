@@ -23,13 +23,13 @@ pub const UPDATE_FEED_URL: &str =
     "https://github.com/ourovoros-io/oikonomia/releases/latest/download/latest.json";
 
 /// Bounds the feed body held in memory.
-const MAX_MANIFEST_BYTES: usize = 1_048_576;
+pub(crate) const MAX_MANIFEST_BYTES: usize = 1_048_576;
 
 /// Bounds the detached feed signature held in memory.
-const MAX_SIGNATURE_BYTES: usize = 16_384;
+pub(crate) const MAX_SIGNATURE_BYTES: usize = 16_384;
 
 /// Bounds the artifact held in memory while it is verified.
-const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
+pub(crate) const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
 
 /// Bounds how many redirects one fetch follows before it is given up.
 pub(crate) const MAX_REDIRECTS: u8 = 5;
