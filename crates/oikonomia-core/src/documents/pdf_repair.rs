@@ -20,7 +20,7 @@ const MAX_REPAIR_BYTES: usize = 8 * 1024 * 1024;
 
 /// How many `startxref` and `/Prev` pointers are examined. Each one is an
 /// incremental update of the file; real documents have a handful.
-const MAX_STALE_XREF_SPANS: usize = 256;
+const MAX_XREF_POINTERS: usize = 256;
 
 /// How many table entries one repair rewrites. A statement or invoice has
 /// far fewer objects, and the bound keeps a crafted table from costing more
@@ -30,7 +30,7 @@ const MAX_REPAIRED_ENTRIES: usize = 65_536;
 /// Returns a patched copy of `data` if any stale xref offset was repaired.
 ///
 /// The copy has the same length as `data`. Only the first
-/// [`MAX_STALE_XREF_SPANS`] table pointers are examined and at most
+/// [`MAX_XREF_POINTERS`] table pointers are examined and at most
 /// [`MAX_REPAIRED_ENTRIES`] table entries are rewritten.
 ///
 /// `None` means nothing was repaired:
@@ -55,7 +55,7 @@ pub(crate) fn repair_xref_offsets(data: &[u8]) -> Option<Vec<u8>> {
     let mut repaired_any = false;
     for span in claimed_offset_spans(data)
         .into_iter()
-        .take(MAX_STALE_XREF_SPANS)
+        .take(MAX_XREF_POINTERS)
     {
         // The spans index `data` itself, so the lookup only fails to parse.
         let claimed = parse_ascii_usize(data.get(span.clone())?)?;
@@ -85,7 +85,7 @@ pub(crate) fn repair_xref_offsets(data: &[u8]) -> Option<Vec<u8>> {
     repaired_any.then_some(patched)
 }
 
-/// Overwrite `span` with `value`, zero-padded to the span's width.
+/// Overwrites `span` with `value`, zero-padded to the span's width.
 /// Fails (false) when the value needs more digits than the span holds.
 fn patch_span(patched: &mut [u8], span: Range<usize>, value: usize) -> bool {
     let width = span.len();
@@ -191,6 +191,7 @@ impl EntryRepair<'_> {
 struct Entry {
     /// Where the offset's digits are in the file.
     offset_span: Range<usize>,
+    /// The generation number the entry gives its object.
     generation: usize,
     /// `n` entries point at an object; `f` entries are free.
     in_use: bool,
@@ -209,12 +210,11 @@ fn leading_whitespace(data: &[u8], at: usize) -> usize {
 fn read_entry(data: &[u8], at: usize) -> Option<Entry> {
     let (offset_span, after) = read_digits(data, at)?;
 
-    let ws = count_while(data.get(after..)?, u8::is_ascii_whitespace);
-    let (generation_span, after_generation) = read_digits(data, after + ws)?;
+    let generation_at = after + leading_whitespace(data, after);
+    let (generation_span, after_generation) = read_digits(data, generation_at)?;
     let generation = parse_ascii_usize(data.get(generation_span)?)?;
 
-    let ws = count_while(data.get(after_generation..)?, u8::is_ascii_whitespace);
-    let kind_at = after_generation + ws;
+    let kind_at = after_generation + leading_whitespace(data, after_generation);
     let in_use = match data.get(kind_at)? {
         b'n' => true,
         b'f' => false,
@@ -241,81 +241,74 @@ fn read_number(data: &[u8], at: usize) -> Option<(usize, usize)> {
     let (span, after) = read_digits(data, at)?;
     let value = parse_ascii_usize(data.get(span)?)?;
 
-    let ws = count_while(data.get(after..)?, u8::is_ascii_whitespace);
-    Some((value, after + ws))
+    Some((value, after + leading_whitespace(data, after)))
 }
 
 /// Does `offset` (after optional whitespace) hold the header of exactly
 /// `object` at generation `generation`?
 fn object_header_at(data: &[u8], offset: usize, object: usize, generation: usize) -> bool {
-    let Some(rest) = data.get(offset..) else {
-        return false;
-    };
-    let rest = rest.trim_ascii_start();
+    let at = offset + leading_whitespace(data, offset);
 
-    parse_object_header(rest).is_some_and(|header| header.key == (object, generation))
+    object_header_token(data, at) == Some((object, generation))
 }
 
-/// A parsed `N G obj` header.
-struct ObjectHeader {
-    /// Object number and generation.
-    key: (usize, usize),
-    /// Length of the header up to and including `obj`.
-    len: usize,
-}
-
-/// Parses a leading `N G obj` header.
-fn parse_object_header(data: &[u8]) -> Option<ObjectHeader> {
-    let (num_span, after) = read_digits(data, 0)?;
-    let num = parse_ascii_usize(data.get(num_span)?)?;
-
-    let ws = count_while(data.get(after..)?, u8::is_ascii_whitespace);
-    if ws == 0 {
+/// The object number and generation of the `N G obj` header that starts a
+/// token at `at`: the file start or whitespace comes before it.
+///
+/// So `12 0 obj` inside `112 0 obj` is not a header of object 12.
+fn object_header_token(data: &[u8], at: usize) -> Option<(usize, usize)> {
+    let starts_token = at
+        .checked_sub(1)
+        .and_then(|before| data.get(before))
+        .is_none_or(u8::is_ascii_whitespace);
+    if !starts_token {
         return None;
     }
 
-    let (generation_span, after_generation) = read_digits(data, after + ws)?;
+    parse_object_header(data.get(at..)?)
+}
+
+/// Parses a leading `N G obj` header into object number and generation.
+///
+/// `obj` must end a token: `1 0 object` is not a header.
+fn parse_object_header(data: &[u8]) -> Option<(usize, usize)> {
+    let (object_span, after_object) = read_digits(data, 0)?;
+    let object = parse_ascii_usize(data.get(object_span)?)?;
+
+    let gap = leading_whitespace(data, after_object);
+    if gap == 0 {
+        return None;
+    }
+
+    let (generation_span, after_generation) = read_digits(data, after_object + gap)?;
     let generation = parse_ascii_usize(data.get(generation_span)?)?;
 
-    let ws = count_while(data.get(after_generation..)?, u8::is_ascii_whitespace);
-    if ws == 0 {
+    let gap = leading_whitespace(data, after_generation);
+    if gap == 0 {
         return None;
     }
 
-    let keyword_at = after_generation + ws;
-    data.get(keyword_at..)?
-        .starts_with(b"obj")
-        .then_some(ObjectHeader {
-            key: (num, generation),
-            len: keyword_at + 3,
-        })
+    let keyword = data.get(after_generation + gap..)?;
+    let ends_token = keyword
+        .get(3)
+        .is_none_or(|after| !after.is_ascii_alphanumeric());
+
+    (keyword.starts_with(b"obj") && ends_token).then_some((object, generation))
 }
 
 /// Finds every `N G obj` header in one pass over the file.
 ///
-/// A header counts when it starts a token (the file start or whitespace
-/// before it) and `obj` ends one (no letter or digit after it), so `12 0 obj`
-/// inside `112 0 obj` or before `object` is not indexed. Scanning once keeps
-/// the repair linear in the file size however many entries are stale.
+/// Scanning once keeps the repair linear in the file size however many
+/// entries are stale.
 fn index_object_headers(data: &[u8]) -> ObjectHeaders {
     let mut headers = ObjectHeaders::new();
-    let mut previous = b' ';
 
-    for (at, &byte) in data.iter().enumerate() {
-        let starts_token = byte.is_ascii_digit() && previous.is_ascii_whitespace();
-        previous = byte;
-        if !starts_token {
+    for (at, byte) in data.iter().enumerate() {
+        if !byte.is_ascii_digit() {
             continue;
         }
-
-        let Some(header) = data.get(at..).and_then(parse_object_header) else {
-            continue;
-        };
-        let ends_token = data
-            .get(at + header.len)
-            .is_none_or(|after| !after.is_ascii_alphanumeric());
-        if ends_token {
-            headers.entry(header.key).or_default().push(at);
+        if let Some(key) = object_header_token(data, at) {
+            headers.entry(key).or_default().push(at);
         }
     }
 
@@ -380,11 +373,9 @@ fn claimed_offset_spans(data: &[u8]) -> Vec<Range<usize>> {
             let after = found + keyword.len();
             from = after;
 
-            let digits_start = after + count_while(&data[after..], u8::is_ascii_whitespace);
-            let digits_len = count_while(&data[digits_start..], u8::is_ascii_digit);
-
-            if digits_len > 0 {
-                spans.push(digits_start..digits_start + digits_len);
+            let digits_start = after + leading_whitespace(data, after);
+            if let Some((span, _)) = read_digits(data, digits_start) {
+                spans.push(span);
             }
         }
     }
@@ -477,9 +468,42 @@ mod tests {
     fn xref_stream_offsets_count_as_valid() {
         // startxref points at "12 0 obj" (a cross-reference stream), which
         // must not be treated as stale.
-        let data = b"%PDF-1.5\nxref\n12 0 obj\n<<>>\nstartxref\n9\n%%EOF";
+        let data = b"%PDF-1.5\nxref\n12 0 obj\n<<>>\nstartxref\n14\n%%EOF";
+
+        assert_eq!(&data[14..22], b"12 0 obj", "test fixture geometry");
 
         assert!(repair_xref_offsets(data).is_none());
+    }
+
+    #[test]
+    fn an_offset_into_the_middle_of_another_header_is_stale() {
+        // Object 1 is at 25. Its entry claims 10: the second digit of
+        // "11 0 obj", which reads as "1 0 obj" from there.
+        let data = b"%PDF-1.4\n11 0 obj\nendobj\n1 0 obj\nendobj\nxref\n1 1\n0000000010 00000 n \ntrailer\n<<>>\nstartxref\n40\n%%EOF";
+
+        assert_eq!(&data[10..17], b"1 0 obj", "test fixture geometry");
+        assert_eq!(&data[25..32], b"1 0 obj", "test fixture geometry");
+        assert_eq!(&data[40..44], b"xref", "test fixture geometry");
+
+        let repaired = repair_xref_offsets(data).unwrap_or_default();
+
+        let text = String::from_utf8_lossy(&repaired);
+        assert!(text.contains("0000000025 00000 n"), "entry patched: {text}");
+    }
+
+    #[test]
+    fn a_word_that_only_starts_with_obj_is_not_a_header() {
+        // "1 0 object" at 9 is text; the real header is at 20.
+        let data = b"%PDF-1.4\n1 0 object\n1 0 obj\nendobj\nxref\n1 1\n0000000009 00000 n \ntrailer\n<<>>\nstartxref\n35\n%%EOF";
+
+        assert_eq!(&data[9..19], b"1 0 object", "test fixture geometry");
+        assert_eq!(&data[20..27], b"1 0 obj", "test fixture geometry");
+        assert_eq!(&data[35..39], b"xref", "test fixture geometry");
+
+        let repaired = repair_xref_offsets(data).unwrap_or_default();
+
+        let text = String::from_utf8_lossy(&repaired);
+        assert!(text.contains("0000000020 00000 n"), "entry patched: {text}");
     }
 
     #[test]
