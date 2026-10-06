@@ -4,11 +4,12 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::coa::template_accounts;
+use crate::db::{corrupt_column, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
-use crate::util::{now_utc_string, parse_uuid};
+use crate::util::now_utc_string;
 
 /// Input for creating a new entity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,11 +24,16 @@ pub struct CreateEntity {
     pub fiscal_year_start_month: Option<u8>,
 }
 
-/// List non-archived entities ordered by name.
+/// Lists non-archived entities ordered by name.
+///
+/// Names are ordered by their case fold (the `fold` SQL function every vault
+/// connection registers), so capitals do not sort ahead of small letters in
+/// any script; names that fold alike keep code point order.
 ///
 /// # Errors
 ///
-/// Returns DB errors.
+/// [`Error::VaultCorrupt`] for a stored row that does not parse; database
+/// errors as [`Error::Io`].
 pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
     let mut stmt = conn
         .prepare(
@@ -35,16 +41,20 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
             SELECT id, name, base_currency, fiscal_year_start_month, chart_template
             FROM entities
             WHERE archived_at IS NULL
-            ORDER BY name COLLATE NOCASE
+            ORDER BY fold(name), name
             ",
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let rows = stmt
-        .query_map([], map_entity)
+        .query_map([], |row| Ok(map_entity(row)))
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    collect_rows(rows)
+    let mut entities = Vec::new();
+    for row in rows {
+        entities.push(row.map_err(|err| Error::Io(err.to_string()))??);
+    }
+    Ok(entities)
 }
 
 /// Fetch one entity by id.
@@ -59,22 +69,30 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
         FROM entities WHERE id = ?1
         ",
         [id.0.to_string()],
-        map_entity,
+        |row| Ok(map_entity(row)),
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound("entity".into()),
         other => Error::Io(other.to_string()),
-    })
+    })?
 }
 
-/// Create entity and seed chart of accounts from template, atomically.
+/// Creates an entity and seeds its chart of accounts from the template,
+/// atomically.
 ///
 /// The seeded account names are written in `locale`, the language the app is
-/// set to now. They are never rewritten if the language changes later.
+/// set to now. They are never rewritten if the language changes later. The
+/// base currency is stored in capitals.
 ///
 /// # Errors
 ///
-/// Validation or DB errors.
+/// - [`ValidationError::NameRequired`] for an empty name.
+/// - [`ValidationError::CurrencyInvalid`] unless the base currency is three
+///   ASCII letters.
+/// - [`ValidationError::Internal`] for a fiscal year start month outside 1–12.
+/// - [`ValidationError::NameTaken`] when an entity that is not archived has
+///   the same name, compared without case.
+/// - [`Error::Io`] on database errors.
 pub fn create_entity(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let tx = conn
         .unchecked_transaction()
@@ -104,10 +122,13 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
         }));
     }
 
-    let currency = input.base_currency.trim().to_uppercase();
-    if currency.len() != 3 {
+    // An ISO 4217 code is three ASCII letters. Checking the letters makes the
+    // byte length a character count too, so "12$" and "€" are both refused.
+    let currency = input.base_currency.trim();
+    if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_alphabetic()) {
         return Err(Error::Validation(ValidationError::CurrencyInvalid));
     }
+    let currency = currency.to_ascii_uppercase();
 
     let month = input.fiscal_year_start_month.unwrap_or(1);
     if !(1..=12).contains(&month) {
@@ -124,17 +145,11 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 
     conn.execute(
         "
-        INSERT INTO entities (id, name, base_currency, fiscal_year_start_month, chart_template, created_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+        INSERT INTO entities (
+            id, name, base_currency, fiscal_year_start_month, chart_template, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         ",
-        rusqlite::params![
-            id.0.to_string(),
-            name,
-            currency,
-            month,
-            template_s,
-            created,
-        ],
+        rusqlite::params![id.0.to_string(), name, currency, month, template_s, created,],
     )
     .map_err(|err| Error::Io(err.to_string()))?;
 
@@ -346,34 +361,32 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
     Ok(())
 }
 
-fn map_entity(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entity> {
-    let id_s: String = row.get(0)?;
-    let id = parse_uuid(&id_s).map_err(|e| sql_conversion_error(0, &e))?;
-    let template_s: String = row.get(4)?;
-    let template = parse_chart_template(&template_s).map_err(|e| sql_conversion_error(4, &e))?;
-    let month_raw: i64 = row.get(3)?;
-    let month = u8::try_from(month_raw)
-        .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(3, month_raw))?;
+/// Maps a row selected as `id, name, base_currency, fiscal_year_start_month,
+/// chart_template`.
+fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
+    let id = stored_uuid("entities.id", &read_column::<String>(row, 0)?)?;
+    let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
+
+    // Reports derive the fiscal year from this number, so one outside the
+    // calendar is refused here instead of shifting every year boundary.
+    let stored_month: i64 = read_column(row, 3)?;
+    let fiscal_year_start_month = u8::try_from(stored_month)
+        .ok()
+        .filter(|month| (1..=12).contains(month))
+        .ok_or_else(|| {
+            corrupt_column(
+                "entities.fiscal_year_start_month",
+                format_args!("not a month: {stored_month}"),
+            )
+        })?;
 
     Ok(Entity {
         id: EntityId(id),
-        name: row.get(1)?,
-        base_currency: row.get(2)?,
-        fiscal_year_start_month: month,
-        chart_template: template,
+        name: read_column(row, 1)?,
+        base_currency: read_column(row, 2)?,
+        fiscal_year_start_month,
+        chart_template,
     })
-}
-
-/// Map a domain error to rusqlite's row-conversion failure for column `col`.
-fn sql_conversion_error(col: usize, err: &Error) -> rusqlite::Error {
-    rusqlite::Error::FromSqlConversionFailure(
-        col,
-        rusqlite::types::Type::Text,
-        Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            err.to_string(),
-        )),
-    )
 }
 
 /// Persist `ChartTemplate` as the stable on-disk string.
@@ -391,19 +404,9 @@ fn parse_chart_template(s: &str) -> Result<ChartTemplate> {
         "personal" => Ok(ChartTemplate::Personal),
         "company" => Ok(ChartTemplate::Company),
         "blank" => Ok(ChartTemplate::Blank),
-        other => Err(Error::VaultCorrupt(format!(
-            "unknown chart template: {other}"
-        ))),
+        other => Err(corrupt_column(
+            "entities.chart_template",
+            format_args!("unknown chart template: {other}"),
+        )),
     }
-}
-
-fn collect_rows<T, E>(rows: impl Iterator<Item = std::result::Result<T, E>>) -> Result<Vec<T>>
-where
-    E: std::fmt::Display,
-{
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row.map_err(|err| Error::Io(err.to_string()))?);
-    }
-    Ok(out)
 }

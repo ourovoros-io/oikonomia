@@ -6,11 +6,53 @@
 //! source of truth, and is omitted.
 //!
 //! An unlocked vault is snapshotted with `VACUUM INTO` so WAL is folded
-//! without closing the session. A locked vault is a quiescent file copy.
+//! without closing the session. A locked vault is copied file by file, which
+//! is only complete when `vault.db-wal` is absent or empty: the database
+//! runs in WAL mode, and after a crash committed transactions can still sit
+//! in that log. Such a vault is refused until it has been unlocked once,
+//! which replays the log into `vault.db`.
+//!
+//! # Restore protocol
+//!
+//! A restore replaces two files that are only usable together, and no
+//! filesystem renames two files atomically, so the swap is a sequence that
+//! [`Vault::open_path`] can settle from whatever files a crash left:
+//!
+//! 1. Unpack the archive to `vault.header.json.restore-tmp` and
+//!    `vault.db.restore-tmp`, then check them: the header must parse as a
+//!    header of a known format, and the database must not be plaintext
+//!    `SQLite`. Nothing live has been touched; a failure removes the two files.
+//! 2. Remove the live database's `-shm` index. `SQLite` rebuilds it from the
+//!    log, so nothing is lost if the swap is undone.
+//! 3. Rename the unpacked header to `vault.header.json.restore-new`. This
+//!    file exists exactly while the swap is in progress.
+//! 4. Rename the live header, write-ahead log and database, where present,
+//!    to `vault.header.json.restore-old`, `vault.db-wal.restore-old` and
+//!    `vault.db.restore-old`. The log moves with its database: `SQLite` would
+//!    replay a log left next to a different database into it, and removing
+//!    it would drop commits a crashed session left there.
+//! 5. Rename `vault.db.restore-tmp` to `vault.db`.
+//! 6. Rename `vault.header.json.restore-new` to `vault.header.json`. The
+//!    restore is committed.
+//! 7. Remove the three `restore-old` files.
+//!
+//! An error in steps 3 to 6 is undone on the spot, and a crash is settled on
+//! the next open, by the same rules:
+//!
+//! - `restore-new` exists: the swap did not commit, so it is undone. If
+//!   `vault.db.restore-tmp` is gone, step 5 ran and `vault.db` is the new
+//!   database; it is renamed back first, so that this test stays true however
+//!   often the undo itself is interrupted. Then the `restore-old` files are
+//!   renamed back, `restore-new` is removed, and last the unpacked files.
+//!   For the same reason `vault.db.restore-tmp` is never removed while
+//!   `restore-new` exists.
+//! - `restore-new` is gone but a `restore-old` file exists: step 6 ran, so
+//!   the restore is finished by removing them.
+//! - Only `restore-tmp` files exist: step 1 was interrupted; they are removed.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rusqlite::Connection;
 
@@ -18,6 +60,14 @@ use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
 use super::permissions::{create_private_dir, create_private_file};
 use super::store::Vault;
 use crate::error::{Error, Result};
+use crate::vault::files::{
+    discard_database_files, discard_file, remove_files_if_present, rename_if_present,
+    rename_synced, sibling_path, sync_parent_dir,
+};
+use crate::vault::header::VaultHeader;
+use crate::vault::paths::{
+    RestorePaths, backup_snapshot_db_path, db_sidecar_paths, vault_init_header_path,
+};
 
 /// Unencrypted magic. Identifies the file; contains no secrets.
 pub const MAGIC: &[u8; 8] = b"OIKOBACK";
@@ -43,9 +93,6 @@ fn local_iso_date() -> String {
 
 const MEMBER_DB: &str = "vault.db";
 const MEMBER_HEADER: &str = "vault.header.json";
-const RESTORE_DB_TMP: &str = "vault.db.restore-tmp";
-const RESTORE_HEADER_TMP: &str = "vault.header.json.restore-tmp";
-const SNAPSHOT_DB_TMP: &str = "vault.db.backup-tmp";
 
 /// Write a portable archive of the ciphertext vault files at `dest`.
 ///
@@ -57,7 +104,8 @@ const SNAPSHOT_DB_TMP: &str = "vault.db.backup-tmp";
 ///
 /// [`Error::VaultUninitialized`] when neither vault file exists;
 /// [`Error::VaultCorrupt`] when only one of the two source-of-truth files is
-/// present; [`Error::Io`] on filesystem failures.
+/// present, or when `vault.db-wal` holds pages a file copy would leave out;
+/// [`Error::Io`] on filesystem failures.
 pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     let db_path = vault_db_path(data_dir);
@@ -65,56 +113,161 @@ pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     write_archive_from_paths(&header_path, &db_path, dest)
 }
 
-/// Unpack a backup archive into `data_dir`.
+/// Unpacks a backup archive into `data_dir`, leaving the vault locked.
 ///
 /// Decrypt is not required: members are ciphertext plus the public header.
 /// Existing `vault.db` / `vault.header.json` are left untouched unless
-/// `replace` is true. WAL/SHM sidecars and `vault.header.json.tmp` are
-/// removed after a successful replace so unlock cannot mix old recovery
-/// state with restored files.
+/// `replace` is true. `replace` is required only when a vault already
+/// exists; an uninitialized data directory accepts `replace: false`.
 ///
-/// Staging files are written next to the vault, then renamed into place.
-/// `replace` is required only when a vault already exists; an uninitialized
-/// data directory accepts `replace: false`.
+/// The archive is unpacked next to the vault and checked before any live
+/// file is touched, and the two files are swapped by the restore protocol in
+/// the module doc, so a failure or a crash leaves either the previous vault
+/// or the restored one, never one's header with the other's database. The
+/// previous vault's WAL/SHM sidecars and `vault.header.json.tmp` do not
+/// survive a completed replace, so unlock cannot mix old recovery state with
+/// restored files.
 ///
 /// # Errors
 ///
 /// [`Error::BackupInvalid`] for a non-archive, truncated, or incomplete
-/// file; [`Error::RestoreWouldOverwrite`] when vault files exist and
-/// `replace` is false; [`Error::Io`] on filesystem failures.
+/// file, a header member that is not a vault header of a known format, or a
+/// database member that is not encrypted;
+/// [`Error::RestoreWouldOverwrite`] when vault files exist and `replace` is
+/// false; [`Error::Io`] on filesystem failures.
 pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Result<()> {
     create_private_dir(data_dir)?;
+    recover_interrupted_restore(data_dir)?;
+    let paths = RestorePaths::new(data_dir);
 
-    let header_dest = vault_header_path(data_dir);
-    let db_dest = vault_db_path(data_dir);
-    let header_tmp = data_dir.join(RESTORE_HEADER_TMP);
-    let db_tmp = data_dir.join(RESTORE_DB_TMP);
-    let _ = fs::remove_file(&header_tmp);
-    let _ = fs::remove_file(&db_tmp);
-
-    // Unpack to staging first so a bad archive is rejected even when a vault
-    // already exists and `replace` is false. Staging names never clobber the
-    // live files.
-    let unpack = unpack_archive_to_staging(archive, &header_tmp, &db_tmp);
-    if let Err(err) = unpack {
-        let _ = fs::remove_file(&header_tmp);
-        let _ = fs::remove_file(&db_tmp);
+    // Unpack and check first, so a bad archive is rejected even when a vault
+    // already exists and `replace` is false.
+    let restored = unpack_and_verify(archive, &paths)
+        .and_then(|()| refuse_overwrite(&paths, replace))
+        .and_then(|()| swap_in_unpacked_pair(&paths));
+    if let Err(err) = restored {
+        discard_unpacked_unless_swap_pending(&paths);
         return Err(err);
     }
 
-    let vault_present = header_dest.exists() || db_dest.exists();
+    // Recovery state of the vault that was replaced.
+    discard_file(&vault_staged_header_path(data_dir));
+    discard_file(&vault_init_header_path(data_dir));
+    Ok(())
+}
+
+/// Settles a restore that a crash interrupted, by the rules in the module
+/// doc: undoes a swap that did not commit, finishes one that did, and
+/// removes a half-unpacked archive. Does nothing when no restore files exist.
+///
+/// # Errors
+///
+/// [`Error::Io`] when a file cannot be renamed or removed; the files are
+/// left for the next attempt.
+pub(crate) fn recover_interrupted_restore(data_dir: &Path) -> Result<()> {
+    let paths = RestorePaths::new(data_dir);
+
+    if paths.verified_header.exists() {
+        undo_swap(&paths)?;
+    } else {
+        remove_files_if_present(&[&paths.old_header, &paths.old_db, &paths.old_wal])?;
+    }
+    remove_files_if_present(&[&paths.unpacked_header, &paths.unpacked_db])
+}
+
+/// Removes the unpacked archive after a failed restore.
+///
+/// Not while `restore-new` exists, which is the case when the undo itself
+/// failed: the undo that the next open runs reads a missing
+/// `vault.db.restore-tmp` as "the live database is the new one", and would
+/// set the previous database aside and then delete it.
+fn discard_unpacked_unless_swap_pending(paths: &RestorePaths) {
+    if paths.verified_header.exists() {
+        return;
+    }
+    discard_file(&paths.unpacked_header);
+    discard_file(&paths.unpacked_db);
+}
+
+fn unpack_and_verify(archive: &Path, paths: &RestorePaths) -> Result<()> {
+    unpack_archive_to_staging(archive, &paths.unpacked_header, &paths.unpacked_db)?;
+
+    match VaultHeader::load(&paths.unpacked_header) {
+        Ok(_header) => {}
+        Err(Error::VaultCorrupt(reason)) => {
+            return Err(Error::BackupInvalid(format!(
+                "{MEMBER_HEADER} is not a usable vault header: {reason}"
+            )));
+        }
+        Err(other) => return Err(other),
+    }
+    if is_plaintext_sqlite(&paths.unpacked_db)? {
+        return Err(Error::BackupInvalid(format!(
+            "{MEMBER_DB} is not encrypted"
+        )));
+    }
+    Ok(())
+}
+
+fn refuse_overwrite(paths: &RestorePaths, replace: bool) -> Result<()> {
+    let vault_present = paths.header.exists() || paths.db.exists();
     if vault_present && !replace {
-        let _ = fs::remove_file(&header_tmp);
-        let _ = fs::remove_file(&db_tmp);
         return Err(Error::RestoreWouldOverwrite);
     }
+    Ok(())
+}
 
-    fs::rename(&header_tmp, &header_dest).map_err(|err| Error::Io(err.to_string()))?;
-    fs::rename(&db_tmp, &db_dest).map_err(|err| Error::Io(err.to_string()))?;
-    sync_parent(&header_dest);
+/// Steps 2 to 7 of the restore protocol. On an error the previous files are
+/// back in place, unless the error says that putting them back failed too.
+fn swap_in_unpacked_pair(paths: &RestorePaths) -> Result<()> {
+    remove_files_if_present(&[&paths.shm])?;
 
-    remove_db_sidecars(&db_dest);
-    let _ = fs::remove_file(vault_staged_header_path(data_dir));
+    if let Err(err) = replace_live_pair(paths) {
+        return Err(match undo_swap(paths) {
+            Ok(()) => err,
+            Err(undo_err) => Error::Io(format!(
+                "{err}; putting the previous vault files back also failed: {undo_err}"
+            )),
+        });
+    }
+
+    // Committed. A leftover here is removed by the next open.
+    discard_file(&paths.old_header);
+    discard_file(&paths.old_db);
+    discard_file(&paths.old_wal);
+    Ok(())
+}
+
+/// Steps 3 to 6 of the restore protocol.
+fn replace_live_pair(paths: &RestorePaths) -> Result<()> {
+    rename_synced(&paths.unpacked_header, &paths.verified_header)?;
+
+    rename_if_present(&paths.header, &paths.old_header)?;
+    rename_if_present(&paths.wal, &paths.old_wal)?;
+    rename_if_present(&paths.db, &paths.old_db)?;
+
+    fs::rename(&paths.unpacked_db, &paths.db).map_err(|err| Error::Io(err.to_string()))?;
+    rename_synced(&paths.verified_header, &paths.header)
+}
+
+/// Puts the previous pair back while `restore-new` still marks the swap as
+/// uncommitted. Every step is a no-op when repeated, and `restore-new` is
+/// removed only after the previous pair is back, so an interrupted undo is
+/// simply run again.
+fn undo_swap(paths: &RestorePaths) -> Result<()> {
+    // With the unpacked database gone, `vault.db` is the new one. Renaming it
+    // back, instead of removing it, restores the condition this test reads:
+    // after the old database returns below, a repeated undo must not take it
+    // for the new one.
+    if !paths.unpacked_db.exists() {
+        rename_if_present(&paths.db, &paths.unpacked_db)?;
+    }
+    rename_if_present(&paths.old_header, &paths.header)?;
+    rename_if_present(&paths.old_db, &paths.db)?;
+    rename_if_present(&paths.old_wal, &paths.wal)?;
+
+    remove_files_if_present(&[&paths.verified_header])?;
+    sync_parent_dir(&paths.header);
     Ok(())
 }
 
@@ -123,7 +276,7 @@ impl Vault {
     ///
     /// Unlocked: `VACUUM INTO` a temp file (`SQLCipher` keeps the dest keyed with
     /// the live connection's key), then pack it with `vault.header.json`.
-    /// Locked: copy the on-disk pair (no writer).
+    /// Locked: copy the on-disk pair, as [`backup_to_path`] does.
     ///
     /// # Errors
     ///
@@ -157,7 +310,7 @@ impl Vault {
 
 fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
     match (header_path.is_file(), db_path.is_file()) {
-        (true, true) => Ok(()),
+        (true, true) => ensure_no_unmerged_wal(db_path),
         (false, false) => Err(Error::VaultUninitialized),
         (true, false) => Err(Error::VaultCorrupt(
             "vault header exists without database".into(),
@@ -166,6 +319,29 @@ fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
             "vault database exists without header".into(),
         )),
     }
+}
+
+/// Refuses a database whose write-ahead log still holds pages.
+///
+/// `SQLite` removes the log when the last connection closes cleanly, so a
+/// non-empty one next to a locked vault is left from a crash and can hold
+/// committed transactions that are not in `vault.db` yet.
+fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
+    let [wal_path, _shm_path] = db_sidecar_paths(db_path);
+    let wal_len = match fs::metadata(&wal_path) {
+        Ok(meta) => meta.len(),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => 0,
+        Err(err) => return Err(Error::Io(err.to_string())),
+    };
+
+    if wal_len > 0 {
+        return Err(Error::VaultCorrupt(
+            "vault database has changes still in its write-ahead log; \
+             unlock the vault once before backing up"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Consistent snapshot of an open `SQLCipher` connection, packed with the
@@ -178,17 +354,17 @@ fn backup_from_open_connection(conn: &Connection, data_dir: &Path, dest: &Path) 
         ));
     }
 
-    let snap = data_dir.join(SNAPSHOT_DB_TMP);
-    discard_snapshot(&snap);
+    let snap = backup_snapshot_db_path(data_dir);
+    discard_database_files(&snap);
 
     let vacuum = vacuum_into_encrypted(conn, &snap);
     if let Err(err) = vacuum {
-        discard_snapshot(&snap);
+        discard_database_files(&snap);
         return Err(err);
     }
 
     let packed = write_archive_from_paths(&header_path, &snap, dest);
-    discard_snapshot(&snap);
+    discard_database_files(&snap);
     packed
 }
 
@@ -197,22 +373,16 @@ fn vacuum_into_encrypted(conn: &Connection, dest: &Path) -> Result<()> {
         .to_str()
         .ok_or_else(|| Error::Io("backup snapshot path is not UTF-8".into()))?;
     let escaped = path.replace('\'', "''");
+
+    // SQLite would create the snapshot under the umask, leaving a copy of the
+    // whole vault readable by other accounts until it is packed and removed.
+    // `VACUUM INTO` accepts a target that exists as long as it is empty
+    // (https://www.sqlite.org/lang_vacuum.html#vacuuminto).
+    drop(create_private_file(dest)?);
+
     conn.execute(&format!("VACUUM INTO '{escaped}'"), [])
         .map_err(|err| Error::Io(err.to_string()))?;
-    reject_plaintext_sqlite(dest)
-}
-
-fn reject_plaintext_sqlite(path: &Path) -> Result<()> {
-    let mut magic = [0u8; 6];
-    let mut file = File::open(path).map_err(|err| Error::Io(err.to_string()))?;
-    file.read_exact(&mut magic).map_err(|err| {
-        if err.kind() == io::ErrorKind::UnexpectedEof {
-            Error::Io("backup snapshot is empty".into())
-        } else {
-            Error::Io(err.to_string())
-        }
-    })?;
-    if &magic == b"SQLite" {
+    if is_plaintext_sqlite(dest)? {
         return Err(Error::Io(
             "online backup produced a plaintext database".into(),
         ));
@@ -220,13 +390,22 @@ fn reject_plaintext_sqlite(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn discard_snapshot(path: &Path) {
-    let _ = fs::remove_file(path);
-    remove_db_sidecars(path);
+/// Whether the file at `path` starts with the magic of a plaintext `SQLite`
+/// database. A file shorter than the magic does not.
+fn is_plaintext_sqlite(path: &Path) -> Result<bool> {
+    const SQLITE_MAGIC: &[u8; 6] = b"SQLite";
+
+    let mut magic = [0u8; SQLITE_MAGIC.len()];
+    let mut file = File::open(path).map_err(|err| Error::Io(err.to_string()))?;
+    match file.read_exact(&mut magic) {
+        Ok(()) => Ok(&magic == SQLITE_MAGIC),
+        Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(err) => Err(Error::Io(err.to_string())),
+    }
 }
 
 fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> Result<()> {
-    let tmp = sibling_temp(dest, ".tmp")?;
+    let tmp = sibling_path(dest, ".tmp")?;
     let result = (|| {
         if let Some(parent) = dest.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::create_dir_all(parent).map_err(|err| Error::Io(err.to_string()))?;
@@ -242,13 +421,11 @@ fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> 
         out.sync_all().map_err(|err| Error::Io(err.to_string()))?;
         drop(out);
 
-        fs::rename(&tmp, dest).map_err(|err| Error::Io(err.to_string()))?;
-        sync_parent(dest);
-        Ok(())
+        rename_synced(&tmp, dest)
     })();
 
     if result.is_err() {
-        let _ = fs::remove_file(&tmp);
+        discard_file(&tmp);
     }
     result
 }
@@ -433,34 +610,6 @@ fn read_exact_or_truncated(reader: &mut impl Read, buf: &mut [u8]) -> Result<()>
     })
 }
 
-fn sibling_temp(dest: &Path, suffix: &str) -> Result<PathBuf> {
-    let name = dest
-        .file_name()
-        .ok_or_else(|| Error::Io("backup destination has no file name".into()))?;
-    let mut tmp_name = name.to_os_string();
-    tmp_name.push(suffix);
-    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty());
-    Ok(match parent {
-        Some(parent) => parent.join(tmp_name),
-        None => PathBuf::from(tmp_name),
-    })
-}
-
-fn sync_parent(path: &Path) {
-    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty())
-        && let Ok(dir) = File::open(parent)
-    {
-        let _ = dir.sync_all();
-    }
-}
-
-fn remove_db_sidecars(db_path: &Path) {
-    let wal = PathBuf::from(format!("{}-wal", db_path.display()));
-    let shm = PathBuf::from(format!("{}-shm", db_path.display()));
-    let _ = fs::remove_file(wal);
-    let _ = fs::remove_file(shm);
-}
-
 /// Encode an archive from named members. Test helper for truncated/incomplete cases.
 #[cfg(test)]
 fn encode_members(members: &[(&str, &[u8])]) -> Result<Vec<u8>> {
@@ -478,6 +627,8 @@ fn encode_members(members: &[(&str, &[u8])]) -> Result<Vec<u8>> {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
     use crate::vault::VaultStatus;
     use tempfile::TempDir;
@@ -730,6 +881,307 @@ mod tests {
         assert_eq!(restored_entities[0].name, "Personal");
     }
 
+    fn create_personal_entity(vault: &Vault) {
+        crate::ledger::create_entity(
+            vault.connection().expect("conn"),
+            &crate::ledger::CreateEntity {
+                name: "Personal".into(),
+                base_currency: "EUR".into(),
+                chart_template: crate::domain::ChartTemplate::Personal,
+                fiscal_year_start_month: Some(1),
+            },
+            crate::prefs::Locale::En,
+        )
+        .expect("entity");
+    }
+
+    /// Copies the vault files as a crash would leave them: the session never
+    /// closed, so committed transactions are still in the write-ahead log.
+    fn crash_image_of(live: &Path) -> TempDir {
+        let image = TempDir::new().expect("crash image dir");
+        let [live_wal, _shm] = db_sidecar_paths(&vault_db_path(live));
+        let [image_wal, _shm] = db_sidecar_paths(&vault_db_path(image.path()));
+        for (from, to) in [
+            (vault_header_path(live), vault_header_path(image.path())),
+            (vault_db_path(live), vault_db_path(image.path())),
+            (live_wal, image_wal.clone()),
+        ] {
+            fs::copy(from, to).expect("copy vault file");
+        }
+        assert!(
+            fs::metadata(&image_wal).expect("wal").len() > 0,
+            "the scenario needs committed pages in the write-ahead log"
+        );
+        image
+    }
+
+    #[test]
+    fn locked_backup_refuses_a_vault_with_unmerged_wal_pages() {
+        let (live, vault) = init_vault();
+        create_personal_entity(&vault);
+        let image = crash_image_of(live.path());
+        let dest = image.path().join("books.oikonomia-backup");
+
+        let err = backup_to_path(image.path(), &dest).expect_err("the log is not in the archive");
+
+        assert!(
+            matches!(err, Error::VaultCorrupt(ref message) if message.contains("unlock")),
+            "got {err:?}"
+        );
+        assert!(!dest.exists(), "no partial archive");
+    }
+
+    #[test]
+    fn unlocking_once_makes_a_crashed_vault_backable() {
+        let (live, vault) = init_vault();
+        create_personal_entity(&vault);
+        let image = crash_image_of(live.path());
+
+        let mut recovered = Vault::open_path(image.path()).expect("open crash image");
+        recovered.unlock(PASSWORD).expect("unlock replays the log");
+        recovered.lock();
+        let (_archive_dir, archive) = backup_of(&recovered);
+
+        let restore_dir = TempDir::new().expect("restore");
+        restore_from_path(&archive, restore_dir.path(), false).expect("restore");
+        let mut restored = Vault::open_path(restore_dir.path()).expect("open restored");
+        restored.unlock(PASSWORD).expect("unlock restored");
+        let entities =
+            crate::ledger::list_entities(restored.connection().expect("conn")).expect("list");
+        assert_eq!(entities.len(), 1, "the logged transaction is in the backup");
+    }
+
+    const OTHER_PASSWORD: &str = "a different password 12";
+
+    // The on-disk names of the restore protocol, spelled out so a rename of
+    // one is a visible format change.
+    const UNPACKED_HEADER: &str = "vault.header.json.restore-tmp";
+    const UNPACKED_DB: &str = "vault.db.restore-tmp";
+    const VERIFIED_HEADER: &str = "vault.header.json.restore-new";
+    const OLD_HEADER: &str = "vault.header.json.restore-old";
+    const OLD_DB: &str = "vault.db.restore-old";
+    const OLD_WAL: &str = "vault.db-wal.restore-old";
+    const RESTORE_NAMES: [&str; 6] = [
+        UNPACKED_HEADER,
+        UNPACKED_DB,
+        VERIFIED_HEADER,
+        OLD_HEADER,
+        OLD_DB,
+        OLD_WAL,
+    ];
+
+    /// A locked vault under [`PASSWORD`] and, in a second directory, the
+    /// files of a vault under [`OTHER_PASSWORD`] that a restore brings in.
+    fn live_and_incoming() -> (TempDir, TempDir) {
+        let (live, mut live_vault) = init_vault();
+        live_vault.lock();
+        let (incoming, mut incoming_vault) = init_vault_with(OTHER_PASSWORD);
+        incoming_vault.lock();
+        (live, incoming)
+    }
+
+    fn move_file(from: &Path, to: &Path) {
+        fs::rename(from, to).expect("move file");
+    }
+
+    fn assert_no_restore_files(data_dir: &Path) {
+        for name in RESTORE_NAMES {
+            assert!(!data_dir.join(name).exists(), "{name} must be gone");
+        }
+    }
+
+    fn assert_opens_with(data_dir: &Path, password: &str) {
+        let mut vault = Vault::open_path(data_dir).expect("open");
+        assert_eq!(vault.status(), VaultStatus::Locked);
+        vault.unlock(password).expect("the expected password opens");
+    }
+
+    #[test]
+    fn restore_rejects_a_header_that_is_not_a_vault_header() {
+        let (live, incoming) = live_and_incoming();
+        let db = fs::read(vault_db_path(incoming.path())).expect("db");
+        let archive = live.path().join("junk-header.oikonomia-backup");
+        let bytes = encode_members(&[(MEMBER_HEADER, b"{\"kdf\":\"argon2id\"}"), (MEMBER_DB, &db)])
+            .expect("encode");
+        write_file(&archive, &bytes);
+
+        let err = restore_from_path(&archive, live.path(), true).expect_err("junk header");
+
+        assert!(
+            matches!(err, Error::BackupInvalid(ref message) if message.contains("header")),
+            "got {err:?}"
+        );
+        assert_no_restore_files(live.path());
+        assert_opens_with(live.path(), PASSWORD);
+    }
+
+    #[test]
+    fn restore_rejects_a_header_from_a_newer_vault_format() {
+        let (live, incoming) = live_and_incoming();
+        let db = fs::read(vault_db_path(incoming.path())).expect("db");
+        let mut header =
+            VaultHeader::load(&vault_header_path(incoming.path())).expect("incoming header");
+        header.version += 1;
+        let header = serde_json::to_vec(&header).expect("encode header");
+        let archive = live.path().join("newer.oikonomia-backup");
+        let bytes = encode_members(&[(MEMBER_HEADER, &header), (MEMBER_DB, &db)]).expect("encode");
+        write_file(&archive, &bytes);
+
+        let err = restore_from_path(&archive, live.path(), true).expect_err("newer format");
+
+        assert!(matches!(err, Error::BackupInvalid(_)), "got {err:?}");
+        assert_opens_with(live.path(), PASSWORD);
+    }
+
+    #[test]
+    fn restore_rejects_a_plaintext_database() {
+        let (live, incoming) = live_and_incoming();
+        let header = fs::read(vault_header_path(incoming.path())).expect("header");
+        let plain_path = incoming.path().join("plain.db");
+        rusqlite::Connection::open(&plain_path)
+            .expect("open plaintext sqlite")
+            .execute_batch("CREATE TABLE t (id INTEGER);")
+            .expect("schema");
+        let plain = fs::read(&plain_path).expect("plaintext db");
+        let archive = live.path().join("plaintext.oikonomia-backup");
+        let bytes =
+            encode_members(&[(MEMBER_HEADER, &header), (MEMBER_DB, &plain)]).expect("encode");
+        write_file(&archive, &bytes);
+
+        let err = restore_from_path(&archive, live.path(), true).expect_err("plaintext db");
+
+        assert!(
+            matches!(err, Error::BackupInvalid(ref message) if message.contains("not encrypted")),
+            "got {err:?}"
+        );
+        assert_no_restore_files(live.path());
+        assert_opens_with(live.path(), PASSWORD);
+    }
+
+    #[test]
+    fn open_removes_a_half_unpacked_archive() {
+        let (live, incoming) = live_and_incoming();
+        fs::copy(
+            vault_header_path(incoming.path()),
+            live.path().join(UNPACKED_HEADER),
+        )
+        .expect("leftover header");
+
+        assert_opens_with(live.path(), PASSWORD);
+        assert_no_restore_files(live.path());
+    }
+
+    #[test]
+    fn open_undoes_a_restore_that_died_before_the_old_pair_moved() {
+        let (live, incoming) = live_and_incoming();
+        move_file(
+            &vault_header_path(incoming.path()),
+            &live.path().join(VERIFIED_HEADER),
+        );
+        move_file(
+            &vault_db_path(incoming.path()),
+            &live.path().join(UNPACKED_DB),
+        );
+
+        assert_opens_with(live.path(), PASSWORD);
+        assert_no_restore_files(live.path());
+    }
+
+    #[test]
+    fn open_undoes_a_restore_that_died_with_only_the_header_set_aside() {
+        let (live, incoming) = live_and_incoming();
+        move_file(
+            &vault_header_path(incoming.path()),
+            &live.path().join(VERIFIED_HEADER),
+        );
+        move_file(
+            &vault_db_path(incoming.path()),
+            &live.path().join(UNPACKED_DB),
+        );
+        move_file(
+            &vault_header_path(live.path()),
+            &live.path().join(OLD_HEADER),
+        );
+
+        assert_opens_with(live.path(), PASSWORD);
+        assert_no_restore_files(live.path());
+    }
+
+    #[test]
+    fn open_undoes_a_restore_that_died_after_the_new_database_went_in() {
+        // The state the old code could leave for good: one vault's database
+        // with no header that opens it.
+        let (live, incoming) = live_and_incoming();
+        move_file(
+            &vault_header_path(live.path()),
+            &live.path().join(OLD_HEADER),
+        );
+        move_file(&vault_db_path(live.path()), &live.path().join(OLD_DB));
+        move_file(
+            &vault_header_path(incoming.path()),
+            &live.path().join(VERIFIED_HEADER),
+        );
+        move_file(&vault_db_path(incoming.path()), &vault_db_path(live.path()));
+
+        assert_opens_with(live.path(), PASSWORD);
+        assert_no_restore_files(live.path());
+    }
+
+    #[test]
+    fn open_undoes_an_interrupted_restore_into_an_empty_directory() {
+        let (_live, incoming) = live_and_incoming();
+        let empty = TempDir::new().expect("empty");
+        move_file(
+            &vault_header_path(incoming.path()),
+            &empty.path().join(VERIFIED_HEADER),
+        );
+        move_file(
+            &vault_db_path(incoming.path()),
+            &vault_db_path(empty.path()),
+        );
+
+        let vault = Vault::open_path(empty.path()).expect("open");
+
+        assert_eq!(vault.status(), VaultStatus::Uninitialized);
+        assert!(!vault_db_path(empty.path()).exists(), "half-restored db");
+        assert_no_restore_files(empty.path());
+    }
+
+    #[test]
+    fn open_finishes_a_restore_that_died_before_removing_the_old_pair() {
+        let (live, incoming) = live_and_incoming();
+        move_file(
+            &vault_header_path(live.path()),
+            &live.path().join(OLD_HEADER),
+        );
+        move_file(&vault_db_path(live.path()), &live.path().join(OLD_DB));
+        move_file(
+            &vault_header_path(incoming.path()),
+            &vault_header_path(live.path()),
+        );
+        move_file(&vault_db_path(incoming.path()), &vault_db_path(live.path()));
+
+        assert_opens_with(live.path(), OTHER_PASSWORD);
+        assert_no_restore_files(live.path());
+    }
+
+    #[test]
+    fn restore_removes_the_old_sidecars_and_recovery_files() {
+        let (live, incoming) = live_and_incoming();
+        let archive = incoming.path().join("incoming.oikonomia-backup");
+        backup_to_path(incoming.path(), &archive).expect("backup incoming");
+        let [wal, shm] = db_sidecar_paths(&vault_db_path(live.path()));
+        write_file(&wal, b"");
+        write_file(&shm, b"stale index");
+
+        restore_from_path(&archive, live.path(), true).expect("restore");
+
+        assert!(!wal.exists(), "old write-ahead log");
+        assert!(!shm.exists(), "old shared-memory index");
+        assert_no_restore_files(live.path());
+        assert_opens_with(live.path(), OTHER_PASSWORD);
+    }
+
     #[test]
     fn master_password_never_appears_in_backup_bytes() {
         let (_src, vault) = init_vault();
@@ -820,6 +1272,17 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn online_snapshot_is_owner_only() {
+        let (dir, vault) = init_vault();
+        let snapshot = backup_snapshot_db_path(dir.path());
+
+        vacuum_into_encrypted(vault.connection().expect("conn"), &snapshot).expect("snapshot");
+
+        assert_eq!(mode_of(&snapshot), 0o600, "a copy of the whole vault");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn backup_and_restore_write_owner_only_files() {
         let (_src, vault) = init_vault();
         let (_archive_dir, archive) = backup_of(&vault);
@@ -860,30 +1323,104 @@ mod tests {
     }
 
     #[test]
-    fn reject_plaintext_sqlite_refuses_sqlite_magic() {
+    fn plaintext_sqlite_is_told_apart_from_a_vault_database() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+        let plain_path = dir.path().join("plain.db");
+        rusqlite::Connection::open(&plain_path)
+            .expect("open plaintext sqlite")
+            .execute_batch("CREATE TABLE t (id INTEGER);")
+            .expect("schema");
+        let short_path = dir.path().join("short.db");
+        write_file(&short_path, b"SQL");
+
+        assert!(is_plaintext_sqlite(&plain_path).expect("plain"));
+        assert!(!is_plaintext_sqlite(&vault_db_path(dir.path())).expect("vault"));
+        assert!(!is_plaintext_sqlite(&short_path).expect("short"));
+    }
+
+    #[test]
+    fn a_failed_swap_puts_the_previous_pair_back() {
+        let (live, incoming) = live_and_incoming();
+        let paths = RestorePaths::new(live.path());
+        // Only the header was unpacked, so the swap fails at the database
+        // rename, after the live pair has been set aside.
+        move_file(&vault_header_path(incoming.path()), &paths.unpacked_header);
+
+        let err = swap_in_unpacked_pair(&paths).expect_err("no database to swap in");
+
+        assert!(matches!(err, Error::Io(_)), "got {err:?}");
+        assert!(!paths.verified_header.exists(), "swap marker");
+        assert!(!paths.old_header.exists() && !paths.old_db.exists());
+        assert_opens_with(live.path(), PASSWORD);
+    }
+
+    #[test]
+    fn a_failed_swap_puts_the_previous_write_ahead_log_back() {
+        let (live, incoming) = live_and_incoming();
+        let paths = RestorePaths::new(live.path());
+        let [wal, _shm] = db_sidecar_paths(&paths.db);
+        write_file(&wal, b"commits a crash left in the log");
+        move_file(&vault_header_path(incoming.path()), &paths.unpacked_header);
+
+        swap_in_unpacked_pair(&paths).expect_err("no database to swap in");
+
+        assert_eq!(
+            fs::read(&wal).expect("log is back"),
+            b"commits a crash left in the log"
+        );
+    }
+
+    #[test]
+    fn a_failed_restore_keeps_the_unpacked_database_while_the_swap_is_pending() {
         let dir = TempDir::new().expect("dir");
-        let magic_path = dir.path().join("magic.db");
-        write_file(&magic_path, b"SQLite format 3\0");
-        let err = reject_plaintext_sqlite(&magic_path).expect_err("sqlite magic");
+        let paths = RestorePaths::new(dir.path());
+        for path in [&paths.unpacked_header, &paths.unpacked_db] {
+            write_file(path, b"unpacked");
+        }
+
+        write_file(&paths.verified_header, b"marker");
+        discard_unpacked_unless_swap_pending(&paths);
         assert!(
-            matches!(err, Error::Io(ref msg) if msg.contains("plaintext")),
-            "SQLite magic must be refused, got {err:?}"
+            paths.unpacked_db.exists(),
+            "the pending undo reads this file"
         );
 
-        let db_path = dir.path().join("plain.db");
-        {
-            let conn = rusqlite::Connection::open(&db_path).expect("open plaintext sqlite");
-            conn.execute_batch("CREATE TABLE t (id INTEGER);")
-                .expect("schema");
-        }
-        let err = reject_plaintext_sqlite(&db_path).expect_err("plaintext sqlite");
-        assert!(
-            matches!(
-                err,
-                Error::Io(ref msg) if msg == "online backup produced a plaintext database"
-            ),
-            "plaintext sqlite must be refused, got {err:?}"
-        );
+        fs::remove_file(&paths.verified_header).expect("swap settled");
+        discard_unpacked_unless_swap_pending(&paths);
+        assert!(!paths.unpacked_db.exists() && !paths.unpacked_header.exists());
+    }
+
+    #[test]
+    fn open_undoes_a_restore_and_returns_the_previous_write_ahead_log() {
+        let (live, incoming) = live_and_incoming();
+        let paths = RestorePaths::new(live.path());
+        move_file(&paths.header, &paths.old_header);
+        move_file(&paths.db, &paths.old_db);
+        write_file(&live.path().join(OLD_WAL), b"");
+        move_file(&vault_header_path(incoming.path()), &paths.verified_header);
+        move_file(&vault_db_path(incoming.path()), &paths.db);
+
+        assert_opens_with(live.path(), PASSWORD);
+        assert_no_restore_files(live.path());
+    }
+
+    #[test]
+    fn an_undo_that_is_run_twice_keeps_the_previous_database() {
+        let (live, incoming) = live_and_incoming();
+        let paths = RestorePaths::new(live.path());
+        move_file(&paths.header, &paths.old_header);
+        move_file(&paths.db, &paths.old_db);
+        move_file(&vault_header_path(incoming.path()), &paths.verified_header);
+        move_file(&vault_db_path(incoming.path()), &paths.db);
+
+        // A crash between the old pair returning and the marker going away
+        // leaves the marker for a second run.
+        undo_swap(&paths).expect("first undo");
+        fs::copy(&paths.header, &paths.verified_header).expect("marker left behind");
+        undo_swap(&paths).expect("second undo");
+
+        assert_opens_with(live.path(), PASSWORD);
     }
 
     #[test]
