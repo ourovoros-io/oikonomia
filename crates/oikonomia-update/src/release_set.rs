@@ -4,6 +4,23 @@
 //! The promote workflow asks this module instead of matching file names in
 //! shell, so the rules are tested and the feed and the allow-list cannot
 //! disagree.
+//!
+//! A draft holds what the release workflow built for one tag. Every file in
+//! it falls into one of these groups, and [`is_published_asset`] is the
+//! single place that decides which group a name belongs to:
+//!
+//! - a feed artifact, the one file per platform the app installs
+//!   ([`feed_entries`], [`updater_artifact_kinds`]), and its detached `.sig`;
+//! - a manual download (`.dmg`, `.deb`) and its `.sig`;
+//! - the feed itself, `latest.json` and `latest.json.sig`;
+//! - a version-free copy of a download, which the website links to
+//!   ([`fixed_name_copies`]);
+//! - the checksum file, which lists all of the above
+//!   ([`checksummed_assets`]);
+//! - anything else, which is deleted before the release is published.
+//!
+//! Files are recognised by suffix. Whether the Windows files belong to the
+//! release at all is the caller's choice, passed as [`WindowsBuild`].
 
 use thiserror::Error;
 
@@ -28,7 +45,7 @@ pub enum ReleaseSetError {
     /// No file for a platform that must be in the feed.
     #[error("no {suffix} file for {platform}")]
     Missing {
-        /// Feed key of the platform.
+        /// Feed key of the platform, or the label of the download.
         platform: &'static str,
         /// File-name suffix that was looked for.
         suffix: &'static str,
@@ -37,7 +54,7 @@ pub enum ReleaseSetError {
     /// More than one candidate; promoting would have to guess.
     #[error("expected one {suffix} file for {platform}, found: {found}")]
     Ambiguous {
-        /// Feed key of the platform.
+        /// Feed key of the platform, or the label of the download.
         platform: &'static str,
         /// File-name suffix that was looked for.
         suffix: &'static str,
@@ -46,96 +63,137 @@ pub enum ReleaseSetError {
     },
 }
 
+/// Which releases a platform or a download is part of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Shipped {
+    /// Part of every release.
+    Always,
+    /// Part of a release only when the Windows build is published.
+    WithWindows,
+}
+
+impl Shipped {
+    /// Returns whether this is part of a release made with `windows`.
+    fn in_release(self, windows: WindowsBuild) -> bool {
+        match self {
+            Self::Always => true,
+            Self::WithWindows => windows == WindowsBuild::Published,
+        }
+    }
+}
+
+/// One platform the feed can offer an artifact for.
 struct FeedPlatform {
     /// Key the update client derives from its own OS and architecture.
     key: &'static str,
     /// Suffix of the one artifact that platform installs.
     suffix: &'static str,
+    /// Which releases offer this platform.
+    shipped: Shipped,
 }
 
-const MACOS: FeedPlatform = FeedPlatform {
-    key: "darwin-aarch64",
-    suffix: ".app.tar.gz",
-};
-const LINUX: FeedPlatform = FeedPlatform {
-    key: "linux-x86_64",
-    suffix: ".AppImage",
-};
-const WINDOWS: FeedPlatform = FeedPlatform {
-    key: "windows-x86_64",
-    suffix: "-setup.exe",
-};
+impl FeedPlatform {
+    /// Returns the key and suffix of this platform's artifact, the part of
+    /// the entry that does not depend on the Windows choice.
+    const fn kind(&self) -> UpdaterArtifactKind {
+        UpdaterArtifactKind {
+            platform: self.key,
+            suffix: self.suffix,
+        }
+    }
+}
+
+/// The platforms a feed can hold, in the order the feed lists them.
+const FEED_PLATFORMS: [FeedPlatform; 3] = [
+    FeedPlatform {
+        key: "darwin-aarch64",
+        suffix: ".app.tar.gz",
+        shipped: Shipped::Always,
+    },
+    FeedPlatform {
+        key: "linux-x86_64",
+        suffix: ".AppImage",
+        shipped: Shipped::Always,
+    },
+    FeedPlatform {
+        key: "windows-x86_64",
+        suffix: "-setup.exe",
+        shipped: Shipped::WithWindows,
+    },
+];
 
 /// Suffixes published next to the feed artifacts: the disk image and the
 /// package people download by hand.
 const MANUAL_DOWNLOAD_SUFFIXES: [&str; 2] = [".dmg", ".deb"];
 
+/// The feed and its detached signature, published under these exact names:
+/// the client requests `latest.json` and appends `.sig` to that URL.
 const FEED_FILES: [&str; 2] = ["latest.json", "latest.json.sig"];
 
 /// Name of the checksum file published with every release: one
 /// `<sha256>  <file name>` line per published file, the format
 /// `sha256sum --check` reads.
-pub const CHECKSUMS_FILE: &str = "SHA256SUMS";
+const CHECKSUMS_FILE: &str = "SHA256SUMS";
 
 /// Version-free copy of the macOS disk image. getoikonomia.app links to
 /// `releases/latest/download/<name>`, so these names are a contract with the
 /// site and must not change without it.
-pub const FIXED_MACOS_DMG: &str = "Oikonomia-macos-arm64.dmg";
+const FIXED_MACOS_DMG: &str = "Oikonomia-macos-arm64.dmg";
 /// Version-free copy of the Windows installer, published only with Windows.
-pub const FIXED_WINDOWS_SETUP: &str = "Oikonomia-windows-x64-setup.exe";
+const FIXED_WINDOWS_SETUP: &str = "Oikonomia-windows-x64-setup.exe";
 /// Version-free copy of the Linux `AppImage`.
-pub const FIXED_LINUX_APPIMAGE: &str = "Oikonomia-linux-x86_64.AppImage";
+const FIXED_LINUX_APPIMAGE: &str = "Oikonomia-linux-x86_64.AppImage";
 /// Version-free copy of the Debian package.
-pub const FIXED_LINUX_DEB: &str = "Oikonomia-linux-amd64.deb";
+const FIXED_LINUX_DEB: &str = "Oikonomia-linux-amd64.deb";
 
-/// One version-free copy: the fixed name, which platform it is for, and the
-/// suffix of the versioned file it copies.
+/// One version-free copy of a download.
 struct FixedCopy {
+    /// The fixed name the copy is published under.
     name: &'static str,
-    platform: &'static str,
+    /// What an error calls this download. A label for people, never compared.
+    label: &'static str,
+    /// Suffix of the versioned file it is copied from.
     suffix: &'static str,
+    /// Which releases carry this copy.
+    shipped: Shipped,
 }
 
+/// The version-free copies, in the order they are made and listed.
 const FIXED_COPIES: [FixedCopy; 4] = [
     FixedCopy {
         name: FIXED_MACOS_DMG,
-        platform: "macos",
+        label: "macos",
         suffix: ".dmg",
+        shipped: Shipped::Always,
     },
     FixedCopy {
         name: FIXED_LINUX_APPIMAGE,
-        platform: "linux-appimage",
+        label: "linux-appimage",
         suffix: ".AppImage",
+        shipped: Shipped::Always,
     },
     FixedCopy {
         name: FIXED_LINUX_DEB,
-        platform: "linux-deb",
+        label: "linux-deb",
         suffix: ".deb",
+        shipped: Shipped::Always,
     },
     FixedCopy {
         name: FIXED_WINDOWS_SETUP,
-        platform: "windows",
+        label: "windows",
         suffix: "-setup.exe",
+        shipped: Shipped::WithWindows,
     },
 ];
 
-/// True for one of the version-free copy names, whatever the Windows choice.
-#[must_use]
-pub fn is_fixed_name(file_name: &str) -> bool {
-    FIXED_COPIES.iter().any(|copy| copy.name == file_name)
-}
-
-/// The version-free names a release publishes, in a stable order.
+/// Returns the version-free names a release publishes, in a stable order.
 #[must_use]
 pub fn fixed_names(windows: WindowsBuild) -> Vec<&'static str> {
-    FIXED_COPIES
-        .iter()
-        .filter(|copy| copy.platform != "windows" || windows == WindowsBuild::Published)
-        .map(|copy| copy.name)
-        .collect()
+    fixed_copies(windows).map(|copy| copy.name).collect()
 }
 
-/// The `(versioned source, fixed name)` pairs to copy before publishing.
+/// Returns the `(versioned source, fixed name)` pairs to copy before
+/// publishing.
 ///
 /// Each fixed name needs exactly one versioned file among `file_names`.
 /// Fixed names already present (from an earlier, interrupted promotion) are
@@ -143,60 +201,26 @@ pub fn fixed_names(windows: WindowsBuild) -> Vec<&'static str> {
 ///
 /// # Errors
 ///
-/// [`ReleaseSetError::Missing`] or [`ReleaseSetError::Ambiguous`] when a
-/// fixed name has no source or more than one.
+/// Returns [`ReleaseSetError::Missing`] when a fixed name has no source and
+/// [`ReleaseSetError::Ambiguous`] when it has more than one. The first fixed
+/// name in the stable order that fails is the one reported.
 pub fn fixed_name_copies<'a>(
     file_names: &[&'a str],
     windows: WindowsBuild,
 ) -> Result<Vec<(&'a str, &'static str)>, ReleaseSetError> {
-    let mut copies = Vec::new();
-
-    for copy in &FIXED_COPIES {
-        if copy.platform == "windows" && windows == WindowsBuild::Withheld {
-            continue;
-        }
-
-        let mut candidates = Vec::new();
-        for name in file_names {
-            if !is_fixed_name(name) && name.ends_with(copy.suffix) {
-                candidates.push(*name);
-            }
-        }
-
-        match candidates.as_slice() {
-            [] => {
-                return Err(ReleaseSetError::Missing {
-                    platform: copy.platform,
-                    suffix: copy.suffix,
-                });
-            }
-            [only] => copies.push((*only, copy.name)),
-            _ => {
-                return Err(ReleaseSetError::Ambiguous {
-                    platform: copy.platform,
-                    suffix: copy.suffix,
-                    found: candidates.join(", "),
-                });
-            }
-        }
-    }
-
-    Ok(copies)
+    fixed_copies(windows)
+        .map(|copy| {
+            let source = only_versioned_file(file_names, copy.label, copy.suffix)?;
+            Ok((source, copy.name))
+        })
+        .collect()
 }
 
-fn platforms(windows: WindowsBuild) -> Vec<FeedPlatform> {
-    match windows {
-        WindowsBuild::Withheld => vec![MACOS, LINUX],
-        WindowsBuild::Published => vec![MACOS, LINUX, WINDOWS],
-    }
-}
-
-/// The platform keys `latest.json` holds for this release, no more and no
-/// fewer, in a stable order.
+/// Returns the platform keys `latest.json` holds for this release, no more
+/// and no fewer, in a stable order.
 #[must_use]
 pub fn feed_platform_keys(windows: WindowsBuild) -> Vec<&'static str> {
-    platforms(windows)
-        .iter()
+    feed_platforms(windows)
         .map(|platform| platform.key)
         .collect()
 }
@@ -210,96 +234,72 @@ pub struct UpdaterArtifactKind {
     pub suffix: &'static str,
 }
 
-/// Every artifact a client downloads, Windows included.
+/// Returns every kind of artifact a client downloads, Windows included.
 ///
 /// Promotion can withhold Windows, but the Windows release job still builds
 /// the installer. The size gate has to recognize it there, before a feed
 /// exists.
 #[must_use]
 pub const fn updater_artifact_kinds() -> &'static [UpdaterArtifactKind] {
-    const KINDS: [UpdaterArtifactKind; 3] = [
-        UpdaterArtifactKind {
-            platform: MACOS.key,
-            suffix: MACOS.suffix,
-        },
-        UpdaterArtifactKind {
-            platform: LINUX.key,
-            suffix: LINUX.suffix,
-        },
-        UpdaterArtifactKind {
-            platform: WINDOWS.key,
-            suffix: WINDOWS.suffix,
-        },
+    /// The feed platforms, whatever the Windows choice. A test holds this
+    /// to the platform table entry by entry.
+    const KINDS: [UpdaterArtifactKind; FEED_PLATFORMS.len()] = [
+        FEED_PLATFORMS[0].kind(),
+        FEED_PLATFORMS[1].kind(),
+        FEED_PLATFORMS[2].kind(),
     ];
+
     &KINDS
 }
 
-/// The `(platform key, file name)` pairs for `latest.json`.
+/// Returns the `(platform key, file name)` pairs for `latest.json`.
 ///
 /// Every platform in the set needs exactly one artifact among `file_names`.
 ///
 /// # Errors
 ///
-/// [`ReleaseSetError::Missing`] or [`ReleaseSetError::Ambiguous`] when a
-/// platform has no artifact or more than one.
+/// Returns [`ReleaseSetError::Missing`] when a platform has no artifact and
+/// [`ReleaseSetError::Ambiguous`] when it has more than one. The first
+/// platform in the stable order that fails is the one reported.
 pub fn feed_entries<'a>(
     file_names: &[&'a str],
     windows: WindowsBuild,
 ) -> Result<Vec<(&'static str, &'a str)>, ReleaseSetError> {
-    let mut entries = Vec::new();
-
-    for platform in platforms(windows) {
-        let mut candidates = Vec::new();
-        for name in file_names {
-            if !is_fixed_name(name) && name.ends_with(platform.suffix) {
-                candidates.push(*name);
-            }
-        }
-
-        match candidates.as_slice() {
-            [] => {
-                return Err(ReleaseSetError::Missing {
-                    platform: platform.key,
-                    suffix: platform.suffix,
-                });
-            }
-            [only] => entries.push((platform.key, *only)),
-            _ => {
-                return Err(ReleaseSetError::Ambiguous {
-                    platform: platform.key,
-                    suffix: platform.suffix,
-                    found: candidates.join(", "),
-                });
-            }
-        }
-    }
-
-    Ok(entries)
+    feed_platforms(windows)
+        .map(|platform| {
+            let artifact = only_versioned_file(file_names, platform.key, platform.suffix)?;
+            Ok((platform.key, artifact))
+        })
+        .collect()
 }
 
-/// The files [`CHECKSUMS_FILE`] lists: every published file except the
-/// checksum file itself, sorted by name so the file is reproducible.
+/// Returns the files `SHA256SUMS` lists: every published file except
+/// the checksum file itself, sorted by name so the file is reproducible.
 #[must_use]
 pub fn checksummed_assets<'a>(file_names: &[&'a str], windows: WindowsBuild) -> Vec<&'a str> {
-    let mut listed = Vec::new();
-    for name in file_names {
-        if *name != CHECKSUMS_FILE && is_published_asset(name, windows) {
-            listed.push(*name);
-        }
-    }
+    let mut listed: Vec<&str> = file_names
+        .iter()
+        .copied()
+        .filter(|name| *name != CHECKSUMS_FILE && is_published_asset(name, windows))
+        .collect();
     listed.sort_unstable();
+
     listed
 }
 
-/// One line of [`CHECKSUMS_FILE`], newline included.
+/// Returns one line of `SHA256SUMS`, newline included.
+///
+/// Two spaces separate the digest from the name, which is how
+/// `sha256sum --check` marks a file read in text mode.
 #[must_use]
 pub fn checksum_line(sha256_hex: &str, file_name: &str) -> String {
     format!("{sha256_hex}  {file_name}\n")
 }
 
-/// True when `file_name` belongs in the published release: a feed artifact,
-/// a manual download, the signature of either, the feed itself, the
-/// checksum file, or a version-free copy. Everything else
+/// Returns whether `file_name` belongs in the published release.
+///
+/// That is a feed artifact, a manual download, the signature of either, the
+/// feed itself, the checksum file, or a version-free copy. Everything else
 /// in the draft is deleted before publishing.
 #[must_use]
 pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
@@ -310,7 +310,7 @@ pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
     // Decided by name, not suffix: the Windows copy ends in `-setup.exe` too,
     // and a fixed name never has a detached signature.
     if is_fixed_name(file_name) {
-        return fixed_names(windows).contains(&file_name);
+        return fixed_copies(windows).any(|copy| copy.name == file_name);
     }
     if file_name.strip_suffix(".sig").is_some_and(is_fixed_name) {
         return false;
@@ -319,19 +319,61 @@ pub fn is_published_asset(file_name: &str, windows: WindowsBuild) -> bool {
     // A detached signature is published exactly when its file is.
     let artifact = file_name.strip_suffix(".sig").unwrap_or(file_name);
 
-    for suffix in MANUAL_DOWNLOAD_SUFFIXES {
-        if artifact.ends_with(suffix) {
-            return true;
-        }
-    }
+    MANUAL_DOWNLOAD_SUFFIXES
+        .into_iter()
+        .chain(feed_platforms(windows).map(|platform| platform.suffix))
+        .any(|suffix| artifact.ends_with(suffix))
+}
 
-    for platform in platforms(windows) {
-        if artifact.ends_with(platform.suffix) {
-            return true;
-        }
-    }
+/// Returns the platforms the feed of a release made with `windows` offers.
+fn feed_platforms(windows: WindowsBuild) -> impl Iterator<Item = &'static FeedPlatform> {
+    FEED_PLATFORMS
+        .iter()
+        .filter(move |platform| platform.shipped.in_release(windows))
+}
 
-    false
+/// Returns the version-free copies a release made with `windows` carries.
+fn fixed_copies(windows: WindowsBuild) -> impl Iterator<Item = &'static FixedCopy> {
+    FIXED_COPIES
+        .iter()
+        .filter(move |copy| copy.shipped.in_release(windows))
+}
+
+/// Returns whether `file_name` is one of the version-free copy names,
+/// whatever the Windows choice.
+fn is_fixed_name(file_name: &str) -> bool {
+    FIXED_COPIES.iter().any(|copy| copy.name == file_name)
+}
+
+/// Returns the one versioned file among `file_names` that ends with `suffix`.
+///
+/// A version-free copy is never a candidate, so a second run over a
+/// directory that already holds the copies finds the same files as the first.
+///
+/// # Errors
+///
+/// Returns [`ReleaseSetError::Missing`] when no file matches and
+/// [`ReleaseSetError::Ambiguous`] when several do, naming `platform` in both.
+fn only_versioned_file<'a>(
+    file_names: &[&'a str],
+    platform: &'static str,
+    suffix: &'static str,
+) -> Result<&'a str, ReleaseSetError> {
+    let candidates: Vec<&str> = file_names
+        .iter()
+        .copied()
+        .filter(|name| !is_fixed_name(name) && name.ends_with(suffix))
+        .collect();
+
+    match candidates.as_slice() {
+        [] => Err(ReleaseSetError::Missing { platform, suffix }),
+        [only] => Ok(only),
+        _ => Err(ReleaseSetError::Ambiguous {
+            platform,
+            suffix,
+            found: candidates.join(", "),
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -412,6 +454,17 @@ mod tests {
                     .any(|kind| { kind.platform == key && name.ends_with(kind.suffix) }),
                 "{key} {name}"
             );
+        }
+    }
+
+    #[test]
+    fn updater_artifact_kinds_follow_the_platform_table_entry_by_entry() {
+        let kinds = updater_artifact_kinds();
+
+        assert_eq!(kinds.len(), super::FEED_PLATFORMS.len());
+        for (kind, platform) in kinds.iter().zip(&super::FEED_PLATFORMS) {
+            assert_eq!(kind.platform, platform.key);
+            assert_eq!(kind.suffix, platform.suffix);
         }
     }
 
