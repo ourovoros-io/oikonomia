@@ -20,10 +20,11 @@
 //! | one kind, once, before 4 or more digits | not money | `1,2345` |
 //!
 //! When both kinds appear, the one that is not the decimal mark groups
-//! thousands. Thousands groups must be well formed: one to three leading digits that do
-//! not start with zero, then groups of exactly three. So `0,085` and `0.971`
-//! (a unit price, a conversion factor) are not money, and neither is `1.2.3`.
-//! A fraction has one or two digits, and the whole part at most eight.
+//! thousands. Thousands groups must be well formed: one to three leading
+//! digits that do not start with zero, then groups of exactly three. So
+//! `0,085` and `0.971` (a unit price, a conversion factor) are not money, and
+//! neither is `1.2.3`. A fraction has one or two digits, and the whole part
+//! at most eight.
 //!
 //! Digits-only tokens with a leading zero, of more than five digits, or in
 //! 1900..=2100 are date fragments, identifiers and years, not money.
@@ -939,6 +940,9 @@ fn line_has_date(line: &str) -> bool {
 /// Real PDF extracts often put `13/08/2026 72,53 €` on one line — without this,
 /// `13`, `08`, and `2026` become €13 / €8 / €2026 candidates. Bank receipts
 /// also print unpadded `27/8/2026`, which must not become €27 / €8.
+///
+/// A token only has to be written like a date ([`DateShape`]): `31/02/2026`
+/// is not a date, and its digits are still not money.
 fn mask_date_tokens(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let chars: Vec<char> = line.chars().collect();
@@ -1021,7 +1025,7 @@ fn eu_date_len_at(chars: &[char], i: usize) -> Option<usize> {
     }
 
     let token: String = chars[i..j].iter().collect();
-    parse_eu_date(&token).map(|_| j - i)
+    eu_date_shape(&token).map(|_| j - i)
 }
 
 /// Blank out `h:mm` / `hh:mm` clocks so `7:00` is not parsed as €7.00.
@@ -1289,46 +1293,75 @@ fn find_best_date(text: &str) -> Option<String> {
     text.lines().find_map(first_date_on_line)
 }
 
-fn parse_iso_date(s: &str) -> Option<String> {
-    let parts: Vec<_> = s.split('-').collect();
-    if parts.len() != 3 {
-        return None;
+/// The numbers of a token written like a date: a year in 1990..=2100, a
+/// month in 1..=12 and a day in 1..=31.
+///
+/// The day need not exist in that month. The shape alone decides that the
+/// digits are not money; only [`DateShape::to_iso`] decides that they are a
+/// date.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DateShape {
+    year: i32,
+    month: u8,
+    day: u8,
+}
+
+impl DateShape {
+    fn new(year: i32, month: u8, day: u8) -> Option<Self> {
+        let in_range =
+            (1990..=2100).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day);
+
+        in_range.then_some(Self { year, month, day })
     }
-    let y: i32 = parts[0].parse().ok()?;
-    let m: u32 = parts[1].parse().ok()?;
-    let d: u32 = parts[2].parse().ok()?;
-    if (1990..=2100).contains(&y) && (1..=12).contains(&m) && (1..=31).contains(&d) {
-        Some(format!("{y:04}-{m:02}-{d:02}"))
-    } else {
-        None
+
+    /// The date as `YYYY-MM-DD`, or `None` when the calendar has no such day
+    /// (31 February, 29 February outside a leap year).
+    fn to_iso(self) -> Option<String> {
+        let month = time::Month::try_from(self.month).ok()?;
+        let date = time::Date::from_calendar_date(self.year, month, self.day).ok()?;
+
+        Some(format!(
+            "{:04}-{:02}-{:02}",
+            date.year(),
+            u8::from(date.month()),
+            date.day()
+        ))
     }
 }
 
+fn iso_date_shape(s: &str) -> Option<DateShape> {
+    let mut parts = s.split('-');
+    let year = parts.next()?.parse().ok()?;
+    let month = parts.next()?.parse().ok()?;
+    let day = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    DateShape::new(year, month, day)
+}
+
+fn eu_date_shape(s: &str) -> Option<DateShape> {
+    let sep = ['/', '.', '-'].into_iter().find(|sep| s.contains(*sep))?;
+
+    let mut parts = s.split(sep);
+    let day = parts.next()?.parse().ok()?;
+    let month = parts.next()?.parse().ok()?;
+    let year: i32 = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    let year = if year < 100 { year + 2000 } else { year };
+    DateShape::new(year, month, day)
+}
+
+fn parse_iso_date(s: &str) -> Option<String> {
+    iso_date_shape(s)?.to_iso()
+}
+
 fn parse_eu_date(s: &str) -> Option<String> {
-    let sep = if s.contains('/') {
-        '/'
-    } else if s.contains('.') {
-        '.'
-    } else if s.contains('-') {
-        '-'
-    } else {
-        return None;
-    };
-    let parts: Vec<_> = s.split(sep).collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let d: u32 = parts[0].parse().ok()?;
-    let m: u32 = parts[1].parse().ok()?;
-    let mut y: i32 = parts[2].parse().ok()?;
-    if y < 100 {
-        y += 2000;
-    }
-    if (1990..=2100).contains(&y) && (1..=12).contains(&m) && (1..=31).contains(&d) {
-        Some(format!("{y:04}-{m:02}-{d:02}"))
-    } else {
-        None
-    }
+    eu_date_shape(s)?.to_iso()
 }
 
 /// The document's reference, by the first of these that yields one: a
@@ -2470,6 +2503,31 @@ mod jumbled_extract {
             read("Amount due 1.234.567,00").amount_minor,
             Some(123_456_700)
         );
+    }
+
+    #[test]
+    fn a_day_the_month_does_not_have_is_not_a_date() {
+        for impossible in ["31/02/2026", "29/02/2026", "31.04.2026", "2026-02-31"] {
+            let suggestion = read(&format!("Invoice\nDate {impossible}\nTOTAL 45,90"));
+
+            assert_eq!(suggestion.entry_date, None, "{impossible}");
+            assert_eq!(suggestion.amount_minor, Some(4_590), "{impossible}");
+        }
+
+        assert_eq!(
+            read("Date 29/02/2024").entry_date.as_deref(),
+            Some("2024-02-29")
+        );
+        assert_eq!(
+            read("Date 2024-02-29").entry_date.as_deref(),
+            Some("2024-02-29")
+        );
+    }
+
+    #[test]
+    fn the_digits_of_an_impossible_date_are_still_not_money() {
+        assert_eq!(read("Amount due 31/02/2026").amount_minor, None);
+        assert_eq!(read("Amount due 2026-02-31").amount_minor, None);
     }
 
     #[test]

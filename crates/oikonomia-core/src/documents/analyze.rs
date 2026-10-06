@@ -58,7 +58,8 @@ pub struct DocumentSuggestion {
     pub kind: EntryKindSuggestion,
     /// Amount in minor units (entity currency assumed).
     pub amount_minor: Option<i64>,
-    /// ISO date if found.
+    /// The document's date as `YYYY-MM-DD`, if one was found. Always a day
+    /// the calendar has.
     pub entry_date: Option<String>,
     /// Description / merchant line.
     pub description: Option<String>,
