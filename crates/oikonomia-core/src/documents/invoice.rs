@@ -676,10 +676,10 @@ fn find_transfer_date(text: &str) -> Option<String> {
 }
 
 fn first_date_on_line(line: &str) -> Option<String> {
-    for token in line.split_whitespace() {
-        let trimmed =
-            token.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
-        if let Some(iso) = parse_eu_date(trimmed).or_else(|| parse_iso_date(trimmed)) {
+    for word in line.split_whitespace() {
+        let token =
+            word.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
+        if let Some(iso) = parse_eu_date(token).or_else(|| parse_iso_date(token)) {
             return Some(iso);
         }
     }
@@ -1006,126 +1006,120 @@ fn line_has_date(line: &str) -> bool {
 /// A token only has to be written like a date ([`DateShape`]): `31/02/2026`
 /// is not a date, and its digits are still not money.
 fn mask_date_tokens(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
     let chars: Vec<char> = line.chars().collect();
-    let n = chars.len();
-    let mut i = 0;
-    while i < n {
-        if is_iso_date_at(&chars, i) {
+    let mut out = String::with_capacity(line.len());
+    let mut index = 0;
+
+    while let Some(&current) = chars.get(index) {
+        if is_iso_date_at(&chars, index) {
             out.push_str("          ");
-            i += 10;
-            continue;
+            index += 10;
+        } else if let Some(len) = eu_date_len_at(&chars, index) {
+            out.push_str(&" ".repeat(len));
+            index += len;
+        } else {
+            out.push(current);
+            index += 1;
         }
-        if let Some(len) = eu_date_len_at(&chars, i) {
-            for _ in 0..len {
-                out.push(' ');
-            }
-            i += len;
-            continue;
-        }
-        out.push(chars[i]);
-        i += 1;
     }
     out
 }
 
-fn is_iso_date_at(chars: &[char], i: usize) -> bool {
-    i + 9 < chars.len()
-        && chars[i].is_ascii_digit()
-        && chars[i + 1].is_ascii_digit()
-        && chars[i + 2].is_ascii_digit()
-        && chars[i + 3].is_ascii_digit()
-        && chars[i + 4] == '-'
-        && chars[i + 5].is_ascii_digit()
-        && chars[i + 6].is_ascii_digit()
-        && chars[i + 7] == '-'
-        && chars[i + 8].is_ascii_digit()
-        && chars[i + 9].is_ascii_digit()
+fn is_iso_date_at(chars: &[char], start: usize) -> bool {
+    start + 9 < chars.len()
+        && chars[start].is_ascii_digit()
+        && chars[start + 1].is_ascii_digit()
+        && chars[start + 2].is_ascii_digit()
+        && chars[start + 3].is_ascii_digit()
+        && chars[start + 4] == '-'
+        && chars[start + 5].is_ascii_digit()
+        && chars[start + 6].is_ascii_digit()
+        && chars[start + 7] == '-'
+        && chars[start + 8].is_ascii_digit()
+        && chars[start + 9].is_ascii_digit()
 }
 
-/// Length of a `d/m/yyyy` (or `dd.mm.yy`, …) token starting at `i`.
-fn eu_date_len_at(chars: &[char], i: usize) -> Option<usize> {
-    if i > 0 && chars[i - 1].is_ascii_digit() {
+/// Length of a `d/m/yyyy` (or `dd.mm.yy`, …) token starting at `start`.
+fn eu_date_len_at(chars: &[char], start: usize) -> Option<usize> {
+    if start > 0 && chars[start - 1].is_ascii_digit() {
         return None;
     }
-    if i >= chars.len() || !chars[i].is_ascii_digit() {
+    if start >= chars.len() || !chars[start].is_ascii_digit() {
         return None;
     }
 
-    let mut j = i;
-    while j < chars.len() && chars[j].is_ascii_digit() && j - i < 2 {
-        j += 1;
+    let mut end = start;
+    while end < chars.len() && chars[end].is_ascii_digit() && end - start < 2 {
+        end += 1;
     }
-    if j == i || j >= chars.len() {
+    if end == start || end >= chars.len() {
         return None;
     }
-    let sep = chars[j];
-    if sep != '/' && sep != '.' && sep != '-' {
+    let separator = chars[end];
+    if separator != '/' && separator != '.' && separator != '-' {
         return None;
     }
-    j += 1;
+    end += 1;
 
-    let month_start = j;
-    while j < chars.len() && chars[j].is_ascii_digit() && j - month_start < 2 {
-        j += 1;
+    let month_start = end;
+    while end < chars.len() && chars[end].is_ascii_digit() && end - month_start < 2 {
+        end += 1;
     }
-    if j == month_start || j >= chars.len() || chars[j] != sep {
+    if end == month_start || end >= chars.len() || chars[end] != separator {
         return None;
     }
-    j += 1;
+    end += 1;
 
-    let year_start = j;
-    while j < chars.len() && chars[j].is_ascii_digit() && j - year_start < 4 {
-        j += 1;
+    let year_start = end;
+    while end < chars.len() && chars[end].is_ascii_digit() && end - year_start < 4 {
+        end += 1;
     }
-    let year_len = j - year_start;
+    let year_len = end - year_start;
     if year_len != 2 && year_len != 4 {
         return None;
     }
-    if j < chars.len() && chars[j].is_ascii_digit() {
+    if end < chars.len() && chars[end].is_ascii_digit() {
         return None;
     }
 
-    let token: String = chars[i..j].iter().collect();
-    eu_date_shape(&token).map(|_| j - i)
+    let token: String = chars[start..end].iter().collect();
+    eu_date_shape(&token).map(|_| end - start)
 }
 
 /// Blank out `h:mm` / `hh:mm` clocks so `7:00` is not parsed as €7.00.
 fn mask_time_tokens(line: &str) -> String {
-    let mut out = String::with_capacity(line.len());
     let chars: Vec<char> = line.chars().collect();
-    let n = chars.len();
-    let mut i = 0;
-    while i < n {
-        if let Some(len) = time_len_at(&chars, i) {
-            for _ in 0..len {
-                out.push(' ');
-            }
-            i += len;
-            continue;
+    let mut out = String::with_capacity(line.len());
+    let mut index = 0;
+
+    while let Some(&current) = chars.get(index) {
+        if let Some(len) = time_len_at(&chars, index) {
+            out.push_str(&" ".repeat(len));
+            index += len;
+        } else {
+            out.push(current);
+            index += 1;
         }
-        out.push(chars[i]);
-        i += 1;
     }
     out
 }
 
-/// Length of the `H:MM`, `HH:MM` or `HH:MM:SS` time starting at `i`, if one
-/// starts there and is not part of a longer run of digits.
-fn time_len_at(chars: &[char], i: usize) -> Option<usize> {
-    if i > 0 && digit_at(chars, i - 1).is_some() {
+/// Length of the `H:MM`, `HH:MM` or `HH:MM:SS` time starting at `start`, if
+/// one starts there and is not part of a longer run of digits.
+fn time_len_at(chars: &[char], start: usize) -> Option<usize> {
+    if start > 0 && digit_at(chars, start - 1).is_some() {
         return None;
     }
 
-    let colon = hour_colon_at(chars, i)?;
+    let colon = hour_colon_at(chars, start)?;
     let minutes = two_digits_at(chars, colon + 1)?;
     if minutes > 59 {
         return None;
     }
 
     let mut end = colon + 3;
-    let has_seconds =
-        chars.get(end) == Some(&':') && two_digits_at(chars, end + 1).is_some_and(|s| s <= 59);
+    let has_seconds = chars.get(end) == Some(&':')
+        && two_digits_at(chars, end + 1).is_some_and(|seconds| seconds <= 59);
     if has_seconds {
         end += 3;
     }
@@ -1133,28 +1127,28 @@ fn time_len_at(chars: &[char], i: usize) -> Option<usize> {
     if digit_at(chars, end).is_some() {
         return None;
     }
-    Some(end - i)
+    Some(end - start)
 }
 
-/// Index of the colon that ends the hour starting at `i`: a two-digit hour
-/// up to 23, or else a single digit.
-fn hour_colon_at(chars: &[char], i: usize) -> Option<usize> {
-    let first = digit_at(chars, i)?;
+/// Index of the colon that ends the hour starting at `start`: a two-digit
+/// hour up to 23, or else a single digit.
+fn hour_colon_at(chars: &[char], start: usize) -> Option<usize> {
+    let first = digit_at(chars, start)?;
 
-    let two_digit_hour = digit_at(chars, i + 1).is_some_and(|second| first * 10 + second <= 23);
-    if two_digit_hour && chars.get(i + 2) == Some(&':') {
-        return Some(i + 2);
+    let two_digit_hour = digit_at(chars, start + 1).is_some_and(|second| first * 10 + second <= 23);
+    if two_digit_hour && chars.get(start + 2) == Some(&':') {
+        return Some(start + 2);
     }
 
-    (chars.get(i + 1) == Some(&':')).then_some(i + 1)
+    (chars.get(start + 1) == Some(&':')).then_some(start + 1)
 }
 
-fn digit_at(chars: &[char], i: usize) -> Option<u32> {
-    chars.get(i)?.to_digit(10)
+fn digit_at(chars: &[char], index: usize) -> Option<u32> {
+    chars.get(index)?.to_digit(10)
 }
 
-fn two_digits_at(chars: &[char], i: usize) -> Option<u32> {
-    Some(digit_at(chars, i)? * 10 + digit_at(chars, i + 1)?)
+fn two_digits_at(chars: &[char], index: usize) -> Option<u32> {
+    Some(digit_at(chars, index)? * 10 + digit_at(chars, index + 1)?)
 }
 
 /// Accept amounts that look like currency, not AFM / invoice IDs / ZIPs.
@@ -1214,36 +1208,36 @@ fn percent_len_at(chars: &[char], index: usize) -> Option<usize> {
 
 fn money_amounts_on_line(line: &str) -> Vec<i64> {
     let line = mask_percent_tokens(&mask_time_tokens(&mask_date_tokens(line)));
-    let mut out = Vec::new();
-    let mut buf = String::new();
-    for ch in line.chars() {
-        if ch.is_ascii_digit() || ch == '.' || ch == ',' {
-            buf.push(ch);
+    let mut amounts = Vec::new();
+    let mut token = String::new();
+    for character in line.chars() {
+        if character.is_ascii_digit() || character == '.' || character == ',' {
+            token.push(character);
         } else {
-            if let Some(v) = parse_money_token(&buf) {
-                out.push(v);
+            if let Some(amount) = parse_money_token(&token) {
+                amounts.push(amount);
             }
-            buf.clear();
+            token.clear();
         }
     }
-    if let Some(v) = parse_money_token(&buf) {
-        out.push(v);
+    if let Some(amount) = parse_money_token(&token) {
+        amounts.push(amount);
     }
-    out
+    amounts
 }
 
-fn parse_money_token(s: &str) -> Option<i64> {
+fn parse_money_token(token: &str) -> Option<i64> {
     // The tokenizer keeps `.` and `,`, so an amount that ends a sentence or a
     // list item arrives with that punctuation attached.
-    let s = s.trim().trim_end_matches(['.', ',']);
-    if s.is_empty() || s.len() > 14 {
+    let token = token.trim().trim_end_matches(['.', ',']);
+    if token.is_empty() || token.len() > 14 {
         return None;
     }
 
-    if s.contains([',', '.']) {
-        separated_to_minor(s)
+    if token.contains([',', '.']) {
+        separated_to_minor(token)
     } else {
-        whole_euros_to_minor(s)
+        whole_euros_to_minor(token)
     }
 }
 
@@ -1440,8 +1434,8 @@ impl DateShape {
     }
 }
 
-fn iso_date_shape(s: &str) -> Option<DateShape> {
-    let mut parts = s.split('-');
+fn iso_date_shape(token: &str) -> Option<DateShape> {
+    let mut parts = token.split('-');
     let year = parts.next()?.parse().ok()?;
     let month = parts.next()?.parse().ok()?;
     let day = parts.next()?.parse().ok()?;
@@ -1452,10 +1446,12 @@ fn iso_date_shape(s: &str) -> Option<DateShape> {
     DateShape::new(year, month, day)
 }
 
-fn eu_date_shape(s: &str) -> Option<DateShape> {
-    let sep = ['/', '.', '-'].into_iter().find(|sep| s.contains(*sep))?;
+fn eu_date_shape(token: &str) -> Option<DateShape> {
+    let separator = ['/', '.', '-']
+        .into_iter()
+        .find(|separator| token.contains(*separator))?;
 
-    let mut parts = s.split(sep);
+    let mut parts = token.split(separator);
     let day = parts.next()?.parse().ok()?;
     let month = parts.next()?.parse().ok()?;
     let year: i32 = parts.next()?.parse().ok()?;
@@ -1467,12 +1463,12 @@ fn eu_date_shape(s: &str) -> Option<DateShape> {
     DateShape::new(year, month, day)
 }
 
-fn parse_iso_date(s: &str) -> Option<String> {
-    iso_date_shape(s)?.to_iso()
+fn parse_iso_date(token: &str) -> Option<String> {
+    iso_date_shape(token)?.to_iso()
 }
 
-fn parse_eu_date(s: &str) -> Option<String> {
-    eu_date_shape(s)?.to_iso()
+fn parse_eu_date(token: &str) -> Option<String> {
+    eu_date_shape(token)?.to_iso()
 }
 
 /// The document's reference, by the first of these that yields one: a
