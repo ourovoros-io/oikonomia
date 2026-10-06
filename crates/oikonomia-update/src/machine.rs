@@ -8,9 +8,15 @@
 //! ```text
 //! any state but Installing ── begin_check ──▶ Checking
 //! Checking ── finish_check ──▶ UpToDate | Installable | Manual | Failed
+//! Checking ── abandon_check ──▶ Failed
 //! Installable ── begin_install ──▶ Installing
-//! Installing ── finish_install(Failed) ──▶ Failed
+//! Installing ── finish_install(Failed) | abandon_install ──▶ Failed
 //! ```
+//!
+//! A step that failed is finished with the error it failed with, and the
+//! machine keeps that error's code for the status. A step that never
+//! returned, because its task died, is abandoned instead: there is no error
+//! to name, and the status says failed without a code.
 //!
 //! The docs here name states as the webview sees them, by their
 //! [`UpdateStatus`] names: Available is [`State::Installable`] and
@@ -58,7 +64,9 @@ impl UpdateMachine {
                 notes: notes.clone(),
             },
             State::Installing => UpdateStatus::Installing,
-            State::Failed => UpdateStatus::Failed,
+            State::Failed { code } => UpdateStatus::Failed {
+                code: code.map(str::to_owned),
+            },
         }
     }
 
@@ -94,8 +102,22 @@ impl UpdateMachine {
             CheckOutcome::UpToDate => State::UpToDate,
             CheckOutcome::Available(offer) => State::Installable(offer),
             CheckOutcome::AvailableManually { version, notes } => State::Manual { version, notes },
-            CheckOutcome::Failed => State::Failed,
+            CheckOutcome::Failed(error) => State::Failed {
+                code: Some(error.code()),
+            },
         };
+    }
+
+    /// Ends the check begun with [`Self::begin_check`] as failed, with no
+    /// error to name.
+    ///
+    /// For a check that will never report: the task running it died. Nothing
+    /// else would move the machine out of Checking. Does nothing unless the
+    /// machine is Checking, for the reason [`Self::finish_check`] gives.
+    pub fn abandon_check(&mut self) {
+        if matches!(self.state, State::Checking) {
+            self.state = State::Failed { code: None };
+        }
     }
 
     /// Moves from Available to Installing and hands out the offer to install.
@@ -127,14 +149,33 @@ impl UpdateMachine {
     /// exit, so the machine stays Installing and goes on refusing a check or
     /// another install in the meantime. Does nothing unless the machine is
     /// Installing.
-    pub fn finish_install(&mut self, outcome: InstallOutcome) {
+    ///
+    /// The outcome is borrowed: the caller still has to act on it, by
+    /// restarting or by reporting the error.
+    pub fn finish_install(&mut self, outcome: &InstallOutcome) {
         if !matches!(self.state, State::Installing) {
             return;
         }
 
         match outcome {
-            InstallOutcome::Failed => self.state = State::Failed,
+            InstallOutcome::Failed(error) => {
+                self.state = State::Failed {
+                    code: Some(error.code()),
+                };
+            }
             InstallOutcome::Installed(_) => {}
+        }
+    }
+
+    /// Ends the install begun with [`Self::begin_install`] as failed, with
+    /// no error to name.
+    ///
+    /// For an install that will never report: the task running it died.
+    /// Otherwise the machine would stay Installing and refuse every further
+    /// check. Does nothing unless the machine is Installing.
+    pub fn abandon_install(&mut self) {
+        if matches!(self.state, State::Installing) {
+            self.state = State::Failed { code: None };
         }
     }
 }
@@ -189,5 +230,9 @@ enum State {
     /// being downloaded, verified or handed to the installer.
     Installing,
     /// The last check or install failed.
-    Failed,
+    Failed {
+        /// The code of the error it failed with, or `None` when the step was
+        /// abandoned.
+        code: Option<&'static str>,
+    },
 }

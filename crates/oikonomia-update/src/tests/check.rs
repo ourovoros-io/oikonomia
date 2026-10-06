@@ -5,13 +5,14 @@ use crate::client::{
     CheckOutcome, ClientConfig, InstallRoute, MAX_MANIFEST_BYTES, MAX_SIGNATURE_BYTES,
     UPDATE_FEED_URL, download_and_verify, perform_check,
 };
+use crate::error::UpdateError;
 use crate::feed::{FeedArtifact, assemble_manifest};
 use crate::hosts::HostPolicy;
 use crate::machine::{CheckStart, UpdateMachine};
 use crate::notes::sanitize_notes;
 use crate::status::UpdateStatus;
 use crate::tests::support::{
-    available_offer, cache_dir, check_error_code, config, install, leftover_files,
+    available_offer, cache_dir, check_error_code, config, failed_with, install, leftover_files,
     machine_with_an_offer, serve_signed_manifest, server_url, sign, signed_manifest, spy,
     static_manifest, test_keys,
 };
@@ -70,7 +71,10 @@ fn a_refused_connection_is_a_failed_check_and_writes_nothing() {
     .expect("config");
 
     assert_eq!(check_error_code(&config), "update_network");
-    assert_eq!(UpdateMachine::new().check(&config), UpdateStatus::Failed);
+    assert_eq!(
+        UpdateMachine::new().check(&config),
+        failed_with("update_network")
+    );
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -97,7 +101,7 @@ fn timeout_check_is_failed_no_file_no_exec() {
     .expect("config");
     let mut machine = UpdateMachine::new();
     let status = machine.check(&config);
-    assert_eq!(status, UpdateStatus::Failed);
+    assert_eq!(status, failed_with("update_network"));
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -229,9 +233,13 @@ fn missing_manifest_sig_is_failed() {
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
-    assert_eq!(machine.check(&config), UpdateStatus::Failed);
     // A feed published without its signature cannot be trusted; that is
-    // not the same finding as a server that could not be reached.
+    // not the same finding as a server that could not be reached, and the
+    // status says which it was.
+    assert_eq!(
+        machine.check(&config),
+        failed_with("update_manifest_signature")
+    );
     assert_eq!(check_error_code(&config), "update_manifest_signature");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
@@ -262,7 +270,10 @@ fn bad_manifest_sig_is_failed() {
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
-    assert_eq!(machine.check(&config), UpdateStatus::Failed);
+    assert_eq!(
+        machine.check(&config),
+        failed_with("update_manifest_signature")
+    );
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -287,7 +298,7 @@ fn truncated_json_after_valid_sig_is_failed() {
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
-    assert_eq!(machine.check(&config), UpdateStatus::Failed);
+    assert_eq!(machine.check(&config), failed_with("update_manifest_parse"));
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -315,7 +326,7 @@ fn host_not_allow_listed_is_failed_no_file() {
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
-    assert_eq!(machine.check(&config), UpdateStatus::Failed);
+    assert_eq!(machine.check(&config), failed_with("update_artifact_url"));
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -343,7 +354,7 @@ fn file_url_artifact_is_failed() {
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
-    assert_eq!(machine.check(&config), UpdateStatus::Failed);
+    assert_eq!(machine.check(&config), failed_with("update_artifact_url"));
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 
@@ -748,8 +759,32 @@ fn a_check_that_ends_after_an_install_began_does_not_replace_installing() {
     machine.finish_check(CheckOutcome::UpToDate);
     assert_eq!(machine.status(), UpdateStatus::Installing);
 
-    machine.finish_check(CheckOutcome::Failed);
+    machine.finish_check(CheckOutcome::Failed(UpdateError::Network));
     assert_eq!(machine.status(), UpdateStatus::Installing);
+
+    machine.abandon_check();
+    assert_eq!(machine.status(), UpdateStatus::Installing);
+}
+
+#[test]
+fn an_abandoned_check_fails_without_a_code_and_a_new_check_may_start() {
+    let mut machine = UpdateMachine::new();
+    assert_eq!(machine.begin_check(), CheckStart::Started);
+
+    // What the caller's drop guard does when the check never returns.
+    machine.abandon_check();
+
+    assert_eq!(machine.status(), UpdateStatus::Failed { code: None });
+    assert_eq!(machine.begin_check(), CheckStart::Started);
+}
+
+#[test]
+fn abandoning_a_check_that_was_never_begun_changes_nothing() {
+    let mut machine = UpdateMachine::new();
+
+    machine.abandon_check();
+
+    assert_eq!(machine.status(), UpdateStatus::Idle);
 }
 
 #[test]

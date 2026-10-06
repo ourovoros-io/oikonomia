@@ -116,10 +116,11 @@ pub enum InstallHandoff {
 }
 
 /// The result of [`install_offer`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum InstallOutcome {
-    /// Download, verification, or the installer failed; nothing was replaced.
-    Failed,
+    /// The download, a check of the artifact, the cache or the installer
+    /// failed, with the error it failed with; nothing was replaced.
+    Failed(UpdateError),
     /// The installer ran; the caller restarts or exits as the handoff says.
     Installed(InstallHandoff),
 }
@@ -304,9 +305,10 @@ pub enum CheckOutcome {
         /// The release notes with every HTML markup character escaped.
         notes: String,
     },
-    /// The check could not be completed or its result could not be trusted.
-    /// The cause, an [`UpdateError`], is logged and not returned.
-    Failed,
+    /// The check could not be completed or its result could not be trusted,
+    /// with the error it ended on. [`UpdateError::code`] tells a server that
+    /// could not be reached from a feed that must not be trusted.
+    Failed(UpdateError),
 }
 
 /// The platform installer, called only with an artifact whose digest and
@@ -318,24 +320,20 @@ pub trait ArtifactInstaller {
     /// # Errors
     ///
     /// Returns an [`UpdateError`] when the artifact could not be installed.
-    /// [`install_offer`] logs it, deletes the artifact and reports
+    /// [`install_offer`] deletes the artifact and returns the error in
     /// [`InstallOutcome::Failed`].
     fn install(&self, artifact: &Path) -> Result<InstallHandoff>;
 }
 
 /// Checks the feed for a newer version. Does not download the artifact.
 ///
-/// Blocks on the network for up to the feed deadline per request. The cause
-/// of a failure is logged and the outcome is [`CheckOutcome::Failed`].
+/// Blocks on the network for up to the feed deadline per request. A failure
+/// is an outcome, [`CheckOutcome::Failed`], because the caller's state
+/// machine has to be told of it like any other end of a check. It holds the
+/// error and is not logged here; the caller decides what to record.
 #[must_use]
 pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
-    match perform_check_inner(config) {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            log_failure("update check failed", &error);
-            CheckOutcome::Failed
-        }
-    }
+    perform_check_inner(config).unwrap_or_else(CheckOutcome::Failed)
 }
 
 /// Downloads and verifies the artifact of `offer`, then hands it to `installer`.
@@ -349,7 +347,9 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
 /// The artifact is verified in memory before it is written, so a failed
 /// download or check leaves no file and `installer` is not called. The
 /// artifact is deleted afterwards unless an installer process is still
-/// running from it. The cause of a failure is logged.
+/// running from it. A failure is returned in [`InstallOutcome::Failed`] with
+/// its error, whether it came from this crate or from `installer`, and is
+/// not logged here.
 #[must_use]
 pub fn install_offer(
     config: &ClientConfig,
@@ -358,10 +358,7 @@ pub fn install_offer(
 ) -> InstallOutcome {
     let path = match download_and_verify(config, offer) {
         Ok(path) => path,
-        Err(error) => {
-            log_failure("update install verify failed", &error);
-            return InstallOutcome::Failed;
-        }
+        Err(error) => return InstallOutcome::Failed(error),
     };
 
     match installer.install(&path) {
@@ -373,9 +370,8 @@ pub fn install_offer(
             InstallOutcome::Installed(InstallHandoff::InstallerStarted)
         }
         Err(error) => {
-            log_failure("update install exec failed", &error);
             delete_artifact(&path);
-            InstallOutcome::Failed
+            InstallOutcome::Failed(error)
         }
     }
 }
@@ -462,8 +458,8 @@ pub(crate) fn current_updater_platform() -> String {
     format!("{os}-{}", std::env::consts::ARCH)
 }
 
-/// Runs the check and keeps the cause of a failure, which [`perform_check`]
-/// logs and reduces to [`CheckOutcome::Failed`].
+/// Runs the check and returns a failure as an error, which
+/// [`perform_check`] turns into [`CheckOutcome::Failed`].
 ///
 /// # Errors
 ///
@@ -739,19 +735,6 @@ enum FetchFailure {
     Denied,
     /// The body was larger than the cap of the resource.
     TooLarge,
-}
-
-/// Logs `error` under `context`, with its cause when it has one.
-///
-/// The message of an [`UpdateError`] leaves the cause out, so that it does
-/// not repeat it when a caller prints the chain. A failure that is only
-/// logged has no such caller, and without the cause a cache failure would
-/// not say which operation the system refused.
-fn log_failure(context: &str, error: &UpdateError) {
-    match std::error::Error::source(error) {
-        Some(cause) => log::warn!("{context}: {error}: {cause}"),
-        None => log::warn!("{context}: {error}"),
-    }
 }
 
 /// Parses a feed body, and the version it states, the way every copy does.

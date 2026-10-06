@@ -5,10 +5,12 @@
 //! contract with `web/src/lib/errorCodes.json`: [`UpdateError::ALL_CODES`]
 //! lists them, and a desktop test compares that list with the fixture.
 //!
-//! A check does not hand these to its caller. [`perform_check`] logs the
-//! error and reports [`CheckOutcome::Failed`], and [`install_offer`] does the
-//! same with [`InstallOutcome::Failed`]. The variants that do reach a caller
-//! come from building a [`ClientConfig`], from
+//! A failed check or install hands its error to the caller inside the
+//! outcome: [`perform_check`] in [`CheckOutcome::Failed`] and
+//! [`install_offer`] in [`InstallOutcome::Failed`]. Nothing in this crate logs
+//! it. The desktop crate logs it and gives it to the [`UpdateMachine`], which
+//! keeps the code for the [`UpdateStatus`] the webview is shown. The other
+//! errors are returned as errors: from building a [`ClientConfig`], from
 //! [`UpdateMachine::begin_install`] and from the release-side functions.
 //!
 //! [`FeedRefusal`] is the release lane's: it says which entry of a feed
@@ -20,6 +22,8 @@
 //! [`CheckOutcome::Failed`]: crate::CheckOutcome::Failed
 //! [`InstallOutcome::Failed`]: crate::InstallOutcome::Failed
 //! [`ClientConfig`]: crate::ClientConfig
+//! [`UpdateMachine`]: crate::UpdateMachine
+//! [`UpdateStatus`]: crate::UpdateStatus
 //! [`UpdateMachine::begin_install`]: crate::UpdateMachine::begin_install
 
 use thiserror::Error;

@@ -49,7 +49,8 @@
 //!    copy the system package manager owns,
 //!    [`CheckOutcome::AvailableManually`] with the version and notes only.
 //!
-//! The check downloads no artifact and writes no file.
+//! The check downloads no artifact and writes no file. A step that fails
+//! ends it as [`CheckOutcome::Failed`], which holds the [`UpdateError`].
 //!
 //! # Install
 //!
@@ -71,7 +72,11 @@
 //!    process that is still running from it.
 //!
 //! After a failure at any step the artifact, if it was written at all, is
-//! removed.
+//! removed, and the install ends as [`InstallOutcome::Failed`], which holds
+//! the [`UpdateError`].
+//!
+//! Neither function logs a failure. The caller has the error and decides
+//! what to record of it.
 //!
 //! # Host allow-list
 //!
@@ -127,7 +132,10 @@
 //! available (to install, or only to report), installing or failed. The
 //! desktop keeps it behind a mutex and
 //! never holds that mutex across a request: it begins a step, releases the
-//! machine, does the work, and finishes the step.
+//! machine, does the work, and finishes the step. Of a failure the machine
+//! keeps the error's code, and [`UpdateStatus::Failed`] carries it to the
+//! webview, which words it; a step whose task died is abandoned and has
+//! none.
 //!
 //! # Not defended
 //!

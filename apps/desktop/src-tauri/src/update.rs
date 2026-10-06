@@ -17,7 +17,7 @@ use crate::update_exec::{InstallKind, VerifiedPathInstaller};
 use crate::update_key::UPDATER_PUBLIC_KEY;
 use oikonomia_update::{
     ArtifactInstaller, CheckOutcome, CheckStart, ClientConfig, InstallHandoff, InstallOutcome,
-    UpdateMachine, UpdateStatus, VerifiedOffer, install_offer, perform_check,
+    UpdateError, UpdateMachine, UpdateStatus, VerifiedOffer, install_offer, perform_check,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -52,7 +52,8 @@ fn updater_cache_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
 /// detached signature `latest.json.sig`, verifies the signature with the
 /// compiled-in minisign key, and checks the artifact URL against the
 /// allow-list. Does not download the artifact. A check that cannot complete
-/// is the status `Failed`, not an error.
+/// is the status `Failed` with the code of what stopped it, not an error. The
+/// cause is logged here.
 ///
 /// HTTP is `ureq` on the blocking pool, so the async runtime is not stalled.
 ///
@@ -70,15 +71,30 @@ pub(crate) async fn update_check(
 
     run_check(state.update_machine(), move || {
         let route = InstallKind::detect().route();
-        match ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, route) {
+        let outcome = match ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, route) {
             Ok(config) => perform_check(&config),
-            Err(err) => {
-                log::warn!("update check config failed: {err}");
-                CheckOutcome::Failed
-            }
+            Err(error) => CheckOutcome::Failed(error),
+        };
+        if let CheckOutcome::Failed(error) = &outcome {
+            log_failure("update check failed", error);
         }
+
+        outcome
     })
     .await
+}
+
+/// Logs `error` under `context`, with its cause when it has one.
+///
+/// The update crate logs no failure of its own; this is where one is
+/// recorded. The message of an [`UpdateError`] leaves the cause out, and the
+/// webview is sent only the code, so without the cause here a cache failure
+/// would nowhere say which operation the system refused.
+fn log_failure(context: &str, error: &UpdateError) {
+    match std::error::Error::source(error) {
+        Some(cause) => log::warn!("{context}: {error}: {cause}"),
+        None => log::warn!("{context}: {error}"),
+    }
 }
 
 /// Runs `check` on the blocking pool and applies its outcome to `machine`.
@@ -111,9 +127,10 @@ async fn run_check(
 
 /// A check that has begun on the machine and has to end on it.
 ///
-/// Dropped unfinished, which happens when the check panics, it moves the
-/// machine to failed. Otherwise the status would stay `Checking` for the rest
-/// of the session, because nothing else ends a check.
+/// Dropped unfinished, which happens when the check panics, it abandons the
+/// check, and the machine reads failed with no code. Otherwise the status
+/// would stay `Checking` for the rest of the session, because nothing else
+/// ends a check.
 struct PendingCheck<'a> {
     /// The machine the check was begun on.
     machine: &'a Mutex<UpdateMachine>,
@@ -147,7 +164,7 @@ impl<'a> PendingCheck<'a> {
 impl Drop for PendingCheck<'_> {
     fn drop(&mut self) {
         if !self.finished {
-            crate::state::lock_update(self.machine).finish_check(CheckOutcome::Failed);
+            crate::state::lock_update(self.machine).abandon_check();
         }
     }
 }
@@ -158,9 +175,10 @@ impl Drop for PendingCheck<'_> {
 /// the download can take minutes, and a check that arrives meanwhile must be
 /// answered, not left waiting on the mutex.
 ///
-/// Dropped unfinished, which happens when the install panics, it moves the
-/// machine to failed. Otherwise the status would stay `Installing` for the
-/// rest of the session and refuse every further check.
+/// Dropped unfinished, which happens when the install panics, it abandons
+/// the install, and the machine reads failed with no code. Otherwise the
+/// status would stay `Installing` for the rest of the session and refuse
+/// every further check.
 struct PendingInstall<'a> {
     /// The machine the install was begun on.
     machine: &'a Mutex<UpdateMachine>,
@@ -188,7 +206,7 @@ impl<'a> PendingInstall<'a> {
     }
 
     /// Applies `outcome` to the machine.
-    fn finish(mut self, outcome: InstallOutcome) {
+    fn finish(mut self, outcome: &InstallOutcome) {
         crate::state::lock_update(self.machine).finish_install(outcome);
         self.finished = true;
     }
@@ -197,7 +215,7 @@ impl<'a> PendingInstall<'a> {
 impl Drop for PendingInstall<'_> {
     fn drop(&mut self) {
         if !self.finished {
-            crate::state::lock_update(self.machine).finish_install(InstallOutcome::Failed);
+            crate::state::lock_update(self.machine).abandon_install();
         }
     }
 }
@@ -211,7 +229,16 @@ impl Drop for PendingInstall<'_> {
 /// starts the new version.
 ///
 /// From any state but [`UpdateStatus::Available`] this is a typed hard error,
-/// not a silent no-op.
+/// not a silent no-op. An install that was begun and then failed is the
+/// status `Failed` with the code of what stopped it.
+///
+/// # Errors
+///
+/// Returns `update_install_not_allowed` unless the last check found an
+/// update this copy may install, the code of the
+/// [`UpdateError`] when the client configuration cannot be built, and
+/// `task_failed` when the system names no cache directory or the blocking
+/// task panics.
 #[tauri::command]
 pub(crate) async fn update_install(
     app: tauri::AppHandle,
@@ -239,7 +266,9 @@ pub(crate) async fn update_install(
     };
 
     match outcome {
-        InstallOutcome::Failed => Ok(UpdateStatus::Failed),
+        InstallOutcome::Failed(error) => Ok(UpdateStatus::Failed {
+            code: Some(error.code().to_owned()),
+        }),
         InstallOutcome::Installed(InstallHandoff::Replaced) => app.restart(),
         InstallOutcome::Installed(InstallHandoff::InstallerStarted) => {
             app.exit(0);
@@ -257,6 +286,9 @@ pub(crate) async fn update_install(
 /// it in its installing state, in which it refuses a second install and a
 /// check, so neither can run against the same cache file.
 ///
+/// A failed install is logged here with its cause and returned as
+/// [`InstallOutcome::Failed`].
+///
 /// # Errors
 ///
 /// Returns [`oikonomia_update::UpdateError::InstallNotAvailable`] unless the
@@ -268,7 +300,10 @@ fn install_available_update(
 ) -> oikonomia_update::Result<InstallOutcome> {
     let pending = PendingInstall::begin(machine)?;
     let outcome = install_offer(config, &pending.offer, installer);
-    pending.finish(outcome);
+    if let InstallOutcome::Failed(error) = &outcome {
+        log_failure("update install failed", error);
+    }
+    pending.finish(&outcome);
 
     Ok(outcome)
 }
@@ -365,7 +400,34 @@ mod tests {
         assert_eq!(result.expect_err("join error").code, "task_failed");
         assert_eq!(
             crate::state::lock_update(&machine).status(),
-            UpdateStatus::Failed
+            UpdateStatus::Failed { code: None }
+        );
+    }
+
+    /// Runs a check that ends in `error` and returns the status the command
+    /// would send, as the JSON the webview receives.
+    fn failed_check_as_json(error: UpdateError) -> serde_json::Value {
+        let machine = Arc::new(Mutex::new(UpdateMachine::new()));
+
+        let status =
+            tauri::async_runtime::block_on(run_check(machine, move || CheckOutcome::Failed(error)))
+                .expect("a failed check is a status, not a command error");
+
+        serde_json::to_value(status).expect("status json")
+    }
+
+    #[test]
+    fn a_failed_check_sends_the_webview_the_code_of_its_cause() {
+        let offline = failed_check_as_json(UpdateError::Network);
+        let forged = failed_check_as_json(UpdateError::ManifestSignature);
+
+        assert_eq!(
+            offline,
+            serde_json::json!({ "kind": "failed", "code": "update_network" })
+        );
+        assert_eq!(
+            forged,
+            serde_json::json!({ "kind": "failed", "code": "update_manifest_signature" })
         );
     }
 

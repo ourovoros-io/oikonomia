@@ -60,9 +60,12 @@ fn a_running_installer_keeps_its_artifact_and_the_next_download_clears_it() {
 
     let outcome = install(&mut machine, &config, &installer).expect("legal");
 
-    assert_eq!(
-        outcome,
-        InstallOutcome::Installed(InstallHandoff::InstallerStarted)
+    assert!(
+        matches!(
+            outcome,
+            InstallOutcome::Installed(InstallHandoff::InstallerStarted)
+        ),
+        "{outcome:?}"
     );
     assert_eq!(leftover_files(cache.path()).len(), 1);
 
