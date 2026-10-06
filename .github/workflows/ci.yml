@@ -288,7 +288,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-      - run: cargo install cargo-audit cargo-deny --locked
+      # Exact versions: a gate tool must not change under a pull request.
+      # Dependabot does not see these; bump them by hand.
+      - run: cargo install cargo-audit@0.22.2 cargo-deny@0.20.2 --locked
 
       # Blocking by design: cargo audit exits nonzero only for actual
       # vulnerabilities; unmaintained-crate warnings do not fail the job.
