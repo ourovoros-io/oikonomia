@@ -1,7 +1,7 @@
 //! Tauri command handlers (thin wrappers over core + state).
 
 use crate::error::{CommandError, CommandResult, DesktopError};
-use crate::state::AppState;
+use crate::state::{AppState, GatedVault};
 use base64::Engine;
 use oikonomia_core::csv::{
     CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewInput,
@@ -20,11 +20,11 @@ use oikonomia_core::domain::{
 use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplate,
-    DEFAULT_LOCK_TIMEOUT_SECS, DashboardSummary, EntryFilter, PnL, PostJournal, PostSimpleEntry,
-    PostedEntryView, RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance,
-    UpdateAccount, UpdateRecurringTemplate, VoidResult, account_balance, account_register,
-    activity_window, archive_account, archive_entity, balance_sheet, cash_flow_series,
-    create_account, create_entity, create_recurring_template, dashboard_summary, delete_entity,
+    DashboardSummary, EntryFilter, PnL, PostJournal, PostSimpleEntry, PostedEntryView,
+    RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
+    UpdateRecurringTemplate, VoidResult, account_balance, account_register, activity_window,
+    archive_account, archive_entity, balance_sheet, cash_flow_series, create_account,
+    create_entity, create_recurring_template, dashboard_summary, delete_entity,
     delete_recurring_template, get_entity, get_entry, get_lock_timeout_secs,
     get_recurring_template, list_accounts, list_entities, list_entries, list_recurring_templates,
     post_entry, post_recurring_template, post_simple_entry, profit_and_loss,
@@ -40,7 +40,6 @@ use oikonomia_core::util::{format_date, utc_today};
 use oikonomia_core::vault::{BACKUP_EXTENSION, Vault, VaultStatus, default_backup_file_name};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use tauri::{Emitter, State};
 use zeroize::Zeroizing;
 
@@ -71,7 +70,7 @@ pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStat
     let vault = state.vault();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let guard = crate::state::lock_vault(&vault);
+        let guard = vault.lock();
         Ok(guard.status())
     }))
     .await
@@ -93,13 +92,11 @@ pub async fn vault_init(
     state: State<'_, AppState>,
     password: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
-    let status = with_vault_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         vault.init(&password)?;
         Ok(vault.status())
     })
-    .await?;
-    state.sync_watchdog_gate(status);
-    Ok(status)
+    .await
 }
 
 /// Unlock an existing vault. The password is wiped when the command returns.
@@ -108,26 +105,11 @@ pub async fn vault_unlock(
     state: State<'_, AppState>,
     password: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
-    let (status, secs) = with_vault_blocking(&state, move |vault| {
+    with_vault_blocking(&state, move |vault| {
         vault.unlock(&password)?;
-
-        // Refresh the watchdog's timeout cache from the now-readable settings.
-        // A failed read falls back to the default, but never silently.
-        let secs = match vault.connection().and_then(get_lock_timeout_secs) {
-            Ok(secs) => secs,
-            Err(err) => {
-                log::warn!("could not read lock timeout after unlock, using default: {err}");
-                DEFAULT_LOCK_TIMEOUT_SECS
-            }
-        };
-
-        Ok((vault.status(), secs))
+        Ok(vault.status())
     })
-    .await?;
-
-    state.set_lock_timeout_cache(secs);
-    state.sync_watchdog_gate(status);
-    Ok(status)
+    .await
 }
 
 #[cfg(test)]
@@ -194,20 +176,20 @@ mod tests {
 
 /// Change the master password (requires the current password). Both
 /// passwords are wiped when the command returns.
+///
+/// Returns the status the vault is left in. The watchdog follows it whatever
+/// it is, so this does not depend on whether core unlocks a locked vault as
+/// part of the change.
 #[tauri::command]
 pub async fn vault_change_password(
     state: State<'_, AppState>,
     old: Zeroizing<String>,
     new: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
-    let vault = state.vault();
-    state.touch();
-
-    await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = crate::state::lock_vault(&vault);
-        guard.change_password(&old, &new)?;
-        Ok(guard.status())
-    }))
+    with_vault_blocking(&state, move |vault| {
+        vault.change_password(&old, &new)?;
+        Ok(vault.status())
+    })
     .await
 }
 
@@ -222,7 +204,6 @@ pub async fn vault_lock(
         Ok(vault.status())
     })
     .await?;
-    state.sync_watchdog_gate(status);
     let _ = app.emit("vault-locked", ());
     Ok(status)
 }
@@ -380,9 +361,6 @@ async fn lock_vault_session(
         Ok(was_unlocked)
     })
     .await?;
-    // Always park: restore (and any other session lock) leaves the vault
-    // closed even when it was already locked.
-    state.sync_watchdog_gate(VaultStatus::Locked);
     if was_unlocked {
         let _ = app.emit("vault-locked", ());
     }
@@ -840,7 +818,7 @@ pub async fn entry_post_simple_with_document_path(
             )
         })?;
 
-        let guard = crate::state::lock_vault(&vault);
+        let guard = vault.lock();
         let conn = guard.connection()?;
         let (view, _meta) = post_simple_entry_with_document(
             conn,
@@ -1623,6 +1601,10 @@ fn require_granted_path(state: &AppState, path: &str) -> CommandResult<PathBuf> 
 /// Run vault work on the blocking pool: no command ever waits for the vault
 /// mutex on the main thread or an async runtime worker (e.g. while a rekey
 /// holds it for seconds).
+///
+/// Whatever status `f` leaves the vault in, the guard brings the idle
+/// watchdog in line with it before the vault mutex is released
+/// ([`crate::state::VaultGuard`]), so no command updates the watchdog itself.
 async fn with_vault_blocking<T, F>(state: &State<'_, AppState>, f: F) -> CommandResult<T>
 where
     T: Send + 'static,
@@ -1632,7 +1614,7 @@ where
     state.touch();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = crate::state::lock_vault(&vault);
+        let mut guard = vault.lock();
         f(&mut guard).map_err(CommandError::from)
     }))
     .await
@@ -1655,7 +1637,7 @@ async fn await_blocking<T>(
 /// nothing: the file is stored only when the entry is posted
 /// (`entry_post_simple_with_document`), keeping the no-orphan invariant.
 fn analyze_readonly(
-    vault: &Mutex<Vault>,
+    vault: &GatedVault,
     model_dir: &Path,
     entity_id: EntityId,
     filename: &str,
@@ -1667,7 +1649,7 @@ fn analyze_readonly(
     oikonomia_core::documents::validate_document_file(filename, &mime, data.len() as u64)?;
 
     let (accounts, entity) = {
-        let guard = crate::state::lock_vault(vault);
+        let guard = vault.lock();
         let conn = guard.connection()?;
         (
             suggest_accounts_for_entity(conn, entity_id)?,

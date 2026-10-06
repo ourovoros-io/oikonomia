@@ -1,29 +1,64 @@
 //! Process-wide application state: vault handle, OCR model paths, idle lock.
+//!
+//! # Locks
+//!
+//! The state holds five mutexes:
+//!
+//! 1. `GatedVault::vault`, the vault. Held for one vault operation (a query,
+//!    an unlock with its key derivation, a rekey).
+//! 2. `WatchdogGate::state`, whether the idle watchdog polls or parks. Held
+//!    for a field update, or handed to a condition-variable wait.
+//! 3. `AppState::granted_paths`, the paths the user handed over. Held for one
+//!    lookup or insert.
+//! 4. `AppState::prefs_lock`, which serializes a load-change-save of the
+//!    plaintext preferences file. Held across that file I/O.
+//! 5. `AppState::update`, the update machine. Held for a status change, and
+//!    by an install for its whole download.
+//!
+//! ## Order
+//!
+//! Only one pair is ever held together: the vault first, then the gate state.
+//! [`VaultGuard`] updates the gate as it is dropped, while it still holds the
+//! vault, so the gate always shows the status the vault was left in and no
+//! other status change can come between the two writes. The opposite order
+//! does not occur: the watchdog takes the gate state only inside
+//! [`WatchdogGate`] methods, each of which releases it before returning, so
+//! it never holds the gate state while it waits for the vault. Every other
+//! mutex is taken with no other mutex held.
+//!
+//! ## Poisoning
+//!
+//! No mutex stays poisoned. Each lock helper clears the flag and hands out
+//! the guard, so one panicking command cannot disable the rest of the
+//! session. For the gate state, the granted paths, the preferences lock and
+//! the update machine that is all: each holds plain values that are valid
+//! whichever statement the panic interrupted. The vault is different, because
+//! a panic may have interrupted a database operation: [`GatedVault::lock`]
+//! also locks the vault, which closes the connection, and has the watchdog
+//! tell the UI.
 
 use std::collections::HashSet;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oikonomia_core::error::Error as CoreError;
-use oikonomia_core::ledger::DEFAULT_LOCK_TIMEOUT_SECS;
+use oikonomia_core::ledger::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs};
 use oikonomia_core::vault::{Vault, VaultStatus, default_data_dir};
 use oikonomia_update::UpdateMachine;
 
 /// Shared state behind Tauri commands.
 pub struct AppState {
-    vault: Arc<Mutex<Vault>>,
+    /// The vault, with the watchdog gate and timeout that follow its status.
+    vault: Arc<GatedVault>,
     /// App data directory: vault files plus the plaintext UI prefs.
     data_dir: PathBuf,
     /// Directory containing bundled `text-detection.rten` + `text-recognition.rten`.
     ocr_model_dir: PathBuf,
     /// Seconds since `UNIX_EPOCH` of the last command touching the vault.
     last_activity: Arc<AtomicU64>,
-    /// Cached idle timeout for the watchdog; the persisted value lives in the vault.
-    lock_timeout_secs: Arc<AtomicU64>,
-    /// Parks the idle watchdog while the vault is not unlocked.
-    gate: Arc<WatchdogGate>,
     /// Canonical paths the user handed over through a native drop or a native
     /// file dialog; path-taking IPC commands accept only these.
     granted_paths: Mutex<HashSet<PathBuf>>,
@@ -47,12 +82,10 @@ impl AppState {
     pub(crate) fn open_path(data_dir: PathBuf, ocr_model_dir: PathBuf) -> Result<Self, CoreError> {
         let vault = Vault::open_path(data_dir.clone())?;
         Ok(Self {
-            vault: Arc::new(Mutex::new(vault)),
+            vault: Arc::new(GatedVault::new(vault)),
             data_dir,
             ocr_model_dir,
             last_activity: Arc::new(AtomicU64::new(now_secs())),
-            lock_timeout_secs: Arc::new(AtomicU64::new(DEFAULT_LOCK_TIMEOUT_SECS)),
-            gate: Arc::new(WatchdogGate::new()),
             granted_paths: Mutex::new(HashSet::new()),
             prefs_lock: Mutex::new(()),
             update: Arc::new(Mutex::new(UpdateMachine::new())),
@@ -73,7 +106,7 @@ impl AppState {
 
     /// Shared vault handle for blocking work off the command thread.
     #[must_use]
-    pub fn vault(&self) -> Arc<Mutex<Vault>> {
+    pub fn vault(&self) -> Arc<GatedVault> {
         Arc::clone(&self.vault)
     }
 
@@ -128,9 +161,9 @@ impl AppState {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
     }
 
-    /// Cache the idle timeout so the watchdog needs no vault access.
+    /// Cache the idle timeout so the watchdog needs no database access.
     pub fn set_lock_timeout_cache(&self, secs: u64) {
-        self.lock_timeout_secs.store(secs, Ordering::Relaxed);
+        self.vault.set_lock_timeout_cache(secs);
     }
 
     /// Handles for the idle watchdog thread.
@@ -139,20 +172,6 @@ impl AppState {
         WatchdogHandles {
             vault: Arc::clone(&self.vault),
             last_activity: Arc::clone(&self.last_activity),
-            lock_timeout_secs: Arc::clone(&self.lock_timeout_secs),
-            gate: Arc::clone(&self.gate),
-        }
-    }
-
-    /// Park or run the idle watchdog after a vault lock-state change.
-    ///
-    /// Call after releasing the vault mutex. Unlock notifies the parked
-    /// thread; lock notifies so an in-flight poll wait returns and parks.
-    pub fn sync_watchdog_gate(&self, status: VaultStatus) {
-        if matches!(status, VaultStatus::Unlocked) {
-            self.gate.set_running();
-        } else {
-            self.gate.set_parked();
         }
     }
 }
@@ -163,54 +182,203 @@ fn now_secs() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// The vault behind its mutex, with the watchdog state derived from it.
+///
+/// The gate and the cached timeout are functions of the vault: they are
+/// written only by [`VaultGuard`] while it holds the vault, so no caller can
+/// change the vault's status and forget them, and two status changes cannot
+/// apply their gate updates in the opposite order.
+pub struct GatedVault {
+    /// The vault. Locked only through [`Self::lock`].
+    vault: Mutex<Vault>,
+    /// Parks the idle watchdog while the vault is not unlocked.
+    gate: WatchdogGate,
+    /// Cached idle timeout in seconds; the persisted value lives in the vault.
+    lock_timeout_secs: AtomicU64,
+}
+
+impl GatedVault {
+    /// Wraps a vault that is not unlocked, as every vault is when the process starts.
+    fn new(vault: Vault) -> Self {
+        Self {
+            vault: Mutex::new(vault),
+            gate: WatchdogGate::new(),
+            lock_timeout_secs: AtomicU64::new(DEFAULT_LOCK_TIMEOUT_SECS),
+        }
+    }
+
+    /// Locks the vault mutex, recovering from poisoning.
+    ///
+    /// A panic inside a command closure must not brick the session or disable
+    /// the watchdog. The guard is recovered and the poison flag cleared, and
+    /// the vault is forced into the locked state, because the panic may have
+    /// interrupted a database operation. If that ended an unlocked session
+    /// the watchdog emits `vault-locked`, as no command is there to do it.
+    ///
+    /// Blocks while another thread holds the vault, which a rekey does for
+    /// seconds: call it on the blocking pool, not on an async worker.
+    pub fn lock(&self) -> VaultGuard<'_> {
+        let vault = match self.vault.lock() {
+            Ok(vault) => vault,
+            Err(poisoned) => {
+                self.vault.clear_poison();
+                let mut vault = poisoned.into_inner();
+
+                let was_unlocked = vault.status() == VaultStatus::Unlocked;
+                vault.lock();
+                if was_unlocked {
+                    self.gate.announce_lock();
+                }
+                vault
+            }
+        };
+
+        VaultGuard {
+            status_at_lock: vault.status(),
+            vault,
+            gated: self,
+        }
+    }
+
+    /// Caches the idle timeout so the watchdog needs no database access.
+    pub fn set_lock_timeout_cache(&self, secs: u64) {
+        self.lock_timeout_secs.store(secs, Ordering::Relaxed);
+    }
+
+    /// Reads the stored idle timeout into the cache after an unlock.
+    fn refresh_lock_timeout_cache(&self, vault: &Vault) {
+        // A failed read falls back to the default, but never silently.
+        let secs = match vault.connection().and_then(get_lock_timeout_secs) {
+            Ok(secs) => secs,
+            Err(err) => {
+                log::warn!("could not read lock timeout after unlock, using default: {err}");
+                DEFAULT_LOCK_TIMEOUT_SECS
+            }
+        };
+        self.set_lock_timeout_cache(secs);
+    }
+}
+
+/// Exclusive access to the vault.
+///
+/// Dropping it brings the watchdog in line with the status the vault was left
+/// in, before the vault mutex is released.
+#[must_use = "the vault unlocks for other threads as soon as the guard is dropped"]
+pub struct VaultGuard<'a> {
+    /// The locked vault.
+    vault: MutexGuard<'a, Vault>,
+    /// Owner of the gate and the timeout cache this guard keeps in step.
+    gated: &'a GatedVault,
+    /// Status when the guard was taken, to tell an unlock from a vault that
+    /// was already open.
+    status_at_lock: VaultStatus,
+}
+
+impl Deref for VaultGuard<'_> {
+    type Target = Vault;
+
+    fn deref(&self) -> &Vault {
+        &self.vault
+    }
+}
+
+impl DerefMut for VaultGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Vault {
+        &mut self.vault
+    }
+}
+
+impl Drop for VaultGuard<'_> {
+    fn drop(&mut self) {
+        let status = self.vault.status();
+        let unlocked_under_this_guard =
+            status == VaultStatus::Unlocked && self.status_at_lock != VaultStatus::Unlocked;
+
+        // Not while unwinding: the next `GatedVault::lock` locks the vault
+        // again, and a query that panicked here would abort the process.
+        if unlocked_under_this_guard && !std::thread::panicking() {
+            self.gated.refresh_lock_timeout_cache(&self.vault);
+        }
+
+        // Runs before the `vault` field is dropped, so the vault mutex is
+        // still held: lock order vault, then gate state.
+        self.gated.gate.follow(status);
+    }
+}
+
 /// How often the watchdog re-checks idle time while the vault is unlocked.
 pub const AUTO_LOCK_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Shared handles for [`spawn_auto_lock`].
 pub struct WatchdogHandles {
-    /// Vault mutex the watchdog locks only for a status check / idle lock.
-    pub vault: Arc<Mutex<Vault>>,
+    /// The vault, which the watchdog locks only for a status check / idle
+    /// lock, and whose gate it waits on.
+    pub vault: Arc<GatedVault>,
     /// Seconds since `UNIX_EPOCH` of the last command touching the vault.
     pub last_activity: Arc<AtomicU64>,
-    /// Cached idle timeout; the persisted value lives in the vault.
-    pub lock_timeout_secs: Arc<AtomicU64>,
-    /// Park while locked; poll while unlocked.
-    pub gate: Arc<WatchdogGate>,
 }
 
 /// Gate that parks the idle watchdog while the vault is not unlocked.
 ///
-/// Unlock sets the gate to running and notifies. Lock parks and notifies so
-/// an in-flight poll wait returns immediately. The vault mutex is never
-/// held across a wait.
+/// [`VaultGuard`] moves the gate to match the vault and notifies on a change:
+/// an unlock wakes the parked thread, a lock ends an in-flight poll wait at
+/// once. The watchdog never holds the vault mutex across a wait.
 pub struct WatchdogGate {
+    /// What the watchdog should be doing.
     state: Mutex<GateState>,
+    /// Notified whenever `state` changes.
     cond: Condvar,
     /// Completed unlocked poll intervals. Stays zero while the thread is parked.
     #[cfg(test)]
     ticks: AtomicU64,
 }
 
+/// What the gate tells the watchdog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GateState {
+struct GateState {
+    /// Whether the watchdog polls or waits.
+    phase: GatePhase,
+    /// A lock the watchdog still has to report to the UI: the one forced by
+    /// poison recovery, which happens where no `AppHandle` is at hand.
+    lock_to_announce: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GatePhase {
+    /// The vault is not unlocked; nothing to poll for.
     Parked,
+    /// The vault is unlocked; check idle time every poll interval.
     Running,
+    /// The loop should end.
+    Shutdown,
+}
+
+/// Why [`WatchdogGate::wait_for_work`] returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Wake {
+    /// The vault is unlocked: start polling.
+    Poll,
+    /// The vault was locked behind the UI's back: emit `vault-locked`.
+    AnnounceLock,
+    /// The loop should end.
     Shutdown,
 }
 
 impl WatchdogGate {
     /// Start parked: the process launches with the vault locked or missing.
-    #[must_use]
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
-            state: Mutex::new(GateState::Parked),
+            state: Mutex::new(GateState {
+                phase: GatePhase::Parked,
+                lock_to_announce: false,
+            }),
             cond: Condvar::new(),
             #[cfg(test)]
             ticks: AtomicU64::new(0),
         }
     }
 
-    fn lock_state(&self) -> std::sync::MutexGuard<'_, GateState> {
+    fn lock_state(&self) -> MutexGuard<'_, GateState> {
         match self.state.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -220,10 +388,7 @@ impl WatchdogGate {
         }
     }
 
-    fn wait<'a>(
-        &self,
-        guard: std::sync::MutexGuard<'a, GateState>,
-    ) -> std::sync::MutexGuard<'a, GateState> {
+    fn wait<'a>(&self, guard: MutexGuard<'a, GateState>) -> MutexGuard<'a, GateState> {
         match self.cond.wait(guard) {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -235,9 +400,9 @@ impl WatchdogGate {
 
     fn wait_timeout<'a>(
         &self,
-        guard: std::sync::MutexGuard<'a, GateState>,
+        guard: MutexGuard<'a, GateState>,
         interval: Duration,
-    ) -> std::sync::MutexGuard<'a, GateState> {
+    ) -> MutexGuard<'a, GateState> {
         match self.cond.wait_timeout(guard, interval) {
             Ok((guard, _)) => guard,
             Err(poisoned) => {
@@ -247,49 +412,72 @@ impl WatchdogGate {
         }
     }
 
-    /// Wake the watchdog so it resumes the unlocked poll interval.
-    pub fn set_running(&self) {
+    /// Runs the watchdog for an unlocked vault and parks it for any other.
+    ///
+    /// Called by [`VaultGuard`] with the vault mutex held. Notifies only on a
+    /// change, so ordinary commands do not cut the poll wait short.
+    fn follow(&self, status: VaultStatus) {
+        let phase = if status == VaultStatus::Unlocked {
+            GatePhase::Running
+        } else {
+            GatePhase::Parked
+        };
+
         let mut state = self.lock_state();
-        if *state == GateState::Shutdown {
+        if state.phase == GatePhase::Shutdown || state.phase == phase {
             return;
         }
-        *state = GateState::Running;
+        state.phase = phase;
         self.cond.notify_all();
     }
 
-    /// Park the watchdog; notifies so a poll wait does not run to completion.
-    pub fn set_parked(&self) {
+    /// Has the watchdog emit `vault-locked` once.
+    fn announce_lock(&self) {
         let mut state = self.lock_state();
-        if *state == GateState::Shutdown {
-            return;
-        }
-        *state = GateState::Parked;
+        state.lock_to_announce = true;
         self.cond.notify_all();
     }
 
     /// Wake any waiter and stop the loop. Process exit also ends the thread.
     #[cfg(test)]
-    pub fn shutdown(&self) {
+    fn shutdown(&self) {
         let mut state = self.lock_state();
-        *state = GateState::Shutdown;
+        state.phase = GatePhase::Shutdown;
         self.cond.notify_all();
     }
 
-    fn wait_until_running(&self) -> GateState {
+    /// Waits while parked with nothing to announce.
+    fn wait_for_work(&self) -> Wake {
         let mut state = self.lock_state();
-        while *state == GateState::Parked {
+        loop {
+            if state.phase == GatePhase::Shutdown {
+                return Wake::Shutdown;
+            }
+            if state.lock_to_announce {
+                state.lock_to_announce = false;
+                return Wake::AnnounceLock;
+            }
+            if state.phase == GatePhase::Running {
+                return Wake::Poll;
+            }
             state = self.wait(state);
         }
-        *state
     }
 
-    fn wait_poll_interval(&self, interval: Duration) -> GateState {
+    /// Waits one poll interval, or less if the gate changes, and returns the
+    /// phase to act on.
+    fn wait_poll_interval(&self, interval: Duration) -> GatePhase {
         let state = self.lock_state();
-        if *state != GateState::Running {
-            return *state;
+        if state.phase != GatePhase::Running || state.lock_to_announce {
+            return state.phase;
         }
         let state = self.wait_timeout(state, interval);
-        *state
+        state.phase
+    }
+
+    #[cfg(test)]
+    fn is_running(&self) -> bool {
+        self.lock_state().phase == GatePhase::Running
     }
 
     #[cfg(test)]
@@ -304,12 +492,6 @@ impl WatchdogGate {
     }
 }
 
-impl Default for WatchdogGate {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Lock the update machine, recovering from poisoning.
 pub fn lock_update(machine: &Mutex<UpdateMachine>) -> std::sync::MutexGuard<'_, UpdateMachine> {
     match machine.lock() {
@@ -317,23 +499,6 @@ pub fn lock_update(machine: &Mutex<UpdateMachine>) -> std::sync::MutexGuard<'_, 
         Err(poisoned) => {
             machine.clear_poison();
             poisoned.into_inner()
-        }
-    }
-}
-
-/// Lock the vault mutex, recovering from poisoning.
-///
-/// A panic inside a command closure must not brick the session or disable the
-/// watchdog: recover the guard, force the vault into the safe locked state,
-/// and clear the poison flag so later locks are clean.
-pub fn lock_vault(vault: &Mutex<Vault>) -> std::sync::MutexGuard<'_, Vault> {
-    match vault.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            vault.clear_poison();
-            let mut guard = poisoned.into_inner();
-            guard.lock();
-            guard
         }
     }
 }
@@ -376,54 +541,61 @@ pub fn spawn_auto_lock(app: tauri::AppHandle, handles: WatchdogHandles) {
     });
 }
 
-/// Idle watchdog loop. `on_auto_locked` runs after the vault mutex is released.
+/// Idle watchdog loop. `on_locked` runs with no mutex held, each time the
+/// watchdog locked the vault or has a forced lock to announce.
 fn run_auto_lock_loop(
     handles: WatchdogHandles,
     poll_interval: Duration,
-    mut on_auto_locked: impl FnMut(),
+    mut on_locked: impl FnMut(),
 ) {
     let WatchdogHandles {
         vault,
         last_activity,
-        lock_timeout_secs,
-        gate,
     } = handles;
 
     loop {
-        match gate.wait_until_running() {
-            GateState::Shutdown => return,
-            GateState::Parked | GateState::Running => {}
+        match vault.gate.wait_for_work() {
+            Wake::Shutdown => return,
+            Wake::AnnounceLock => {
+                on_locked();
+                continue;
+            }
+            Wake::Poll => {}
         }
 
-        match gate.wait_poll_interval(poll_interval) {
-            GateState::Shutdown => return,
-            GateState::Parked => continue,
-            GateState::Running => {}
+        match vault.gate.wait_poll_interval(poll_interval) {
+            GatePhase::Shutdown => return,
+            GatePhase::Parked => continue,
+            GatePhase::Running => {}
         }
 
         #[cfg(test)]
-        gate.record_tick();
+        vault.gate.record_tick();
 
-        let idle = now_secs().saturating_sub(last_activity.load(Ordering::Relaxed));
-        let timeout = lock_timeout_secs.load(Ordering::Relaxed);
-
-        let mut locked_now = false;
-        {
-            let mut vault = lock_vault(&vault);
-            if should_auto_lock(idle, timeout, vault.status()) {
-                vault.lock();
-                locked_now = true;
-            }
-        }
-
-        if locked_now {
-            gate.set_parked();
-        }
+        let locked_now = lock_if_idle(&vault, &last_activity);
 
         if should_emit_vault_locked(locked_now) {
-            on_auto_locked();
+            on_locked();
         }
     }
+}
+
+/// Locks the vault if it is unlocked and has been idle for the timeout.
+/// Returns whether it did. The guard parks the gate as it drops.
+fn lock_if_idle(vault: &GatedVault, last_activity: &AtomicU64) -> bool {
+    let mut guard = vault.lock();
+
+    // Sampled with the vault held, so the decision uses the activity and the
+    // timeout as they are once every earlier vault operation has finished,
+    // not as they were before this thread waited for the mutex.
+    let idle = now_secs().saturating_sub(last_activity.load(Ordering::Relaxed));
+    let timeout = vault.lock_timeout_secs.load(Ordering::Relaxed);
+
+    let lock_now = should_auto_lock(idle, timeout, guard.status());
+    if lock_now {
+        guard.lock();
+    }
+    lock_now
 }
 
 /// Resolve OCR model directory for dev and packaged builds.
@@ -476,9 +648,10 @@ fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 #[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{
-        AUTO_LOCK_POLL_INTERVAL, AppState, WatchdogGate, lock_vault, resolve_ocr_model_dir,
-        run_auto_lock_loop, should_auto_lock, should_emit_vault_locked,
+        AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, resolve_ocr_model_dir, run_auto_lock_loop,
+        should_auto_lock, should_emit_vault_locked,
     };
+    use oikonomia_core::ledger::set_lock_timeout_secs;
     use oikonomia_core::vault::VaultStatus;
     use std::fs;
     use std::sync::Arc;
@@ -631,34 +804,29 @@ mod tests {
         let (state, dir) = test_state("park");
         init_locked_vault(&state);
         let handles = state.watchdog_handles();
-        let gate = Arc::clone(&handles.gate);
         let vault = Arc::clone(&handles.vault);
         let last_activity = Arc::clone(&handles.last_activity);
         let (join, emits) = spawn_watchdog(&state, AUTO_LOCK_POLL_INTERVAL);
 
         std::thread::sleep(PAST_POLL);
         assert_eq!(
-            gate.tick_count(),
+            vault.gate.tick_count(),
             0,
             "locked watchdog must not complete a 5s poll tick"
         );
-        assert_eq!(lock_vault(&vault).status(), VaultStatus::Locked);
+        assert_eq!(vault.lock().status(), VaultStatus::Locked);
 
-        {
-            let mut guard = lock_vault(&vault);
-            guard.unlock(TEST_PASSWORD).expect("unlock");
-        }
+        vault.lock().unlock(TEST_PASSWORD).expect("unlock");
         last_activity.store(0, Ordering::Relaxed);
         state.set_lock_timeout_cache(60);
-        state.sync_watchdog_gate(VaultStatus::Unlocked);
 
         std::thread::sleep(PAST_POLL);
         assert!(
-            gate.tick_count() >= 1,
+            vault.gate.tick_count() >= 1,
             "unlock must unpark and run an idle check"
         );
         assert_eq!(
-            lock_vault(&vault).status(),
+            vault.lock().status(),
             VaultStatus::Locked,
             "idle unlocked session must still auto-lock"
         );
@@ -666,15 +834,15 @@ mod tests {
             .recv_timeout(Duration::from_millis(200))
             .expect("auto-lock emits vault-locked");
 
-        let ticks_after_lock = gate.tick_count();
+        let ticks_after_lock = vault.gate.tick_count();
         std::thread::sleep(PAST_POLL);
         assert_eq!(
-            gate.tick_count(),
+            vault.gate.tick_count(),
             ticks_after_lock,
             "auto-lock must park; no further 5s ticks"
         );
 
-        shutdown_watchdog(&gate, join);
+        shutdown_watchdog(&vault, join);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -682,33 +850,162 @@ mod tests {
     fn watchdog_lock_parks_before_poll_wait_finishes() {
         let (state, dir) = test_state("inflight");
         init_locked_vault(&state);
-        {
-            let vault = state.vault();
-            let mut guard = lock_vault(&vault);
-            guard.unlock(TEST_PASSWORD).expect("unlock");
-        }
+        let vault = state.vault();
+        vault.lock().unlock(TEST_PASSWORD).expect("unlock");
         state.touch();
         state.set_lock_timeout_cache(15 * 60);
-        state.sync_watchdog_gate(VaultStatus::Unlocked);
 
-        let gate = Arc::clone(&state.watchdog_handles().gate);
         let (join, _emits) = spawn_watchdog(&state, AUTO_LOCK_POLL_INTERVAL);
 
         std::thread::sleep(Duration::from_millis(200));
-        {
-            let vault = state.vault();
-            lock_vault(&vault).lock();
-        }
-        state.sync_watchdog_gate(VaultStatus::Locked);
+        vault.lock().lock();
 
         std::thread::sleep(PAST_POLL);
         assert_eq!(
-            gate.tick_count(),
+            vault.gate.tick_count(),
             0,
             "lock must park before the unlocked poll wait completes"
         );
 
-        shutdown_watchdog(&gate, join);
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_gate_runs_exactly_while_the_vault_is_unlocked() {
+        let (state, dir) = test_state("follow");
+        let vault = state.vault();
+        assert!(!vault.gate.is_running(), "no vault yet");
+
+        vault.lock().init(TEST_PASSWORD).expect("init");
+        assert!(vault.gate.is_running(), "init leaves the vault unlocked");
+
+        vault.lock().lock();
+        assert!(!vault.gate.is_running());
+
+        let wrong = vault.lock().unlock("not the password at all");
+        assert!(wrong.is_err());
+        assert!(!vault.gate.is_running(), "a refused unlock changes nothing");
+
+        vault.lock().unlock(TEST_PASSWORD).expect("unlock");
+        assert!(vault.gate.is_running());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The race this guards against: a lock and an unlock overlap, and the
+    /// lock's watchdog update is applied after the unlock's, parking the
+    /// watchdog on an unlocked vault. With the gate written under the vault
+    /// guard, the unlock cannot start before the lock's update is done.
+    #[test]
+    fn a_lock_that_overlaps_a_later_unlock_cannot_park_the_watchdog_after_it() {
+        let (state, dir) = test_state("overlap");
+        init_locked_vault(&state);
+        let vault = state.vault();
+        vault.lock().unlock(TEST_PASSWORD).expect("unlock");
+        let (holding, is_holding) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let shared: &GatedVault = &vault;
+
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                let mut guard = shared.lock();
+                guard.lock();
+                let _ = holding.send(());
+                // Keep the vault until the unlock has been started.
+                let _ = released.recv();
+            });
+            is_holding.recv().expect("the lock holds the vault");
+
+            let unlock = scope.spawn(move || shared.lock().unlock(TEST_PASSWORD));
+            release.send(()).expect("the lock is still waiting");
+
+            unlock.join().expect("unlock thread").expect("unlock");
+        });
+
+        assert_eq!(vault.lock().status(), VaultStatus::Unlocked);
+        assert!(
+            vault.gate.is_running(),
+            "vault unlocked but watchdog parked"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_poisoned_vault_is_locked_parked_and_announced_to_the_ui() {
+        let (state, dir) = test_state("poison");
+        init_locked_vault(&state);
+        let vault = state.vault();
+        vault.lock().unlock(TEST_PASSWORD).expect("unlock");
+        state.touch();
+        let (join, emits) = spawn_watchdog(&state, AUTO_LOCK_POLL_INTERVAL);
+
+        let poisoner = Arc::clone(&vault);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoner.lock();
+            std::panic::resume_unwind(Box::new("a command panicked"));
+        })
+        .join();
+        assert!(panicked.is_err());
+
+        assert_eq!(vault.lock().status(), VaultStatus::Locked);
+        assert!(
+            !vault.gate.is_running(),
+            "vault force-locked but watchdog running"
+        );
+        emits
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the forced lock emits vault-locked");
+
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_password_change_leaves_the_gate_and_timeout_matching_the_vault() {
+        let (state, dir) = test_state("rekey");
+        let vault = state.vault();
+        {
+            let mut guard = vault.lock();
+            guard.init(TEST_PASSWORD).expect("init");
+            set_lock_timeout_secs(guard.connection().expect("connection"), 120).expect("store");
+            guard.lock();
+        }
+        state.set_lock_timeout_cache(7);
+
+        vault
+            .lock()
+            .change_password(TEST_PASSWORD, "another long password")
+            .expect("change");
+
+        // Whether a change on a locked vault unlocks it is core's decision;
+        // the watchdog has to agree with the outcome either way.
+        let status = vault.lock().status();
+        assert_eq!(
+            vault.gate.is_running(),
+            status == VaultStatus::Unlocked,
+            "{status:?}"
+        );
+        if status == VaultStatus::Unlocked {
+            assert_eq!(vault.lock_timeout_secs.load(Ordering::Relaxed), 120);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unlock_reads_the_stored_timeout_into_the_cache() {
+        let (state, dir) = test_state("timeout");
+        let vault = state.vault();
+        {
+            let mut guard = vault.lock();
+            guard.init(TEST_PASSWORD).expect("init");
+            set_lock_timeout_secs(guard.connection().expect("connection"), 120).expect("store");
+            guard.lock();
+        }
+        state.set_lock_timeout_cache(7);
+
+        vault.lock().unlock(TEST_PASSWORD).expect("unlock");
+
+        assert_eq!(vault.lock_timeout_secs.load(Ordering::Relaxed), 120);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -726,13 +1023,10 @@ mod tests {
     }
 
     fn init_locked_vault(state: &AppState) {
-        {
-            let vault = state.vault();
-            let mut guard = lock_vault(&vault);
-            guard.init(TEST_PASSWORD).expect("vault init");
-            guard.lock();
-        }
-        state.sync_watchdog_gate(VaultStatus::Locked);
+        let vault = state.vault();
+        let mut guard = vault.lock();
+        guard.init(TEST_PASSWORD).expect("vault init");
+        guard.lock();
     }
 
     fn spawn_watchdog(
@@ -749,8 +1043,8 @@ mod tests {
         (join, rx)
     }
 
-    fn shutdown_watchdog(gate: &WatchdogGate, join: std::thread::JoinHandle<()>) {
-        gate.shutdown();
+    fn shutdown_watchdog(vault: &GatedVault, join: std::thread::JoinHandle<()>) {
+        vault.gate.shutdown();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let _ = join.join();
