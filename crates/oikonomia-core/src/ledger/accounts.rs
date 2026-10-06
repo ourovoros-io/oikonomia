@@ -88,11 +88,15 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
     })?
 }
 
-/// Create a user account.
+/// Creates a user account.
 ///
 /// # Errors
 ///
-/// Validation or DB error.
+/// - [`ValidationError::NameRequired`] for an empty code or name.
+/// - [`Error::NotFound`] for an unknown or archived entity.
+/// - [`ValidationError::AccountCodeTaken`] when the entity already has an
+///   account with this code.
+/// - [`Error::Io`] on database errors.
 pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Account> {
     let code = input.code.trim();
     let name = input.name.trim();
@@ -133,22 +137,38 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
             sort,
         ],
     )
-    .map_err(|err| {
-        if err.to_string().contains("UNIQUE") {
-            Error::Validation(ValidationError::AccountCodeTaken)
-        } else {
-            Error::Io(err.to_string())
-        }
-    })?;
+    .map_err(|err| account_write_error(&err))?;
 
     get_account(conn, id)
 }
 
-/// Update account fields (not type / system flag).
+/// Classifies a failed write to `accounts`.
+///
+/// The only unique constraint a caller can violate is `(entity_id, code)`, so
+/// that failure means the code is taken. It is recognised by `SQLite`'s
+/// extended result code, never by the wording of its message.
+fn account_write_error(err: &rusqlite::Error) -> Error {
+    match err {
+        rusqlite::Error::SqliteFailure(failure, _)
+            if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
+        {
+            Error::Validation(ValidationError::AccountCodeTaken)
+        }
+        other => Error::Io(other.to_string()),
+    }
+}
+
+/// Updates account fields (not type / system flag).
 ///
 /// # Errors
 ///
-/// Not found, validation, or DB error.
+/// - [`ValidationError::NameRequired`] for an empty code or name.
+/// - [`Error::NotFound`] for an unknown account.
+/// - [`ValidationError::SystemAccountProtected`] when deactivating a system
+///   account.
+/// - [`ValidationError::AccountCodeTaken`] when the entity already has
+///   another account with this code.
+/// - [`Error::Io`] on database errors.
 pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Account> {
     let code = input.code.trim();
     let name = input.name.trim();
@@ -178,13 +198,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
                 input.id.0.to_string(),
             ],
         )
-        .map_err(|err| {
-            if err.to_string().contains("UNIQUE") {
-                Error::Validation(ValidationError::AccountCodeTaken)
-            } else {
-                Error::Io(err.to_string())
-            }
-        })?;
+        .map_err(|err| account_write_error(&err))?;
 
     if n == 0 {
         return Err(Error::NotFound("account".into()));
@@ -282,6 +296,87 @@ mod tests {
 
     fn entity() -> EntityId {
         EntityId(parse_uuid(ENTITY).expect("entity id"))
+    }
+
+    /// One entity and an accounts table with the schema's unique code per entity.
+    fn chart_with_unique_codes() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory database");
+        conn.execute_batch(&format!(
+            "CREATE TABLE entities (id TEXT PRIMARY KEY NOT NULL, archived_at TEXT);
+             INSERT INTO entities (id) VALUES ('{ENTITY}');
+             CREATE TABLE accounts (
+                id TEXT PRIMARY KEY NOT NULL,
+                entity_id TEXT NOT NULL,
+                code TEXT NOT NULL,
+                name TEXT NOT NULL,
+                account_type TEXT NOT NULL,
+                parent_id TEXT,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                is_system INTEGER NOT NULL DEFAULT 0,
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                UNIQUE (entity_id, code)
+            );"
+        ))
+        .expect("create tables");
+        conn
+    }
+
+    fn new_account(code: &str) -> CreateAccount {
+        CreateAccount {
+            entity_id: entity(),
+            code: code.into(),
+            name: "Cash".into(),
+            account_type: AccountType::Asset,
+            sort_order: None,
+        }
+    }
+
+    fn renumbered(account: &Account, code: &str) -> UpdateAccount {
+        UpdateAccount {
+            id: account.id,
+            code: code.into(),
+            name: account.name.clone(),
+            is_active: true,
+            sort_order: account.sort_order,
+        }
+    }
+
+    #[test]
+    fn a_code_already_used_in_the_book_is_reported_as_taken() {
+        let conn = chart_with_unique_codes();
+        create_account(&conn, &new_account("1000")).expect("first");
+        let second = create_account(&conn, &new_account("1001")).expect("second");
+        let taken = Err(Error::Validation(ValidationError::AccountCodeTaken));
+
+        assert_eq!(
+            create_account(&conn, &new_account("1000")).map(|account| account.id),
+            taken
+        );
+        assert_eq!(
+            update_account(&conn, &renumbered(&second, "1000")).map(|account| account.id),
+            taken
+        );
+    }
+
+    /// The failure is classified by `SQLite`'s result code. Its message is
+    /// English prose that only happens to say UNIQUE for that code today.
+    #[test]
+    fn another_failure_whose_message_says_unique_is_not_a_taken_code() {
+        let conn = chart_with_unique_codes();
+        let existing = create_account(&conn, &new_account("1000")).expect("first");
+        conn.execute_batch(
+            "CREATE TRIGGER refuse_insert BEFORE INSERT ON accounts
+             BEGIN SELECT RAISE(ABORT, 'UNIQUE visitors only'); END;
+             CREATE TRIGGER refuse_update BEFORE UPDATE ON accounts
+             BEGIN SELECT RAISE(ABORT, 'UNIQUE visitors only'); END;",
+        )
+        .expect("create triggers");
+
+        let created = create_account(&conn, &new_account("2000"));
+        assert!(matches!(created, Err(Error::Io(_))), "{created:?}");
+
+        let updated = update_account(&conn, &renumbered(&existing, "3000"));
+        assert!(matches!(updated, Err(Error::Io(_))), "{updated:?}");
     }
 
     #[test]
