@@ -12,6 +12,7 @@ mod config_checks;
 mod donations;
 mod error;
 mod nav_guard;
+mod startup;
 mod state;
 #[cfg(test)]
 mod test_macros;
@@ -20,54 +21,30 @@ mod update;
 mod update_exec;
 mod update_key;
 
+use startup::StartupError;
 use state::{AppState, resolve_ocr_model_dir};
 use tauri::Manager;
 
 /// Start the desktop application.
 ///
+/// A start that fails once the runtime is up (a damaged vault header, an
+/// unreadable data directory) is reported in a native message and ends with a
+/// failure exit code; see [`startup`].
+///
 /// # Panics
 ///
-/// Panics if the Tauri runtime fails to start or the vault data dir is unusable.
+/// Panics if the Tauri runtime itself cannot be built.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     with_desktop_plugins(
         with_single_instance(tauri::Builder::default()).plugin(nav_guard::plugin()),
     )
     .setup(|app| {
-        // The bundled .app gets its Dock icon from icon.icns; dev mode runs
-        // the bare binary, so set the icon at runtime as well.
-        macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
-
-        let resource_dir = app.path().resource_dir().ok();
-        let ocr_dir = resolve_ocr_model_dir(resource_dir);
-        log::info!("OCR model dir: {}", ocr_dir.display());
-
-        let app_state = AppState::new(ocr_dir).expect("failed to open vault data directory");
-        let watchdog = app_state.watchdog_handles();
-
-        // Native window appearance (scrollbars, controls, title bar) must
-        // match the app, not the OS preference. The UI is dark-only, so a
-        // user who once picked the retired light theme still gets dark
-        // native chrome instead of a light title bar around a dark window.
-        let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
-        app.handle().set_theme(Some(tauri::Theme::Dark));
-
-        tray::init(app, prefs.locale)?;
-
-        app.manage(app_state);
-
-        // Rust-side idle lock: guarantees the vault locks even if the
-        // webview throttles timers or stalls entirely.
-        state::spawn_auto_lock(app.handle().clone(), watchdog)?;
-
-        if cfg!(debug_assertions) {
-            app.handle().plugin(
-                tauri_plugin_log::Builder::default()
-                    .level(log::LevelFilter::Info)
-                    .build(),
-            )?;
+        // Never an `Err` from here: Tauri panics on one. A failed start is
+        // shown to the user instead, and the app exits when they dismiss it.
+        if let Err(failure) = start(app) {
+            startup::report_and_exit(app, &failure);
         }
-
         Ok(())
     })
     .invoke_handler(ipc_commands())
@@ -75,6 +52,50 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("failed to start Oikonomia")
     .run(on_run_event);
+}
+
+/// Sets up the state, the tray and the idle watchdog.
+fn start(app: &mut tauri::App) -> Result<(), StartupError> {
+    // The bundled .app gets its Dock icon from icon.icns; dev mode runs
+    // the bare binary, so set the icon at runtime as well.
+    macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
+
+    let resource_dir = app.path().resource_dir().ok();
+    let ocr_dir = resolve_ocr_model_dir(resource_dir);
+    log::info!("OCR model dir: {}", ocr_dir.display());
+
+    let app_state = startup::open_app_state(ocr_dir)?;
+    let watchdog = app_state.watchdog_handles();
+
+    // Native window appearance (scrollbars, controls, title bar) must
+    // match the app, not the OS preference. The UI is dark-only, so a
+    // user who once picked the retired light theme still gets dark
+    // native chrome instead of a light title bar around a dark window.
+    app.handle().set_theme(Some(tauri::Theme::Dark));
+
+    // The tray menu is worded in the stored language; the webview applies
+    // its own copy of the preference later.
+    let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
+    tray::init(app, prefs.locale).map_err(StartupError::Shell)?;
+
+    // Rust-side idle lock: guarantees the vault locks even if the
+    // webview throttles timers or stalls entirely. Started before the state
+    // is managed, so no command can reach the vault without it running.
+    state::spawn_auto_lock(app.handle().clone(), watchdog).map_err(StartupError::Watchdog)?;
+
+    app.manage(app_state);
+
+    if cfg!(debug_assertions) {
+        app.handle()
+            .plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )
+            .map_err(StartupError::Shell)?;
+    }
+
+    Ok(())
 }
 
 fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {

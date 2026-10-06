@@ -47,7 +47,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs};
-use oikonomia_core::vault::{Vault, VaultStatus, default_data_dir};
+use oikonomia_core::vault::{Vault, VaultStatus};
 use oikonomia_update::UpdateMachine;
 
 /// Shared state behind Tauri commands.
@@ -70,16 +70,13 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Open the vault path; resolve OCR models next to the binary / resources.
+    /// Opens the vault in `data_dir`, without unlocking it. `ocr_model_dir`
+    /// is where the bundled OCR models were found.
     ///
     /// # Errors
     ///
-    /// Propagates vault I/O errors from the default data directory.
-    pub fn new(ocr_model_dir: PathBuf) -> Result<Self, CoreError> {
-        Self::open_path(default_data_dir()?, ocr_model_dir)
-    }
-
-    /// Open a vault in `data_dir` (tests and [`Self::new`]).
+    /// Returns core's error when the directory cannot be created or read, or
+    /// the vault header in it cannot be parsed.
     pub(crate) fn open_path(data_dir: PathBuf, ocr_model_dir: PathBuf) -> Result<Self, CoreError> {
         let vault = Vault::open_path(data_dir.clone())?;
         Ok(Self {

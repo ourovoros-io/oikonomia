@@ -155,6 +155,12 @@ pub fn apply_locale(app: &AppHandle, locale: Locale) {
 
 /// Bring the main window back after it was hidden to the tray.
 pub fn show_main_window(app: &AppHandle) {
+    // No state means the start failed: the window is hidden behind the
+    // failure message (`crate::startup`), and none of its commands would work.
+    if app.try_state::<crate::state::AppState>().is_none() {
+        return;
+    }
+
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
