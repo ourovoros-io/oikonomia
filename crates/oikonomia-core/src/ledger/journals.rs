@@ -391,9 +391,20 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
     let tx = conn
         .unchecked_transaction()
         .map_err(|err| Error::Io(err.to_string()))?;
-    let view = insert_posted_entry(&tx, input, false)?;
+    let view = insert_posted_entry(&tx, input, false, ArchivedAccounts::Refuse)?;
     tx.commit().map_err(|err| Error::Io(err.to_string()))?;
     Ok(view)
+}
+
+/// Whether a new entry may post to an archived account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchivedAccounts {
+    /// The rule for every entry the user writes.
+    Refuse,
+    /// Only for the reversing entry of a void: it must use the accounts of the
+    /// entry it reverses, and archiving one of them later must not make that
+    /// entry impossible to void or edit.
+    Accept,
 }
 
 /// Insert header + lines without transaction management.
@@ -405,6 +416,7 @@ fn insert_posted_entry(
     conn: &Connection,
     input: &PostJournal,
     hidden: bool,
+    archived: ArchivedAccounts,
 ) -> Result<PostedEntryView> {
     // Description may be empty (tray quick-add memo is optional); still trim.
     let description = input.description.trim();
@@ -415,7 +427,10 @@ fn insert_posted_entry(
     let mut lines = Vec::with_capacity(input.lines.len());
     for raw in &input.lines {
         let account = get_account(conn, raw.account_id)?;
-        ensure_postable(&account, input.entity_id)?;
+        ensure_in_book(&account, input.entity_id)?;
+        if archived == ArchivedAccounts::Refuse {
+            ensure_active(&account)?;
+        }
 
         let debit = Money::from_minor(raw.debit_minor)?;
         let credit = Money::from_minor(raw.credit_minor)?;
@@ -530,6 +545,7 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
             lines,
         },
         hidden,
+        ArchivedAccounts::Refuse,
     )
 }
 
@@ -584,16 +600,23 @@ fn simple_entry_sides(
         return Err(Error::Validation(ValidationError::SameAccount));
     }
 
-    ensure_postable(&debit, input.entity_id)?;
-    ensure_postable(&credit, input.entity_id)?;
+    for account in [&debit, &credit] {
+        ensure_in_book(account, input.entity_id)?;
+        ensure_active(account)?;
+    }
     Ok((debit.id, credit.id))
 }
 
-/// Checks that `account` may take a new posting in the book of `entity_id`.
-fn ensure_postable(account: &Account, entity_id: EntityId) -> Result<()> {
+/// Checks that `account` belongs to the book of `entity_id`.
+fn ensure_in_book(account: &Account, entity_id: EntityId) -> Result<()> {
     if account.entity_id != entity_id {
         return Err(Error::AccountWrongEntity);
     }
+    Ok(())
+}
+
+/// Checks that `account` is not archived.
+fn ensure_active(account: &Account) -> Result<()> {
     if !account.is_active {
         return Err(Error::Validation(ValidationError::AccountInactive {
             code: account.code.clone(),
@@ -701,7 +724,15 @@ fn simple_entry_role_accounts(
 ///
 /// # Errors
 ///
-/// Already voided, not found, or DB error.
+/// - [`Error::NotFound`] for an unknown entry.
+/// - [`ValidationError::EntryAlreadyVoided`] when the entry is voided or is
+///   itself a reversing entry.
+/// - [`ValidationError::EntryNotPosted`] when the entry is a draft.
+/// - [`Error::Io`] on database errors.
+///
+/// An archived account is not an error here: the reversing entry posts to the
+/// original's accounts even when one of them has since been archived, so that
+/// archiving an account never makes its entries impossible to void.
 pub fn void_entry(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
     let tx = conn
         .unchecked_transaction()
@@ -738,7 +769,12 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
-    let reverse = insert_posted_entry(conn, &reverse_input, view.entry.hidden)?;
+    let reverse = insert_posted_entry(
+        conn,
+        &reverse_input,
+        view.entry.hidden,
+        ArchivedAccounts::Accept,
+    )?;
 
     // Link original → reverse (original is voided).
     conn.execute(
@@ -773,7 +809,16 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
 ///
 /// # Errors
 ///
-/// Not found, already voided, entity mismatch, or any posting error.
+/// - [`Error::NotFound`] for an unknown entry.
+/// - [`ValidationError::WrongBook`] when `input` names another entity than
+///   the original's.
+/// - The errors of [`void_entry`] for the original.
+/// - The errors of [`post_simple_entry`] for the replacement, including
+///   [`ValidationError::AccountInactive`]: the reversal may post to an
+///   archived account of the original, but the replacement is a new entry and
+///   may not.
+///
+/// On any error nothing is changed; the void is rolled back with the post.
 pub fn replace_simple_entry(
     conn: &Connection,
     original_id: JournalEntryId,
