@@ -6,14 +6,13 @@ use uuid::Uuid;
 
 use crate::coa::{DocumentTopic, document_topic_codes};
 use crate::default_accounts::{account_by_codes, first_of_type};
+use crate::documents::store::Keyword::{Prefix, Unit, Word};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
 };
 use crate::util::{now_utc_string, parse_uuid};
-
-use self::Keyword::{Prefix, Unit, Word};
 
 /// Document primary key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

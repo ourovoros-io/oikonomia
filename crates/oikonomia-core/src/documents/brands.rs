@@ -90,7 +90,7 @@ const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
 ];
 
 /// Recognizes a known biller in folded document text
-/// ([`folded`](super::invoice::folded)).
+/// ([`folded`](crate::documents::invoice::folded)).
 ///
 /// Returns the display name and, when the brand implies it, the service.
 /// The first entry of [`BRANDS`] whose token appears wins.

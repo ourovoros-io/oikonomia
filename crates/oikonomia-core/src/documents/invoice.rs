@@ -29,7 +29,8 @@
 //! Digits-only tokens with a leading zero, of more than five digits, or in
 //! 1900..=2100 are date fragments, identifiers and years, not money.
 
-use super::analyze::{DocumentSuggestion, EntryKindSuggestion};
+use crate::documents::analyze::{AnalyzeSource, DocumentSuggestion, EntryKindSuggestion};
+use crate::documents::brands::{Service, classify_service, known_brand};
 use crate::prefs::Locale;
 use crate::text::{
     BillKind, bank_transfer_description, bill_description, customer_invoice_description,
@@ -65,7 +66,7 @@ pub(crate) struct InvoiceReading {
 ///
 /// The returned notes never mention a transfer fee, even when the receipt
 /// shows one: that note needs the book's currency, so
-/// [`analyze_document_bytes`](super::analyze_document_bytes) adds it. Callers
+/// [`analyze_document_bytes`](crate::documents::analyze_document_bytes) adds it. Callers
 /// that need the fee use `read_invoice_text`.
 #[must_use]
 pub fn parse_invoice_text(text: &str, locale: Locale) -> DocumentSuggestion {
@@ -118,7 +119,7 @@ fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
     let suggestion = DocumentSuggestion {
-        source: super::analyze::AnalyzeSource::Heuristic,
+        source: AnalyzeSource::Heuristic,
         model: Some("invoice-parser-v1".into()),
         kind,
         amount_minor,
@@ -405,7 +406,7 @@ fn classify_kind(folded_text: &str) -> (EntryKindSuggestion, bool) {
 
     // A recognized biller with a known service (telecom etc.) is a bill to
     // pay even without the utility markers above.
-    if let Some((_, Some(_))) = super::brands::known_brand(folded_text) {
+    if let Some((_, Some(_))) = known_brand(folded_text) {
         return (EntryKindSuggestion::Bill, unpaid);
     }
 
@@ -432,7 +433,7 @@ fn parse_bank_transfer(text: &str, locale: Locale) -> InvoiceReading {
     let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
 
     let suggestion = DocumentSuggestion {
-        source: super::analyze::AnalyzeSource::Heuristic,
+        source: AnalyzeSource::Heuristic,
         model: Some("invoice-parser-v1".into()),
         kind,
         amount_minor,
@@ -1664,7 +1665,7 @@ fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Option<String
     }
 
     // Known billers: brand tokens that survive text extraction.
-    if let Some((brand, _)) = super::brands::known_brand(folded_text) {
+    if let Some((brand, _)) = known_brand(folded_text) {
         return Some(brand.to_owned());
     }
 
@@ -1800,11 +1801,11 @@ fn find_description(
 
     // Recognized biller or utility bill: company-first title with the
     // service decided by weighted keyword scoring.
-    let brand_service = super::brands::known_brand(folded_text).and_then(|(_, service)| service);
+    let brand_service = known_brand(folded_text).and_then(|(_, service)| service);
 
     if is_utility_bill(folded_text) || brand_service.is_some() {
-        let service = brand_service.or_else(|| super::brands::classify_service(folded_text));
-        let kind = service.map_or(BillKind::Utility, super::brands::Service::bill_kind);
+        let service = brand_service.or_else(|| classify_service(folded_text));
+        let kind = service.map_or(BillKind::Utility, Service::bill_kind);
 
         return Some(bill_description(locale, kind, merchant));
     }

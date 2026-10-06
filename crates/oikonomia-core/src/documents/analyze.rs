@@ -14,14 +14,15 @@ use std::path::Path;
 use pdf_extract as lopdf;
 use serde::{Deserialize, Serialize};
 
-use super::invoice::read_invoice_text;
-use super::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
-use super::pdf_budget::within_budget;
-use super::store::{
-    MAX_DOCUMENT_BYTES, has_extension, match_expense_account, match_income_account,
-};
 use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
+use crate::documents::invoice::read_invoice_text;
+use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
+use crate::documents::pdf_budget::within_budget;
+use crate::documents::pdf_repair::repair_xref_offsets;
+use crate::documents::store::{
+    MAX_DOCUMENT_BYTES, has_extension, match_expense_account, match_income_account,
+};
 use crate::domain::{Account, AccountId, ChartTemplate};
 use crate::error::{AccountRole, Result};
 use crate::prefs::Locale;
@@ -504,7 +505,7 @@ fn ocr_pdf_images(jpegs: &[Vec<u8>], model_dir: Option<&Path>) -> Option<OcrOutc
 }
 
 /// A parsed PDF that is within the size budget of
-/// [`pdf_budget`](super::pdf_budget). Only [`load_pdf`] builds one, so every
+/// [`pdf_budget`](crate::documents::pdf_budget). Only [`load_pdf`] builds one, so every
 /// function that takes it works on a bounded document.
 struct BudgetedPdf(lopdf::Document);
 
@@ -589,7 +590,7 @@ fn parse_pdf(data: &[u8]) -> std::result::Result<ParsedPdf, PdfOverBudget> {
     let mut text = document.as_deref().and_then(pdf_text);
 
     if text.is_none()
-        && let Some(repaired) = super::pdf_repair::repair_xref_offsets(data)
+        && let Some(repaired) = repair_xref_offsets(data)
     {
         match load_pdf(&repaired) {
             PdfLoad::Loaded(repaired_document) => {
