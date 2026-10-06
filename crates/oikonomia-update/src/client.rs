@@ -180,7 +180,7 @@ impl ClientConfig {
 impl ClientConfig {
     #[expect(
         clippy::too_many_arguments,
-        reason = "mirrors `ClientConfig::new`, which takes every field as an argument; tracked for the API pass"
+        reason = "mirrors `ClientConfig::new`, one argument per field; tracked for the API pass"
     )]
     pub(crate) fn for_test(
         feed_url: Url,

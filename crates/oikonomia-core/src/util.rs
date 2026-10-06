@@ -150,9 +150,10 @@ mod properties {
             .prop_map(|day| Date::from_julian_day(day).unwrap())
     }
 
-    // Found by `a_formatted_date_of_any_year_parses_back`. The rejection is
-    // what keeps such a date out of the ledger, where dates are compared as
-    // text and a leading minus sign would sort wrongly.
+    // The smallest case of the ignored property below. Which side should
+    // change is undecided: today the rejection also keeps such a date out of
+    // the ledger, where dates are compared as text and a leading minus sign
+    // would sort wrongly.
     #[test]
     fn a_date_before_year_zero_is_formatted_but_not_parsed() {
         let last_day_before_year_zero = YEAR_ZERO.previous_day().unwrap();

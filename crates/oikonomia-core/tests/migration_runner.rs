@@ -130,14 +130,23 @@ fn a_v1_vault_migrates_through_every_step() {
 }
 
 #[test]
-fn migrating_a_vault_that_is_already_current_changes_nothing() {
+fn migrating_a_vault_that_is_already_current_keeps_its_schema() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
+    // Every table, index and trigger, as the statement that created it.
+    let schema = || -> Vec<String> {
+        let mut statement = conn
+            .prepare("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name")
+            .expect("prepare");
+        let rows = statement.query_map([], |row| row.get(0)).expect("query");
+        rows.collect::<Result<_, _>>().expect("rows")
+    };
+    let schema_before = schema();
     assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
 
     migrate(conn).expect("first run on a current vault");
     migrate(conn).expect("second run on a current vault");
 
     assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
-    assert!(table_exists(conn, "recurring_templates"));
+    assert_eq!(schema(), schema_before);
 }

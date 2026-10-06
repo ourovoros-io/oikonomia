@@ -1764,7 +1764,7 @@ async fn await_blocking<T>(
 /// (`entry_post_simple_with_document`), keeping the no-orphan invariant.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the document's name, type and bytes travel as separate arguments; tracked for the API pass"
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
 )]
 fn analyze_readonly(
     vault: &GatedVault,

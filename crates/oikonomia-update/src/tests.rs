@@ -68,7 +68,7 @@ fn spy_with_handoff(fail: bool, handoff: InstallHandoff) -> (SpyInstaller, Arc<A
 /// and returns a config for an app at 0.1.0.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a test helper that takes the keys, the artifact and the cache; tracked for the API pass"
+    reason = "a test helper taking the keys, the artifact and the cache; tracked for the API pass"
 )]
 fn serve_newer_release(
     server: &Server,
@@ -138,7 +138,7 @@ fn policy_for(server: &Server) -> HostPolicy {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "a test helper that forwards most of `ClientConfig::for_test`; tracked for the API pass"
+    reason = "a test helper forwarding most of `ClientConfig::for_test`; tracked for the API pass"
 )]
 fn config(
     server: &Server,

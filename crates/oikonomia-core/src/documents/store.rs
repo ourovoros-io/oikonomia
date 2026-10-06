@@ -102,7 +102,7 @@ pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Re
 /// book; DB errors otherwise.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the document's name, type and bytes travel as separate arguments; tracked for the API pass"
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
 )]
 pub fn save_document(
     conn: &Connection,
@@ -204,7 +204,7 @@ fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
 /// entry in a different book, an invalid file, or a duplicate filename.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the document's name, type and bytes travel as separate arguments; tracked for the API pass"
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
 )]
 pub fn attach_document(
     conn: &Connection,
@@ -234,7 +234,7 @@ pub fn attach_document(
 /// [`save_document`] errors.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the document's name, type and bytes travel as separate arguments; tracked for the API pass"
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
 )]
 pub fn post_simple_entry_with_document(
     conn: &Connection,

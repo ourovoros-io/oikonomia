@@ -31,7 +31,7 @@ pub fn set_dock_icon(png_bytes: &[u8]) {
         reason = "the binding is `unsafe` only because the setter may reject \
                   `None`, and this call always passes an image"
     )]
-    // SAFETY: the binding states one precondition (objc2-app-kit 0.3,
+    // SAFETY: the binding states one precondition (objc2-app-kit 0.3.2,
     // `NSApplication::setApplicationIconImage`, "# Safety"): the argument
     // "might not allow `None`". This call passes `Some(&image)`, a live
     // `NSImage` that `initWithData` returned above, so `None` never reaches

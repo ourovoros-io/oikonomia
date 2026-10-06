@@ -146,8 +146,20 @@ mod properties {
         }
 
         #[test]
-        fn parsing_any_64_characters_returns_instead_of_panicking(text in "\\PC{64}") {
+        fn parsing_64_bytes_that_are_not_all_hex_returns_instead_of_panicking(
+            text in "[0-9a-fA-Fg-z ]{64}",
+        ) {
             let _ = parse_sha256_hex(&text);
+        }
+
+        // 64 bytes, so the length check passes, with a two-byte character at
+        // each position in turn for the byte-wise decoding to meet.
+        #[test]
+        fn parsing_64_bytes_with_a_wide_character_is_refused(at in 0_usize..=62) {
+            let text = format!("{}\u{e9}{}", "a".repeat(at), "a".repeat(62 - at));
+            prop_assert_eq!(text.len(), 64);
+
+            prop_assert!(parse_sha256_hex(&text).is_err());
         }
     }
 }
