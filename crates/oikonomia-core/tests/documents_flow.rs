@@ -4,7 +4,7 @@
 
 use oikonomia_core::documents::{
     DocumentId, attach_document, delete_document, get_document, list_documents,
-    post_simple_entry_with_document, save_document,
+    post_simple_entry_with_document, save_analysis_json, save_document,
 };
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, ValidationError};
@@ -247,6 +247,47 @@ fn delete_missing_document_returns_not_found() {
 
     let missing = DocumentId::new();
     assert!(delete_document(conn, missing).is_err());
+}
+
+#[test]
+fn saving_analysis_for_a_missing_document_returns_not_found() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    setup_entity(conn);
+
+    let missing = DocumentId::new();
+
+    assert_eq!(
+        save_analysis_json(conn, missing, "{}"),
+        Err(Error::NotFound("document".into()))
+    );
+    assert_eq!(
+        delete_document(conn, missing),
+        Err(Error::NotFound("document".into())),
+        "the same unknown id gets the same answer from delete"
+    );
+}
+
+#[test]
+fn saving_analysis_for_a_stored_document_succeeds() {
+    let (_dir, vault) = setup_vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    let entry = post_expense_entry(conn, entity_id, "Groceries");
+    let meta = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "receipt.txt",
+        "text/plain",
+        b"TOTAL 5,00",
+    )
+    .expect("document");
+
+    assert_eq!(
+        save_analysis_json(conn, meta.id, "{\"kind\":\"expense\"}"),
+        Ok(())
+    );
 }
 
 #[test]

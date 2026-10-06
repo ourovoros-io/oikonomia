@@ -365,13 +365,18 @@ pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
 ///
 /// # Errors
 ///
-/// DB errors.
+/// [`Error::NotFound`] when no document has this id; DB errors otherwise.
 pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE documents SET analysis_json = ?1 WHERE id = ?2",
-        rusqlite::params![json, id.0.to_string()],
-    )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    let updated = conn
+        .execute(
+            "UPDATE documents SET analysis_json = ?1 WHERE id = ?2",
+            rusqlite::params![json, id.0.to_string()],
+        )
+        .map_err(|err| Error::Io(err.to_string()))?;
+
+    if updated == 0 {
+        return Err(Error::NotFound("document".into()));
+    }
     Ok(())
 }
 
