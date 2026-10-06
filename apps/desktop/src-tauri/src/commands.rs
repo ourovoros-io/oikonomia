@@ -58,7 +58,7 @@
 //! own `# Errors` section names:
 //!
 //! - `vault_locked` when the vault is locked or does not exist yet;
-//! - `io` when the database cannot be read or written;
+//! - `database` when the database cannot be read or written;
 //! - `vault_corrupt` when a stored value cannot be parsed;
 //! - `task_failed` when its blocking task panics.
 //!
