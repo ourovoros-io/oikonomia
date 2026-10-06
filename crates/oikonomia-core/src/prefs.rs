@@ -150,8 +150,8 @@ const MAX_SYSTEM_LANGUAGES: usize = 16;
 /// The longest system language tag considered, in characters; a longer one
 /// is skipped.
 ///
-/// 35 is the smallest buffer RFC 5646 (section 4.4.1) recommends for a
-/// language tag. A longer tag can be valid; it is skipped here so that the
+/// 35 is the smallest limit RFC 5646 (section 4.4.1) lets a protocol set on
+/// a language tag. A longer tag can be valid; it is skipped here so that the
 /// work per tag stays bounded whatever the system reports.
 const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
 
