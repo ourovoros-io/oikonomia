@@ -2,7 +2,8 @@
 //!
 //! Loads `testdata/documents/MANIFEST.toml`, runs the invoice reader (and the
 //! public analyze path for PDF / JPEG), and compares locked fields to golden
-//! JSON. No network. Missing `private/` files are skipped.
+//! JSON. No network. Missing `private/` files are skipped; the OCR models
+//! are checked in, so the two OCR tests fail when they are missing.
 
 #![expect(clippy::expect_used, reason = "corpus tests fail loudly by design")]
 
@@ -324,18 +325,32 @@ fn public_tree_has_no_private_rights(manifest: &Manifest) {
     }
 }
 
-fn bundled_ocr_dir() -> Option<PathBuf> {
+/// Where the OCR models are checked in, relative to the workspace root.
+const BUNDLED_OCR_REL: &str = "apps/desktop/src-tauri/resources/ocr";
+
+/// The directory holding the OCR models: `OIKONOMIA_OCR_MODELS` when it
+/// names one that has them, else the copy checked into the repository.
+///
+/// The models are ordinary tracked files (no Git LFS, no download step), so
+/// a checkout without them is broken and the OCR tests fail instead of
+/// passing without reading anything.
+fn bundled_ocr_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("OIKONOMIA_OCR_MODELS") {
         let path = PathBuf::from(dir);
         if analyzer_status(Some(path.as_path())).ocr_available {
-            return Some(path);
+            return path;
         }
     }
+
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let candidate = workspace.join("apps/desktop/src-tauri/resources/ocr");
-    analyzer_status(Some(candidate.as_path()))
-        .ocr_available
-        .then_some(candidate)
+    let bundled = workspace.join(BUNDLED_OCR_REL);
+    assert!(
+        analyzer_status(Some(bundled.as_path())).ocr_available,
+        "the OCR models text-detection.rten and text-recognition.rten must be in {} \
+         (or in the directory OIKONOMIA_OCR_MODELS names)",
+        bundled.display()
+    );
+    bundled
 }
 
 #[test]
@@ -470,12 +485,7 @@ fn jpeg_ocr_smoke() {
     assert!(jpeg_path.is_file(), "synthetic JPEG must be checked in");
     let bytes = fs::read(&jpeg_path).expect("jpeg");
 
-    let Some(model_dir) = bundled_ocr_dir() else {
-        let status = analyzer_status(None);
-        assert!(!status.ocr_available);
-        assert!(status.offline);
-        return;
-    };
+    let model_dir = bundled_ocr_dir();
 
     let suggestion = analyze_document_bytes(
         "english_total.jpg",
@@ -550,10 +560,7 @@ fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
 /// unit tests that check for one.
 #[test]
 fn a_scanned_pdf_is_read_through_its_image_or_says_why_not() {
-    let Some(model_dir) = bundled_ocr_dir() else {
-        assert!(!analyzer_status(None).ocr_available);
-        return;
-    };
+    let model_dir = bundled_ocr_dir();
     let root = corpus_root();
     let jpeg = fs::read(root.join("synthetic/image/english_total.jpg")).expect("jpeg");
 
