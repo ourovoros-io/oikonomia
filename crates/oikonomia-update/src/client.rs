@@ -80,7 +80,7 @@ pub enum InstallHandoff {
     InstallerStarted,
 }
 
-/// Result of [`crate::UpdateMachine::install`] from a legal state.
+/// Result of [`install_offer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstallOutcome {
     /// Download, verification, or the installer failed; nothing was replaced.
@@ -690,6 +690,48 @@ fn read_capped(
         buf.extend_from_slice(&chunk[..read]);
     }
     Ok(buf)
+}
+
+/// Downloads and verifies the artifact of `offer`, then hands it to `installer`.
+///
+/// Does not touch an [`UpdateMachine`](crate::UpdateMachine), so the caller
+/// need not hold one locked for the minutes a download may take. The offer
+/// comes from [`UpdateMachine::begin_install`](crate::UpdateMachine::begin_install)
+/// and the outcome goes to
+/// [`UpdateMachine::finish_install`](crate::UpdateMachine::finish_install).
+///
+/// The artifact is verified in memory before it is written, so a failed
+/// download or check leaves no file and `installer` is not called. The
+/// artifact is deleted afterwards unless an installer process is still
+/// running from it. The cause of a failure is logged.
+#[must_use]
+pub fn install_offer(
+    config: &ClientConfig,
+    offer: &VerifiedOffer,
+    installer: &impl ArtifactInstaller,
+) -> InstallOutcome {
+    let path = match download_and_verify(config, offer) {
+        Ok(path) => path,
+        Err(err) => {
+            log::warn!("update install verify failed: {err}");
+            return InstallOutcome::Failed;
+        }
+    };
+
+    match installer.install(&path) {
+        Ok(InstallHandoff::Replaced) => {
+            delete_artifact(&path);
+            InstallOutcome::Installed(InstallHandoff::Replaced)
+        }
+        Ok(InstallHandoff::InstallerStarted) => {
+            InstallOutcome::Installed(InstallHandoff::InstallerStarted)
+        }
+        Err(err) => {
+            log::warn!("update install exec failed: {err}");
+            delete_artifact(&path);
+            InstallOutcome::Failed
+        }
+    }
 }
 
 /// Platform installer invoked only after hash and signature succeed.

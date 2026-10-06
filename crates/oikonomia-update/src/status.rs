@@ -31,6 +31,9 @@ pub enum UpdateStatus {
         /// Release notes, HTML-stripped and escaped. Plain text only.
         notes: String,
     },
+    /// `update_install` is downloading, verifying or handing over the
+    /// artifact. No check and no second install starts until it ends.
+    Installing,
     /// Check or install failed. Unlock and export stay usable.
     Failed,
 }

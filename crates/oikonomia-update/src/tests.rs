@@ -6,12 +6,12 @@ use crate::UPDATE_FEED_URL;
 use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
     MAX_ARTIFACT_BYTES, MAX_MANIFEST_BYTES, MAX_REDIRECTS, MAX_SIGNATURE_BYTES, VerifiedOffer,
-    delete_artifact, download_and_verify, perform_check, perform_check_inner,
+    delete_artifact, download_and_verify, install_offer, perform_check, perform_check_inner,
 };
 use crate::error::UpdateError;
 use crate::feed::{FeedArtifact, assemble_manifest};
 use crate::hosts::HostPolicy;
-use crate::machine::UpdateMachine;
+use crate::machine::{CheckStart, UpdateMachine};
 use crate::notes::sanitize_notes;
 use crate::status::UpdateStatus;
 use crate::verify::{parse_public_key, to_hex};
@@ -62,6 +62,19 @@ fn spy_with_handoff(fail: bool, handoff: InstallHandoff) -> (SpyInstaller, Arc<A
         },
         calls,
     )
+}
+
+/// Runs an install the way the desktop does: begin on the machine, install
+/// without it, then finish on it.
+fn install(
+    machine: &mut UpdateMachine,
+    config: &ClientConfig,
+    installer: &SpyInstaller,
+) -> crate::Result<InstallOutcome> {
+    let offer = machine.begin_install()?;
+    let outcome = install_offer(config, &offer, installer);
+    machine.finish_install(outcome);
+    Ok(outcome)
 }
 
 /// Serves a signed manifest offering `payload` at `artifact_path` as 0.2.0
@@ -591,7 +604,7 @@ fn artifact_hash_mismatch_leaves_no_file_and_does_not_exec() {
         machine.check(&config),
         UpdateStatus::Available { .. }
     ));
-    let outcome = machine.install(&config, &installer).expect("legal");
+    let outcome = install(&mut machine, &config, &installer).expect("legal");
     assert_eq!(outcome, InstallOutcome::Failed);
     assert_eq!(machine.status(), UpdateStatus::Failed);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -634,7 +647,7 @@ fn artifact_sig_mismatch_leaves_no_file_and_does_not_exec() {
         machine.check(&config),
         UpdateStatus::Available { .. }
     ));
-    let outcome = machine.install(&config, &installer).expect("legal");
+    let outcome = install(&mut machine, &config, &installer).expect("legal");
     assert_eq!(outcome, InstallOutcome::Failed);
     assert_eq!(machine.status(), UpdateStatus::Failed);
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -656,7 +669,7 @@ fn install_from_idle_is_hard_error() {
         Duration::from_secs(1),
     );
     let (installer, _calls) = spy(false);
-    let err = machine.install(&config, &installer).expect_err("idle");
+    let err = install(&mut machine, &config, &installer).expect_err("idle");
     assert_eq!(err.code(), "update_install_not_allowed");
     assert_eq!(machine.status(), UpdateStatus::Idle);
 }
@@ -681,14 +694,14 @@ fn install_from_failed_is_hard_error() {
     let mut machine = UpdateMachine::new();
     assert_eq!(machine.check(&config), UpdateStatus::Failed);
     let (installer, _calls) = spy(false);
-    let err = machine.install(&config, &installer).expect_err("failed");
+    let err = install(&mut machine, &config, &installer).expect_err("failed");
     assert_eq!(err.code(), "update_install_not_allowed");
 }
 
 #[test]
 fn install_from_checking_is_hard_error() {
     let mut machine = UpdateMachine::new();
-    machine.begin_check();
+    assert_eq!(machine.begin_check(), CheckStart::Started);
     let (pk, _sk) = test_keys();
     let server = Server::run();
     let cache = cache_dir();
@@ -701,7 +714,7 @@ fn install_from_checking_is_hard_error() {
         Duration::from_secs(1),
     );
     let (installer, _calls) = spy(false);
-    let err = machine.install(&config, &installer).expect_err("checking");
+    let err = install(&mut machine, &config, &installer).expect_err("checking");
     assert_eq!(err.code(), "update_install_not_allowed");
 }
 
@@ -774,7 +787,7 @@ fn successful_install_calls_exec_once() {
     let (installer, calls) = spy(false);
     let mut machine = UpdateMachine::new();
     machine.check(&config);
-    let outcome = machine.install(&config, &installer).expect("legal");
+    let outcome = install(&mut machine, &config, &installer).expect("legal");
     assert_eq!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let exec_path = installer
@@ -809,7 +822,7 @@ fn downloaded_artifact_keeps_the_file_extension_of_its_url() {
     let (installer, _calls) = spy(false);
     let mut machine = UpdateMachine::new();
     machine.check(&config);
-    machine.install(&config, &installer).expect("legal");
+    install(&mut machine, &config, &installer).expect("legal");
 
     let exec_path = installer
         .last_path
@@ -842,9 +855,7 @@ fn artifact_name_from_a_hostile_url_cannot_leave_the_cache_directory() {
         b"installer",
         cache.path(),
     );
-    let mut machine = UpdateMachine::new();
-    machine.check(&config);
-    let offer = machine.require_available().expect("offer").clone();
+    let offer = available_offer(&config);
     let path = download_and_verify(&config, &offer).expect("download");
 
     assert_eq!(path.parent(), Some(cache.path()));
@@ -877,7 +888,7 @@ fn a_running_installer_keeps_its_artifact_and_the_next_download_clears_it() {
     let mut machine = UpdateMachine::new();
     machine.check(&config);
 
-    let outcome = machine.install(&config, &installer).expect("legal");
+    let outcome = install(&mut machine, &config, &installer).expect("legal");
 
     assert_eq!(
         outcome,
@@ -887,7 +898,7 @@ fn a_running_installer_keeps_its_artifact_and_the_next_download_clears_it() {
 
     let stale = cache.path().join("stale-from-an-earlier-install.exe");
     std::fs::write(&stale, b"old").expect("stale file");
-    let offer = machine.require_available().expect("offer").clone();
+    let offer = available_offer(&config);
     let fresh = download_and_verify(&config, &offer).expect("download");
     assert_eq!(leftover_files(cache.path()), vec![fresh]);
 }
@@ -908,9 +919,7 @@ fn cache_is_private_and_a_planted_link_cannot_redirect_the_download() {
         b"appimage",
         cache.path(),
     );
-    let mut machine = UpdateMachine::new();
-    machine.check(&config);
-    let offer = machine.require_available().expect("offer").clone();
+    let offer = available_offer(&config);
 
     // Someone planted a link where the artifact will be written, pointing
     // at a file outside the cache, and loosened the directory.
@@ -989,8 +998,7 @@ fn package_managed_copy_reports_the_version_and_refuses_to_install() {
             notes: "ok".into(),
         }
     );
-    let err = machine
-        .install(&config, &installer)
+    let err = install(&mut machine, &config, &installer)
         .expect_err("a package-managed copy must not install");
     assert_eq!(err.code(), "update_install_not_allowed");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -1025,9 +1033,7 @@ fn download_and_verify_rejects_mismatched_hash_and_leaves_no_file() {
         cache.path(),
         Duration::from_secs(2),
     );
-    let mut machine = UpdateMachine::new();
-    machine.check(&config);
-    let offer = machine.require_available().expect("offer").clone();
+    let offer = available_offer(&config);
     let err = download_and_verify(&config, &offer).expect_err("hash");
     assert_eq!(err.code(), "update_artifact_integrity");
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
@@ -1787,8 +1793,7 @@ fn older_remote_version_is_up_to_date_and_never_downloaded() {
 
     assert_eq!(machine.check(&config), UpdateStatus::UpToDate);
 
-    let err = machine
-        .install(&config, &installer)
+    let err = install(&mut machine, &config, &installer)
         .expect_err("an older version must not be installable");
     assert_eq!(err.code(), "update_install_not_allowed");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -1819,4 +1824,120 @@ fn http_204_on_the_manifest_signature_is_a_signature_failure() {
     );
 
     assert_eq!(check_error_code(&config), "update_manifest_signature");
+}
+
+/// Returns a machine that found the 0.2.0 release served on `server`, and
+/// the config it was checked with.
+fn machine_with_an_offer(
+    server: &Server,
+    public_key: &str,
+    secret_key: &SecretKey,
+    cache: &Path,
+) -> (UpdateMachine, ClientConfig) {
+    let config = serve_newer_release(
+        server,
+        public_key,
+        secret_key,
+        "/Oikonomia.AppImage",
+        b"appimage",
+        cache,
+    );
+    let mut machine = UpdateMachine::new();
+    assert!(matches!(
+        machine.check(&config),
+        UpdateStatus::Available { .. }
+    ));
+    (machine, config)
+}
+
+#[test]
+fn a_check_during_an_install_is_refused_and_the_status_stays_installing() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (mut machine, config) = machine_with_an_offer(&server, &pk, &sk, cache.path());
+    let _offer = machine.begin_install().expect("available");
+    assert_eq!(machine.status(), UpdateStatus::Installing);
+
+    assert_eq!(machine.begin_check(), CheckStart::InstallInProgress);
+    assert_eq!(machine.status(), UpdateStatus::Installing);
+
+    assert_eq!(machine.check(&config), UpdateStatus::Installing);
+}
+
+#[test]
+fn a_check_that_ends_after_an_install_began_does_not_replace_installing() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (mut machine, _config) = machine_with_an_offer(&server, &pk, &sk, cache.path());
+    let _offer = machine.begin_install().expect("available");
+
+    // A second check that was already in flight when the first ended.
+    machine.finish_check(CheckOutcome::UpToDate);
+    assert_eq!(machine.status(), UpdateStatus::Installing);
+
+    machine.finish_check(CheckOutcome::Failed);
+    assert_eq!(machine.status(), UpdateStatus::Installing);
+}
+
+#[test]
+fn a_second_install_during_an_install_is_refused() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (mut machine, _config) = machine_with_an_offer(&server, &pk, &sk, cache.path());
+    let _offer = machine.begin_install().expect("available");
+
+    let err = machine.begin_install().expect_err("already installing");
+
+    assert_eq!(err.code(), "update_install_not_allowed");
+    assert_eq!(machine.status(), UpdateStatus::Installing);
+}
+
+#[test]
+fn an_install_that_dies_leaves_a_usable_machine() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (mut machine, config) = machine_with_an_offer(&server, &pk, &sk, cache.path());
+    let offer = machine.begin_install().expect("available");
+
+    // What the caller's drop guard reports when the install never returns.
+    drop(offer);
+    machine.finish_install(InstallOutcome::Failed);
+
+    assert_eq!(machine.status(), UpdateStatus::Failed);
+    assert!(matches!(
+        machine.check(&config),
+        UpdateStatus::Available { .. }
+    ));
+    let (installer, calls) = spy(false);
+    let outcome = install(&mut machine, &config, &installer).expect("available again");
+    assert_eq!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_finished_install_is_ignored_by_a_machine_that_is_not_installing() {
+    let mut machine = UpdateMachine::new();
+
+    machine.finish_install(InstallOutcome::Failed);
+
+    assert_eq!(machine.status(), UpdateStatus::Idle);
+}
+
+#[test]
+fn a_machine_stays_installing_after_a_successful_install() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (mut machine, config) = machine_with_an_offer(&server, &pk, &sk, cache.path());
+    let (installer, _calls) = spy(false);
+
+    let outcome = install(&mut machine, &config, &installer).expect("available");
+
+    assert_eq!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced));
+    assert_eq!(machine.status(), UpdateStatus::Installing);
+    assert_eq!(machine.begin_check(), CheckStart::InstallInProgress);
 }

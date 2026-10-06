@@ -18,12 +18,12 @@ mod verify;
 pub use client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
     UPDATE_FEED_URL, VerifiedOffer, current_updater_platform, delete_artifact, download_and_verify,
-    perform_check,
+    install_offer, perform_check,
 };
 pub use error::{Result, UpdateError};
 pub use feed::{FeedArtifact, assemble_manifest};
 pub use hosts::HostPolicy;
-pub use machine::UpdateMachine;
+pub use machine::{CheckStart, UpdateMachine};
 pub use notes::sanitize_notes;
 pub use release_set::{
     CHECKSUMS_FILE, ReleaseSetError, WindowsBuild, checksum_line, checksummed_assets, feed_entries,
