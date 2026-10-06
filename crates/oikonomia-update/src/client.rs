@@ -331,12 +331,17 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 
     let manifest: RawManifest =
         serde_json::from_slice(&body).map_err(|_| UpdateError::ManifestParse)?;
-    let offer = offer_from_manifest(config, &manifest)?;
-    let remote = offer.version.trim().trim_start_matches('v');
+
+    // The version is compared before the platform entry is read: a copy that
+    // is already current has no use for an artifact, so a feed that lists
+    // none for its platform is not a failure for it.
+    let remote = manifest.version.trim().trim_start_matches('v');
     let remote = Version::parse(remote).map_err(|_| UpdateError::ManifestParse)?;
     if remote <= config.current_version {
         return Ok(CheckOutcome::UpToDate);
     }
+
+    let offer = offer_from_manifest(config, &manifest)?;
     Ok(CheckOutcome::Available(offer))
 }
 
@@ -344,7 +349,7 @@ fn offer_from_manifest(config: &ClientConfig, manifest: &RawManifest) -> Result<
     let platform = manifest
         .platforms
         .get(&config.platform)
-        .ok_or(UpdateError::ManifestParse)?;
+        .ok_or(UpdateError::MissingPlatform)?;
 
     let artifact_url = Url::parse(&platform.url).map_err(|_| UpdateError::ArtifactUrl)?;
     if !config.host_policy.is_allowed_artifact_url(&artifact_url) {

@@ -1454,5 +1454,60 @@ fn artifact_fields_outside_the_platform_table_are_not_an_offer() {
         Duration::from_secs(2),
     );
 
-    assert_eq!(check_error_code(&config), "update_manifest_parse");
+    assert_eq!(check_error_code(&config), "update_missing_platform");
+}
+/// Serves a signed manifest for `version` that lists an artifact for
+/// `darwin-aarch64` only, and returns a config for a `linux-x86_64` app at
+/// 0.1.0.
+fn serve_release_without_this_platform(
+    server: &Server,
+    public_key: &str,
+    secret_key: &SecretKey,
+    version: &str,
+    cache: &Path,
+) -> ClientConfig {
+    let payload = b"artifact-bytes";
+    let body = assemble_manifest(
+        version,
+        "notes",
+        server_url(server, "/").as_str(),
+        &[FeedArtifact {
+            platform: "darwin-aarch64".to_owned(),
+            file_name: "Oikonomia.app.tar.gz".to_owned(),
+            signature: sign(secret_key, payload),
+            sha256_hex: sha256_hex(payload),
+        }],
+    )
+    .expect("assemble");
+    let signature = sign(secret_key, body.as_bytes());
+    serve_signed_manifest(server, &body, &signature);
+
+    config(
+        server,
+        "/latest.json",
+        public_key,
+        "0.1.0",
+        cache,
+        Duration::from_secs(2),
+    )
+}
+
+#[test]
+fn current_version_is_up_to_date_even_when_the_feed_omits_this_platform() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let config = serve_release_without_this_platform(&server, &pk, &sk, "0.1.0", cache.path());
+
+    assert_eq!(UpdateMachine::new().check(&config), UpdateStatus::UpToDate);
+}
+
+#[test]
+fn newer_version_without_this_platform_fails_as_a_missing_platform() {
+    let (pk, sk) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let config = serve_release_without_this_platform(&server, &pk, &sk, "0.2.0", cache.path());
+
+    assert_eq!(check_error_code(&config), "update_missing_platform");
 }
