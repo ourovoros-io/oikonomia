@@ -39,7 +39,10 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// Returns I/O errors when the directory cannot be created or the header is unreadable.
+    /// [`Error::Io`] when the directory cannot be created or the header cannot
+    /// be read; [`Error::VaultCorrupt`] when the header is not valid, comes
+    /// from a vault format this build does not know, or is missing while a
+    /// database exists.
     pub fn open_path(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         create_private_dir(&data_dir)?;
@@ -55,10 +58,7 @@ impl Vault {
         }
 
         let header = if header_path.exists() {
-            let raw = fs::read_to_string(&header_path).map_err(|err| Error::Io(err.to_string()))?;
-            let header: VaultHeader =
-                serde_json::from_str(&raw).map_err(|err| Error::VaultCorrupt(err.to_string()))?;
-            Some(header)
+            Some(VaultHeader::load(&header_path)?)
         } else if db_path.exists() {
             return Err(Error::VaultCorrupt(
                 "database exists without vault header".into(),
@@ -466,6 +466,30 @@ mod tests {
         let bytes = fs::read(vault_db_path(dir.path())).expect("read database");
         assert!(bytes.len() > 16);
         assert_ne!(&bytes[0..6], b"SQLite");
+    }
+
+    #[test]
+    fn a_header_from_a_newer_format_is_rejected_on_open() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+
+        let header_path = vault_header_path(dir.path());
+        let raw = fs::read_to_string(&header_path).expect("read header");
+        let mut header: VaultHeader = serde_json::from_str(&raw).expect("parse header");
+        header.version += 1;
+        fs::write(
+            &header_path,
+            serde_json::to_string(&header).expect("encode"),
+        )
+        .expect("write header");
+
+        let err = Vault::open_path(dir.path())
+            .map(|vault| vault.status())
+            .expect_err("a format this build does not know must not open");
+        assert_eq!(
+            err,
+            Error::VaultCorrupt("unsupported vault format 2".into())
+        );
     }
 
     #[test]
