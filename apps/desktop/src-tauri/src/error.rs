@@ -443,7 +443,13 @@ mod tests {
                 },
                 CoreParams::DiagnosticText,
             ),
-            (CoreError::Io(text()), CoreParams::DiagnosticText),
+            (
+                CoreError::Io {
+                    operation: "write",
+                    detail: text(),
+                },
+                CoreParams::DiagnosticText,
+            ),
             (
                 CoreError::Serialization {
                     operation: "encode",
@@ -451,7 +457,13 @@ mod tests {
                 },
                 CoreParams::DiagnosticText,
             ),
-            (CoreError::Crypto(text()), CoreParams::DiagnosticText),
+            (
+                CoreError::Crypto {
+                    operation: "derive",
+                    detail: text(),
+                },
+                CoreParams::DiagnosticText,
+            ),
             (CoreError::VaultCorrupt(text()), CoreParams::DiagnosticText),
             (CoreError::BackupInvalid(text()), CoreParams::DiagnosticText),
             (CoreError::RestoreWouldOverwrite, CoreParams::NoData),
@@ -459,7 +471,13 @@ mod tests {
                 CoreError::NotFound("account".to_owned()),
                 CoreParams::KnownGap,
             ),
-            (CoreError::Analysis(text()), CoreParams::DiagnosticText),
+            (
+                CoreError::Analysis {
+                    operation: "decode",
+                    detail: text(),
+                },
+                CoreParams::DiagnosticText,
+            ),
             (CoreError::CsvParse(text()), CoreParams::DiagnosticText),
         ]
     }

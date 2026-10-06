@@ -134,11 +134,7 @@ mod tests {
         let err = failed.io("write vault header").expect_err("failed");
 
         assert_eq!(err.code(), "io");
-        assert!(
-            err.to_string()
-                .ends_with("write vault header: disk on fire"),
-            "{err}"
-        );
+        assert_eq!(err.to_string(), "write vault header: disk on fire");
     }
 
     #[test]

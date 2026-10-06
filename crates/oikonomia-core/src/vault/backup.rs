@@ -1557,7 +1557,7 @@ mod tests {
 
         let err = swap_in_unpacked_pair(&paths).expect_err("no database to swap in");
 
-        assert!(matches!(err, Error::Io(_)), "got {err:?}");
+        assert!(matches!(err, Error::Io { .. }), "got {err:?}");
         assert!(!paths.verified_header.exists(), "swap marker");
         assert!(!paths.old_header.exists() && !paths.old_db.exists());
         assert_opens_with(live.path(), PASSWORD);

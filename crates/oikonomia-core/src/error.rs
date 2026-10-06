@@ -118,9 +118,16 @@ pub enum Error {
         detail: String,
     },
 
-    /// The filesystem or the database failed; the text is the cause.
-    #[error("I/O error: {0}")]
-    Io(String),
+    /// Reading or writing a file or a directory failed.
+    #[error("{operation}: {detail}")]
+    Io {
+        /// What core was doing, as a lowercase phrase such as
+        /// `write backup archive`.
+        operation: &'static str,
+        /// The operating system's own text. For logs; never sent as a
+        /// parameter.
+        detail: String,
+    },
 
     /// Encoding or decoding one of the application's own JSON files failed.
     #[error("{operation}: {detail}")]
@@ -133,9 +140,15 @@ pub enum Error {
     },
 
     /// Deriving the vault key or applying a cipher setting to the database
-    /// failed; the text is the cause.
-    #[error("crypto error: {0}")]
-    Crypto(String),
+    /// failed.
+    #[error("{operation}: {detail}")]
+    Crypto {
+        /// What core was doing, as a lowercase phrase such as
+        /// `derive vault key`.
+        operation: &'static str,
+        /// The library's own text. For logs; never sent as a parameter.
+        detail: String,
+    },
 
     /// Stored vault data cannot be interpreted: the header, the database or
     /// a row in it. The text says which.
@@ -156,10 +169,15 @@ pub enum Error {
     #[error("{0} not found")]
     NotFound(String),
 
-    /// Reading an image with the bundled OCR failed (its models, decoding
-    /// the image, or the engine); the text is the cause.
-    #[error("analysis failed: {0}")]
-    Analysis(String),
+    /// Reading an image with the bundled OCR failed: its models, decoding
+    /// the image, or the engine.
+    #[error("{operation}: {detail}")]
+    Analysis {
+        /// What core was doing, as a lowercase phrase such as `decode image`.
+        operation: &'static str,
+        /// The library's own text. For logs; never sent as a parameter.
+        detail: String,
+    },
 
     /// A bank CSV or journal CSV could not be read, or the journal export
     /// could not be written; the text says why.
@@ -228,14 +246,14 @@ impl Error {
             Self::NegativeMoney => "negative_money",
             Self::Validation(reason) => reason.code(),
             Self::Database { .. } => "database",
-            Self::Io(_) => "io",
+            Self::Io { .. } => "io",
             Self::Serialization { .. } => "serialization",
-            Self::Crypto(_) => "crypto",
+            Self::Crypto { .. } => "crypto",
             Self::VaultCorrupt(_) => "vault_corrupt",
             Self::BackupInvalid(_) => "backup_invalid",
             Self::RestoreWouldOverwrite => "restore_would_overwrite",
             Self::NotFound(_) => "not_found",
-            Self::Analysis(_) => "analysis",
+            Self::Analysis { .. } => "analysis",
             Self::CsvParse(_) => "csv_parse",
         }
     }
@@ -253,7 +271,10 @@ impl Error {
 
     /// Builds the error for a file or directory failure during `operation`.
     pub(crate) fn io(operation: &'static str, detail: impl Display) -> Self {
-        Self::Io(format!("{operation}: {detail}"))
+        Self::Io {
+            operation,
+            detail: detail.to_string(),
+        }
     }
 
     /// Builds the error for a failure to encode or decode during `operation`.
@@ -266,12 +287,18 @@ impl Error {
 
     /// Builds the error for a cryptographic failure during `operation`.
     pub(crate) fn crypto(operation: &'static str, detail: impl Display) -> Self {
-        Self::Crypto(format!("{operation}: {detail}"))
+        Self::Crypto {
+            operation,
+            detail: detail.to_string(),
+        }
     }
 
     /// Builds the error for a failure to read an image during `operation`.
     pub(crate) fn analysis(operation: &'static str, detail: impl Display) -> Self {
-        Self::Analysis(format!("{operation}: {detail}"))
+        Self::Analysis {
+            operation,
+            detail: detail.to_string(),
+        }
     }
 }
 
@@ -300,17 +327,26 @@ mod tests {
                 operation: "x",
                 detail: "x".into(),
             },
-            Error::Io("x".into()),
+            Error::Io {
+                operation: "x",
+                detail: "x".into(),
+            },
             Error::Serialization {
                 operation: "x",
                 detail: "x".into(),
             },
-            Error::Crypto("x".into()),
+            Error::Crypto {
+                operation: "x",
+                detail: "x".into(),
+            },
             Error::VaultCorrupt("x".into()),
             Error::BackupInvalid("x".into()),
             Error::RestoreWouldOverwrite,
             Error::NotFound("x".into()),
-            Error::Analysis("x".into()),
+            Error::Analysis {
+                operation: "x",
+                detail: "x".into(),
+            },
             Error::CsvParse("x".into()),
         ]
     }
@@ -328,14 +364,14 @@ mod tests {
             Error::NegativeMoney,
             Error::Validation(_),
             Error::Database { .. },
-            Error::Io(_),
+            Error::Io { .. },
             Error::Serialization { .. },
-            Error::Crypto(_),
+            Error::Crypto { .. },
             Error::VaultCorrupt(_),
             Error::BackupInvalid(_),
             Error::RestoreWouldOverwrite,
             Error::NotFound(_),
-            Error::Analysis(_),
+            Error::Analysis { .. },
             Error::CsvParse(_),
         }
     }

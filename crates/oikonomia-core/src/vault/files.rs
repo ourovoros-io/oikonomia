@@ -202,7 +202,7 @@ mod tests {
     fn sibling_path_needs_a_file_name() {
         for path in ["..", "/", ""] {
             let err = sibling_path(Path::new(path), ".tmp").expect_err(path);
-            assert!(matches!(err, Error::Io(_)), "{path:?} gave {err:?}");
+            assert!(matches!(err, Error::Io { .. }), "{path:?} gave {err:?}");
         }
     }
 
