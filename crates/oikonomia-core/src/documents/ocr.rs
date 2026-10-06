@@ -13,7 +13,6 @@ use image::imageops::{self, FilterType};
 use image::{DynamicImage, ImageReader, RgbImage};
 use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
 use rten::Model;
-use tracing::info;
 
 use crate::error::{Error, Result};
 
@@ -90,10 +89,10 @@ pub fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
         )));
     }
 
-    info!(
-        detection = %paths.detection.display(),
-        recognition = %paths.recognition.display(),
-        "loading bundled OCR models"
+    log::info!(
+        "loading bundled OCR models from {} and {}",
+        paths.detection.display(),
+        paths.recognition.display()
     );
 
     let detection = Model::load_file(&paths.detection)
@@ -130,7 +129,7 @@ pub fn ocr_image_bytes(paths: &OcrModelPaths, data: &[u8]) -> Result<String> {
         .map_err(|e| Error::Analysis(format!("decode image: {e}")))?;
 
     let prepared = preprocess_for_receipt(&dyn_img);
-    run_ocr_on_rgb(paths, &prepared)
+    run_ocr_on_rgb(&prepared)
 }
 
 /// Scale a dimension, clamped into the valid non-zero range.
@@ -205,8 +204,8 @@ fn preprocess_for_receipt(img: &DynamicImage) -> RgbImage {
     rgb
 }
 
-fn run_ocr_on_rgb(paths: &OcrModelPaths, img: &RgbImage) -> Result<String> {
-    let _ = paths; // engine already loaded
+/// Runs the engine that [`ensure_engine`] loaded on a prepared image.
+fn run_ocr_on_rgb(img: &RgbImage) -> Result<String> {
     let img_source = ImageSource::from_bytes(img.as_raw(), img.dimensions())
         .map_err(|e| Error::Analysis(format!("image source: {e}")))?;
 
