@@ -1,7 +1,9 @@
 //! Vault lifecycle commands: status, unlock, lock, backup and restore.
 
-use crate::commands::support::{await_blocking, require_granted_path, with_vault_blocking};
-use crate::error::{CommandError, CommandResult, DesktopError};
+use crate::commands::support::{
+    await_blocking, dialog_path, require_granted_path, with_vault_blocking,
+};
+use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::prefs::load_ui_prefs;
 use oikonomia_core::vault::{BACKUP_EXTENSION, VaultStatus, default_backup_file_name};
@@ -138,12 +140,7 @@ pub(crate) async fn vault_backup(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let dest = with_backup_extension(file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid save location: {e}"),
-        )
-    })?);
+    let dest = with_backup_extension(dialog_path(file_path, "save")?);
 
     with_vault_blocking(&state, move |vault| {
         vault.backup_to(&dest)?;
@@ -241,12 +238,7 @@ async fn pick_backup_path(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let path = file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid backup location: {e}"),
-        )
-    })?;
+    let path = dialog_path(file_path, "backup")?;
     state.grant_paths([path.clone()]);
     Ok(Some(path))
 }

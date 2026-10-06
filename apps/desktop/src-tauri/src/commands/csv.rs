@@ -1,9 +1,10 @@
 //! Bank CSV import and journal CSV export commands.
 
 use crate::commands::support::{
-    SaveTarget, await_blocking, require_granted_path, save_with_dialog, with_connection,
+    SaveTarget, await_blocking, dialog_path, require_granted_path, save_with_dialog,
+    with_connection,
 };
-use crate::error::{CommandError, CommandResult, DesktopError};
+use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::csv::{
     CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewInput,
@@ -105,12 +106,7 @@ async fn pick_csv_path(app: &tauri::AppHandle, state: &AppState) -> CommandResul
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let path = file_path.into_path().map_err(|e| {
-        CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid CSV location: {e}"),
-        )
-    })?;
+    let path = dialog_path(file_path, "CSV")?;
     state.grant_paths([path.clone()]);
     Ok(Some(path))
 }

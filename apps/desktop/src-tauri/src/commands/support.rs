@@ -8,6 +8,7 @@ use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use tauri::State;
+use tauri_plugin_dialog::FilePath;
 
 /// Decodes a document the webview picked, up to the size core stores
 /// ([`oikonomia_core::documents::MAX_DOCUMENT_BYTES`]). The drop path applies
@@ -153,6 +154,25 @@ pub(super) async fn await_blocking<T>(
     }
 }
 
+/// Converts the location a native file dialog returned into a filesystem path.
+///
+/// `purpose` names the dialog in the diagnostic message: `"save"`,
+/// `"backup"`, `"CSV"`.
+///
+/// # Errors
+///
+/// Returns `save_location_invalid`, for open dialogs as well as save dialogs,
+/// when the location is not a path. A desktop dialog returns paths; the
+/// plugin's other form is a URI, which mobile systems hand out.
+pub(super) fn dialog_path(picked: FilePath, purpose: &str) -> CommandResult<PathBuf> {
+    picked.into_path().map_err(|err| {
+        CommandError::desktop(
+            DesktopError::SaveLocationInvalid,
+            format!("invalid {purpose} location: {err}"),
+        )
+    })
+}
+
 /// What a native Save dialog offers, and how the chosen path is completed.
 pub(super) struct SaveTarget {
     /// File type filter as a label and its extensions; `None` offers every file.
@@ -188,13 +208,7 @@ pub(super) async fn save_with_dialog(
             return Ok(None);
         };
 
-        let chosen = picked.into_path().map_err(|err| {
-            CommandError::desktop(
-                DesktopError::SaveLocationInvalid,
-                format!("invalid save location: {err}"),
-            )
-        })?;
-        let destination = (target.complete_path)(chosen);
+        let destination = (target.complete_path)(dialog_path(picked, "save")?);
 
         std::fs::write(&destination, &bytes).map_err(|err| {
             CommandError::desktop(
