@@ -91,6 +91,42 @@ pub(crate) fn remove_file_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Renames `from` to `to`; a `from` that does not exist is left as a no-op,
+/// for steps that are repeated when an interrupted sequence is resumed.
+pub(crate) fn rename_if_present(from: &Path, to: &Path) -> Result<()> {
+    match fs::rename(from, to) {
+        Err(err) if err.kind() != io::ErrorKind::NotFound => Err(Error::Io(format!(
+            "cannot rename {} to {}: {err}",
+            from.display(),
+            to.display()
+        ))),
+        Ok(()) | Err(_) => Ok(()),
+    }
+}
+
+/// Removes each of `paths` that exists.
+///
+/// # Errors
+///
+/// [`Error::Io`] naming the first file that exists and cannot be removed.
+pub(crate) fn remove_files_if_present(paths: &[&Path]) -> Result<()> {
+    for path in paths {
+        remove_file_if_present(path)
+            .map_err(|err| Error::Io(format!("cannot remove {}: {err}", path.display())))?;
+    }
+    Ok(())
+}
+
+/// Removes the WAL and SHM sidecars of the database at `db_path`.
+///
+/// # Errors
+///
+/// [`Error::Io`] when a sidecar exists and cannot be removed.
+pub(crate) fn remove_db_sidecars(db_path: &Path) -> Result<()> {
+    let [wal, shm] = db_sidecar_paths(db_path);
+    remove_files_if_present(&[&wal, &shm])
+}
+
 /// Removes a leftover file on a path that has no error to return it through:
 /// cleanup after a failure that is already being reported, or of a stale
 /// file the next write truncates anyway. A failure is logged.

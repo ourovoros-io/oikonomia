@@ -12,6 +12,7 @@ use super::paths::{vault_db_path, vault_header_path, vault_staged_header_path};
 use super::permissions::{create_private_dir, create_private_file, restrict_to_owner};
 use crate::db::register_fold;
 use crate::error::{Error, Result, ValidationError};
+use crate::vault::backup::recover_interrupted_restore;
 use crate::vault::files::{
     discard_database_files, discard_file, rename_synced, write_private_file,
 };
@@ -39,18 +40,22 @@ pub struct Vault {
 impl Vault {
     /// Inspects the data directory without opening the database.
     ///
-    /// Also clears what an interrupted first run left behind, so the vault
-    /// reads as uninitialized again; see [`Vault::init`].
+    /// Also settles what a crash left half-done: a restore that was swapping
+    /// the vault files is undone or finished (the protocol is in the
+    /// `vault::backup` module doc), and an interrupted first run is cleared
+    /// so the vault reads as uninitialized again (see [`Vault::init`]).
     ///
     /// # Errors
     ///
-    /// [`Error::Io`] when the directory cannot be created or the header cannot
-    /// be read; [`Error::VaultCorrupt`] when the header is not valid, comes
+    /// [`Error::Io`] when the directory cannot be created, an interrupted
+    /// restore cannot be settled, or the header cannot be read;
+    /// [`Error::VaultCorrupt`] when the header is not valid, comes
     /// from a vault format this build does not know, or is missing while a
     /// database exists.
     pub fn open_path(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         create_private_dir(&data_dir)?;
+        recover_interrupted_restore(&data_dir)?;
 
         let header_path = vault_header_path(&data_dir);
         let db_path = vault_db_path(&data_dir);

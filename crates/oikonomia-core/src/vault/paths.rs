@@ -55,6 +55,52 @@ pub(crate) fn vault_init_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json.init")
 }
 
+/// Path of the database snapshot an online backup packs and then removes.
+#[must_use]
+pub(crate) fn backup_snapshot_db_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("vault.db.backup-tmp")
+}
+
+/// Every file a restore touches in one data directory.
+///
+/// The roles, and what each combination of these files means after a crash,
+/// are the restore protocol in the [`crate::vault::backup`] module doc.
+#[derive(Debug)]
+pub(crate) struct RestorePaths {
+    /// Live header, [`vault_header_path`].
+    pub(crate) header: PathBuf,
+    /// Live database, [`vault_db_path`].
+    pub(crate) db: PathBuf,
+    /// Header as unpacked from the archive, not yet checked.
+    pub(crate) unpacked_header: PathBuf,
+    /// Database as unpacked from the archive; it keeps this name until it
+    /// becomes the live database.
+    pub(crate) unpacked_db: PathBuf,
+    /// Unpacked header after the archive passed its checks. It exists
+    /// exactly while the live pair is being swapped.
+    pub(crate) verified_header: PathBuf,
+    /// Previous live header, set aside until the swap is complete.
+    pub(crate) old_header: PathBuf,
+    /// Previous live database, set aside until the swap is complete.
+    pub(crate) old_db: PathBuf,
+}
+
+impl RestorePaths {
+    /// Returns the restore paths of `data_dir`.
+    #[must_use]
+    pub(crate) fn new(data_dir: &Path) -> Self {
+        Self {
+            header: vault_header_path(data_dir),
+            db: vault_db_path(data_dir),
+            unpacked_header: data_dir.join("vault.header.json.restore-tmp"),
+            unpacked_db: data_dir.join("vault.db.restore-tmp"),
+            verified_header: data_dir.join("vault.header.json.restore-new"),
+            old_header: data_dir.join("vault.header.json.restore-old"),
+            old_db: data_dir.join("vault.db.restore-old"),
+        }
+    }
+}
+
 /// Paths of the write-ahead log and the shared-memory index that `SQLite`
 /// keeps next to `db_path` in WAL mode, in that order.
 #[must_use]
