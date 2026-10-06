@@ -155,6 +155,17 @@ pub enum Error {
     #[error("vault is corrupt: {0}")]
     VaultCorrupt(String),
 
+    /// The vault was written by a later build: its schema version is above
+    /// the one this build migrates to. The vault is sound and is left
+    /// untouched; a newer build opens it.
+    #[error("vault schema version {found} is newer than this build supports ({supported})")]
+    VaultTooNew {
+        /// The schema version the vault records.
+        found: i64,
+        /// The highest schema version this build knows.
+        supported: i64,
+    },
+
     /// A backup file is not a usable Oikonomia backup; the text says why.
     #[error("backup is invalid: {0}")]
     BackupInvalid(String),
@@ -206,6 +217,7 @@ impl Error {
         "serialization",
         "crypto",
         "vault_corrupt",
+        "vault_too_new",
         "backup_invalid",
         "restore_would_overwrite",
         "not_found",
@@ -250,6 +262,7 @@ impl Error {
             Self::Serialization { .. } => "serialization",
             Self::Crypto { .. } => "crypto",
             Self::VaultCorrupt(_) => "vault_corrupt",
+            Self::VaultTooNew { .. } => "vault_too_new",
             Self::BackupInvalid(_) => "backup_invalid",
             Self::RestoreWouldOverwrite => "restore_would_overwrite",
             Self::NotFound(_) => "not_found",
@@ -340,6 +353,10 @@ mod tests {
                 detail: "x".into(),
             },
             Error::VaultCorrupt("x".into()),
+            Error::VaultTooNew {
+                found: 8,
+                supported: 7,
+            },
             Error::BackupInvalid("x".into()),
             Error::RestoreWouldOverwrite,
             Error::NotFound("x".into()),
@@ -368,6 +385,7 @@ mod tests {
             Error::Serialization { .. },
             Error::Crypto { .. },
             Error::VaultCorrupt(_),
+            Error::VaultTooNew { .. },
             Error::BackupInvalid(_),
             Error::RestoreWouldOverwrite,
             Error::NotFound(_),

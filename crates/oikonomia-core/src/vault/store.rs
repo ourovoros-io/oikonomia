@@ -223,8 +223,8 @@ impl Vault {
     ///   under neither the published header nor a staged one.
     /// - [`Error::VaultCorrupt`] when the header cannot be used to derive a
     ///   key, the database file is missing or empty, the database has no
-    ///   `vault_meta` row, or its schema is newer than this build or fails a
-    ///   migration's checks.
+    ///   `vault_meta` row, or its data fails a migration's checks.
+    /// - [`Error::VaultTooNew`] when the schema is newer than this build.
     /// - [`Error::Crypto`] when Argon2 fails or `SQLCipher` rejects a
     ///   setting.
     /// - [`Error::Database`] for every other failure to read or migrate the

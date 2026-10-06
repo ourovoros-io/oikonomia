@@ -52,7 +52,7 @@ const MIGRATIONS: &[(i64, Migration)] = &[
 ///
 /// # Errors
 ///
-/// - [`Error::VaultCorrupt`] when the vault's schema version is newer than
+/// - [`Error::VaultTooNew`] when the vault's schema version is newer than
 ///   [`CURRENT_SCHEMA_VERSION`]: it was written by a later build, and this one
 ///   does not know its schema. Nothing is changed.
 /// - [`Error::VaultCorrupt`] when existing data cannot satisfy a constraint a
@@ -71,10 +71,10 @@ pub fn migrate(conn: &Connection) -> Result<()> {
         .database("read schema version")?;
 
     if version > CURRENT_SCHEMA_VERSION {
-        return Err(Error::VaultCorrupt(format!(
-            "vault schema version {version} is newer than this build supports \
-             ({CURRENT_SCHEMA_VERSION})"
-        )));
+        return Err(Error::VaultTooNew {
+            found: version,
+            supported: CURRENT_SCHEMA_VERSION,
+        });
     }
 
     for (target, step) in MIGRATIONS {

@@ -465,6 +465,13 @@ mod tests {
                 CoreParams::DiagnosticText,
             ),
             (CoreError::VaultCorrupt(text()), CoreParams::DiagnosticText),
+            (
+                CoreError::VaultTooNew {
+                    found: 8,
+                    supported: 7,
+                },
+                CoreParams::KnownGap,
+            ),
             (CoreError::BackupInvalid(text()), CoreParams::DiagnosticText),
             (CoreError::RestoreWouldOverwrite, CoreParams::NoData),
             (
