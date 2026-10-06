@@ -393,7 +393,7 @@ pub fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Resu
     match download_and_verify_inner(config, offer, &dest) {
         Ok(()) => Ok(dest),
         Err(err) => {
-            let _ = std::fs::remove_file(&dest);
+            delete_artifact(&dest);
             Err(err)
         }
     }
@@ -522,10 +522,22 @@ fn purge_cache(cache_dir: &Path) {
     }
 }
 
-/// Removes `path` if it exists. Used after a failed install or after exec.
+/// Removes the artifact at `path`. Used after a failed download or install,
+/// and once an installer has replaced the app.
+///
+/// A file that is already gone is not a failure. Any other failure is logged
+/// and not returned: this is cleanup, and it must not replace the outcome of
+/// the step it follows.
 pub fn delete_artifact(path: &Path) {
-    if path.exists() {
-        let _ = std::fs::remove_file(path);
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            log::warn!(
+                "updater artifact removal failed for {}: {err}",
+                path.display()
+            );
+        }
     }
 }
 

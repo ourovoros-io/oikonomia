@@ -6,7 +6,8 @@
 use crate::UPDATE_FEED_URL;
 use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
-    MAX_REDIRECTS, VerifiedOffer, download_and_verify, perform_check, perform_check_inner,
+    MAX_REDIRECTS, VerifiedOffer, delete_artifact, download_and_verify, perform_check,
+    perform_check_inner,
 };
 use crate::error::UpdateError;
 use crate::feed::{FeedArtifact, assemble_manifest};
@@ -1548,4 +1549,86 @@ fn feed_and_signature_requests_each_name_this_copy_once() {
         matches!(status, UpdateStatus::Available { .. }),
         "got {status:?}"
     );
+}
+/// Keeps every warning the crate logs while the tests run.
+///
+/// `log` takes one logger per process, so all tests share this one and each
+/// looks only for messages that name a path of its own.
+struct CapturedWarnings {
+    messages: Mutex<Vec<String>>,
+}
+
+impl CapturedWarnings {
+    fn mentioning(&self, path: &Path) -> Vec<String> {
+        let needle = path.display().to_string();
+        let messages = self.messages.lock().expect("captured warnings");
+        messages
+            .iter()
+            .filter(|message| message.contains(&needle))
+            .cloned()
+            .collect()
+    }
+}
+
+impl log::Log for CapturedWarnings {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            let mut messages = self.messages.lock().expect("captured warnings");
+            messages.push(record.args().to_string());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn captured_warnings() -> &'static CapturedWarnings {
+    static WARNINGS: CapturedWarnings = CapturedWarnings {
+        messages: Mutex::new(Vec::new()),
+    };
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+
+    INSTALL.call_once(|| {
+        log::set_logger(&WARNINGS).expect("this test binary installs no other logger");
+        log::set_max_level(log::LevelFilter::Warn);
+    });
+    &WARNINGS
+}
+
+#[test]
+fn delete_artifact_removes_the_file() {
+    let cache = cache_dir();
+    let artifact = cache.path().join("Oikonomia.AppImage");
+    std::fs::write(&artifact, b"verified").expect("artifact");
+
+    delete_artifact(&artifact);
+
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn delete_artifact_says_nothing_about_a_file_that_is_already_gone() {
+    let warnings = captured_warnings();
+    let cache = cache_dir();
+    let missing = cache.path().join("never-written.AppImage");
+
+    delete_artifact(&missing);
+
+    assert_eq!(warnings.mentioning(&missing), Vec::<String>::new());
+}
+
+#[test]
+fn delete_artifact_logs_a_removal_that_fails() {
+    let warnings = captured_warnings();
+    let cache = cache_dir();
+    // `remove_file` refuses a directory, with an error other than `NotFound`.
+    let directory = cache.path().join("not-a-file");
+    std::fs::create_dir(&directory).expect("directory");
+
+    delete_artifact(&directory);
+
+    assert_eq!(warnings.mentioning(&directory).len(), 1);
 }
