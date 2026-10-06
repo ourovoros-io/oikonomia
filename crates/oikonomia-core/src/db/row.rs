@@ -9,7 +9,8 @@
 //!
 //! A mapper is used from a rusqlite row closure as `|row| Ok(map_thing(row))`:
 //! the outer `rusqlite::Result` carries driver failures and the inner one
-//! carries the mapper's verdict on the row.
+//! carries the mapper's verdict on the row. [`collect_rows`] unwraps both for
+//! a query that returns many rows.
 //!
 //! Damage shows up at two levels, and both are `vault_corrupt`:
 //!
