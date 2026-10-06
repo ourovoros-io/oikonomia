@@ -4,14 +4,21 @@ use super::CsvError;
 
 /// Decimal digits (minor-unit exponent) for an ISO 4217 code.
 ///
-/// Unknown codes default to 2 (EUR/USD). JPY/KRW-style currencies use 0;
-/// a short list of three-decimal Gulf dinars uses 3.
+/// This is the one exponent table of the crate: CSV import and the document
+/// analyzer both read it. It lists the codes whose exponent is not 2, as
+/// given in ISO 4217 list one (published 2026-09-17): `CLP`, `ISK`, `JPY`,
+/// `KRW` and `VND` have no minor unit; `BHD`, `IQD`, `JOD`, `KWD`, `LYD`,
+/// `OMR` and `TND` have three decimals. Every other code, known or not,
+/// gets 2 (EUR, USD).
 #[must_use]
 pub fn currency_minor_exponent(code: &str) -> u8 {
     let code = code.trim().to_ascii_uppercase();
-    if matches!(code.as_str(), "JPY" | "KRW" | "VND" | "CLP") {
+    if matches!(code.as_str(), "CLP" | "ISK" | "JPY" | "KRW" | "VND") {
         0
-    } else if matches!(code.as_str(), "BHD" | "JOD" | "KWD" | "OMR" | "TND") {
+    } else if matches!(
+        code.as_str(),
+        "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND"
+    ) {
         3
     } else {
         2

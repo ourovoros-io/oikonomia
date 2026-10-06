@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::invoice::read_invoice_text;
 use super::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use super::store::{match_expense_account, match_income_account};
+use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
 use crate::domain::{Account, AccountId, ChartTemplate};
 use crate::error::{AccountRole, Result};
@@ -199,7 +200,7 @@ pub fn analyze_document_bytes(
 
     // The invoice reader emits 2-exponent minor units (cents). For currencies
     // with a different exponent the value would be silently wrong, so drop it.
-    let two_decimals = currency_exponent(default_currency) == 2;
+    let two_decimals = currency_minor_exponent(default_currency) == 2;
     if !two_decimals && suggestion.amount_minor.is_some() {
         suggestion.amount_minor = None;
         suggestion.notes.push(
@@ -224,21 +225,12 @@ pub fn analyze_document_bytes(
 /// figure with the book's currency, which the UI formats. In any other book
 /// the figure would be wrong, so the note states the fee exists without one.
 fn transfer_fee_note(fee_minor: i64, currency: &str) -> UiText {
-    if currency_exponent(currency) == 2 {
+    if currency_minor_exponent(currency) == 2 {
         UiText::new(UiTextCode::TransferFee)
             .with_param("fee_minor", fee_minor.to_string())
             .with_param("currency", currency.to_ascii_uppercase())
     } else {
         UiText::new(UiTextCode::TransferFeeUnstated)
-    }
-}
-
-/// ISO 4217 minor-unit exponent for the currencies the app offers.
-fn currency_exponent(code: &str) -> u32 {
-    match code.to_ascii_uppercase().as_str() {
-        "JPY" | "KRW" | "VND" | "CLP" | "ISK" => 0,
-        "BHD" | "KWD" | "OMR" | "TND" | "JOD" | "IQD" | "LYD" => 3,
-        _ => 2,
     }
 }
 
@@ -1032,6 +1024,59 @@ mod tests {
             ),
             "notes explain the skip: {jpy_notes:?}"
         );
+    }
+
+    /// Whether a 45,90 total survives analysis in a book of `currency`.
+    fn keeps_the_amount_in(currency: &str) -> bool {
+        let suggestion = analyze_document_bytes(
+            "bill.txt",
+            "text/plain",
+            b"Invoice\nTOTAL 45,90\nThank you",
+            &AnalyzeContext {
+                template: ChartTemplate::Blank,
+                accounts: &[],
+                default_currency: currency,
+                locale: crate::prefs::Locale::En,
+            },
+            None,
+        );
+
+        suggestion.is_ok_and(|suggestion| suggestion.amount_minor == Some(4590))
+    }
+
+    #[test]
+    fn the_shared_exponent_table_knows_the_currencies_the_analyzer_dropped() {
+        use crate::csv::currency_minor_exponent;
+
+        assert_eq!(currency_minor_exponent("ISK"), 0);
+        assert_eq!(currency_minor_exponent("IQD"), 3);
+        assert_eq!(currency_minor_exponent("LYD"), 3);
+    }
+
+    #[test]
+    fn the_amount_is_kept_exactly_for_the_currencies_the_csv_table_gives_two_decimals() {
+        let letters = || 'A'..='Z';
+        let mut without_two_decimals = Vec::new();
+
+        for code in letters()
+            .flat_map(|a| letters().flat_map(move |b| letters().map(move |c| [a, b, c])))
+            .map(String::from_iter)
+        {
+            let two_decimals = crate::csv::currency_minor_exponent(&code) == 2;
+
+            assert_eq!(keeps_the_amount_in(&code), two_decimals, "{code}");
+            if !two_decimals {
+                without_two_decimals.push(code);
+            }
+        }
+
+        assert_eq!(
+            without_two_decimals,
+            [
+                "BHD", "CLP", "IQD", "ISK", "JOD", "JPY", "KRW", "KWD", "LYD", "OMR", "TND", "VND"
+            ]
+        );
+        assert!(!keeps_the_amount_in("isk"), "codes are case-insensitive");
     }
 
     #[test]
