@@ -1,6 +1,11 @@
 //! Public vault header stored beside the encrypted database.
 
+use std::fs;
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
+
+use crate::error::{Error, Result};
 
 /// Schema version for the on-disk vault format.
 pub const VAULT_FORMAT_VERSION: u32 = 1;
@@ -52,7 +57,8 @@ pub struct VaultHeader {
 }
 
 impl VaultHeader {
-    /// Build a new header with random salt and default Argon2id params.
+    /// Builds a header for a new key from the caller's salt and the default
+    /// Argon2id parameters. The salt must come from a CSPRNG.
     #[must_use]
     pub fn new_with_salt(salt: &[u8; SALT_LEN]) -> Self {
         use base64::Engine;
@@ -66,5 +72,30 @@ impl VaultHeader {
             p_cost: DEFAULT_P_COST,
             output_len: KEY_LEN,
         }
+    }
+
+    /// Reads and checks the header file at `path`.
+    ///
+    /// The format version is checked here, before any key is derived: a
+    /// header written by a newer build would otherwise be used with this
+    /// build's rules and fail later as a wrong password.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Io`] when the file cannot be read; [`Error::VaultCorrupt`]
+    /// when it is not a header or its `version` is not
+    /// [`VAULT_FORMAT_VERSION`].
+    pub(crate) fn load(path: &Path) -> Result<Self> {
+        let raw = fs::read_to_string(path).map_err(|err| Error::Io(err.to_string()))?;
+        let header: Self =
+            serde_json::from_str(&raw).map_err(|err| Error::VaultCorrupt(err.to_string()))?;
+
+        if header.version != VAULT_FORMAT_VERSION {
+            return Err(Error::VaultCorrupt(format!(
+                "unsupported vault format {}",
+                header.version
+            )));
+        }
+        Ok(header)
     }
 }

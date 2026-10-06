@@ -132,7 +132,7 @@ fn preview_row(
     }
 }
 
-/// Post selected simple-entry rows via [`post_simple_entry_unchecked`].
+/// Post selected simple-entry rows via `post_simple_entry_unchecked`.
 ///
 /// Rows that match the duplicate rule are skipped unless `include_duplicates`
 /// is true. Intra-batch duplicates are skipped the same way. Junk (non-positive

@@ -212,8 +212,9 @@ pub enum CsvRowOutcome {
 ///
 /// When this struct is provided (`Some`), `date` and `description` are
 /// required, and the amount side must be **either** `amount` **or** both
-/// `debit` and `credit` — not both forms, and not neither. `reference` is
-/// optional. Auto-detect is not used for those fields.
+/// `debit` and `credit` — not both forms, and not neither. `reference` and
+/// `direction` are optional. Auto-detect is not used for any field, so a
+/// column left out here is not read.
 ///
 /// When omitted (`None` on [`CsvImportPreviewInput::mapping`]), the parser
 /// auto-detects columns from header aliases.
@@ -237,6 +238,14 @@ pub struct CsvColumnMapping {
     /// Optional reference / check-number column.
     #[serde(default)]
     pub reference: Option<String>,
+    /// Optional column that says which way the money moved (`Debit` /
+    /// `Credit`, `D` / `C`, `In` / `Out`), for files whose [`Self::amount`]
+    /// is unsigned. When set, a recognized cell decides the sign of its row,
+    /// an empty cell leaves the amount's own sign, and any other cell makes
+    /// the row invalid. Ignored when [`Self::debit`] and [`Self::credit`]
+    /// are mapped.
+    #[serde(default)]
+    pub direction: Option<String>,
 }
 
 /// Preview of a bank CSV: suggested simple entries, duplicate flags, per-row errors.
