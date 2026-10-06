@@ -50,22 +50,31 @@ use oikonomia_core::ledger::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs};
 use oikonomia_core::vault::{Vault, VaultStatus};
 use oikonomia_update::UpdateMachine;
 
-/// Shared state behind Tauri commands.
+/// How often the watchdog re-checks idle time while the vault is unlocked.
+pub(crate) const AUTO_LOCK_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The state shared by every Tauri command.
+///
+/// Tauri manages it from the end of a successful start (`start` in `lib.rs`); a command
+/// borrows it for the length of the call. What a blocking task needs from it
+/// is handed out as an owned handle ([`Self::vault`], [`Self::path_grants`],
+/// [`Self::update_machine`]).
 pub(crate) struct AppState {
     /// The vault, with the watchdog gate and timeout that follow its status.
     vault: Arc<GatedVault>,
-    /// App data directory: vault files plus the plaintext UI prefs.
+    /// The app data directory: the vault files plus the plaintext preferences.
     data_dir: PathBuf,
-    /// Directory containing bundled `text-detection.rten` + `text-recognition.rten`.
+    /// The directory that holds the bundled OCR models, `text-detection.rten`
+    /// and `text-recognition.rten`.
     ocr_model_dir: PathBuf,
     /// Seconds since `UNIX_EPOCH` of the last command touching the vault.
     last_activity: Arc<AtomicU64>,
     /// The paths the user handed over through a native drop or a native file
     /// dialog; path-taking IPC commands accept only these.
     path_grants: PathGrants,
-    /// Serializes plaintext prefs load-mutate-save.
+    /// Serializes a load-change-save of the plaintext preferences file.
     prefs_lock: Mutex<()>,
-    /// Unlock-screen update check / install machine. Independent of the vault.
+    /// The update check and install machine. Independent of the vault.
     update: Arc<Mutex<UpdateMachine>>,
 }
 
@@ -90,31 +99,40 @@ impl AppState {
         })
     }
 
-    /// App data directory (UI prefs live here as plaintext).
+    /// Returns the app data directory, where the vault files and the plaintext
+    /// preferences live.
     #[must_use]
     pub(crate) fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
     }
 
-    /// Path to bundled OCR models.
+    /// Returns the directory the bundled OCR models were looked for in.
     #[must_use]
     pub(crate) fn ocr_model_dir(&self) -> &PathBuf {
         &self.ocr_model_dir
     }
 
-    /// Shared vault handle for blocking work off the command thread.
+    /// Returns a shared handle to the vault, for work on the blocking pool.
     #[must_use]
     pub(crate) fn vault(&self) -> Arc<GatedVault> {
         Arc::clone(&self.vault)
     }
 
-    /// Shared update machine. Never awaited from `vault_unlock`.
+    /// Returns a shared handle to the update machine.
+    ///
+    /// The machine is independent of the vault: an unlock never waits on a check
+    /// or an install.
     #[must_use]
     pub(crate) fn update_machine(&self) -> Arc<Mutex<UpdateMachine>> {
         Arc::clone(&self.update)
     }
 
-    /// Hold across a prefs load-mutate-save so locale and tray last-used cannot clobber.
+    /// Locks the preferences file for a load-change-save.
+    ///
+    /// Held across the three steps, so that a language change and a quick-add
+    /// post cannot each load the old file and write over the other's change.
+    /// Recovers from poisoning: the mutex guards no data, only the order of file
+    /// operations.
     pub(crate) fn lock_prefs(&self) -> MutexGuard<'_, ()> {
         match self.prefs_lock.lock() {
             Ok(guard) => guard,
@@ -137,17 +155,31 @@ impl AppState {
         self.path_grants.clone()
     }
 
-    /// Record command activity for the idle watchdog.
+    /// Records command activity for the idle watchdog.
     pub(crate) fn touch(&self) {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
     }
 
-    /// Handles for the idle watchdog thread.
+    /// Returns the handles the idle watchdog thread runs on.
     #[must_use]
     pub(crate) fn watchdog_handles(&self) -> WatchdogHandles {
         WatchdogHandles {
             vault: Arc::clone(&self.vault),
             last_activity: Arc::clone(&self.last_activity),
+        }
+    }
+}
+
+/// Locks the update machine, recovering from poisoning.
+///
+/// The machine holds plain values that are valid whichever statement a panic
+/// interrupted, so the guard is handed out and the flag cleared.
+pub(crate) fn lock_update(machine: &Mutex<UpdateMachine>) -> MutexGuard<'_, UpdateMachine> {
+    match machine.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            machine.clear_poison();
+            poisoned.into_inner()
         }
     }
 }
@@ -376,9 +408,6 @@ impl Drop for VaultGuard<'_> {
     }
 }
 
-/// How often the watchdog re-checks idle time while the vault is unlocked.
-pub(crate) const AUTO_LOCK_POLL_INTERVAL: Duration = Duration::from_secs(5);
-
 /// Shared handles for [`spawn_auto_lock`].
 pub(crate) struct WatchdogHandles {
     /// The vault, which the watchdog locks only for a status check / idle
@@ -448,7 +477,8 @@ enum Wake {
 }
 
 impl WatchdogGate {
-    /// Start parked: the process launches with the vault locked or missing.
+    /// Creates a parked gate: the process starts with the vault locked or
+    /// missing.
     fn new() -> Self {
         Self {
             state: Mutex::new(GateState {
@@ -467,6 +497,8 @@ impl WatchdogGate {
         }
     }
 
+    /// Locks the gate state, recovering from poisoning: it holds plain values
+    /// that are valid whichever statement a panic interrupted.
     fn lock_state(&self) -> MutexGuard<'_, GateState> {
         match self.state.lock() {
             Ok(guard) => guard,
@@ -477,6 +509,9 @@ impl WatchdogGate {
         }
     }
 
+    /// Waits on the condition variable until notified, recovering from poisoning
+    /// as [`Self::lock_state`] does. May also return without a notification, as
+    /// any condition-variable wait may; callers re-check the state.
     fn wait<'a>(&self, guard: MutexGuard<'a, GateState>) -> MutexGuard<'a, GateState> {
         match self.cond.wait(guard) {
             Ok(guard) => guard,
@@ -487,6 +522,8 @@ impl WatchdogGate {
         }
     }
 
+    /// Waits on the condition variable for at most `interval`, recovering from
+    /// poisoning as [`Self::lock_state`] does.
     fn wait_timeout<'a>(
         &self,
         guard: MutexGuard<'a, GateState>,
@@ -523,14 +560,18 @@ impl WatchdogGate {
         self.cond.notify_all();
     }
 
-    /// Has the watchdog emit `vault-locked` once.
+    /// Has the watchdog emit `vault-locked` once, for a lock made where no
+    /// `AppHandle` is at hand.
     fn announce_lock(&self) {
         let mut state = self.lock_state();
         state.lock_to_announce = true;
         self.cond.notify_all();
     }
 
-    /// Wake any waiter and stop the loop. Process exit also ends the thread.
+    /// Wakes any waiter and ends the loop.
+    ///
+    /// Only tests end the loop; in the app the thread runs until the process
+    /// exits.
     #[cfg(test)]
     fn shutdown(&self) {
         let mut state = self.lock_state();
@@ -538,7 +579,8 @@ impl WatchdogGate {
         self.cond.notify_all();
     }
 
-    /// Waits while parked with nothing to announce.
+    /// Waits while the gate is parked with nothing to announce, and returns why
+    /// it stopped waiting.
     fn wait_for_work(&self) -> Wake {
         let mut state = self.lock_state();
         loop {
@@ -573,17 +615,20 @@ impl WatchdogGate {
         state.phase
     }
 
+    /// Returns whether the gate has the watchdog polling.
     #[cfg(test)]
     fn is_running(&self) -> bool {
         self.lock_state().phase == GatePhase::Running
     }
 
+    /// Counts one completed poll interval.
     #[cfg(test)]
     fn record_tick(&self) {
         self.ticks.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Unlocked poll completions. Zero while parked.
+    /// Returns the completed poll intervals. Zero for a watchdog that has only
+    /// ever been parked.
     #[cfg(test)]
     fn tick_count(&self) -> u64 {
         self.ticks.load(Ordering::Relaxed)
@@ -607,24 +652,14 @@ impl WatchdogGate {
     }
 }
 
-/// Lock the update machine, recovering from poisoning.
-pub(crate) fn lock_update(machine: &Mutex<UpdateMachine>) -> MutexGuard<'_, UpdateMachine> {
-    match machine.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            machine.clear_poison();
-            poisoned.into_inner()
-        }
-    }
-}
-
-/// Lock iff the vault is unlocked and idle time has reached the timeout.
+/// Returns whether the watchdog should lock the vault now: it is unlocked
+/// and has been idle for the timeout.
 ///
 /// `idle_secs` is `None` when the idle time is unknown because the clock was
 /// set back ([`idle_secs`]); an unlocked vault is then locked at once.
 ///
-/// Pure predicate for the idle watchdog. Tests cover the four launch cases
-/// without sleeping the 5s loop or constructing an `AppHandle`.
+/// A pure predicate, so its cases are tested without a watchdog thread or an
+/// `AppHandle`.
 #[must_use]
 pub(crate) const fn should_auto_lock(
     idle_secs: Option<u64>,
@@ -678,8 +713,11 @@ pub(crate) fn spawn_auto_lock(
     Ok(())
 }
 
-/// Idle watchdog loop. `on_locked` runs with no mutex held, each time the
-/// watchdog locked the vault or has a forced lock to announce.
+/// Runs the idle watchdog until the gate shuts it down.
+///
+/// `on_locked` runs with no mutex held, each time the watchdog locked the
+/// vault or has a forced lock to announce. A round that panics is contained:
+/// the vault is locked ([`lock_after_panic`]) and the loop goes on.
 fn run_auto_lock_loop(
     handles: &WatchdogHandles,
     poll_interval: Duration,
@@ -705,8 +743,8 @@ fn run_auto_lock_loop(
     }
 }
 
-/// One pass of the watchdog: wait until the vault is unlocked, wait one poll
-/// interval, lock if idle. `Break` ends the loop.
+/// Runs one pass of the watchdog: waits until the vault is unlocked, waits
+/// one poll interval, and locks if idle. `Break` ends the loop.
 fn watch_one_round(
     handles: &WatchdogHandles,
     poll_interval: Duration,
@@ -780,7 +818,11 @@ fn lock_if_idle(vault: &GatedVault, last_activity: &AtomicU64) -> bool {
     lock_now
 }
 
-/// Resolve OCR model directory for dev and packaged builds.
+/// Returns the directory that holds the OCR models, for a packaged build and
+/// for one run from the source tree.
+///
+/// When no candidate holds the models, returns the source-tree path, so the
+/// caller always gets a path; the analyzer then reports the models missing.
 #[must_use]
 pub(crate) fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
     // Dev layout: apps/desktop/src-tauri/resources/ocr. Also the answer when
@@ -794,13 +836,14 @@ pub(crate) fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
     first_dir_with_models(candidates).unwrap_or(dev)
 }
 
-/// Where the OCR models may be, most specific first.
+/// Returns the places the OCR models may be, most specific first.
 ///
-/// The Tauri resource directory (packaged) comes first. The bundle keeps the
-/// `resources/ocr/*` path from tauri.conf.json, so on macOS the models sit
-/// in Contents/Resources/resources/ocr; without that entry the lookup fell
-/// through to the compile-time dev path, which exists only on the machine
-/// that built the app. Some bundles put resources under `ocr` or flat.
+/// The Tauri resource directory of a packaged build comes first. The bundle
+/// keeps the `resources/ocr/*` path from `tauri.conf.json`, so on macOS the
+/// models sit in `Contents/Resources/resources/ocr`; that entry is what
+/// finds them there, since the compile-time source-tree path exists only on
+/// the machine that built the app. Some bundles put resources under `ocr` or
+/// flat.
 fn ocr_model_dir_candidates(
     resource_dir: Option<PathBuf>,
     dev: &Path,
@@ -819,7 +862,7 @@ fn ocr_model_dir_candidates(
     candidates
 }
 
-/// The first directory that holds the text-detection model.
+/// Returns the first directory that holds the text-detection model file.
 fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
     candidates
         .into_iter()
@@ -840,6 +883,7 @@ mod tests {
     use std::sync::{Arc, TryLockError};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+    /// A master password long enough for core to accept.
     const TEST_PASSWORD: &str = "correct horse battery staple";
     /// A poll interval short enough that a test can wait for an idle check.
     const SHORT_POLL: Duration = Duration::from_millis(20);
@@ -1330,6 +1374,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// Opens a state on a fresh directory and returns both.
     fn test_state(label: &str) -> (AppState, std::path::PathBuf) {
         let dir = std::env::temp_dir().join(format!(
             "oiko-watchdog-{label}-{}-{}",
@@ -1343,6 +1388,7 @@ mod tests {
         (state, dir)
     }
 
+    /// Creates a vault under [`TEST_PASSWORD`] and leaves it locked.
     fn init_locked_vault(state: &AppState) {
         let vault = state.vault();
         let mut guard = vault.acquire();
@@ -1350,6 +1396,8 @@ mod tests {
         guard.lock();
     }
 
+    /// Starts the watchdog loop on its own thread with `poll` as the poll
+    /// interval. Each `vault-locked` it would emit arrives on the receiver.
     fn spawn_watchdog(
         state: &AppState,
         poll: Duration,
@@ -1364,6 +1412,7 @@ mod tests {
         (join, receiver)
     }
 
+    /// Ends the watchdog loop and fails the test if its thread does not exit.
     fn shutdown_watchdog(vault: &GatedVault, join: std::thread::JoinHandle<()>) {
         vault.gate.shutdown();
         let (sender, receiver) = mpsc::channel();
