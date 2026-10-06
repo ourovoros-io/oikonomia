@@ -6,8 +6,10 @@
 //! the size of the file says nothing about the memory a document needs.
 //!
 //! The budget here decodes every stream the way lopdf would, but stops
-//! reading a stream as soon as the budget is spent: the check costs at most
-//! [`MAX_PDF_DECODED_BYTES`] of memory whatever the file holds.
+//! decoding a stream as soon as the budget is spent. The check holds two
+//! stages of one stream at a time (the input of a filter and its output),
+//! each cut off within one read of [`DECODE_CHUNK_BYTES`] past the budget,
+//! whatever the file holds.
 //!
 //! One gap remains. lopdf decompresses object streams and cross-reference
 //! streams while it loads a file, before this check can run, and that step
@@ -25,8 +27,9 @@ pub(super) const MAX_PDF_PAGES: usize = 50;
 
 /// Most bytes the streams of one PDF may decode to, all streams together.
 /// Four times the upload cap: room for the text and fonts of a long
-/// statement, and a bound on what a compression bomb can make pdf-extract
-/// allocate.
+/// statement, and a bound on what decoding any one stream can make
+/// pdf-extract allocate. A stream that is used several times is decoded
+/// again each time, one at a time.
 pub(super) const MAX_PDF_DECODED_BYTES: usize = 32 * 1024 * 1024;
 
 /// How much is read from a decoder at a time while counting.
@@ -70,7 +73,7 @@ fn decoded_len(stream: &lopdf::Stream, cap: usize) -> Option<usize> {
         let decoded = match filter {
             b"FlateDecode" => inflate(&stage, cap)?,
             b"LZWDecode" => unpack_lzw(&stage, early_change(stream), cap)?,
-            b"ASCII85Decode" => decode_ascii85(&stage),
+            b"ASCII85Decode" => decode_ascii85(&stage, cap)?,
             _ => break,
         };
         largest = largest.max(decoded.len());
@@ -164,15 +167,63 @@ fn unpack_lzw(input: &[u8], early_change: bool, cap: usize) -> Option<Vec<u8>> {
     }
 }
 
-/// Decodes `ASCII85` data with lopdf itself. The output is at most four
-/// times the input (a `z` stands for four zero bytes), so it needs no cap
-/// of its own. Data lopdf rejects decodes to nothing.
-fn decode_ascii85(input: &[u8]) -> Vec<u8> {
-    let stream = lopdf::Stream::new(
-        lopdf::dictionary! { "Filter" => "ASCII85Decode" },
-        input.to_vec(),
-    );
-    stream.decompressed_content().unwrap_or_default()
+/// Decodes `ASCII85` data the way lopdf does, or `None` when the output is
+/// longer than `cap`. A `z` stands for four zero bytes, so the output can be
+/// four times the input.
+///
+/// Data lopdf rejects (a `z` inside a group, a group too large for 32 bits)
+/// decodes to nothing: lopdf returns an error there and its caller keeps the
+/// stored bytes.
+fn decode_ascii85(input: &[u8], cap: usize) -> Option<Vec<u8>> {
+    let input = input.strip_suffix(b"~>").unwrap_or(input);
+
+    let mut output = Vec::new();
+    let mut group: u32 = 0;
+    let mut digits = 0_usize;
+
+    for &byte in input {
+        if byte == b'z' {
+            if digits != 0 {
+                return Some(Vec::new());
+            }
+            output.extend_from_slice(&[0; 4]);
+        } else if byte.is_ascii_whitespace() {
+            continue;
+        } else if !(b'!'..=b'u').contains(&byte) {
+            break;
+        } else {
+            let Some(shifted) = group.checked_mul(85) else {
+                return Some(Vec::new());
+            };
+            // lopdf adds the digit unchecked, which wraps in a release build.
+            group = shifted.wrapping_add(u32::from(byte - b'!'));
+            digits += 1;
+
+            if digits == 5 {
+                output.extend_from_slice(&group.to_be_bytes());
+                group = 0;
+                digits = 0;
+            }
+        }
+
+        if output.len() > cap {
+            return None;
+        }
+    }
+
+    if digits > 0 {
+        // A short final group is padded with the largest digit and yields
+        // one byte less than it has digits.
+        for _ in digits..5 {
+            let Some(shifted) = group.checked_mul(85) else {
+                return Some(Vec::new());
+            };
+            group = shifted.wrapping_add(84);
+        }
+        output.extend_from_slice(group.to_be_bytes().get(..digits - 1)?);
+    }
+
+    (output.len() <= cap).then_some(output)
 }
 
 #[cfg(test)]
@@ -246,6 +297,50 @@ mod tests {
     }
 
     #[test]
+    fn ascii85_decodes_to_the_bytes_lopdf_decodes() {
+        let inputs: [&[u8]; 7] = [
+            b"9jqo^BlbD-BleB1DJ+*+F(f,q~>",
+            b"9jqo^ Bl\nbD-B leB1~>",
+            b"zz9jqo^z~>",
+            b"9jqo^Bl~>",
+            b"9jqo^B",
+            b"9jqo^\x7fignored~>",
+            b"~>",
+        ];
+
+        for input in inputs {
+            let by_lopdf = stream(name("ASCII85Decode"), input.to_vec())
+                .decompressed_content()
+                .unwrap_or_default();
+
+            assert_eq!(
+                decode_ascii85(input, usize::MAX),
+                Some(by_lopdf),
+                "{:?}",
+                String::from_utf8_lossy(input)
+            );
+        }
+    }
+
+    #[test]
+    fn ascii85_that_lopdf_rejects_decodes_to_nothing() {
+        for input in [&b"9jz~>"[..], b"uuuuu~>"] {
+            let by_lopdf = stream(name("ASCII85Decode"), input.to_vec()).decompressed_content();
+
+            assert!(by_lopdf.is_err(), "lopdf must reject the fixture");
+            assert_eq!(decode_ascii85(input, usize::MAX), Some(Vec::new()));
+        }
+    }
+
+    #[test]
+    fn a_run_of_ascii85_zeros_is_cut_off_at_the_cap() {
+        let zeros = stream(name("ASCII85Decode"), vec![b'z'; 1_000]);
+
+        assert_eq!(decoded_len(&zeros, 4_000), Some(4_000));
+        assert_eq!(decoded_len(&zeros, 3_999), None);
+    }
+
+    #[test]
     fn an_lzw_stream_is_cut_off_at_the_cap() {
         let packed = stream(name("LZWDecode"), weezl_packed(&vec![b'a'; 100_000]));
 
@@ -275,7 +370,11 @@ mod tests {
 
         let counted = decoded_len(&packed, usize::MAX).unwrap_or_default();
 
-        assert!(counted > 0 && counted < 200_000, "counted {counted}");
+        assert!(
+            counted > packed.content.len() && counted < 200_000,
+            "counted {counted} from {} stored bytes",
+            packed.content.len()
+        );
     }
 
     #[test]
