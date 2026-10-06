@@ -53,6 +53,11 @@ ignore = true
 
 [bans]
 multiple-versions = "allow"
+# A `*` requirement accepts any future release of a crate. The workspace's
+# own path dependencies carry no version, which counts as a wildcard, so
+# those are let through.
+wildcards = "deny"
+allow-wildcard-paths = true
 # Network crates are banned everywhere EXCEPT the user-initiated update path.
 # `wrappers` = the only crates allowed to depend on the banned crate directly.
 # Never widen a wrapper list for a non-updater parent; oikonomia-core stays
