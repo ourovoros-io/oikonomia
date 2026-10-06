@@ -239,14 +239,19 @@ fn invoked_names(content: &[u8]) -> Vec<Vec<u8>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+
+    /// What a form that runs no other form draws, so a test can tell the
+    /// deepest form was read.
+    pub(in crate::documents) const LEAF_TEXT: &str = "leaf";
 
     /// A one-page PDF with forms `F0`, `F1`, … sharing one resource
     /// dictionary with the page. The page runs the forms in `page`, and form
-    /// `i` runs the forms in `forms[i]`.
+    /// `i` runs the forms in `forms[i]`; a form that runs none draws
+    /// [`LEAF_TEXT`].
     #[expect(clippy::expect_used, reason = "test fails loudly by design")]
-    fn pdf_with_forms(page: &[usize], forms: &[Vec<usize>]) -> Vec<u8> {
+    pub(in crate::documents) fn pdf_with_forms(page: &[usize], forms: &[Vec<usize>]) -> Vec<u8> {
         use lopdf::{Dictionary, Document, Object, Stream, dictionary};
 
         fn invoking(forms: &[usize]) -> Vec<u8> {
@@ -255,6 +260,14 @@ mod tests {
                 content.extend_from_slice(format!("/F{form} Do\n").as_bytes());
             }
             content
+        }
+
+        fn form_content(forms: &[usize]) -> Vec<u8> {
+            if forms.is_empty() {
+                format!("BT /Helv 12 Tf 10 10 Td ({LEAF_TEXT}) Tj ET\n").into_bytes()
+            } else {
+                invoking(forms)
+            }
         }
 
         let mut doc = Document::with_version("1.5");
@@ -270,13 +283,22 @@ mod tests {
                     "BBox" => vec![0.into(), 0.into(), 200.into(), 200.into()],
                     "Resources" => resources_id,
                 },
-                invoking(invoked),
+                form_content(invoked),
             ));
             xobjects.set(format!("F{index}"), form);
         }
         doc.objects.insert(
             resources_id,
-            Object::Dictionary(dictionary! { "XObject" => xobjects }),
+            Object::Dictionary(dictionary! {
+                "XObject" => xobjects,
+                "Font" => dictionary! {
+                    "Helv" => dictionary! {
+                        "Type" => "Font",
+                        "Subtype" => "Type1",
+                        "BaseFont" => "Helvetica",
+                    },
+                },
+            }),
         );
 
         let contents = doc.add_object(Stream::new(Dictionary::new(), invoking(page)));
@@ -309,7 +331,7 @@ mod tests {
     }
 
     /// Form `i` runs form `i + 1`, `depth` forms in all.
-    fn chain(depth: usize) -> Vec<Vec<usize>> {
+    pub(in crate::documents) fn chain(depth: usize) -> Vec<Vec<usize>> {
         (0..depth)
             .map(|form| {
                 if form + 1 < depth {
@@ -352,13 +374,10 @@ mod tests {
     }
 
     #[test]
-    fn forms_nested_to_the_depth_limit_are_extracted() {
-        let pdf = pdf_with_forms(&[0], &chain(MAX_FORM_DEPTH));
-
-        assert!(within_limits(&pdf));
-        // The deepest accepted nesting must fit the stack of a test thread,
-        // which is no larger than the extraction thread's.
-        assert!(pdf_extract::extract_text_from_mem(&pdf).is_ok());
+    fn forms_nested_to_the_depth_limit_are_accepted() {
+        // That extracting them fits the extraction thread's stack is tested
+        // in `analyze`, through the path the app takes.
+        assert!(within_limits(&pdf_with_forms(&[0], &chain(MAX_FORM_DEPTH))));
     }
 
     #[test]

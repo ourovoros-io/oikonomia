@@ -1261,6 +1261,37 @@ mod tests {
         }
     }
 
+    /// Stack of the thread the desktop app extracts on. It runs analysis in
+    /// `tauri::async_runtime::spawn_blocking`, and Tauri's Tokio runtime
+    /// keeps Tokio's default stack for its blocking threads.
+    const EXTRACTION_THREAD_STACK: usize = 2 * 1024 * 1024;
+
+    #[test]
+    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
+    fn forms_nested_to_the_depth_limit_read_on_a_quarter_of_the_extraction_stack() {
+        use super::super::pdf_nesting::MAX_FORM_DEPTH;
+        use super::super::pdf_nesting::tests::{LEAF_TEXT, chain, pdf_with_forms};
+
+        // The deepest nesting the budget lets through, run through the whole
+        // read path on a thread with a quarter of the app's stack. In a
+        // debug build, whose frames are larger than release ones. A stack
+        // overflow here aborts the test run rather than failing one test.
+        let pdf = pdf_with_forms(&[0], &chain(MAX_FORM_DEPTH));
+        assert!(matches!(load_pdf(&pdf), PdfLoad::Loaded(_)));
+
+        let read = std::thread::Builder::new()
+            .stack_size(EXTRACTION_THREAD_STACK / 4)
+            .spawn(move || read_pdf_text(&pdf, None))
+            .expect("spawn the extraction thread")
+            .join()
+            .expect("extraction does not panic");
+
+        assert!(
+            matches!(&read, ExtractedText::Read { text, .. } if text.contains(LEAF_TEXT)),
+            "{read:?}"
+        );
+    }
+
     #[test]
     fn an_oversized_pdf_says_it_is_over_budget() {
         // Larger than any stored document: refused before it is parsed.
