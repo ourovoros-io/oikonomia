@@ -5,9 +5,12 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
+use crate::db::stored_date;
 use crate::domain::{AccountType, EntityId};
 use crate::error::{Error, Result, ValidationError};
-use crate::ledger::balance::{ACTIVE_ENTRY_PREDICATE, normal_balance, parse_account_type};
+use crate::ledger::balance::{
+    ACTIVE_ENTRY_PREDICATE, add_minor, normal_balance, parse_account_type, subtract_minor,
+};
 use crate::ledger::entities::get_entity;
 use crate::util::{format_date, parse_date};
 
@@ -76,7 +79,10 @@ pub struct CashFlowSeries {
 /// # Errors
 ///
 /// [`Error::Validation`] for a malformed date or `from > to`;
-/// [`Error::NotFound`] for an unknown entity; database errors as [`Error::Io`].
+/// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
+/// bucket, a running total or the net does not fit in `i64`;
+/// [`Error::VaultCorrupt`] for a stored date or account type that does not
+/// parse; database errors as [`Error::Io`].
 pub fn cash_flow_series(
     conn: &Connection,
     entity_id: EntityId,
@@ -108,16 +114,16 @@ pub fn cash_flow_series(
         // after the day holds it.
         let index = buckets.partition_point(|bucket| bucket.end < day.date);
         if let Some(bucket) = buckets.get_mut(index) {
-            bucket.income_minor = bucket.income_minor.saturating_add(day.income_minor);
-            bucket.expenses_minor = bucket.expenses_minor.saturating_add(day.expenses_minor);
+            bucket.income_minor = add_minor(bucket.income_minor, day.income_minor)?;
+            bucket.expenses_minor = add_minor(bucket.expenses_minor, day.expenses_minor)?;
         }
     }
 
     let mut income = 0_i64;
     let mut expenses = 0_i64;
     for bucket in &mut buckets {
-        income = income.saturating_add(bucket.income_minor);
-        expenses = expenses.saturating_add(bucket.expenses_minor);
+        income = add_minor(income, bucket.income_minor)?;
+        expenses = add_minor(expenses, bucket.expenses_minor)?;
         bucket.cumulative_income_minor = income;
         bucket.cumulative_expenses_minor = expenses;
     }
@@ -129,21 +135,28 @@ pub fn cash_flow_series(
         granularity,
         total_income_minor: income,
         total_expenses_minor: expenses,
-        net_minor: income.saturating_sub(expenses),
+        net_minor: subtract_minor(income, expenses)?,
         buckets,
     })
 }
 
 /// The window to draw when a date filter leaves one or both bounds empty.
 ///
-/// An empty `from` becomes the book's first active entry date and an empty `to`
-/// its last; with no entries, the open side falls back to the other bound, or
-/// to `today`. A defaulted bound never lands on the wrong side of a given one.
+/// - Both given: the window is `from..=to` as given.
+/// - Only `from` given: `to` is the book's last active entry date, or `today`
+///   when the book has no active entries. If that lands before `from`, `to`
+///   is `from`.
+/// - Only `to` given: `from` is the book's first active entry date, or `to`
+///   itself when the book has no active entries (`today` plays no part). If
+///   the first entry is after `to`, `from` is `to`.
+/// - Neither given: the first and last active entry dates, or `today` for
+///   both when the book has no active entries.
 ///
 /// # Errors
 ///
 /// [`Error::Validation`] for a malformed date or an explicit `from > to`;
-/// [`Error::NotFound`] for an unknown entity; database errors as [`Error::Io`].
+/// [`Error::NotFound`] for an unknown entity; [`Error::VaultCorrupt`] for a
+/// stored entry date that does not parse; database errors as [`Error::Io`].
 pub fn activity_window(
     conn: &Connection,
     entity_id: EntityId,
@@ -223,7 +236,6 @@ fn daily_activity(
         JOIN accounts a ON a.id = jl.account_id
         WHERE a.entity_id = ?1
           AND a.account_type IN ('income', 'expense')
-          AND je.status = 'posted'
           AND {ACTIVE_ENTRY_PREDICATE}
           AND je.entry_date >= ?2
           AND je.entry_date <= ?3
@@ -252,9 +264,9 @@ fn daily_activity(
     for row in rows {
         let (date_text, type_text, debits, credits) =
             row.map_err(|err| Error::Io(err.to_string()))?;
-        let date = parse_date(&date_text)?;
+        let date = stored_date("journal_entries.entry_date", &date_text)?;
         let account_type = parse_account_type(&type_text)?;
-        let amount = normal_balance(account_type, debits, credits);
+        let amount = normal_balance(account_type, debits, credits)?;
 
         if days.last().map(|day| day.date) != Some(date) {
             days.push(DayActivity {
@@ -265,9 +277,9 @@ fn daily_activity(
         }
         if let Some(day) = days.last_mut() {
             match account_type {
-                AccountType::Income => day.income_minor = day.income_minor.saturating_add(amount),
+                AccountType::Income => day.income_minor = add_minor(day.income_minor, amount)?,
                 AccountType::Expense => {
-                    day.expenses_minor = day.expenses_minor.saturating_add(amount);
+                    day.expenses_minor = add_minor(day.expenses_minor, amount)?;
                 }
                 AccountType::Asset | AccountType::Liability | AccountType::Equity => {}
             }
@@ -285,7 +297,6 @@ fn active_entry_bounds(
         SELECT MIN(je.entry_date), MAX(je.entry_date)
         FROM journal_entries je
         WHERE je.entity_id = ?1
-          AND je.status = 'posted'
           AND {ACTIVE_ENTRY_PREDICATE}
         "
     );
@@ -295,8 +306,9 @@ fn active_entry_bounds(
         })
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    Ok((
-        earliest.as_deref().map(parse_date).transpose()?,
-        latest.as_deref().map(parse_date).transpose()?,
-    ))
+    let stored_bound = |text: Option<String>| {
+        text.map(|text| stored_date("journal_entries.entry_date", &text))
+            .transpose()
+    };
+    Ok((stored_bound(earliest)?, stored_bound(latest)?))
 }
