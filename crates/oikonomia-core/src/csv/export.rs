@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::csv::CsvError;
 use crate::domain::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{DatabaseContext, Error, Result};
 use crate::ledger::get_entity;
 use crate::vault::files::{local_iso_date, replace_private_file};
 
@@ -104,7 +104,7 @@ pub fn default_journal_export_file_name(entity_name: &str) -> String {
 /// # Errors
 ///
 /// - [`Error::NotFound`] when the entity does not exist.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 /// - [`Error::CsvParse`] when the CSV writer reports an error.
 pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<String> {
     let _entity = get_entity(conn, entity_id)?;
@@ -132,11 +132,11 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read journal for export")?;
 
     let mut rows = statement
         .query([entity_id.0.to_string()])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read journal for export")?;
 
     let mut csv_bytes = Vec::new();
     {
@@ -154,15 +154,15 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             ])
             .map_err(|err| Error::CsvParse(err.to_string()))?;
 
-        while let Some(row) = rows.next().map_err(|err| Error::Io(err.to_string()))? {
-            let date: String = row.get(0).map_err(|err| Error::Io(err.to_string()))?;
-            let description: String = row.get(1).map_err(|err| Error::Io(err.to_string()))?;
-            let reference: Option<String> = row.get(2).map_err(|err| Error::Io(err.to_string()))?;
-            let code: String = row.get(3).map_err(|err| Error::Io(err.to_string()))?;
-            let name: String = row.get(4).map_err(|err| Error::Io(err.to_string()))?;
-            let debit: i64 = row.get(5).map_err(|err| Error::Io(err.to_string()))?;
-            let credit: i64 = row.get(6).map_err(|err| Error::Io(err.to_string()))?;
-            let status: String = row.get(7).map_err(|err| Error::Io(err.to_string()))?;
+        while let Some(row) = rows.next().database("read journal for export")? {
+            let date: String = row.get(0).database("read journal export row")?;
+            let description: String = row.get(1).database("read journal export row")?;
+            let reference: Option<String> = row.get(2).database("read journal export row")?;
+            let code: String = row.get(3).database("read journal export row")?;
+            let name: String = row.get(4).database("read journal export row")?;
+            let debit: i64 = row.get(5).database("read journal export row")?;
+            let credit: i64 = row.get(6).database("read journal export row")?;
+            let status: String = row.get(7).database("read journal export row")?;
 
             let description = neutralize_formula(&description);
             let reference = neutralize_formula(reference.as_deref().unwrap_or(""));

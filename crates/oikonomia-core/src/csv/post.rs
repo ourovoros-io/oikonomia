@@ -23,7 +23,7 @@ use crate::csv::{
     suggested_entry,
 };
 use crate::domain::{AccountId, EntityId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_account, get_entity, post_simple_entry_unchecked,
 };
@@ -44,7 +44,7 @@ use crate::ledger::{
 /// - [`Error::CsvParse`] for a problem with the file as a whole, as
 ///   [`parse_bank_csv`] lists them. A bad row is not an error; it is a row
 ///   of the preview with `error` set.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn preview_bank_csv(
     conn: &Connection,
     entity_id: EntityId,
@@ -101,7 +101,7 @@ pub fn preview_bank_csv_file(
 /// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry)
 ///   for a row the ledger refuses: a non-positive amount, a missing or
 ///   mistyped role account.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn post_import_rows(
     conn: &Connection,
     rows: &[PostSimpleEntry],
@@ -123,9 +123,7 @@ pub fn post_import_rows(
     }
     let _entity = get_entity(conn, entity_id)?;
 
-    let transaction = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+    let transaction = conn.unchecked_transaction().database("begin csv import")?;
     let mut seen = load_active_keys(&transaction, entity_id)?;
     let mut posted: Vec<PostedEntryView> = Vec::new();
     let mut skipped_duplicate_count = 0u32;
@@ -141,9 +139,7 @@ pub fn post_import_rows(
         posted.push(view);
     }
 
-    transaction
-        .commit()
-        .map_err(|err| Error::Io(err.to_string()))?;
+    transaction.commit().database("commit csv import")?;
     Ok(CsvImportPostResult {
         posted,
         skipped_duplicate_count,
@@ -284,7 +280,7 @@ fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<De
             GROUP BY je.id, je.entry_date, je.description
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read entries for duplicate check")?;
 
     let mapped = statement
         .query_map([entity_id.0.to_string()], |row| {
@@ -294,11 +290,11 @@ fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<De
                 row.get::<_, i64>(2)?,
             ))
         })
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read entries for duplicate check")?;
 
     let mut keys = HashSet::new();
     for row in mapped {
-        let (date, description, amount) = row.map_err(|err| Error::Io(err.to_string()))?;
+        let (date, description, amount) = row.database("read entries for duplicate check")?;
         keys.insert(DedupeKey::new(&date, amount, &description));
     }
     Ok(keys)

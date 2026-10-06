@@ -75,7 +75,7 @@ use time::{Date, Month};
 
 use crate::csv::amount::parse_signed_minor;
 use crate::csv::{CsvColumnMapping, CsvError, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow};
-use crate::error::Error;
+use crate::error::{Error, IoContext};
 use crate::ledger::SimpleEntryKind;
 use crate::ui_text::{UiText, UiTextCode};
 use crate::util::format_date;
@@ -105,14 +105,17 @@ pub struct ParsedBankCsv {
 /// - [`Error::CsvParse`] when the file is larger than [`MAX_CSV_BYTES`] or is
 ///   not valid UTF-8.
 pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
-    let metadata = fs::metadata(path).map_err(|err| Error::Io(err.to_string()))?;
+    let metadata = fs::metadata(path).io("inspect csv file")?;
     if !metadata.is_file() {
-        return Err(Error::Io(format!("not a file: {}", path.display())));
+        return Err(Error::io(
+            "read csv file",
+            format_args!("not a regular file: {}", path.display()),
+        ));
     }
     if metadata.len() > MAX_CSV_BYTES {
         return Err(CsvError::TooLarge.into());
     }
-    let bytes = fs::read(path).map_err(|err| Error::Io(err.to_string()))?;
+    let bytes = fs::read(path).io("read csv file")?;
     let text = String::from_utf8(bytes).map_err(|_| CsvError::NotUtf8)?;
     Ok(text.trim_start_matches('\u{feff}').to_owned())
 }
