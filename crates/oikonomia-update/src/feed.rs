@@ -140,20 +140,16 @@ mod tests {
             signature: "TESTSIG".to_owned(),
             sha256_hex: "ab".repeat(32),
         }];
-        let json = assemble_manifest(
-            "1.0.0",
-            "First release.",
-            "https://github.com/ourovoros-io/oikonomia/releases/download/v1.0.0",
-            &artifacts,
-        )
-        .expect("assemble");
+        let base_url = "https://github.com/ourovoros-io/oikonomia/releases/download/v1.0.0";
+        let json =
+            assemble_manifest("1.0.0", "First release.", base_url, &artifacts).expect("assemble");
         let value: serde_json::Value = serde_json::from_str(&json).expect("json");
         assert_eq!(value["version"], "1.0.0");
         assert_eq!(value["notes"], "First release.");
         let platform = &value["platforms"]["darwin-aarch64"];
         assert_eq!(
             platform["url"],
-            "https://github.com/ourovoros-io/oikonomia/releases/download/v1.0.0/Oikonomia_aarch64.app.tar.gz"
+            format!("{base_url}/Oikonomia_aarch64.app.tar.gz")
         );
         assert_eq!(platform["signature"], "TESTSIG");
         assert_eq!(platform["sha256"], "ab".repeat(32));

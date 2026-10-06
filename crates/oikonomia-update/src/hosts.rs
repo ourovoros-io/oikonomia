@@ -161,21 +161,19 @@ mod tests {
     #[test]
     fn production_allows_release_assets_redirect_host() {
         // GitHub answers a release-asset download with a 302 to
-        // release-assets.githubusercontent.com. `fetch_following_redirects` in `client.rs`
-        // follows it and checks `is_allowed_fetch_url` on every hop, so the
-        // manifest, its signature and the artifact all need this host allowed.
+        // release-assets.githubusercontent.com. `fetch_following_redirects`
+        // in `client.rs` follows it and checks `is_allowed_fetch_url` on
+        // every hop, so the manifest, its signature and the artifact all
+        // need this host allowed.
+        const ASSETS: &str =
+            "https://release-assets.githubusercontent.com/github-production-release-asset";
+
         let policy = HostPolicy::production();
-        let url = Url::parse(
-            "https://release-assets.githubusercontent.com/github-production-release-asset/000000000/abc123def",
-        )
-        .expect("url");
+        let url = Url::parse(&format!("{ASSETS}/000000000/abc123def")).expect("url");
         assert!(policy.is_allowed_fetch_url(&url));
         assert!(policy.is_allowed_artifact_url(&url));
 
-        let deb_url = Url::parse(
-            "https://release-assets.githubusercontent.com/github-production-release-asset/000000000/oikonomia.deb",
-        )
-        .expect("url");
+        let deb_url = Url::parse(&format!("{ASSETS}/000000000/oikonomia.deb")).expect("url");
         assert!(policy.is_allowed_fetch_url(&deb_url));
         assert!(!policy.is_allowed_artifact_url(&deb_url));
 

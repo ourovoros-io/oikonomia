@@ -36,8 +36,8 @@ const USAGE: &str = "usage:
   assemble_feed assemble --version <v> --base-url <url> --dir <artifact-dir> \
     --out <latest.json> [--notes-file <path>] [--with-windows]
   assemble_feed verify --manifest <latest.json> --sig <latest.json.sig> --pubkey <minisign-pubkey>
-  assemble_feed verify-feed --manifest <latest.json> --dir <artifact-dir> --pubkey <minisign-pubkey> \
-    [--with-windows]
+  assemble_feed verify-feed --manifest <latest.json> --dir <artifact-dir> \
+    --pubkey <minisign-pubkey> [--with-windows]
   assemble_feed unpublished [--with-windows] <asset-name>...
   assemble_feed checksums --dir <artifact-dir> --out <SHA256SUMS> [--with-windows]
   assemble_feed fixed-copies --dir <artifact-dir> [--with-windows]

@@ -166,9 +166,19 @@ mod tests {
     /// A public key, a file and its signature as `tauri signer` 2.12.1 (the
     /// version pinned in `web/package.json`) wrote them, made with a key
     /// generated for this fixture and then discarded.
-    const TAURI_PUBLIC_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ0Q0I4RDg2ODhGQTQ4NzgKUldSNFNQcUlobzNMMUZHVVBmblZ4T2xxT2dlenB3NC96S0dFRDY2cGp4YTliR1JIVndaRzhxQk4K";
+    const TAURI_PUBLIC_KEY: &str = concat!(
+        "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ0Q0I4RDg2ODhGQTQ4NzgK",
+        "UldSNFNQcUlobzNMMUZHVVBmblZ4T2xxT2dlenB3NC96S0dFRDY2cGp4YTliR1JIVndaRzhxQk4K",
+    );
     const TAURI_SIGNED_BYTES: &[u8] = b"bytes of an artifact signed by the pinned Tauri CLI\n";
-    const TAURI_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSNFNQcUlobzNMMUI0K3Qra0tlOXp4anIzMkRYVVY3V2hxaVIxcnBwZWdENkRCaEt0bk1RZHJHcks1WkVqdmFnMHBBRjJiMUc3TzdhSzBNeUVJdmdWWlJ6cGpGNzVDa1FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxMzEzMDcwCWZpbGU6YXJ0aWZhY3QuYmluClVOUnFiOHM1WlZ6TEVrY0VqVDVubitqWmhlYWNGTytabkdkOGpzSWhwenRDU3lkODFUZHVpRFg5VGliMXhySWNENGxXSFZ1VFd6SUV0K1BSTmJ2TkN3PT0K";
+    const TAURI_SIGNATURE: &str = concat!(
+        "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSNFNQ",
+        "cUlobzNMMUI0K3Qra0tlOXp4anIzMkRYVVY3V2hxaVIxcnBwZWdENkRCaEt0bk1RZHJHcks1WkVq",
+        "dmFnMHBBRjJiMUc3TzdhSzBNeUVJdmdWWlJ6cGpGNzVDa1FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRp",
+        "bWVzdGFtcDoxNzkxMzEzMDcwCWZpbGU6YXJ0aWZhY3QuYmluClVOUnFiOHM1WlZ6TEVrY0VqVDVu",
+        "bitqWmhlYWNGTytabkdkOGpzSWhwenRDU3lkODFUZHVpRFg5VGliMXhySWNENGxXSFZ1VFd6SUV0",
+        "K1BSTmJ2TkN3PT0K",
+    );
 
     #[test]
     fn a_signature_written_by_the_tauri_signer_verifies() {
