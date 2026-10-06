@@ -1,7 +1,35 @@
-//! System tray: left-click quick-add; menu Open / Quit; close hides windows.
+//! The system tray: its icon, its menu, and the quick-add window it opens.
 //!
-//! Linux trays deliver no click events, only the menu, so there the menu
-//! carries a "Quick add" item instead.
+//! # Left click and menu
+//!
+//! A left click on the tray icon opens the quick-add window: a small,
+//! always-on-top companion for posting one entry without opening the main
+//! window. The tray menu, which the platform shows on a right click, offers
+//! "Open Oikonomia" and "Quit Oikonomia". Closing the main window only hides
+//! it (`on_window_event` in `lib.rs`), so the menu is how it comes back and,
+//! with the system's own quit shortcut, how the app exits.
+//!
+//! # Linux
+//!
+//! Linux trays (libayatana-appindicator) report no click on the icon; they
+//! only ever show the menu. There the menu gets a "Quick add" entry, first in
+//! the list ([`TRAY_REPORTS_CLICKS`]). No click position is known on that
+//! path, so the window goes to the top-right corner of the work area, where
+//! Linux desktops keep their tray.
+//!
+//! # Placement
+//!
+//! Where a click position and the monitor's work area are known (Windows),
+//! the window is centred on the click, on the side of it that has room, and
+//! pulled inside the work area ([`quick_add_origin`]). macOS reports no work
+//! area on purpose and keeps the placement that was tuned on real hardware.
+//!
+//! # Language
+//!
+//! The native strings that never pass through the webview are worded here,
+//! one function per string: the menu entries, the quick-add window's title
+//! and the backup dialog's file filter. They follow the stored language, and
+//! [`apply_locale`] rewords the live tray after a change.
 
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use tauri::image::Image;
@@ -10,6 +38,12 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 
+/// Whether this platform's tray reports clicks on the icon. Linux
+/// (libayatana-appindicator) only ever shows the menu.
+const TRAY_REPORTS_CLICKS: bool = !cfg!(target_os = "linux");
+
+/// The window label of the quick-add window. The frontend tells the two
+/// windows apart by it.
 const QUICK_ADD_LABEL: &str = "quick-add";
 
 // Sizes of the quick-add window in logical pixels. The frontend resizes the
@@ -34,7 +68,10 @@ const _: () = assert!(
     "the save row must be the tallest quick-add state"
 );
 
-/// Tray menu: open the main window.
+/// Gap between the quick-add window and the tray click or screen edge.
+const QUICK_ADD_GAP: f64 = 8.0;
+
+/// Returns the tray menu entry that opens the main window.
 #[must_use]
 pub(crate) fn tray_open_label(locale: Locale) -> &'static str {
     match locale {
@@ -45,7 +82,7 @@ pub(crate) fn tray_open_label(locale: Locale) -> &'static str {
     }
 }
 
-/// Tray menu: quit the app.
+/// Returns the tray menu entry that quits the app.
 #[must_use]
 pub(crate) fn tray_quit_label(locale: Locale) -> &'static str {
     match locale {
@@ -56,7 +93,8 @@ pub(crate) fn tray_quit_label(locale: Locale) -> &'static str {
     }
 }
 
-/// Quick-add companion window title.
+/// Returns the title of the quick-add window, which is also the Linux menu
+/// entry that opens it.
 #[must_use]
 pub(crate) fn quick_add_title(locale: Locale) -> &'static str {
     match locale {
@@ -67,7 +105,8 @@ pub(crate) fn quick_add_title(locale: Locale) -> &'static str {
     }
 }
 
-/// Native file-dialog filter for `.oikonomia-backup` archives.
+/// Returns the file-type label the native dialogs show for
+/// `.oikonomia-backup` archives.
 #[must_use]
 pub(crate) fn backup_filter_label(locale: Locale) -> &'static str {
     match locale {
@@ -78,33 +117,27 @@ pub(crate) fn backup_filter_label(locale: Locale) -> &'static str {
     }
 }
 
-/// Tray tooltip is the brand name in every locale.
+/// Returns the tray icon's tooltip: the brand name, the same in every
+/// language.
 #[must_use]
 pub(crate) fn tray_tooltip(_locale: Locale) -> &'static str {
     "Oikonomia"
 }
 
-fn locale_from_app(app: &AppHandle) -> Locale {
-    app.try_state::<crate::state::AppState>()
-        .map(|state| load_ui_prefs(state.data_dir()).locale)
-        .unwrap_or_default()
-}
-
-/// Whether this platform's tray reports clicks on the icon. Linux
-/// (libayatana-appindicator) only ever shows the menu.
-const TRAY_REPORTS_CLICKS: bool = !cfg!(target_os = "linux");
-
 /// One entry of the tray menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrayMenuItem {
+    /// Opens the quick-add window. Listed only where the icon reports no click.
     QuickAdd,
+    /// Shows the main window.
     Open,
+    /// Exits the app.
     Quit,
 }
 
 impl TrayMenuItem {
-    /// Entries in display order. "Quick add" is listed only where a click on
-    /// the icon cannot open the quick-add window.
+    /// Returns the entries in display order. "Quick add" is listed only where a
+    /// click on the icon cannot open the quick-add window.
     fn for_tray(reports_clicks: bool) -> &'static [Self] {
         if reports_clicks {
             &[Self::Open, Self::Quit]
@@ -113,6 +146,8 @@ impl TrayMenuItem {
         }
     }
 
+    /// Returns the identifier the entry is registered under and its menu event
+    /// carries.
     const fn id(self) -> &'static str {
         match self {
             Self::QuickAdd => "quick_add",
@@ -121,12 +156,14 @@ impl TrayMenuItem {
         }
     }
 
+    /// Returns the entry a menu event's identifier names, if it is one of ours.
     fn from_id(id: &str) -> Option<Self> {
         [Self::QuickAdd, Self::Open, Self::Quit]
             .into_iter()
             .find(|item| item.id() == id)
     }
 
+    /// Returns the entry's text in `locale`.
     fn label(self, locale: Locale) -> &'static str {
         match self {
             Self::QuickAdd => quick_add_title(locale),
@@ -136,6 +173,11 @@ impl TrayMenuItem {
     }
 }
 
+/// Builds the tray menu for this platform, worded in `locale`.
+///
+/// # Errors
+///
+/// Returns Tauri's error when a menu or an entry cannot be created.
 fn build_menu<R: tauri::Runtime, M: Manager<R>>(app: &M, locale: Locale) -> tauri::Result<Menu<R>> {
     let menu = Menu::new(app)?;
 
@@ -147,7 +189,11 @@ fn build_menu<R: tauri::Runtime, M: Manager<R>>(app: &M, locale: Locale) -> taur
     Ok(menu)
 }
 
-/// Rebuild the tray menu and refresh the quick-add title after a locale change.
+/// Rewords the tray menu and the quick-add window's title after a language
+/// change.
+///
+/// A failure is logged and otherwise ignored: the language itself is already
+/// stored, and stale native text is not worth failing the command for.
 pub(crate) fn apply_locale(app: &AppHandle, locale: Locale) {
     match build_menu(app, locale) {
         Ok(menu) => {
@@ -167,7 +213,11 @@ pub(crate) fn apply_locale(app: &AppHandle, locale: Locale) {
     }
 }
 
-/// Bring the main window back after it was hidden to the tray.
+/// Brings the main window back after it was hidden to the tray: shows it,
+/// restores it if minimized, and focuses it.
+///
+/// Does nothing after a failed start, when there is no state behind the
+/// window.
 pub(crate) fn show_main_window(app: &AppHandle) {
     // No state means the start failed: the window is hidden behind the
     // failure message (`crate::startup`), and none of its commands would work.
@@ -194,7 +244,7 @@ pub(crate) fn show_main_window(app: &AppHandle) {
     }
 }
 
-/// Hide the tray quick-add window if it exists (no-op when missing).
+/// Hides the quick-add window. Does nothing when the window does not exist.
 pub(crate) fn hide_quick_add(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(QUICK_ADD_LABEL)
         && let Err(err) = window.hide()
@@ -203,6 +253,11 @@ pub(crate) fn hide_quick_add(app: &AppHandle) {
     }
 }
 
+/// Returns the quick-add window, creating it hidden on first use.
+///
+/// # Errors
+///
+/// Returns Tauri's error when the window cannot be created.
 fn ensure_quick_add_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     if let Some(existing) = app.get_webview_window(QUICK_ADD_LABEL) {
         return Ok(existing);
@@ -228,29 +283,40 @@ fn ensure_quick_add_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindo
     Ok(window)
 }
 
-/// Gap between the quick-add window and the tray click or screen edge.
-const QUICK_ADD_GAP: f64 = 8.0;
+/// Returns the stored language, or the default when the app has no state.
+fn locale_from_app(app: &AppHandle) -> Locale {
+    app.try_state::<crate::state::AppState>()
+        .map(|state| load_ui_prefs(state.data_dir()).locale)
+        .unwrap_or_default()
+}
 
 /// The part of a monitor not covered by the taskbar or panels, in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct WorkArea {
+    /// The left edge.
     x: f64,
+    /// The top edge.
     y: f64,
+    /// The width.
     width: f64,
+    /// The height.
     height: f64,
 }
 
 impl WorkArea {
+    /// Returns the right edge.
     fn right(self) -> f64 {
         self.x + self.width
     }
 
+    /// Returns the bottom edge.
     fn bottom(self) -> f64 {
         self.y + self.height
     }
 }
 
-/// Top-left corner for a quick-add window of `size`, in physical pixels.
+/// Returns the top-left corner for a quick-add window of `size`, in physical
+/// pixels.
 ///
 /// With a tray click and a work area, the window is centred on the click and
 /// sits on the side of it that has room: above a click in the lower half of
@@ -258,7 +324,7 @@ impl WorkArea {
 /// It is then pulled inside the work area, so a tray icon in a screen corner
 /// cannot push it off screen.
 ///
-/// Without a click (the Linux menu item) it goes to the top-right corner of
+/// Without a click (the Linux menu entry) it goes to the top-right corner of
 /// the work area, where Linux desktops keep their tray. Without a work area
 /// it is centred above the click and kept at or below the top of the screen;
 /// macOS uses that path and applies its own menu-bar constraint.
@@ -295,8 +361,9 @@ fn quick_add_origin(
     )
 }
 
-/// Moves a span of `length` starting at `start` inside `low..high`, leaving
-/// [`QUICK_ADD_GAP`] at each end. A span longer than the range starts at `low`.
+/// Returns `start` moved so that a span of `length` lies inside `low..high`
+/// with [`QUICK_ADD_GAP`] left at each end. A span longer than the range
+/// starts at `low`.
 fn keep_inside(start: f64, length: f64, low: f64, high: f64) -> f64 {
     let lowest = low + QUICK_ADD_GAP;
     let highest = high - length - QUICK_ADD_GAP;
@@ -308,7 +375,8 @@ fn keep_inside(start: f64, length: f64, low: f64, high: f64) -> f64 {
     }
 }
 
-/// Work area of the monitor under `click`, or of the primary monitor.
+/// Returns the work area of the monitor under `click`, or of the primary
+/// monitor.
 ///
 /// macOS reports none on purpose: its placement was tuned on real hardware
 /// and the system keeps the window under the menu bar.
@@ -330,8 +398,9 @@ fn work_area_for(app: &AppHandle, click: Option<(f64, f64)>) -> Option<WorkArea>
     })
 }
 
-/// Height to place the quick-add window by, in physical pixels: its current
-/// height, or its tallest state when it is being fitted to a work area.
+/// Returns the height to place the quick-add window by, in physical pixels:
+/// its current height, or its tallest state when it is being fitted to a
+/// work area.
 fn placement_height(current: f64, scale: f64, fitted_to_work_area: bool) -> f64 {
     if fitted_to_work_area {
         current.max(QUICK_ADD_SAVE_HEIGHT * scale)
@@ -340,7 +409,7 @@ fn placement_height(current: f64, scale: f64, fitted_to_work_area: bool) -> f64 
     }
 }
 
-/// Place the quick-add window next to the tray click, on screen.
+/// Moves the quick-add window next to the tray click and onto the screen.
 fn position_quick_add(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
@@ -371,7 +440,12 @@ fn position_quick_add(
     let _ = window.set_position(tauri::Position::Physical(position));
 }
 
-/// Create (if needed), position, show, and focus the quick-add panel.
+/// Shows the quick-add window: creates it if needed, positions it, shows it
+/// and gives it focus.
+///
+/// `click` is where the tray icon was clicked, or `None` when the window is
+/// opened from the Linux menu entry. A failure is logged; there is no caller
+/// that could act on it.
 pub(crate) fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64>>) {
     match ensure_quick_add_window(app) {
         Ok(window) => {
@@ -387,7 +461,15 @@ pub(crate) fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64
     }
 }
 
-/// Build the tray icon with left-click quick-add and Open / Quit menu.
+/// Creates the tray icon, with its menu and its click handler.
+///
+/// The menu is worded in `locale`. A left click opens the quick-add window
+/// and never the menu.
+///
+/// # Errors
+///
+/// Returns Tauri's error when the menu, the icon image or the tray itself
+/// cannot be created. The caller fails startup.
 pub(crate) fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
     let menu = build_menu(app, locale)?;
 
@@ -462,7 +544,8 @@ mod tests {
         assert_eq!(tray_tooltip(Locale::De), "Oikonomia");
     }
 
-    /// The number in the web source's `export const <name> = <number>` line.
+    /// Returns the number in the web source's `export const <name> = <number>`
+    /// line.
     fn web_constant(source: &str, name: &str) -> f64 {
         let declaration = format!("export const {name} = ");
         let value = source
@@ -488,14 +571,17 @@ mod tests {
         }
     }
 
+    /// A 1920 by 1080 monitor with a 40 pixel taskbar along the bottom.
     const FULL_HD: WorkArea = WorkArea {
         x: 0.0,
         y: 0.0,
         width: 1920.0,
         height: 1040.0,
     };
+    /// The quick-add window at its opening size, as width and height.
     const PANEL: (f64, f64) = (300.0, 64.0);
 
+    /// Fails unless a window of `size` at `origin` lies wholly inside `area`.
     fn assert_inside(origin: (f64, f64), size: (f64, f64), area: WorkArea) {
         let (x, y) = origin;
         assert!(
