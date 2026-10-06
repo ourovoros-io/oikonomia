@@ -16,10 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use super::invoice::read_invoice_text;
 use super::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
-use super::pdf_budget::within_budget;
-use super::store::{
-    MAX_DOCUMENT_BYTES, has_extension, match_expense_account, match_income_account,
-};
+use super::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
+use super::store::{has_extension, match_expense_account, match_income_account};
 use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
 use crate::domain::{Account, AccountId, ChartTemplate};
@@ -499,62 +497,6 @@ fn ocr_pdf_images(jpegs: &[Vec<u8>], model_dir: Option<&Path>) -> Option<OcrOutc
     first_failure
 }
 
-/// A parsed PDF that is within the size budget of
-/// [`pdf_budget`](super::pdf_budget). Only [`load_pdf`] builds one, so every
-/// function that takes it works on a bounded document.
-struct BudgetedPdf(lopdf::Document);
-
-/// What loading a PDF produced.
-enum PdfLoad {
-    /// The file parsed and is within the budget.
-    Loaded(Box<BudgetedPdf>),
-    /// The file, its page count or what its streams decode to is too large.
-    OverBudget,
-    /// lopdf could not parse the file, or it needs a password.
-    Unreadable,
-}
-
-/// Runs `work`, turning a panic into `None`.
-///
-/// lopdf and pdf-extract index, `unwrap` and `expect` on file content, so a
-/// malformed document can panic inside them; that makes the document
-/// unreadable, not the app. The closures passed here only read borrowed
-/// data and return owned values, so nothing is left half-updated when one
-/// unwinds. Two failures abort instead of unwinding and are not caught: a
-/// failed allocation and a stack overflow. The budget is what keeps
-/// allocations small and recursion shallow; only a [`BudgetedPdf`] reaches
-/// pdf-extract.
-fn contain_panics<T>(work: impl FnOnce() -> T) -> Option<T> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).ok()
-}
-
-/// Parses `data` once and checks it against the budget.
-fn load_pdf(data: &[u8]) -> PdfLoad {
-    // A stored document is never larger than the upload cap, and lopdf's
-    // work and memory while parsing grow with the size of its input.
-    if data.len() > MAX_DOCUMENT_BYTES {
-        return PdfLoad::OverBudget;
-    }
-
-    let loaded = contain_panics(|| {
-        let mut document = lopdf::Document::load_mem(data).ok()?;
-        // Many PDFs are encrypted with an empty user password only to carry
-        // permissions; pdf-extract's own entry points try it too.
-        if document.is_encrypted() && document.decrypt("").is_err() {
-            return None;
-        }
-
-        let fits = within_budget(&document);
-        Some((document, fits))
-    });
-
-    match loaded.flatten() {
-        Some((document, true)) => PdfLoad::Loaded(Box::new(BudgetedPdf(document))),
-        Some((_, false)) => PdfLoad::OverBudget,
-        None => PdfLoad::Unreadable,
-    }
-}
-
 /// A PDF after loading: the document if lopdf could parse it, and its text
 /// layer if it has one.
 struct ParsedPdf {
@@ -614,7 +556,7 @@ fn pdf_text_whole(pdf: &BudgetedPdf) -> Option<String> {
         let mut text = String::new();
         let mut output = pdf_extract::PlainTextOutput::new(&mut text);
 
-        pdf_extract::output_doc(&pdf.0, &mut output)
+        pdf_extract::output_doc(pdf.document(), &mut output)
             .ok()
             .map(|()| text)
     })
@@ -624,7 +566,8 @@ fn pdf_text_whole(pdf: &BudgetedPdf) -> Option<String> {
 /// Page-by-page pass: pages whose resources make pdf-extract error or panic
 /// are skipped, and the surviving pages' text is joined.
 fn pdf_text_per_page(pdf: &BudgetedPdf) -> Option<String> {
-    let page_numbers = contain_panics(|| pdf.0.get_pages().into_keys().collect::<Vec<u32>>())?;
+    let page_numbers =
+        contain_panics(|| pdf.document().get_pages().into_keys().collect::<Vec<u32>>())?;
 
     let chunks: Vec<String> = page_numbers
         .into_iter()
@@ -633,7 +576,7 @@ fn pdf_text_per_page(pdf: &BudgetedPdf) -> Option<String> {
                 let mut text = String::new();
                 let mut output = pdf_extract::PlainTextOutput::new(&mut text);
 
-                pdf_extract::output_doc_page(&pdf.0, &mut output, page)
+                pdf_extract::output_doc_page(pdf.document(), &mut output, page)
                     .ok()
                     .map(|()| text)
             })
@@ -652,7 +595,7 @@ fn pdf_text_per_page(pdf: &BudgetedPdf) -> Option<String> {
 /// Page `/XObject` images are preferred so a logo in the catalog is not first.
 fn extract_pdf_jpeg_images(pdf: &BudgetedPdf) -> Vec<Vec<u8>> {
     contain_panics(|| {
-        let document = &pdf.0;
+        let document = pdf.document();
         let mut out = Vec::new();
 
         for page_id in document.get_pages().into_values() {
@@ -739,6 +682,7 @@ mod tests {
     use super::super::invoice::parse_invoice_text;
     use super::*;
     use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
+    use crate::documents::MAX_DOCUMENT_BYTES;
     use crate::documents::pdf_budget::MAX_PDF_DECODED_BYTES;
     use crate::domain::AccountType;
     use crate::test_macros::listed_variants;
