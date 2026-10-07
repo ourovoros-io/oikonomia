@@ -23,7 +23,7 @@ use crate::csv::{
     CsvImportPreviewRow, CsvRowOutcome, currency_minor_exponent, normalize_description,
     suggested_entry,
 };
-use crate::db::stored_date;
+use crate::db::{collect_rows, read_column, stored_date};
 use crate::domain::{AccountId, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
@@ -292,11 +292,19 @@ fn check_role_account(conn: &Connection, entity_id: EntityId, id: Option<Account
 /// An entry's amount is the sum of its debit lines, which for a balanced
 /// entry is its total. Every entry of the book is read on each call; there
 /// is no index on the key.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] naming the column when a stored entry date does
+///   not parse, or a date, a description or an amount has the wrong storage
+///   class.
+/// - [`Error::Database`] on database errors.
 fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<DedupeKey>> {
     let mut statement = conn
         .prepare(
             "
-            SELECT je.entry_date, je.description, COALESCE(SUM(jl.debit_minor), 0)
+            SELECT je.entry_date, je.description,
+                   COALESCE(SUM(jl.debit_minor), 0) AS amount_minor
             FROM journal_entries je
             JOIN journal_lines jl ON jl.entry_id = je.id
             WHERE je.entity_id = ?1
@@ -312,20 +320,26 @@ fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<De
         .database("read entries for duplicate check")?;
 
     let mapped = statement
-        .query_map([entity_id.to_string()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        })
+        .query_map([entity_id.to_string()], |row| Ok(map_active_key(row)))
         .database("read entries for duplicate check")?;
 
-    let mut keys = HashSet::new();
-    for row in mapped {
-        let (date, description, amount) = row.database("read entries for duplicate check")?;
-        let date = stored_date("journal_entries.entry_date", &date)?;
-        keys.insert(DedupeKey::new(date, amount, &description));
-    }
-    Ok(keys)
+    let keys = collect_rows("read entries for duplicate check", mapped)?;
+    Ok(keys.into_iter().collect())
+}
+
+/// Maps a row selected as `entry_date, description, amount_minor` to its
+/// key.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when the date does not parse or
+/// a column has the wrong storage class.
+fn map_active_key(row: &rusqlite::Row<'_>) -> Result<DedupeKey> {
+    let date = stored_date(
+        "journal_entries.entry_date",
+        &read_column::<String>(row, 0)?,
+    )?;
+    let description: String = read_column(row, 1)?;
+
+    Ok(DedupeKey::new(date, read_column(row, 2)?, &description))
 }

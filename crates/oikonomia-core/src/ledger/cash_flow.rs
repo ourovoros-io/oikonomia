@@ -17,7 +17,7 @@
 //! placed in its bucket by binary search, and the running totals are added in
 //! a second pass over the buckets.
 
-use crate::db::{collect_rows, stored_date};
+use crate::db::{collect_rows, read_column, stored_date};
 use crate::domain::{AccountType, EntityId};
 use crate::error::{DatabaseContext, Result, ValidationError};
 // Named only by the documentation below.
@@ -274,8 +274,8 @@ fn daily_activity(
     let sql = format!(
         "
         SELECT je.entry_date, a.account_type,
-               COALESCE(SUM(jl.debit_minor), 0),
-               COALESCE(SUM(jl.credit_minor), 0)
+               COALESCE(SUM(jl.debit_minor), 0) AS debits,
+               COALESCE(SUM(jl.credit_minor), 0) AS credits
         FROM journal_lines jl
         JOIN journal_entries je ON je.id = jl.entry_id
         JOIN accounts a ON a.id = jl.account_id
@@ -292,23 +292,12 @@ fn daily_activity(
     let rows = stmt
         .query_map(
             rusqlite::params![entity_id.to_string(), format_date(from), format_date(to)],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            },
+            |row| Ok(map_activity_row(row)),
         )
         .database("read daily activity")?;
 
     let mut days: Vec<DayActivity> = Vec::new();
-    for (date, account_type, debits, credits) in collect_rows(rows.map(|row| row.map(Ok)))? {
-        let date = stored_date("journal_entries.entry_date", &date)?;
-        let account_type = parse_account_type(&account_type)?;
-        let amount = normal_balance(account_type, debits, credits)?;
-
+    for (date, account_type, amount) in collect_rows("read daily activity", rows)? {
         // Rows arrive ordered by date, at most one per account type, so the
         // rows of a day are adjacent and extend the last element.
         if days.last().map(|day| day.date) != Some(date) {
@@ -329,6 +318,28 @@ fn daily_activity(
         }
     }
     Ok(days)
+}
+
+/// Maps a row of [`daily_activity`], selected as `entry_date, account_type,
+/// debits, credits`, to the date, the account type and the activity signed
+/// towards that type's normal side.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] naming the column when the date or the account
+///   type does not parse, or a column has the wrong storage class. A stored
+///   amount that is not an integer makes its total a real number, which is
+///   reported under `debits` or `credits`.
+/// - [`Error::MoneyOverflow`] when the activity does not fit in `i64`.
+fn map_activity_row(row: &rusqlite::Row<'_>) -> Result<(Date, AccountType, i64)> {
+    let date = stored_date(
+        "journal_entries.entry_date",
+        &read_column::<String>(row, 0)?,
+    )?;
+    let account_type = parse_account_type(&read_column::<String>(row, 1)?)?;
+    let amount = normal_balance(account_type, read_column(row, 2)?, read_column(row, 3)?)?;
+
+    Ok((date, account_type, amount))
 }
 
 /// Returns the earliest and the latest entry date among the active entries

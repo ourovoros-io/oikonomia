@@ -81,7 +81,7 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
         .query_map([], |row| Ok(map_entity(row)))
         .database("list entities")?;
 
-    collect_rows(rows)
+    collect_rows("list entities", rows)
 }
 
 /// Returns one entity, archived or not.

@@ -5,6 +5,7 @@
 mod common;
 
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
+use oikonomia_core::error::{Error, VaultCorruption};
 use rusqlite::Connection;
 
 /// Rebuild the v3 documents shape (nullable `entry_id`, no unique index) and
@@ -110,6 +111,34 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
         is_constraint_violation(&dup_insert),
         "UNIQUE rejects duplicate names: {dup_insert:?}"
     );
+}
+
+#[test]
+fn a_document_name_that_is_not_text_is_a_corrupt_vault_and_the_step_is_undone() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    downgrade_to_v3_with_bad_data(conn);
+    conn.execute(
+        "UPDATE documents SET filename = x'00ff' WHERE id = 'd4'",
+        [],
+    )
+    .expect("damage the name");
+
+    let refused = migrate(conn);
+
+    assert!(
+        matches!(
+            &refused,
+            Err(Error::VaultCorrupt(VaultCorruption::Column { column, .. })) if column == "filename"
+        ),
+        "{refused:?}"
+    );
+    let orphans: i64 = conn
+        .query_row("SELECT COUNT(1) FROM documents WHERE id = 'd1'", [], |r| {
+            r.get(0)
+        })
+        .expect("orphans");
+    assert_eq!(orphans, 1, "the orphan the step deleted first is back");
 }
 
 #[test]

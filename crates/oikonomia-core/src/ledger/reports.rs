@@ -688,7 +688,7 @@ fn active_lines(conn: &Connection, query: LineQuery) -> Result<Vec<ReportLine>> 
         )
         .database("read account activity")?;
 
-    let lines = collect_rows(rows)?;
+    let lines = collect_rows("read account activity", rows)?;
     Ok(lines.into_iter().filter(has_activity).collect())
 }
 

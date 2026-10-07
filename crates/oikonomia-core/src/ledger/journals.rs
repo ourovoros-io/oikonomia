@@ -597,35 +597,15 @@ pub fn account_register(
 
     let rows = stmt
         .query_map(rusqlite::params![account_id.to_string(), from, to], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-            ))
+            Ok(map_register_row(row))
         })
         .database("read account register")?;
 
-    let mut register = Vec::new();
-    for (entry_id, entry_date, description, debit_minor, credit_minor, hidden) in
-        collect_rows(rows.map(|row| row.map(Ok)))?
-    {
-        let entry_id: JournalEntryId = stored_id("journal_entries.id", &entry_id)?;
-        let entry_date = stored_date("journal_entries.entry_date", &entry_date)?;
-        let change = normal_balance(account.account_type, debit_minor, credit_minor)?;
+    let mut register = collect_rows("read account register", rows)?;
+    for line in &mut register {
+        let change = normal_balance(account.account_type, line.debit_minor, line.credit_minor)?;
         running = add_minor(running, change)?;
-
-        register.push(RegisterLine {
-            entry_id,
-            entry_date,
-            description,
-            debit_minor,
-            credit_minor,
-            balance_minor: running,
-            hidden: hidden != 0,
-        });
+        line.balance_minor = running;
     }
 
     Ok(register)
@@ -813,7 +793,7 @@ fn load_listed_headers(
         })
         .database("list journal entries")?;
 
-    collect_rows(rows)
+    collect_rows("list journal entries", rows)
 }
 
 /// The query of [`load_listed_headers`]: the entries
@@ -891,7 +871,7 @@ fn load_listed_lines(
         .database("list journal lines")?;
 
     let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
-    for line in collect_rows(rows)? {
+    for line in collect_rows("list journal lines", rows)? {
         grouped.entry(line.entry_id).or_default().push(line);
     }
     Ok(grouped)
@@ -919,7 +899,7 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
         .query_map([entry_id.to_string()], |row| Ok(map_line_row(row)))
         .database("read journal lines")?;
 
-    collect_rows(rows)
+    collect_rows("read journal lines", rows)
 }
 
 /// Returns whether another entry names `id` in its `voided_by_entry_id`.
@@ -1237,6 +1217,32 @@ fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
         amount,
         side,
         memo: read_column(row, 5)?,
+    })
+}
+
+/// Maps a row of [`register_sql`], selected as `id, entry_date, description,
+/// debit_minor, credit_minor, hidden`, with a balance of 0 for
+/// [`account_register`] to fill in.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when the id or the date does
+/// not parse, or a column has the wrong storage class.
+fn map_register_row(row: &rusqlite::Row<'_>) -> Result<RegisterLine> {
+    let entry_id = stored_id("journal_entries.id", &read_column::<String>(row, 0)?)?;
+    let entry_date = stored_date(
+        "journal_entries.entry_date",
+        &read_column::<String>(row, 1)?,
+    )?;
+
+    Ok(RegisterLine {
+        entry_id,
+        entry_date,
+        description: read_column(row, 2)?,
+        debit_minor: read_column(row, 3)?,
+        credit_minor: read_column(row, 4)?,
+        balance_minor: 0,
+        hidden: read_column::<i64>(row, 5)? != 0,
     })
 }
 

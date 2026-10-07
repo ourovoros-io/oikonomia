@@ -308,7 +308,7 @@ pub fn list_recurring_templates_as_of(
         .query_map([entity_id.to_string()], |row| Ok(map_template_row(row)))
         .database("list recurring templates")?;
 
-    Ok(collect_rows(rows)?
+    Ok(collect_rows("list recurring templates", rows)?
         .into_iter()
         .map(|stored| stored.into_view(today))
         .collect())

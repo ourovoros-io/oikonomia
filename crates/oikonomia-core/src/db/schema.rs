@@ -21,7 +21,7 @@
 //! Never edit a step that has shipped: a vault that already ran it will not
 //! run it again, so the change would reach new vaults only.
 
-use crate::db::collect_rows;
+use crate::db::{collect_rows, read_column};
 use crate::error::{DatabaseContext, Error, Result, VaultCorruption};
 use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
@@ -57,7 +57,9 @@ const MIGRATIONS: &[(i64, Migration)] = &[
 ///   [`CURRENT_SCHEMA_VERSION`]: it was written by a later build, and this one
 ///   does not know its schema. Nothing is changed.
 /// - [`Error::VaultCorrupt`] when existing data cannot satisfy a constraint a
-///   step adds (the v5 step and journal lines that are not debit XOR credit).
+///   step adds (the v5 step and journal lines that are not debit XOR credit),
+///   or a step reads a stored value of the wrong kind (the v4 step and a
+///   document name that is not text).
 /// - [`Error::Database`] when the schema version cannot be read or a statement of a
 ///   step fails.
 ///
@@ -391,7 +393,9 @@ fn migrate_v8(tx: &Transaction<'_>) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`Error::Database`] when the documents cannot be read or a rename fails.
+/// - [`Error::VaultCorrupt`] naming the column when a document's id, entity
+///   or filename is not stored as text.
+/// - [`Error::Database`] when the documents cannot be read or a rename fails.
 fn dedup_document_names(conn: &Connection) -> Result<()> {
     let rows: Vec<(String, String, String)> = {
         let mut stmt = conn
@@ -401,9 +405,9 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
             )
             .database("list document names")?;
         let mapped = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .query_map([], |row| Ok(map_document_name(row)))
             .database("list document names")?;
-        collect_rows(mapped.map(|row| row.map(Ok)))?
+        collect_rows("list document names", mapped)?
     };
 
     let mut taken: HashSet<(String, String)> = HashSet::new();
@@ -425,6 +429,22 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
         taken.insert((entity_id, name));
     }
     Ok(())
+}
+
+/// Maps a row selected as `id, entity_id, filename` to those three texts.
+///
+/// The ids are compared and written back as the text they are stored as, so
+/// they are not parsed here.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column that is not stored as text.
+fn map_document_name(row: &rusqlite::Row<'_>) -> Result<(String, String, String)> {
+    Ok((
+        read_column(row, 0)?,
+        read_column(row, 1)?,
+        read_column(row, 2)?,
+    ))
 }
 
 /// Returns `filename` with ` (suffix)` before its last extension:

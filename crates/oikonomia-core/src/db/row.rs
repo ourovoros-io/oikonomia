@@ -46,8 +46,11 @@ pub(crate) fn corrupt_column(column: &str, detail: impl Display) -> Error {
 ///
 /// - [`Error::VaultCorrupt`] when the stored value cannot be a `T`: it has
 ///   another storage class, or is out of `T`'s range.
-/// - [`Error::Database`] for any other driver failure, such as an `index` the query
-///   does not select.
+/// - [`Error::Database`] for any other driver failure, which is an `index`
+///   the query does not select: a mistake in the query, and nothing a stored
+///   value can cause. Its operation is `read stored column` whatever the
+///   query was for; the failures of a query that depend on the vault surface
+///   in [`collect_rows`], under the caller's operation.
 pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> {
     row.get(index).map_err(|err| match err {
         rusqlite::Error::InvalidColumnType(..)
@@ -71,14 +74,21 @@ pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> 
 /// Stops at the first row that fails, so a damaged row fails the whole query
 /// instead of being left out of the result.
 ///
+/// `operation` names what the query is for, in the words the caller gave
+/// when it prepared the statement. A query does its work as its rows are
+/// stepped, so most of its failures (a `SUM` that overflows, a page that
+/// cannot be read) surface here and not at the prepare.
+///
 /// # Errors
 ///
-/// - [`Error::Database`] when the driver fails to step to a row.
+/// - [`Error::Database`], carrying `operation`, when the driver fails to
+///   step to a row.
 /// - The mapper's own error for the first row it refuses.
 pub(crate) fn collect_rows<T>(
+    operation: &'static str,
     rows: impl Iterator<Item = rusqlite::Result<Result<T>>>,
 ) -> Result<Vec<T>> {
-    rows.map(|row| row.database("read query rows")?).collect()
+    rows.map(|row| row.database(operation)?).collect()
 }
 
 /// Parses an id stored as text in `column` into the id type `T`.
@@ -131,6 +141,49 @@ mod tests {
             })
         );
         assert_eq!(corrupt_column("a.b", "bad").code(), "vault_corrupt");
+    }
+
+    #[test]
+    fn a_query_that_fails_while_its_rows_are_read_names_the_callers_operation() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // `abs` of the smallest integer overflows, which `SQLite` reports
+        // when the row is stepped to and not when the statement is prepared.
+        let mut statement = conn
+            .prepare("SELECT abs(-9223372036854775807 - 1)")
+            .unwrap();
+        let rows = statement
+            .query_map([], |row| Ok(read_column::<i64>(row, 0)))
+            .unwrap();
+
+        let failed = collect_rows("add up the test amounts", rows);
+
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::Database { operation, .. }) if *operation == "add up the test amounts"
+            ),
+            "{failed:?}"
+        );
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_storage_class_is_corrupt_under_its_column_name() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut statement = conn.prepare("SELECT 'seven' AS amount_minor").unwrap();
+        let rows = statement
+            .query_map([], |row| Ok(read_column::<i64>(row, 0)))
+            .unwrap();
+
+        let failed = collect_rows("read the test amount", rows);
+
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::VaultCorrupt(VaultCorruption::Column { column, .. }))
+                    if column == "amount_minor"
+            ),
+            "{failed:?}"
+        );
     }
 
     #[test]

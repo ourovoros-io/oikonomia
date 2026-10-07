@@ -8,14 +8,16 @@ mod common;
 
 use std::fmt::Debug;
 
-use oikonomia_core::csv::export_journal_csv;
+use oikonomia_core::csv::{
+    CsvImportAccounts, export_journal_csv, post_import_rows, preview_bank_csv,
+};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
-    CreateRecurringTemplateRequest, EntryFilter, RecurringCadence, RecurringSchedule,
-    SimpleEntryKind, account_register, activity_window, balance_sheet, cash_flow_series,
-    create_recurring_template, get_entity, get_entry, get_recurring_template, list_accounts,
-    list_entities, list_entries, list_recurring_templates, post_recurring_template,
+    CreateRecurringTemplateRequest, EntryFilter, PostSimpleEntryRequest, RecurringCadence,
+    RecurringSchedule, SimpleEntryKind, account_register, activity_window, balance_sheet,
+    cash_flow_series, create_recurring_template, get_entity, get_entry, get_recurring_template,
+    list_accounts, list_entities, list_entries, list_recurring_templates, post_recurring_template,
     post_simple_entry, trial_balance,
 };
 use rusqlite::Connection;
@@ -404,4 +406,55 @@ fn a_value_of_the_wrong_kind_is_corrupt_in_the_journal_export() {
     damage(conn, "UPDATE journal_entries SET description = x'00ff'");
 
     assert_corrupt(export_journal_csv(conn, book.entity_id), "description");
+}
+
+#[test]
+fn a_description_of_the_wrong_kind_is_corrupt_in_the_register_and_the_import() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    damage(conn, "UPDATE journal_entries SET description = x'00ff'");
+    let statement = "Date,Description,Amount\n2026-02-11,Coffee,-3.50\n";
+    let no_accounts = CsvImportAccounts::default();
+
+    assert_corrupt(account_register(conn, book.food, None, None), "description");
+    // Both halves of the import read every entry for the duplicate rule.
+    let preview = preview_bank_csv(conn, book.entity_id, no_accounts, statement, None);
+    assert_corrupt(preview, "description");
+    let row = PostSimpleEntryRequest {
+        entity_id: book.entity_id,
+        kind: SimpleEntryKind::Expense,
+        bill_status: None,
+        entry_date: "2026-02-11".into(),
+        description: "Coffee".into(),
+        reference: None,
+        amount_minor: 350,
+        category_account_id: Some(book.food),
+        wallet_account_id: Some(book.checking),
+        payable_account_id: None,
+        from_account_id: None,
+        to_account_id: None,
+    };
+    assert_corrupt(post_import_rows(conn, &[row], false), "description");
+}
+
+#[test]
+fn an_amount_of_the_wrong_kind_is_corrupt_in_the_cash_flow_series() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    // Text where the application only ever writes an integer. `SQLite` adds
+    // it up as a real number, which is not an amount.
+    damage(
+        conn,
+        "UPDATE journal_lines SET debit_minor = 'abc' WHERE debit_minor > 0",
+    );
+
+    let series = cash_flow_series(
+        conn,
+        book.entity_id,
+        common::date("2026-02-01"),
+        common::date("2026-02-28"),
+    );
+    assert_corrupt(series, "debits");
 }
