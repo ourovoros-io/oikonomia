@@ -2,8 +2,10 @@
 
 import { afterEach, describe, expect, test } from 'vitest'
 import {
+  dialogStateFromCheck,
   isAvailableUpdate,
   parseUpdateCheckResult,
+  pollsRefusedInstall,
   readDevUnlockUpdatePreview,
   stubUpdateCheckResult,
 } from './updateCheck'
@@ -115,7 +117,46 @@ describe('isAvailableUpdate', () => {
     expect(isAvailableUpdate({ kind: 'failed' })).toBe(false)
     expect(isAvailableUpdate({ kind: 'checking' })).toBe(false)
     expect(isAvailableUpdate({ kind: 'idle' })).toBe(false)
-    expect(isAvailableUpdate({ kind: 'installing' })).toBe(false)
+    expect(isAvailableUpdate({ kind: 'installing', origin: 'local' })).toBe(false)
+    expect(isAvailableUpdate({ kind: 'installing', origin: 'check' })).toBe(false)
+  })
+})
+
+describe('dialog state from a check', () => {
+  test('wire installing gains a check origin and other kinds pass through', () => {
+    expect(parseUpdateCheckResult({ kind: 'installing' })).toEqual({ kind: 'installing' })
+    expect(dialogStateFromCheck({ kind: 'installing' })).toEqual({
+      kind: 'installing',
+      origin: 'check',
+    })
+    expect(dialogStateFromCheck({ kind: 'upToDate' })).toEqual({ kind: 'upToDate' })
+    expect(dialogStateFromCheck({ kind: 'failed' })).toEqual({ kind: 'failed' })
+    expect(dialogStateFromCheck({ kind: 'failed', code: 'update_network' })).toEqual({
+      kind: 'failed',
+      code: 'update_network',
+    })
+    expect(dialogStateFromCheck({ kind: 'available', version: '1.2.3' })).toEqual({
+      kind: 'available',
+      version: '1.2.3',
+    })
+    expect(dialogStateFromCheck({ kind: 'idle' })).toEqual({ kind: 'idle' })
+  })
+
+  test('only a refused check is polled', () => {
+    expect(pollsRefusedInstall({ kind: 'installing', origin: 'check' })).toBe(true)
+    expect(pollsRefusedInstall({ kind: 'installing', origin: 'local' })).toBe(false)
+    expect(pollsRefusedInstall({ kind: 'checking' })).toBe(false)
+    expect(pollsRefusedInstall({ kind: 'failed' })).toBe(false)
+    expect(pollsRefusedInstall({ kind: 'failed', code: 'update_network' })).toBe(false)
+    expect(pollsRefusedInstall({ kind: 'updateError' })).toBe(false)
+    expect(pollsRefusedInstall({ kind: 'upToDate' })).toBe(false)
+  })
+
+  test('the installing paint hook is the local frame', () => {
+    window.history.replaceState({}, '', '/?unlockUpdate=installing')
+    const preview = readDevUnlockUpdatePreview()
+    expect(preview).toEqual({ kind: 'installing', origin: 'local' })
+    if (preview) expect(pollsRefusedInstall(preview)).toBe(false)
   })
 })
 

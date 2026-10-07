@@ -5,8 +5,12 @@ import { Logo } from './Logo'
 import { ConfirmDialog } from './ConfirmDialog'
 import { useDialogFocus } from './useDialogFocus'
 import {
+  dialogStateFromCheck,
   isAvailableUpdate,
+  pollsRefusedInstall,
   readDevUnlockUpdatePreview,
+  watchRefusedInstall,
+  type ParsedIpcUpdate,
   type UpdateUiState,
 } from '../lib/updateCheck'
 import type { VaultStatus } from '../lib/tauri'
@@ -58,6 +62,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
   // fields invalid — only a failed unlock/create submit does.
   const [passwordInvalid, setPasswordInvalid] = useState(false)
   const checkGeneration = useRef(0)
+  const updateRef = useRef(update)
   const handoffTimer = useRef<number | undefined>(undefined)
   const errorId = useId()
 
@@ -65,6 +70,10 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
   const restorePrompt = restoreConfirm(isSetup ? 'load' : 'replace')
 
   useEffect(() => () => window.clearTimeout(handoffTimer.current), [])
+
+  useEffect(() => {
+    updateRef.current = update
+  }, [update])
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -152,7 +161,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
     try {
       const result = await updateCheck()
       if (generation !== checkGeneration.current) return
-      setUpdate(result)
+      setUpdate(dialogStateFromCheck(result))
     } catch {
       if (generation !== checkGeneration.current) return
       setUpdate({ kind: 'failed' })
@@ -165,10 +174,22 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
     setUpdate(IDLE)
   }
 
+  function applyCheckedUpdate(result: ParsedIpcUpdate) {
+    // A poll that resolves after we left the refused-check state must not
+    // paint over whatever the dialog is showing now.
+    if (!pollsRefusedInstall(updateRef.current)) return
+    setUpdate(dialogStateFromCheck(result))
+  }
+
+  function giveUpOnRefusedCheck() {
+    if (!pollsRefusedInstall(updateRef.current)) return
+    setUpdate({ kind: 'updateError' })
+  }
+
   async function installAvailable() {
     if (!isAvailableUpdate(update)) return
     const available = update
-    setUpdate({ kind: 'installing' })
+    setUpdate({ kind: 'installing', origin: 'local' })
     try {
       const result = await updateInstall(available)
       if (result?.kind === 'failed') {
@@ -309,6 +330,8 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
         state={update}
         onDismiss={dismissUpdate}
         onInstall={() => void installAvailable()}
+        onResolve={applyCheckedUpdate}
+        onCap={giveUpOnRefusedCheck}
       />
 
       <ConfirmDialog
@@ -334,20 +357,50 @@ function UnlockUpdateDialog({
   state,
   onDismiss,
   onInstall,
+  onResolve,
+  onCap,
 }: {
   state: UpdateUiState
   onDismiss: () => void
   onInstall: () => void
+  onResolve: (result: ParsedIpcUpdate) => void
+  onCap: () => void
 }) {
   const { t } = useI18n()
   const titleId = useId()
   const panelRef = useRef<HTMLDivElement>(null)
   const open = state.kind !== 'idle'
   const canDismiss = state.kind !== 'installing'
+  const onResolveRef = useRef(onResolve)
+  const onCapRef = useRef(onCap)
+  const watchRefused = pollsRefusedInstall(state)
 
   useDialogFocus(panelRef, open, () => {
     if (canDismiss) onDismiss()
   })
+
+  useEffect(() => {
+    onResolveRef.current = onResolve
+    onCapRef.current = onCap
+  }, [onResolve, onCap])
+
+  // Only a check Rust refused reaches here. `{ origin: 'local' }` is the
+  // install this screen started, and `watchRefused` is false for it, so
+  // that install never polls. Cleanup drops a response that lands after
+  // unmount or after the dialog has moved on.
+  useEffect(() => {
+    if (!watchRefused) return
+
+    return watchRefusedInstall(
+      updateCheck,
+      (result) => {
+        onResolveRef.current(result)
+      },
+      () => {
+        onCapRef.current()
+      },
+    )
+  }, [watchRefused])
 
   if (state.kind === 'idle') return null
 
@@ -467,6 +520,12 @@ function dialogCopy(
       return {
         title: t('unlock.update.failed.title'),
         body: updateFailureBody(state.code, t),
+        actions: [{ kind: 'secondary', label: t('unlock.update.close') }],
+      }
+    case 'updateError':
+      return {
+        title: t('unlock.update.failed.title'),
+        body: t('error.update'),
         actions: [{ kind: 'secondary', label: t('unlock.update.close') }],
       }
     case 'installing':

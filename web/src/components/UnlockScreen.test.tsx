@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -26,6 +26,10 @@ import {
 } from '../lib/tauri'
 import { UnlockScreen } from './UnlockScreen'
 import { resetI18nForTests } from '../lib/i18n'
+import {
+  REFUSED_CHECK_POLL_CAP_MS,
+  REFUSED_CHECK_POLL_INTERVAL_MS,
+} from '../lib/updateCheck'
 
 const BACKUP_PATH = '/tmp/in.oikonomia-backup'
 
@@ -639,5 +643,192 @@ describe('UnlockScreen check for update', () => {
     await waitFor(() => {
       expect(screen.getByText('Could not unlock the vault.')).toBeTruthy()
     })
+  })
+})
+
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+}
+
+// user-event waits on a zero-delay timer. Fake timers do not flush that wait.
+function click(name: string) {
+  fireEvent.click(screen.getByRole('button', { name }))
+}
+
+describe('UnlockScreen refused-check poll', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+    })
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.useRealTimers()
+  })
+
+  async function openRefusedCheck() {
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    click('Check for updates')
+    await advance(0)
+    expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+  }
+
+  test('a refused check then shows the real result and stops polling', async () => {
+    vi.mocked(updateCheck)
+      .mockResolvedValueOnce({ kind: 'installing' })
+      .mockResolvedValue({ kind: 'upToDate' })
+
+    await openRefusedCheck()
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS)
+
+    expect(screen.getByRole('dialog', { name: 'You’re up to date' })).toBeTruthy()
+    expect(screen.getByText('You have the latest version of Oikonomia.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+
+    const calls = vi.mocked(updateCheck).mock.calls.length
+    await advance(REFUSED_CHECK_POLL_CAP_MS)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(calls)
+
+    click('Close')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  test('a refused check shows Failed when the later check fails', async () => {
+    vi.mocked(updateCheck)
+      .mockResolvedValueOnce({ kind: 'installing' })
+      .mockResolvedValue({ kind: 'failed' })
+
+    await openRefusedCheck()
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS)
+
+    expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+    expect(screen.getByText('Nothing was changed. You can try again later.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  test('a poll that fails with a cause code shows the copy mapped to that code', async () => {
+    vi.mocked(updateCheck)
+      .mockResolvedValueOnce({ kind: 'installing' })
+      .mockResolvedValue({ kind: 'failed', code: 'update_network' })
+
+    await openRefusedCheck()
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS)
+
+    expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+    expect(
+      screen.getByText('Could not check for or install the update. Try again later.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('Nothing was changed. You can try again later.')).toBeNull()
+    expect(screen.queryByText('update_network')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  test('unmount stops the poll', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'installing' })
+    const { unmount } = render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    click('Check for updates')
+    await advance(0)
+    expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+
+    const calls = vi.mocked(updateCheck).mock.calls.length
+    unmount()
+    await advance(REFUSED_CHECK_POLL_CAP_MS + REFUSED_CHECK_POLL_INTERVAL_MS)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(calls)
+  })
+
+  test('the poll cap leaves the existing Failed dialog, which can close', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'installing' })
+    await openRefusedCheck()
+
+    await advance(REFUSED_CHECK_POLL_CAP_MS - REFUSED_CHECK_POLL_INTERVAL_MS)
+    expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS)
+    expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+    expect(
+      screen.getByText('Could not check for or install the update. Try again later.'),
+    ).toBeTruthy()
+
+    const calls = vi.mocked(updateCheck).mock.calls.length
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS * 3)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(calls)
+
+    click('Close')
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  test('an install started from this screen does not poll', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.1' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    click('Check for updates')
+    await advance(0)
+    expect(screen.getByRole('button', { name: 'Install and restart' })).toBeTruthy()
+
+    click('Install and restart')
+    await advance(0)
+    expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(updateInstall).toHaveBeenCalledTimes(1)
+
+    const calls = vi.mocked(updateCheck).mock.calls.length
+    await advance(REFUSED_CHECK_POLL_CAP_MS + REFUSED_CHECK_POLL_INTERVAL_MS)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(calls)
+    expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+  })
+
+  test('a poll that resolves after the cap does not replace Failed', async () => {
+    const pending = deferred<{ kind: 'upToDate' }>()
+    vi.mocked(updateCheck)
+      .mockResolvedValueOnce({ kind: 'installing' })
+      .mockReturnValueOnce(pending.promise)
+
+    await openRefusedCheck()
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(2)
+
+    await advance(REFUSED_CHECK_POLL_CAP_MS)
+    expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+
+    pending.resolve({ kind: 'upToDate' })
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS)
+    expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+    expect(screen.queryByText('You have the latest version of Oikonomia.')).toBeNull()
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(2)
+  })
+
+  test('a slow poll is not joined by another', async () => {
+    const pending = deferred<{ kind: 'installing' }>()
+    vi.mocked(updateCheck)
+      .mockResolvedValueOnce({ kind: 'installing' })
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValue({ kind: 'upToDate' })
+
+    await openRefusedCheck()
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(2)
+
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS * 5)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(2)
+    expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+
+    pending.resolve({ kind: 'installing' })
+    await advance(0)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(2)
+
+    await advance(REFUSED_CHECK_POLL_INTERVAL_MS)
+    expect(vi.mocked(updateCheck).mock.calls.length).toBe(3)
+    expect(screen.getByRole('dialog', { name: 'You’re up to date' })).toBeTruthy()
   })
 })
