@@ -24,8 +24,6 @@
 //! on the main thread, so a synchronous command must not wait for the vault.
 //! [`vault_touch`], [`app_info`], [`open_support_email`],
 //! [`open_main_window`] and [`quick_add_hide`] neither block nor take a lock.
-//! [`document_analyzer_status`] is synchronous too, although it takes the OCR
-//! engine's mutex, which an analysis in progress holds for its whole pass.
 //!
 //! **The vault is locked in one place.** A command reaches the vault through
 //! [`support::with_vault_blocking`] or one of the two helpers built for the

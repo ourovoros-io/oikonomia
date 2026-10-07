@@ -14,8 +14,8 @@
 // The same lopdf as pdf-extract uses; see `analyze`.
 use pdf_extract as lopdf;
 
+use crate::documents::file::MAX_DOCUMENT_BYTES;
 use crate::documents::pdf_budget::within_budget;
-use crate::documents::store::MAX_DOCUMENT_BYTES;
 
 /// A parsed PDF that is within the budget of
 /// [`pdf_budget`](crate::documents::pdf_budget). Only [`load_pdf`] builds one.
