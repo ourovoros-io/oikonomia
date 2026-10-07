@@ -972,6 +972,7 @@
     "vaultCorrupt": "Le fichier du coffre est corrompu.",
     "backupInvalid": "Ce fichier de sauvegarde n’est pas valide.",
     "restoreWouldOverwrite": "Un coffre existe déjà ; la restauration l’écraserait.",
+    "passwordChangeUnfinished": "Un changement de mot de passe n’a pas abouti. Déverrouillez le coffre une fois, puis relancez la sauvegarde ou la restauration.",
     "notFound": "Cet élément est introuvable.",
     "analysis": "L’analyse du document a échoué.",
     "csvParse": "Ce fichier CSV n’a pas pu être lu.",

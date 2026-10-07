@@ -21,6 +21,7 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   vault_too_new: 'error.vaultCorrupt',
   backup_invalid: 'error.backupInvalid',
   restore_would_overwrite: 'error.restoreWouldOverwrite',
+  password_change_unfinished: 'error.passwordChangeUnfinished',
   not_found: 'error.notFound',
   analysis: 'error.analysis',
   // Every CSV code borrows one sentence until each has wording of its own; an

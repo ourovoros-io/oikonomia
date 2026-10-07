@@ -16,6 +16,7 @@
   "vault_too_new",
   "backup_invalid",
   "restore_would_overwrite",
+  "password_change_unfinished",
   "not_found",
   "analysis",
   "csv_empty",

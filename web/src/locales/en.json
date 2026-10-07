@@ -617,6 +617,7 @@
   "error.vaultCorrupt": "The vault file is corrupt.",
   "error.backupInvalid": "That backup file is not valid.",
   "error.restoreWouldOverwrite": "A vault already exists; restoring would overwrite it.",
+  "error.passwordChangeUnfinished": "A password change did not finish. Unlock the vault once, then try the backup or restore again.",
   "error.notFound": "That item could not be found.",
   "error.analysis": "Document analysis failed.",
   "error.csvParse": "That CSV file could not be read.",

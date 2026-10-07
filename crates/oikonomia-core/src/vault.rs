@@ -60,6 +60,7 @@
 //! - **`.tmp`.** If the rekey ran, this header is the one whose key fits.
 //!   When the published header's key does not fit, unlock tries this one and
 //!   publishes it. A stale one is removed by the next successful unlock.
+//!   A locked backup and a replacing restore refuse the vault until then.
 //! - **`restore-tmp`.** Without the marker no live file was touched yet, and
 //!   they are removed. The unpacked database keeps this name during the
 //!   swap as well, until it becomes `vault.db`; with the marker present it

@@ -5,12 +5,17 @@
 //! `vault.header.json.tmp`, the header staged by a password change, is never
 //! packed.
 //!
-//! That leaves one gap. If a password change crashed after the rekey and
-//! before the staged header was published, the staged header is the one
-//! whose key fits the database, and a backup of the locked vault taken
-//! before the next unlock packs the published header instead. No password
-//! opens such an archive. Unlocking once publishes the staged header and
-//! closes the gap; nothing here checks for it.
+//! While that staged header exists, a backup of the locked vault and a
+//! restore that replaces the vault are refused with
+//! [`Error::PasswordChangeUnfinished`]. If the password change stopped after
+//! the rekey, the staged header is the only one whose key fits the database:
+//! an archive of the published header would open with no password, and a
+//! replace would delete the staged header along with the old files. Without
+//! the password nothing tells whether the rekey ran, so a staged header left
+//! before it is refused as well. Unlocking once settles both cases: it
+//! publishes the staged header when that is the one that fits, and removes
+//! it otherwise. An unlocked vault's backup is not affected, since the
+//! session was opened with the header that is published.
 //!
 //! An unlocked vault is snapshotted with `VACUUM INTO` so WAL is folded
 //! without closing the session. A locked vault is copied file by file, which
@@ -172,6 +177,9 @@ pub fn default_backup_file_name() -> String {
 /// - [`Error::VaultCorrupt`] when only one of the two files exists, when
 ///   either is empty, or when `vault.db-wal` holds pages a file copy would
 ///   leave out.
+/// - [`Error::PasswordChangeUnfinished`] when a password change left its
+///   staged header, `vault.header.json.tmp`; see the module doc. Nothing is
+///   written.
 /// - [`Error::Io`] when `dest` has no file name, or a file cannot be read,
 ///   created, written or renamed.
 /// - [`Error::BackupInvalid`] when a vault file becomes shorter while it is
@@ -180,6 +188,7 @@ pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     let db_path = vault_db_path(data_dir);
     ensure_vault_files(&header_path, &db_path)?;
+    ensure_no_unfinished_password_change(data_dir)?;
     write_archive_from_paths(&header_path, &db_path, dest)
 }
 
@@ -198,12 +207,16 @@ pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
 /// file is touched, and the two files are swapped by the restore protocol in
 /// the module doc, so a failure or a crash leaves either the previous vault
 /// or the restored one, never one's header with the other's database. The
-/// previous vault's WAL/SHM sidecars and `vault.header.json.tmp` do not
-/// survive a completed replace, so unlock cannot mix old recovery state with
-/// restored files.
+/// previous vault's WAL/SHM sidecars do not survive a completed replace, so
+/// unlock cannot mix old recovery state with restored files. A replace is
+/// not started while a password change has left `vault.header.json.tmp`
+/// (see the module doc).
 ///
 /// # Errors
 ///
+/// - [`Error::PasswordChangeUnfinished`] when `replace` is true and a
+///   password change left its staged header. This is checked before
+///   anything else, so nothing in `data_dir` is created, moved or removed.
 /// - [`Error::BackupInvalid`] when `archive` does not follow the format in
 ///   the module doc, its header member is not a vault header of a known
 ///   format, or its database member is a plaintext `SQLite` file. This is
@@ -216,6 +229,11 @@ pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
 ///   removed. When putting the previous files back failed as well, the
 ///   message says so, and the next [`Vault::open_path`] completes the undo.
 pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Result<()> {
+    // Before anything changes: the replace below would delete the staged
+    // header, which may be the only one that fits the database.
+    if replace {
+        ensure_no_unfinished_password_change(data_dir)?;
+    }
     create_private_dir(data_dir)?;
     recover_interrupted_restore(data_dir)?;
     let paths = RestorePaths::new(data_dir);
@@ -230,7 +248,9 @@ pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Resu
         return Err(err);
     }
 
-    // Recovery state of the vault that was replaced.
+    // Recovery state left in the directory. A staged password-change header
+    // only gets this far when no vault was replaced: beside a live vault, a
+    // replace was refused above and a restore without one as an overwrite.
     discard_file(&vault_staged_header_path(data_dir));
     discard_file(&vault_init_header_path(data_dir));
     Ok(())
@@ -273,6 +293,8 @@ impl Vault {
     /// - [`Error::VaultCorrupt`] when the header file is missing or empty,
     ///   and, for a locked vault, in the other cases [`backup_to_path`]
     ///   lists.
+    /// - [`Error::PasswordChangeUnfinished`] for a locked vault, when a
+    ///   password change left its staged header. Unlocking once settles it.
     /// - [`Error::Io`] when `dest` has no file name, or a file cannot be
     ///   read, created, written or renamed. For an unlocked vault also when
     ///   the data directory path is not UTF-8.
@@ -414,6 +436,25 @@ fn undo_swap(paths: &RestorePaths) -> Result<()> {
     remove_files_if_present(&[&paths.verified_header])?;
     sync_parent_dir(&paths.header);
     Ok(())
+}
+
+/// Refuses while a password change has left its staged header,
+/// `vault.header.json.tmp`.
+///
+/// Without the password nothing tells whether the rekey ran, and so whether
+/// that header or the published one fits the database. [`Vault::unlock`]
+/// finds out, and publishes or removes the staged header.
+///
+/// # Errors
+///
+/// [`Error::PasswordChangeUnfinished`] when the staged header exists;
+/// [`Error::Io`] when whether it exists cannot be determined.
+fn ensure_no_unfinished_password_change(data_dir: &Path) -> Result<()> {
+    match vault_staged_header_path(data_dir).try_exists() {
+        Ok(false) => Ok(()),
+        Ok(true) => Err(Error::PasswordChangeUnfinished),
+        Err(err) => Err(Error::io("inspect staged vault header", err)),
+    }
 }
 
 /// Checks that the header and the database both exist as files and that a
@@ -1407,34 +1448,72 @@ mod tests {
     }
 
     #[test]
-    fn restore_with_replace_overwrites_and_drops_staged_header() {
+    fn a_staged_header_left_before_the_rekey_refuses_a_replace_until_an_unlock() {
+        // A password change that failed before the rekey leaves the staged
+        // header behind and the old key in force.
         let (src, mut vault) = init_vault();
         let staged = vault_staged_header_path(src.path());
         write_file(&staged, b"stale-staged-header");
+        let header_before = fs::read(vault_header_path(src.path())).expect("header");
 
-        let other = TempDir::new().expect("other");
-        let mut other_vault = Vault::open_path(other.path()).expect("open other");
-        other_vault
-            .init("a different password 12")
-            .expect("init other");
+        let (other, other_vault) = init_vault_with(OTHER_PASSWORD);
         let archive = other.path().join("other.oikonomia-backup");
         other_vault.backup_to(&archive).expect("backup other");
-        let expected_header = fs::read(vault_header_path(other.path())).expect("other header");
 
-        vault.restore_from(&archive, true).expect("replace restore");
-        assert_eq!(vault.status(), VaultStatus::Locked);
-        assert!(!staged.exists(), "staged password-change header must go");
         assert_eq!(
-            fs::read(vault_header_path(src.path())).expect("replaced header"),
-            expected_header
+            vault.restore_from(&archive, true),
+            Err(Error::PasswordChangeUnfinished)
         );
+        assert_eq!(vault.status(), VaultStatus::Locked);
+        assert!(staged.exists(), "the staged header is left for unlock");
+        assert_eq!(
+            fs::read(vault_header_path(src.path())).expect("header after"),
+            header_before
+        );
+        assert_no_restore_files(src.path());
+
+        vault.unlock(PASSWORD).expect("the old password still fits");
+        assert!(!staged.exists(), "unlock removes the stale staged header");
+        vault.restore_from(&archive, true).expect("replace restore");
         vault
-            .unlock("a different password 12")
+            .unlock(OTHER_PASSWORD)
             .expect("replaced vault unlocks with the backup password");
+    }
+
+    #[test]
+    fn a_locked_backup_is_refused_while_a_staged_header_exists() {
+        let (src, mut vault) = init_vault();
         vault.lock();
-        vault
-            .unlock(PASSWORD)
-            .expect_err("pre-restore password must no longer open the vault");
+        write_file(
+            &vault_staged_header_path(src.path()),
+            b"stale-staged-header",
+        );
+        let dest = TempDir::new().expect("archive dir");
+        let archive = dest.path().join("books.oikonomia-backup");
+
+        assert_eq!(
+            vault.backup_to(&archive),
+            Err(Error::PasswordChangeUnfinished)
+        );
+        assert_eq!(
+            fs::read_dir(dest.path()).expect("archive dir").count(),
+            0,
+            "no archive and no partial archive"
+        );
+    }
+
+    #[test]
+    fn a_restore_without_replace_into_an_empty_directory_drops_a_stray_staged_header() {
+        let (_src, source) = init_vault();
+        let (_archive_dir, archive) = backup_of(&source);
+        let empty = TempDir::new().expect("empty");
+        let staged = vault_staged_header_path(empty.path());
+        write_file(&staged, b"stray-staged-header");
+
+        restore_from_path(&archive, empty.path(), false).expect("restore");
+
+        assert!(!staged.exists(), "no vault it could belong to");
+        assert_opens_with(empty.path(), PASSWORD);
     }
 
     #[test]

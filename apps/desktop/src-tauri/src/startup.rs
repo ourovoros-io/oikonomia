@@ -91,6 +91,7 @@ fn vault_problem(source: &CoreError) -> StartupProblem {
         | CoreError::VaultTooNew { .. }
         | CoreError::BackupInvalid(_)
         | CoreError::RestoreWouldOverwrite
+        | CoreError::PasswordChangeUnfinished
         | CoreError::NotFound(_)
         | CoreError::Analysis { .. }
         | CoreError::Csv(_) => StartupProblem::DataFolderUnreadable,

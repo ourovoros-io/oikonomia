@@ -443,6 +443,7 @@ mod tests {
                 &[],
             ),
             (CoreError::RestoreWouldOverwrite, &[]),
+            (CoreError::PasswordChangeUnfinished, &[]),
             (CoreError::NotFound(Resource::Account), &["resource"]),
             (
                 failure(|operation, detail| CoreError::Analysis { operation, detail }),

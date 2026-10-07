@@ -234,6 +234,13 @@ pub enum Error {
     #[error("a vault already exists; restore requires replace")]
     RestoreWouldOverwrite,
 
+    /// A backup of the locked vault, or a restore that would replace it, was
+    /// refused because a password change did not finish: its staged header
+    /// is still on disk, and only an unlock can tell whether that header or
+    /// the published one fits the database. Unlocking once settles it.
+    #[error("a password change did not finish; unlock the vault once first")]
+    PasswordChangeUnfinished,
+
     /// The requested record does not exist.
     #[error("{0} not found")]
     NotFound(Resource),
@@ -279,6 +286,7 @@ impl Error {
         "vault_too_new",
         "backup_invalid",
         "restore_would_overwrite",
+        "password_change_unfinished",
         "not_found",
         "analysis",
     ];
@@ -324,6 +332,7 @@ impl Error {
             Self::VaultTooNew { .. } => "vault_too_new",
             Self::BackupInvalid(_) => "backup_invalid",
             Self::RestoreWouldOverwrite => "restore_would_overwrite",
+            Self::PasswordChangeUnfinished => "password_change_unfinished",
             Self::NotFound(_) => "not_found",
             Self::Analysis { .. } => "analysis",
             Self::Csv(reason) => reason.code(),
@@ -389,7 +398,8 @@ impl Error {
             | Self::NegativeMoney
             | Self::VaultCorrupt(_)
             | Self::BackupInvalid(_)
-            | Self::RestoreWouldOverwrite => BTreeMap::new(),
+            | Self::RestoreWouldOverwrite
+            | Self::PasswordChangeUnfinished => BTreeMap::new(),
         }
     }
 }
@@ -483,6 +493,7 @@ mod tests {
             },
             Error::BackupInvalid(BackupDefect::Truncated),
             Error::RestoreWouldOverwrite,
+            Error::PasswordChangeUnfinished,
             Error::NotFound(Resource::Account),
             Error::Analysis {
                 operation: "x",
@@ -512,6 +523,7 @@ mod tests {
             Error::VaultTooNew { .. },
             Error::BackupInvalid(_),
             Error::RestoreWouldOverwrite,
+            Error::PasswordChangeUnfinished,
             Error::NotFound(_),
             Error::Analysis { .. },
             Error::Csv(_),

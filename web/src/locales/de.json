@@ -972,6 +972,7 @@
     "vaultCorrupt": "Die Tresordatei ist beschädigt.",
     "backupInvalid": "Diese Sicherungsdatei ist ungültig.",
     "restoreWouldOverwrite": "Es existiert bereits ein Tresor; die Wiederherstellung würde ihn überschreiben.",
+    "passwordChangeUnfinished": "Eine Passwortänderung wurde nicht abgeschlossen. Entsperren Sie den Tresor einmal und versuchen Sie dann die Sicherung oder Wiederherstellung erneut.",
     "notFound": "Dieses Element wurde nicht gefunden.",
     "analysis": "Die Dokumentanalyse ist fehlgeschlagen.",
     "csvParse": "Diese CSV-Datei konnte nicht gelesen werden.",

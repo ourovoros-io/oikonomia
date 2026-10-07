@@ -130,8 +130,23 @@ describe('restoreCommandError', () => {
     expect(backupCommandError(error)).toBe('Could not complete the backup.')
   })
 
+  test('an unfinished password change asks for one unlock, for backup and restore alike', () => {
+    const error = { code: 'password_change_unfinished', message: 'a password change did not finish' }
+
+    expect(restoreCommandError(error)).toBe(
+      'A password change did not finish. Unlock the vault once, then try the backup or restore again.',
+    )
+    expect(backupCommandError(error)).toBe(restoreCommandError(error))
+  })
+
   test('shares the specific sentences with backup', () => {
-    for (const code of ['vault_uninitialized', 'backup_invalid', 'restore_would_overwrite', 'not_found']) {
+    for (const code of [
+      'vault_uninitialized',
+      'backup_invalid',
+      'restore_would_overwrite',
+      'password_change_unfinished',
+      'not_found',
+    ]) {
       expect(restoreCommandError({ code, message: 'x' }), code).toBe(
         backupCommandError({ code, message: 'x' }),
       )

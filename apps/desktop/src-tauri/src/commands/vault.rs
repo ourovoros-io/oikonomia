@@ -179,11 +179,12 @@ pub(crate) async fn vault_lock(
 ///
 /// Returns `save_location_invalid` when the dialog's answer is not a path,
 /// `vault_uninitialized` when there is no vault to back up, `vault_corrupt`
-/// when the vault files are incomplete, `io` when the archive cannot be
-/// written, `database` when the open vault cannot be snapshotted, `crypto`
-/// when that snapshot is not encrypted, and `backup_invalid` when a vault
-/// file becomes shorter while it is copied. Returns `task_failed` when a
-/// blocking task panics.
+/// when the vault files are incomplete, `password_change_unfinished` when
+/// the vault is locked and a password change has not finished (one unlock
+/// settles it), `io` when the archive cannot be written, `database` when the
+/// open vault cannot be snapshotted, `crypto` when that snapshot is not
+/// encrypted, and `backup_invalid` when a vault file becomes shorter while it
+/// is copied. Returns `task_failed` when a blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_backup(
     app: tauri::AppHandle,
@@ -249,7 +250,9 @@ pub(crate) async fn vault_backup(
 /// the session is touched; `save_location_invalid` when the dialog's answer
 /// is not a path; `backup_invalid` when the file is not a backup archive;
 /// `restore_would_overwrite` when a vault exists and `replace` is `false`;
-/// and `io` or `vault_corrupt` when the vault files cannot be replaced.
+/// `password_change_unfinished` when `replace` is `true` and a password
+/// change has not finished (one unlock settles it); and `io` or
+/// `vault_corrupt` when the vault files cannot be replaced.
 /// Returns `task_failed` when a blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_restore(

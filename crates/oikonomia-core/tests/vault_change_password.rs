@@ -1,10 +1,15 @@
-//! Master password change: `SQLCipher` rekey + header salt rotation.
+//! Master password change: `SQLCipher` rekey + header salt rotation, and what
+//! a backup or restore does while a change is unfinished.
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+use std::path::PathBuf;
+
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
-use oikonomia_core::vault::{Vault, VaultStatus, vault_db_path};
+use oikonomia_core::vault::{
+    Vault, VaultStatus, backup_to_path, restore_from_path, vault_db_path, vault_header_path,
+};
 use tempfile::TempDir;
 
 const OLD: &str = "old password 12345";
@@ -143,22 +148,56 @@ fn change_password_rejects_wrong_old_and_weak_new() {
     vault.unlock(OLD).expect("old password still valid");
 }
 
-#[test]
-fn interrupted_change_recovers_via_staged_header() {
+/// A vault in the state a password change leaves when it stops between the
+/// rekey and the publishing of the new header: the database is under the
+/// key of [`NEW`], the published header is still the old one, and the new
+/// header is only staged.
+///
+/// Built by completing a change and putting the old header back, since no
+/// public call stops halfway.
+fn vault_with_unfinished_password_change() -> TempDir {
     let (dir, mut vault) = init_vault();
-
-    // Complete a change, then reconstruct the crash state: database already
-    // rekeyed, real header still the old one, new header only staged.
-    let header_path = dir.path().join("vault.header.json");
-    let staged_path = dir.path().join("vault.header.json.tmp");
-    let old_header = std::fs::read_to_string(&header_path).expect("read old header");
+    let header_path = vault_header_path(dir.path());
+    let old_header = std::fs::read(&header_path).expect("read old header");
 
     vault.change_password(OLD, NEW).expect("change password");
     drop(vault);
 
-    let new_header = std::fs::read_to_string(&header_path).expect("read new header");
-    std::fs::write(&staged_path, new_header).expect("stage new header");
+    let new_header = std::fs::read(&header_path).expect("read new header");
+    std::fs::write(staged_header_path(&dir), new_header).expect("stage new header");
     std::fs::write(&header_path, old_header).expect("restore old header");
+    dir
+}
+
+/// The staged header a password change writes, `vault.header.json.tmp`.
+fn staged_header_path(dir: &TempDir) -> PathBuf {
+    dir.path().join("vault.header.json.tmp")
+}
+
+/// The bytes of the published header, the staged header and the database.
+fn vault_files(dir: &TempDir) -> [Vec<u8>; 3] {
+    [
+        vault_header_path(dir.path()),
+        staged_header_path(dir),
+        vault_db_path(dir.path()),
+    ]
+    .map(|path| std::fs::read(path).expect("read vault file"))
+}
+
+/// A backup of a separate vault under `password`, for a restore to bring in.
+fn archive_of_another_vault(password: &str) -> (TempDir, PathBuf) {
+    let dir = TempDir::new().expect("tempdir");
+    let mut vault = Vault::open_path(dir.path()).expect("open vault");
+    vault.init(password).expect("init");
+    let archive = dir.path().join("other.oikonomia-backup");
+    vault.backup_to(&archive).expect("backup");
+    (dir, archive)
+}
+
+#[test]
+fn interrupted_change_recovers_via_staged_header() {
+    let dir = vault_with_unfinished_password_change();
+    let staged_path = staged_header_path(&dir);
 
     let mut recovered = Vault::open_path(dir.path()).expect("reopen");
     assert_eq!(
@@ -178,6 +217,99 @@ fn interrupted_change_recovers_via_staged_header() {
     recovered
         .unlock(NEW)
         .expect("promoted header works on its own");
+}
+
+#[test]
+fn a_locked_backup_is_refused_while_a_password_change_is_unfinished() {
+    let dir = vault_with_unfinished_password_change();
+    let vault = Vault::open_path(dir.path()).expect("reopen");
+    let dest = TempDir::new().expect("archive dir");
+    let archive = dest.path().join("books.oikonomia-backup");
+
+    assert_eq!(
+        vault.backup_to(&archive),
+        Err(Error::PasswordChangeUnfinished)
+    );
+    assert_eq!(
+        backup_to_path(dir.path(), &archive),
+        Err(Error::PasswordChangeUnfinished)
+    );
+    assert_eq!(
+        std::fs::read_dir(dest.path()).expect("archive dir").count(),
+        0,
+        "no archive and no partial archive"
+    );
+}
+
+#[test]
+fn a_replacing_restore_is_refused_while_a_password_change_is_unfinished() {
+    let dir = vault_with_unfinished_password_change();
+    let files_before = vault_files(&dir);
+    let (_other, archive) = archive_of_another_vault("another password 12345");
+
+    let mut vault = Vault::open_path(dir.path()).expect("reopen");
+    assert_eq!(
+        vault.restore_from(&archive, true),
+        Err(Error::PasswordChangeUnfinished)
+    );
+    assert_eq!(
+        restore_from_path(&archive, dir.path(), true),
+        Err(Error::PasswordChangeUnfinished)
+    );
+
+    assert_eq!(
+        vault_files(&dir),
+        files_before,
+        "header, staged header and database are untouched"
+    );
+    let mut names: Vec<_> = std::fs::read_dir(dir.path())
+        .expect("data dir")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["vault.db", "vault.header.json", "vault.header.json.tmp"],
+        "nothing was unpacked or set aside"
+    );
+    vault
+        .unlock(NEW)
+        .expect("the new password still opens the vault");
+}
+
+#[test]
+fn after_one_unlock_a_backup_of_an_unfinished_change_opens_with_the_new_password() {
+    let dir = vault_with_unfinished_password_change();
+    let mut vault = Vault::open_path(dir.path()).expect("reopen");
+    vault.unlock(NEW).expect("unlock settles the staged header");
+    vault.lock();
+    let dest = TempDir::new().expect("archive dir");
+    let archive = dest.path().join("books.oikonomia-backup");
+
+    vault.backup_to(&archive).expect("locked backup");
+
+    let restore_dir = TempDir::new().expect("restore dir");
+    restore_from_path(&archive, restore_dir.path(), false).expect("restore");
+    let mut restored = Vault::open_path(restore_dir.path()).expect("open restored");
+    assert_eq!(restored.unlock(OLD), Err(Error::InvalidPassword));
+    restored
+        .unlock(NEW)
+        .expect("the restored vault opens with the new password");
+}
+
+#[test]
+fn after_one_unlock_a_replacing_restore_goes_ahead() {
+    let dir = vault_with_unfinished_password_change();
+    let (_other, archive) = archive_of_another_vault("another password 12345");
+    let mut vault = Vault::open_path(dir.path()).expect("reopen");
+    vault.unlock(NEW).expect("unlock settles the staged header");
+
+    vault.restore_from(&archive, true).expect("replace restore");
+
+    assert!(!staged_header_path(&dir).exists());
+    vault
+        .unlock("another password 12345")
+        .expect("the restored vault opens with its own password");
 }
 
 #[test]
