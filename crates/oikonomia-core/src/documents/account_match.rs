@@ -5,9 +5,12 @@
 //! reader produced, worded in English whatever the language of the
 //! application.
 //!
-//! 1. The hint is lowercased and tested against a keyword table
+//! 1. The hint is folded as the invoice reader folds its text ([`folded`]:
+//!    lowercase, Greek accents removed), so a word matches in capitals and
+//!    with or without its accent. It is then tested against a keyword table
 //!    ([`EXPENSE_KEYWORDS`] or [`INCOME_KEYWORDS`]), topic by topic, in table
-//!    order. A keyword matches on word boundaries only ([`Keyword`]).
+//!    order. A keyword is written in folded form and matches on word
+//!    boundaries only ([`Keyword`]).
 //! 2. A topic that matches is turned into chart codes by the book's template
 //!    ([`document_topic_codes`]). The first active account of the right type
 //!    that carries one of those codes is the answer.
@@ -26,7 +29,7 @@
 use crate::coa::{DocumentTopic, document_topic_codes};
 use crate::default_accounts::{account_by_codes, first_of_type};
 use crate::documents::keyword::Keyword::{Prefix, Unit, Word};
-use crate::documents::keyword::{Keyword, contains_any};
+use crate::documents::keyword::{Keyword, contains_any, folded};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate};
 
 /// Picks the expense account a document most likely belongs to.
@@ -88,17 +91,16 @@ const EXPENSE_KEYWORDS: &TopicKeywords = &[
             Word("gas"),
             Word("power"),
             Word("dei"),
-            Prefix("ρεύμα"),
+            Prefix("ρευμα"),
             Unit("kwh"),
             Word("zenith"),
             Word("zeniθ"),
             Prefix("εκκαθαριστ"),
             Prefix("ηλεκτρ"),
-            Prefix("αέριο"),
             Prefix("αεριο"),
             Word("ngs"),
             Word("φ.α"),
-            Prefix("έναντι"),
+            Prefix("εναντι"),
         ],
     ),
     (
@@ -283,15 +285,16 @@ const INCOME_TOPICS: TopicTable = TopicTable {
 /// Picks the account of the table's type that `hints` point at, by the four
 /// steps in the module documentation.
 ///
-/// `hints` may be in any letter case. Returns `None` only when the book has
-/// no active account of the type.
+/// `hints` may be in any letter case, and its Greek words with or without
+/// their accents. Returns `None` only when the book has no active account of
+/// the type.
 fn match_account_of_type(
     template: ChartTemplate,
     accounts: &[Account],
     hints: &str,
     table: &TopicTable,
 ) -> Option<AccountId> {
-    let hints = hints.to_lowercase();
+    let hints = folded(hints);
     let account_type = table.account_type;
 
     // The first topic the text points at that the chart has an account for.
@@ -691,16 +694,102 @@ mod tests {
 
     /// The first topic of `table` whose keywords occur in `text`.
     fn first_topic(table: &TopicKeywords, text: &str) -> Option<DocumentTopic> {
-        let lowercased = text.to_lowercase();
+        let folded_text = folded(text);
 
         table
             .iter()
-            .find(|(_, keywords)| {
-                keywords
-                    .iter()
-                    .any(|keyword| keyword.occurs_in(&lowercased))
-            })
+            .find(|(_, keywords)| contains_any(&folded_text, keywords))
             .map(|(topic, _)| *topic)
+    }
+
+    /// Both keyword tables. A table added to the file has to be added here
+    /// to be checked.
+    const TABLES: &[(&str, &TopicKeywords)] = &[
+        ("EXPENSE_KEYWORDS", EXPENSE_KEYWORDS),
+        ("INCOME_KEYWORDS", INCOME_KEYWORDS),
+    ];
+
+    #[test]
+    fn every_keyword_is_in_folded_form() {
+        for (name, table) in TABLES {
+            for (topic, keywords) in *table {
+                for keyword in *keywords {
+                    assert_eq!(
+                        folded(keyword.text()),
+                        keyword.text(),
+                        "{name} {topic:?}: {keyword:?} can never match folded text"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A keyword listed once with its accent and once without was how the
+    /// table made up for a hint that was only lowercased.
+    #[test]
+    fn no_keyword_is_listed_twice_for_a_topic() {
+        for (name, table) in TABLES {
+            for (topic, keywords) in *table {
+                for (index, keyword) in keywords.iter().enumerate() {
+                    assert!(
+                        !keywords[..index].contains(keyword),
+                        "{name} {topic:?} lists {keyword:?} twice"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_greek_word_matches_in_capitals_and_with_or_without_its_accent() {
+        let accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        let template = ChartTemplate::Personal;
+
+        // Capitals carry no accent, so a merchant name printed in capitals
+        // differs from the lowercase word by more than its case.
+        for hints in [
+            "ρεύμα",
+            "Ρεύμα",
+            "ρευμα",
+            "ΡΕΥΜΑ",
+            "ΛΟΓΑΡΙΑΣΜΟΣ ΡΕΥΜΑΤΟΣ",
+            "αέριο",
+            "ΦΥΣΙΚΟ ΑΕΡΙΟ",
+            "Έναντι",
+            "ΕΝΑΝΤΙ",
+            "Ηλεκτρισμός",
+            "ΗΛΕΚΤΡΙΚΗ ΕΝΕΡΓΕΙΑ",
+            "Εκκαθαριστικός",
+        ] {
+            assert_eq!(
+                expense_code(template, &accounts, hints).as_deref(),
+                Some("5300"),
+                "{hints:?} is a utility bill"
+            );
+        }
+
+        for hints in [
+            "Τιμολόγιο",
+            "ΤΙΜΟΛΟΓΙΟ",
+            "Παροχή Υπηρεσιών",
+            "ΠΑΡΟΧΗ ΥΠΗΡΕΣΙΩΝ",
+        ] {
+            assert_eq!(
+                first_topic(INCOME_KEYWORDS, hints),
+                Some(DocumentTopic::Sales),
+                "{hints:?} is a sales invoice"
+            );
+            assert_eq!(
+                income_code(ChartTemplate::Company, &company_chart(), hints).as_deref(),
+                Some("4000"),
+                "{hints:?}"
+            );
+        }
+    }
+
+    /// The seeded company chart.
+    fn company_chart() -> Vec<Account> {
+        seeded_chart_for_tests(ChartTemplate::Company, false)
     }
 
     #[test]
