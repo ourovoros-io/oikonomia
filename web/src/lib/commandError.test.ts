@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import codes from './errorCodes.json'
 import roles from './accountRoles.json'
 import codeParams from './errorCodeParams.json'
+import mappingProblems from './csvMappingProblems.json'
 import {
   asCommandError,
   commandErrorMessage,
@@ -9,9 +10,12 @@ import {
   fileReadError,
   isMissingIpcCommand,
   logCommandError,
+  VARIANT_KEYS,
   WEB_ERROR_KEYS,
 } from './commandError'
+import { FILE_TEXT_LIMIT } from './fileText'
 import { flattenMessages, LOCALES, resetI18nForTests, setLocale, t } from './i18n'
+import { NOTE_CODE_KEYS } from './uiText'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
 import fr from '../locales/fr.json' with { type: 'json' }
@@ -31,13 +35,6 @@ afterEach(() => {
 const UNWORDED_PARAMS: Record<string, string[]> = {
   analysis: ['operation'],
   crypto: ['operation'],
-  csv_invalid_amount: ['value'],
-  csv_invalid_date: ['value'],
-  csv_invalid_integer: ['value'],
-  csv_invalid_mapping: ['column', 'problem'],
-  csv_invalid_status: ['value'],
-  csv_invalid_type: ['value'],
-  csv_missing_column: ['column'],
   database: ['operation'],
   io: ['operation'],
   name_required: ['field'],
@@ -138,9 +135,12 @@ describe('command error localization', () => {
 
     for (const code of codes) {
       const unworded = UNWORDED_PARAMS[code] ?? []
-      const expected = [...(paramsByCode[code] ?? [])]
-        .filter((name) => !unworded.includes(name))
-        .sort()
+      // The sentence of a code with variants is the one shown when the
+      // identifier is unknown, so it can name no value; the test below
+      // checks the variants against what Rust sends.
+      const expected = Object.hasOwn(VARIANT_KEYS, code)
+        ? []
+        : [...(paramsByCode[code] ?? [])].filter((name) => !unworded.includes(name)).sort()
       for (const [locale, catalog] of Object.entries(catalogs)) {
         const copy = flattenMessages(catalog)[ERROR_CODE_KEYS[code]]
         const used = [...new Set([...copy.matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort()
@@ -150,6 +150,149 @@ describe('command error localization', () => {
     for (const code of Object.keys(paramsByCode)) {
       expect(codes, `${code} is not in errorCodes.json`).toContain(code)
     }
+  })
+
+  it('has variant copy that together uses exactly the parameters Rust sends, in every locale', () => {
+    const paramsByCode: Record<string, string[]> = codeParams
+    const catalogs = { en, el, fr, de }
+
+    for (const [code, { param, keys }] of Object.entries(VARIANT_KEYS)) {
+      // The identifier chooses the sentence; it is never a value in one.
+      const expected = (paramsByCode[code] ?? []).filter((name) => name !== param).sort()
+      expect(paramsByCode[code] ?? [], `${code} no longer sends ${param}`).toContain(param)
+
+      for (const [locale, catalog] of Object.entries(catalogs)) {
+        const flat = flattenMessages(catalog)
+        const used = new Set<string>()
+
+        for (const key of Object.values(keys)) {
+          expect(flat[key], `${locale} missing ${key}`).toBeTruthy()
+          for (const match of flat[key].matchAll(/\{(\w+)\}/g)) used.add(match[1])
+        }
+
+        expect([...used].sort(), `${locale} variants of ${code}`).toEqual(expected)
+      }
+    }
+  })
+
+  it('gives every CSV code a sentence of its own', () => {
+    const csvCodes = codes.filter((code) => code.startsWith('csv_'))
+    const keys = csvCodes.map((code) => ERROR_CODE_KEYS[code])
+
+    expect(csvCodes).toHaveLength(18)
+    expect(new Set(keys).size).toBe(csvCodes.length)
+
+    for (const locale of LOCALES) {
+      setLocale(locale)
+      const sentences = keys.map((key) => t(key))
+
+      expect(new Set(sentences).size, locale).toBe(csvCodes.length)
+    }
+  })
+
+  it('words a problem with one cell the way the import preview words the row', () => {
+    const shared = Object.keys(NOTE_CODE_KEYS).filter((code) => Object.hasOwn(ERROR_CODE_KEYS, code))
+
+    expect(shared.sort()).toEqual([
+      'csv_amount_overflow',
+      'csv_invalid_amount',
+      'csv_invalid_date',
+      'csv_invalid_type',
+      'csv_missing_amount',
+      'csv_missing_date',
+      'csv_zero_amount',
+    ])
+    for (const code of shared) {
+      expect(ERROR_CODE_KEYS[code], code).toBe(NOTE_CODE_KEYS[code])
+    }
+  })
+
+  it('says what is wrong with a CSV file, with the value Rust sent', () => {
+    expect(commandErrorMessage({ code: 'csv_not_utf8', message: 'raw' })).toBe(
+      'That CSV file is not UTF-8 text. Save or export it again as CSV with UTF-8 encoding.',
+    )
+    expect(
+      commandErrorMessage({ code: 'csv_missing_column', message: 'raw', params: { column: 'debit_minor' } }),
+    ).toBe(
+      'That journal CSV has no “debit_minor” column. Use a file exported from Oikonomia with all its columns.',
+    )
+    expect(
+      commandErrorMessage({ code: 'csv_invalid_date', message: 'raw', params: { value: '31/31/2026' } }),
+    ).toBe('"31/31/2026" is not a valid date.')
+  })
+
+  it('has a sentence for every mapping problem Rust names, in every language', () => {
+    const { param, keys } = VARIANT_KEYS.csv_invalid_mapping
+
+    expect(param).toBe('problem')
+    expect(Object.keys(keys)).toEqual(mappingProblems)
+
+    for (const locale of LOCALES) {
+      setLocale(locale)
+      const shown = mappingProblems.map((problem) =>
+        commandErrorMessage({
+          code: 'csv_invalid_mapping',
+          message: 'raw',
+          params: { problem, column: 'Payee' },
+        }),
+      )
+
+      expect(new Set(shown).size, locale).toBe(mappingProblems.length)
+      for (const [index, sentence] of shown.entries()) {
+        expect(sentence, locale).not.toContain(mappingProblems[index])
+        expect(sentence, locale).not.toMatch(/\{\w+\}/)
+        expect(sentence, locale).not.toBe(t('error.csvInvalidMapping'))
+        expect(sentence, locale).not.toBe(t('error.unknown'))
+      }
+    }
+  })
+
+  it('names the column a mapping could not find', () => {
+    expect(
+      commandErrorMessage({
+        code: 'csv_invalid_mapping',
+        message: 'raw',
+        params: { problem: 'unknown_column', column: 'Payee' },
+      }),
+    ).toBe('The file has no column named “Payee”. Choose one of the file’s columns.')
+  })
+
+  it('falls back to the mapping sentence for a problem it cannot word, never the identifier', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const unusable = [
+      { problem: 'a_problem_from_a_newer_version' },
+      { problem: 'constructor' },
+      // The sentence for an unknown column names the column, which is missing.
+      { problem: 'unknown_column' },
+      {},
+      undefined,
+    ]
+
+    for (const locale of LOCALES) {
+      setLocale(locale)
+
+      for (const params of unusable) {
+        const shown = commandErrorMessage({ code: 'csv_invalid_mapping', message: 'raw', params })
+
+        expect(shown, locale).toBe(t('error.csvInvalidMapping'))
+        expect(shown, locale).not.toContain('_')
+      }
+    }
+  })
+
+  it('cuts a long cell from the file and shows markup in it as text', () => {
+    const long = 'x'.repeat(FILE_TEXT_LIMIT * 3)
+    const cut = commandErrorMessage({ code: 'csv_invalid_status', message: 'raw', params: { value: long } })
+    const markup = commandErrorMessage({
+      code: 'csv_invalid_status',
+      message: 'raw',
+      params: { value: '<b>posted</b>' },
+    })
+
+    expect(cut).toContain(`“${'x'.repeat(FILE_TEXT_LIMIT)}…”`)
+    expect(cut).not.toContain('x'.repeat(FILE_TEXT_LIMIT + 1))
+    expect(markup).toContain('“<b>posted</b>”')
   })
 
   it('fills the copy in from the error params', () => {

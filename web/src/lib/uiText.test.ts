@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { FILE_TEXT_LIMIT } from './fileText'
 import { resetI18nForTests, resolvesInLocale, setLocale, t, type Locale } from './i18n'
 import { formatMoney } from './money'
 import {
@@ -194,6 +195,18 @@ describe('renderUiText', () => {
 
     expect(renderUiText(fee, book)).toBe('')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('transfer_fee'))
+  })
+
+  test('a long cell of the file is cut, and markup in it stays text', () => {
+    setLocale('en')
+    const long = 'x'.repeat(FILE_TEXT_LIMIT * 3)
+
+    expect(renderUiText({ code: 'csv_invalid_amount', params: { value: long } }, EUR)).toBe(
+      `"${'x'.repeat(FILE_TEXT_LIMIT)}…" is not a valid amount.`,
+    )
+    expect(renderUiText({ code: 'csv_invalid_type', params: { value: '<i>in</i>' } }, EUR)).toBe(
+      '"<i>in</i>" is not a recognized type.',
+    )
   })
 
   test('a date is shown the way the rest of the app shows dates', () => {

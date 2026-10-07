@@ -1,3 +1,4 @@
+import { FILE_TEXT_PARAMS, shortenFileText } from './fileText'
 import { t } from './i18n'
 import { formatDate, formatMoney, type Currency } from './money'
 
@@ -104,7 +105,10 @@ export function renderUiText(text: UiText, book: Currency | null): string {
   const vars: Record<string, string> = {}
 
   for (const [name, value] of Object.entries(text.params ?? {})) {
-    vars[name] = DATE_PARAMS.has(name) ? formatDate(value) : value
+    if (DATE_PARAMS.has(name)) vars[name] = formatDate(value)
+    // A cell of the user's file is cut to a length a sentence can hold.
+    else if (FILE_TEXT_PARAMS.has(name)) vars[name] = shortenFileText(value)
+    else vars[name] = value
   }
 
   const spec = Object.hasOwn(MONEY_PARAMS, text.code) ? MONEY_PARAMS[text.code] : undefined
