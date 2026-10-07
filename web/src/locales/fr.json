@@ -210,6 +210,12 @@
       },
       "error": "Impossible de changer la langue."
     },
+    "prefs": {
+      "unreadable": "Le fichier des préférences est endommagé : la langue et les choix de la Saisie rapide ne peuvent pas être enregistrés. Rien n’est modifié dans votre coffre. Vous pouvez réinitialiser les préférences dans les Paramètres.",
+      "reset": "Réinitialiser les préférences",
+      "resetDone": "Préférences réinitialisées. Le fichier endommagé a été conservé à côté du coffre sous le nom ui-prefs.damaged.json.",
+      "resetFailed": "Impossible de réinitialiser les préférences."
+    },
     "support": {
       "title": "Assistance",
       "description": "Questions et rapports de bogue : {email}",

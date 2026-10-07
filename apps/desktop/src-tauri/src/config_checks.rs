@@ -166,6 +166,16 @@ fn the_first_run_language_command_is_registered() {
 }
 
 #[test]
+fn the_preferences_reset_command_is_registered() {
+    let registrations = include_str!("lib.rs");
+
+    assert!(
+        registrations.contains("commands::settings_reset_ui_prefs,"),
+        "settings_reset_ui_prefs is not in the command list"
+    );
+}
+
+#[test]
 fn an_app_command_needs_no_new_webview_permission() {
     // App commands registered in the invoke handler are callable by every
     // window in the capability; the permission list stays exactly as audited.

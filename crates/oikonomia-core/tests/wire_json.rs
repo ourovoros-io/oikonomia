@@ -28,7 +28,7 @@ use oikonomia_core::ledger::{
     PostedEntryView, RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance,
     UpdateAccount, UpdateRecurringTemplateRequest, VoidResult,
 };
-use oikonomia_core::prefs::UiPrefs;
+use oikonomia_core::prefs::{UiPrefs, load_ui_prefs_view, ui_prefs_path};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -471,6 +471,37 @@ fn ui_prefs() {
         r#""66666666-6666-4666-8666-666666666666","payable_account_id":null,"#,
         r#""from_account_id":null,"to_account_id":null}}}"#,
     ));
+}
+
+/// The view is only ever written, so it is pinned from the file it is
+/// loaded from instead of being read back: the keys of the file, in the
+/// file's order, then `unreadable`.
+#[test]
+fn ui_prefs_view() {
+    let stored = concat!(
+        r#"{"locale":"el","last_entity_id":"11111111-1111-4111-8111-111111111111","#,
+        r#""last_accounts_by_entity_kind":{"11111111-1111-4111-8111-111111111111:expense":{"#,
+        r#""category_account_id":"22222222-2222-4222-8222-222222222222","wallet_account_id":"#,
+        r#""66666666-6666-4666-8666-666666666666","payable_account_id":null,"#,
+        r#""from_account_id":null,"to_account_id":null}}"#,
+    );
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let written = |text: &str| {
+        std::fs::write(ui_prefs_path(dir.path()), text).expect("write the preferences file");
+        serde_json::to_string(&load_ui_prefs_view(dir.path())).expect("the view serializes")
+    };
+
+    assert_eq!(
+        written(&format!("{stored}}}")),
+        format!(r#"{stored},"unreadable":false}}"#)
+    );
+    assert_eq!(
+        written("not json"),
+        concat!(
+            r#"{"locale":"en","last_entity_id":null,"last_accounts_by_entity_kind":{},"#,
+            r#""unreadable":true}"#,
+        )
+    );
 }
 
 #[test]

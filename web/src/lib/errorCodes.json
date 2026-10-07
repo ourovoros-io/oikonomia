@@ -19,6 +19,7 @@
   "restore_would_overwrite",
   "not_found",
   "analysis",
+  "prefs_unreadable",
   "csv_empty",
   "csv_not_utf8",
   "csv_too_large",

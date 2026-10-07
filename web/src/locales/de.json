@@ -210,6 +210,12 @@
       },
       "error": "Die Sprache konnte nicht geändert werden."
     },
+    "prefs": {
+      "unreadable": "Die Datei mit den Vorgaben ist beschädigt, daher können die Sprache und die Auswahl der Schnellerfassung nicht gespeichert werden. Ihr Tresor ist nicht betroffen. Sie können die Vorgaben in den Einstellungen zurücksetzen.",
+      "reset": "Vorgaben zurücksetzen",
+      "resetDone": "Vorgaben zurückgesetzt. Die beschädigte Datei wurde neben dem Tresor als ui-prefs.damaged.json aufbewahrt.",
+      "resetFailed": "Die Vorgaben konnten nicht zurückgesetzt werden."
+    },
     "support": {
       "title": "Support",
       "description": "Fragen und Fehlerberichte: {email}",

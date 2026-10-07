@@ -64,7 +64,11 @@ The vault is one SQLCipher database, `vault.db`, plus a small public header,
 - **UI preferences** (language, last book and accounts used in quick-add) are
   plain JSON in `ui-prefs.json` beside the vault, so the tray menu and unlock
   screen can use the right language before a password is entered. Nothing
-  sensitive goes there (`prefs.rs`).
+  sensitive goes there (`prefs.rs`). A file that is there and cannot be read
+  or decoded is never saved over: the app runs on the defaults, a save is
+  refused with the code `prefs_unreadable`, and Settings shows a notice whose
+  button moves the file aside to `ui-prefs.damaged.json`, after which the
+  next save writes a new one.
 
 ## The ledger
 

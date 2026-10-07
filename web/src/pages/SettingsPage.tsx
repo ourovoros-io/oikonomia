@@ -132,6 +132,8 @@ export function SettingsPage({
   const [donations, setDonations] = useState<DonationAddress[]>([])
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+  const [prefsUnreadable, setPrefsUnreadable] = useState(false)
+  const [prefsResetBusy, setPrefsResetBusy] = useState(false)
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -182,6 +184,27 @@ export function SettingsPage({
       })
   }, [])
 
+  // Whether the preferences file can be read is asked, not learned from a
+  // failed save. A language change that failed is one reason for it to have
+  // changed, so that asks again.
+  useEffect(() => {
+    let cancelled = false
+
+    async function readPrefsState() {
+      try {
+        const prefs = await api.getUiPrefs()
+        if (!cancelled) setPrefsUnreadable(prefs.unreadable)
+      } catch {
+        /* The state is unknown, so the notice stays as it was. */
+      }
+    }
+    void readPrefsState()
+
+    return () => {
+      cancelled = true
+    }
+  }, [languageChangeFailed])
+
   // App bumps createBookIntent from the five empty-state CTAs. Pop the
   // create-entity form open and scroll to it — scrollIntoView is undefined
   // in jsdom, so guard it. Then tell App the intent was consumed, so a later
@@ -229,6 +252,21 @@ export function SettingsPage({
       setPageError(commandErrorMessage(err, 'settings.deleteFailed'))
     } finally {
       setDeleteBusy(false)
+    }
+  }
+
+  async function onResetPrefs() {
+    setPrefsResetBusy(true)
+    setPageError(null)
+    setNotice(null)
+    try {
+      const prefs = await api.resetUiPrefs()
+      setPrefsUnreadable(prefs.unreadable)
+      if (!prefs.unreadable) setNotice(t('settings.prefs.resetDone'))
+    } catch (err) {
+      setPageError(commandErrorMessage(err, 'settings.prefs.resetFailed'))
+    } finally {
+      setPrefsResetBusy(false)
     }
   }
 
@@ -352,8 +390,27 @@ export function SettingsPage({
 
       <ErrorBanner id={errorBannerId} message={error} />
       {notice ? (
-        <div className="rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]">
+        <div
+          role="status"
+          className="rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]"
+        >
           {notice}
+        </div>
+      ) : null}
+      {prefsUnreadable ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-warning)]/25 bg-[var(--color-warning-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]"
+        >
+          <p className="min-w-0 flex-1">{t('settings.prefs.unreadable')}</p>
+          <Button
+            variant="secondary"
+            size="sm"
+            busy={prefsResetBusy}
+            onClick={() => void onResetPrefs()}
+          >
+            {t('settings.prefs.reset')}
+          </Button>
         </div>
       ) : null}
 

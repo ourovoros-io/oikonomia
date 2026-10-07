@@ -41,8 +41,12 @@
 //! | is not there | the defaults | writes it |
 //! | is blank | the defaults | replaces it |
 //! | decodes | what it holds | replaces it |
-//! | cannot be read | the defaults | refuses with [`Error::Io`] |
-//! | does not decode | the defaults | refuses with [`Error::Serialization`] |
+//! | cannot be read | the defaults | refuses with [`Error::PrefsUnreadable`] |
+//! | does not decode | the defaults | refuses with [`Error::PrefsUnreadable`] |
+//!
+//! The two refusals share one variant, and so one code and one sentence in
+//! the UI, because the user does the same thing about both. The `operation`
+//! of the error still says which it was.
 //!
 //! "Not there" includes a data directory that does not exist yet. "Blank" is
 //! empty or only whitespace. A file decodes whatever its `locale` string is
@@ -59,12 +63,26 @@
 //! of the file to protect three writers. The cost here is one more read of a
 //! small file per save.
 //!
-//! A refusal lasts until the file is repaired or removed. Until then the app
-//! runs on the defaults, a language change fails with the error and quick
-//! add remembers nothing. [`resolve_locale`] fails too, unless the file is an
-//! object with a `locale` key: that counts as a stored language, so nothing
-//! is written. A blank file is the exception to all of it because there is
-//! nothing in it to repair.
+//! A refusal lasts until the file is repaired, removed or reset. Until then
+//! the app runs on the defaults, a language change fails with the error and
+//! quick add remembers nothing. [`resolve_locale`] fails too, unless the file
+//! is an object with a `locale` key: that counts as a stored language, so
+//! nothing is written. A blank file is the exception to all of it because
+//! there is nothing in it to repair.
+//!
+//! # Telling the user, and resetting
+//!
+//! [`load_ui_prefs_view`] is what a UI loads. Its
+//! [`unreadable`](UiPrefsView::unreadable) flag is set when a file is there
+//! and gave no preferences, so the UI can say so without attempting a save.
+//!
+//! [`reset_unreadable_ui_prefs`] ends the refusal. It renames the file to
+//! `ui-prefs.damaged.json` beside it ([`damaged_ui_prefs_path`]), replacing
+//! an earlier file of that name, and leaves no preferences file, so the next
+//! save writes a new one. The file is moved and never deleted: its owner may
+//! still want what is in it. A file that is missing, blank or decodes is
+//! left alone and the call succeeds, so the reset cannot be used to discard
+//! preferences that work.
 //!
 //! # The first run
 //!
@@ -279,9 +297,10 @@ impl UiPrefs {
 /// The preferences as a UI is shown them: [`UiPrefs`] with the language in
 /// effect, always one of [`Locale`], in place of the stored value.
 ///
-/// It serializes with the same keys as the preferences file. It is only
-/// ever sent, never saved, so a stored value this build does not know stays
-/// in the file.
+/// It serializes with the keys of the preferences file, followed by
+/// `unreadable`, which is about the file and not in it. It is only ever
+/// sent, never saved, so a stored value this build does not know stays in
+/// the file. [`load_ui_prefs_view`] builds it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct UiPrefsView {
     /// The app language in effect; see [`UiPrefs::locale`].
@@ -290,10 +309,17 @@ pub struct UiPrefsView {
     pub last_entity_id: Option<String>,
     /// See [`UiPrefs::last_accounts_by_entity_kind`].
     pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
+    /// `true` when a preferences file is there and could not be read or
+    /// decoded. The other fields are then the defaults, every save is
+    /// refused with [`Error::PrefsUnreadable`], and
+    /// [`reset_unreadable_ui_prefs`] is the way out.
+    pub unreadable: bool,
 }
 
-impl From<UiPrefs> for UiPrefsView {
-    fn from(prefs: UiPrefs) -> Self {
+impl UiPrefsView {
+    /// Builds the view of `prefs`, which came from a file that was
+    /// `unreadable` or not.
+    fn new(prefs: UiPrefs, unreadable: bool) -> Self {
         // Destructured in full so that a new field cannot be left out of the
         // view without a compile error.
         let UiPrefs {
@@ -306,6 +332,7 @@ impl From<UiPrefs> for UiPrefsView {
             locale: locale.effective(),
             last_entity_id,
             last_accounts_by_entity_kind,
+            unreadable,
         }
     }
 }
@@ -424,6 +451,16 @@ pub fn ui_prefs_path(data_dir: &Path) -> PathBuf {
     data_dir.join("ui-prefs.json")
 }
 
+/// Returns the path a preferences file that cannot be read is moved to,
+/// `ui-prefs.damaged.json` in `data_dir`.
+///
+/// [`reset_unreadable_ui_prefs`] is the only function that writes there. No
+/// function reads the file: it is kept for its owner.
+#[must_use]
+pub fn damaged_ui_prefs_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("ui-prefs.damaged.json")
+}
+
 /// Returns the stored preferences, or the defaults when there are none to
 /// read.
 ///
@@ -435,6 +472,55 @@ pub fn ui_prefs_path(data_dir: &Path) -> PathBuf {
 #[must_use]
 pub fn load_ui_prefs(data_dir: &Path) -> UiPrefs {
     or_defaults(read_ui_prefs(data_dir), &ui_prefs_path(data_dir))
+}
+
+/// Returns the preferences as a UI is shown them, with whether a file is
+/// there that could not be used.
+///
+/// The preferences are those of [`load_ui_prefs`], and like it this never
+/// fails. The file is read once, so the flag and the values describe the
+/// same contents.
+#[must_use]
+pub fn load_ui_prefs_view(data_dir: &Path) -> UiPrefsView {
+    let read = read_ui_prefs(data_dir);
+    let unreadable = read.is_err();
+
+    UiPrefsView::new(or_defaults(read, &ui_prefs_path(data_dir)), unreadable)
+}
+
+/// Moves a preferences file that cannot be read or decoded out of the way,
+/// so that the next save writes a new one.
+///
+/// The file is renamed to [`damaged_ui_prefs_path`], replacing a file an
+/// earlier reset left there, and is never deleted. No preferences file is
+/// left behind: the app runs on the defaults until something is saved, and
+/// the next launch chooses the language as on a first run
+/// ([`resolve_locale`]).
+///
+/// A file that is missing, blank or decodes is left as it is and the call
+/// succeeds: this is not a way to discard preferences that work.
+///
+/// The file is judged by reading it, as a save judges it. A file that fails
+/// to read for a passing reason, such as its permissions, is moved too; it
+/// is still there under the other name.
+///
+/// Nothing here locks: a caller that can race a save must hold the lock it
+/// holds for one across the call.
+///
+/// # Errors
+///
+/// [`Error::Io`] with the operation `move the damaged preferences file
+/// aside` when the rename fails. The preferences file is then still where it
+/// was. A directory at either path is one way for it to fail.
+pub fn reset_unreadable_ui_prefs(data_dir: &Path) -> Result<()> {
+    if read_ui_prefs(data_dir).is_ok() {
+        return Ok(());
+    }
+
+    // One rename, so a crash leaves the file under one name or the other and
+    // never under neither.
+    fs::rename(ui_prefs_path(data_dir), damaged_ui_prefs_path(data_dir))
+        .io("move the damaged preferences file aside")
 }
 
 /// Why a preferences file that is there gave no preferences.
@@ -454,13 +540,17 @@ enum UnusablePrefs {
 impl UnusablePrefs {
     /// Returns the error of a save that would have replaced the file.
     ///
-    /// The variant says which layer failed and the operation says what was
-    /// refused; both read after "cannot", as every operation does.
+    /// Both reasons give [`Error::PrefsUnreadable`]. The operation says
+    /// which it was and what was refused; it reads after "cannot", as every
+    /// operation does. The decoder's text can quote the file, which is why
+    /// it goes in the `detail`, the part a release log leaves out.
     fn into_refusal(self) -> Error {
         match self {
-            Self::Read(err) => Error::io("replace a preferences file that cannot be read", err),
+            Self::Read(err) => {
+                Error::prefs_unreadable("replace a preferences file that cannot be read", err)
+            }
             Self::Decode(err) => {
-                Error::serialization("replace a preferences file that does not decode", err)
+                Error::prefs_unreadable("replace a preferences file that does not decode", err)
             }
         }
     }
@@ -649,11 +739,13 @@ pub fn resolve_locale<S: AsRef<str>>(
 ///
 /// # Errors
 ///
-/// - [`Error::Io`] with the operation `replace a preferences file that
-///   cannot be read` when a file is there and reading it fails, which
-///   includes text that is not UTF-8 and a directory at the file's path.
-/// - [`Error::Serialization`] with the operation `replace a preferences file
-///   that does not decode` when a file is there and is not a [`UiPrefs`].
+/// - [`Error::PrefsUnreadable`] with the operation `replace a preferences
+///   file that cannot be read` when a file is there and reading it fails,
+///   which includes text that is not UTF-8 and a directory at the file's
+///   path.
+/// - [`Error::PrefsUnreadable`] with the operation `replace a preferences
+///   file that does not decode` when a file is there and is not a
+///   [`UiPrefs`].
 /// - [`Error::Io`] when the data directory cannot be created or the
 ///   temporary file cannot be written or renamed into place.
 /// - [`Error::Serialization`] when the preferences cannot be encoded as
@@ -772,13 +864,15 @@ mod tests {
     /// The operation of the refusal for a file that cannot be read.
     const CANNOT_BE_READ: &str = "replace a preferences file that cannot be read";
 
-    /// Returns the operation of a failed save, whichever of the two variants
-    /// a save can fail with.
+    /// Returns the operation of a failed save, whichever of the variants a
+    /// save can fail with.
     fn failed_operation<T>(result: &Result<T>) -> Option<&'static str> {
         match result {
-            Err(Error::Io { operation, .. } | Error::Serialization { operation, .. }) => {
-                Some(*operation)
-            }
+            Err(
+                Error::Io { operation, .. }
+                | Error::Serialization { operation, .. }
+                | Error::PrefsUnreadable { operation, .. },
+            ) => Some(*operation),
             _ => None,
         }
     }
@@ -1496,7 +1590,7 @@ mod tests {
         let json = r#"{ "locale": "xx-YY", "last_entity_id": "ent-1" }"#;
         let prefs: UiPrefs = serde_json::from_str(json).unwrap();
 
-        let view = serde_json::to_value(UiPrefsView::from(prefs)).unwrap();
+        let view = serde_json::to_value(UiPrefsView::new(prefs, false)).unwrap();
 
         assert_eq!(
             view,
@@ -1504,6 +1598,7 @@ mod tests {
                 "locale": "en",
                 "last_entity_id": "ent-1",
                 "last_accounts_by_entity_kind": {},
+                "unreadable": false,
             })
         );
     }
@@ -1719,11 +1814,11 @@ mod tests {
 
             for (path, saved) in every_save_path(dir.path()) {
                 assert!(
-                    matches!(saved, Err(Error::Serialization { .. })),
+                    matches!(saved, Err(Error::PrefsUnreadable { .. })),
                     "{path} on {content:?}: {saved:?}"
                 );
                 assert_eq!(failed_operation(&saved), Some(DOES_NOT_DECODE), "{path}");
-                assert_eq!(saved.as_ref().map_err(Error::code), Err("serialization"));
+                assert_eq!(saved.as_ref().map_err(Error::code), Err("prefs_unreadable"));
                 assert_eq!(
                     fs::read(ui_prefs_path(dir.path())).unwrap(),
                     content.as_bytes(),
@@ -1744,9 +1839,12 @@ mod tests {
         assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
 
         for (path, saved) in every_save_path(dir.path()) {
-            assert!(matches!(saved, Err(Error::Io { .. })), "{path}: {saved:?}");
+            assert!(
+                matches!(saved, Err(Error::PrefsUnreadable { .. })),
+                "{path}: {saved:?}"
+            );
             assert_eq!(failed_operation(&saved), Some(CANNOT_BE_READ), "{path}");
-            assert_eq!(saved.as_ref().map_err(Error::code), Err("io"));
+            assert_eq!(saved.as_ref().map_err(Error::code), Err("prefs_unreadable"));
             assert_eq!(
                 fs::read(ui_prefs_path(dir.path())).unwrap(),
                 content,
@@ -1869,5 +1967,193 @@ mod tests {
             }
             assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::De);
         }
+    }
+
+    /// A file that does not decode: an object cut off part way.
+    const CUT_OFF: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": ";
+
+    /// A file that cannot be read: bytes that are not UTF-8.
+    const NOT_UTF8: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": \"\xff\xfe\"}";
+
+    /// Returns the names of the files in `data_dir`, sorted.
+    fn file_names(data_dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(data_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn the_view_flags_a_file_that_is_there_and_gives_no_preferences() {
+        for content in [CUT_OFF, NOT_UTF8, b"[]"] {
+            let dir = tempdir().unwrap();
+            fs::write(ui_prefs_path(dir.path()), content).unwrap();
+
+            let view = load_ui_prefs_view(dir.path());
+
+            assert!(view.unreadable, "{content:?}");
+            assert_eq!(view, UiPrefsView::new(UiPrefs::default(), true));
+            assert_eq!(fs::read(ui_prefs_path(dir.path())).unwrap(), content);
+        }
+    }
+
+    #[test]
+    fn the_view_does_not_flag_a_missing_a_blank_or_a_good_file() {
+        let dir = tempdir().unwrap();
+        assert!(!load_ui_prefs_view(dir.path()).unreadable, "missing file");
+        assert!(
+            !load_ui_prefs_view(&dir.path().join("no-such-directory")).unreadable,
+            "missing directory"
+        );
+
+        fs::write(ui_prefs_path(dir.path()), " \n").unwrap();
+        assert!(!load_ui_prefs_view(dir.path()).unreadable, "blank file");
+
+        fs::write(
+            ui_prefs_path(dir.path()),
+            r#"{ "locale": "fr", "last_entity_id": "ent-1" }"#,
+        )
+        .unwrap();
+        let view = load_ui_prefs_view(dir.path());
+        assert!(!view.unreadable, "good file");
+        assert_eq!(view.locale, Locale::Fr);
+        assert_eq!(view.last_entity_id.as_deref(), Some("ent-1"));
+    }
+
+    #[test]
+    fn a_reset_moves_an_unusable_file_aside_byte_for_byte_and_leaves_none() {
+        for content in [CUT_OFF, NOT_UTF8] {
+            let dir = tempdir().unwrap();
+            fs::write(ui_prefs_path(dir.path()), content).unwrap();
+
+            assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
+
+            assert_eq!(file_names(dir.path()), ["ui-prefs.damaged.json"]);
+            assert_eq!(
+                fs::read(damaged_ui_prefs_path(dir.path())).unwrap(),
+                content
+            );
+            assert!(!load_ui_prefs_view(dir.path()).unreadable);
+        }
+    }
+
+    #[test]
+    fn every_save_path_writes_a_new_file_after_a_reset() {
+        let dir = tempdir().unwrap();
+        fs::write(ui_prefs_path(dir.path()), CUT_OFF).unwrap();
+        assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
+
+        for (path, saved) in every_save_path(dir.path()) {
+            assert_eq!(saved, Ok(()), "{path}");
+        }
+
+        assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::De);
+        assert_eq!(
+            fs::read(damaged_ui_prefs_path(dir.path())).unwrap(),
+            CUT_OFF
+        );
+    }
+
+    #[test]
+    fn a_reset_leaves_a_good_a_blank_and_a_missing_file_alone() {
+        let good = r#"{ "locale": "fr", "last_entity_id": "ent-1" }"#;
+
+        for content in [good, "", " \n\t "] {
+            let dir = tempdir().unwrap();
+            fs::write(ui_prefs_path(dir.path()), content).unwrap();
+
+            assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
+
+            assert_eq!(file_names(dir.path()), ["ui-prefs.json"], "{content:?}");
+            assert_eq!(
+                fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
+                content
+            );
+        }
+
+        let dir = tempdir().unwrap();
+        assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
+        assert!(file_names(dir.path()).is_empty(), "missing file");
+
+        let missing_directory = dir.path().join("no-such-directory");
+        assert_eq!(reset_unreadable_ui_prefs(&missing_directory), Ok(()));
+        assert!(!missing_directory.exists());
+    }
+
+    #[test]
+    fn a_reset_that_finds_a_good_file_keeps_an_earlier_aside_file() {
+        let dir = tempdir().unwrap();
+        fs::write(damaged_ui_prefs_path(dir.path()), CUT_OFF).unwrap();
+        assert_eq!(store_locale(dir.path(), Locale::El), Ok(()));
+
+        assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
+
+        assert_eq!(
+            fs::read(damaged_ui_prefs_path(dir.path())).unwrap(),
+            CUT_OFF
+        );
+        assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::El);
+    }
+
+    #[test]
+    fn a_second_reset_replaces_the_earlier_aside_file() {
+        let dir = tempdir().unwrap();
+        fs::write(ui_prefs_path(dir.path()), CUT_OFF).unwrap();
+        assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
+
+        fs::write(ui_prefs_path(dir.path()), NOT_UTF8).unwrap();
+        assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
+
+        assert_eq!(file_names(dir.path()), ["ui-prefs.damaged.json"]);
+        assert_eq!(
+            fs::read(damaged_ui_prefs_path(dir.path())).unwrap(),
+            NOT_UTF8
+        );
+    }
+
+    #[test]
+    fn a_reset_that_cannot_move_the_file_says_so_and_leaves_it_where_it_was() {
+        let dir = tempdir().unwrap();
+        fs::write(ui_prefs_path(dir.path()), CUT_OFF).unwrap();
+        // A directory that is not empty cannot be replaced by a rename, on
+        // any platform.
+        fs::create_dir(damaged_ui_prefs_path(dir.path())).unwrap();
+        fs::write(damaged_ui_prefs_path(dir.path()).join("kept"), "x").unwrap();
+
+        let failed = reset_unreadable_ui_prefs(dir.path());
+
+        assert!(matches!(failed, Err(Error::Io { .. })), "{failed:?}");
+        assert_eq!(
+            failed_operation(&failed),
+            Some("move the damaged preferences file aside")
+        );
+        assert_eq!(fs::read(ui_prefs_path(dir.path())).unwrap(), CUT_OFF);
+        assert!(load_ui_prefs_view(dir.path()).unreadable);
+    }
+
+    /// The decoder's message can quote what it could not read, so its text
+    /// stays in the detail and out of what a release log and the UI receive.
+    #[test]
+    fn the_refusal_keeps_the_text_of_the_file_out_of_the_log_and_the_parameters() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            ui_prefs_path(dir.path()),
+            r#"{ "last_entity_id": { "Acme-Payroll-7731": 1 } }"#,
+        )
+        .unwrap();
+
+        let refused = store_locale(dir.path(), Locale::El).unwrap_err();
+
+        assert_eq!(refused.code(), "prefs_unreadable");
+        assert_eq!(
+            refused.log_text().to_string(),
+            format!("prefs_unreadable: {DOES_NOT_DECODE}")
+        );
+        assert_eq!(
+            refused.params(),
+            BTreeMap::from([("operation", DOES_NOT_DECODE.to_owned())])
+        );
     }
 }

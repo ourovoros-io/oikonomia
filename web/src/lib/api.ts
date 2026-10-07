@@ -218,6 +218,12 @@ export type UiPrefs = {
   last_accounts_by_entity_kind: Record<string, LastRoleAccounts>
   /** Absent on older prefs files; treat as `en`. */
   locale?: Locale
+  /**
+   * True when a preferences file is there and Rust could not read or decode
+   * it. The other fields are then the defaults, every save is refused with
+   * `prefs_unreadable`, and `resetUiPrefs` is the way out.
+   */
+  unreadable: boolean
 }
 
 /** Simple-form posting input; the kind → debit/credit mapping lives in Rust. */
@@ -439,6 +445,12 @@ export const api = {
   setLocale: (locale: Locale) => call<void>('settings_set_locale', { locale }),
   /** Full plaintext UI prefs (tray last-used + locale). Safe before unlock. */
   getUiPrefs: () => call<UiPrefs>('settings_get_ui_prefs'),
+  /**
+   * Moves a preferences file Rust cannot read aside (never deletes it) and
+   * returns the preferences as they are afterwards. Leaves a file that is
+   * missing or readable alone.
+   */
+  resetUiPrefs: () => call<UiPrefs>('settings_reset_ui_prefs'),
   /** Remember last entity + role accounts after a successful tray post. */
   rememberQuickAdd: (entityId: string, kind: string, accounts: LastRoleAccounts) =>
     call<void>('settings_remember_quick_add', {
