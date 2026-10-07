@@ -100,11 +100,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
+use crate::documents::account_match::{match_expense_account, match_income_account};
 use crate::documents::invoice::read_invoice_text;
 use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use crate::documents::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
 use crate::documents::pdf_repair::repair_xref_offsets;
-use crate::documents::store::{has_extension, match_expense_account, match_income_account};
+use crate::documents::store::has_extension;
 use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode};
 use crate::error::{AccountRole, Result};
 use crate::prefs::Locale;

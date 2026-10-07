@@ -34,7 +34,7 @@
 //! 8. **Invoice reader** (`invoice.rs`, `brands.rs`). The text becomes an
 //!    amount, a date, a reference, a merchant, a description and an entry
 //!    kind.
-//! 9. **Account matching** (`store.rs`, `analyze.rs`). Keywords in the
+//! 9. **Account matching** (`account_match.rs`, `analyze.rs`). Keywords in the
 //!    merchant and description choose a topic, and the topic an account of
 //!    the book. The wallet and payable accounts are the book's defaults.
 //! 10. **Suggestion** (`analyze.rs`). The notes are put in order, and an
@@ -50,6 +50,7 @@
 //! them back. Analysis does not depend on storage; the desktop shell analyzes
 //! a dropped file first and stores it when the user posts the entry.
 
+mod account_match;
 mod analyze;
 mod brands;
 mod invoice;
