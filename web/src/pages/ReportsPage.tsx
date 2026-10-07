@@ -3,11 +3,13 @@ import { BarChart3, FileSpreadsheet, FileText, PieChart, RefreshCw, Scale } from
 import {
   api,
   formatDate,
+  bookCurrency,
   formatMoney,
   monthEndISO,
   monthStartISO,
   todayISO,
   type BalanceSheet,
+  type Currency,
   type Entity,
   type PnL,
   type ReportLine,
@@ -87,7 +89,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
       const data = await api.reportPnlExport(entity.id, from, to)
       const bytes = await buildExpensePdfBytes({
         entityName: entity.name,
-        currency: entity.base_currency,
+        currency: bookCurrency(entity),
         from: data.from,
         to: data.to,
         expenses: data.expenses,
@@ -168,13 +170,13 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
     )
   }
 
-  const ccy = entity.base_currency
+  const ccy = bookCurrency(entity)
 
   return (
     <div className="space-y-4">
       <TopBar
         title={t('rpt.title')}
-        subtitle={`${entity.name} · ${ccy}`}
+        subtitle={`${entity.name} · ${ccy.code}`}
         actions={
           <Segmented<Tab>
             value={tab}
@@ -257,7 +259,7 @@ function Statement({
   entityName: string
   title: string
   period: string
-  ccy: string
+  ccy: Currency
   children: ReactNode
 }) {
   return (
@@ -270,7 +272,7 @@ function Statement({
           {title}
         </h3>
         <p className="mt-0.5 text-xs text-[var(--color-muted)]">
-          {t('rpt.amountsIn', { period, ccy })}
+          {t('rpt.amountsIn', { period, ccy: ccy.code })}
         </p>
       </div>
       {children}
@@ -286,7 +288,7 @@ function SectionLabel({ children }: { children: ReactNode }) {
   )
 }
 
-function LineRow({ line, ccy }: { line: ReportLine; ccy: string }) {
+function LineRow({ line, ccy }: { line: ReportLine; ccy: Currency }) {
   return (
     <div className="flex items-baseline justify-between gap-4 py-1.5">
       <div className="flex min-w-0 items-baseline gap-3">
@@ -315,7 +317,7 @@ function TotalRow({
 }: {
   label: string
   amount: number
-  ccy: string
+  ccy: Currency
   /** Grand totals close with a double rule, section totals with a single one. */
   grand?: boolean
   tone?: 'danger' | 'success'
@@ -351,7 +353,7 @@ function TotalRow({
 
 // --- Views ------------------------------------------------------------------
 
-function PnlView({ pnl, entityName, ccy }: { pnl: PnL; entityName: string; ccy: string }) {
+function PnlView({ pnl, entityName, ccy }: { pnl: PnL; entityName: string; ccy: Currency }) {
   const net = pnl.net_income
   return (
     <div className="space-y-4">
@@ -397,7 +399,7 @@ function PnlView({ pnl, entityName, ccy }: { pnl: PnL; entityName: string; ccy: 
   )
 }
 
-function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string; ccy: string }) {
+function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string; ccy: Currency }) {
   const diff = bs.total_assets - bs.total_liabilities_equity
   return (
     <Statement
@@ -449,7 +451,7 @@ function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string;
   )
 }
 
-function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: string; ccy: string }) {
+function TrialView({ tb, entityName, ccy }: { tb: TrialBalance; entityName: string; ccy: Currency }) {
   return (
     <Statement
       entityName={entityName}

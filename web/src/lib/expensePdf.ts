@@ -5,7 +5,7 @@ import interRegularUrl from '../assets/fonts/Inter-Regular.ttf?url'
 import interSemiBoldUrl from '../assets/fonts/Inter-SemiBold.ttf?url'
 import type { ReportLine } from './api'
 import { asCommandError, commandErrorMessage, logCommandError } from './commandError'
-import { formatMoney } from './money'
+import { formatMoney, type Currency } from './money'
 import { buildSlices, vizHex, type ExpenseSlice } from './expenseSlices'
 import { getLocale, t, type Locale } from './i18n'
 
@@ -29,7 +29,7 @@ const EL_MON = ['Ιαν', 'Φεβ', 'Μαρ', 'Απρ', 'Μάι', 'Ιουν', '�
 
 export type ExpensePdfInput = {
   entityName: string
-  currency: string
+  currency: Currency
   from: string
   to: string
   expenses: ReportLine[]
@@ -37,7 +37,7 @@ export type ExpensePdfInput = {
 
 export type ExpensePdfModel = {
   entityName: string
-  currency: string
+  currency: Currency
   period: string
   slices: ExpenseSlice[]
   total: number
@@ -117,9 +117,9 @@ export function buildExpensePdfModel(input: ExpensePdfInput): ExpensePdfModel {
     total,
     labels: {
       brand: 'Oikonomia',
-      context: `${input.entityName} · ${input.currency}`,
+      context: `${input.entityName} · ${input.currency.code}`,
       title: t('reports.pdf.title'),
-      whisper: t('reports.pdf.meta', { currency: input.currency }),
+      whisper: t('reports.pdf.meta', { currency: input.currency.code }),
       totalExpenses: t('reports.pdf.totalExpenses'),
       totalAmount: formatMoney(total, input.currency, moneyLocale),
       emptyTitle: t('reports.pdf.emptyTitle'),

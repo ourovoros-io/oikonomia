@@ -1,23 +1,71 @@
-/** Currency decimal places (ISO 4217 subset). Most are 2; some are 0 or 3. */
-export function currencyFractionDigits(currency: string): number {
-  try {
-    return (
-      new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions()
-        .maximumFractionDigits ?? 2
+/**
+ * A currency as core describes it: its code, and how many decimals one minor
+ * unit is.
+ *
+ * Amounts are stored as integer minor units, and core alone decides what a
+ * minor unit of a currency is (`currency_minor_exponent` in oikonomia-core).
+ * Every conversion between minor units and a displayed or typed amount takes
+ * `decimals` from here. The webview's own `Intl` data may give a currency
+ * another number of decimals than core does, and reading it would show a book
+ * 100 or 1000 times off from what is stored; `moneyDecimals.test.ts` guards
+ * against that.
+ */
+export type Currency = {
+  /** Three capital letters, such as `EUR`. */
+  readonly code: string
+  /** Decimals of one minor unit, as core sent them. */
+  readonly decimals: number
+}
+
+/** The largest number of decimals `Intl.NumberFormat` and `toFixed` accept. */
+const MAX_DECIMALS = 20
+
+/**
+ * The currency of a book, from the entity core sent.
+ *
+ * Throws when the entity carries no usable number of decimals: showing or
+ * storing amounts at a guessed scale would be worse than failing.
+ */
+export function bookCurrency(entity: {
+  base_currency: string
+  base_currency_decimals: number
+}): Currency {
+  const decimals = entity.base_currency_decimals
+
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > MAX_DECIMALS) {
+    throw new RangeError(
+      `Book currency ${entity.base_currency}: base_currency_decimals is ${String(decimals)}, ` +
+        `expected an integer from 0 to ${MAX_DECIMALS}. The entity must come from core's entity commands.`,
     )
-  } catch {
-    return 2
   }
+
+  return { code: entity.base_currency, decimals }
 }
 
 /**
- * Parse a user-entered amount into minor units.
+ * The amount as plain text for an amount input: digits and a `.` decimal
+ * mark, with exactly the currency's decimals and no grouping (`1234.50`).
+ * Built from the digits of the integer, so no rounding is involved.
+ */
+export function minorToInputText(minor: number, currency: Currency): string {
+  const digits = String(Math.abs(Math.trunc(minor))).padStart(currency.decimals + 1, '0')
+  const whole = digits.slice(0, digits.length - currency.decimals)
+  const fraction = digits.slice(digits.length - currency.decimals)
+  const sign = minor < 0 ? '-' : ''
+
+  return fraction ? `${sign}${whole}.${fraction}` : `${sign}${whole}`
+}
+
+/**
+ * Parse a user-entered amount into minor units of `currency`.
  * Accepts:
  * - `25` / `25.50` (dot decimal)
  * - `25,50` (comma decimal, common in Europe)
  * - `1,234.56` / `1.234,56` (thousands separators)
+ *
+ * Null when the text is not an amount or has more decimals than the currency.
  */
-export function parseMajorToMinor(input: string, currency = 'EUR'): number | null {
+export function parseMajorToMinor(input: string, currency: Currency): number | null {
   let s = input.trim()
   if (!s) return null
 
@@ -65,7 +113,7 @@ export function parseMajorToMinor(input: string, currency = 'EUR'): number | nul
 
   if (!/^\d+(\.\d+)?$/.test(normalized)) return null
 
-  const digits = currencyFractionDigits(currency)
+  const digits = currency.decimals
   const [whole, frac = ''] = normalized.split('.')
   if (frac.length > digits) return null
 
@@ -100,16 +148,23 @@ export function localeForCurrency(currency: string): string {
   }
 }
 
-/** Format minor units as currency for display. */
+/**
+ * Format minor units as currency for display.
+ *
+ * `Intl.NumberFormat` supplies the grouping, the decimal mark and the
+ * currency sign of the locale. The number of decimals is always
+ * `currency.decimals`, set as both the minimum and the maximum so the
+ * locale data's own figure for the currency is never used.
+ */
 export function formatMoney(
   minor: number,
-  currency: string,
+  currency: Currency,
   locale?: string,
   opts?: { signed?: boolean },
 ): string {
-  const ccy = currency || 'EUR'
+  const ccy = currency.code
   const loc = locale || localeForCurrency(ccy)
-  const digits = currencyFractionDigits(ccy)
+  const digits = currency.decimals
   const factor = 10 ** digits
   const major = minor / factor
   try {

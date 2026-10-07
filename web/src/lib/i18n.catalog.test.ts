@@ -1,9 +1,9 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
 import { CURRENCIES } from './currencies'
 import accountRoles from './accountRoles.json'
 import { KEY_ALIASES, REVERSE_ALIASES, flattenMessages } from './i18n'
+import { productionSources, SRC_ROOT } from '../test/sourceFiles'
 import { stripComments } from './stripComments.testutil'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
@@ -42,8 +42,6 @@ const DYNAMIC_KEY_FAMILIES: Record<string, readonly string[]> = {
   'tx.form.kind.*': ['expense', 'income', 'bill', 'transfer'].map((v) => `tx.form.kind.${v}`),
 }
 
-const SRC_ROOT = fileURLToPath(new URL('..', import.meta.url))
-
 const catalogs = {
   en: flattenMessages(en),
   el: flattenMessages(el),
@@ -76,27 +74,9 @@ function twin(locale: keyof typeof catalogs, key: string): string | undefined {
   return spellings(key).find((spelling) => catalogs[locale][spelling] !== undefined)
 }
 
-/** Production sources only: no tests or test helpers, no type stubs, no catalogs, not i18n.ts. */
-function productionSources(dir: string = SRC_ROOT): string[] {
-  const files: string[] = []
-
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = `${dir}${entry.name}`
-
-    if (entry.isDirectory()) {
-      if (entry.name === 'locales') continue
-      files.push(...productionSources(`${path}/`))
-      continue
-    }
-
-    if (!/\.tsx?$/.test(entry.name)) continue
-    if (/\.(test|testutil)\.tsx?$/.test(entry.name) || entry.name.endsWith('.d.ts')) continue
-    if (path === `${SRC_ROOT}lib/i18n.ts`) continue
-
-    files.push(path)
-  }
-
-  return files
+/** The sources whose strings may be catalog keys: production code, without i18n.ts itself. */
+function keyReadingSources(): string[] {
+  return productionSources().filter((path) => path !== `${SRC_ROOT}lib/i18n.ts`)
 }
 
 /** Every quoted string in code (not in a comment) that looks like a dotted catalog key. */
@@ -104,7 +84,7 @@ function literalKeys(): Set<string> {
   const found = new Set<string>()
   const quoted = /(['"`])([A-Za-z][\w-]*(?:\.[\w-]+)*)\1/g
 
-  for (const file of productionSources()) {
+  for (const file of keyReadingSources()) {
     for (const match of stripComments(readFileSync(file, 'utf8')).matchAll(quoted)) {
       found.add(match[2])
     }

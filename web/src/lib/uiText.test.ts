@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { FILE_TEXT_LIMIT } from './fileText'
 import { resetI18nForTests, resolvesInLocale, setLocale, t, type Locale } from './i18n'
 import { formatMoney } from './money'
 import {
@@ -86,6 +87,8 @@ describe('copy for every code', () => {
   })
 })
 
+const EUR = { code: 'EUR', decimals: 2 }
+
 describe('renderUiText', () => {
   const fee = { code: 'transfer_fee', params: { fee_minor: '140', currency: 'EUR' } }
 
@@ -97,7 +100,7 @@ describe('renderUiText', () => {
   ] as const)('%s words the fee in that language', (locale, start) => {
     setLocale(locale)
 
-    const text = renderUiText(fee)
+    const text = renderUiText(fee, EUR)
 
     expect(text.startsWith(start)).toBe(true)
     expect(text).not.toContain('{')
@@ -109,17 +112,17 @@ describe('renderUiText', () => {
       setLocale(locale)
 
       // The suggested amount in the same banner is formatMoney(minor, currency).
-      expect(renderUiText(fee)).toContain(formatMoney(140, 'EUR'))
+      expect(renderUiText(fee, EUR)).toContain(formatMoney(140, EUR))
     },
   )
 
   test('a EUR fee reads the same number in every language', () => {
     const shown = LOCALES.map((locale) => {
       setLocale(locale)
-      return renderUiText(fee).match(/1,40\s€/u)?.[0]
+      return renderUiText(fee, EUR).match(/1,40\s€/u)?.[0]
     })
 
-    expect(shown).toEqual(Array(LOCALES.length).fill(formatMoney(140, 'EUR')))
+    expect(shown).toEqual(Array(LOCALES.length).fill(formatMoney(140, EUR)))
   })
 
   test.each([
@@ -134,14 +137,14 @@ describe('renderUiText', () => {
   ] as const)('%s words %s as a sentence with no empty quotation marks', (locale, code, copy) => {
     setLocale(locale)
 
-    expect(renderUiText({ code })).toBe(copy)
+    expect(renderUiText({ code }, EUR)).toBe(copy)
   })
 
   test('the fee that is not a figure has plain copy in every language', () => {
     for (const locale of LOCALES) {
       setLocale(locale)
 
-      const text = renderUiText({ code: 'transfer_fee_unstated' })
+      const text = renderUiText({ code: 'transfer_fee_unstated' }, EUR)
 
       expect(text).not.toBe('')
       expect(text).not.toContain('{')
@@ -159,21 +162,57 @@ describe('renderUiText', () => {
   ] as const)('%s copy for the fee without a figure', (locale, copy) => {
     setLocale(locale)
 
-    expect(renderUiText({ code: 'transfer_fee_unstated' })).toBe(copy)
+    expect(renderUiText({ code: 'transfer_fee_unstated' }, EUR)).toBe(copy)
   })
 
-  test('the money follows the currency Rust names, not a number it formatted', () => {
+  test("the money is formatted in the book's currency, from the minor units Rust sent", () => {
     setLocale('en')
 
-    const text = renderUiText({ code: 'transfer_fee', params: { fee_minor: '12345', currency: 'USD' } })
+    const text = renderUiText(
+      { code: 'transfer_fee', params: { fee_minor: '12345', currency: 'USD' } },
+      { code: 'USD', decimals: 2 },
+    )
 
     expect(text).toContain('$123.45')
+  })
+
+  test("the fee is scaled by the decimals core sent, not by the webview's for the currency", () => {
+    setLocale('en')
+
+    const text = renderUiText(
+      { code: 'transfer_fee', params: { fee_minor: '12345', currency: 'JPY' } },
+      { code: 'JPY', decimals: 2 },
+    )
+
+    expect(text).toContain('123.45')
+  })
+
+  test.each([
+    ['no book', null],
+    ['a book in another currency', { code: 'USD', decimals: 2 }],
+  ])('a fee with %s renders nothing and warns', (_label, book) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    expect(renderUiText(fee, book)).toBe('')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('transfer_fee'))
+  })
+
+  test('a long cell of the file is cut, and markup in it stays text', () => {
+    setLocale('en')
+    const long = 'x'.repeat(FILE_TEXT_LIMIT * 3)
+
+    expect(renderUiText({ code: 'csv_invalid_amount', params: { value: long } }, EUR)).toBe(
+      `"${'x'.repeat(FILE_TEXT_LIMIT)}…" is not a valid amount.`,
+    )
+    expect(renderUiText({ code: 'csv_invalid_type', params: { value: '<i>in</i>' } }, EUR)).toBe(
+      '"<i>in</i>" is not a recognized type.',
+    )
   })
 
   test('a date is shown the way the rest of the app shows dates', () => {
     setLocale('en')
 
-    expect(renderUiText({ code: 'dated_from_document', params: { date: '2026-03-15' } })).toContain(
+    expect(renderUiText({ code: 'dated_from_document', params: { date: '2026-03-15' } }, EUR)).toContain(
       '15/03/2026',
     )
   })
@@ -182,28 +221,28 @@ describe('renderUiText', () => {
     setLocale('de')
 
     expect(
-      renderUiText({ code: 'amount_assumes_two_decimals', params: { currency: 'JPY' } }),
+      renderUiText({ code: 'amount_assumes_two_decimals', params: { currency: 'JPY' } }, EUR),
     ).toContain('JPY')
   })
 
   test('an unknown code renders nothing and warns', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    expect(renderUiText({ code: 'a_code_from_a_newer_version' })).toBe('')
+    expect(renderUiText({ code: 'a_code_from_a_newer_version' }, EUR)).toBe('')
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('a_code_from_a_newer_version'))
   })
 
   test('a name inherited from Object.prototype is not a code', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    expect(renderUiText({ code: 'constructor' })).toBe('')
-    expect(renderUiText({ code: 'toString' })).toBe('')
+    expect(renderUiText({ code: 'constructor' }, EUR)).toBe('')
+    expect(renderUiText({ code: 'toString' }, EUR)).toBe('')
   })
 
   test('a fee without its currency renders nothing and warns', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    expect(renderUiText({ code: 'transfer_fee', params: { fee_minor: '140' } })).toBe('')
+    expect(renderUiText({ code: 'transfer_fee', params: { fee_minor: '140' } }, EUR)).toBe('')
     expect(warn).toHaveBeenCalled()
   })
 
@@ -216,7 +255,7 @@ describe('renderUiText', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     expect(
-      renderUiText({ code: 'transfer_fee', params: { fee_minor: minor, currency: 'EUR' } }),
+      renderUiText({ code: 'transfer_fee', params: { fee_minor: minor, currency: 'EUR' } }, EUR),
     ).toBe('')
     expect(warn).toHaveBeenCalled()
   })
@@ -225,17 +264,17 @@ describe('renderUiText', () => {
     setLocale('en')
 
     expect(
-      renderUiText({ code: 'transfer_fee', params: { fee_minor: '-140', currency: 'EUR' } }),
-    ).toContain(formatMoney(-140, 'EUR'))
+      renderUiText({ code: 'transfer_fee', params: { fee_minor: '-140', currency: 'EUR' } }, EUR),
+    ).toContain(formatMoney(-140, EUR))
   })
 
   test('a note whose value is missing renders nothing and warns, for any value', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     setLocale('en')
 
-    expect(renderUiText({ code: 'dated_from_document' })).toBe('')
-    expect(renderUiText({ code: 'dated_from_document', params: {} })).toBe('')
-    expect(renderUiText({ code: 'amount_assumes_two_decimals' })).toBe('')
+    expect(renderUiText({ code: 'dated_from_document' }, EUR)).toBe('')
+    expect(renderUiText({ code: 'dated_from_document', params: {} }, EUR)).toBe('')
+    expect(renderUiText({ code: 'amount_assumes_two_decimals' }, EUR)).toBe('')
     expect(warn).toHaveBeenCalledTimes(3)
   })
 
@@ -244,7 +283,7 @@ describe('renderUiText', () => {
     setLocale('en')
 
     expect(
-      renderUiTexts([{ code: 'ocr_read' }, { code: 'nope' }, { code: 'invoice_parsed' }]),
+      renderUiTexts([{ code: 'ocr_read' }, { code: 'nope' }, { code: 'invoice_parsed' }], EUR),
     ).toBe(
       'Read with built-in offline OCR. Review before saving. Parsed offline with the built-in invoice reader (no internet).',
     )
@@ -266,7 +305,7 @@ describe('copy polish', () => {
   ] as const)('%s %s', (locale, code, copy) => {
     setLocale(locale)
 
-    expect(renderUiText({ code })).toBe(copy)
+    expect(renderUiText({ code }, EUR)).toBe(copy)
   })
 
   test.each([
@@ -282,7 +321,7 @@ describe('copy polish', () => {
     setLocale(locale)
 
     expect(
-      renderUiText({ code: 'transfer_fee', params: { fee_minor: '140', currency: 'EUR' } }),
+      renderUiText({ code: 'transfer_fee', params: { fee_minor: '140', currency: 'EUR' } }, EUR),
     ).toBe(copy)
   })
 
@@ -299,7 +338,7 @@ describe('copy polish', () => {
     setLocale(locale)
 
     expect(
-      renderUiText({ code: 'amount_assumes_two_decimals', params: { currency: 'JPY' } }),
+      renderUiText({ code: 'amount_assumes_two_decimals', params: { currency: 'JPY' } }, EUR),
     ).toBe(copy)
   })
 })

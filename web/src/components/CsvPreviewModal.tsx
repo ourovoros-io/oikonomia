@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Modal } from './Modal'
 import { Button, Field, Select } from './ui'
 import { cn } from '../lib/cn'
-import { formatDate, formatMoney, type Account, type CsvImportPreview, type SimpleEntryInput } from '../lib/api'
+import { formatDate, formatMoney, type Account, type Currency, type CsvImportPreview, type SimpleEntryInput } from '../lib/api'
 import {
   applyBulkAccounts,
   defaultChecked,
@@ -18,7 +18,7 @@ type DraftRow = CsvImportPreview['rows'][number] & { checked: boolean }
 type Props = {
   open: boolean
   preview: CsvImportPreview | null
-  currency: string
+  currency: Currency
   walletAccounts: Account[]
   expenseAccounts: Account[]
   incomeAccounts: Account[]
@@ -132,7 +132,7 @@ export function CsvPreviewModal({
           >
             {walletAccounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name} · {currency}
+                {a.name} · {currency.code}
               </option>
             ))}
           </Select>
@@ -250,7 +250,7 @@ export function CsvPreviewModal({
                   <td className="px-3 py-2.5 text-xs">
                     {row.error ? (
                       <span className="text-[var(--color-danger)]">
-                        {renderUiText(row.error) || t('tx.csv.rowProblem.unreadable')}
+                        {renderUiText(row.error, currency) || t('tx.csv.rowProblem.unreadable')}
                       </span>
                     ) : row.duplicate ? (
                       <span className="text-[var(--color-warning)]">{t('tx.csv.duplicate')}</span>

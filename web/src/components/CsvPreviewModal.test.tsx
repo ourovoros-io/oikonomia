@@ -34,7 +34,7 @@ function renderPreview(preview: CsvImportPreview) {
     <CsvPreviewModal
       open
       preview={preview}
-      currency="EUR"
+      currency={{ code: 'EUR', decimals: 2 }}
       walletAccounts={[]}
       expenseAccounts={[]}
       incomeAccounts={[]}

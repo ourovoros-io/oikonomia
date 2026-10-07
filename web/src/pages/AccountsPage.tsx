@@ -22,7 +22,7 @@ import {
   type Entity,
   type RegisterLine,
 } from '../lib/api'
-import { parseMajorToMinor } from '../lib/money'
+import { bookCurrency, parseMajorToMinor } from '../lib/money'
 import { DateInput } from '../components/DateInput'
 import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
@@ -199,7 +199,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     ev.preventDefault()
     if (!balanceAccount || !entity) return
 
-    const minor = parseMajorToMinor(balanceAmount, entity.base_currency)
+    const minor = parseMajorToMinor(balanceAmount, bookCurrency(entity))
     if (minor === null) {
       setBalanceError(t('acct.invalidAmount'))
       return
@@ -282,13 +282,13 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                         {line.hidden ? <HiddenBadge className="ml-2" /> : null}
                       </td>
                       <td className="px-5 py-3 text-right tabular-nums text-[var(--color-fg)]">
-                        {line.debit_minor ? formatMoney(line.debit_minor, entity.base_currency) : ''}
+                        {line.debit_minor ? formatMoney(line.debit_minor, bookCurrency(entity)) : ''}
                       </td>
                       <td className="px-5 py-3 text-right tabular-nums text-[var(--color-fg)]">
-                        {line.credit_minor ? formatMoney(line.credit_minor, entity.base_currency) : ''}
+                        {line.credit_minor ? formatMoney(line.credit_minor, bookCurrency(entity)) : ''}
                       </td>
                       <td className="px-5 py-3 text-right font-medium tabular-nums text-[var(--color-fg)]">
-                        {formatMoney(line.balance_minor, entity.base_currency)}
+                        {formatMoney(line.balance_minor, bookCurrency(entity))}
                       </td>
                     </tr>
                   ))}
@@ -409,7 +409,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
             <p className="text-sm text-[var(--color-muted)]">
               {t('acct.ledgerBalanceToday')}{' '}
               <span className="font-medium tabular-nums text-[var(--color-fg)]">
-                {formatMoney(balanceCurrent, entity.base_currency)}
+                {formatMoney(balanceCurrent, bookCurrency(entity))}
               </span>
             </p>
           ) : null}

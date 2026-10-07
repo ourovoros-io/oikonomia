@@ -85,6 +85,7 @@ const entity: Entity = {
   id: 'e1',
   name: 'Personal',
   base_currency: 'EUR',
+  base_currency_decimals: 2,
   fiscal_year_start_month: 1,
   chart_template: 'personal',
 }

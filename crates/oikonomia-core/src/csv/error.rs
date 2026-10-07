@@ -38,6 +38,10 @@ pub enum CsvMappingProblem {
 impl CsvMappingProblem {
     /// Returns the stable `snake_case` identifier sent as the `problem`
     /// parameter.
+    ///
+    /// The UI has a sentence for each identifier and never shows the
+    /// identifier itself. A test checks the identifiers against
+    /// `web/src/lib/csvMappingProblems.json`.
     #[must_use]
     pub fn identifier(&self) -> &'static str {
         match self {
@@ -399,6 +403,45 @@ mod tests {
         assert_eq!(error.code(), "csv_parse");
         assert_eq!(error.params(), BTreeMap::new());
         assert!(error.to_string().contains("record 3 has 9 fields"));
+    }
+
+    listed_variants! {
+        patterns listed_problems for CsvMappingProblem {
+            CsvMappingProblem::MissingDate,
+            CsvMappingProblem::MissingDescription,
+            CsvMappingProblem::MissingAmount,
+            CsvMappingProblem::AmountAndDebitOrCredit,
+            CsvMappingProblem::UnknownColumn { .. },
+        }
+    }
+
+    /// One value of every mapping problem, in declaration order.
+    fn every_problem() -> Vec<CsvMappingProblem> {
+        vec![
+            CsvMappingProblem::MissingDate,
+            CsvMappingProblem::MissingDescription,
+            CsvMappingProblem::MissingAmount,
+            CsvMappingProblem::AmountAndDebitOrCredit,
+            CsvMappingProblem::UnknownColumn { name: "x".into() },
+        ]
+    }
+
+    /// The UI words a mapping problem by its identifier and has a sentence
+    /// for each one the fixture lists. The compiler checks `listed_problems`
+    /// against the enum, so a new problem cannot be left out of the fixture.
+    #[test]
+    fn the_problems_fixture_lists_the_identifier_of_every_mapping_problem() {
+        let samples = every_problem();
+        let identifiers: Vec<&str> = samples.iter().map(CsvMappingProblem::identifier).collect();
+        let pinned: Vec<String> = serde_json::from_str(include_str!(
+            "../../../../web/src/lib/csvMappingProblems.json"
+        ))
+        .expect("csvMappingProblems.json parses");
+
+        listed_problems::assert_every_position_once(
+            samples.iter().map(listed_problems::position).collect(),
+        );
+        assert_eq!(identifiers, pinned);
     }
 
     /// The parameter names the shared fixture pins for each code that has any.

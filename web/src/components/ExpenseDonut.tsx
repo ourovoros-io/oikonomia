@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { formatMoney, type ReportLine } from '../lib/api'
 import { formatPercentFromBps } from '../lib/arc'
 import { buildSlices, vizVar } from '../lib/expenseSlices'
-import { localeForCurrency } from '../lib/money'
+import { localeForCurrency, type Currency } from '../lib/money'
 import { cn } from '../lib/cn'
 import { t } from '../lib/i18n'
 import { useI18n } from '../lib/I18nProvider'
@@ -14,12 +14,12 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 const GAP = 2
 
 /** Donut of period expenses by category, with a hover readout in the hole. */
-export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: string }) {
+export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: Currency }) {
   useI18n()
   const [hover, setHover] = useState<number | null>(null)
   const { slices, total } = buildSlices(lines)
   // Percentages use the money's locale, so "29,5 %" sits beside "720,00 €".
-  const percent = (share: number) => `${formatPercentFromBps(Math.round(share * 10_000), localeForCurrency(ccy))}%`
+  const percent = (share: number) => `${formatPercentFromBps(Math.round(share * 10_000), localeForCurrency(ccy.code))}%`
 
   if (slices.length === 0) {
     return (

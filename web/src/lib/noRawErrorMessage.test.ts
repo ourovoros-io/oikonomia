@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
 import { describe, expect, test } from 'vitest'
+import { productionSources, SRC_ROOT } from '../test/sourceFiles'
 import { stripComments } from './stripComments.testutil'
 
 /**
@@ -39,8 +39,6 @@ import { stripComments } from './stripComments.testutil'
  * The allow-list below is for the code that owns the normalisation, and must
  * stay tiny.
  */
-
-const SRC_ROOT = fileURLToPath(new URL('../', import.meta.url))
 
 /** The only production files allowed to touch an error's message. */
 const RAW_MESSAGE_ALLOWED: Record<string, string> = {
@@ -85,28 +83,6 @@ function rawMessageReads(source: string): string[] {
   }
 
   return hits.sort((a, b) => a.index - b.index).map((hit) => hit.text)
-}
-
-/** Production sources only: no tests, no type stubs, no catalogs. */
-function productionSources(dir: string = SRC_ROOT): string[] {
-  const files: string[] = []
-
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = `${dir}${entry.name}`
-
-    if (entry.isDirectory()) {
-      if (entry.name === 'locales') continue
-      files.push(...productionSources(`${path}/`))
-      continue
-    }
-
-    if (!/\.tsx?$/.test(entry.name)) continue
-    if (/\.(test|testutil)\.tsx?$/.test(entry.name) || entry.name.endsWith('.d.ts')) continue
-
-    files.push(path)
-  }
-
-  return files
 }
 
 /** Just the names of the patterns that fired, in source order. */

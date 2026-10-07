@@ -5,6 +5,7 @@ import {
   formatDate,
   formatMoney,
   type Account,
+  type Currency,
   type DocumentMeta,
   type PostedEntryView,
 } from '../lib/api'
@@ -22,7 +23,7 @@ type Props = {
   accounts: Map<string, Account>
   /** Documents linked to this entry. */
   documents: DocumentMeta[]
-  currency: string
+  currency: Currency
   onClose: () => void
   /** Open the entry in the edit form. */
   onEdit: () => void
