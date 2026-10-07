@@ -316,10 +316,25 @@ fn replace_linux_appimage(verified: &Path, current: &Path) -> Result<()> {
         .ok_or_else(|| failed_at(InstallStep::FindRunningCopy))?;
     let staging = parent.join(format!(".{file_name}.staging"));
 
-    stage_and_swap_appimage(verified, &staging, current).map_err(|(step, err)| {
-        log::warn!("appimage replace failed: cannot {step}: {err}");
-        failed_at(step)
+    stage_and_swap_appimage(verified, &staging, current).map_err(|failure| {
+        log::warn!(
+            "appimage replace failed: cannot {}: {}",
+            failure.step,
+            failure.cause
+        );
+        failed_at(failure.step)
     })
+}
+
+/// A step of the image replacement that failed, with the operating system's
+/// error, which is logged and goes no further.
+#[cfg(any(target_os = "linux", all(test, unix)))]
+#[derive(Debug)]
+struct StepFailure {
+    /// The step that failed.
+    step: InstallStep,
+    /// Why the operating system refused it.
+    cause: std::io::Error,
 }
 
 /// Copies `verified` into a new file at `staging`, then renames it over
@@ -337,8 +352,8 @@ fn stage_and_swap_appimage(
     verified: &Path,
     staging: &Path,
     current: &Path,
-) -> std::result::Result<(), (InstallStep, std::io::Error)> {
-    let at = |step: InstallStep| move |err: std::io::Error| (step, err);
+) -> std::result::Result<(), StepFailure> {
+    let at = |step: InstallStep| move |cause: std::io::Error| StepFailure { step, cause };
 
     let mut source = std::fs::File::open(verified).map_err(at(InstallStep::FindArtifact))?;
     let mut staged = StagingFile::create(staging).map_err(at(InstallStep::Stage))?;

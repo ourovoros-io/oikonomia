@@ -109,22 +109,6 @@ const PATH_COMMANDS: [PathCommand; 4] = [
     },
 ];
 
-/// Every purpose. The `match` stops compiling when a purpose is added, so
-/// the new one cannot be left out of these tests.
-fn every_purpose() -> [GrantPurpose; 3] {
-    let all = [
-        GrantPurpose::Backup,
-        GrantPurpose::Csv,
-        GrantPurpose::Document,
-    ];
-    for purpose in all {
-        match purpose {
-            GrantPurpose::Backup | GrantPurpose::Csv | GrantPurpose::Document => {}
-        }
-    }
-    all
-}
-
 /// Starts the mock app with the path-taking commands registered, over a
 /// vault that holds one book.
 fn mock_book(label: &str) -> (MockApp, BookIds) {
@@ -202,8 +186,9 @@ fn a_path_that_was_never_granted_is_refused_by_every_command() {
 #[test]
 fn a_path_granted_for_another_purpose_is_refused_by_every_command() {
     for command in &PATH_COMMANDS {
-        let others = every_purpose()
-            .into_iter()
+        let others = GrantPurpose::ALL
+            .iter()
+            .copied()
             .filter(|purpose| *purpose != command.purpose);
 
         for other in others {
