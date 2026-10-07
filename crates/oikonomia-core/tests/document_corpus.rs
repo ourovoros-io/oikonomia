@@ -521,6 +521,49 @@ fn a_jpeg_is_read_through_ocr() {
     );
 }
 
+/// A white PNG of the given size: an image the engine finds no text on.
+fn blank_png(width: u32, height: u32) -> Vec<u8> {
+    let picture = image::GrayImage::from_pixel(width, height, image::Luma([255]));
+    let mut bytes = std::io::Cursor::new(Vec::new());
+
+    image::DynamicImage::ImageLuma8(picture)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .expect("a grey image encodes as PNG");
+    bytes.into_inner()
+}
+
+/// Runs in this file because it loads the real models; see
+/// `a_scanned_pdf_is_read_through_its_image_or_says_why_not`.
+#[test]
+fn an_image_without_text_says_ocr_found_little() {
+    let model_dir = bundled_ocr_dir();
+
+    let suggestion = analyze_document_bytes(
+        &NewDocument {
+            filename: "blank.png",
+            mime_type: "image/png",
+            data: &blank_png(400, 200),
+        },
+        &AnalyzeContext {
+            template: ChartTemplate::Blank,
+            accounts: &[],
+            default_currency: "EUR".parse().expect("EUR is a currency code"),
+            locale: Locale::En,
+        },
+        Some(model_dir.as_path()),
+    );
+
+    assert_eq!(
+        suggestion
+            .notes
+            .iter()
+            .map(|note| note.code)
+            .collect::<Vec<_>>(),
+        [UiTextCode::OcrLittleText]
+    );
+    assert_eq!(suggestion.amount_minor, None);
+}
+
 /// A one-page PDF whose only content is an image stream marked as a JPEG
 /// and holding `image_bytes`.
 fn scanned_pdf(image_bytes: &[u8]) -> Vec<u8> {
