@@ -20,6 +20,7 @@ use crate::db::{collect_rows, read_column, stored_id};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
+use crate::ledger::entities::ensure_writable_entity;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
@@ -139,19 +140,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
         .into());
     }
 
-    // An archived entity counts as missing here, as it does when an entity
-    // is renamed. The reads accept one; the `entities` module doc lists
-    // which operation does which.
-    let exists: i64 = conn
-        .query_row(
-            "SELECT COUNT(1) FROM entities WHERE id = ?1 AND archived_at IS NULL",
-            [input.entity_id.to_string()],
-            |row| row.get(0),
-        )
-        .database("check entity exists")?;
-    if exists == 0 {
-        return Err(Error::NotFound(Resource::Entity));
-    }
+    ensure_writable_entity(conn, input.entity_id)?;
 
     let id = AccountId::generate();
     let sort_order = input.sort_order.unwrap_or(DEFAULT_SORT_ORDER);

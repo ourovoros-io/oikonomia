@@ -22,7 +22,8 @@ use crate::documents::file::{CheckedDocument, NewDocument};
 use crate::domain::{Account, EntityId, JournalEntry, JournalEntryId, define_id};
 use crate::error::{DatabaseContext, Error, Resource, Result, ValidationError};
 use crate::ledger::{
-    PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
+    PostSimpleEntry, PostedEntryView, ensure_writable_entity, get_entry, list_accounts,
+    post_simple_entry_unchecked,
 };
 use crate::util::now_utc_string;
 
@@ -66,7 +67,8 @@ pub struct DocumentMeta {
 /// The entry is looked up first, so a missing entry or one in another book
 /// is reported before the file is checked.
 ///
-/// - [`Error::NotFound`]: no entry has `entry_id`.
+/// - [`Error::NotFound`]: no entry has `entry_id`, or the book is archived
+///   and takes no more documents.
 /// - [`Error::Validation`]: the entry belongs to another book
 ///   ([`ValidationError::WrongBook`]); the file is empty, larger than
 ///   [`MAX_DOCUMENT_BYTES`](crate::documents::MAX_DOCUMENT_BYTES), has a
@@ -85,6 +87,7 @@ pub fn attach_document(
     if entry.entity_id != entity_id {
         return Err(ValidationError::WrongBook.into());
     }
+    ensure_writable_entity(conn, entity_id)?;
 
     insert_document(conn, &entry, &document.checked()?)
 }

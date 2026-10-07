@@ -27,7 +27,7 @@ use crate::domain::{AccountId, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
     ACTIVE_ENTRY_PREDICATE, PostSimpleEntryRequest, PostedEntryView, SimpleBillStatus,
-    SimpleEntryKind, get_account, get_entity, post_simple_entry_unchecked,
+    SimpleEntryKind, ensure_writable_entity, get_account, get_entity, post_simple_entry_unchecked,
 };
 use crate::util::parse_date;
 
@@ -106,7 +106,7 @@ pub fn preview_bank_csv_file(
 ///
 /// - [`Error::Validation`] with [`ValidationError::Internal`] when the rows
 ///   do not all carry the same `entity_id`.
-/// - [`Error::NotFound`] when that entity does not exist.
+/// - [`Error::NotFound`] when that entity does not exist or is archived.
 /// - [`ValidationError::InvalidDate`] for a row whose `entry_date` is not a
 ///   `YYYY-MM-DD` date. The date is read before the duplicate rule is
 ///   applied, so this is reported for any row.
@@ -140,7 +140,7 @@ pub fn post_import_rows(
             .into());
         }
     }
-    let _entity = get_entity(conn, entity_id)?;
+    ensure_writable_entity(conn, entity_id)?;
 
     let transaction = conn.unchecked_transaction().database("begin CSV import")?;
     let mut seen = load_active_movements(&transaction, entity_id)?;

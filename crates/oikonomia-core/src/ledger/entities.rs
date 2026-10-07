@@ -14,19 +14,37 @@
 //! [`delete_entity`] removes an entity and everything that belongs to it, in
 //! one transaction and in an order the foreign keys allow.
 //!
-//! [`archive_entity`] deletes nothing; it only stamps `archived_at`. The
-//! operations do not treat an archived entity alike:
+//! [`archive_entity`] deletes nothing; it only stamps `archived_at`. One rule
+//! then holds for the entity: **it is readable everywhere and never
+//! writable.**
 //!
-//! - [`list_entities`] leaves it out, and its name no longer counts as taken.
-//! - [`update_entity`], [`archive_entity`] and
-//!   [`create_account`](crate::ledger::create_account) report it as
-//!   [`Error::NotFound`].
-//! - [`get_entity`], [`count_entities`] and [`delete_entity`] treat it like any
-//!   other entity. So do the reports and the cash flow series, which look the
-//!   entity up through [`get_entity`], and the recurring templates, which
-//!   only check that the row exists.
-//! - Posting an entry checks the entry's accounts and never the entity, so it
-//!   is accepted as well.
+//! | Operation on an archived entity | Outcome |
+//! |---------------------------------|---------|
+//! | A read | answers as before |
+//! | A write that takes the entity | [`Error::NotFound`] |
+//! | [`update_entity`], [`archive_entity`] | [`Error::NotFound`] |
+//! | [`delete_entity`] | deletes it |
+//!
+//! The reads are [`get_entity`], the reports, the cash flow series, the
+//! journal export, and the lists of the entity's accounts, entries,
+//! templates and documents. The writes that take the entity are posting an
+//! entry, creating or updating a template, creating an account, importing
+//! CSV rows and attaching a document; each calls
+//! [`ensure_writable_entity`], which reports the entity as if it did not
+//! exist.
+//!
+//! Every entry is inserted in one place, which makes the check, so it also
+//! covers the operations that post on the caller's behalf: voiding or
+//! correcting an entry, setting an opening balance, and posting from a
+//! template.
+//!
+//! Two things follow from being archived without being a read or a write:
+//! [`list_entities`] leaves the entity out, which is how the app hides it,
+//! and its name no longer counts as taken. [`count_entities`] counts it.
+//!
+//! The writes that name a record and no entity do not make the check:
+//! updating or archiving an account, hiding an entry, deleting a template or
+//! a document, and storing the analysis of a document.
 
 use crate::coa::template_accounts;
 use crate::db::{collect_rows, corrupt_column, read_column, stored_id};
@@ -225,6 +243,32 @@ pub fn delete_entity(conn: &Connection, id: EntityId) -> Result<()> {
         .database("begin entity deletion")?;
     delete_entity_in_tx(&tx, id)?;
     tx.commit().database("commit entity deletion")?;
+    Ok(())
+}
+
+/// Checks that `id` names an entity that may be written to: one that exists
+/// and is not archived.
+///
+/// Every write path that takes an entity calls this before it writes; the
+/// module documentation lists them. An archived entity is reported exactly
+/// like an unknown one, so a caller cannot tell the two apart.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown or archived entity.
+/// - [`Error::Database`] on database errors.
+pub(crate) fn ensure_writable_entity(conn: &Connection, id: EntityId) -> Result<()> {
+    let writable: i64 = conn
+        .query_row(
+            "SELECT COUNT(1) FROM entities WHERE id = ?1 AND archived_at IS NULL",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .database("check entity is writable")?;
+
+    if writable == 0 {
+        return Err(Error::NotFound(Resource::Entity));
+    }
     Ok(())
 }
 

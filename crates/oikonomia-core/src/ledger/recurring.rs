@@ -34,6 +34,7 @@ use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_i
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::calendar::add_months;
+use crate::ledger::entities::ensure_writable_entity;
 use crate::ledger::journals::{
     PostSimpleEntry, PostedEntryView, ensure_simple_entry_accounts, post_simple_entry_unchecked,
 };
@@ -355,7 +356,7 @@ fn get_recurring_template_as_of(
 ///
 /// # Errors
 ///
-/// - [`Error::NotFound`] for an unknown entity or an unknown account.
+/// - [`Error::NotFound`] for an unknown or archived entity, or an unknown account.
 /// - [`ValidationError::NameRequired`] for an empty name.
 /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
 /// - The account errors of
@@ -410,7 +411,7 @@ pub fn create_recurring_template(
 ///
 /// # Errors
 ///
-/// - [`Error::NotFound`] for an unknown template.
+/// - [`Error::NotFound`] for an unknown template, and for a template of an archived entity.
 /// - The errors of [`create_recurring_template`] for the new values.
 pub fn update_recurring_template(
     conn: &Connection,
@@ -499,7 +500,7 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 ///
 /// # Errors
 ///
-/// - [`Error::NotFound`] for an unknown template.
+/// - [`Error::NotFound`] for an unknown template, and for a template of an archived entity.
 /// - [`ValidationError::AmountNotPositive`] for an override amount of zero or
 ///   less.
 /// - The errors of [`post_simple_entry`](crate::ledger::post_simple_entry),
@@ -705,7 +706,7 @@ fn validated_fields(
     entity_id: EntityId,
     fields: &RecurringTemplateFields,
 ) -> Result<RecurringTemplateFields> {
-    ensure_entity_exists(conn, entity_id)?;
+    ensure_writable_entity(conn, entity_id)?;
     check_template_values(&fields.name, fields.amount_minor)?;
     ensure_simple_entry_accounts(conn, entity_id, fields.accounts)?;
 
@@ -725,9 +726,9 @@ fn validated_fields(
 
 /// Checks that the entity has a row, archived or not.
 ///
-/// An archived entity passes: its templates can still be listed, created and
-/// changed, where [`create_account`](crate::ledger::accounts::create_account)
-/// refuses one. The `entities` module doc lists which operation does which.
+/// For the list of an entity's templates, which is a read: an archived
+/// entity passes. Creating or changing a template is a write and goes
+/// through [`ensure_writable_entity`], which refuses one.
 ///
 /// # Errors
 ///

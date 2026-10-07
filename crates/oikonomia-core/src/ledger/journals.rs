@@ -74,6 +74,7 @@ use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
+use crate::ledger::entities::ensure_writable_entity;
 use crate::ledger::simple_entry::{RoleAccount, SimpleEntryAccounts};
 use crate::money::Money;
 use crate::prefs::Locale;
@@ -343,7 +344,7 @@ pub fn set_entry_hidden(
 ///
 /// # Errors
 ///
-/// - [`Error::NotFound`] for an unknown account.
+/// - [`Error::NotFound`] for an unknown or archived entity, and for an unknown account.
 /// - [`Error::AccountWrongEntity`] for an account of another entity.
 /// - [`ValidationError::AccountInactive`] for an archived account.
 /// - [`Error::TooFewLines`] for fewer than two lines.
@@ -374,7 +375,7 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 /// - [`ValidationError::AccountWrongType`] when a role holds an account of a
 ///   type the kind does not allow there.
 /// - [`ValidationError::SameAccount`] when both sides are one account.
-/// - [`Error::NotFound`] for an unknown account.
+/// - [`Error::NotFound`] for an unknown or archived entity, and for an unknown account.
 /// - [`Error::AccountWrongEntity`] for an account of another entity.
 /// - [`ValidationError::AccountInactive`] for an archived account.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
@@ -399,7 +400,7 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
 ///
 /// # Errors
 ///
-/// - [`Error::NotFound`] for an unknown entry.
+/// - [`Error::NotFound`] for an unknown entry, and for an entry of an archived entity.
 /// - [`ValidationError::EntryAlreadyVoided`] when the entry is voided or is
 ///   itself a reversing entry.
 /// - [`ValidationError::EntryNotPosted`] when the entry is a draft.
@@ -429,7 +430,7 @@ pub fn void_entry(conn: &Connection, id: JournalEntryId, locale: Locale) -> Resu
 ///
 /// # Errors
 ///
-/// - [`Error::NotFound`] for an unknown entry.
+/// - [`Error::NotFound`] for an unknown entry, and for an entry of an archived entity.
 /// - [`ValidationError::WrongBook`] when `input` names another entity than
 ///   the original's.
 /// - The errors of [`void_entry`] for the original.
@@ -481,7 +482,7 @@ pub fn replace_simple_entry(
 ///
 /// # Errors
 ///
-/// - [`Error::NotFound`] for an unknown account.
+/// - [`Error::NotFound`] for an unknown account, and for an account of an archived entity.
 /// - [`ValidationError::OpeningBalanceAccountType`] unless the account is an
 ///   asset or a liability.
 /// - [`ValidationError::AccountInactive`] for an archived account.
@@ -968,6 +969,10 @@ fn post_entry_in_tx(
     hidden: bool,
     archived: ArchivedAccounts,
 ) -> Result<PostedEntryView> {
+    // First, so that an archived entity is refused whatever else is wrong
+    // with the entry, and by every operation that posts one.
+    ensure_writable_entity(conn, input.entity_id)?;
+
     // An empty description is accepted: the quick-add form leaves it optional.
     let description = input.description.trim();
 
