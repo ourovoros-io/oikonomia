@@ -17,6 +17,7 @@ use oikonomia_core::documents::{
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::ui_text::UiTextCode;
+use oikonomia_core::util::format_date;
 use serde::{Deserialize, Serialize};
 
 const CORPUS_REL: &str = "testdata/documents";
@@ -251,7 +252,11 @@ fn assert_against_golden(id: &str, got: &DocumentSuggestion, golden: &Golden) {
         );
     }
     if let Some(date) = golden.entry_date.as_deref() {
-        assert_eq!(got.entry_date.as_deref(), Some(date), "{id}: entry_date");
+        assert_eq!(
+            got.entry_date.map(format_date).as_deref(),
+            Some(date),
+            "{id}: entry_date"
+        );
     }
     if let Some(kind) = golden.kind {
         assert_eq!(got.kind, kind, "{id}: kind");
@@ -295,7 +300,7 @@ fn write_golden(path: &Path, suggestion: &DocumentSuggestion) {
     }
     let golden = Golden {
         amount_minor: suggestion.amount_minor,
-        entry_date: suggestion.entry_date.clone(),
+        entry_date: suggestion.entry_date.map(format_date),
         kind: Some(suggestion.kind),
         merchant: suggestion.merchant.clone(),
         merchant_aliases: Vec::new(),

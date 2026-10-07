@@ -380,7 +380,7 @@ mod tests {
 #[cfg(test)]
 mod amounts_and_dates {
     use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)

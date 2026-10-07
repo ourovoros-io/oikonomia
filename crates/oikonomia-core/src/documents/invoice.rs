@@ -4,7 +4,8 @@
 //! The reader is a set of rules over lines of text, tuned for Greek and other
 //! European tax documents. It uses no network and no model, and it does not
 //! know the book: accounts are chosen later, by the analyzer.
-//! [`read_invoice_text`] is the entry point.
+//! [`read_invoice_text`] is the entry point, and an [`InvoiceReading`] what
+//! it returns: the fields in no language, for the analyzer to word.
 //!
 //! # Steps
 //!
@@ -18,7 +19,8 @@
 //!    value-date line.
 //! 4. For any other document each field is found on its own: total, date,
 //!    reference, merchant, description and kind.
-//! 5. A confidence and the reader's notes are added.
+//! 5. The reader's notes are added. The confidence is computed from what
+//!    was found ([`InvoiceReading::confidence`]).
 //!
 //! # Normalizing
 //!
@@ -177,10 +179,12 @@
 //! [`money_amounts_on_line`]: money::money_amounts_on_line
 //! [`names_a_total`]: total::names_a_total
 
-use crate::documents::analyze::{AnalyzeSource, DocumentSuggestion, EntryKindSuggestion};
+use time::Date;
+
+use crate::documents::analyze::EntryKindSuggestion;
 use crate::documents::invoice::dates::find_best_date;
 use crate::documents::invoice::kind::{classify_kind, is_utility_bill};
-use crate::documents::invoice::merchant::{find_description, find_merchant};
+use crate::documents::invoice::merchant::{Description, Merchant, find_description, find_merchant};
 use crate::documents::invoice::normalization::{contains_any, normalize};
 use crate::documents::invoice::reference::find_invoice_reference;
 use crate::documents::invoice::total::find_total_amount;
@@ -200,117 +204,129 @@ mod transfer;
 pub(super) use crate::documents::invoice::normalization::folded;
 
 /// What the invoice reader found in a document.
+///
+/// Nothing in it is worded. The reader knows neither the book nor the
+/// language of the application: a name or a line taken from the document is
+/// held as written, and a generated name or title is held as which one it is.
+/// [`merchant_in`](Self::merchant_in) and
+/// [`description_in`](Self::description_in) word them, and the analyzer turns
+/// the reading into the suggestion the UI receives.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InvoiceReading {
-    /// The draft fields and the reader's own notes.
-    pub suggestion: DocumentSuggestion,
+    /// The total, in minor units of a two-decimal currency (cents).
+    pub amount_minor: Option<i64>,
+    /// The date to post the entry on.
+    pub entry_date: Option<Date>,
+    /// The document's reference, as written.
+    pub reference: Option<String>,
+    /// Who the document is from, or on a sales invoice who it is to.
+    pub merchant: Option<Merchant>,
+    /// What the suggested description says.
+    pub description: Option<Description>,
+    /// The entry kind the document suggests.
+    pub kind: EntryKindSuggestion,
+    /// Whether the document is on credit terms or shows an amount still due.
+    pub unpaid: bool,
     /// The fee a bank transfer receipt shows, in 2-decimal minor units (cents).
     ///
     /// It is data, not a note: the note needs the book's currency, which the
     /// reader does not know, so the analyzer builds it in one place.
     pub transfer_fee_minor: Option<i64>,
-    /// The words the suggested category is chosen from: the merchant and
-    /// description, always worded in English.
-    ///
-    /// The suggestion's own merchant and description are written in the app's
-    /// language, and the category must not depend on that language, so the
-    /// category is matched against this text instead. Words taken from the
-    /// document itself are the same in it as in the suggestion.
-    pub category_hint: String,
+    /// The reader's own notes, in the order the user reads them. None of
+    /// them mentions a transfer fee.
+    pub notes: Vec<UiText>,
 }
 
-/// Reads extracted document text into a draft suggestion.
-///
-/// The accounts of the suggestion are left empty: the reader knows no book.
-/// Inside the crate, `read_invoice_text` returns the same suggestion with
-/// the transfer fee and the category hint beside it.
-///
-/// A bank transfer receipt stays [`EntryKindSuggestion::Expense`]. Its
-/// amount is the capital debit (`Ποσό Χρέωσης Κεφαλαίου` or `Ποσό:`), not the
-/// fee and not an `hh:mm` time.
-///
-/// The returned notes never mention a transfer fee, even when the receipt
-/// shows one: that note needs the book's currency, so
-/// [`analyze_document_bytes`](crate::documents::analyze_document_bytes) adds
-/// it.
-#[must_use]
-pub fn parse_invoice_text(text: &str, locale: Locale) -> DocumentSuggestion {
-    read_invoice_text(text, locale).suggestion
-}
-
-/// Reads extracted document text, keeping the transfer fee and the category
-/// hint as data.
-///
-/// The suggestion is worded in `locale`; the category hint never is. For a
-/// locale other than English the fields are read a second time in English to
-/// get the hint, so the text is parsed twice.
-pub(crate) fn read_invoice_text(text: &str, locale: Locale) -> InvoiceReading {
-    let mut reading = read_fields(text, locale);
-
-    if locale != Locale::En {
-        reading.category_hint = read_fields(text, Locale::En).category_hint;
+impl InvoiceReading {
+    /// The merchant's name, with a generic supplier worded in `locale`.
+    pub(crate) fn merchant_in(&self, locale: Locale) -> Option<&str> {
+        self.merchant
+            .as_ref()
+            .map(|merchant| merchant.in_locale(locale))
     }
 
-    reading
+    /// The description, with a generated title worded in `locale`.
+    pub(crate) fn description_in(&self, locale: Locale) -> Option<String> {
+        self.description.as_ref()?.in_locale(
+            locale,
+            self.merchant_in(locale),
+            self.reference.as_deref(),
+        )
+    }
+
+    /// The words the suggested category is chosen from: the merchant and the
+    /// description, always worded in English.
+    ///
+    /// The category must not depend on the language of the application, so
+    /// it is matched against this text and never against the worded fields
+    /// of the suggestion. Words taken from the document itself are the same
+    /// in both.
+    pub(crate) fn category_hint(&self) -> String {
+        format!(
+            "{} {}",
+            self.merchant_in(Locale::En).unwrap_or(""),
+            self.description_in(Locale::En).as_deref().unwrap_or("")
+        )
+    }
+
+    /// A rough confidence between 0 and 1: the sum of the [`confidence`]
+    /// parts for what was found, capped at the ceiling.
+    pub(crate) fn confidence(&self) -> f32 {
+        let mut score = confidence::BASE;
+        if self.amount_minor.is_some() {
+            score += confidence::AMOUNT;
+        }
+        if self.entry_date.is_some() {
+            score += confidence::DATE;
+        }
+        if self.reference.is_some() {
+            score += confidence::REFERENCE;
+        }
+        if matches!(
+            self.kind,
+            EntryKindSuggestion::Income | EntryKindSuggestion::Bill
+        ) {
+            score += confidence::CLASSIFIED_KIND;
+        }
+        score.min(confidence::CEILING)
+    }
 }
 
-/// The merchant and description of a suggestion, joined for keyword matching.
-fn category_hint_of(suggestion: &DocumentSuggestion) -> String {
-    format!(
-        "{} {}",
-        suggestion.merchant.as_deref().unwrap_or(""),
-        suggestion.description.as_deref().unwrap_or("")
-    )
-}
-
-/// Reads every field of `text`, wording the generated merchant and
-/// description in `locale`.
+/// Reads extracted document text.
 ///
 /// The text is normalized and folded here, once. A bank transfer receipt is
-/// handed to [`parse_bank_transfer`]; any other document has each field found
-/// on its own.
-fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
+/// handed to [`parse_bank_transfer`]: its amount is the capital debit
+/// (`Ποσό Χρέωσης Κεφαλαίου` or `Ποσό:`), not the fee and not an `hh:mm`
+/// time, and it stays an expense. Any other document has each field found on
+/// its own.
+pub(crate) fn read_invoice_text(text: &str) -> InvoiceReading {
     let normalized = normalize(text);
     let folded_full = folded(&normalized);
     if is_bank_transfer_receipt(&folded_full) {
-        return parse_bank_transfer(&normalized, locale);
+        return parse_bank_transfer(&normalized);
     }
 
     let amount_minor = find_total_amount(&normalized, &folded_full);
-    let entry_date = find_best_date(&normalized);
     let reference = find_invoice_reference(&normalized);
-    let merchant = find_merchant(&normalized, &folded_full, locale);
+    let merchant = find_merchant(&normalized, &folded_full);
     let description = find_description(
         &normalized,
         &folded_full,
-        merchant.as_deref(),
-        reference.as_deref(),
-        locale,
+        merchant.is_some(),
+        reference.is_some(),
     );
-    let (kind, bill_unpaid) = classify_kind(&folded_full);
-
-    let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
-
-    let suggestion = DocumentSuggestion {
-        source: AnalyzeSource::Heuristic,
-        model: Some("invoice-parser-v1".into()),
-        kind,
-        amount_minor,
-        entry_date,
-        description,
-        reference,
-        merchant,
-        bill_unpaid,
-        category_account_id: None,
-        wallet_account_id: None,
-        payable_account_id: None,
-        confidence,
-        notes: build_notes(amount_minor, kind, bill_unpaid, &folded_full),
-    };
+    let (kind, unpaid) = classify_kind(&folded_full);
 
     InvoiceReading {
-        category_hint: category_hint_of(&suggestion),
-        suggestion,
+        amount_minor,
+        entry_date: find_best_date(&normalized),
+        reference,
+        merchant,
+        description,
+        kind,
+        unpaid,
         transfer_fee_minor: None,
+        notes: build_notes(amount_minor, kind, unpaid, &folded_full),
     }
 }
 
@@ -318,7 +334,7 @@ fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
 /// rate of zero says the same; [`states_a_zero_rate`] finds that.
 const VAT_EXEMPT_MARKERS: &[&str] = &["χωρις φπα"];
 
-/// The parts of the confidence that [`score_confidence`] adds up.
+/// The parts of the confidence that [`InvoiceReading::confidence`] adds up.
 ///
 /// The figure is a rough guide for the user, not a probability. An amount
 /// weighs most, then a date, then a reference. The parts sum to 0.9, under
@@ -340,33 +356,6 @@ mod confidence {
     pub(super) const CLASSIFIED_KIND: f32 = 0.05;
     /// The most a heuristic reading claims.
     pub(super) const CEILING: f32 = 0.95;
-}
-
-/// A rough confidence between 0 and 1 for a reading: the sum of the
-/// [`confidence`] parts for what was found, capped at the ceiling.
-fn score_confidence(
-    amount: Option<i64>,
-    date: Option<&String>,
-    reference: Option<&String>,
-    kind: EntryKindSuggestion,
-) -> f32 {
-    let mut score = confidence::BASE;
-    if amount.is_some() {
-        score += confidence::AMOUNT;
-    }
-    if date.is_some() {
-        score += confidence::DATE;
-    }
-    if reference.is_some() {
-        score += confidence::REFERENCE;
-    }
-    if matches!(
-        kind,
-        EntryKindSuggestion::Income | EntryKindSuggestion::Bill
-    ) {
-        score += confidence::CLASSIFIED_KIND;
-    }
-    score.min(confidence::CEILING)
 }
 
 /// The reader's notes for a document that is not a transfer receipt, in the
@@ -431,6 +420,7 @@ fn states_a_zero_rate(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::documents::analyze::parse_invoice_text;
     use crate::documents::invoice::dates::{DATE_LABELS, VALUE_DATE_LABELS};
     use crate::documents::invoice::kind::{
         CUSTOMER_BLOCK_LABEL, INVOICE_WORD_GREEK, INVOICE_WORDS, POWER_BUSINESS_TARIFF,
@@ -451,6 +441,7 @@ mod tests {
         TRANSFER_AMOUNT_LABEL, TRANSFER_DATE_LABELS, TRANSFER_FEE_LABELS, TRANSFER_MARKERS,
         TRANSFER_PRINCIPAL_LABEL, TRANSFER_REFERENCE_LABEL,
     };
+    use time::macros::date;
 
     /// Every label and marker constant of the reader. A constant added to
     /// the module has to be added here to be checked.
@@ -530,7 +521,7 @@ mod tests {
         );
         assert_eq!(suggestion.amount_minor, Some(186_000), "expected €1860.00");
         assert_eq!(suggestion.kind, EntryKindSuggestion::Income);
-        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-06-25"));
+        assert_eq!(suggestion.entry_date, Some(date!(2026 - 06 - 25)));
         assert_eq!(suggestion.reference.as_deref(), Some("900000000000001"));
         assert!(
             suggestion
@@ -657,24 +648,34 @@ mod tests {
     }
 
     #[test]
-    fn the_category_hint_is_worded_in_english_whatever_the_language() {
-        let text = corpus_text("synthetic/text/dei_settlement.txt");
-        let english = read_invoice_text(&text, crate::prefs::Locale::En);
+    fn the_category_hint_is_worded_in_english() {
+        let reading = read_invoice_text(&corpus_text("synthetic/text/dei_settlement.txt"));
 
-        for locale in [
-            crate::prefs::Locale::El,
-            crate::prefs::Locale::Fr,
-            crate::prefs::Locale::De,
-        ] {
-            let reading = read_invoice_text(&text, locale);
+        assert_eq!(reading.category_hint(), "ΔΕΗ ΔΕΗ — Electricity bill");
+        assert_eq!(
+            reading.description_in(crate::prefs::Locale::El).as_deref(),
+            Some("ΔΕΗ — Λογαριασμός ρεύματος"),
+            "the description itself follows the language"
+        );
+    }
 
-            assert_eq!(reading.category_hint, english.category_hint, "{locale:?}");
-        }
+    #[test]
+    fn a_generic_supplier_is_worded_only_when_asked_for_a_language() {
+        let reading = read_invoice_text("Λογαριασμός\nΠρομήθεια φυσικού αερίου\nΣΥΝΟΛΟ 45,90 EUR");
 
+        assert_eq!(reading.merchant, Some(Merchant::UnnamedGasSupplier));
+        assert_eq!(
+            reading.merchant_in(crate::prefs::Locale::En),
+            Some("Natural gas")
+        );
+        assert_eq!(
+            reading.merchant_in(crate::prefs::Locale::De),
+            Some("Erdgas")
+        );
         assert!(
-            english.category_hint.contains("Electricity bill"),
+            reading.category_hint().starts_with("Natural gas "),
             "{:?}",
-            english.category_hint
+            reading.category_hint()
         );
     }
 }
@@ -682,6 +683,8 @@ mod tests {
 #[cfg(test)]
 mod amounts_and_dates {
     use super::*;
+    use crate::documents::analyze::{DocumentSuggestion, parse_invoice_text};
+    use time::macros::date;
 
     /// Synthetic jumbled layout (the shape `pdf_extract` produces on a
     /// text-layer utility PDF). Placeholders only — not a live dump.
@@ -700,7 +703,7 @@ mod amounts_and_dates {
             suggestion.amount_minor
         );
         assert_ne!(suggestion.kind, EntryKindSuggestion::Income);
-        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-13"));
+        assert_eq!(suggestion.entry_date, Some(date!(2026 - 08 - 13)));
         assert!(
             suggestion.reference.as_deref().is_some_and(|reference| {
                 reference.contains("NGS")
@@ -753,6 +756,7 @@ mod properties {
     use proptest::prelude::*;
 
     use super::*;
+    use crate::documents::analyze::parse_invoice_text;
 
     /// Words, amounts and dates an invoice reader looks for, in the scripts
     /// the app supports.

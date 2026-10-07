@@ -403,6 +403,19 @@ fn document_suggestion() {
 }
 
 #[test]
+fn a_suggestion_dated_on_a_day_the_calendar_lacks_is_refused_by_the_json_layer() {
+    assert!(
+        is_refused::<DocumentSuggestion>(concat!(
+            r#"{"source":"none","model":null,"kind":"expense","amount_minor":null,"#,
+            r#""entry_date":"2026-02-31","description":null,"reference":null,"merchant":null,"#,
+            r#""bill_unpaid":false,"category_account_id":null,"wallet_account_id":null,"#,
+            r#""payable_account_id":null,"confidence":0.0,"notes":[]}"#,
+        )),
+        "accepted"
+    );
+}
+
+#[test]
 fn analyzer_status() {
     assert_json_is_pinned::<AnalyzerStatus>(
         r#"{"ocr_available":true,"offline":true,"hint":"ready"}"#,

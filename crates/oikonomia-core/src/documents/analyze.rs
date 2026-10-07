@@ -82,12 +82,15 @@
 //!
 //! # From text to suggestion
 //!
-//! The invoice reader ([`read_invoice_text`]) fills in the amount, date,
-//! reference, merchant, description and kind. [`finalize_suggestion`] adds
-//! the accounts. The notes end up in this order: where the text came from,
-//! the reader's own notes, the transfer fee, the request to add a payable
-//! account, the warning that the amount was withheld because the book's
-//! currency does not have two decimals, and the document's date.
+//! The invoice reader ([`read_invoice_text`]) finds the amount, date,
+//! reference, merchant, description and kind, in no language.
+//! [`suggest_accounts`] chooses the book's accounts for them, and
+//! [`suggestion_from_reading`] words the reading in the language of the
+//! application and builds the suggestion, once. The notes end up in this
+//! order: where the text came from, the reader's own notes, the transfer
+//! fee, the request to add a payable account, the warning that the amount
+//! was withheld because the book's currency does not have two decimals, and
+//! the document's date.
 
 use std::path::Path;
 
@@ -97,11 +100,12 @@ use std::path::Path;
 // version bump of one stops the build (the types no longer match).
 use pdf_extract as lopdf;
 use serde::{Deserialize, Serialize};
+use time::Date;
 
 use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
 use crate::documents::account_match::{match_expense_account, match_income_account};
-use crate::documents::invoice::read_invoice_text;
+use crate::documents::invoice::{InvoiceReading, read_invoice_text};
 use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use crate::documents::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
 use crate::documents::pdf_repair::repair_xref_offsets;
@@ -110,6 +114,7 @@ use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode};
 use crate::error::{AccountRole, Result};
 use crate::prefs::Locale;
 use crate::ui_text::{UiText, UiTextCode};
+use crate::util::format_date;
 
 /// Suggested high-level entry kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,9 +151,9 @@ pub struct DocumentSuggestion {
     pub kind: EntryKindSuggestion,
     /// Amount in minor units (entity currency assumed).
     pub amount_minor: Option<i64>,
-    /// The document's date as `YYYY-MM-DD`, if one was found. Always a day
-    /// the calendar has.
-    pub entry_date: Option<String>,
+    /// The document's date, if one was found. Written as `YYYY-MM-DD`.
+    #[serde(with = "optional_date")]
+    pub entry_date: Option<Date>,
     /// Description / merchant line.
     pub description: Option<String>,
     /// Invoice / reference number.
@@ -169,6 +174,53 @@ pub struct DocumentSuggestion {
     /// per sentence, in the order they are shown. The UI words them in the
     /// current language; see [`UiTextCode`].
     pub notes: Vec<UiText>,
+}
+
+/// Writes an optional [`Date`] as a `YYYY-MM-DD` string or `null`, the form
+/// the web UI reads.
+///
+/// [`serde_date`](crate::util::serde_date) does the same for a date that is
+/// always there.
+mod optional_date {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use time::Date;
+
+    use crate::util::{format_date, parse_date};
+
+    /// Serializes `date` as the string [`format_date`] gives, or as `null`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serializer's own error when it cannot write the value.
+    #[expect(
+        clippy::ref_option,
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde calls a `with` serializer with a reference to the field"
+    )]
+    pub(super) fn serialize<S: Serializer>(
+        date: &Option<Date>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match date {
+            Some(date) => serializer.serialize_some(&format_date(*date)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    /// Deserializes `null` or a string read through [`parse_date`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserializer's error when the value is neither `null`
+    /// nor a string, and a custom error when the string is not a
+    /// `YYYY-MM-DD` date.
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Date>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| parse_date(&text).map_err(serde::de::Error::custom))
+            .transpose()
+    }
 }
 
 /// What the analyzer status line says.
@@ -255,47 +307,40 @@ pub fn analyze_document_bytes(
     model_dir: Option<&std::path::Path>,
 ) -> Result<DocumentSuggestion> {
     let AnalyzeContext {
-        template,
-        accounts,
         default_currency,
         locale,
+        ..
     } = *context;
     let mime = mime_type.to_ascii_lowercase();
 
-    let mut category_hint = String::new();
-    let mut source = AnalyzeSource::None;
-    let mut model = None;
-
     let mut suggestion = match read_document_text(filename, &mime, data, model_dir) {
         ExtractedText::Read { text, origin } => {
-            let reading = read_invoice_text(&text, locale);
-            category_hint = reading.category_hint;
-            source = origin.source();
+            let reading = read_invoice_text(&text);
+            let accounts = suggest_accounts(context, reading.kind, &reading.category_hint());
+            let fee_minor = reading.transfer_fee_minor;
 
-            let mut suggestion = reading.suggestion;
-            model = origin
-                .model_label()
-                .map(str::to_owned)
-                .or_else(|| suggestion.model.clone());
-            if let Some(fee_minor) = reading.transfer_fee_minor {
+            let mut suggestion = suggestion_from_reading(reading, origin, locale, accounts);
+            suggestion.notes.insert(0, UiText::new(origin.note()));
+            if let Some(fee_minor) = fee_minor {
                 suggestion
                     .notes
                     .push(transfer_fee_note(fee_minor, default_currency));
             }
-            suggestion.notes.insert(0, UiText::new(origin.note()));
             suggestion
         }
-        ExtractedText::Unread(reason) => empty_suggestion(UiText::new(reason)),
+        ExtractedText::Unread(reason) => {
+            let accounts = suggest_accounts(context, EntryKindSuggestion::Expense, "");
+
+            unread_suggestion(UiText::new(reason), accounts)
+        }
     };
 
-    finalize_suggestion(
-        &mut suggestion,
-        template,
-        accounts,
-        &category_hint,
-        source,
-        model,
-    );
+    let unpaid_bill = suggestion.kind == EntryKindSuggestion::Bill && suggestion.bill_unpaid;
+    if unpaid_bill && lacks_payable_account(context, suggestion.payable_account_id) {
+        suggestion
+            .notes
+            .push(UiText::new(UiTextCode::AddPayableAccount));
+    }
 
     // The invoice reader emits 2-exponent minor units (cents). For currencies
     // with a different exponent the value would be silently wrong, so drop it.
@@ -310,8 +355,8 @@ pub fn analyze_document_bytes(
 
     // Document dates (issue or due date) often fall outside the current month;
     // say so, or the entry seems to vanish from the dashboard after posting.
-    if let Some(date) = suggestion.entry_date.as_deref() {
-        let note = UiText::new(UiTextCode::DatedFromDocument).with_param("date", date);
+    if let Some(date) = suggestion.entry_date {
+        let note = UiText::new(UiTextCode::DatedFromDocument).with_param("date", format_date(date));
         suggestion.notes.push(note);
     }
 
@@ -333,60 +378,120 @@ fn transfer_fee_note(fee_minor: i64, currency: CurrencyCode) -> UiText {
     }
 }
 
-/// Completes a suggestion with where it came from and the book's accounts.
+/// The accounts of the book that a suggestion points at.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SuggestedAccounts {
+    /// The expense or income account the document is filed under.
+    category: Option<AccountId>,
+    /// The bank, cash or card account that pays or receives.
+    wallet: Option<AccountId>,
+    /// The account an unpaid bill is owed on.
+    payable: Option<AccountId>,
+}
+
+/// Chooses the accounts for a document of `kind` in the book of `context`.
 ///
-/// An account the suggestion already names is kept. The category comes from
-/// the keyword matcher on `category_hint`, by entry kind; the wallet and the
-/// payable account are the book's defaults for those roles. An unpaid bill
-/// in a book with no payable account to point at gets the note that asks the
-/// user to add one.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the analysis source and model ride beside the chart inputs; tracked for the API pass"
-)]
-fn finalize_suggestion(
-    suggestion: &mut DocumentSuggestion,
-    template: ChartTemplate,
-    accounts: &[Account],
+/// The category comes from the keyword matcher on `category_hint`, by entry
+/// kind. The wallet and the payable account are the book's defaults for
+/// those roles.
+fn suggest_accounts(
+    context: &AnalyzeContext<'_>,
+    kind: EntryKindSuggestion,
     category_hint: &str,
-    source: AnalyzeSource,
-    model: Option<String>,
-) {
-    suggestion.source = source;
-    suggestion.model = model;
+) -> SuggestedAccounts {
+    let AnalyzeContext {
+        template, accounts, ..
+    } = *context;
 
-    if suggestion.category_account_id.is_none() {
-        suggestion.category_account_id = match suggestion.kind {
-            EntryKindSuggestion::Income => match_income_account(template, accounts, category_hint),
-            EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
-                match_expense_account(template, accounts, category_hint)
-            }
-        };
-    }
-    if suggestion.wallet_account_id.is_none() {
-        suggestion.wallet_account_id =
-            default_account_for_role(template, accounts, AccountRole::Payment);
-    }
-    if suggestion.payable_account_id.is_none() {
-        suggestion.payable_account_id =
-            default_account_for_role(template, accounts, AccountRole::BillsPayable);
-    }
+    let category = match kind {
+        EntryKindSuggestion::Income => match_income_account(template, accounts, category_hint),
+        EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
+            match_expense_account(template, accounts, category_hint)
+        }
+    };
 
-    // A seeded book has a real payable account. When identity cannot find it
-    // (deactivated or re-coded), any liability suggested above is only a
-    // stand-in, and the user must still be told to add a payable account. A
-    // blank book seeds none, so there a liability is the legitimate answer.
-    let payable_is_missing = suggestion.payable_account_id.is_none()
-        || (template != ChartTemplate::Blank
-            && seeded_account_for_role(template, accounts, AccountRole::BillsPayable).is_none());
-
-    let unpaid_bill = suggestion.kind == EntryKindSuggestion::Bill && suggestion.bill_unpaid;
-    if unpaid_bill && payable_is_missing {
-        suggestion
-            .notes
-            .push(UiText::new(UiTextCode::AddPayableAccount));
+    SuggestedAccounts {
+        category,
+        wallet: default_account_for_role(template, accounts, AccountRole::Payment),
+        payable: default_account_for_role(template, accounts, AccountRole::BillsPayable),
     }
 }
+
+/// Whether the user still has to add a payable account, given the one that
+/// was suggested.
+///
+/// A seeded book has a real payable account. When identity cannot find it
+/// (deactivated or re-coded), any liability suggested is only a stand-in,
+/// and the user must still be told to add a payable account. A blank book
+/// seeds none, so there a liability is the legitimate answer.
+fn lacks_payable_account(context: &AnalyzeContext<'_>, payable: Option<AccountId>) -> bool {
+    let AnalyzeContext {
+        template, accounts, ..
+    } = *context;
+
+    payable.is_none()
+        || (template != ChartTemplate::Blank
+            && seeded_account_for_role(template, accounts, AccountRole::BillsPayable).is_none())
+}
+
+/// Reads extracted document text into a draft suggestion, worded in
+/// `locale`.
+///
+/// The accounts of the suggestion are left empty: no book is given. The
+/// source and model are those of a document's own text.
+///
+/// A bank transfer receipt stays [`EntryKindSuggestion::Expense`]. Its
+/// amount is the capital debit (`Ποσό Χρέωσης Κεφαλαίου` or `Ποσό:`), not the
+/// fee and not an `hh:mm` time.
+///
+/// The returned notes are the reader's own. They never mention a transfer
+/// fee, even when the receipt shows one: that note needs the book's
+/// currency, so [`analyze_document_bytes`] adds it.
+#[must_use]
+pub fn parse_invoice_text(text: &str, locale: Locale) -> DocumentSuggestion {
+    suggestion_from_reading(
+        read_invoice_text(text),
+        TextOrigin::DocumentText,
+        locale,
+        SuggestedAccounts::default(),
+    )
+}
+
+/// The suggestion for a reading: its fields worded in `locale`, with where
+/// the text came from and the accounts chosen for it.
+///
+/// The notes are the reader's own, in its order.
+fn suggestion_from_reading(
+    reading: InvoiceReading,
+    origin: TextOrigin,
+    locale: Locale,
+    accounts: SuggestedAccounts,
+) -> DocumentSuggestion {
+    let description = reading.description_in(locale);
+    let merchant = reading.merchant_in(locale).map(str::to_owned);
+    let confidence = reading.confidence();
+
+    DocumentSuggestion {
+        source: origin.source(),
+        model: Some(origin.model_label().to_owned()),
+        kind: reading.kind,
+        amount_minor: reading.amount_minor,
+        entry_date: reading.entry_date,
+        description,
+        reference: reading.reference,
+        merchant,
+        bill_unpaid: reading.unpaid,
+        category_account_id: accounts.category,
+        wallet_account_id: accounts.wallet,
+        payable_account_id: accounts.payable,
+        confidence,
+        notes: reading.notes,
+    }
+}
+
+/// The model label of a suggestion read from a document's own text by the
+/// invoice reader.
+const READER_MODEL_LABEL: &str = "invoice-parser-v1";
 
 /// The model label of a suggestion whose text came from the bundled OCR.
 const OCR_MODEL_LABEL: &str = "ocrs-bundled";
@@ -412,11 +517,12 @@ impl TextOrigin {
         }
     }
 
-    /// The label that replaces the reader's own when OCR produced the text.
-    const fn model_label(self) -> Option<&'static str> {
+    /// The label the suggestion reports as its model: the invoice reader's
+    /// for a document's own text, the OCR's when OCR produced the text.
+    const fn model_label(self) -> &'static str {
         match self {
-            Self::DocumentText => None,
-            Self::ImageOcr | Self::PdfImageOcr => Some(OCR_MODEL_LABEL),
+            Self::DocumentText => READER_MODEL_LABEL,
+            Self::ImageOcr | Self::PdfImageOcr => OCR_MODEL_LABEL,
         }
     }
 
@@ -524,10 +630,11 @@ fn ocr_image(data: &[u8], model_dir: Option<&Path>) -> OcrOutcome {
     }
 }
 
-/// A suggestion with no field read, carrying `note` as its only note.
+/// The suggestion for a file no text was read from: no field, `note` as the
+/// only note, and the accounts an expense with no hint gets.
 ///
 /// The kind is `Expense` and the confidence zero.
-fn empty_suggestion(note: UiText) -> DocumentSuggestion {
+fn unread_suggestion(note: UiText, accounts: SuggestedAccounts) -> DocumentSuggestion {
     DocumentSuggestion {
         source: AnalyzeSource::None,
         model: None,
@@ -538,9 +645,9 @@ fn empty_suggestion(note: UiText) -> DocumentSuggestion {
         reference: None,
         merchant: None,
         bill_unpaid: false,
-        category_account_id: None,
-        wallet_account_id: None,
-        payable_account_id: None,
+        category_account_id: accounts.category,
+        wallet_account_id: accounts.wallet,
+        payable_account_id: accounts.payable,
         confidence: 0.0,
         notes: vec![note],
     }

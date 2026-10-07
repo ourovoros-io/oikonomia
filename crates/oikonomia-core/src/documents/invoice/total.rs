@@ -422,7 +422,8 @@ fn is_amount_only_line(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::documents::analyze::EntryKindSuggestion;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
+    use time::macros::date;
 
     /// Loads a corpus fixture, so the unit tests read the same documents as
     /// the golden test in `tests/document_corpus.rs`.
@@ -463,7 +464,7 @@ mod tests {
             suggestion.kind
         );
         assert_ne!(suggestion.kind, EntryKindSuggestion::Income);
-        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-18"));
+        assert_eq!(suggestion.entry_date, Some(date!(2026 - 08 - 18)));
         assert!(
             suggestion
                 .merchant
@@ -503,7 +504,7 @@ mod tests {
             "kind={:?}",
             suggestion.kind
         );
-        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-13"));
+        assert_eq!(suggestion.entry_date, Some(date!(2026 - 08 - 13)));
         assert!(
             suggestion.merchant.as_deref().is_some_and(|merchant| {
                 let merchant = merchant.to_lowercase();
@@ -527,7 +528,7 @@ mod tests {
 #[cfg(test)]
 mod amounts_and_dates {
     use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
@@ -599,7 +600,7 @@ mod amounts_and_dates {
 mod documented_tradeoffs {
     use super::*;
     use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)

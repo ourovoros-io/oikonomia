@@ -5,9 +5,10 @@
 //! a bill, a sales invoice or a referenced invoice, and otherwise the first
 //! line of the document's item table.
 //!
-//! Names taken from the document are returned as written. Generated names
-//! and titles are worded in the locale the caller passes, by
-//! [`crate::text`].
+//! Neither is worded here. A name taken from the document is returned as
+//! written; a generated name or title is returned as which one it is
+//! ([`Merchant`], [`Description`]), and worded later in the language the
+//! caller asks for, by [`crate::text`].
 
 use std::ops::RangeInclusive;
 
@@ -19,8 +20,9 @@ use crate::documents::invoice::kind::{
 use crate::documents::invoice::normalization::{contains_any, folded};
 use crate::prefs::Locale;
 use crate::text::{
-    BillKind, bill_description, customer_invoice_description, electricity_supplier_merchant,
-    invoice_reference_description, invoice_word, natural_gas_merchant,
+    BillKind, bank_transfer_description, bill_description, customer_invoice_description,
+    electricity_supplier_merchant, invoice_reference_description, invoice_word,
+    natural_gas_merchant,
 };
 
 /// Fewest characters of a payee, issuer or customer name.
@@ -28,14 +30,87 @@ use crate::text::{
 /// The reason for 3 is not recorded, and no test pins it.
 pub(super) const MIN_NAME_CHARS: usize = 3;
 
+/// The counterparty of a document: a name the document or the brand table
+/// gives, or a generic supplier that has to be worded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Merchant {
+    /// A name taken from the document or from the brand table. It is the
+    /// same in every language.
+    Named(String),
+    /// The supplier of a natural gas bill that names no known brand.
+    UnnamedGasSupplier,
+    /// The supplier of an electricity bill that names no known brand.
+    UnnamedElectricitySupplier,
+}
+
+impl Merchant {
+    /// The name to show, worded in `locale` when it is a generic supplier.
+    pub(crate) fn in_locale(&self, locale: Locale) -> &str {
+        match self {
+            Self::Named(name) => name,
+            Self::UnnamedGasSupplier => natural_gas_merchant(locale),
+            Self::UnnamedElectricitySupplier => electricity_supplier_merchant(locale),
+        }
+    }
+}
+
+/// What the suggested description of a document says.
+///
+/// Only [`LineItem`](Self::LineItem) holds text of the document. The others
+/// name a title that [`Description::in_locale`] generates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Description {
+    /// A sales invoice: the customer, the word "invoice" and the reference.
+    CustomerInvoice,
+    /// A bill for a service, with the merchant in front.
+    Bill(BillKind),
+    /// The first line of the document's item table, as written.
+    LineItem(String),
+    /// The word "invoice", the reference and the merchant.
+    InvoiceReference,
+    /// The word "invoice" alone.
+    InvoiceWord,
+    /// The merchant's name alone.
+    MerchantName,
+    /// A bank transfer, with the payee.
+    BankTransfer,
+}
+
+impl Description {
+    /// The description in `locale`, built around the `merchant` and
+    /// `reference` of the same reading.
+    ///
+    /// `merchant` is already worded. `None` when the description needs a
+    /// merchant or a reference and the reading has none; the reader does not
+    /// produce such a pair.
+    pub(crate) fn in_locale(
+        &self,
+        locale: Locale,
+        merchant: Option<&str>,
+        reference: Option<&str>,
+    ) -> Option<String> {
+        let description = match self {
+            Self::CustomerInvoice => customer_invoice_description(locale, merchant?, reference),
+            Self::Bill(kind) => bill_description(locale, *kind, merchant),
+            Self::LineItem(words) => words.clone(),
+            Self::InvoiceReference => invoice_reference_description(locale, reference?, merchant),
+            Self::InvoiceWord => invoice_word(locale).to_owned(),
+            Self::MerchantName => merchant?.to_owned(),
+            Self::BankTransfer => bank_transfer_description(locale, merchant),
+        };
+
+        Some(description)
+    }
+}
+
 /// The counterparty of a document. The first of these that yields a name:
 ///
 /// 1. on a sales invoice, the customer ([`sales_invoice_customer`]). This
 ///    comes before brand recognition because the issuer's payment footer
 ///    often names a bank ("PIRAEUS BANK, IBAN ...") that must not win;
 /// 2. a known biller ([`known_brand`]);
-/// 3. on a utility bill of no known brand, a generic supplier name in
-///    `locale`: natural gas, or electricity for a "Power Business" tariff;
+/// 3. on a utility bill of no known brand, a generic supplier: natural gas,
+///    or electricity for a "Power Business" tariff;
 /// 4. the first `Επωνυμία` (legal name) line: what follows its colon, or
 ///    else the line without the label words at its start. When the label is
 ///    neither followed by a colon nor at the start, the whole line is
@@ -44,23 +119,23 @@ pub(super) const MIN_NAME_CHARS: usize = 3;
 ///    and does not hold the Greek word for "invoice".
 ///
 /// `text` is normalized and `folded_text` is its folded form.
-pub(super) fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Option<String> {
+pub(super) fn find_merchant(text: &str, folded_text: &str) -> Option<Merchant> {
     if is_sales_invoice(folded_text)
         && let Some(customer) = sales_invoice_customer(text)
     {
-        return Some(customer);
+        return Some(Merchant::Named(customer));
     }
 
     if let Some((brand, _)) = known_brand(folded_text) {
-        return Some(brand.to_owned());
+        return Some(Merchant::Named(brand.to_owned()));
     }
 
     if is_utility_bill(folded_text) {
         if contains_any(folded_text, GAS_SUPPLY_MARKERS) {
-            return Some(natural_gas_merchant(locale).into());
+            return Some(Merchant::UnnamedGasSupplier);
         }
         if folded_text.contains(POWER_BUSINESS_TARIFF) {
-            return Some(electricity_supplier_merchant(locale).into());
+            return Some(Merchant::UnnamedElectricitySupplier);
         }
     }
 
@@ -69,7 +144,7 @@ pub(super) fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Op
             if let Some(name) = value_after_colon(line)
                 && name.chars().count() >= MIN_NAME_CHARS
             {
-                return Some(name);
+                return Some(Merchant::Named(name));
             }
             // No colon: the name is what follows the label word.
             let cleaned = line
@@ -78,7 +153,7 @@ pub(super) fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Op
                 .collect::<Vec<_>>()
                 .join(" ");
             if cleaned.chars().count() >= MIN_NAME_CHARS {
-                return Some(cleaned);
+                return Some(Merchant::Named(cleaned));
             }
         }
     }
@@ -90,7 +165,7 @@ pub(super) fn find_merchant(text: &str, folded_text: &str, locale: Locale) -> Op
                 && line.chars().any(char::is_alphabetic)
                 && !folded(line).contains(INVOICE_WORD_GREEK)
         })
-        .map(ToOwned::to_owned)
+        .map(|line| Merchant::Named(line.to_owned()))
 }
 
 /// Lengths of a line that can stand in for the merchant's name.
@@ -191,31 +266,27 @@ const MIN_DESCRIPTION_CHARS: usize = 4;
 
 /// The description to suggest. The first of these that applies:
 ///
-/// 1. sales invoice with a customer: a generated "customer, invoice,
-///    reference" title;
-/// 2. utility bill, or known biller whose brand implies a service: a
-///    generated bill title for the service. The brand's service wins;
-///    otherwise [`classify_service`] decides, and a bill whose service
-///    cannot be told is a plain utility bill;
+/// 1. sales invoice with a customer: the customer invoice title;
+/// 2. utility bill, or known biller whose brand implies a service: the bill
+///    title for the service. The brand's service wins; otherwise
+///    [`classify_service`] decides, and a bill whose service cannot be told
+///    is a plain utility bill;
 /// 3. the first line under a description heading that has at least
 ///    [`MIN_DESCRIPTION_CHARS`] letters and spaces once everything else is
 ///    removed, and is not the quantity heading of the same table row;
-/// 4. with a reference: a generated "invoice reference" title;
-/// 5. with the Greek word for "invoice" in the text: that word in `locale`;
-/// 6. the merchant.
+/// 4. with a reference: the invoice reference title;
+/// 5. with the Greek word for "invoice" in the text: that word;
+/// 6. with a merchant: the merchant's name.
 ///
-/// Generated titles are worded in `locale` by [`crate::text`].
+/// `has_merchant` and `has_reference` say what the same reading found.
 pub(super) fn find_description(
     text: &str,
     folded_text: &str,
-    merchant: Option<&str>,
-    reference: Option<&str>,
-    locale: Locale,
-) -> Option<String> {
-    if is_sales_invoice(folded_text)
-        && let Some(customer) = merchant
-    {
-        return Some(customer_invoice_description(locale, customer, reference));
+    has_merchant: bool,
+    has_reference: bool,
+) -> Option<Description> {
+    if is_sales_invoice(folded_text) && has_merchant {
+        return Some(Description::CustomerInvoice);
     }
 
     let brand_service = known_brand(folded_text).and_then(|(_, service)| service);
@@ -224,7 +295,7 @@ pub(super) fn find_description(
         let service = brand_service.or_else(|| classify_service(folded_text));
         let kind = service.map_or(BillKind::Utility, Service::bill_kind);
 
-        return Some(bill_description(locale, kind, merchant));
+        return Some(Description::Bill(kind));
     }
 
     let mut after_header = false;
@@ -242,25 +313,25 @@ pub(super) fn find_description(
             if words.chars().count() >= MIN_DESCRIPTION_CHARS
                 && !contains_any(&folded(words), QUANTITY_HEADERS)
             {
-                return Some(words.to_owned());
+                return Some(Description::LineItem(words.to_owned()));
             }
         }
     }
 
-    if let Some(reference) = reference {
-        return Some(invoice_reference_description(locale, reference, merchant));
+    if has_reference {
+        return Some(Description::InvoiceReference);
     }
     if folded_text.contains(INVOICE_WORD_GREEK) {
-        return Some(invoice_word(locale).into());
+        return Some(Description::InvoiceWord);
     }
-    merchant.map(ToOwned::to_owned)
+    has_merchant.then_some(Description::MerchantName)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::documents::analyze::EntryKindSuggestion;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
 
     /// Loads a corpus fixture, so the unit tests read the same documents as
     /// the golden test in `tests/document_corpus.rs`.

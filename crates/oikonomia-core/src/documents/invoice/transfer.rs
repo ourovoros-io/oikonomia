@@ -13,18 +13,20 @@
 
 use std::ops::RangeInclusive;
 
-use crate::documents::analyze::{AnalyzeSource, DocumentSuggestion, EntryKindSuggestion};
+use time::Date;
+
+use crate::documents::analyze::EntryKindSuggestion;
+use crate::documents::invoice::InvoiceReading;
 use crate::documents::invoice::dates::{first_date_on_line, is_value_date_line};
-use crate::documents::invoice::merchant::{ISSUER_NAME_LABEL, MIN_NAME_CHARS, value_after_colon};
+use crate::documents::invoice::merchant::{
+    Description, ISSUER_NAME_LABEL, MIN_NAME_CHARS, Merchant, value_after_colon,
+};
 use crate::documents::invoice::money::{
     is_plausible_money, largest_plausible_amount, money_amounts_on_line,
 };
 use crate::documents::invoice::normalization::{contains_any, folded};
 use crate::documents::invoice::reference::is_rf_then_digits;
 use crate::documents::invoice::total::IBAN_WORD;
-use crate::documents::invoice::{InvoiceReading, category_hint_of, score_confidence};
-use crate::prefs::Locale;
-use crate::text::bank_transfer_description;
 use crate::ui_text::{UiText, UiTextCode};
 
 /// Wording that makes a document a bank transfer receipt: "έμβασμα"
@@ -46,40 +48,22 @@ pub(super) fn is_bank_transfer_receipt(folded_text: &str) -> bool {
 /// Reads a Greek bank transfer receipt (`έμβασμα`, or a transfer to another
 /// bank) from normalized text.
 ///
-/// The kind is always `Expense` and never unpaid. The description is
-/// generated from the payee. The fee is returned beside the suggestion, not
-/// in its notes.
-pub(super) fn parse_bank_transfer(text: &str, locale: Locale) -> InvoiceReading {
+/// The kind is always `Expense` and never unpaid. The description is the
+/// generated transfer title, which names the payee. The fee is returned as
+/// data, not in the notes.
+pub(super) fn parse_bank_transfer(text: &str) -> InvoiceReading {
     let amount_minor = find_transfer_principal(text);
-    let entry_date = find_transfer_date(text);
-    let reference = find_transfer_reference(text);
-    let merchant = find_transfer_payee(text);
-    let description = Some(bank_transfer_description(locale, merchant.as_deref()));
-    let fee_minor = find_transfer_fee(text);
-    let kind = EntryKindSuggestion::Expense;
-    let confidence = score_confidence(amount_minor, entry_date.as_ref(), reference.as_ref(), kind);
-
-    let suggestion = DocumentSuggestion {
-        source: AnalyzeSource::Heuristic,
-        model: Some("invoice-parser-v1".into()),
-        kind,
-        amount_minor,
-        entry_date,
-        description,
-        reference,
-        merchant,
-        bill_unpaid: false,
-        category_account_id: None,
-        wallet_account_id: None,
-        payable_account_id: None,
-        confidence,
-        notes: build_transfer_notes(amount_minor),
-    };
 
     InvoiceReading {
-        category_hint: category_hint_of(&suggestion),
-        suggestion,
-        transfer_fee_minor: fee_minor,
+        amount_minor,
+        entry_date: find_transfer_date(text),
+        reference: find_transfer_reference(text),
+        merchant: find_transfer_payee(text).map(Merchant::Named),
+        description: Some(Description::BankTransfer),
+        kind: EntryKindSuggestion::Expense,
+        unpaid: false,
+        transfer_fee_minor: find_transfer_fee(text),
+        notes: build_transfer_notes(amount_minor),
     }
 }
 
@@ -319,14 +303,14 @@ fn is_transfer_code(token: &str) -> bool {
     true
 }
 
-/// The date of a transfer, as `YYYY-MM-DD`.
+/// The date of a transfer.
 ///
 /// Value-date lines are skipped throughout: the value date can be a day or
 /// more after the transfer. Among the other lines, in order of preference:
 /// the first date on a line with an execution label, the first on a line
 /// with any date label, the first anywhere.
-fn find_transfer_date(text: &str) -> Option<String> {
-    let mut labeled: Option<String> = None;
+fn find_transfer_date(text: &str) -> Option<Date> {
+    let mut labeled: Option<Date> = None;
     for line in text.lines() {
         if is_value_date_line(&folded(line)) {
             continue;
@@ -371,7 +355,9 @@ fn build_transfer_notes(amount: Option<i64>) -> Vec<UiText> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::invoice::{parse_invoice_text, read_invoice_text};
+    use crate::documents::analyze::parse_invoice_text;
+    use crate::documents::invoice::read_invoice_text;
+    use time::macros::date;
 
     /// Loads a corpus fixture, so the unit tests read the same documents as
     /// the golden test in `tests/document_corpus.rs`.
@@ -394,7 +380,7 @@ mod tests {
         );
         assert_eq!(suggestion.kind, EntryKindSuggestion::Expense);
         assert!(!suggestion.bill_unpaid);
-        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-27"));
+        assert_eq!(suggestion.entry_date, Some(date!(2026 - 08 - 27)));
         assert_eq!(suggestion.merchant.as_deref(), Some("HELIOS TRADING IKE"));
         assert_eq!(suggestion.reference.as_deref(), Some("F000TO0000000001"));
         assert_eq!(
@@ -410,7 +396,7 @@ mod tests {
             "the fee note needs the book currency, so the analyzer adds it"
         );
         assert_eq!(
-            read_invoice_text(&text, crate::prefs::Locale::En).transfer_fee_minor,
+            read_invoice_text(&text).transfer_fee_minor,
             Some(140),
             "the fee is returned as integer minor units"
         );
@@ -452,7 +438,7 @@ mod tests {
 ";
         let suggestion = parse_invoice_text(text, crate::prefs::Locale::En);
         assert_eq!(suggestion.amount_minor, Some(31_000));
-        assert_eq!(suggestion.entry_date.as_deref(), Some("2026-08-27"));
+        assert_eq!(suggestion.entry_date, Some(date!(2026 - 08 - 27)));
         assert_eq!(suggestion.merchant.as_deref(), Some("HELIOS TRADING IKE"));
         assert_eq!(suggestion.reference.as_deref(), Some("F000TO0000000001"));
         assert_eq!(suggestion.kind, EntryKindSuggestion::Expense);
@@ -508,9 +494,9 @@ mod documented_tradeoffs {
     fn a_fee_under_the_plausibility_band_is_not_reported() {
         let receipt = "Έμβασμα\nΠοσό Χρέωσης Κεφαλαίου 310,00\nΠρομήθεια 0,40";
 
-        let reading = read_invoice_text(receipt, crate::prefs::Locale::En);
+        let reading = read_invoice_text(receipt);
 
-        assert_eq!(reading.suggestion.amount_minor, Some(31_000));
+        assert_eq!(reading.amount_minor, Some(31_000));
         assert_eq!(reading.transfer_fee_minor, None);
     }
 }

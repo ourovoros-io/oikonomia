@@ -123,7 +123,7 @@ pub(super) const INVOICE_WORD_GREEK: &str = "τιμολογιο";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
 
     /// Loads a corpus fixture, so the unit tests read the same documents as
     /// the golden test in `tests/document_corpus.rs`.

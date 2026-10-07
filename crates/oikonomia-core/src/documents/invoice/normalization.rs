@@ -241,7 +241,8 @@ mod tests {
 #[cfg(test)]
 mod amounts_and_dates {
     use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
+    use time::macros::date;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
@@ -251,16 +252,16 @@ mod amounts_and_dates {
     fn a_date_before_an_amount_is_not_its_thousands_prefix() {
         let padded = read("13/08/2026 172,53 €");
         assert_eq!(padded.amount_minor, Some(17_253));
-        assert_eq!(padded.entry_date.as_deref(), Some("2026-08-13"));
+        assert_eq!(padded.entry_date, Some(date!(2026 - 08 - 13)));
 
         let unpadded = read("27/8/2026 310,00");
         assert_eq!(unpadded.amount_minor, Some(31_000));
-        assert_eq!(unpadded.entry_date.as_deref(), Some("2026-08-27"));
+        assert_eq!(unpadded.entry_date, Some(date!(2026 - 08 - 27)));
 
         // A two-digit year ends in a group short enough to be a prefix.
         let short_year = read("13/08/26 172,53 €");
         assert_eq!(short_year.amount_minor, Some(17_253));
-        assert_eq!(short_year.entry_date.as_deref(), Some("2026-08-13"));
+        assert_eq!(short_year.entry_date, Some(date!(2026 - 08 - 13)));
     }
 
     #[test]
@@ -299,7 +300,7 @@ mod amounts_and_dates {
 #[cfg(test)]
 mod documented_tradeoffs {
     use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)

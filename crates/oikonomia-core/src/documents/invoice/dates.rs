@@ -13,19 +13,21 @@
 
 use std::ops::RangeInclusive;
 
+use time::Date;
+
 use crate::documents::invoice::normalization::{contains_any, folded};
 
-/// The first date written on `line`, as `YYYY-MM-DD`.
+/// The first date written on `line`.
 ///
 /// A date is a whitespace-separated word that, with everything but digits
 /// and `/ . -` trimmed from its ends, is a day-month-year date or an ISO
 /// date. A day the calendar does not have is not a date.
-pub(super) fn first_date_on_line(line: &str) -> Option<String> {
+pub(super) fn first_date_on_line(line: &str) -> Option<Date> {
     for word in line.split_whitespace() {
         let token =
             word.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
-        if let Some(iso) = parse_eu_date(token).or_else(|| parse_iso_date(token)) {
-            return Some(iso);
+        if let Some(date) = parse_eu_date(token).or_else(|| parse_iso_date(token)) {
+            return Some(date);
         }
     }
     None
@@ -214,8 +216,7 @@ fn two_digits_at(chars: &[char], index: usize) -> Option<u32> {
     Some(digit_at(chars, index)? * 10 + digit_at(chars, index + 1)?)
 }
 
-/// The date to suggest for a document, as `YYYY-MM-DD`. In order of
-/// preference:
+/// The date to suggest for a document. In order of preference:
 ///
 /// 1. the first date on a line that also has a `€`: on a utility payment
 ///    slip that is the due date printed beside the amount to pay;
@@ -223,20 +224,20 @@ fn two_digits_at(chars: &[char], index: usize) -> Option<u32> {
 /// 3. the first date anywhere.
 ///
 /// `None` when the text has no date.
-pub(super) fn find_best_date(text: &str) -> Option<String> {
+pub(super) fn find_best_date(text: &str) -> Option<Date> {
     for line in text.lines() {
         if line.contains('€')
-            && let Some(iso) = first_date_on_line(line)
+            && let Some(date) = first_date_on_line(line)
         {
-            return Some(iso);
+            return Some(date);
         }
     }
 
     for line in text.lines() {
         if contains_any(&folded(line), DATE_LABELS)
-            && let Some(iso) = first_date_on_line(line)
+            && let Some(date) = first_date_on_line(line)
         {
-            return Some(iso);
+            return Some(date);
         }
     }
 
@@ -263,7 +264,7 @@ const TWO_DIGIT_YEAR_CENTURY: i32 = 2000;
 /// month in 1..=12 and a day in 1..=31.
 ///
 /// The day need not exist in that month. The shape alone decides that the
-/// digits are not money; only [`DateShape::to_iso`] decides that they are a
+/// digits are not money; only [`DateShape::to_date`] decides that they are a
 /// date.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DateShape {
@@ -284,18 +285,12 @@ impl DateShape {
         in_range.then_some(Self { year, month, day })
     }
 
-    /// The date as `YYYY-MM-DD`, or `None` when the calendar has no such day
-    /// (31 February, 29 February outside a leap year).
-    fn to_iso(self) -> Option<String> {
+    /// The date, or `None` when the calendar has no such day (31 February,
+    /// 29 February outside a leap year).
+    fn to_date(self) -> Option<Date> {
         let month = time::Month::try_from(self.month).ok()?;
-        let date = time::Date::from_calendar_date(self.year, month, self.day).ok()?;
 
-        Some(format!(
-            "{:04}-{:02}-{:02}",
-            date.year(),
-            u8::from(date.month()),
-            date.day()
-        ))
+        Date::from_calendar_date(self.year, month, self.day).ok()
     }
 }
 
@@ -340,16 +335,16 @@ fn eu_date_shape(token: &str) -> Option<DateShape> {
     DateShape::new(year, month, day)
 }
 
-/// A `YYYY-MM-DD` token as that same date, or `None` when it is not a day
-/// the calendar has.
-fn parse_iso_date(token: &str) -> Option<String> {
-    iso_date_shape(token)?.to_iso()
+/// A `YYYY-MM-DD` token as a date, or `None` when it is not a day the
+/// calendar has.
+fn parse_iso_date(token: &str) -> Option<Date> {
+    iso_date_shape(token)?.to_date()
 }
 
-/// A day-month-year token as `YYYY-MM-DD`, or `None` when it is not a day
-/// the calendar has.
-fn parse_eu_date(token: &str) -> Option<String> {
-    eu_date_shape(token)?.to_iso()
+/// A day-month-year token as a date, or `None` when it is not a day the
+/// calendar has.
+fn parse_eu_date(token: &str) -> Option<Date> {
+    eu_date_shape(token)?.to_date()
 }
 
 #[cfg(test)]
@@ -394,8 +389,9 @@ mod tests {
 #[cfg(test)]
 mod amounts_and_dates {
     use crate::documents::analyze::DocumentSuggestion;
+    use crate::documents::analyze::parse_invoice_text;
     use crate::documents::invoice::money::{money_amounts_on_line, parse_money_token};
-    use crate::documents::invoice::parse_invoice_text;
+    use time::macros::date;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
@@ -423,12 +419,12 @@ mod amounts_and_dates {
         }
 
         assert_eq!(
-            read("Date 29/02/2024").entry_date.as_deref(),
-            Some("2024-02-29")
+            read("Date 29/02/2024").entry_date,
+            Some(date!(2024 - 02 - 29))
         );
         assert_eq!(
-            read("Date 2024-02-29").entry_date.as_deref(),
-            Some("2024-02-29")
+            read("Date 2024-02-29").entry_date,
+            Some(date!(2024 - 02 - 29))
         );
     }
 
@@ -449,7 +445,8 @@ mod amounts_and_dates {
 #[cfg(test)]
 mod documented_tradeoffs {
     use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::invoice::parse_invoice_text;
+    use crate::documents::analyze::parse_invoice_text;
+    use time::macros::date;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
@@ -458,8 +455,8 @@ mod documented_tradeoffs {
     #[test]
     fn dates_are_read_day_first() {
         assert_eq!(
-            read("Date 03/04/2026").entry_date.as_deref(),
-            Some("2026-04-03")
+            read("Date 03/04/2026").entry_date,
+            Some(date!(2026 - 04 - 03))
         );
         // Month first, with a day over 12: not a date.
         assert_eq!(read("Date 04/13/2026").entry_date, None);
