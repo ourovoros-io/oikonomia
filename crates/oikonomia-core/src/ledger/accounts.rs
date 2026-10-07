@@ -19,7 +19,7 @@
 use crate::db::{collect_rows, read_column, stored_id};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
-use crate::ledger::balance::{account_type_str, parse_account_type};
+use crate::ledger::balance::parse_account_type;
 use crate::ledger::entities::ensure_writable_entity;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -157,7 +157,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
             input.entity_id.to_string(),
             code,
             name,
-            account_type_str(input.account_type),
+            input.account_type.identifier(),
             sort_order,
         ],
     )

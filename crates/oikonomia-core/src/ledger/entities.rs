@@ -50,7 +50,6 @@ use crate::coa::template_accounts;
 use crate::db::{collect_rows, corrupt_column, read_column, stored_id};
 use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode, Entity, EntityId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
-use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
 use crate::util::now_utc_string;
 use rusqlite::Connection;
@@ -313,7 +312,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
             name,
             currency.as_str(),
             u8::from(month),
-            chart_template_str(input.chart_template),
+            input.chart_template.identifier(),
             now_utc_string(),
         ],
     )
@@ -478,7 +477,7 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
             account.entity_id.to_string(),
             account.code,
             account.name,
-            account_type_str(account.account_type),
+            account.account_type.identifier(),
             account.parent_id.map(|parent| parent.to_string()),
             i32::from(account.is_active),
             i32::from(account.is_system),
@@ -534,19 +533,8 @@ fn map_entity(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Entity
     })
 }
 
-/// Returns the text `template` is stored as in `entities.chart_template`.
-///
-/// The strings are part of the vault format; [`parse_chart_template`] reads
-/// them back.
-fn chart_template_str(template: ChartTemplate) -> &'static str {
-    match template {
-        ChartTemplate::Personal => "personal",
-        ChartTemplate::Company => "company",
-        ChartTemplate::Blank => "blank",
-    }
-}
-
-/// Parses the text [`chart_template_str`] writes.
+/// Parses the text [`ChartTemplate::identifier`] writes into
+/// `entities.chart_template`.
 ///
 /// # Errors
 ///
@@ -561,5 +549,25 @@ fn parse_chart_template(stored: &str) -> Result<ChartTemplate> {
             "entities.chart_template",
             format_args!("unknown chart template: {other}"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChartTemplate, parse_chart_template};
+
+    #[test]
+    fn a_chart_template_is_read_back_from_the_text_it_is_stored_as() {
+        for template in [
+            ChartTemplate::Personal,
+            ChartTemplate::Company,
+            ChartTemplate::Blank,
+        ] {
+            assert_eq!(parse_chart_template(template.identifier()), Ok(template));
+        }
+        assert_eq!(
+            parse_chart_template("Personal").map_err(|error| error.code()),
+            Err("vault_corrupt")
+        );
     }
 }

@@ -49,8 +49,8 @@ use crate::db::{collect_rows, read_column};
 use crate::domain::{AccountType, CurrencyCode, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::balance::{
-    ACTIVE_ENTRY_PREDICATE, account_type_str, add_minor, normal_balance, parse_account_type,
-    subtract_minor, sum_minor, sum_type_as_of, sum_type_in_range,
+    ACTIVE_ENTRY_PREDICATE, add_minor, normal_balance, parse_account_type, subtract_minor,
+    sum_minor, sum_type_as_of, sum_type_in_range,
 };
 use crate::ledger::calendar::{add_months, months_between};
 use crate::ledger::entities::get_entity;
@@ -667,7 +667,7 @@ fn active_lines(conn: &Connection, query: LineQuery) -> Result<Vec<ReportLine>> 
                 query.entity_id.to_string(),
                 query.from.map(format_date),
                 format_date(query.to),
-                account_type_str(query.account_type),
+                query.account_type.identifier(),
             ],
             |row| Ok(map_report_line("read account activity", row)),
         )
