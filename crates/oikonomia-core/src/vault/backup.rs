@@ -298,15 +298,21 @@ pub(crate) fn recover_interrupted_restore(data_dir: &Path) -> Result<()> {
 /// again: each online backup makes its own. A snapshot that is not there is
 /// the usual case and not an error.
 ///
-/// An online backup that another handle on the same directory is running at
-/// this moment loses its snapshot and fails with [`Error::Io`]; it writes no
-/// archive and can be repeated.
+/// The names `SQLite` would use for a write-ahead log and its index beside
+/// the snapshot are removed with it, as the backup's own cleanup does.
+///
+/// Must not run while another handle on the same directory is writing an
+/// online backup: that backup can then fail with [`Error::Io`] for its
+/// missing snapshot, or this call can fail because the snapshot is open.
+/// A failed backup leaves no archive and can be repeated.
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when the snapshot exists and cannot be removed.
+/// [`Error::Io`] when one of these files exists and cannot be removed.
 pub(crate) fn remove_stale_snapshot(data_dir: &Path) -> Result<()> {
-    remove_files_if_present(&[&backup_snapshot_db_path(data_dir)])
+    let snapshot = backup_snapshot_db_path(data_dir);
+    let [wal, shm] = db_sidecar_paths(&snapshot);
+    remove_files_if_present(&[&snapshot, &wal, &shm])
 }
 
 impl Vault {
@@ -363,8 +369,10 @@ impl Vault {
     /// In the last row the error is the [`Error::Io`] whose operation is
     /// `put previous vault files back`. The next [`Vault::open_path`]
     /// completes the undo, after which the files are the previous vault
-    /// again and match the header this handle kept. Until then an unlock
-    /// through this handle can fail, so a new handle has to be opened.
+    /// again and match the header this handle kept. Until then this handle
+    /// must not be used: an unlock through it fails, or, when the archive
+    /// was made from this same vault, opens a database that the undo will
+    /// move away again. Open a new handle.
     ///
     /// # Errors
     ///
@@ -534,11 +542,11 @@ fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
 /// when the staged header exists; [`Error::Io`] when that cannot be
 /// determined.
 fn ensure_no_staged_header(data_dir: &Path) -> Result<()> {
-    let staged = vault_staged_header_path(data_dir)
+    let staged_header_exists = vault_staged_header_path(data_dir)
         .try_exists()
         .io("look for a staged vault header")?;
 
-    if staged {
+    if staged_header_exists {
         return Err(Error::VaultCorrupt(
             VaultCorruption::UnfinishedPasswordChange,
         ));
@@ -1769,18 +1777,19 @@ mod tests {
 
     #[test]
     fn a_member_is_as_long_as_its_length_field_when_the_file_grows() {
+        let contents = b"0123456789";
         let mut grown: &[u8] = b"0123456789 and bytes appended after the size was read";
         let mut archive = Vec::new();
 
         write_member(&mut archive, MEMBER_DB, &mut grown, 10).expect("write member");
 
-        assert!(archive.ends_with(b"0123456789"), "{archive:?}");
-        let contents_len = u64::from_le_bytes(
-            archive[archive.len() - 18..archive.len() - 10]
-                .try_into()
-                .expect("eight bytes"),
-        );
-        assert_eq!(contents_len, 10);
+        // A member ends with its eight-byte length field and its contents.
+        let contents_start = archive.len() - contents.len();
+        let length_field: [u8; 8] = archive[contents_start - 8..contents_start]
+            .try_into()
+            .expect("eight bytes");
+        assert_eq!(&archive[contents_start..], contents);
+        assert_eq!(u64::from_le_bytes(length_field), 10);
     }
 
     #[test]

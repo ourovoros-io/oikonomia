@@ -91,6 +91,10 @@ impl Vault {
     /// backup is removed, and an interrupted first run is cleared so the
     /// vault reads as uninitialized again (see [`Vault::init`]).
     ///
+    /// Because of the snapshot, this must not be called on a directory
+    /// while another handle is writing an online backup of it
+    /// ([`Vault::backup_to`], unlocked): that backup can fail.
+    ///
     /// # Errors
     ///
     /// [`Error::Io`] when the directory cannot be created, an interrupted
@@ -416,18 +420,6 @@ impl Vault {
         }
     }
 
-    /// Puts back the session a failed password change closed.
-    ///
-    /// The old key no longer fits when the rekey itself went through and a
-    /// later step failed. The vault then stays locked, and the next unlock
-    /// recovers through the staged header.
-    fn reopen_after_failed_rekey(&mut self, db_path: &Path, old_key: &VaultKey) {
-        match open_sqlcipher(db_path, old_key, false) {
-            Ok(conn) => self.conn = Some(conn),
-            Err(err) => log::warn!("vault left locked after a failed password change: {err}"),
-        }
-    }
-
     /// Records that `header` is the one now published in the data
     /// directory.
     ///
@@ -440,6 +432,18 @@ impl Vault {
             "a connection would outlive the database it was opened on"
         );
         self.header = Some(header);
+    }
+
+    /// Puts back the session a failed password change closed.
+    ///
+    /// The old key no longer fits when the rekey itself went through and a
+    /// later step failed. The vault then stays locked, and the next unlock
+    /// recovers through the staged header.
+    fn reopen_after_failed_rekey(&mut self, db_path: &Path, old_key: &VaultKey) {
+        match open_sqlcipher(db_path, old_key, false) {
+            Ok(conn) => self.conn = Some(conn),
+            Err(err) => log::warn!("vault left locked after a failed password change: {err}"),
+        }
     }
 
     /// Returns the open connection.
