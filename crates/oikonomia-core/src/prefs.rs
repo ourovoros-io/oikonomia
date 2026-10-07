@@ -87,7 +87,7 @@
 //! user's choice with its own default.
 
 use crate::domain::EntityId;
-use crate::error::{Error, IoContext, Result, SerializationContext};
+use crate::error::{Error, IoContext, PrivateDetail, Result, SerializationContext};
 use crate::ledger::SimpleEntryKind;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -518,9 +518,12 @@ fn or_defaults(read: std::result::Result<Option<UiPrefs>, UnusablePrefs>, path: 
     match read {
         Ok(stored) => stored.unwrap_or_default(),
         Err(err) => {
+            // The decode error can quote a value from the file, so a release
+            // build writes that it happened and withholds the text.
             log::warn!(
-                "using default preferences and leaving {} as it is: {err}",
-                path.display()
+                "using default preferences and leaving {} as it is: {}",
+                path.display(),
+                PrivateDetail(&err)
             );
             UiPrefs::default()
         }
