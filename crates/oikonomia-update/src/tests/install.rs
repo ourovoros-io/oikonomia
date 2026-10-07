@@ -3,7 +3,7 @@
 
 use crate::artifact_limit::MAX_ARTIFACT_BYTES;
 use crate::client::{InstallHandoff, InstallOutcome, InstallRoute, download_and_verify};
-use crate::error::UpdateError;
+use crate::error::{InstallStep, UpdateError};
 use crate::machine::{CheckStart, UpdateMachine};
 use crate::status::UpdateStatus;
 use crate::tests::support::{
@@ -478,7 +478,7 @@ fn an_installer_that_fails_reaches_the_status_as_its_own_code() {
     let cache = cache_dir();
     let (mut machine, config) =
         machine_with_an_offer(&server, &public_key, &secret_key, cache.path());
-    // The spy fails with `ArtifactIntegrity`, as the desktop's installer does.
+    // The spy fails at an install step, as the desktop's installer does.
     let (installer, calls) = spy(true);
 
     let outcome = install(&mut machine, &config, &installer).expect("available");
@@ -486,12 +486,15 @@ fn an_installer_that_fails_reaches_the_status_as_its_own_code() {
     assert!(
         matches!(
             outcome,
-            InstallOutcome::Failed(UpdateError::ArtifactIntegrity)
+            InstallOutcome::Failed(UpdateError::InstallFailed {
+                step: InstallStep::Replace
+            })
         ),
         "{outcome:?}"
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(machine.status(), failed_with("update_artifact_integrity"));
+    // The artifact passed verification, and the code does not say otherwise.
+    assert_eq!(machine.status(), failed_with("update_install_failed"));
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
 

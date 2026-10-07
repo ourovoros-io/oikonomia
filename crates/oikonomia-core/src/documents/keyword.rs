@@ -13,10 +13,9 @@
 //! [`folded`] lowercases text and removes the accents of precomposed Greek
 //! letters, so one spelling of a keyword matches the word in capitals, with
 //! its accent and without. A letter followed by a combining accent is left
-//! as it is. The reader and the brand table fold the text and write their
-//! keywords folded; a test in each file that defines such keywords checks
-//! that. The account matcher only lowercases, and writes its Greek keywords
-//! with their accents.
+//! as it is. The reader, the brand table and the account matcher fold the
+//! text and write their keywords folded; a test in each file that defines
+//! such keywords checks that.
 //!
 //! # Where a keyword may sit
 //!
@@ -156,9 +155,10 @@ impl Sides {
 
 /// Lowercases `text` and folds its Greek accents.
 ///
-/// Every label and marker of the invoice reader and of `brands` is matched
-/// against text in this form, and is itself written in it, so `Τελική`,
-/// `ΤΕΛΙΚΗ` and `τελικη` all match the one needle `τελικη`.
+/// Every label and marker of the invoice reader and of `brands`, and every
+/// keyword of the account matcher, is matched against text in this form and
+/// is itself written in it, so `Τελική`, `ΤΕΛΙΚΗ` and `τελικη` all match the
+/// one needle `τελικη`.
 pub(crate) fn folded(text: &str) -> String {
     text.to_lowercase()
         .chars()

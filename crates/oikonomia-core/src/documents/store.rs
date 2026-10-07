@@ -22,7 +22,8 @@ use crate::documents::file::{CheckedDocument, NewDocument};
 use crate::domain::{Account, EntityId, JournalEntry, JournalEntryId, define_id};
 use crate::error::{DatabaseContext, Error, Resource, Result, ValidationError};
 use crate::ledger::{
-    PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
+    PostSimpleEntry, PostedEntryView, ensure_writable_entity, get_entry, list_accounts,
+    post_simple_entry_unchecked,
 };
 use crate::util::now_utc_string;
 
@@ -66,7 +67,8 @@ pub struct DocumentMeta {
 /// The entry is looked up first, so a missing entry or one in another book
 /// is reported before the file is checked.
 ///
-/// - [`Error::NotFound`]: no entry has `entry_id`.
+/// - [`Error::NotFound`]: no entry has `entry_id`, or the book is archived
+///   and takes no more documents.
 /// - [`Error::Validation`]: the entry belongs to another book
 ///   ([`ValidationError::WrongBook`]); the file is empty, larger than
 ///   [`MAX_DOCUMENT_BYTES`](crate::documents::MAX_DOCUMENT_BYTES), has a
@@ -85,6 +87,7 @@ pub fn attach_document(
     if entry.entity_id != entity_id {
         return Err(ValidationError::WrongBook.into());
     }
+    ensure_writable_entity(conn, entity_id)?;
 
     insert_document(conn, &entry, &document.checked()?)
 }
@@ -232,20 +235,26 @@ const DOCUMENT_META_COLUMNS: &str = "d.id, d.entity_id, d.entry_id, d.filename, 
 /// a value of the wrong type: the application wrote the row, so the damage
 /// is in the vault and not in what the caller passed. [`Error::Database`] for any
 /// other driver failure.
-fn map_document_meta(row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
-    let id = stored_id("documents.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_id("documents.entity_id", &read_column::<String>(row, 1)?)?;
-    let entry_id = stored_id("documents.entry_id", &read_column::<String>(row, 2)?)?;
+fn map_document_meta(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
+    let id = stored_id("documents.id", &read_column::<String>(operation, row, 0)?)?;
+    let entity_id = stored_id(
+        "documents.entity_id",
+        &read_column::<String>(operation, row, 1)?,
+    )?;
+    let entry_id = stored_id(
+        "documents.entry_id",
+        &read_column::<String>(operation, row, 2)?,
+    )?;
 
     Ok(DocumentMeta {
         id,
         entity_id,
         entry_id,
-        filename: read_column(row, 3)?,
-        mime_type: read_column(row, 4)?,
-        size_bytes: read_column(row, 5)?,
-        created_at: read_column(row, 6)?,
-        entry_description: read_column(row, 7)?,
+        filename: read_column(operation, row, 3)?,
+        mime_type: read_column(operation, row, 4)?,
+        size_bytes: read_column(operation, row, 5)?,
+        created_at: read_column(operation, row, 6)?,
+        entry_description: read_column(operation, row, 7)?,
     })
 }
 
@@ -275,7 +284,9 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
         .database("list documents")?;
 
     let rows = statement
-        .query_map([entity_id.to_string()], |row| Ok(map_document_meta(row)))
+        .query_map([entity_id.to_string()], |row| {
+            Ok(map_document_meta("list documents", row))
+        })
         .database("list documents")?;
 
     let mut documents = Vec::new();
@@ -307,8 +318,12 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
         ),
         [id.to_string()],
         |row| {
-            Ok(map_document_meta(row)
-                .and_then(|meta| Ok((meta, read_column::<Vec<u8>>(row, DATA_COLUMN)?))))
+            Ok(map_document_meta("read document", row).and_then(|meta| {
+                Ok((
+                    meta,
+                    read_column::<Vec<u8>>("read document", row, DATA_COLUMN)?,
+                ))
+            }))
         },
     )
     .map_err(|err| match err {

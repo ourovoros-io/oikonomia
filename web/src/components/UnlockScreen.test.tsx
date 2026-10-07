@@ -585,7 +585,7 @@ describe('UnlockScreen check for update', () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.1' })
     vi.mocked(updateInstall).mockResolvedValue({
       kind: 'failed',
-      code: 'update_artifact_integrity',
+      code: 'update_install_failed',
     })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
     await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))

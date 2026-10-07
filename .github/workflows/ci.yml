@@ -109,7 +109,9 @@ jobs:
       - run: cargo build -p oikonomia --locked
 
   # Rustdoc warnings are errors: a broken intra-doc link fails here instead of
-  # shipping a dead reference in the API docs.
+  # shipping a dead reference in the API docs. Private items are documented
+  # too, because most of the workspace's docs are on private items and a
+  # link in them is checked only when they are built.
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -146,7 +148,7 @@ jobs:
       - name: Create frontend dist placeholder
         run: mkdir -p web/dist
 
-      - run: cargo doc --workspace --no-deps --locked
+      - run: cargo doc --workspace --no-deps --document-private-items --locked
 
   # Early warning only. Beta becomes stable within six weeks, so a lint that
   # fails here is one the next toolchain bump will have to fix. It must not

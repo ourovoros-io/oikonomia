@@ -18,7 +18,7 @@ around a Rust core, with a React interface in a webview.
 |------|------|
 | `crates/oikonomia-core` | Vault, schema and migrations, ledger, reports, CSV, documents and OCR, UI preferences. No network crates (`scripts/assert-core-offline.sh`). |
 | `crates/oikonomia-update` | The update client: signed feed, host allow-list, verified download. The only crate that talks to the network. |
-| `crates/macos-dock-icon` | Sets the Dock icon for `cargo tauri dev`. |
+| `crates/macos-dock-icon` | Sets the Dock icon for dev mode (`make app`). |
 | `apps/desktop/src-tauri` | The Tauri shell: IPC commands, app state, tray and quick-add window, idle auto-lock, capabilities, bundle config, OCR models. |
 | `web` | The React, Vite and Tailwind interface. |
 | `docs` | This overview, the release runbook, brand assets. |
@@ -114,8 +114,11 @@ those, the webview can call only the Tauri built-ins that
 
 - **Path grants.** A command that takes a file path accepts it only if the user
   handed it over through a native drop or a native dialog. Those paths are
-  recorded in `AppState` and checked by `require_granted_path`. The webview
-  cannot name an arbitrary file.
+  recorded in `AppState`, each with the purpose it was handed over for (a
+  backup to restore, a statement to import, a dropped document), and checked by
+  `require_granted_path`, which asks for the command's own purpose. The webview
+  cannot name an arbitrary file, nor pass a file picked for one thing to a
+  command that does another.
 - **Capabilities.** `capabilities/default.json` gives the `main` and `quick-add`
   windows core defaults and a short list of window and event permissions. No
   file-system, shell or opener permission reaches the webview; the opener is used

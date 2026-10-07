@@ -140,6 +140,7 @@ pub use cash_flow::{
     CashFlowBucket, CashFlowGranularity, CashFlowSeries, DAILY_BUCKET_MAX_DAYS, activity_window,
     cash_flow_series, cash_flow_series_for_window,
 };
+pub(crate) use entities::ensure_writable_entity;
 pub use entities::{
     CreateEntity, archive_entity, count_entities, create_entity, delete_entity, get_entity,
     list_entities, update_entity,

@@ -27,7 +27,7 @@ use crate::domain::{AccountId, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
     ACTIVE_ENTRY_PREDICATE, PostSimpleEntryRequest, PostedEntryView, SimpleBillStatus,
-    SimpleEntryKind, get_account, get_entity, post_simple_entry_unchecked,
+    SimpleEntryKind, ensure_writable_entity, get_account, get_entity, post_simple_entry_unchecked,
 };
 use crate::util::parse_date;
 
@@ -106,7 +106,7 @@ pub fn preview_bank_csv_file(
 ///
 /// - [`Error::Validation`] with [`ValidationError::Internal`] when the rows
 ///   do not all carry the same `entity_id`.
-/// - [`Error::NotFound`] when that entity does not exist.
+/// - [`Error::NotFound`] when that entity does not exist or is archived.
 /// - [`ValidationError::InvalidDate`] for a row whose `entry_date` is not a
 ///   `YYYY-MM-DD` date. The date is read before the duplicate rule is
 ///   applied, so this is reported for any row.
@@ -140,7 +140,7 @@ pub fn post_import_rows(
             .into());
         }
     }
-    let _entity = get_entity(conn, entity_id)?;
+    ensure_writable_entity(conn, entity_id)?;
 
     let transaction = conn.unchecked_transaction().database("begin CSV import")?;
     let mut seen = load_active_movements(&transaction, entity_id)?;
@@ -488,7 +488,9 @@ fn load_active_movements(conn: &Connection, entity_id: EntityId) -> Result<SeenM
         .database("read entries for duplicate check")?;
 
     let mapped = statement
-        .query_map([entity_id.to_string()], |row| Ok(map_active_movement(row)))
+        .query_map([entity_id.to_string()], |row| {
+            Ok(map_active_movement("read entries for duplicate check", row))
+        })
         .database("read entries for duplicate check")?;
 
     let mut seen = SeenMovements::default();
@@ -505,14 +507,14 @@ fn load_active_movements(conn: &Connection, entity_id: EntityId) -> Result<SeenM
 ///
 /// [`Error::VaultCorrupt`] naming the column when the date does not parse or
 /// a column has the wrong storage class.
-fn map_active_movement(row: &rusqlite::Row<'_>) -> Result<Movement> {
+fn map_active_movement(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Movement> {
     let date = stored_date(
         "journal_entries.entry_date",
-        &read_column::<String>(row, 0)?,
+        &read_column::<String>(operation, row, 0)?,
     )?;
-    let description: String = read_column(row, 1)?;
-    let amount_minor = read_column(row, 2)?;
-    let flow = Flow::of_result(read_column(row, 3)?);
+    let description: String = read_column(operation, row, 1)?;
+    let amount_minor = read_column(operation, row, 2)?;
+    let flow = Flow::of_result(read_column(operation, row, 3)?);
 
     Ok(Movement::new(date, amount_minor, flow, &description))
 }
