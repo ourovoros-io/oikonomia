@@ -396,7 +396,7 @@ fn analyze_readonly(
             locale,
         },
         Some(model_dir),
-    )?;
+    );
 
     Ok(suggestion)
 }

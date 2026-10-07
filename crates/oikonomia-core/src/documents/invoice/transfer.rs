@@ -402,7 +402,7 @@ mod tests {
         assert_ne!(suggestion.amount_minor, Some(140));
         assert_ne!(suggestion.amount_minor, Some(700));
 
-        let via_analyze = crate::documents::analyze_document_bytes(
+        let analyzed = crate::documents::analyze_document_bytes(
             &crate::documents::NewDocument {
                 filename: "greek_bank_embasma.txt",
                 mime_type: "text/plain",
@@ -416,7 +416,6 @@ mod tests {
             },
             None,
         );
-        let analyzed = via_analyze.expect("analyze text/plain");
         assert_eq!(analyzed.amount_minor, suggestion.amount_minor);
         assert_eq!(analyzed.entry_date, suggestion.entry_date);
         assert_eq!(analyzed.kind, suggestion.kind);

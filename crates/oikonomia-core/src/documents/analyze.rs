@@ -111,7 +111,7 @@ use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use crate::documents::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
 use crate::documents::pdf_repair::repair_xref_offsets;
 use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode};
-use crate::error::{AccountRole, Result};
+use crate::error::AccountRole;
 use crate::prefs::Locale;
 use crate::ui_text::{UiText, UiTextCode};
 use crate::util::format_date;
@@ -348,18 +348,14 @@ pub struct AnalyzeContext<'a> {
 /// The suggested description and merchant are written in `context.locale`;
 /// text taken from the document itself stays as the document has it.
 ///
-/// # Errors
-///
-/// None: a file that cannot be read, decoded or parsed yields an empty
-/// suggestion whose note says why, never an error. The `Result` stays
-/// because the desktop shell (`analyze_readonly` in
-/// `apps/desktop/src-tauri/src/commands/documents.rs`) applies `?` to it; returning the
-/// suggestion directly means changing that caller too.
+/// There is no error to return: a file that cannot be read, decoded or
+/// parsed yields an empty suggestion whose note says why.
+#[must_use]
 pub fn analyze_document_bytes(
     document: &NewDocument<'_>,
     context: &AnalyzeContext<'_>,
     model_dir: Option<&std::path::Path>,
-) -> Result<DocumentSuggestion> {
+) -> DocumentSuggestion {
     let AnalyzeContext {
         default_currency,
         locale,
@@ -414,7 +410,7 @@ pub fn analyze_document_bytes(
         suggestion.notes.push(note);
     }
 
-    Ok(suggestion)
+    suggestion
 }
 
 /// The note for a transfer fee the receipt shows.
@@ -1365,9 +1361,9 @@ mod tests {
         assert!(!should_ocr_pdf_images(Some("12345678")));
     }
 
-    /// The notes of an analysis, or none when it failed.
-    fn notes_of(suggestion: Result<DocumentSuggestion>) -> Vec<UiText> {
-        suggestion.map_or_else(|_| Vec::new(), |suggestion| suggestion.notes)
+    /// The notes of an analysis.
+    fn notes_of(suggestion: DocumentSuggestion) -> Vec<UiText> {
+        suggestion.notes
     }
 
     /// The codes of `notes`, without their parameters.
@@ -1407,20 +1403,14 @@ mod tests {
             None,
         );
 
-        let eur_notes = notes_of(eur.clone());
-        assert_eq!(
-            eur.map(|suggestion| suggestion.amount_minor),
-            Ok(Some(4590))
-        );
+        assert_eq!(eur.amount_minor, Some(4590));
+        let eur_notes = notes_of(eur);
         assert!(
             !codes_of(&eur_notes).contains(&UiTextCode::AmountAssumesTwoDecimals),
             "a 2-decimal currency needs no warning"
         );
 
-        let amount = jpy
-            .as_ref()
-            .map_or(Some(-1), |suggestion| suggestion.amount_minor);
-        assert_eq!(amount, None, "JPY amount must not be prefilled");
+        assert_eq!(jpy.amount_minor, None, "JPY amount must not be prefilled");
 
         let jpy_notes = notes_of(jpy);
         assert!(
@@ -1448,7 +1438,7 @@ mod tests {
             None,
         );
 
-        suggestion.is_ok_and(|suggestion| suggestion.amount_minor == Some(4590))
+        suggestion.amount_minor == Some(4590)
     }
 
     #[test]
@@ -1903,7 +1893,6 @@ mod tests {
             },
             None,
         );
-        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(
             code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -1924,10 +1913,7 @@ mod tests {
     const UNPAID_BILL: &str = "Invoice\nTOTAL 45,90 EUR\nAmount due\nThank you";
 
     /// The suggestion for [`UNPAID_BILL`] in a book with these accounts.
-    fn analyze_unpaid_bill(
-        template: ChartTemplate,
-        accounts: &[Account],
-    ) -> Option<DocumentSuggestion> {
+    fn analyze_unpaid_bill(template: ChartTemplate, accounts: &[Account]) -> DocumentSuggestion {
         analyze_document_bytes(
             &NewDocument {
                 filename: "bill.txt",
@@ -1942,7 +1928,6 @@ mod tests {
             },
             None,
         )
-        .ok()
     }
 
     /// Archives the account with this chart code.
@@ -1966,8 +1951,6 @@ mod tests {
             deactivate_code(&mut accounts, payable_code);
 
             let suggestion = analyze_unpaid_bill(template, &accounts);
-            assert!(suggestion.is_some(), "{template:?}: analysis must succeed");
-            let suggestion = suggestion.unwrap();
 
             assert_eq!(
                 code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -1990,7 +1973,6 @@ mod tests {
         });
 
         let suggestion = analyze_unpaid_bill(ChartTemplate::Blank, &accounts);
-        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(
             code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -2009,7 +1991,6 @@ mod tests {
         accounts.retain(|account| account.account_type != AccountType::Liability);
 
         let suggestion = analyze_unpaid_bill(ChartTemplate::Blank, &accounts);
-        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(suggestion.payable_account_id, None);
         assert!(

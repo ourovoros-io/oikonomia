@@ -220,7 +220,6 @@ fn suggest_for(entry: &ManifestEntry, bytes: &[u8]) -> DocumentSuggestion {
                 },
                 None,
             )
-            .expect("analyze")
         }
         other => unreachable!("id {}: unknown parser {other}", entry.id),
     }
@@ -426,8 +425,7 @@ fn text_mime_analyze_path_matches_invoice_reader() {
             locale: Locale::En,
         },
         None,
-    )
-    .expect("analyze text/plain");
+    );
 
     assert_eq!(via_analyze.amount_minor, via_parse.amount_minor);
     assert_eq!(via_analyze.entry_date, via_parse.entry_date);
@@ -450,8 +448,7 @@ fn text_mime_analyze_path_matches_invoice_reader() {
             locale: Locale::En,
         },
         None,
-    )
-    .expect("analyze transfer text/plain");
+    );
     assert_eq!(transfer_analyze.amount_minor, transfer_parse.amount_minor);
     assert_eq!(transfer_analyze.entry_date, transfer_parse.entry_date);
     assert_eq!(transfer_analyze.kind, transfer_parse.kind);
@@ -513,8 +510,7 @@ fn a_jpeg_is_read_through_ocr() {
             locale: Locale::En,
         },
         Some(model_dir.as_path()),
-    )
-    .expect("analysis reports a failure in the notes, never as an error");
+    );
 
     let golden = load_golden(&root.join("golden/english_total_jpeg.json"));
     assert_against_golden("english-total-jpeg", &suggestion, &golden);
@@ -574,7 +570,6 @@ fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
         },
         Some(model_dir),
     )
-    .expect("analysis reports a failure in the notes, never as an error")
 }
 
 /// Runs in this file because it loads the real models: the engine is one
@@ -711,8 +706,7 @@ fn suggested_codes(
             locale,
         },
         None,
-    )
-    .expect("analyze");
+    );
 
     let code_of = |id: Option<oikonomia_core::domain::AccountId>| -> Option<String> {
         let id = id?;
