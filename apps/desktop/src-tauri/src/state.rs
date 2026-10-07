@@ -380,7 +380,10 @@ impl GatedVault {
         let timeout_secs = match vault.connection().and_then(get_lock_timeout_secs) {
             Ok(timeout_secs) => timeout_secs,
             Err(err) => {
-                log::warn!("could not read lock timeout after unlock, using default: {err}");
+                log::warn!(
+                    "could not read lock timeout after unlock, using default: {}",
+                    err.log_text()
+                );
                 DEFAULT_LOCK_TIMEOUT_SECS
             }
         };

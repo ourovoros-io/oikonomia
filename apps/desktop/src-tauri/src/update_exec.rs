@@ -64,7 +64,9 @@
 //! | `StartInstaller` | the installer process cannot be started |
 //!
 //! The step is all the error carries. Most paths log the operating system's
-//! error first, but only a debug build keeps a log.
+//! error first, as a warning, which a release build writes to its local
+//! error log (`crate::error_log`). Those lines name paths of the installed
+//! copy and of the update cache, never one the user chose.
 
 use oikonomia_update::{
     ArtifactInstaller, InstallHandoff, InstallRoute, InstallStep, Result, UpdateError,

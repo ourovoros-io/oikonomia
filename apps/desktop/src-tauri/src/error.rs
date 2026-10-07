@@ -33,7 +33,8 @@
 //! `validation_internal`, and the reason of `vault_corrupt`,
 //! `vault_unlock_before_backup` and `backup_invalid`) is diagnostic, may
 //! hold operating-system error text, and is never a parameter. It reaches
-//! the webview only in `message`.
+//! the webview only in `message`, and a release build's log not at all
+//! (`oikonomia_core::Error::log_text`).
 //!
 //! # One code, one condition
 //!
@@ -51,10 +52,12 @@ use std::collections::BTreeMap;
 ///
 /// The UI shows localized text chosen by `code` and filled in from `params`.
 ///
-/// `message` is English diagnostic text that the UI never shows. Rust does
-/// not log it, and a release build has no logger in any case. It crosses IPC
-/// with the rest of the error, where the frontend may write it to the webview
-/// console (`logCommandError` in `web/src/lib/commandError.ts`).
+/// `message` is English diagnostic text that the UI never shows. Rust never
+/// logs it: it is the full text of the error, which can hold a path the user
+/// chose or a value from the ledger, and a release build keeps a log on disk
+/// (`crate::error_log`). It crosses IPC with the rest of the error, where the
+/// frontend may write it to the webview console (`logCommandError` in
+/// `web/src/lib/commandError.ts`); nothing carries the console to that file.
 ///
 /// The serialized shape is `{ code, message, params }`, which the frontend's
 /// type of the same name mirrors (`web/src/lib/tauri.ts`).
