@@ -72,10 +72,11 @@ jobs:
             librsvg2-dev \
             perl
 
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
+      # rust-toolchain.toml names the exact toolchain and its components; with
+      # no toolchain argument rustup installs that one, so no workflow repeats
+      # the version.
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --profile minimal --no-self-update
 
       # The cargo steps below keep each runner's default shell on purpose. On
       # Windows that is PowerShell, which finds Strawberry Perl; Git Bash would
@@ -94,11 +95,95 @@ jobs:
       - if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
 
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-      - run: cargo test --workspace
+      # No --all-targets: it would stop cargo running the doctests.
+      - run: cargo test --workspace --locked
 
-      - run: cargo build -p oikonomia
+      - run: cargo build -p oikonomia --locked
+
+  # Rustdoc warnings are errors: a broken intra-doc link fails here instead of
+  # shipping a dead reference in the API docs.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Documenting the desktop crate compiles its dependencies' build
+      # scripts, which probe for the same system libraries as a build.
+      - name: Install Tauri v2 Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            perl
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --profile minimal --no-self-update
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Create frontend dist placeholder
+        run: mkdir -p web/dist
+
+      - run: cargo doc --workspace --no-deps --locked
+
+  # Early warning only. Beta becomes stable within six weeks, so a lint that
+  # fails here is one the next toolchain bump will have to fix. It must not
+  # block a merge: continue-on-error keeps the run green while this job shows
+  # red, and the job must not be made a required status check.
+  clippy-beta:
+    name: clippy (beta)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
+      # Overrides rust-toolchain.toml for every step, the cache key included.
+      RUSTUP_TOOLCHAIN: beta
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Tauri v2 Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            perl
+
+      - name: Install the beta toolchain
+        run: rustup toolchain install beta --profile minimal --component clippy --no-self-update
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Create frontend dist placeholder
+        run: mkdir -p web/dist
+
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
   # Builds the real installers: the .deb and AppImage on Linux, the NSIS
   # installer on Windows. Windows runs its installer here; the Linux ones run
@@ -148,9 +233,8 @@ jobs:
         working-directory: web
         run: npm ci
 
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
-        with:
-          toolchain: stable
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --profile minimal --no-self-update
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
@@ -159,11 +243,14 @@ jobs:
       # Each runner builds in its default shell: on Windows that is
       # PowerShell, which finds Strawberry Perl for the vendored OpenSSL
       # build; Git Bash would put its own, incomplete perl first.
+      # The Tauri CLI is the one `npm ci` installed from web/package-lock.json,
+      # started through node so one command line works in both shells.
+      # Everything after `--` goes to cargo.
       - name: Build the installers (Linux)
         if: runner.os == 'Linux'
         run: |
           printf '{"bundle": {"createUpdaterArtifacts": false}}' > "${RUNNER_TEMP}/smoke-config.json"
-          npx --yes @tauri-apps/cli@^2 build --bundles deb,appimage --config "${RUNNER_TEMP}/smoke-config.json"
+          node web/node_modules/@tauri-apps/cli/tauri.js build --bundles deb,appimage --config "${RUNNER_TEMP}/smoke-config.json" -- --locked
 
       # The bundler's own fetch has no retry and no integrity check.
       - name: Fetch the WebView2 bootstrapper (retried, signature-checked)
@@ -207,7 +294,7 @@ jobs:
         run: |
           $config = Join-Path $env:RUNNER_TEMP 'smoke-config.json'
           '{"bundle": {"createUpdaterArtifacts": false}}' | Set-Content -Path $config -Encoding ascii
-          npx --yes '@tauri-apps/cli@2.12.1' build --bundles nsis --config $config
+          node web/node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $config -- --locked
 
       - name: Smoke-test the installed app (Windows)
         if: runner.os == 'Windows'
@@ -315,13 +402,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
-        with:
-          toolchain: stable
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install --profile minimal --no-self-update
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-      - run: cargo install cargo-audit cargo-deny --locked
+      # Exact versions: a gate tool must not change under a pull request.
+      # Dependabot does not see these; bump them by hand.
+      - run: cargo install cargo-audit@0.22.2 cargo-deny@0.20.2 --locked
 
       # Blocking by design: cargo audit exits nonzero only for actual
       # vulnerabilities; unmaintained-crate warnings do not fail the job.
@@ -333,3 +421,48 @@ jobs:
       # The wrappers in deny.toml allow network crates under the updater;
       # core's own subtree must stay at zero.
       - run: ./scripts/assert-core-offline.sh
+
+  # The workflows hold the signing and publishing lanes, so they are linted
+  # like code: actionlint for syntax and shell, zizmor for security findings.
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Release binaries at exact versions, checked against the sha256 each
+      # release publishes for its asset. Dependabot does not see these; bump
+      # the version and the hash together, by hand.
+      - name: Install actionlint and zizmor
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ZIZMOR_VERSION: 1.30.1
+          ZIZMOR_SHA256: e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+        run: |
+          set -euo pipefail
+          tools="${RUNNER_TEMP}/workflow-lint"
+          mkdir -p "${tools}"
+          cd "${tools}"
+          curl --proto '=https' --tlsv1.2 --retry 3 -sSfL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl --proto '=https' --tlsv1.2 --retry 3 -sSfL -o zizmor.tar.gz \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          printf '%s  %s\n' \
+            "${ACTIONLINT_SHA256}" actionlint.tar.gz \
+            "${ZIZMOR_SHA256}" zizmor.tar.gz > SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          tar -xzf actionlint.tar.gz actionlint
+          tar -xzf zizmor.tar.gz
+          echo "${tools}" >> "${GITHUB_PATH}"
+
+      - run: actionlint
+
+      # The token lets zizmor ask GitHub about the pinned actions (known
+      # vulnerabilities, commits that are not in the action's own history).
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --no-progress .

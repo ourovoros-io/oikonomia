@@ -1,26 +1,51 @@
 # Keeps the SHA-pinned Actions, Cargo and npm dependencies current so a pin
 # never quietly ages into a known-vulnerable version.
+#
+# Every ecosystem waits seven days before proposing a new release, so a
+# compromised or broken one has time to be noticed and pulled first, and
+# sends its updates as one pull request a week instead of one per package.
+# Neither setting delays security updates: Dependabot applies cooldown to
+# version updates only, and `applies-to` keeps the groups to those as well.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     # ocrs and rten have to stay on the same rten version because ocr.rs
     # hands our rten::Model to ocrs; bump them together manually.
     ignore:
       - dependency-name: "rten"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    # A dependency goes to the first group whose pattern matches it, so the
+    # OCR pair is listed before the catch-all.
     groups:
       ocr:
         patterns:
           - "ocrs"
           - "rten*"
+      cargo:
+        applies-to: version-updates
+        patterns: ["*"]
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        applies-to: version-updates
+        patterns: ["*"]

@@ -1,4 +1,4 @@
-.PHONY: app bundle test check smoke
+.PHONY: app bundle test check doc smoke
 
 # Run the desktop app in dev mode (vite + tauri, live reload).
 app:
@@ -6,7 +6,7 @@ app:
 
 # Build the distributable bundle (target/release/bundle/).
 bundle:
-	cargo tauri build
+	cargo tauri build -- --locked
 
 # Build the .app bundle and verify it renders (never smoke the bare binary).
 smoke:
@@ -14,13 +14,17 @@ smoke:
 
 # Core library tests.
 test:
-	cargo test -p oikonomia-core
+	cargo test -p oikonomia-core --locked
+
+# API docs with rustdoc warnings as errors, as the CI `docs` job runs them.
+doc:
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 
 # Local quality gate (a subset of CI).
 check:
 	cargo fmt --all -- --check
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 	cargo deny check
 	./scripts/assert-core-offline.sh
-	cargo test -p oikonomia-core
+	cargo test -p oikonomia-core --locked
 	cd web && npx tsc -b && npm test && npm run build
