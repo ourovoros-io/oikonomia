@@ -10,28 +10,40 @@ master-password unlock.
 |------|------|
 | `crates/oikonomia-core` | Domain, vault, ledger, reports |
 | `crates/oikonomia-update` | Signed update check, the only network path |
-| `crates/macos-dock-icon` | macOS Dock icon for `cargo tauri dev` |
+| `crates/macos-dock-icon` | macOS Dock icon in dev mode |
 | `crates/oikonomia-test-support` | Test-only macros shared by the crates (a dev-dependency) |
-| `apps/desktop/src-tauri` | Tauri shell + IPC commands |
+| `apps/desktop/src-tauri` | Tauri shell: windows, tray, watchdog (`state.rs`), updates |
+| `apps/desktop/src-tauri/src/commands/` | IPC commands, one module per subject; shared helpers and the mock-IPC test support in `support.rs` |
 | `web` | React + Vite + Tailwind frontend |
 | `docs/` | Release runbook (`release.md`), brand assets, and the design overview (`DESIGN.md`) |
 
 ## Commands
 
+Every `cargo` command takes `--locked`. The desktop crate needs `web/dist`
+to exist (`mkdir -p web/dist`, or a web build).
+
 ```bash
-# Core library tests
-cargo test -p oikonomia-core
+# Tests: core alone, or everything CI runs
+cargo test -p oikonomia-core --locked
+cargo test --workspace --locked --lib --bins --tests
 
 # Format + lint (workspace)
 cargo fmt --all
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+# Docs, private items included, warnings as errors (`make doc`)
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked
 
 # Frontend
-cd web && npm install && npm run dev
+cd web && npm ci && npm run dev
 cd web && npm run build
 
-# Desktop (from the repo root)
-cargo tauri dev
+# Desktop in dev mode (from the repo root). Runs the Tauri CLI pinned in
+# web/package.json, not a global `cargo tauri`.
+make app
+
+# Local gate, a subset of CI
+make check
 ```
 
 ## Invariants (do not break)
@@ -66,8 +78,14 @@ cargo tauri dev
 ## Style
 
 `rustfmt.toml`: `use_small_heuristics = "Default"` (never `"Max"`).
-Workspace Clippy: `unwrap_used = deny`, `panic = deny`, etc.
+The lint set is the baseline in the root `Cargo.toml` (`[workspace.lints]`:
+pedantic Clippy, `unwrap_used`, `panic` and `allow_attributes` denied,
+`missing_docs`, `unsafe_code` forbidden) plus `clippy.toml` (`unwrap` and
+`expect` allowed in tests, at most 5 parameters). Every crate inherits it;
+silence a lint with `#[expect(..., reason = "...")]`, never `#[allow]`.
 
+- IPC tests go through Tauri's mock runtime (`ipc_test_support::MockApp`), in a
+  module gated `#[cfg(test)]` then `#[cfg(not(windows))]`.
 - Function names are full words. Cryptic abbreviations (`ta`, `row_err`, `chk_bal`)
   are not allowed. Prefer associated constructors (`TemplateAccount::new`) over
   2–3 letter helpers. Public and `pub(crate)` items have rustdoc. Comments
