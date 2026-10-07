@@ -42,7 +42,8 @@ use std::str::FromStr;
 /// assert_eq!(euro.to_string(), "EUR");
 /// assert_eq!(serde_json::to_string(&euro)?, r#""EUR""#);
 ///
-/// assert_eq!("12$".parse::<CurrencyCode>().map_err(|error| error.code()), Err("currency_invalid"));
+/// let refused = "12$".parse::<CurrencyCode>().map_err(|error| error.code());
+/// assert_eq!(refused, Err("currency_invalid"));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

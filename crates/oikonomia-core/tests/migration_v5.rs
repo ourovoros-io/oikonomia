@@ -56,7 +56,9 @@ fn v5_rejects_double_sided_journal_line() {
     let err = conn
         .execute(
             "
-            INSERT INTO journal_lines (id, entry_id, account_id, debit_minor, credit_minor, memo, line_order)
+            INSERT INTO journal_lines (
+                id, entry_id, account_id, debit_minor, credit_minor, memo, line_order
+            )
             VALUES ('bad-line', ?1, ?2, 10, 10, NULL, 99)
             ",
             rusqlite::params![view.entry.id.to_string(), food.id.to_string()],
@@ -156,7 +158,9 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
 
     conn.execute(
         "
-        INSERT INTO journal_lines (id, entry_id, account_id, debit_minor, credit_minor, memo, line_order)
+        INSERT INTO journal_lines (
+            id, entry_id, account_id, debit_minor, credit_minor, memo, line_order
+        )
         VALUES ('bad-v4', ?1, ?2, 10, 10, NULL, 99)
         ",
         rusqlite::params![view.entry.id.to_string(), food.id.to_string()],

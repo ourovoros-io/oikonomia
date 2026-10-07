@@ -164,7 +164,9 @@ fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
     post_simple_entry(conn, &existing).expect("seed");
 
     // Same date+amount; description differs only by whitespace and case.
-    let csv = "Date,Description,Amount\n2026-03-15,  GROCERIES  ,-25.00\n2026-03-15,  GROCERIES  ,-25.00\n";
+    let csv = "Date,Description,Amount\n\
+               2026-03-15,  GROCERIES  ,-25.00\n\
+               2026-03-15,  GROCERIES  ,-25.00\n";
     let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
     assert_eq!(preview.rows.len(), 2);
     assert!(preview.rows[0].duplicate, "matches existing ledger entry");

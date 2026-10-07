@@ -261,7 +261,8 @@ impl TryFrom<JournalLineColumns> for JournalLine {
 /// Checks that `lines` can be posted as one journal entry.
 ///
 /// The lines pass when there are at least two of them, each has an amount
-/// greater than zero, and the debits and credits add up to the same total. Nothing else is looked at: not the accounts, not the
+/// greater than zero, and the debits and credits add up to the same total.
+/// Nothing else is looked at: not the accounts, not the
 /// ids, not the memos.
 ///
 /// # Examples

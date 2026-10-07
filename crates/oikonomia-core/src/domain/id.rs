@@ -38,7 +38,8 @@
 //! assert_eq!(serde_json::to_string(&id)?, r#""22222222-2222-4222-8222-222222222222""#);
 //!
 //! assert_ne!(AccountId::generate(), AccountId::generate());
-//! assert_eq!("not an id".parse::<AccountId>().map_err(|error| error.code()), Err("validation_internal"));
+//! let refused = "not an id".parse::<AccountId>().map_err(|error| error.code());
+//! assert_eq!(refused, Err("validation_internal"));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 

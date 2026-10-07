@@ -129,7 +129,8 @@ fn dashboard_numbers_hand_checked() {
     assert_eq!(s.net_income, 85_247);
     assert_eq!(
         s.cash_like_assets, 97_500,
-        "assets AS OF Aug 10 = 100000 salary − 2500 groceries; the Aug 20 payment must not count yet"
+        "assets AS OF Aug 10 = 100000 salary − 2500 groceries; \
+         the Aug 20 payment must not count yet"
     );
     assert_eq!(
         s.recent_entry_count, 6,

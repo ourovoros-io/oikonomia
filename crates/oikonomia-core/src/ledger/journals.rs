@@ -541,7 +541,8 @@ pub fn set_account_opening_balance(
 /// # Errors
 ///
 /// [`Error::NotFound`] for an unknown account; [`Error::MoneyOverflow`] when
-/// the running balance does not fit in `i64`; [`Error::VaultCorrupt`] for a stored id or date that does not
+/// the running balance does not fit in `i64`; [`Error::VaultCorrupt`] for a
+/// stored id or date that does not
 /// parse; database errors as [`Error::Database`].
 pub fn account_register(
     conn: &Connection,

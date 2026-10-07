@@ -88,8 +88,8 @@
 //! commits it, so a failure part-way leaves nothing behind. Functions take a
 //! shared `&Connection`, so the transaction is rusqlite's
 //! `unchecked_transaction`. Opening a second one inside it fails at run
-//! time; rusqlite documents that it does and leaves the error unspecified
-//! (<https://docs.rs/rusqlite/0.40.2/rusqlite/struct.Connection.html#method.unchecked_transaction>).
+//! time; rusqlite documents that it does and leaves the error unspecified:
+//! <https://docs.rs/rusqlite/0.40.2/rusqlite/struct.Connection.html#method.unchecked_transaction>.
 //! Such a function can therefore not be called from inside another
 //! transaction.
 //!

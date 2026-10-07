@@ -2991,9 +2991,10 @@ mod tests {
         assert_eq!(suggestion.kind, EntryKindSuggestion::Income);
         assert_eq!(suggestion.merchant.as_deref(), Some("ACME CONSULTING LTD"));
         assert!(
-            suggestion.description
+            suggestion
+                .description
                 .as_deref()
-                .is_some_and(|description| description.starts_with("ACME CONSULTING LTD — Invoice")),
+                .is_some_and(|text| text.starts_with("ACME CONSULTING LTD — Invoice")),
             "description={:?}",
             suggestion.description
         );
