@@ -97,7 +97,9 @@ pub fn default_journal_export_file_name(entity_name: &str) -> String {
 /// Columns: `date`, `description`, `reference`, `account_code`, `account_name`,
 /// `debit_minor`, `credit_minor`, `status`. Amounts are **integer minor units**,
 /// never floating point. `status` is `posted` or `voided`. One row is written
-/// per journal line, ordered by entry date, then creation time, then line.
+/// per journal line, ordered by entry date, then creation time, then the
+/// order the entries were posted in, then line, so the lines of an entry are
+/// always together.
 ///
 /// Text cells that a spreadsheet would run as a formula are prefixed with an
 /// apostrophe; [`parse_journal_export`] removes it again.
@@ -134,7 +136,7 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             WHERE je.entity_id = ?1
               AND je.status = 'posted'
               AND (je.hidden = 0 OR je.hidden IS NULL)
-            ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
+            ORDER BY je.entry_date ASC, je.created_at ASC, je.rowid ASC, jl.line_order ASC
             ",
         )
         .database("read journal for export")?;

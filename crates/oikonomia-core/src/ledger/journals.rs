@@ -36,6 +36,19 @@
 //! here report that as [`PostedEntryView::is_voided`], for the original and
 //! for its reversal alike. Nothing is deleted.
 //!
+//! # Order
+//!
+//! Entries are ordered by their date, then by when they were created, then
+//! by `rowid`. Creation time is stored to the second, and an import posts
+//! many entries of one date within a second, so the first two do not settle
+//! the order on their own. `journal_entries` has a text primary key and so
+//! keeps `SQLite`'s own `rowid`, which for a new row is one more than the
+//! largest in the table (<https://www.sqlite.org/autoinc.html>): among the
+//! entries of a book it rises in the order they were posted. `VACUUM` is the
+//! one statement that renumbers such rowids, and nothing here runs it.
+//! [`list_entries`] reads that order backwards, the register and the journal
+//! export forwards.
+//!
 //! # Transactions
 //!
 //! A public function that writes more than one row opens a transaction and
@@ -218,8 +231,8 @@ pub struct EntryFilter {
 ///
 /// Voided entries and their reversals are listed too, marked by
 /// [`PostedEntryView::is_voided`]. Entries of one date are ordered by when
-/// they were created, latest first; creation time is kept to the second, so
-/// entries created within one second have no fixed order among themselves.
+/// they were created, latest first, and entries created within one second by
+/// the order they were posted in, last first.
 /// An entity that does not exist has no entries and gives an empty list.
 ///
 /// # Errors
@@ -532,8 +545,9 @@ pub fn set_account_opening_balance(
 /// inclusive, oldest first, each with the running balance.
 ///
 /// `None` leaves that end of the range open. Lines of one date are ordered by
-/// when their entries were created, to the second, and lines of one entry by
-/// their order in it. The running balance starts from
+/// when their entries were created, entries created within one second by the
+/// order they were posted in, and lines of one entry by their order in it.
+/// The running balance starts from
 /// the account's balance on the day before `from`, so the first line's
 /// balance is the account's true balance and not just the sum of the lines
 /// shown.
@@ -821,7 +835,7 @@ fn listed_headers_sql() -> String {
                    ) AS is_voided
         FROM journal_entries je
         WHERE {LISTED_ENTRIES_PREDICATE}
-        ORDER BY je.entry_date DESC, je.created_at DESC
+        ORDER BY je.entry_date DESC, je.created_at DESC, je.rowid DESC
         "
     )
 }
@@ -839,7 +853,7 @@ fn register_sql() -> String {
           AND {ACTIVE_ENTRY_PREDICATE}
           AND (?2 IS NULL OR je.entry_date >= ?2)
           AND (?3 IS NULL OR je.entry_date <= ?3)
-        ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
+        ORDER BY je.entry_date ASC, je.created_at ASC, je.rowid ASC, jl.line_order ASC
         "
     )
 }
