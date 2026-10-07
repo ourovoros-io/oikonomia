@@ -69,6 +69,21 @@ wait_until() {
 }
 
 window_is_visible() { [ -n "$(visible_window)" ]; }
+
+# window_is_painted <screenshot path>: captures the visible window and succeeds
+# once it shows more than a flat colour. The webview paints some time after the
+# window appears, and how long depends on the runner, so the check is repeated
+# instead of made once after a fixed pause.
+window_is_painted() {
+  local screenshot="$1"
+  local window
+  window="$(visible_window)"
+  [ -n "$window" ] || return 1
+  import -window "$window" "$screenshot" 2>/dev/null || return 1
+  local colours
+  colours="$(identify -format '%k' "$screenshot" 2>/dev/null)" || return 1
+  [ "$colours" -ge "$MIN_DISTINCT_COLOURS" ]
+}
 window_is_hidden() { [ -z "$(visible_window)" ]; }
 app_has_exited() { [ "$(process_count)" -eq 0 ]; }
 
@@ -90,16 +105,13 @@ smoke() {
   "$@" >"$out/$name.log" 2>&1 &
   wait_until "$name shows its window" window_is_visible
 
-  # Give the webview time to load and paint the first screen.
-  sleep 8
+  # A window that stays one flat colour is a blank webview. The last capture
+  # is left in $out/$name.png for the uploaded artifacts.
+  wait_until "$name paints its first screen (see $out/$name.png)" \
+    window_is_painted "$out/$name.png"
   local window
   window="$(visible_window)"
-  import -window "$window" "$out/$name.png"
-  local colours
-  colours="$(identify -format '%k' "$out/$name.png")"
-  echo "$name: window drawn with $colours distinct colours"
-  [ "$colours" -ge "$MIN_DISTINCT_COLOURS" ] \
-    || fail "$name drew a blank window ($colours colours); see $out/$name.png"
+  echo "$name: window drawn with $(identify -format '%k' "$out/$name.png") distinct colours"
 
   local vault_dir="$XDG_DATA_HOME/oikonomia"
   [ -d "$vault_dir" ] || fail "$name did not create $vault_dir"

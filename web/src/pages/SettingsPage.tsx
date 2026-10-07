@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import {
   Archive,
+  ArchiveRestore,
   Briefcase,
   Building2,
   Clock,
@@ -132,6 +133,15 @@ export function SettingsPage({
   const [donations, setDonations] = useState<DonationAddress[]>([])
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
+  const [archived, setArchived] = useState<Entity[]>([])
+  // Bumped after every change that can move a book in or out of the archive.
+  const [archivedVersion, setArchivedVersion] = useState(0)
+  const archivedHeadingId = useId()
+  const [pendingArchive, setPendingArchive] = useState<{ id: string; name: string } | null>(null)
+  const [archiveBusy, setArchiveBusy] = useState(false)
+  const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [prefsUnreadable, setPrefsUnreadable] = useState(false)
+  const [prefsResetBusy, setPrefsResetBusy] = useState(false)
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -182,6 +192,50 @@ export function SettingsPage({
       })
   }, [])
 
+  // Whether the preferences file can be read is asked, not learned from a
+  // failed save. A language change that failed is one reason for it to have
+  // changed, so that asks again.
+  useEffect(() => {
+    let cancelled = false
+
+    async function readPrefsState() {
+      try {
+        const prefs = await api.getUiPrefs()
+        if (!cancelled) setPrefsUnreadable(prefs.unreadable)
+      } catch {
+        /* The state is unknown, so the notice stays as it was. */
+      }
+    }
+    void readPrefsState()
+
+    return () => {
+      cancelled = true
+    }
+  }, [languageChangeFailed])
+
+  // Archived books are not in the list App holds, which is the books that
+  // can be opened, so this page asks for them itself.
+  useEffect(() => {
+    if (!vaultPresent) return
+    let cancelled = false
+
+    async function loadArchived() {
+      try {
+        const books = await api.entityListArchived()
+        if (!cancelled) setArchived(books)
+      } catch (err) {
+        if (cancelled) return
+        setError(commandErrorMessage(err, 'settings.entities.archived.loadError'))
+        setPasswordErrorField(null)
+      }
+    }
+    void loadArchived()
+
+    return () => {
+      cancelled = true
+    }
+  }, [vaultPresent, archivedVersion])
+
   // App bumps createBookIntent from the five empty-state CTAs. Pop the
   // create-entity form open and scroll to it — scrollIntoView is undefined
   // in jsdom, so guard it. Then tell App the intent was consumed, so a later
@@ -229,6 +283,64 @@ export function SettingsPage({
       setPageError(commandErrorMessage(err, 'settings.deleteFailed'))
     } finally {
       setDeleteBusy(false)
+    }
+  }
+
+  // Archiving the current book needs nothing more than deleting it does:
+  // App reloads the active books and falls to the first of them, or to the
+  // no-book state when none is left.
+  async function confirmArchive() {
+    if (!pendingArchive) return
+    setArchiveBusy(true)
+    setPageError(null)
+    setNotice(null)
+    try {
+      await api.entityArchive(pendingArchive.id)
+      await onEntitiesChange()
+    } catch (err) {
+      setPageError(commandErrorMessage(err, 'settings.entities.archiveError'))
+    } finally {
+      // Closed on failure too, so the error is not behind the dialog.
+      setPendingArchive(null)
+      setArchiveBusy(false)
+      setArchivedVersion((version) => version + 1)
+    }
+  }
+
+  async function onRestore(book: Entity) {
+    setRestoringId(book.id)
+    setPageError(null)
+    setNotice(null)
+    try {
+      await api.entityUnarchive(book.id)
+      await onEntitiesChange()
+    } catch (err) {
+      const cmd = asCommandError(err)
+      // The general sentence for a taken name says to choose another, which
+      // an archived book cannot do: it is read-only.
+      setPageError(
+        cmd.code === 'name_taken'
+          ? t('settings.entities.restoreNameTaken', { name: book.name })
+          : commandErrorMessage(cmd, 'settings.entities.restoreError'),
+      )
+    } finally {
+      setRestoringId(null)
+      setArchivedVersion((version) => version + 1)
+    }
+  }
+
+  async function onResetPrefs() {
+    setPrefsResetBusy(true)
+    setPageError(null)
+    setNotice(null)
+    try {
+      const prefs = await api.resetUiPrefs()
+      setPrefsUnreadable(prefs.unreadable)
+      if (!prefs.unreadable) setNotice(t('settings.prefs.resetDone'))
+    } catch (err) {
+      setPageError(commandErrorMessage(err, 'settings.prefs.resetFailed'))
+    } finally {
+      setPrefsResetBusy(false)
     }
   }
 
@@ -352,8 +464,27 @@ export function SettingsPage({
 
       <ErrorBanner id={errorBannerId} message={error} />
       {notice ? (
-        <div className="rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]">
+        <div
+          role="status"
+          className="rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]"
+        >
           {notice}
+        </div>
+      ) : null}
+      {prefsUnreadable ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-warning)]/25 bg-[var(--color-warning-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]"
+        >
+          <p className="min-w-0 flex-1">{t('settings.prefs.unreadable')}</p>
+          <Button
+            variant="secondary"
+            size="sm"
+            busy={prefsResetBusy}
+            onClick={() => void onResetPrefs()}
+          >
+            {t('settings.prefs.reset')}
+          </Button>
         </div>
       ) : null}
 
@@ -370,6 +501,22 @@ export function SettingsPage({
           if (!deleteBusy) setPendingDelete(null)
         }}
         onConfirm={() => void confirmDelete()}
+      />
+
+      <ConfirmDialog
+        open={pendingArchive !== null}
+        title={t('settings.entities.archiveConfirm.title')}
+        body={
+          pendingArchive
+            ? t('settings.entities.archiveConfirm.body', { name: pendingArchive.name })
+            : ''
+        }
+        confirmLabel={t('settings.entities.archiveTitle')}
+        busy={archiveBusy}
+        onCancel={() => {
+          if (!archiveBusy) setPendingArchive(null)
+        }}
+        onConfirm={() => void confirmArchive()}
       />
 
       <ConfirmDialog
@@ -664,6 +811,15 @@ export function SettingsPage({
                     {t('settings.entities.open')}
                   </Button>
                   <Button
+                    variant="secondary"
+                    size="iconSm"
+                    onClick={() => setPendingArchive({ id: e.id, name: e.name })}
+                    aria-label={t('settings.entities.archiveAria', { name: e.name })}
+                    title={t('settings.entities.archiveTitle')}
+                  >
+                    <Archive className="size-3.5" />
+                  </Button>
+                  <Button
                     variant="danger"
                     size="iconSm"
                     onClick={() => setPendingDelete({ id: e.id, name: e.name })}
@@ -683,6 +839,55 @@ export function SettingsPage({
             {t('settings.entities.new')}
           </Button>
         </div>
+        {archived.length > 0 ? (
+          <section
+            aria-labelledby={archivedHeadingId}
+            className="border-t border-[var(--color-border)]"
+          >
+            <div className="px-5 pt-4 pb-2">
+              <h4
+                id={archivedHeadingId}
+                className="font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase"
+              >
+                {t('settings.entities.archived.title')}
+              </h4>
+              <p className="mt-1 text-xs text-[var(--color-muted)]">
+                {t('settings.entities.archived.hint')}
+              </p>
+            </div>
+            <ul className="divide-y divide-[var(--color-border)]">
+              {archived.map((book) => (
+                <li key={book.id} className="flex items-center gap-3 px-5 py-3">
+                  <IconBadge tone="muted" size="sm">
+                    <Archive className="size-4" />
+                  </IconBadge>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-[var(--color-fg-secondary)]">
+                      {book.name}
+                    </div>
+                    <div className="text-xs text-[var(--color-muted)]">
+                      <span className="tabular-nums">{book.base_currency}</span>
+                      <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
+                      <span>{t(`chart.${book.chart_template}`)}</span>
+                    </div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="shrink-0"
+                    busy={restoringId === book.id}
+                    disabled={restoringId !== null}
+                    onClick={() => void onRestore(book)}
+                    aria-label={t('settings.entities.restoreAria', { name: book.name })}
+                  >
+                    {restoringId === book.id ? null : <ArchiveRestore className="size-3.5" />}
+                    {t('settings.entities.restore')}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
       </CollapsibleSection>
     </div>
   )

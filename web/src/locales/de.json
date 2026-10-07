@@ -210,6 +210,12 @@
       },
       "error": "Die Sprache konnte nicht geändert werden."
     },
+    "prefs": {
+      "unreadable": "Die Datei mit den Vorgaben ist beschädigt, daher können die Sprache und die Auswahl der Schnellerfassung nicht gespeichert werden. Ihr Tresor ist nicht betroffen. Sie können die Vorgaben in den Einstellungen zurücksetzen.",
+      "reset": "Vorgaben zurücksetzen",
+      "resetDone": "Vorgaben zurückgesetzt. Die beschädigte Datei wurde neben dem Tresor als ui-prefs.damaged.json aufbewahrt.",
+      "resetFailed": "Die Vorgaben konnten nicht zurückgesetzt werden."
+    },
     "support": {
       "title": "Support",
       "description": "Fragen und Fehlerberichte: {email}",
@@ -311,7 +317,23 @@
         "title": "Buch löschen?",
         "body": "„{name}“ und alle Konten und Buchungen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen."
       },
-      "deleteError": "Das Buch konnte nicht gelöscht werden"
+      "deleteError": "Das Buch konnte nicht gelöscht werden",
+      "archiveAria": "{name} archivieren",
+      "archiveTitle": "Archivieren",
+      "archiveConfirm": {
+        "title": "Buch archivieren?",
+        "body": "„{name}“ wird schreibgeschützt und verschwindet aus der Liste der Bücher. Nichts wird gelöscht, und Sie können es hier jederzeit wiederherstellen."
+      },
+      "archiveError": "Das Buch konnte nicht archiviert werden",
+      "archived": {
+        "title": "Archiviert",
+        "hint": "Archivierte Bücher bleiben unverändert erhalten und lassen sich weder öffnen noch ändern. Stellen Sie eines wieder her, um es wieder zu nutzen.",
+        "loadError": "Die archivierten Bücher konnten nicht geladen werden"
+      },
+      "restore": "Wiederherstellen",
+      "restoreAria": "{name} wiederherstellen",
+      "restoreError": "Das Buch konnte nicht wiederhergestellt werden",
+      "restoreNameTaken": "Ein anderes Buch heißt inzwischen „{name}“. Archivieren oder löschen Sie jenes Buch, bevor Sie dieses wiederherstellen."
     },
     "entityCreate": {
       "title": "Neues Buch",

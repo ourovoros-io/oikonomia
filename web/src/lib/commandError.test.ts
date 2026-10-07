@@ -39,6 +39,7 @@ const UNWORDED_PARAMS: Record<string, string[]> = {
   io: ['operation'],
   name_required: ['field'],
   not_found: ['resource'],
+  prefs_unreadable: ['operation'],
   serialization: ['operation'],
   unbalanced_entry: ['credits', 'debits'],
   vault_too_new: ['found', 'supported'],
@@ -537,6 +538,27 @@ describe('command error localization', () => {
     }
 
     expect(commandErrorMessage({ code: 'io', message: 'raw' })).toBe('A file operation failed.')
+  })
+
+  it('says a damaged preferences file is damaged, not that a file operation failed', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = {
+      code: 'prefs_unreadable',
+      message: 'replace a preferences file that does not decode: expected value at line 1',
+      params: { operation: 'replace a preferences file that does not decode' },
+    }
+
+    for (const locale of LOCALES) {
+      setLocale(locale)
+      const shown = commandErrorMessage(error, 'settings.language.error')
+
+      expect(shown, locale).toBe(t('settings.prefs.unreadable'))
+      expect(shown, locale).not.toBe(t('error.io'))
+      expect(shown, locale).not.toBe(t('settings.language.error'))
+      expect(shown, locale).not.toContain('replace a preferences file')
+    }
+    // The sentence says what to do, so the error is not a diagnostic one.
+    expect(warn).not.toHaveBeenCalled()
   })
 
   it('lets a specific code win over the screen sentence', () => {

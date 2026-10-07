@@ -27,7 +27,9 @@ Only the latest release receives security fixes.
 - `vault.header.json` holds the salt and key-derivation parameters. It is not
   secret by design.
 - `ui-prefs.json` holds interface preferences in plaintext: your language and
-  the last entity and account choices made in the quick-add window.
+  the last entity and account choices made in the quick-add window. If that
+  file is damaged and you reset the preferences in Settings, it is kept
+  beside it as `ui-prefs.damaged.json`, also in plaintext.
 - The window-state file written by the window-state plugin (window size and
   position).
 - Anything you export: journal CSV, expense PDF, and documents saved through

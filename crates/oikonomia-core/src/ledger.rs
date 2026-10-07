@@ -143,7 +143,7 @@ pub use cash_flow::{
 pub(crate) use entities::ensure_writable_entity;
 pub use entities::{
     CreateEntity, archive_entity, count_entities, create_entity, delete_entity, get_entity,
-    list_entities, update_entity,
+    list_archived_entities, list_entities, unarchive_entity, update_entity,
 };
 pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{

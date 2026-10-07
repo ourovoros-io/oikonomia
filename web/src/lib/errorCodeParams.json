@@ -20,6 +20,7 @@
   "name_taken": ["name"],
   "not_found": ["resource"],
   "password_too_short": ["min"],
+  "prefs_unreadable": ["operation"],
   "serialization": ["operation"],
   "unbalanced_entry": ["credits", "debits"],
   "vault_too_new": ["found", "supported"]

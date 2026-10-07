@@ -64,7 +64,11 @@ The vault is one SQLCipher database, `vault.db`, plus a small public header,
 - **UI preferences** (language, last book and accounts used in quick-add) are
   plain JSON in `ui-prefs.json` beside the vault, so the tray menu and unlock
   screen can use the right language before a password is entered. Nothing
-  sensitive goes there (`prefs.rs`).
+  sensitive goes there (`prefs.rs`). A file that is there and cannot be read
+  or decoded is never saved over: the app runs on the defaults, a save is
+  refused with the code `prefs_unreadable`, and Settings shows a notice whose
+  button moves the file aside to `ui-prefs.damaged.json`, after which the
+  next save writes a new one.
 
 ## The ledger
 
@@ -276,9 +280,13 @@ with its reason so that it is not raised again without something new to say.
   correction changes them. The rule is `ensure_writable_entity` in
   `crates/oikonomia-core/src/ledger/entities.rs`, whose module documentation
   tabulates it; every entry is inserted through `post_entry_in_tx`
-  (`ledger/journals.rs`), which makes the check first. No un-archive
-  operation exists yet: until one does, an archived book can be read,
-  exported and deleted, and its entries cannot be corrected.
+  (`ledger/journals.rs`), which makes the check first. `unarchive_entity`
+  makes the book active again, and refuses with `name_taken` while another
+  active book has its name. In the app, Settings lists the books: each row
+  archives one after a confirmation, and archived books are listed below
+  with a Restore action. An archived book is not in the sidebar and cannot
+  be opened, so no screen offers a write that core would refuse; it is
+  restored to be read, corrected or exported.
 - **PDF load-time decompression is bounded only by the 8 MiB upload cap.**
   `lopdf` inflates object streams and cross-reference streams while it loads a
   file, before the page, decoded-size and nesting budgets can run on the

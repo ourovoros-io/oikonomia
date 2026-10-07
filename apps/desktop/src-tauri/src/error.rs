@@ -29,7 +29,7 @@
 //! there.
 //!
 //! The lower-level text of a failure (the `detail` of `database`, `io`,
-//! `serialization`, `crypto`, `analysis`, `csv_parse` and
+//! `serialization`, `crypto`, `analysis`, `prefs_unreadable`, `csv_parse` and
 //! `validation_internal`, and the reason of `vault_corrupt`,
 //! `vault_unlock_before_backup` and `backup_invalid`) is diagnostic, may
 //! hold operating-system error text, and is never a parameter. It reaches
@@ -458,6 +458,10 @@ mod tests {
             (CoreError::NotFound(Resource::Account), &["resource"]),
             (
                 failure(|operation, detail| CoreError::Analysis { operation, detail }),
+                &["operation"],
+            ),
+            (
+                failure(|operation, detail| CoreError::PrefsUnreadable { operation, detail }),
                 &["operation"],
             ),
         ]

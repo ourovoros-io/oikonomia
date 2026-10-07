@@ -210,6 +210,12 @@
       },
       "error": "Impossible de changer la langue."
     },
+    "prefs": {
+      "unreadable": "Le fichier des préférences est endommagé : la langue et les choix de la Saisie rapide ne peuvent pas être enregistrés. Rien n’est modifié dans votre coffre. Vous pouvez réinitialiser les préférences dans les Paramètres.",
+      "reset": "Réinitialiser les préférences",
+      "resetDone": "Préférences réinitialisées. Le fichier endommagé a été conservé à côté du coffre sous le nom ui-prefs.damaged.json.",
+      "resetFailed": "Impossible de réinitialiser les préférences."
+    },
     "support": {
       "title": "Assistance",
       "description": "Questions et rapports de bogue : {email}",
@@ -311,7 +317,23 @@
         "title": "Supprimer l’entité ?",
         "body": "« {name} » et tous ses comptes et mouvements seront définitivement supprimés. Cette action est irréversible."
       },
-      "deleteError": "Impossible de supprimer l’entité"
+      "deleteError": "Impossible de supprimer l’entité",
+      "archiveAria": "Archiver {name}",
+      "archiveTitle": "Archiver",
+      "archiveConfirm": {
+        "title": "Archiver l’entité ?",
+        "body": "« {name} » passe en lecture seule et quitte la liste des livres. Rien n’est supprimé, et vous pouvez le restaurer ici à tout moment."
+      },
+      "archiveError": "Impossible d’archiver l’entité",
+      "archived": {
+        "title": "Archivés",
+        "hint": "Les livres archivés sont conservés tels quels et ne peuvent être ni ouverts ni modifiés. Restaurez-en un pour l’utiliser de nouveau.",
+        "loadError": "Impossible de charger les livres archivés"
+      },
+      "restore": "Restaurer",
+      "restoreAria": "Restaurer {name}",
+      "restoreError": "Impossible de restaurer l’entité",
+      "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez ce livre avant de restaurer celui-ci."
     },
     "entityCreate": {
       "title": "Nouvelle entité",

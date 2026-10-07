@@ -93,6 +93,7 @@ fn vault_problem(source: &CoreError) -> StartupProblem {
         | CoreError::RestoreWouldOverwrite
         | CoreError::NotFound(_)
         | CoreError::Analysis { .. }
+        | CoreError::PrefsUnreadable { .. }
         | CoreError::Csv(_) => StartupProblem::DataFolderUnreadable,
     }
 }

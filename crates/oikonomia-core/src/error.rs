@@ -20,6 +20,10 @@
 //!   ([`VaultCorruption`], [`BackupDefect`]), so the reason can be matched
 //!   and not only read. [`Error::VaultTooNew`] is kept apart from them: that
 //!   vault is sound, and only this build is too old for it.
+//!   [`Error::PrefsUnreadable`] is the same kind of failure for the
+//!   preferences file, which is no part of the vault. It has a code of its
+//!   own because the user can settle it, by resetting the preferences, and
+//!   the generic sentence for a failed file operation would not say so.
 //! - **A failure below the crate.** [`Error::Database`], [`Error::Io`],
 //!   [`Error::Serialization`], [`Error::Crypto`] and [`Error::Analysis`] say
 //!   which layer failed and carry an `operation` and a `detail`, described
@@ -61,7 +65,8 @@
 //!
 //! # Operation and detail
 //!
-//! A variant for a failure below the crate has two fields.
+//! A variant for a failure below the crate has two fields, and so has
+//! [`Error::PrefsUnreadable`].
 //!
 //! - `operation` is what core was doing, as a fixed lowercase phrase:
 //!   `insert journal entry`, `write backup archive`. It is written at the
@@ -270,6 +275,22 @@ pub enum Error {
         detail: String,
     },
 
+    /// The preferences file is there and cannot be read or decoded, so a
+    /// save that would have replaced it was refused and the file is as it
+    /// was. Nothing in the vault is involved.
+    ///
+    /// [`reset_unreadable_ui_prefs`](crate::prefs::reset_unreadable_ui_prefs)
+    /// moves the file aside, after which a save writes a new one.
+    #[error("{operation}: {detail}")]
+    PrefsUnreadable {
+        /// What was refused, as a lowercase phrase such as
+        /// `replace a preferences file that does not decode`.
+        operation: &'static str,
+        /// The reader's or decoder's own text, which can quote the file. For
+        /// logs; never sent as a parameter.
+        detail: String,
+    },
+
     /// A bank CSV or a journal CSV could not be read; the reason carries its
     /// own code and the values the UI fills into its wording.
     #[error(transparent)]
@@ -306,6 +327,7 @@ impl Error {
         "restore_would_overwrite",
         "not_found",
         "analysis",
+        "prefs_unreadable",
     ];
 
     /// Returns the stable `snake_case` identifier the UI maps to localized
@@ -360,6 +382,7 @@ impl Error {
             Self::RestoreWouldOverwrite => "restore_would_overwrite",
             Self::NotFound(_) => "not_found",
             Self::Analysis { .. } => "analysis",
+            Self::PrefsUnreadable { .. } => "prefs_unreadable",
             Self::Csv(reason) => reason.code(),
         }
     }
@@ -374,7 +397,8 @@ impl Error {
     /// - a missing record sends `resource`, a [`Resource::identifier`];
     /// - a vault from a newer build sends `found` and `supported`;
     /// - a failure below the crate sends `operation` and never its `detail`,
-    ///   which may hold operating-system text and is for logs;
+    ///   which may hold operating-system text and is for logs; an unreadable
+    ///   preferences file does the same;
     /// - a validation or CSV error sends its own
     ///   ([`ValidationError::params`], [`CsvError::params`]);
     /// - a corrupt vault and an invalid backup send nothing: the reason is
@@ -403,7 +427,8 @@ impl Error {
             | Self::Io { operation, .. }
             | Self::Serialization { operation, .. }
             | Self::Crypto { operation, .. }
-            | Self::Analysis { operation, .. } => {
+            | Self::Analysis { operation, .. }
+            | Self::PrefsUnreadable { operation, .. } => {
                 BTreeMap::from([("operation", (*operation).to_owned())])
             }
             Self::VaultTooNew { found, supported } => BTreeMap::from([
@@ -469,6 +494,15 @@ impl Error {
             detail: detail.to_string(),
         }
     }
+
+    /// Builds the error for `operation` refused because the preferences file
+    /// cannot be read or decoded.
+    pub(crate) fn prefs_unreadable(operation: &'static str, detail: impl Display) -> Self {
+        Self::PrefsUnreadable {
+            operation,
+            detail: detail.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -525,6 +559,10 @@ mod tests {
                 operation: "x",
                 detail: "x".into(),
             },
+            Error::PrefsUnreadable {
+                operation: "x",
+                detail: "x".into(),
+            },
             Error::Csv(CsvError::Empty),
         ]
     }
@@ -557,6 +595,7 @@ mod tests {
             Error::RestoreWouldOverwrite,
             Error::NotFound(_),
             Error::Analysis { .. },
+            Error::PrefsUnreadable { .. },
             Error::Csv(_),
         }
     }
@@ -669,6 +708,7 @@ mod tests {
             Error::serialization("insert journal entry", "disk on fire"),
             Error::crypto("insert journal entry", "disk on fire"),
             Error::analysis("insert journal entry", "disk on fire"),
+            Error::prefs_unreadable("insert journal entry", "disk on fire"),
         ];
 
         for error in failures {

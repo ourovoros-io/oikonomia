@@ -24,6 +24,8 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   restore_would_overwrite: 'error.restoreWouldOverwrite',
   not_found: 'error.notFound',
   analysis: 'error.analysis',
+  // Worded with the Settings notice that offers the reset, so the two read alike.
+  prefs_unreadable: 'settings.prefs.unreadable',
   csv_empty: 'error.csvEmpty',
   csv_not_utf8: 'error.csvNotUtf8',
   csv_too_large: 'error.csvTooLarge',

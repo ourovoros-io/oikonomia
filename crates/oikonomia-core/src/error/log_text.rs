@@ -42,7 +42,9 @@
 //! - for a failure below the crate, the `operation`, a fixed phrase written
 //!   at the call site. The `detail` is left out: a `serde` message can quote
 //!   its input, a file error names a path that may be the user's backup
-//!   destination, and a driver error can carry a stored value;
+//!   destination, and a driver error can carry a stored value. An unreadable
+//!   preferences file is written the same way, for the first of those
+//!   reasons;
 //! - for a corrupt vault or an invalid backup, the reason without its
 //!   free-text fields, so the log still tells a header that does not parse
 //!   from a database that is missing;
@@ -206,7 +208,8 @@ fn write_error(f: &mut Formatter<'_>, error: &Error, with_detail: bool) -> fmt::
         | Error::Io { operation, .. }
         | Error::Serialization { operation, .. }
         | Error::Crypto { operation, .. }
-        | Error::Analysis { operation, .. } => write!(f, "{code}: {operation}"),
+        | Error::Analysis { operation, .. }
+        | Error::PrefsUnreadable { operation, .. } => write!(f, "{code}: {operation}"),
 
         Error::VaultCorrupt(reason) => {
             write!(f, "{code}: ")?;
@@ -345,6 +348,7 @@ mod tests {
             Error::RestoreWouldOverwrite,
             Error::NotFound(Resource::Account),
             failure(|operation, detail| Error::Analysis { operation, detail }),
+            failure(|operation, detail| Error::PrefsUnreadable { operation, detail }),
             Error::Csv(CsvError::InvalidAmount(text())),
             Error::Csv(CsvError::Malformed { detail: text() }),
         ];
@@ -397,7 +401,7 @@ mod tests {
                 with_sentinel += 1;
             }
         }
-        assert_eq!(with_sentinel, 17);
+        assert_eq!(with_sentinel, 18);
     }
 
     #[test]

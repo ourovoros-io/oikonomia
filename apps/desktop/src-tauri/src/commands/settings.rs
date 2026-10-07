@@ -13,13 +13,15 @@
 //! returns ([`oikonomia_core::prefs::save_ui_prefs`]):
 //!
 //! - `io` when the file cannot be written;
-//! - `io` when a file is there and cannot be read;
-//! - `serialization` when a file is there and does not decode.
+//! - `prefs_unreadable` when a file is there and cannot be read or does not
+//!   decode.
 //!
-//! When a file is there and cannot be read or decoded, core has refused to
-//! replace it and it is left as it was: the command changed nothing. The
-//! commands that only read the preferences answer with the defaults for such
-//! a file and never fail on it.
+//! In the second case core has refused to replace the file and it is left as
+//! it was: the command changed nothing. The commands that only read the
+//! preferences answer with the defaults for such a file and never fail on
+//! it; [`settings_get_ui_prefs`] also says so, in its `unreadable` field,
+//! which is how the Settings screen knows to offer
+//! [`settings_reset_ui_prefs`].
 
 use crate::commands::support::{run_blocking, with_connection, with_vault_blocking};
 use crate::error::{CommandError, CommandResult, DesktopError};
@@ -27,8 +29,8 @@ use crate::state::AppState;
 use oikonomia_core::domain::EntityId;
 use oikonomia_core::ledger::{SimpleEntryKind, get_lock_timeout_secs, set_lock_timeout_secs};
 use oikonomia_core::prefs::{
-    LastRoleAccounts, Locale, UiPrefsView, load_ui_prefs, remember_quick_add, resolve_locale,
-    store_locale,
+    LastRoleAccounts, Locale, UiPrefsView, load_ui_prefs, load_ui_prefs_view, remember_quick_add,
+    reset_unreadable_ui_prefs, resolve_locale, store_locale,
 };
 use tauri::{Manager, Runtime, State};
 
@@ -160,7 +162,8 @@ pub(crate) async fn settings_resolve_locale(
 /// quick-add window last used.
 ///
 /// Works in every vault state. A missing or unreadable preferences file
-/// yields the defaults.
+/// yields the defaults; `unreadable` is `true` for a file that is there and
+/// could not be read or decoded, and `false` otherwise.
 ///
 /// The locale sent is the one in effect, so the web UI never sees a stored
 /// value this build does not know.
@@ -173,8 +176,42 @@ pub(crate) async fn settings_resolve_locale(
 pub(crate) async fn settings_get_ui_prefs<R: Runtime>(
     app: tauri::AppHandle<R>,
 ) -> CommandResult<UiPrefsView> {
+    with_prefs_blocking(app, |_app, state| Ok(load_ui_prefs_view(state.data_dir()))).await
+}
+
+/// Moves a damaged preferences file aside, to `ui-prefs.damaged.json` in the
+/// same folder, and returns the preferences as they are afterwards.
+///
+/// Works in every vault state. A file is damaged when it is not UTF-8 or
+/// does not decode. It is moved, not deleted, and replaces the file an
+/// earlier reset left under that name. No preferences file is left, so the
+/// next save writes a new one. A preferences file that is missing, blank or
+/// readable is left as it is and the call succeeds.
+///
+/// The tray and the window titles are not rebuilt: the reset stores no
+/// preference, so the language in effect is the default before it and after
+/// it.
+///
+/// # Errors
+///
+/// Returns `io` when the file cannot be moved, or cannot be read for a
+/// reason other than what it holds (its permissions, a directory at its
+/// path). In both cases it is still where it was and the next
+/// [`settings_get_ui_prefs`] still reports it. Also returns
+/// `app_state_unavailable` when the application state was never set up, and
+/// `task_failed` when the blocking task panics.
+#[tauri::command]
+pub(crate) async fn settings_reset_ui_prefs<R: Runtime>(
+    app: tauri::AppHandle<R>,
+) -> CommandResult<UiPrefsView> {
     with_prefs_blocking(app, |_app, state| {
-        Ok(UiPrefsView::from(load_ui_prefs(state.data_dir())))
+        // Under the lock every save holds, so the file a save has just
+        // written is not the one judged and moved, and the view returned is
+        // of the state this call left.
+        let _prefs_guard = state.lock_prefs();
+
+        reset_unreadable_ui_prefs(state.data_dir())?;
+        Ok(load_ui_prefs_view(state.data_dir()))
     })
     .await
 }
@@ -240,8 +277,10 @@ where
     .await
 }
 
-/// `settings_remember_quick_add` invoked through the mock IPC, the way the
-/// webview invokes it, and read back through `settings_get_ui_prefs`.
+/// The preferences commands invoked through the mock IPC, the way the
+/// webview invokes them: `settings_remember_quick_add` read back through
+/// `settings_get_ui_prefs`, the `unreadable` flag of that answer, and
+/// `settings_reset_ui_prefs`.
 ///
 /// Not built on Windows, where the mock runtime keeps a test executable from
 /// starting; `commands::support::ipc_test_support` says why.
@@ -249,7 +288,8 @@ where
 #[cfg(not(windows))]
 mod ipc_tests {
     use crate::commands::settings::{
-        settings_get_ui_prefs, settings_remember_quick_add, with_prefs_blocking,
+        settings_get_ui_prefs, settings_remember_quick_add, settings_reset_ui_prefs,
+        with_prefs_blocking,
     };
     use crate::commands::support::ipc_test_support::MockApp;
 
@@ -261,13 +301,19 @@ mod ipc_tests {
     const CATEGORY: &str = "22222222-2222-4222-8222-222222222222";
     /// Another account id.
     const WALLET: &str = "44444444-4444-4444-8444-444444444444";
+    /// A preferences file that does not decode: an object cut off part way.
+    const CUT_OFF: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": ";
 
-    /// Starts the mock app with the two preferences commands registered.
-    /// The preferences need nothing in the vault.
+    /// Starts the mock app with the preferences commands registered. The
+    /// preferences need nothing in the vault.
     fn mock_app(label: &str) -> MockApp {
         let (app, ()) = MockApp::start(
             label,
-            tauri::generate_handler![settings_remember_quick_add, settings_get_ui_prefs],
+            tauri::generate_handler![
+                settings_remember_quick_add,
+                settings_get_ui_prefs,
+                settings_reset_ui_prefs
+            ],
             |_conn| (),
         );
         app
@@ -365,12 +411,12 @@ mod ipc_tests {
     }
 
     /// Core refuses to save over a preferences file it could not decode. The
-    /// command answers with that error, as with any other, and the file
-    /// stays as it was.
+    /// command answers with the code of that refusal, and the file stays as
+    /// it was.
     #[test]
     fn a_preferences_file_that_does_not_decode_is_reported_and_left_as_it_is() {
         let app = mock_app("remember-quick-add-corrupt");
-        let corrupt = b"{\"locale\": \"el\", \"last_entity_id\": ";
+        let corrupt = CUT_OFF;
         let path = app.write_file("ui-prefs.json", corrupt);
 
         let refused = app
@@ -384,19 +430,156 @@ mod ipc_tests {
             )
             .unwrap_err();
 
-        assert_eq!(refused["code"], "serialization", "{refused}");
+        assert_eq!(refused["code"], "prefs_unreadable", "{refused}");
         assert_eq!(
-            refused["params"]["operation"],
-            "replace a preferences file that does not decode"
+            refused["params"],
+            serde_json::json!({ "operation": "replace a preferences file that does not decode" })
         );
         assert_eq!(std::fs::read(path).unwrap(), corrupt);
 
-        // Reading still works, on the defaults.
+        // Reading still works, on the defaults, and says what it found.
         let prefs = app
             .invoke("settings_get_ui_prefs", serde_json::json!({}))
             .unwrap();
         assert_eq!(prefs["locale"], "en");
         assert_eq!(prefs["last_entity_id"], serde_json::Value::Null);
+        assert_eq!(prefs["unreadable"], true);
+    }
+
+    #[test]
+    fn the_preferences_say_whether_the_file_could_be_read() {
+        let app = mock_app("prefs-unreadable-flag");
+        let read = || {
+            app.invoke("settings_get_ui_prefs", serde_json::json!({}))
+                .unwrap()
+        };
+
+        assert_eq!(read()["unreadable"], false, "no file");
+
+        remember(&app, ENTITY, "expense", &roles(Some(CATEGORY), None));
+        assert_eq!(read()["unreadable"], false, "a file this build wrote");
+
+        app.write_file("ui-prefs.json", CUT_OFF);
+        assert_eq!(read()["unreadable"], true, "a file that does not decode");
+    }
+
+    #[test]
+    fn a_reset_moves_the_unreadable_file_aside_and_the_next_save_goes_through() {
+        let app = mock_app("prefs-reset");
+        app.write_file("ui-prefs.json", CUT_OFF);
+        let path = app.path("ui-prefs.json");
+        let aside = app.path("ui-prefs.damaged.json");
+
+        let prefs = app
+            .invoke("settings_reset_ui_prefs", serde_json::json!({}))
+            .unwrap();
+
+        assert_eq!(
+            prefs,
+            serde_json::json!({
+                "locale": "en",
+                "last_entity_id": null,
+                "last_accounts_by_entity_kind": {},
+                "unreadable": false,
+            })
+        );
+        assert!(!path.exists(), "the preferences file is still there");
+        assert_eq!(std::fs::read(&aside).unwrap(), CUT_OFF);
+
+        remember(
+            &app,
+            ENTITY,
+            "expense",
+            &roles(Some(CATEGORY), Some(WALLET)),
+        );
+        let prefs = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(prefs["last_entity_id"], ENTITY);
+        assert_eq!(prefs["unreadable"], false);
+        assert_eq!(std::fs::read(&aside).unwrap(), CUT_OFF);
+    }
+
+    #[test]
+    fn a_reset_leaves_readable_preferences_as_they_are() {
+        let app = mock_app("prefs-reset-good");
+        remember(
+            &app,
+            ENTITY,
+            "expense",
+            &roles(Some(CATEGORY), Some(WALLET)),
+        );
+        let before = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+
+        let after = app
+            .invoke("settings_reset_ui_prefs", serde_json::json!({}))
+            .unwrap();
+
+        assert_eq!(after, before);
+        assert_eq!(after["last_entity_id"], ENTITY);
+        assert!(app.path("ui-prefs.json").exists());
+        assert!(!app.path("ui-prefs.damaged.json").exists());
+    }
+
+    #[test]
+    fn a_reset_with_no_preferences_file_succeeds_and_creates_nothing() {
+        let app = mock_app("prefs-reset-missing");
+
+        let prefs = app
+            .invoke("settings_reset_ui_prefs", serde_json::json!({}))
+            .unwrap();
+
+        assert_eq!(prefs["unreadable"], false);
+        assert!(!app.path("ui-prefs.json").exists());
+        assert!(!app.path("ui-prefs.damaged.json").exists());
+    }
+
+    #[test]
+    fn a_reset_that_cannot_move_the_file_answers_io_and_the_file_stays() {
+        let app = mock_app("prefs-reset-blocked");
+        app.write_file("ui-prefs.json", CUT_OFF);
+        let path = app.path("ui-prefs.json");
+        // A directory that is not empty cannot be replaced by a rename.
+        let aside = app.path("ui-prefs.damaged.json");
+        std::fs::create_dir(&aside).unwrap();
+        std::fs::write(aside.join("kept"), b"x").unwrap();
+
+        let refused = app
+            .invoke("settings_reset_ui_prefs", serde_json::json!({}))
+            .unwrap_err();
+
+        assert_eq!(refused["code"], "io", "{refused}");
+        assert_eq!(
+            refused["params"]["operation"],
+            "move the damaged preferences file aside"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), CUT_OFF);
+        let prefs = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(prefs["unreadable"], true);
+    }
+
+    /// A directory at the path cannot be read, but it is not a damaged file,
+    /// so it is reported and left where it is.
+    #[test]
+    fn a_reset_does_not_move_what_is_unreadable_for_another_reason_than_its_contents() {
+        let app = mock_app("prefs-reset-directory");
+        std::fs::create_dir(app.path("ui-prefs.json")).unwrap();
+
+        let refused = app
+            .invoke("settings_reset_ui_prefs", serde_json::json!({}))
+            .unwrap_err();
+
+        assert_eq!(refused["code"], "io", "{refused}");
+        assert_eq!(
+            refused["params"]["operation"],
+            "read the preferences file before moving it aside"
+        );
+        assert!(app.path("ui-prefs.json").is_dir());
+        assert!(!app.path("ui-prefs.damaged.json").exists());
     }
 
     #[test]

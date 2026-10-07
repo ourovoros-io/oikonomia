@@ -218,6 +218,12 @@ export type UiPrefs = {
   last_accounts_by_entity_kind: Record<string, LastRoleAccounts>
   /** Absent on older prefs files; treat as `en`. */
   locale?: Locale
+  /**
+   * True when a preferences file is there and Rust could not read or decode
+   * it. The other fields are then the defaults, every save is refused with
+   * `prefs_unreadable` until the file is repaired or `resetUiPrefs` moves it aside.
+   */
+  unreadable: boolean
 }
 
 /** Simple-form posting input; the kind → debit/credit mapping lives in Rust. */
@@ -297,7 +303,10 @@ export type RecurringPostResult = {
 }
 
 export const api = {
+  /** The books that are not archived; an archived one is never the current book. */
   entityList: () => call<Entity[]>('entity_list'),
+  /** The archived books, which `entityList` leaves out. They are read-only until restored. */
+  entityListArchived: () => call<Entity[]>('entity_list_archived'),
   entityCreate: (input: {
     name: string
     base_currency: string
@@ -306,6 +315,8 @@ export const api = {
   }) => call<Entity>('entity_create', { input }),
   entityUpdate: (id: string, name: string) => call<Entity>('entity_update', { id, name }),
   entityArchive: (id: string) => call<void>('entity_archive', { id }),
+  /** Makes an archived book active again. Rejects with `name_taken` while an active book has its name. */
+  entityUnarchive: (id: string) => call<void>('entity_unarchive', { id }),
   entityDelete: (id: string) => call<void>('entity_delete', { id }),
 
   accountList: (entityId: string) => call<Account[]>('account_list', { entityId }),
@@ -439,6 +450,12 @@ export const api = {
   setLocale: (locale: Locale) => call<void>('settings_set_locale', { locale }),
   /** Full plaintext UI prefs (tray last-used + locale). Safe before unlock. */
   getUiPrefs: () => call<UiPrefs>('settings_get_ui_prefs'),
+  /**
+   * Moves a damaged preferences file aside (it is kept, not deleted) and
+   * returns the preferences as they are afterwards. Leaves a file that is
+   * missing or readable alone.
+   */
+  resetUiPrefs: () => call<UiPrefs>('settings_reset_ui_prefs'),
   /** Remember last entity + role accounts after a successful tray post. */
   rememberQuickAdd: (entityId: string, kind: string, accounts: LastRoleAccounts) =>
     call<void>('settings_remember_quick_add', {

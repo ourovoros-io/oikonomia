@@ -762,6 +762,12 @@ pub(crate) mod ipc_test_support {
             path.to_str().unwrap().to_owned()
         }
 
+        /// Returns the path a file named `name` has, or would have, in the
+        /// app's temporary directory, which is also its data directory.
+        pub(crate) fn path(&self, name: &str) -> PathBuf {
+            self.data_dir.join(name)
+        }
+
         /// Grants `path` for `purpose`, as the native dialog or drop that
         /// stands behind that purpose does.
         pub(crate) fn grant(&self, purpose: GrantPurpose, path: &str) {
