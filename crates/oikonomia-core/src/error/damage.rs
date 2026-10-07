@@ -6,9 +6,11 @@
 //! so a test or a caller can match the reason itself and not a substring of
 //! its message. The `Display` text is English diagnostic text for logs.
 //!
-//! Neither reason is sent to the UI as a parameter: the copy for
-//! `vault_corrupt` and for `backup_invalid` is one sentence each, and what
-//! exactly is wrong helps a person reading a log, not the user.
+//! Neither reason is sent to the UI as a parameter: the copy for each code
+//! is one sentence, and what exactly is wrong helps a person reading a log,
+//! not the user. A [`VaultCorruption`] does choose the code, though: most
+//! reasons are `vault_corrupt`, and the two refusals of a locked backup that
+//! one unlock settles are `vault_unlock_before_backup`.
 
 use thiserror::Error;
 
@@ -112,6 +114,40 @@ pub enum VaultCorruption {
     },
 }
 
+impl VaultCorruption {
+    /// Returns the code [`Error::code`](crate::Error::code) gives a corrupt
+    /// vault with this reason.
+    ///
+    /// [`Self::UnmergedWriteAheadLog`] and [`Self::UnfinishedPasswordChange`]
+    /// are `vault_unlock_before_backup`. Only the backup of a locked vault
+    /// returns them, the vault is sound, and one unlock settles both, so
+    /// calling them corrupt would send the user after a repair they do not
+    /// need. Every other reason is `vault_corrupt`.
+    ///
+    /// The match has no wildcard arm, so a new reason does not compile until
+    /// its code is decided here. A new code also goes in
+    /// [`Error::ALL_CODES`](crate::Error::ALL_CODES).
+    #[must_use]
+    pub(super) fn code(&self) -> &'static str {
+        match self {
+            Self::UnmergedWriteAheadLog | Self::UnfinishedPasswordChange => {
+                "vault_unlock_before_backup"
+            }
+            Self::Column { .. }
+            | Self::HeaderUnreadable { .. }
+            | Self::HeaderField { .. }
+            | Self::UnsupportedFormat { .. }
+            | Self::MissingMetaTable
+            | Self::MissingSchemaVersion
+            | Self::HeaderWithoutDatabase
+            | Self::DatabaseWithoutHeader
+            | Self::EmptyFile { .. }
+            | Self::Setting { .. }
+            | Self::InvalidJournalLines { .. } => "vault_corrupt",
+        }
+    }
+}
+
 /// Why a file is not a usable Oikonomia backup.
 ///
 /// The enum is matched exhaustively by the code that words it; see the
@@ -186,6 +222,7 @@ pub enum BackupDefect {
 #[cfg(test)]
 mod tests {
     use super::{BackupDefect, VaultCorruption};
+    use crate::Error;
     use oikonomia_test_support::listed_variants;
     use std::fmt::Display;
 
@@ -312,6 +349,17 @@ mod tests {
         );
         corruptions.iter().for_each(assert_message_style);
         defects.iter().for_each(assert_message_style);
+    }
+
+    #[test]
+    fn every_reason_gives_a_code_the_error_lists() {
+        for reason in every_corruption() {
+            assert!(
+                Error::ALL_CODES.contains(&reason.code()),
+                "{reason:?} gives {}, which Error::ALL_CODES does not list",
+                reason.code()
+            );
+        }
     }
 
     #[test]

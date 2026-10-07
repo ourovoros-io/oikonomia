@@ -30,9 +30,10 @@
 //!
 //! The lower-level text of a failure (the `detail` of `database`, `io`,
 //! `serialization`, `crypto`, `analysis`, `csv_parse` and
-//! `validation_internal`, and the reason of `vault_corrupt` and
-//! `backup_invalid`) is diagnostic, may hold operating-system error text,
-//! and is never a parameter. It reaches the webview only in `message`.
+//! `validation_internal`, and the reason of `vault_corrupt`,
+//! `vault_unlock_before_backup` and `backup_invalid`) is diagnostic, may
+//! hold operating-system error text, and is never a parameter. It reaches
+//! the webview only in `message`.
 //!
 //! # Codes used more broadly than their name
 //!
@@ -386,7 +387,8 @@ mod tests {
     const DIAGNOSTIC_TEXT: &str = "disk on fire";
 
     /// One value of every core variant other than `Validation` and `Csv`,
-    /// with the names of the parameters it sends.
+    /// and a second `VaultCorrupt` for the code of the reasons one unlock
+    /// settles, with the names of the parameters it sends.
     ///
     /// `every_core_variant_is_listed_with_its_parameters` checks the list
     /// against `CoreError::ALL_CODES`, which core's own tests tie to the
@@ -429,6 +431,10 @@ mod tests {
             ),
             (
                 CoreError::VaultCorrupt(VaultCorruption::HeaderUnreadable { detail: text() }),
+                &[],
+            ),
+            (
+                CoreError::VaultCorrupt(VaultCorruption::UnfinishedPasswordChange),
                 &[],
             ),
             (

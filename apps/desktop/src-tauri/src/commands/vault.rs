@@ -179,7 +179,9 @@ pub(crate) async fn vault_lock(
 ///
 /// Returns `save_location_invalid` when the dialog's answer is not a path,
 /// `vault_uninitialized` when there is no vault to back up, `vault_corrupt`
-/// when the vault files are incomplete or a password change did not finish,
+/// when the vault files are incomplete, `vault_unlock_before_backup` when a
+/// locked vault needs one unlock first (its write-ahead log holds changes or
+/// a password change did not finish),
 /// `io` when the archive cannot be written or a vault file becomes shorter
 /// while it is copied, `database` when the open vault cannot be snapshotted,
 /// and `crypto` when that snapshot is not encrypted. Returns `task_failed`
