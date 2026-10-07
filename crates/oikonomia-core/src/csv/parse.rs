@@ -75,22 +75,32 @@
 //!
 //! # Dates
 //!
-//! | Form | Example | |
-//! |------|---------|-|
-//! | `YYYY-MM-DD` | `2026-03-05` | Accepted. |
-//! | `YYYY/MM/DD` | `2026/03/05` | Accepted. |
-//! | `DD/MM/YYYY` | `05/03/2026`, `5/3/2026` | Accepted. |
-//! | `MM/DD/YYYY` | `03/13/2026` | Not supported. |
-//! | `DD-MM-YYYY`, `DD.MM.YYYY` | `05.03.2026` | Rejected. |
-//! | Two-digit year, month name, time of day | `05/03/26`, `5 Mar 2026` | Rejected. |
+//! One rule reads every date. The cell is three numbers with one separator
+//! between them, `-`, `/` or `.`, the same one in both places. When the
+//! first number has four digits it is the year and the date is year, month,
+//! day. Otherwise the last number has to have four digits, and the date is
+//! day, month, year.
 //!
-//! Day and month may be written without a leading zero; the year is the
-//! segment with four characters. The result is always `YYYY-MM-DD`.
+//! | Form | Examples | |
+//! |------|----------|-|
+//! | Year first | `2026-03-05`, `2026/03/05`, `2026.03.05` | Accepted. |
+//! | Day first | `05.03.2026`, `05-03-2026`, `05/03/2026`, `5.3.2026` | Accepted. |
+//! | Month first | `03/13/2026` | Not supported. |
+//! | Mixed separators | `05.03-2026`, `2026-03/05` | Rejected. |
+//! | Two-digit year | `05/03/26` | Rejected. |
+//! | Month name, time of day | `5 Mar 2026`, `2026-03-05 10:00` | Rejected. |
+//! | A sign or a non-ASCII digit | `+5/3/2026`, `٥.٣.٢٠٢٦` | Rejected. |
+//! | A day the calendar lacks | `2026-02-30`, `31.04.2026` | Rejected. |
 //!
-//! A slash date with the year last is always read day first. A US date is
-//! rejected only when that reading is impossible (`03/13/2026`, month 13).
-//! `03/04/2026` cannot be told apart from the European form and is read as
-//! 3 April; a US statement has to be converted before import.
+//! Day and month may be written without a leading zero. The year is the
+//! number with four digits, so ISO `2026-03-05` can be read one way only: a
+//! four-digit first number is never a day.
+//!
+//! A date with the year last is always read day first, whatever the
+//! separator. A US date is rejected only when that reading is impossible
+//! (`03/13/2026`, month 13). `03/04/2026` cannot be told apart from the
+//! European form and is read as 3 April; a US statement has to be converted
+//! before import.
 
 use std::fs;
 use std::path::Path;
@@ -147,39 +157,50 @@ pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
     Ok(text.trim_start_matches('\u{feff}').to_owned())
 }
 
-/// Parses a date cell written as `YYYY-MM-DD`, `YYYY/MM/DD` or `DD/MM/YYYY`.
+/// Parses a date cell written year first (`YYYY-MM-DD`) or day first
+/// (`DD.MM.YYYY`), with `-`, `/` or `.` between the three numbers.
 ///
-/// Day and month may be unpadded. US `MM/DD/YYYY` is not supported:
-/// `03/13/2026` is rejected (month 13), and `03/04/2026` is read as 3 April.
+/// The table in the module doc has the rule. Day and month may be unpadded.
+/// A date with the year last is always read day first: US `MM/DD/YYYY` is
+/// not supported, `03/13/2026` is rejected (month 13), and `03/04/2026` is
+/// read as 3 April.
 ///
 /// # Errors
 ///
 /// [`CsvError::MissingDate`] when the cell is empty or only whitespace;
 /// [`CsvError::InvalidDate`], carrying the trimmed cell, when it is not in
-/// one of the three forms or is not a date of the calendar.
+/// one of the two forms or is not a date of the calendar.
 pub fn parse_csv_date(raw: &str) -> CsvResult<Date> {
     let cell = raw.trim();
     if cell.is_empty() {
         return Err(CsvError::MissingDate);
     }
+    let invalid = || CsvError::InvalidDate(cell.to_owned());
 
-    if let Some([year, month, day]) = split_three(cell, '-')
-        && year.len() == 4
-    {
-        return calendar_date(year, month, day, cell);
+    // The first separator in the cell is the one the whole date has to use,
+    // so `05.03-2026` does not split into three and is rejected.
+    let separator = cell
+        .chars()
+        .find(|character| DATE_SEPARATORS.contains(character));
+    let [first, second, third] = separator
+        .and_then(|separator| split_three(cell, separator))
+        .ok_or_else(invalid)?;
+
+    if first.len() == YEAR_DIGITS {
+        calendar_date(first, second, third, cell)
+    } else if third.len() == YEAR_DIGITS {
+        calendar_date(third, second, first, cell)
+    } else {
+        Err(invalid())
     }
-    if let Some([year, month, day]) = split_three(cell, '/')
-        && year.len() == 4
-    {
-        return calendar_date(year, month, day, cell);
-    }
-    if let Some([day, month, year]) = split_three(cell, '/')
-        && year.len() == 4
-    {
-        return calendar_date(year, month, day, cell);
-    }
-    Err(CsvError::InvalidDate(cell.to_owned()))
 }
+
+/// The characters a date cell may have between its three numbers.
+const DATE_SEPARATORS: [char; 3] = ['-', '/', '.'];
+
+/// The number of digits a year is written with. A date with a shorter or
+/// longer year is rejected, so a segment of this length is the year.
+const YEAR_DIGITS: usize = 4;
 
 /// Parses a bank CSV into per-row outcomes. Never writes to the ledger.
 ///
@@ -1016,14 +1037,63 @@ mod tests {
     }
 
     #[test]
-    fn date_forms_outside_the_three_documented_ones_are_rejected() {
+    fn a_day_first_date_is_read_with_any_of_the_three_separators() {
+        let fifth_of_march = time::macros::date!(2026 - 03 - 05);
         for cell in [
             "05.03.2026",
+            "5.3.2026",
             "05-03-2026",
+            "5-3-2026",
+            "05/03/2026",
+        ] {
+            assert_eq!(parse_csv_date(cell), Ok(fifth_of_march), "{cell}");
+        }
+        // Day first with every separator, never month first.
+        for cell in ["03.04.2026", "03-04-2026", "03/04/2026"] {
+            assert_eq!(
+                parse_csv_date(cell),
+                Ok(time::macros::date!(2026 - 04 - 03)),
+                "{cell}"
+            );
+        }
+        for cell in ["03.13.2026", "03-13-2026"] {
+            assert_eq!(
+                parse_csv_date(cell),
+                Err(CsvError::InvalidDate(cell.to_owned())),
+                "{cell}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_four_digit_first_segment_is_a_year_with_any_separator() {
+        let fifth_of_march = time::macros::date!(2026 - 03 - 05);
+        for cell in ["2026-03-05", "2026/03/05", "2026.03.05", "2026-3-5"] {
+            assert_eq!(parse_csv_date(cell), Ok(fifth_of_march), "{cell}");
+        }
+        // Never day first, even where that would be a date: 20 December.
+        assert_eq!(
+            parse_csv_date("2012-12-2020"),
+            Err(CsvError::InvalidDate("2012-12-2020".to_owned()))
+        );
+    }
+
+    #[test]
+    fn date_forms_outside_the_documented_ones_are_rejected() {
+        for cell in [
+            "05.03-2026",
+            "05/03.2026",
+            "2026-03/05",
+            "05 03 2026",
+            "05032026",
+            "05.03.2026.",
+            "5.3",
             "05/03/26",
             "5 Mar 2026",
             "2026-03-05 10:00",
             "2026-02-30",
+            "31.04.2026",
+            "29-02-2026",
         ] {
             assert_eq!(
                 parse_csv_date(cell),
@@ -1035,7 +1105,17 @@ mod tests {
 
     #[test]
     fn a_signed_date_segment_is_rejected() {
-        for cell in ["+5/+3/2026", "-123/01/02", "2026-+3-05", "5/3/+026"] {
+        for cell in [
+            "+5/+3/2026",
+            "-123/01/02",
+            "2026-+3-05",
+            "5/3/+026",
+            "-5-3-2026",
+            "5.-3.2026",
+            "+5.3.2026",
+            "5.3.-026",
+            "٥.٣.٢٠٢٦",
+        ] {
             assert_eq!(
                 parse_csv_date(cell),
                 Err(CsvError::InvalidDate(cell.to_owned())),
@@ -1254,5 +1334,83 @@ mod tests {
         let unknown = column_mapping("Date", "Nope", Some("Amount"), None, None);
         let err = parse_bank_csv(csv, 2, Some(&unknown)).expect_err("unknown");
         assert_eq!(err, invalid_mapping(unknown_column("Nope")));
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// Any date a cell can name: one with a four-digit year.
+    fn dates() -> impl Strategy<Value = Date> {
+        (0_i32..=9999, 1_u8..=12, 1_u8..=31).prop_filter_map(
+            "the month has no such day",
+            |(year, month, day)| {
+                let month = Month::try_from(month).ok()?;
+                Date::from_calendar_date(year, month, day).ok()
+            },
+        )
+    }
+
+    /// `date` in every form the date table accepts: year first and day
+    /// first, with each separator, with and without leading zeros on the day
+    /// and the month.
+    fn accepted_forms(date: Date) -> Vec<String> {
+        let (year, month, day) = (date.year(), u8::from(date.month()), date.day());
+
+        DATE_SEPARATORS
+            .into_iter()
+            .flat_map(|s| {
+                [
+                    format!("{year:04}{s}{month:02}{s}{day:02}"),
+                    format!("{year:04}{s}{month}{s}{day}"),
+                    format!("{day:02}{s}{month:02}{s}{year:04}"),
+                    format!("{day}{s}{month}{s}{year:04}"),
+                ]
+            })
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn a_date_written_in_any_accepted_form_parses_back_to_itself(date in dates()) {
+            for cell in accepted_forms(date) {
+                prop_assert_eq!(parse_csv_date(&cell), Ok(date), "{}", cell);
+            }
+        }
+
+        #[test]
+        fn parsing_any_text_as_a_date_returns_instead_of_panicking(raw in any::<String>()) {
+            let _ = parse_csv_date(&raw);
+        }
+
+        #[test]
+        fn parsing_date_shaped_text_returns_instead_of_panicking(
+            raw in "[0-9./ +-]{0,14}",
+        ) {
+            let _ = parse_csv_date(&raw);
+        }
+
+        // A date is three runs of digits, so whatever parses holds nothing
+        // but ASCII digits and one kind of separator, twice.
+        #[test]
+        fn whatever_parses_as_a_date_is_digits_around_one_separator(
+            raw in "[0-9./ +-]{0,14}",
+        ) {
+            if parse_csv_date(&raw).is_ok() {
+                let cell = raw.trim();
+                let separators: Vec<char> =
+                    cell.chars().filter(|character| !character.is_ascii_digit()).collect();
+
+                prop_assert_eq!(separators.len(), 2, "{}", cell);
+                prop_assert_eq!(separators[0], separators[1], "{}", cell);
+                prop_assert!(DATE_SEPARATORS.contains(&separators[0]), "{}", cell);
+            }
+        }
     }
 }
