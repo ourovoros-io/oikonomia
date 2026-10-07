@@ -23,9 +23,11 @@ export type UpdateCheckResult =
 export type AvailableUpdate = Extract<UpdateCheckResult, { kind: 'available' }>
 
 /**
- * Full dialog state. `idle` / `checking` / `installing` are local chrome;
- * the terminal kinds are the Rust enum. A discriminated union so a leftover
- * `version` cannot survive into Checking or Failed.
+ * Full dialog state. `idle` and `checking` are local chrome; `installing` is
+ * set locally when an install starts and also arrives from Rust when a check
+ * is refused because an install is in flight. The terminal kinds are the Rust
+ * enum. A discriminated union so a leftover `version` cannot survive into
+ * Checking or Failed.
  */
 export type UpdateUiState =
   | { kind: 'idle' }
@@ -42,8 +44,9 @@ export function isAvailableUpdate(value: UpdateUiState): value is AvailableUpdat
 /**
  * Wire payload after decode. `idle` means a non-terminal Rust kind
  * (`idle` / `checking`) — not a finished check, and not Failed.
+ * `installing` means Rust refused the check because an install is running.
  */
-export type ParsedIpcUpdate = UpdateCheckResult | { kind: 'idle' }
+export type ParsedIpcUpdate = UpdateCheckResult | { kind: 'idle' } | { kind: 'installing' }
 
 /**
  * Decode the published Rust enum (`tag = kind`, `rename_all = snake_case`).
@@ -52,7 +55,8 @@ export type ParsedIpcUpdate = UpdateCheckResult | { kind: 'idle' }
  * snake_case kind as unknown would paint a successful check as Failed.
  * `notes`, `url`, `size`, and pubkey never enter the UI union — available
  * keeps `version` only. Non-terminal `idle` / `checking` become `idle`
- * so they cannot leak a leftover version into the form.
+ * so they cannot leak a leftover version into the form. `installing` stays
+ * `installing`, so the dialog keeps showing the install in flight.
  */
 export function parseUpdateCheckResult(value: unknown): ParsedIpcUpdate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -62,6 +66,9 @@ export function parseUpdateCheckResult(value: unknown): ParsedIpcUpdate {
   const kind = record.kind
   if (kind === 'idle' || kind === 'checking') {
     return { kind: 'idle' }
+  }
+  if (kind === 'installing') {
+    return { kind: 'installing' }
   }
   if (kind === 'up_to_date' || kind === 'upToDate') {
     return { kind: 'upToDate' }
