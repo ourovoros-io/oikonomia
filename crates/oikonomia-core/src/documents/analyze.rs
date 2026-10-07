@@ -1,9 +1,93 @@
-//! Extract draft entry fields from bill/receipt bytes.
+//! From the bytes of a file to a draft entry: text extraction, then the
+//! invoice reader, then the book's accounts.
 //!
-//! Fully offline pipeline (ships with the app):
-//! 1. **PDF / plain text** → text extract
-//! 2. **Images** → bundled neural OCR (`ocrs` models in app resources)
-//! 3. **Invoice reader** → Greek/EU totals, MARK, kind (no cloud)
+//! [`analyze_document_bytes`] is the entry point. It returns a suggestion for
+//! every input: a file that cannot be read yields an empty suggestion with a
+//! note that says why.
+//!
+//! # Getting the text
+//!
+//! [`read_document_text`] sorts the file by three tests, in this order:
+//!
+//! 1. an `image/*` type goes to OCR ([`ocr_image`]);
+//! 2. a `text/plain` type or a `.txt` name is taken as it is, decoded as
+//!    UTF-8 with invalid bytes replaced;
+//! 3. a type containing `pdf` or a `.pdf` name goes through
+//!    [`read_pdf_text`], described below.
+//!
+//! Anything else has no text. The order means a name can decide before a
+//! type does: a file sent as `application/pdf` and named `notes.txt` is
+//! read as plain text.
+//!
+//! # Reading a PDF
+//!
+//! 1. **Budget.** [`load_pdf`] refuses a file over the upload cap before
+//!    parsing it, parses it once with lopdf, and then checks, in this order,
+//!    the page count, the decoded size of every stream
+//!    ([`pdf_budget`](crate::documents::pdf_budget)), and that the form
+//!    `XObject`s and the page tree do not make pdf-extract recurse without
+//!    end ([`pdf_nesting`](crate::documents::pdf_nesting)). Over budget ends
+//!    the analysis with the "over budget" note; nothing of the file is
+//!    read.
+//! 2. **Whole document.** [`pdf_text_whole`] asks pdf-extract for the text of
+//!    the whole file.
+//! 3. **Page by page.** When that returns an error or panics,
+//!    [`pdf_text_per_page`] reads each page on its own and joins the pages
+//!    that can be read. One bad page then costs its own text and no more.
+//! 4. **Repair and retry.** When there is still no text, because lopdf could
+//!    not parse the file or no page could be read,
+//!    [`repair_xref_offsets`] rewrites stale cross-reference offsets in a
+//!    copy, and steps 1 to 3 run once more on the copy, the whole budget
+//!    included. A file that reads as empty, with no error, is not repaired.
+//! 5. **Embedded JPEGs.** A PDF whose text is missing or shorter than
+//!    [`MIN_PDF_TEXT_CHARS`] is taken as a scan. Up to
+//!    [`MAX_PDF_OCR_IMAGES`] JPEG images embedded in it are read with OCR, in
+//!    order, until one yields text. Only streams whose single filter is
+//!    `DCTDecode` are taken: their stored bytes are a JPEG file as they are,
+//!    so no PDF rasterizer is needed. A scan stored any other way is not
+//!    read.
+//!
+//! Text read from an image wins over a text layer too short to count, and a
+//! short text layer stands when no image can be read
+//! ([`pdf_text_or_image_text`]).
+//!
+//! # The panic boundary
+//!
+//! lopdf and pdf-extract index and unwrap on file content, so a malformed
+//! PDF can panic inside them. [`contain_panics`] turns such a panic into "no
+//! result" at five places: loading with decryption and the whole budget
+//! check, the whole-document pass, listing the pages, each single page, and
+//! the search for embedded JPEGs.
+//!
+//! Outside the boundary are the xref repair and the invoice reader, which
+//! are this crate's own code and are property-tested not to panic on
+//! arbitrary input, and image decoding, which reports a bad image as an
+//! error. OCR inference has a boundary of its own in
+//! [`ocr`](crate::documents::ocr).
+//!
+//! What the boundary cannot catch, and what stands in its place:
+//!
+//! - A failed allocation aborts the process; it does not unwind. The budget
+//!   is what keeps allocations small.
+//! - A stack overflow aborts the process too. pdf-extract recurses through
+//!   nested forms and up `Parent` links with no limit, so the nesting check
+//!   refuses a document that would take it too deep, and only a document
+//!   that passed it ([`BudgetedPdf`]) is handed to pdf-extract. The first
+//!   load and the repaired copy both go through the check.
+//! - lopdf decompresses object streams and cross-reference streams while it
+//!   loads a file, inside the boundary but before the budget check can run,
+//!   and with no limit of its own. Neither the budget nor the nesting check
+//!   covers it: the only bound on that step is the upload cap on the file.
+//!   [`pdf_budget`](crate::documents::pdf_budget) says the same.
+//!
+//! # From text to suggestion
+//!
+//! The invoice reader ([`read_invoice_text`]) fills in the amount, date,
+//! reference, merchant, description and kind. [`finalize_suggestion`] adds
+//! the accounts. The notes end up in this order: where the text came from,
+//! the reader's own notes, the transfer fee, the request to add a payable
+//! account, the warning that the amount was withheld because the book's
+//! currency does not have two decimals, and the document's date.
 
 use std::path::Path;
 
@@ -14,12 +98,13 @@ use std::path::Path;
 use pdf_extract as lopdf;
 use serde::{Deserialize, Serialize};
 
-use super::invoice::read_invoice_text;
-use super::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
-use super::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
-use super::store::{has_extension, match_expense_account, match_income_account};
 use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
+use crate::documents::invoice::read_invoice_text;
+use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
+use crate::documents::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
+use crate::documents::pdf_repair::repair_xref_offsets;
+use crate::documents::store::{has_extension, match_expense_account, match_income_account};
 use crate::domain::{Account, AccountId, ChartTemplate};
 use crate::error::{AccountRole, Result};
 use crate::prefs::Locale;
@@ -111,15 +196,20 @@ pub struct AnalyzerStatus {
     pub hint: AnalyzerHint,
 }
 
-/// Describe capability given model directory.
+/// What the analyzer can read with the models in `model_dir`.
+///
+/// OCR counts as available when both model files exist there, or when the
+/// process has already loaded an engine. With no directory it is
+/// unavailable. The call does not load the models and does not wait for a
+/// running OCR.
 #[must_use]
 pub fn analyzer_status(model_dir: Option<&std::path::Path>) -> AnalyzerStatus {
     let paths = model_dir.map(OcrModelPaths::from_dir);
-    let ok = paths.as_ref().is_some_and(ocr_available);
+    let available = paths.as_ref().is_some_and(ocr_available);
     AnalyzerStatus {
-        ocr_available: ok,
+        ocr_available: available,
         offline: true,
-        hint: if ok {
+        hint: if available {
             AnalyzerHint::Ready
         } else {
             AnalyzerHint::ModelsMissing
@@ -140,10 +230,14 @@ pub struct AnalyzeContext<'a> {
     pub locale: Locale,
 }
 
-/// Analyze raw file bytes into a draft suggestion (fully offline).
+/// Analyzes the bytes of one file into a draft suggestion, fully offline.
 ///
-/// The suggested description and merchant are written in `context.locale`; text taken
-/// from the document itself stays as the document has it.
+/// `mime_type` is compared in lowercase and decides how the file is read;
+/// `filename` is used for its extension only. `model_dir` is where the OCR
+/// models are, and without it images and scanned PDFs are not read.
+///
+/// The suggested description and merchant are written in `context.locale`;
+/// text taken from the document itself stays as the document has it.
 ///
 /// # Errors
 ///
@@ -238,34 +332,42 @@ fn transfer_fee_note(fee_minor: i64, currency: &str) -> UiText {
     }
 }
 
+/// Completes a suggestion with where it came from and the book's accounts.
+///
+/// An account the suggestion already names is kept. The category comes from
+/// the keyword matcher on `category_hint`, by entry kind; the wallet and the
+/// payable account are the book's defaults for those roles. An unpaid bill
+/// in a book with no payable account to point at gets the note that asks the
+/// user to add one.
 #[expect(
     clippy::too_many_arguments,
     reason = "the analysis source and model ride beside the chart inputs; tracked for the API pass"
 )]
 fn finalize_suggestion(
-    s: &mut DocumentSuggestion,
+    suggestion: &mut DocumentSuggestion,
     template: ChartTemplate,
     accounts: &[Account],
     category_hint: &str,
     source: AnalyzeSource,
     model: Option<String>,
 ) {
-    s.source = source;
-    s.model = model;
+    suggestion.source = source;
+    suggestion.model = model;
 
-    if s.category_account_id.is_none() {
-        s.category_account_id = match s.kind {
+    if suggestion.category_account_id.is_none() {
+        suggestion.category_account_id = match suggestion.kind {
             EntryKindSuggestion::Income => match_income_account(template, accounts, category_hint),
             EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
                 match_expense_account(template, accounts, category_hint)
             }
         };
     }
-    if s.wallet_account_id.is_none() {
-        s.wallet_account_id = default_account_for_role(template, accounts, AccountRole::Payment);
+    if suggestion.wallet_account_id.is_none() {
+        suggestion.wallet_account_id =
+            default_account_for_role(template, accounts, AccountRole::Payment);
     }
-    if s.payable_account_id.is_none() {
-        s.payable_account_id =
+    if suggestion.payable_account_id.is_none() {
+        suggestion.payable_account_id =
             default_account_for_role(template, accounts, AccountRole::BillsPayable);
     }
 
@@ -273,12 +375,15 @@ fn finalize_suggestion(
     // (deactivated or re-coded), any liability suggested above is only a
     // stand-in, and the user must still be told to add a payable account. A
     // blank book seeds none, so there a liability is the legitimate answer.
-    let payable_is_missing = s.payable_account_id.is_none()
+    let payable_is_missing = suggestion.payable_account_id.is_none()
         || (template != ChartTemplate::Blank
             && seeded_account_for_role(template, accounts, AccountRole::BillsPayable).is_none());
 
-    if s.kind == EntryKindSuggestion::Bill && s.bill_unpaid && payable_is_missing {
-        s.notes.push(UiText::new(UiTextCode::AddPayableAccount));
+    let unpaid_bill = suggestion.kind == EntryKindSuggestion::Bill && suggestion.bill_unpaid;
+    if unpaid_bill && payable_is_missing {
+        suggestion
+            .notes
+            .push(UiText::new(UiTextCode::AddPayableAccount));
     }
 }
 
@@ -297,6 +402,8 @@ enum TextOrigin {
 }
 
 impl TextOrigin {
+    /// What the suggestion reports as its source: the bundled OCR, or the
+    /// document's own text.
     const fn source(self) -> AnalyzeSource {
         match self {
             Self::DocumentText => AnalyzeSource::Heuristic,
@@ -325,12 +432,21 @@ impl TextOrigin {
 /// The text read from a file, or the reason there is none.
 #[derive(Debug, PartialEq, Eq)]
 enum ExtractedText {
-    /// Text, and where it came from.
+    /// Text, and where it came from. The text is not empty for OCR and for a
+    /// PDF; a plain text file is passed on even when it is empty.
     Read { text: String, origin: TextOrigin },
     /// No text. The code is the note that tells the user why.
     Unread(UiTextCode),
 }
 
+/// Extracts the text of a file, choosing how by its kind.
+///
+/// `mime` is already lowercased. Three tests run in order: an `image/*` type
+/// is read with OCR; `text/plain` or a `.txt` name is decoded as UTF-8,
+/// invalid bytes replaced; a type containing `pdf` or a `.pdf` name is read
+/// as a PDF. So an image named `scan.pdf` is an image, and a file sent as
+/// `application/pdf` and named `notes.txt` is plain text. Anything else is
+/// unread, with the note that no text was found.
 fn read_document_text(
     filename: &str,
     mime: &str,
@@ -381,6 +497,11 @@ impl OcrOutcome {
     }
 }
 
+/// Reads one image with the bundled OCR and says how it went.
+///
+/// A reading that is empty or only whitespace is
+/// [`OcrOutcome::LittleText`]. An error is logged here with its cause and
+/// returned as [`OcrOutcome::Failed`] without it.
 fn ocr_image(data: &[u8], model_dir: Option<&Path>) -> OcrOutcome {
     let Some(dir) = model_dir else {
         return OcrOutcome::PathMissing;
@@ -402,6 +523,9 @@ fn ocr_image(data: &[u8], model_dir: Option<&Path>) -> OcrOutcome {
     }
 }
 
+/// A suggestion with no field read, carrying `note` as its only note.
+///
+/// The kind is `Expense` and the confidence zero.
 fn empty_suggestion(note: UiText) -> DocumentSuggestion {
     DocumentSuggestion {
         source: AnalyzeSource::None,
@@ -423,14 +547,26 @@ fn empty_suggestion(note: UiText) -> DocumentSuggestion {
 
 /// Fewest characters of PDF text that count as a text layer. With less, the
 /// PDF is taken to be a scan and its embedded images are read with OCR.
+///
+/// The two places that use it do not agree at the boundary. A text layer
+/// counts from 8 characters ([`should_ocr_pdf_images`]); an OCR reading of
+/// an embedded image counts from 9 ([`ocr_pdf_images`]).
+///
+/// The unit test `short_or_missing_pdf_text_triggers_image_ocr` pins the
+/// first boundary. The reason for 8 in particular is not recorded.
 const MIN_PDF_TEXT_CHARS: usize = 8;
 
 /// Most embedded JPEG images of one PDF that are tried with OCR. Each try
 /// runs the OCR models once, so this bounds how long a scanned PDF takes.
+///
+/// The reason for 2 in particular is not recorded;
+/// `at_most_two_page_images_are_taken` pins it.
 const MAX_PDF_OCR_IMAGES: usize = 2;
 
+/// Whether a PDF with this trimmed text layer is taken as a scan: no text,
+/// or fewer than [`MIN_PDF_TEXT_CHARS`] characters.
 fn should_ocr_pdf_images(text: Option<&str>) -> bool {
-    text.is_none_or(|t| t.chars().count() < MIN_PDF_TEXT_CHARS)
+    text.is_none_or(|text| text.chars().count() < MIN_PDF_TEXT_CHARS)
 }
 
 /// Reads a PDF: its text layer, or failing that its embedded images.
@@ -533,7 +669,7 @@ fn parse_pdf(data: &[u8]) -> std::result::Result<ParsedPdf, PdfOverBudget> {
     let mut text = document.as_deref().and_then(pdf_text);
 
     if text.is_none()
-        && let Some(repaired) = super::pdf_repair::repair_xref_offsets(data)
+        && let Some(repaired) = repair_xref_offsets(data)
     {
         match load_pdf(&repaired) {
             PdfLoad::Loaded(repaired_document) => {
@@ -554,7 +690,10 @@ fn pdf_text(pdf: &BudgetedPdf) -> Option<String> {
     pdf_text_whole(pdf).or_else(|| pdf_text_per_page(pdf))
 }
 
-/// Whole-document pass. `None` when pdf-extract returns an error or panics.
+/// Whole-document pass: the text of every page in one call to pdf-extract.
+///
+/// `None` when pdf-extract returns an error or panics. `Some` of an empty
+/// string when it succeeds on a document without text.
 fn pdf_text_whole(pdf: &BudgetedPdf) -> Option<String> {
     contain_panics(|| {
         let mut text = String::new();
@@ -568,7 +707,10 @@ fn pdf_text_whole(pdf: &BudgetedPdf) -> Option<String> {
 }
 
 /// Page-by-page pass: pages whose resources make pdf-extract error or panic
-/// are skipped, and the surviving pages' text is joined.
+/// are skipped, and the text of the others is joined with newlines, in page
+/// order.
+///
+/// `None` when the pages cannot be listed or no page can be read.
 fn pdf_text_per_page(pdf: &BudgetedPdf) -> Option<String> {
     let page_numbers =
         contain_panics(|| pdf.document().get_pages().into_keys().collect::<Vec<u32>>())?;
@@ -595,21 +737,25 @@ fn pdf_text_per_page(pdf: &BudgetedPdf) -> Option<String> {
     }
 }
 
-/// JPEG (`DCTDecode`) image streams only — no new PDF rasterizer.
-/// Page `/XObject` images are preferred so a logo in the catalog is not first.
+/// The first JPEG images of a PDF, at most [`MAX_PDF_OCR_IMAGES`].
+///
+/// Images that a page names in its `/Resources /XObject` dictionary are
+/// taken first, in page order, so a logo that only the file's object table
+/// holds does not come before the scan. When no page names a JPEG, every
+/// object of the file is searched. Returns no image when lopdf panics.
 fn extract_pdf_jpeg_images(pdf: &BudgetedPdf) -> Vec<Vec<u8>> {
     contain_panics(|| {
         let document = pdf.document();
-        let mut out = Vec::new();
+        let mut jpegs = Vec::new();
 
         for page_id in document.get_pages().into_values() {
-            collect_jpegs_from_page(document, page_id, &mut out);
-            if out.len() >= MAX_PDF_OCR_IMAGES {
-                return out;
+            collect_jpegs_from_page(document, page_id, &mut jpegs);
+            if jpegs.len() >= MAX_PDF_OCR_IMAGES {
+                return jpegs;
             }
         }
-        if !out.is_empty() {
-            return out;
+        if !jpegs.is_empty() {
+            return jpegs;
         }
 
         document
@@ -622,47 +768,62 @@ fn extract_pdf_jpeg_images(pdf: &BudgetedPdf) -> Vec<Vec<u8>> {
     .unwrap_or_default()
 }
 
+/// Appends the JPEG images that the page's `/Resources /XObject` dictionary
+/// names to `jpegs`, stopping at [`MAX_PDF_OCR_IMAGES`] in total.
+///
+/// A page without resources or without image objects adds nothing.
 fn collect_jpegs_from_page(
-    doc: &lopdf::Document,
+    document: &lopdf::Document,
     page_id: lopdf::ObjectId,
-    out: &mut Vec<Vec<u8>>,
+    jpegs: &mut Vec<Vec<u8>>,
 ) {
-    let Ok(page) = doc.get_dictionary(page_id) else {
+    let Ok(page) = document.get_dictionary(page_id) else {
         return;
     };
-    let Some(resources) = dict_ref_or_inline(doc, page.get(b"Resources").ok()) else {
+    let Some(resources) = dictionary_inline_or_referenced(document, page.get(b"Resources").ok())
+    else {
         return;
     };
-    let Some(xobjects) = dict_ref_or_inline(doc, resources.get(b"XObject").ok()) else {
+    let Some(xobjects) = dictionary_inline_or_referenced(document, resources.get(b"XObject").ok())
+    else {
         return;
     };
     for (_name, object) in xobjects {
-        if let Some(jpeg) = jpeg_from_object(doc, object) {
-            out.push(jpeg);
-            if out.len() >= MAX_PDF_OCR_IMAGES {
+        if let Some(jpeg) = jpeg_from_object(document, object) {
+            jpegs.push(jpeg);
+            if jpegs.len() >= MAX_PDF_OCR_IMAGES {
                 return;
             }
         }
     }
 }
 
-fn dict_ref_or_inline<'a>(
-    doc: &'a lopdf::Document,
-    object: Option<&'a lopdf::Object>,
-) -> Option<&'a lopdf::Dictionary> {
+/// The dictionary that `object` is, or that it refers to.
+///
+/// PDF writers store `/Resources` and `/XObject` either way. `None` when the
+/// object is missing, is neither, or refers to something that is not a
+/// dictionary.
+fn dictionary_inline_or_referenced<'document>(
+    document: &'document lopdf::Document,
+    object: Option<&'document lopdf::Object>,
+) -> Option<&'document lopdf::Dictionary> {
     match object? {
-        lopdf::Object::Dictionary(dict) => Some(dict),
-        lopdf::Object::Reference(id) => doc.get_dictionary(*id).ok(),
+        lopdf::Object::Dictionary(dictionary) => Some(dictionary),
+        lopdf::Object::Reference(id) => document.get_dictionary(*id).ok(),
         _ => None,
     }
 }
 
-/// The stored bytes of an image stream that is a JPEG file. They are a
-/// slice of the uploaded file, so no larger than the upload cap.
-fn jpeg_from_object(doc: &lopdf::Document, object: &lopdf::Object) -> Option<Vec<u8>> {
+/// The stored bytes of an image stream that is a JPEG file: an object, or a
+/// reference to one, that is a stream with `/Subtype /Image` and `DCTDecode`
+/// as its only filter.
+///
+/// The bytes are a slice of the uploaded file, so no larger than the upload
+/// cap. `None` for anything else.
+fn jpeg_from_object(document: &lopdf::Document, object: &lopdf::Object) -> Option<Vec<u8>> {
     let stream = match object {
         lopdf::Object::Stream(stream) => stream,
-        lopdf::Object::Reference(id) => match doc.objects.get(id) {
+        lopdf::Object::Reference(id) => match document.objects.get(id) {
             Some(lopdf::Object::Stream(stream)) => stream,
             _ => return None,
         },
@@ -677,13 +838,12 @@ fn jpeg_from_object(doc: &lopdf::Document, object: &lopdf::Object) -> Option<Vec
     // Only when `DCTDecode` is the one filter are the stored bytes a JPEG file.
     // In a chain such as `[/FlateDecode /DCTDecode]` they are the outer
     // encoding of one.
-    let jpeg = matches!(stream.filters().ok()?.as_slice(), [b"DCTDecode"]);
-    jpeg.then(|| stream.content.clone())
+    let is_jpeg = matches!(stream.filters().ok()?.as_slice(), [b"DCTDecode"]);
+    is_jpeg.then(|| stream.content.clone())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::invoice::parse_invoice_text;
     use super::*;
     use crate::default_accounts::{code_of_for_tests, seeded_chart_for_tests};
     use crate::documents::MAX_DOCUMENT_BYTES;
@@ -782,10 +942,12 @@ mod tests {
         bytes
     }
 
+    /// The filter name of a JPEG image stream.
     fn dct() -> lopdf::Object {
         lopdf::Object::Name(b"DCTDecode".to_vec())
     }
 
+    /// The filter name of a deflate-compressed stream.
     fn flate() -> lopdf::Object {
         lopdf::Object::Name(b"FlateDecode".to_vec())
     }
@@ -1045,17 +1207,12 @@ mod tests {
         assert!(!should_ocr_pdf_images(Some("12345678")));
     }
 
-    #[test]
-    fn english_total_line() {
-        let text = "Invoice\nSubtotal 10,00\nTOTAL 45,90 EUR\nThank you";
-        let s = parse_invoice_text(text, crate::prefs::Locale::En);
-        assert_eq!(s.amount_minor, Some(4590));
-    }
-
+    /// The notes of an analysis, or none when it failed.
     fn notes_of(suggestion: Result<DocumentSuggestion>) -> Vec<UiText> {
-        suggestion.map_or_else(|_| Vec::new(), |s| s.notes)
+        suggestion.map_or_else(|_| Vec::new(), |suggestion| suggestion.notes)
     }
 
+    /// The codes of `notes`, without their parameters.
     fn codes_of(notes: &[UiText]) -> Vec<UiTextCode> {
         notes.iter().map(|note| note.code).collect()
     }
@@ -1089,13 +1246,18 @@ mod tests {
         );
 
         let eur_notes = notes_of(eur.clone());
-        assert_eq!(eur.map(|s| s.amount_minor), Ok(Some(4590)));
+        assert_eq!(
+            eur.map(|suggestion| suggestion.amount_minor),
+            Ok(Some(4590))
+        );
         assert!(
             !codes_of(&eur_notes).contains(&UiTextCode::AmountAssumesTwoDecimals),
             "a 2-decimal currency needs no warning"
         );
 
-        let amount = jpy.as_ref().map_or(Some(-1), |s| s.amount_minor);
+        let amount = jpy
+            .as_ref()
+            .map_or(Some(-1), |suggestion| suggestion.amount_minor);
         assert_eq!(amount, None, "JPY amount must not be prefilled");
 
         let jpy_notes = notes_of(jpy);
@@ -1267,8 +1429,8 @@ mod tests {
 
     #[test]
     fn forms_nested_to_the_depth_limit_read_on_a_quarter_of_the_extraction_stack() {
-        use super::super::pdf_nesting::MAX_FORM_DEPTH;
-        use super::super::pdf_nesting::tests::{LEAF_TEXT, chain, pdf_with_forms};
+        use crate::documents::pdf_nesting::MAX_FORM_DEPTH;
+        use crate::documents::pdf_nesting::tests::{LEAF_TEXT, chain, pdf_with_forms};
 
         // The deepest nesting the budget lets through, run through the whole
         // read path on a thread with a quarter of the app's stack. In a
@@ -1343,10 +1505,12 @@ mod tests {
         bytes
     }
 
+    /// The notes of analyzing `pdf` with no model directory.
     fn analyze_pdf_notes(pdf: &[u8]) -> Vec<UiText> {
         analyze_pdf_notes_with_models(pdf, None)
     }
 
+    /// The notes of analyzing `pdf` in a blank EUR book, in English.
     fn analyze_pdf_notes_with_models(pdf: &[u8], model_dir: Option<&Path>) -> Vec<UiText> {
         notes_of(analyze_document_bytes(
             "document.pdf",
@@ -1491,8 +1655,10 @@ mod tests {
         );
     }
 
+    /// A bill with a total and the words that mark it unpaid.
     const UNPAID_BILL: &str = "Invoice\nTOTAL 45,90 EUR\nAmount due\nThank you";
 
+    /// The suggestion for [`UNPAID_BILL`] in a book with these accounts.
     fn analyze_unpaid_bill(
         template: ChartTemplate,
         accounts: &[Account],
@@ -1512,6 +1678,7 @@ mod tests {
         .ok()
     }
 
+    /// Archives the account with this chart code.
     fn deactivate_code(accounts: &mut [Account], code: &str) {
         for account in accounts {
             if account.code == code {
@@ -1589,6 +1756,7 @@ mod tests {
     const TRANSFER_RECEIPT: &str =
         include_str!("../../testdata/documents/synthetic/text/greek_bank_embasma.txt");
 
+    /// The notes for [`TRANSFER_RECEIPT`] in a book of `currency`.
     fn analyze_receipt_in(currency: &str) -> Vec<UiText> {
         notes_of(analyze_document_bytes(
             "embasma.txt",
