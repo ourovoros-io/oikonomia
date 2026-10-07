@@ -319,6 +319,7 @@ fn decimal_to_minor(whole: &str, cents: Option<&str>) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::documents::analyze::{DocumentSuggestion, parse_invoice_text};
 
     #[test]
     fn a_money_token_is_read_by_the_separator_table() {
@@ -393,12 +394,6 @@ mod tests {
         assert_eq!(parse_money_token("900000000000001"), None);
         assert_eq!(parse_money_token("1860,00"), Some(186_000));
     }
-}
-
-#[cfg(test)]
-mod amounts_and_dates {
-    use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
@@ -453,11 +448,6 @@ mod amounts_and_dates {
             Some(123_456_700)
         );
     }
-}
-
-#[cfg(test)]
-mod documented_tradeoffs {
-    use super::*;
 
     #[test]
     fn leading_zeros_in_a_whole_part_are_accepted_beside_a_decimal_mark() {

@@ -190,6 +190,8 @@ fn is_thousands_group(numbers: &[char], index: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::documents::analyze::{DocumentSuggestion, parse_invoice_text};
+    use time::macros::date;
 
     #[test]
     fn eur_token_replacement_keeps_words() {
@@ -198,13 +200,6 @@ mod tests {
         assert_eq!(replace_eur_token("EUROBANK EUROPE"), "EUROBANK EUROPE");
         assert_eq!(replace_eur_token("EUR"), "€");
     }
-}
-
-#[cfg(test)]
-mod amounts_and_dates {
-    use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
-    use time::macros::date;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
@@ -256,16 +251,6 @@ mod amounts_and_dates {
             read("Qty 5 120,50\nAmount due: 602,50").amount_minor,
             Some(60_250)
         );
-    }
-}
-
-#[cfg(test)]
-mod documented_tradeoffs {
-    use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
-
-    fn read(text: &str) -> DocumentSuggestion {
-        parse_invoice_text(text, crate::prefs::Locale::En)
     }
 
     #[test]

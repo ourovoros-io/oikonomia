@@ -32,24 +32,31 @@
 //!    in it go to OCR.
 //! 7. **OCR** (`ocr.rs`). Image files, and those embedded JPEGs: decoding
 //!    limits, resampling, contrast, recognition.
-//! 8. **Invoice reader** (`invoice.rs`, `brands.rs`). The text becomes an
-//!    amount, a date, a reference, a merchant, a description and an entry
-//!    kind.
+//! 8. **Invoice reader** (`invoice.rs` and the files under `invoice/`,
+//!    `brands.rs`). The text becomes a reading in no language: an amount, a
+//!    date, a reference, a merchant, a description and an entry kind.
 //! 9. **Account matching** (`account_match.rs`, `analyze.rs`). Keywords in the
-//!    merchant and description choose a topic, and the topic an account of
-//!    the book. The wallet and payable accounts are the book's defaults.
-//! 10. **Suggestion** (`analyze.rs`). The notes are put in order, and an
-//!     amount is withheld when the book's currency does not have two
-//!     decimals.
+//!    merchant and description, worded in English, choose a topic, and the
+//!    topic an account of the book. The wallet and payable accounts are the
+//!    book's defaults.
+//! 10. **Suggestion** (`analyze.rs`). The reading is worded in the language
+//!     of the application, the notes are put in order, and an amount is
+//!     withheld when the book's currency does not have two decimals.
 //!
 //! Plain text skips stages 2 to 7 and goes straight to the invoice reader.
+//!
+//! `keyword.rs` serves stages 8 and 9: the folded form of text, and the rule
+//! by which a label, a marker or a topic word matches as a word and never as
+//! a bare substring.
 //!
 //! # Storage
 //!
 //! The other half of this module keeps documents: `store.rs` writes the bytes
 //! into the encrypted vault database, linked to a journal entry, and reads
-//! them back. Analysis does not depend on storage; the desktop shell analyzes
-//! a dropped file first and stores it when the user posts the entry.
+//! them back. What may be stored is decided in `file.rs`, by the same kind
+//! that stage 1 resolves. Analysis does not depend on storage; the desktop
+//! shell analyzes a dropped file first and stores it when the user posts the
+//! entry.
 
 mod account_match;
 mod analyze;

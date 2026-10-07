@@ -9,16 +9,25 @@
 //!
 //! # Steps
 //!
-//! 1. The text is normalized ([`normalize`]).
+//! This file holds the entry point, the reading, the notes and the
+//! confidence. Each step is a file under `invoice/`:
+//!
+//! 1. The text is normalized ([`normalize`], `normalization.rs`).
 //! 2. A folded copy is made ([`folded`]): lowercase, Greek accents removed.
 //!    Every label and marker constant in this module is a [`Keyword`]
 //!    written in that form, and a test checks that each one is.
 //! 3. A Greek bank transfer receipt (`έμβασμα`) is recognized by its wording
-//!    and read by rules of its own ([`parse_bank_transfer`]): the labelled
-//!    principal is the amount, never the fee and never a clock time on the
-//!    value-date line.
-//! 4. For any other document each field is found on its own: total, date,
-//!    reference, merchant, description and kind.
+//!    and read by rules of its own ([`parse_bank_transfer`], `transfer.rs`):
+//!    the labelled principal is the amount, never the fee and never a clock
+//!    time on the value-date line.
+//! 4. For any other document each field is found on its own:
+//!    - the total (`total.rs`), among the amounts that `money.rs` reads off
+//!      each line;
+//!    - the date (`dates.rs`), which also blanks dates and clock times so
+//!      their digits are not read as money;
+//!    - the reference (`reference.rs`);
+//!    - the merchant and the description (`merchant.rs`);
+//!    - the kind, and whether the document is unpaid (`kind.rs`).
 //! 5. The reader's notes are added. The confidence is computed from what
 //!    was found ([`InvoiceReading::confidence`]).
 //!
@@ -150,31 +159,43 @@
 //! # Known tradeoffs
 //!
 //! The rules misread some inputs, on purpose or for lack of a better rule.
-//! Each of these is pinned by a test in `documented_tradeoffs` or named
-//! below:
+//! Each of these is pinned by the test named with it, in the tests of the
+//! file given:
 //!
 //! - **A lone digit before a three-digit group reads as thousands.**
 //!   `5 120,50` is spelled like `1 234,56`, so a quantity column directly
 //!   before a three-digit price reads as one amount, 5 120,50. A labelled
 //!   total on the document still decides
-//!   (`a_lone_digit_before_three_digits_reads_as_thousands` in
-//!   `amounts_and_dates`).
+//!   (`a_lone_digit_before_three_digits_reads_as_thousands`,
+//!   `normalization.rs`).
 //! - **A space before the separator is not joined.** `72, 53` is joined;
-//!   `72 ,53` is not, and reads as 72,00.
+//!   `72 ,53` is not, and reads as 72,00
+//!   (`a_space_before_the_separator_is_not_joined`, `normalization.rs`).
 //! - **A label glued to its neighbour is not found.** Extraction sometimes
 //!   drops the space between two columns. A whole-word label then has a
 //!   letter or digit against it and does not match, where a substring would
 //!   have. Two labels the corpus shows glued allow for it: `ηκασπ` after a
-//!   code (a unit) and `επι πιστωσει` before one (a stem).
+//!   code (a unit) and `επι πιστωσει` before one (a stem)
+//!   (`reference_reads_a_supply_label_glued_to_the_code_before_it`,
+//!   `reference.rs`; `sales_invoice_titles_carry_the_customer`,
+//!   `merchant.rs`).
 //! - **Leading zeros in a whole part are accepted beside a decimal mark.**
 //!   `01,50` reads as 1,50, although a bare `08` is not money and `01.234`
-//!   is not a thousands amount.
+//!   is not a thousands amount
+//!   (`leading_zeros_in_a_whole_part_are_accepted_beside_a_decimal_mark`,
+//!   `money.rs`).
 //! - **A whole amount of 1900 to 2100 euros needs decimals.** `2026` is a
-//!   year; `2026,00` is an amount.
+//!   year; `2026,00` is an amount
+//!   (`a_whole_amount_that_looks_like_a_year_needs_decimals`, `money.rs`).
 //! - **Any zero percentage counts as a zero VAT rate.** The VAT-exempt note
-//!   is added for `0%` anywhere in the text, beside a VAT label or not.
+//!   is added for `0%` anywhere in the text, beside a VAT label or not
+//!   (`a_zero_vat_rate_adds_the_vat_exempt_note`, this file).
 //! - **Dates are day first.** `03/04/2026` is 3 April. A month-first date
-//!   is misread, or refused when its "month" is over 12.
+//!   is misread, or refused when its "month" is over 12
+//!   (`dates_are_read_day_first`, `dates.rs`).
+//! - **A fee under the plausibility band is not reported.** A transfer fee
+//!   of 0,40 is below the band, so the receipt reads as having no fee
+//!   (`a_fee_under_the_plausibility_band_is_not_reported`, `transfer.rs`).
 //!
 //! [`DOCUMENT_YEARS`]: dates::DOCUMENT_YEARS
 //! [`PLAUSIBLE_MONEY_MINOR`]: money::PLAUSIBLE_MONEY_MINOR
@@ -415,7 +436,7 @@ fn states_a_zero_rate(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::analyze::{EntryKindSuggestion, parse_invoice_text};
+    use crate::documents::analyze::{DocumentSuggestion, EntryKindSuggestion, parse_invoice_text};
     use crate::documents::invoice::dates::{DATE_LABELS, VALUE_DATE_LABELS};
     use crate::documents::invoice::kind::{
         CUSTOMER_BLOCK_LABEL, INVOICE_WORD_GREEK, INVOICE_WORDS, POWER_BUSINESS_TARIFF,
@@ -689,13 +710,6 @@ mod tests {
             reading.category_hint()
         );
     }
-}
-
-#[cfg(test)]
-mod amounts_and_dates {
-    use super::*;
-    use crate::documents::analyze::{DocumentSuggestion, EntryKindSuggestion, parse_invoice_text};
-    use time::macros::date;
 
     /// Synthetic jumbled layout (the shape `pdf_extract` produces on a
     /// text-layer utility PDF). Placeholders only — not a live dump.

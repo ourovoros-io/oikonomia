@@ -426,8 +426,8 @@ fn is_amount_only_line(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::documents::analyze::EntryKindSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
+    use super::*;
+    use crate::documents::analyze::{DocumentSuggestion, EntryKindSuggestion, parse_invoice_text};
     use time::macros::date;
 
     /// Loads a corpus fixture, so the unit tests read the same documents as
@@ -528,12 +528,6 @@ mod tests {
             suggestion.reference
         );
     }
-}
-
-#[cfg(test)]
-mod amounts_and_dates {
-    use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
@@ -598,17 +592,6 @@ mod amounts_and_dates {
             suggestion.amount_minor,
             text.chars().take(800).collect::<String>()
         );
-    }
-}
-
-#[cfg(test)]
-mod whole_word_labels {
-    use super::*;
-    use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
-
-    fn read(text: &str) -> DocumentSuggestion {
-        parse_invoice_text(text, crate::prefs::Locale::En)
     }
 
     #[test]

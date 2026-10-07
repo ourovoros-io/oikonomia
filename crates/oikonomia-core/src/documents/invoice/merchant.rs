@@ -333,8 +333,7 @@ pub(super) fn find_description(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::analyze::EntryKindSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
+    use crate::documents::analyze::{EntryKindSuggestion, parse_invoice_text};
 
     /// Loads a corpus fixture, so the unit tests read the same documents as
     /// the golden test in `tests/document_corpus.rs`.

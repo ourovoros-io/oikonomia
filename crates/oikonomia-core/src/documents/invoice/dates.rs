@@ -358,6 +358,9 @@ fn parse_eu_date(token: &str) -> Option<Date> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::documents::analyze::{DocumentSuggestion, parse_invoice_text};
+    use crate::documents::invoice::money::{money_amounts_on_line, parse_money_token};
+    use time::macros::date;
 
     fn time_len(text: &str, at: usize) -> Option<usize> {
         let chars: Vec<char> = text.chars().collect();
@@ -425,14 +428,6 @@ mod tests {
             assert_eq!(time_len(text, at), want, "{text:?} at {at}");
         }
     }
-}
-
-#[cfg(test)]
-mod amounts_and_dates {
-    use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
-    use crate::documents::invoice::money::{money_amounts_on_line, parse_money_token};
-    use time::macros::date;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
@@ -480,17 +475,6 @@ mod amounts_and_dates {
         assert!(!money_amounts_on_line("Ημερομηνία Αξίας 28/8/2026 7:00 μ.μ.").contains(&700));
         assert_eq!(money_amounts_on_line("7:00"), [] as [i64; 0]);
         assert_eq!(money_amounts_on_line("19:30"), [] as [i64; 0]);
-    }
-}
-
-#[cfg(test)]
-mod documented_tradeoffs {
-    use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::analyze::parse_invoice_text;
-    use time::macros::date;
-
-    fn read(text: &str) -> DocumentSuggestion {
-        parse_invoice_text(text, crate::prefs::Locale::En)
     }
 
     #[test]

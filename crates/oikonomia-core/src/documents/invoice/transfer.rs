@@ -502,11 +502,6 @@ mod tests {
             ]
         );
     }
-}
-
-#[cfg(test)]
-mod documented_tradeoffs {
-    use crate::documents::invoice::read_invoice_text;
 
     #[test]
     fn a_fee_under_the_plausibility_band_is_not_reported() {
