@@ -426,6 +426,20 @@ fn analyzer_status() {
 }
 
 #[test]
+fn an_analyzer_status_whose_fields_disagree_is_refused_by_the_json_layer() {
+    for contradiction in [
+        r#"{"ocr_available":true,"offline":true,"hint":"models_missing"}"#,
+        r#"{"ocr_available":false,"offline":true,"hint":"ready"}"#,
+        r#"{"ocr_available":true,"offline":false,"hint":"ready"}"#,
+    ] {
+        assert!(
+            is_refused::<AnalyzerStatus>(contradiction),
+            "{contradiction}"
+        );
+    }
+}
+
+#[test]
 fn ui_prefs() {
     assert_json_is_pinned::<UiPrefs>(concat!(
         r#"{"locale":"el","last_entity_id":"11111111-1111-4111-8111-111111111111","#,

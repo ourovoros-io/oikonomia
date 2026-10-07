@@ -239,14 +239,76 @@ impl AnalyzerHint {
 }
 
 /// Status of the integrated analyzer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The status is one fact: whether OCR can run. On the wire it is three
+/// fields, `ocr_available`, `offline` and `hint`, which the UI reads; they
+/// are all written from that one fact, so they cannot disagree, and a JSON
+/// object in which they do is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "AnalyzerStatusWire", try_from = "AnalyzerStatusWire")]
 pub struct AnalyzerStatus {
-    /// Bundled OCR model files are present.
-    pub ocr_available: bool,
-    /// Always offline.
-    pub offline: bool,
+    /// Whether an engine is loaded or the model files are present.
+    ocr_available: bool,
+}
+
+impl AnalyzerStatus {
+    /// Whether the bundled OCR can run: images and scanned PDFs can be read.
+    #[must_use]
+    pub const fn ocr_available(self) -> bool {
+        self.ocr_available
+    }
+
     /// Which status line the UI shows.
-    pub hint: AnalyzerHint,
+    #[must_use]
+    pub const fn hint(self) -> AnalyzerHint {
+        if self.ocr_available {
+            AnalyzerHint::Ready
+        } else {
+            AnalyzerHint::ModelsMissing
+        }
+    }
+}
+
+/// The JSON form of an [`AnalyzerStatus`].
+#[derive(Debug, Serialize, Deserialize)]
+struct AnalyzerStatusWire {
+    /// Bundled OCR model files are present.
+    ocr_available: bool,
+    /// Always `true`: the analyzer never uses the network.
+    offline: bool,
+    /// Which status line the UI shows.
+    hint: AnalyzerHint,
+}
+
+impl From<AnalyzerStatus> for AnalyzerStatusWire {
+    fn from(status: AnalyzerStatus) -> Self {
+        Self {
+            ocr_available: status.ocr_available(),
+            offline: true,
+            hint: status.hint(),
+        }
+    }
+}
+
+impl TryFrom<AnalyzerStatusWire> for AnalyzerStatus {
+    type Error = &'static str;
+
+    /// Reads the status back from its wire form.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an object whose three fields do not state the same fact.
+    fn try_from(wire: AnalyzerStatusWire) -> std::result::Result<Self, Self::Error> {
+        let status = Self {
+            ocr_available: wire.ocr_available,
+        };
+
+        if wire.offline && wire.hint == status.hint() {
+            Ok(status)
+        } else {
+            Err("the analyzer status fields contradict each other")
+        }
+    }
 }
 
 /// What the analyzer can read with the models in `model_dir`.
@@ -258,15 +320,9 @@ pub struct AnalyzerStatus {
 #[must_use]
 pub fn analyzer_status(model_dir: Option<&std::path::Path>) -> AnalyzerStatus {
     let paths = model_dir.map(OcrModelPaths::from_dir);
-    let available = paths.as_ref().is_some_and(ocr_available);
+
     AnalyzerStatus {
-        ocr_available: available,
-        offline: true,
-        hint: if available {
-            AnalyzerHint::Ready
-        } else {
-            AnalyzerHint::ModelsMissing
-        },
+        ocr_available: paths.as_ref().is_some_and(ocr_available),
     }
 }
 
@@ -316,7 +372,8 @@ pub fn analyze_document_bytes(
     let mut suggestion = match read_document_text(filename, &mime, data, model_dir) {
         ExtractedText::Read { text, origin } => {
             let reading = read_invoice_text(&text);
-            let accounts = suggest_accounts(context, reading.kind, &reading.category_hint());
+            let kind = reading.class.kind();
+            let accounts = suggest_accounts(context, kind, &reading.category_hint());
             let fee_minor = reading.transfer_fee_minor;
 
             let mut suggestion = suggestion_from_reading(reading, origin, locale, accounts);
@@ -474,13 +531,13 @@ fn suggestion_from_reading(
     DocumentSuggestion {
         source: origin.source(),
         model: Some(origin.model_label().to_owned()),
-        kind: reading.kind,
+        kind: reading.class.kind(),
         amount_minor: reading.amount_minor,
         entry_date: reading.entry_date,
         description,
         reference: reading.reference,
         merchant,
-        bill_unpaid: reading.unpaid,
+        bill_unpaid: reading.class.is_unpaid(),
         category_account_id: accounts.category,
         wallet_account_id: accounts.wallet,
         payable_account_id: accounts.payable,
@@ -1954,19 +2011,22 @@ mod tests {
 
     #[test]
     fn the_hint_says_whether_the_models_are_present() {
-        assert_eq!(analyzer_status(None).hint, AnalyzerHint::ModelsMissing);
+        assert_eq!(analyzer_status(None).hint(), AnalyzerHint::ModelsMissing);
 
         let dir = tempfile::tempdir();
         let dir = dir.expect("the temporary directory must be created");
         assert_eq!(
-            analyzer_status(Some(dir.path())).hint,
+            analyzer_status(Some(dir.path())).hint(),
             AnalyzerHint::ModelsMissing
         );
 
         for file in ["text-detection.rten", "text-recognition.rten"] {
             assert!(std::fs::write(dir.path().join(file), b"x").is_ok());
         }
-        assert_eq!(analyzer_status(Some(dir.path())).hint, AnalyzerHint::Ready);
+        assert_eq!(
+            analyzer_status(Some(dir.path())).hint(),
+            AnalyzerHint::Ready
+        );
     }
 
     listed_variants! {

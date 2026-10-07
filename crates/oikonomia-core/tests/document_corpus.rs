@@ -512,7 +512,7 @@ fn a_jpeg_is_read_through_ocr() {
     assert_against_golden("english-total-jpeg", &suggestion, &golden);
 
     assert!(
-        analyzer_status(Some(Path::new("no-such-model-directory"))).ocr_available,
+        analyzer_status(Some(Path::new("no-such-model-directory"))).ocr_available(),
         "a loaded engine answers for any directory"
     );
 }

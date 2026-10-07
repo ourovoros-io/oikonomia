@@ -181,9 +181,8 @@
 
 use time::Date;
 
-use crate::documents::analyze::EntryKindSuggestion;
 use crate::documents::invoice::dates::find_best_date;
-use crate::documents::invoice::kind::{classify_kind, is_utility_bill};
+use crate::documents::invoice::kind::{DocumentClass, classify_kind, is_utility_bill};
 use crate::documents::invoice::merchant::{Description, Merchant, find_description, find_merchant};
 use crate::documents::invoice::normalization::{contains_any, normalize};
 use crate::documents::invoice::reference::find_invoice_reference;
@@ -223,10 +222,9 @@ pub(crate) struct InvoiceReading {
     pub merchant: Option<Merchant>,
     /// What the suggested description says.
     pub description: Option<Description>,
-    /// The entry kind the document suggests.
-    pub kind: EntryKindSuggestion,
-    /// Whether the document is on credit terms or shows an amount still due.
-    pub unpaid: bool,
+    /// The entry kind the document suggests, and whether it is still to be
+    /// paid.
+    pub class: DocumentClass,
     /// The fee a bank transfer receipt shows, in 2-decimal minor units (cents).
     ///
     /// It is data, not a note: the note needs the book's currency, which the
@@ -282,10 +280,7 @@ impl InvoiceReading {
         if self.reference.is_some() {
             score += confidence::REFERENCE;
         }
-        if matches!(
-            self.kind,
-            EntryKindSuggestion::Income | EntryKindSuggestion::Bill
-        ) {
+        if !matches!(self.class, DocumentClass::Expense) {
             score += confidence::CLASSIFIED_KIND;
         }
         score.min(confidence::CEILING)
@@ -315,7 +310,7 @@ pub(crate) fn read_invoice_text(text: &str) -> InvoiceReading {
         merchant.is_some(),
         reference.is_some(),
     );
-    let (kind, unpaid) = classify_kind(&folded_full);
+    let class = classify_kind(&folded_full);
 
     InvoiceReading {
         amount_minor,
@@ -323,10 +318,9 @@ pub(crate) fn read_invoice_text(text: &str) -> InvoiceReading {
         reference,
         merchant,
         description,
-        kind,
-        unpaid,
+        class,
         transfer_fee_minor: None,
-        notes: build_notes(amount_minor, kind, unpaid, &folded_full),
+        notes: build_notes(amount_minor, class, &folded_full),
     }
 }
 
@@ -361,24 +355,19 @@ mod confidence {
 /// The reader's notes for a document that is not a transfer receipt, in the
 /// order the user reads them: parsed, no total found, income, utility bill,
 /// unpaid, VAT-exempt. Each but the first is added only when it applies.
-fn build_notes(
-    amount: Option<i64>,
-    kind: EntryKindSuggestion,
-    unpaid: bool,
-    folded_text: &str,
-) -> Vec<UiText> {
+fn build_notes(amount: Option<i64>, class: DocumentClass, folded_text: &str) -> Vec<UiText> {
     let mut notes = vec![UiText::new(UiTextCode::InvoiceParsed)];
 
     if amount.is_none() {
         notes.push(UiText::new(UiTextCode::InvoiceNoTotal));
     }
-    if matches!(kind, EntryKindSuggestion::Income) {
+    if matches!(class, DocumentClass::Income { .. }) {
         notes.push(UiText::new(UiTextCode::InvoiceIncome));
     }
     if is_utility_bill(folded_text) {
         notes.push(UiText::new(UiTextCode::InvoiceUtility));
     }
-    if unpaid {
+    if class.is_unpaid() {
         notes.push(UiText::new(UiTextCode::InvoiceUnpaid));
     }
     if contains_any(folded_text, VAT_EXEMPT_MARKERS) || states_a_zero_rate(folded_text) {
@@ -420,7 +409,7 @@ fn states_a_zero_rate(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::analyze::parse_invoice_text;
+    use crate::documents::analyze::{EntryKindSuggestion, parse_invoice_text};
     use crate::documents::invoice::dates::{DATE_LABELS, VALUE_DATE_LABELS};
     use crate::documents::invoice::kind::{
         CUSTOMER_BLOCK_LABEL, INVOICE_WORD_GREEK, INVOICE_WORDS, POWER_BUSINESS_TARIFF,
@@ -568,7 +557,7 @@ mod tests {
 
     #[test]
     fn a_sales_invoice_is_noted_as_income() {
-        let notes = build_notes(Some(1000), EntryKindSuggestion::Income, false, "");
+        let notes = build_notes(Some(1000), DocumentClass::Income { unpaid: false }, "");
 
         assert_eq!(
             notes,
@@ -583,8 +572,7 @@ mod tests {
     fn credit_terms_and_zero_vat_each_add_their_note() {
         let notes = build_notes(
             Some(1000),
-            EntryKindSuggestion::Bill,
-            true,
+            DocumentClass::Bill { unpaid: true },
             &folded("Χωρίς ΦΠΑ"),
         );
 
@@ -600,13 +588,8 @@ mod tests {
 
     /// Whether `text` gets the note that the document carries no VAT.
     fn is_noted_vat_exempt(text: &str) -> bool {
-        build_notes(
-            Some(1000),
-            EntryKindSuggestion::Expense,
-            false,
-            &folded(text),
-        )
-        .contains(&UiText::new(UiTextCode::InvoiceVatExempt))
+        build_notes(Some(1000), DocumentClass::Expense, &folded(text))
+            .contains(&UiText::new(UiTextCode::InvoiceVatExempt))
     }
 
     #[test]
@@ -683,7 +666,7 @@ mod tests {
 #[cfg(test)]
 mod amounts_and_dates {
     use super::*;
-    use crate::documents::analyze::{DocumentSuggestion, parse_invoice_text};
+    use crate::documents::analyze::{DocumentSuggestion, EntryKindSuggestion, parse_invoice_text};
     use time::macros::date;
 
     /// Synthetic jumbled layout (the shape `pdf_extract` produces on a

@@ -1,7 +1,7 @@
 //! What kind of document the text is: a utility bill, a sales invoice the
 //! book's owner issued, or anything else, and whether it is still unpaid.
 //!
-//! [`classify_kind`] turns that into the entry kind to suggest. The two
+//! [`classify_kind`] turns that into a [`DocumentClass`]. The two
 //! tests it rests on, [`is_utility_bill`] and [`is_sales_invoice`], are also
 //! what the total, the merchant and the description branch on, so the three
 //! always agree about what the document is.
@@ -75,8 +75,49 @@ pub(super) fn is_sales_invoice(folded_text: &str) -> bool {
     folded_text.contains(CUSTOMER_BLOCK_LABEL) && contains_any(folded_text, INVOICE_WORDS)
 }
 
-/// Decides the entry kind and whether the document is unpaid, from folded
-/// text. The first rule that applies wins:
+/// What a document is for the books: the entry kind it suggests and, where
+/// that can be said, whether it is still to be paid.
+///
+/// An expense is never unpaid: an unpaid purchase is a [`Bill`](Self::Bill).
+/// Income can be: a sales invoice issued on credit is money the customer
+/// still owes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DocumentClass {
+    /// Money spent, with nothing left to pay.
+    Expense,
+    /// Money received or to be received, from a sales invoice.
+    Income {
+        /// The invoice is on credit terms or shows an amount due.
+        unpaid: bool,
+    },
+    /// A bill to pay.
+    Bill {
+        /// The bill is overdue, on credit terms or shows an amount due.
+        unpaid: bool,
+    },
+}
+
+impl DocumentClass {
+    /// The entry kind the suggestion carries.
+    pub(crate) const fn kind(self) -> EntryKindSuggestion {
+        match self {
+            Self::Expense => EntryKindSuggestion::Expense,
+            Self::Income { .. } => EntryKindSuggestion::Income,
+            Self::Bill { .. } => EntryKindSuggestion::Bill,
+        }
+    }
+
+    /// Whether the document is still to be paid.
+    pub(crate) const fn is_unpaid(self) -> bool {
+        match self {
+            Self::Expense => false,
+            Self::Income { unpaid } | Self::Bill { unpaid } => unpaid,
+        }
+    }
+}
+
+/// Classifies a document from its folded text. The first rule that applies
+/// wins:
 ///
 /// 1. A utility bill is a `Bill`, unpaid when it carries one of
 ///    [`UTILITY_UNPAID_MARKERS`].
@@ -88,10 +129,10 @@ pub(super) fn is_sales_invoice(folded_text: &str) -> bool {
 ///
 /// In rules 2 and 3 the document is unpaid when it carries one of
 /// [`UNPAID_MARKERS`].
-pub(super) fn classify_kind(folded_text: &str) -> (EntryKindSuggestion, bool) {
+pub(super) fn classify_kind(folded_text: &str) -> DocumentClass {
     if is_utility_bill(folded_text) {
         let unpaid = contains_any(folded_text, UTILITY_UNPAID_MARKERS);
-        return (EntryKindSuggestion::Bill, unpaid);
+        return DocumentClass::Bill { unpaid };
     }
 
     // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
@@ -100,20 +141,17 @@ pub(super) fn classify_kind(folded_text: &str) -> (EntryKindSuggestion, bool) {
     let unpaid = contains_any(folded_text, UNPAID_MARKERS);
 
     if sales && !purchase {
-        return (EntryKindSuggestion::Income, unpaid);
+        return DocumentClass::Income { unpaid };
     }
 
     // A recognized biller with a known service (telecom etc.) is a bill to
     // pay even without the utility markers above.
-    if let Some((_, Some(_))) = known_brand(folded_text) {
-        return (EntryKindSuggestion::Bill, unpaid);
+    let billed_service = known_brand(folded_text).and_then(|brand| brand.service);
+    if billed_service.is_some() || unpaid {
+        return DocumentClass::Bill { unpaid };
     }
 
-    if unpaid {
-        (EntryKindSuggestion::Bill, true)
-    } else {
-        (EntryKindSuggestion::Expense, false)
-    }
+    DocumentClass::Expense
 }
 
 /// "Invoice" in Greek. Also part of tariff names ("Σταθερό Τιμολόγιο"), so

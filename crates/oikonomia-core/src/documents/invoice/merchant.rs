@@ -126,8 +126,8 @@ pub(super) fn find_merchant(text: &str, folded_text: &str) -> Option<Merchant> {
         return Some(Merchant::Named(customer));
     }
 
-    if let Some((brand, _)) = known_brand(folded_text) {
-        return Some(Merchant::Named(brand.to_owned()));
+    if let Some(brand) = known_brand(folded_text) {
+        return Some(Merchant::Named(brand.name.to_owned()));
     }
 
     if is_utility_bill(folded_text) {
@@ -289,7 +289,7 @@ pub(super) fn find_description(
         return Some(Description::CustomerInvoice);
     }
 
-    let brand_service = known_brand(folded_text).and_then(|(_, service)| service);
+    let brand_service = known_brand(folded_text).and_then(|brand| brand.service);
 
     if is_utility_bill(folded_text) || brand_service.is_some() {
         let service = brand_service.or_else(|| classify_service(folded_text));

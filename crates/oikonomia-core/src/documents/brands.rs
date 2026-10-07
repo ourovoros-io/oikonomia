@@ -44,31 +44,47 @@ impl Service {
     }
 }
 
-/// Brand tokens in folded form, with the display name and, when the brand
-/// implies it, the service. The first entry that matches wins.
+/// A biller the reader knows by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Brand {
+    /// The name to show for the biller.
+    pub name: &'static str,
+    /// The service the brand sells, when it sells only one.
+    pub service: Option<Service>,
+}
+
+impl Brand {
+    /// A brand shown as `name` that implies `service`.
+    const fn new(name: &'static str, service: Option<Service>) -> Self {
+        Self { name, service }
+    }
+}
+
+/// Brand tokens in folded form, each with the brand it stands for. The first
+/// entry that matches wins.
 ///
 /// Suppliers come before ΔΕΔΔΗΕ: the grid operator is printed on every
 /// electricity bill regardless of who issues it, so it may only win when no
 /// supplier brand is present.
-const BRANDS: &[(&str, &str, Option<Service>)] = &[
-    ("zenith", "ZeniΘ", None),
-    ("zeniθ", "ZeniΘ", None),
+const BRANDS: &[(&str, Brand)] = &[
+    ("zenith", Brand::new("ZeniΘ", None)),
+    ("zeniθ", Brand::new("ZeniΘ", None)),
     // "MyON" is the customer portal printed on Volton gas bills; the
     // company name itself never survives text extraction.
-    ("volton", "Volton", None),
-    ("myon", "Volton", None),
-    ("nova", "Nova", Some(Service::Telecom)),
-    ("cosmote", "Cosmote", Some(Service::Telecom)),
-    ("vodafone", "Vodafone", Some(Service::Telecom)),
-    ("elpedison", "Elpedison", None),
-    ("protergia", "Protergia", None),
-    ("ηρων", "ΗΡΩΝ", None),
-    ("heron", "ΗΡΩΝ", None),
-    ("nrg", "nrg", None),
-    ("δεη", "ΔΕΗ", Some(Service::Electricity)),
-    ("ευδαπ", "ΕΥΔΑΠ", Some(Service::Water)),
-    ("ευαθ", "ΕΥΑΘ", Some(Service::Water)),
-    ("δεδδηε", "ΔΕΔΔΗΕ", Some(Service::Electricity)),
+    ("volton", Brand::new("Volton", None)),
+    ("myon", Brand::new("Volton", None)),
+    ("nova", Brand::new("Nova", Some(Service::Telecom))),
+    ("cosmote", Brand::new("Cosmote", Some(Service::Telecom))),
+    ("vodafone", Brand::new("Vodafone", Some(Service::Telecom))),
+    ("elpedison", Brand::new("Elpedison", None)),
+    ("protergia", Brand::new("Protergia", None)),
+    ("ηρων", Brand::new("ΗΡΩΝ", None)),
+    ("heron", Brand::new("ΗΡΩΝ", None)),
+    ("nrg", Brand::new("nrg", None)),
+    ("δεη", Brand::new("ΔΕΗ", Some(Service::Electricity))),
+    ("ευδαπ", Brand::new("ΕΥΔΑΠ", Some(Service::Water))),
+    ("ευαθ", Brand::new("ΕΥΑΘ", Some(Service::Water))),
+    ("δεδδηε", Brand::new("ΔΕΔΔΗΕ", Some(Service::Electricity))),
 ];
 
 /// How strongly a keyword points at a service: the scale of
@@ -145,14 +161,13 @@ const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
 
 /// Recognizes a known biller in folded document text.
 ///
-/// Returns the display name and, when the brand implies it, the service.
 /// The first entry of [`BRANDS`] whose token appears wins, wherever in the
 /// text each token is. Returns `None` when no token appears.
-pub(crate) fn known_brand(folded_text: &str) -> Option<(&'static str, Option<Service>)> {
+pub(crate) fn known_brand(folded_text: &str) -> Option<Brand> {
     BRANDS
         .iter()
-        .find(|(token, _, _)| contains_token(folded_text, token))
-        .map(|(_, display, service)| (*display, *service))
+        .find(|(token, _)| contains_token(folded_text, token))
+        .map(|(_, brand)| *brand)
 }
 
 /// Classifies the service of a utility-style bill in folded text by weighted
@@ -231,11 +246,11 @@ mod tests {
     fn a_supplier_wins_over_the_grid_operator_wherever_it_is_printed() {
         assert_eq!(
             known_brand(&folded("Δίκτυο ΔΕΔΔΗΕ\nΠρομήθεια Ρεύματος ΔΕΗ")),
-            Some(("ΔΕΗ", Some(Service::Electricity)))
+            Some(Brand::new("ΔΕΗ", Some(Service::Electricity)))
         );
         assert_eq!(
             known_brand(&folded("Δίκτυο ΔΕΔΔΗΕ")),
-            Some(("ΔΕΔΔΗΕ", Some(Service::Electricity)))
+            Some(Brand::new("ΔΕΔΔΗΕ", Some(Service::Electricity)))
         );
     }
 
@@ -292,13 +307,13 @@ mod tests {
             known_brand(&folded(
                 "Συνδέσου στο MyON και διαχειρίσου τον λογαριασμό σου"
             )),
-            Some(("Volton", None))
+            Some(Brand::new("Volton", None))
         );
     }
 
     #[test]
     fn every_brand_token_and_service_keyword_is_in_folded_form() {
-        for (token, _, _) in BRANDS {
+        for (token, _) in BRANDS {
             assert_eq!(folded(token), *token, "brand token {token:?}");
         }
         for (service, keywords) in SERVICE_KEYWORDS {

@@ -15,9 +15,9 @@ use std::ops::RangeInclusive;
 
 use time::Date;
 
-use crate::documents::analyze::EntryKindSuggestion;
 use crate::documents::invoice::InvoiceReading;
 use crate::documents::invoice::dates::{first_date_on_line, is_value_date_line};
+use crate::documents::invoice::kind::DocumentClass;
 use crate::documents::invoice::merchant::{
     Description, ISSUER_NAME_LABEL, MIN_NAME_CHARS, Merchant, value_after_colon,
 };
@@ -60,8 +60,7 @@ pub(super) fn parse_bank_transfer(text: &str) -> InvoiceReading {
         reference: find_transfer_reference(text),
         merchant: find_transfer_payee(text).map(Merchant::Named),
         description: Some(Description::BankTransfer),
-        kind: EntryKindSuggestion::Expense,
-        unpaid: false,
+        class: DocumentClass::Expense,
         transfer_fee_minor: find_transfer_fee(text),
         notes: build_transfer_notes(amount_minor),
     }
@@ -355,7 +354,7 @@ fn build_transfer_notes(amount: Option<i64>) -> Vec<UiText> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::analyze::parse_invoice_text;
+    use crate::documents::analyze::{EntryKindSuggestion, parse_invoice_text};
     use crate::documents::invoice::read_invoice_text;
     use time::macros::date;
 
