@@ -60,11 +60,14 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   update_network: 'error.update',
   update_manifest_signature: 'error.update',
   update_manifest_parse: 'error.update',
+  update_invalid_version: 'error.update',
   update_missing_platform: 'error.update',
   update_artifact_url: 'error.update',
   update_artifact_integrity: 'error.update',
   update_artifact_too_large: 'error.update',
+  update_cache_io: 'error.update',
   update_invalid_feed_url: 'error.update',
+  update_invalid_feed_input: 'error.update',
   unknown: 'error.unknown',
 }
 

@@ -6,17 +6,21 @@
 //! [`check_artifact_file`] before publishing.
 
 use std::path::{Path, PathBuf};
-
 use thiserror::Error;
 
-/// Largest installer body, in bytes, that the update client will download.
+/// The largest installer body, in bytes, that the update client will
+/// download: 200 MiB.
 ///
 /// The download accepts a body of exactly this length and refuses one byte
 /// more. The macOS archive, the Linux `AppImage` and a Windows NSIS setup
-/// that embeds the `WebView2` bootstrapper fit under this cap.
+/// that embeds the `WebView2` bootstrapper fit under this cap. The client
+/// holds the artifact in memory until its digest and signature are checked,
+/// so this is also the most memory an install takes.
 pub const MAX_ARTIFACT_BYTES: usize = 200 * 1024 * 1024;
 
 /// A file the update client would not finish downloading.
+///
+/// Exhaustive, like the other public enums of this unpublished crate.
 #[derive(Debug, Error)]
 pub enum ArtifactSizeError {
     /// The path's metadata could not be read.
@@ -62,7 +66,11 @@ pub enum ArtifactSizeError {
 ///
 /// # Errors
 ///
-/// See [`ArtifactSizeError`].
+/// Returns [`ArtifactSizeError::Metadata`] when `path` cannot be examined,
+/// [`ArtifactSizeError::NotAFile`] when it is a directory or a symbolic
+/// link, [`ArtifactSizeError::LimitUnrepresentable`] when the cap does not
+/// fit in a file length, and [`ArtifactSizeError::OverLimit`] when the file
+/// is longer than the cap.
 pub fn check_artifact_file(path: &Path) -> Result<u64, ArtifactSizeError> {
     let metadata =
         std::fs::symlink_metadata(path).map_err(|source| ArtifactSizeError::Metadata {
