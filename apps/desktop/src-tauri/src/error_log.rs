@@ -14,8 +14,9 @@
 //!
 //! A message holds no ledger data. That is decided where the message is
 //! formatted, not here: a log line interpolates fixed phrases, numbers, the
-//! application's own paths, operating-system error text, and core errors
-//! through `oikonomia_core::Error::log_text`, which keeps the code and the
+//! application's own paths, operating-system error text, errors of Tauri and
+//! of the update crate, and core errors through
+//! `oikonomia_core::Error::log_text`, which keeps the code and the
 //! operation and drops the detail. Only a debug build asks core for the
 //! detail (`oikonomia_core::error::enable_log_detail`), and a debug build
 //! does not write this file. The module `oikonomia_core::error::log_text`
@@ -38,8 +39,9 @@
 //! The file is capped at [`MAX_FILE_BYTES`]. A line that would take it past
 //! the cap first renames it to [`PREVIOUS_FILE_NAME`], replacing the file of
 //! that name, and starts a new one. So there are at most two files and at
-//! most twice the cap on disk, and the newest lines are always kept. A line
-//! is cut at [`MAX_LINE_BYTES`], so one runaway message cannot fill the file.
+//! most twice the cap on disk, and the newest lines are always kept. A
+//! message is cut at [`MAX_MESSAGE_BYTES`], so one runaway message cannot
+//! fill the file.
 //!
 //! On Unix the directory is created `0700` and each file `0600`, the modes of
 //! the vault's own directory and files, and an existing directory or file is
@@ -76,7 +78,7 @@ pub(crate) const PREVIOUS_FILE_NAME: &str = "errors.previous.log";
 pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 /// Longest message written, in bytes. The rest of a longer one is cut.
-const MAX_LINE_BYTES: usize = 2048;
+const MAX_MESSAGE_BYTES: usize = 2048;
 
 /// The least severe level that is written.
 const MAX_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
@@ -191,21 +193,21 @@ impl log::Log for ErrorLog {
 
 /// Returns one line of the log, ending in a newline.
 ///
-/// Control characters in `message`, line breaks included, become spaces, so
-/// a record is always one line and a message cannot forge another record.
-/// A message longer than [`MAX_LINE_BYTES`] is cut at a character boundary
-/// and marked.
+/// Characters of `message` that break a line or reorder the text around
+/// them ([`breaks_or_reorders_a_line`]) become spaces, so a record is always
+/// one line and a message cannot forge another record. A message longer than
+/// [`MAX_MESSAGE_BYTES`] is cut at a character boundary and marked.
 fn render_line(timestamp: &str, level: log::Level, target: &str, message: &str) -> String {
     let mut line = format!("{timestamp} {level} {target}: ");
     let mut message_bytes = 0;
 
     for character in message.chars() {
         message_bytes += character.len_utf8();
-        if message_bytes > MAX_LINE_BYTES {
+        if message_bytes > MAX_MESSAGE_BYTES {
             line.push_str(" [cut]");
             break;
         }
-        line.push(if character.is_control() {
+        line.push(if breaks_or_reorders_a_line(character) {
             ' '
         } else {
             character
@@ -213,6 +215,18 @@ fn render_line(timestamp: &str, level: log::Level, target: &str, message: &str) 
     }
     line.push('\n');
     line
+}
+
+/// Returns whether `character` would end a line or change the order in which
+/// a viewer shows the text around it: a control character, the Unicode line
+/// and paragraph separators, or a bidirectional embedding, override or
+/// isolate.
+fn breaks_or_reorders_a_line(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+        )
 }
 
 /// Returns `now` in UTC as `2026-10-07T09:41:05Z`.
@@ -265,8 +279,11 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
-/// An append-only file that never grows past a cap, with one earlier file
-/// kept beside it.
+/// An append-only file that is set aside before a line would take it past a
+/// cap, with one earlier file kept beside it.
+///
+/// The file stays within the cap unless a single line is longer than the
+/// cap, which [`MAX_MESSAGE_BYTES`] rules out for [`MAX_FILE_BYTES`].
 #[derive(Debug)]
 struct CappedFile {
     /// Path of the file being written.
@@ -328,8 +345,17 @@ impl CappedFile {
 
     /// Renames the file to the previous file's name, replacing that file,
     /// and starts an empty one.
+    ///
+    /// A file that is no longer at its path counts as set aside already: the
+    /// user deleted it while the app ran, or an earlier call renamed it and
+    /// then could not open the new one. Returning that error here would stop
+    /// the log for the rest of the session.
     fn rotate(&mut self) -> io::Result<()> {
-        std::fs::rename(&self.path, &self.previous_path)?;
+        match std::fs::rename(&self.path, &self.previous_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
 
         self.file = open_private_file(&self.path)?;
         self.size = 0;
@@ -338,7 +364,7 @@ impl CappedFile {
 }
 
 /// Creates `directory` and any missing parents and, on Unix, sets it to
-/// [`DIRECTORY_MODE`] whether or not it existed.
+/// `DIRECTORY_MODE` whether or not it existed.
 fn create_private_directory(directory: &Path) -> io::Result<()> {
     let mut builder = DirBuilder::new();
     builder.recursive(true);
@@ -359,7 +385,7 @@ fn create_private_directory(directory: &Path) -> io::Result<()> {
 }
 
 /// Opens `path` for appending, creating it if it is missing, and on Unix
-/// sets it to [`FILE_MODE`] whether or not it existed.
+/// sets it to `FILE_MODE` whether or not it existed.
 fn open_private_file(path: &Path) -> io::Result<File> {
     let mut options = OpenOptions::new();
     options.append(true).create(true);
@@ -382,8 +408,8 @@ fn open_private_file(path: &Path) -> io::Result<File> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CappedFile, ErrorLog, FILE_NAME, LOGGED_CRATES, MAX_FILE_BYTES, MAX_LEVEL, MAX_LINE_BYTES,
-        PREVIOUS_FILE_NAME, is_logged, render_line, utc_timestamp,
+        CappedFile, ErrorLog, FILE_NAME, LOGGED_CRATES, MAX_FILE_BYTES, MAX_LEVEL,
+        MAX_MESSAGE_BYTES, PREVIOUS_FILE_NAME, is_logged, render_line, utc_timestamp,
     };
     use log::{Level, Log};
     use std::path::{Path, PathBuf};
@@ -534,24 +560,29 @@ mod tests {
             "2026-10-07T09:41:05Z",
             Level::Error,
             "oikonomia_lib",
-            "first\n2026-10-07T09:41:06Z ERROR oikonomia_lib: forged\r\u{1b}[2J",
+            "first\n2026-10-07T09:41:06Z ERROR oikonomia_lib: forged\r\u{1b}[2J\
+             \u{2028}separator\u{2029}paragraph\u{202e}reversed\u{2066}isolated",
         );
 
         assert_eq!(line.matches('\n').count(), 1);
         assert!(line.ends_with('\n'));
-        assert!(!line.contains('\r'));
-        assert!(!line.contains('\u{1b}'));
+        for forbidden in [
+            '\r', '\u{1b}', '\u{2028}', '\u{2029}', '\u{202e}', '\u{2066}',
+        ] {
+            assert!(!line.contains(forbidden), "{forbidden:?}");
+        }
+        assert!(line.contains("separator paragraph reversed isolated"));
     }
 
     #[test]
     fn a_long_message_is_cut_at_a_character_boundary() {
         // Two bytes per character, and an odd limit would fall inside one.
-        let message = "é".repeat(MAX_LINE_BYTES);
+        let message = "é".repeat(MAX_MESSAGE_BYTES);
 
         let line = render_line("t", Level::Warn, "oikonomia_lib", &message);
 
         assert!(line.ends_with(" [cut]\n"));
-        assert_eq!(line.matches('é').count(), MAX_LINE_BYTES / 2);
+        assert_eq!(line.matches('é').count(), MAX_MESSAGE_BYTES / 2);
         assert!(
             !render_line("t", Level::Warn, "oikonomia_lib", "short").contains("[cut]"),
             "a short message is not marked"
@@ -604,6 +635,26 @@ mod tests {
         // 60 + 60 is over the cap, so the second session's line rotated.
         assert_eq!(size_of(&directory.join(PREVIOUS_FILE_NAME)), 60);
         assert_eq!(size_of(&directory.join(FILE_NAME)), 60);
+        remove(&directory);
+    }
+
+    #[test]
+    fn a_log_deleted_while_open_starts_again_at_the_next_rotation() {
+        let directory = log_directory("deleted");
+        let current = directory.join(FILE_NAME);
+        let line = "x".repeat(59) + "\n";
+        let mut file = CappedFile::open(&directory, 100).expect("open");
+        file.append(&line).expect("append");
+
+        std::fs::remove_file(&current).expect("delete");
+        // Over the cap, so this rotates, with nothing left to rename.
+        file.append(&line)
+            .expect("append after the file was deleted");
+        file.append(&line)
+            .expect("and rotation works again afterwards");
+
+        assert_eq!(size_of(&current), 60);
+        assert_eq!(size_of(&directory.join(PREVIOUS_FILE_NAME)), 60);
         remove(&directory);
     }
 

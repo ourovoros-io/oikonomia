@@ -5,13 +5,19 @@
 //! description, merchant, account or entity name, document name or contents,
 //! password or key material, and no path the user chose. The log line is
 //! formatted at the call site, long before the logger sees it, so the choice
-//! of what goes in is made here, by the two types every `log::` call in the
-//! workspace uses for anything that is not a fixed phrase, a number or one of
-//! the application's own paths:
+//! of what goes in is made there. The rule for a `log::` call anywhere in
+//! the workspace is that it interpolates as they are only a fixed phrase, a
+//! number, one of the application's own paths, the operating system's error
+//! text (a `std::io::Error`, which names no path), and an error of Tauri or
+//! of the update crate, neither of which has seen the ledger. Anything else
+//! goes through one of the two types here:
 //!
 //! - [`LogText`], from [`Error::log_text`], for an [`enum@Error`];
 //! - [`PrivateDetail`] for a path that may be the user's, and for the text of
 //!   a foreign error that may quote its input.
+//!
+//! Neither type shows more through `Debug` than through `Display`, so a
+//! `{:?}` in a log line cannot undo the choice.
 //!
 //! # Reduced unless asked otherwise
 //!
@@ -93,8 +99,17 @@ fn detail_in_logs() -> bool {
 }
 
 /// An [`enum@Error`] as a log line shows it; see [`Error::log_text`].
-#[derive(Debug, Clone, Copy)]
+///
+/// `Debug` writes what `Display` writes. A derived one would print the whole
+/// error, detail included.
+#[derive(Clone, Copy)]
 pub struct LogText<'a>(&'a Error);
+
+impl fmt::Debug for LogText<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
 
 impl Display for LogText<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -132,8 +147,16 @@ impl Error {
 /// For a path that may be one the user chose (a backup destination and the
 /// files staged beside it), and for the text of a foreign error that may
 /// quote its input. Until then `<withheld>` is written in its place.
-#[derive(Debug, Clone, Copy)]
+///
+/// `Debug` writes what `Display` writes. A derived one would print the value.
+#[derive(Clone, Copy)]
 pub(crate) struct PrivateDetail<T>(pub(crate) T);
+
+impl<T: Display> fmt::Debug for PrivateDetail<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
+    }
+}
 
 impl<T: Display> Display for PrivateDetail<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -474,6 +497,17 @@ mod tests {
 
         assert_eq!(error.log_text().to_string(), "io: rename vault file");
         assert_eq!(PrivateDetail(SENTINEL).to_string(), WITHHELD);
+    }
+
+    #[test]
+    fn debug_formatting_shows_no_more_than_display() {
+        let error = Error::Io {
+            operation: "rename vault file",
+            detail: SENTINEL.into(),
+        };
+
+        assert_eq!(format!("{:?}", error.log_text()), "io: rename vault file");
+        assert_eq!(format!("{:?}", PrivateDetail(SENTINEL)), WITHHELD);
     }
 
     #[test]

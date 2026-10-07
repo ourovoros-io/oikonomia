@@ -41,7 +41,7 @@
 //!
 //! # In a log
 //!
-//! A `log::` call never interpolates an error's `Display` text. It
+//! A `log::` call must not interpolate an error's `Display` text. It
 //! interpolates [`Error::log_text`], a reduced form that holds nothing from
 //! the ledger: a release build of the desktop app writes warnings and errors
 //! to a local file. A debug build calls [`enable_log_detail`] and gets the
