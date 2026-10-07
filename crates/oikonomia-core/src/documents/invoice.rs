@@ -273,8 +273,9 @@ impl InvoiceReading {
         )
     }
 
-    /// A rough confidence between 0 and 1: the sum of the [`confidence`]
-    /// parts for what was found, capped at the ceiling.
+    /// A rough confidence, from 0.2 for a text nothing was found in to 0.9
+    /// for one with everything: the sum of the [`confidence`] parts for what
+    /// was found.
     pub(crate) fn confidence(&self) -> f32 {
         let mut score = confidence::BASE;
         if self.amount_minor.is_some() {
@@ -289,7 +290,7 @@ impl InvoiceReading {
         if !matches!(self.class, DocumentClass::Expense) {
             score += confidence::CLASSIFIED_KIND;
         }
-        score.min(confidence::CEILING)
+        score
     }
 }
 
@@ -337,12 +338,13 @@ const VAT_EXEMPT_MARKERS: &[Keyword] = &[Keyword::Word("χωρις φπα")];
 /// The parts of the confidence that [`InvoiceReading::confidence`] adds up.
 ///
 /// The figure is a rough guide for the user, not a probability. An amount
-/// weighs most, then a date, then a reference. The parts sum to 0.9, under
-/// [`CEILING`](confidence::CEILING), so the ceiling does not bind; it states
-/// that a heuristic reading is never reported as certain.
+/// weighs most, then a date, then a reference. The parts sum to 0.9, so a
+/// reading by these rules is never reported as certain, and no cap is
+/// needed to keep it so.
 ///
-/// Why each part has the value it has is not recorded, and no test checks
-/// the figure.
+/// Why each part has the value it has is not recorded.
+/// `the_confidence_is_the_sum_of_the_parts_found` pins each part and the
+/// sum.
 mod confidence {
     /// A document that was read at all.
     pub(super) const BASE: f32 = 0.2;
@@ -354,8 +356,6 @@ mod confidence {
     pub(super) const REFERENCE: f32 = 0.1;
     /// The document was classified as income or as a bill.
     pub(super) const CLASSIFIED_KIND: f32 = 0.05;
-    /// The most a heuristic reading claims.
-    pub(super) const CEILING: f32 = 0.95;
 }
 
 /// The reader's notes for a document that is not a transfer receipt, in the
@@ -634,6 +634,28 @@ mod tests {
         ] {
             assert!(!is_noted_vat_exempt(text), "{text:?}");
         }
+    }
+
+    /// Whether two confidences are the same figure, give or take the
+    /// rounding of adding `f32` parts.
+    fn is_about(confidence: f32, expected: f32) -> bool {
+        (confidence - expected).abs() < 1e-6
+    }
+
+    #[test]
+    fn the_confidence_is_the_sum_of_the_parts_found() {
+        let confidence = |text: &str| read_invoice_text(text).confidence();
+
+        assert!(is_about(confidence("Thank you for your visit"), 0.2));
+        assert!(is_about(confidence("Paid 45,90 €"), 0.6));
+        assert!(is_about(confidence("Visit of 15/03/2026"), 0.35));
+        assert!(is_about(confidence("Order 1234567890"), 0.3));
+        assert!(is_about(confidence("Please pay"), 0.25));
+
+        // Everything found: an unpaid bill with a total, a date and a number.
+        let full = confidence("Invoice 1234567890\nDate 15/03/2026\nAmount due 45,90 €");
+        assert!(is_about(full, 0.9), "{full}");
+        assert!(full < 1.0);
     }
 
     #[test]
