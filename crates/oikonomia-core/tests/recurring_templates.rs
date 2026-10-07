@@ -373,7 +373,7 @@ fn deleting_entity_removes_templates() {
     let template_rows = || -> i64 {
         conn.query_row(
             "SELECT COUNT(1) FROM recurring_templates WHERE entity_id = ?1",
-            [entity_id.0.to_string()],
+            [entity_id.to_string()],
             |row| row.get(0),
         )
         .expect("count templates")

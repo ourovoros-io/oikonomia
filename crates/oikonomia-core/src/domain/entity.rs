@@ -14,28 +14,12 @@
 //! default are found by the template's codes (see [`crate::coa`] and
 //! [`crate::default_accounts`]).
 
+use crate::domain::define_id;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-/// Identifies one [`Entity`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct EntityId(pub Uuid);
-
-impl EntityId {
-    /// Returns a new random (version 4) id.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for EntityId {
-    /// Returns a new random id, the same as [`EntityId::new`], not a fixed
-    /// value.
-    fn default() -> Self {
-        Self::new()
-    }
+define_id! {
+    /// Identifies one [`Entity`].
+    EntityId
 }
 
 /// The starter chart of accounts an entity is created with.

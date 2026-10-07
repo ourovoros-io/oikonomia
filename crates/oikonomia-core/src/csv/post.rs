@@ -284,7 +284,7 @@ fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<De
         .database("read entries for duplicate check")?;
 
     let mapped = statement
-        .query_map([entity_id.0.to_string()], |row| {
+        .query_map([entity_id.to_string()], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

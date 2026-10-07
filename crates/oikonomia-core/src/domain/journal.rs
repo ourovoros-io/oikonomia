@@ -34,53 +34,21 @@
 //! Of the fields of a [`JournalEntry`], only `hidden` changes after posting.
 
 use crate::domain::account::AccountId;
+use crate::domain::define_id;
 use crate::domain::entity::EntityId;
 use crate::error::{Error, Result};
 use crate::money::Money;
 use serde::{Deserialize, Serialize};
 use time::Date;
-use uuid::Uuid;
 
-/// Identifies one [`JournalEntry`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct JournalEntryId(pub Uuid);
-
-impl JournalEntryId {
-    /// Returns a new random (version 4) id.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
+define_id! {
+    /// Identifies one [`JournalEntry`].
+    JournalEntryId
 }
 
-impl Default for JournalEntryId {
-    /// Returns a new random id, the same as [`JournalEntryId::new`], not a
-    /// fixed value.
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Identifies one [`JournalLine`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct JournalLineId(pub Uuid);
-
-impl JournalLineId {
-    /// Returns a new random (version 4) id.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for JournalLineId {
-    /// Returns a new random id, the same as [`JournalLineId::new`], not a
-    /// fixed value.
-    fn default() -> Self {
-        Self::new()
-    }
+define_id! {
+    /// Identifies one [`JournalLine`].
+    JournalLineId
 }
 
 /// Whether a journal entry counts towards balances.
@@ -158,15 +126,15 @@ pub struct JournalLine {
 ///
 /// # fn line(entry_id: JournalEntryId, debit: i64, credit: i64) -> Result<JournalLine, Error> {
 /// #     Ok(JournalLine {
-/// #         id: JournalLineId::new(),
+/// #         id: JournalLineId::generate(),
 /// #         entry_id,
-/// #         account_id: AccountId::new(),
+/// #         account_id: AccountId::generate(),
 /// #         debit: Money::from_minor(debit)?,
 /// #         credit: Money::from_minor(credit)?,
 /// #         memo: None,
 /// #     })
 /// # }
-/// let entry = JournalEntryId::new();
+/// let entry = JournalEntryId::generate();
 ///
 /// // 45.00 of groceries paid from the bank: one debit, one credit.
 /// let balanced = [line(entry, 4_500, 0)?, line(entry, 0, 4_500)?];
@@ -235,9 +203,9 @@ mod tests {
         let credit = Money::from_minor(credit).unwrap();
 
         JournalLine {
-            id: JournalLineId::new(),
-            entry_id: JournalEntryId::new(),
-            account_id: AccountId::new(),
+            id: JournalLineId::generate(),
+            entry_id: JournalEntryId::generate(),
+            account_id: AccountId::generate(),
             debit,
             credit,
             memo: None,
@@ -312,9 +280,9 @@ mod properties {
     /// A line with fresh ids and the given amounts on its two sides.
     fn journal_line(debit: i64, credit: i64) -> JournalLine {
         JournalLine {
-            id: JournalLineId::new(),
-            entry_id: JournalEntryId::new(),
-            account_id: AccountId::new(),
+            id: JournalLineId::generate(),
+            entry_id: JournalEntryId::generate(),
+            account_id: AccountId::generate(),
             debit: Money::from_minor(debit).unwrap(),
             credit: Money::from_minor(credit).unwrap(),
             memo: None,

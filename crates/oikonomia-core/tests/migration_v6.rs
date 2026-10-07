@@ -63,7 +63,7 @@ fn pre_v6_row_becomes_visible() {
         },
     )
     .expect("post");
-    let entry_id = view.entry.id.0.to_string();
+    let entry_id = view.entry.id.to_string();
 
     conn.execute("ALTER TABLE journal_entries DROP COLUMN hidden", [])
         .expect("pre-v6 shape");

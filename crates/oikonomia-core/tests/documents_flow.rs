@@ -235,7 +235,7 @@ fn delete_missing_document_returns_not_found() {
     let conn = vault.connection().expect("conn");
     common::book(conn, "Docs", ChartTemplate::Personal);
 
-    let missing = DocumentId::new();
+    let missing = DocumentId::generate();
     assert_eq!(
         delete_document(conn, missing),
         Err(Error::NotFound(Resource::Document))
@@ -248,7 +248,7 @@ fn saving_analysis_for_a_missing_document_returns_not_found() {
     let conn = vault.connection().expect("conn");
     common::book(conn, "Docs", ChartTemplate::Personal);
 
-    let missing = DocumentId::new();
+    let missing = DocumentId::generate();
 
     assert_eq!(
         save_analysis_json(conn, missing, "{}"),
@@ -372,7 +372,7 @@ fn attach_document_saves_links_and_skips_analysis() {
     let analysis: Option<String> = conn
         .query_row(
             "SELECT analysis_json FROM documents WHERE id = ?1",
-            [meta.id.0.to_string()],
+            [meta.id.to_string()],
             |row| row.get(0),
         )
         .expect("row");
@@ -386,7 +386,7 @@ fn attach_document_rejects_missing_and_wrong_entity_entry() {
     let entity_a = common::book(conn, "Docs", ChartTemplate::Personal);
     let entity_b = common::book(conn, "Other", ChartTemplate::Personal);
 
-    let missing = JournalEntryId::new();
+    let missing = JournalEntryId::generate();
     let no_entry = attach_document(conn, entity_a, missing, "a.txt", "text/plain", b"data");
     assert!(
         matches!(no_entry, Err(Error::NotFound(_))),
@@ -458,7 +458,7 @@ fn post_with_document_is_atomic_and_stores_analysis() {
     let analysis: Option<String> = conn
         .query_row(
             "SELECT analysis_json FROM documents WHERE id = ?1",
-            [meta.id.0.to_string()],
+            [meta.id.to_string()],
             |row| row.get(0),
         )
         .expect("row");

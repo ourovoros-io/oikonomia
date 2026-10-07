@@ -31,6 +31,7 @@
 //! # Ids
 //!
 //! Ids are UUIDs stored as their hyphenated text; [`parse_uuid`] reads one.
+//! The id types of [`crate::domain`] parse through it in their `FromStr`.
 
 use crate::error::{Error, Result, ValidationError};
 use time::{Date, Month};

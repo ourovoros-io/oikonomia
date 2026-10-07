@@ -64,7 +64,7 @@ fn export_mentions(conn: &Connection, entity_id: EntityId, description: &str) ->
 fn entry_hidden_flag(conn: &Connection, id: JournalEntryId) -> i64 {
     conn.query_row(
         "SELECT hidden FROM journal_entries WHERE id = ?1",
-        [id.0.to_string()],
+        [id.to_string()],
         |row| row.get(0),
     )
     .expect("hidden column")
@@ -448,7 +448,7 @@ fn hidden_works_for_personal_and_company_entities() {
 fn set_hidden_missing_id_is_not_found() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let err = set_entry_hidden(conn, JournalEntryId::new(), true).expect_err("missing");
+    let err = set_entry_hidden(conn, JournalEntryId::generate(), true).expect_err("missing");
     assert!(matches!(err, Error::NotFound(_)), "{err:?}");
 }
 
@@ -457,7 +457,7 @@ fn set_hidden_allows_draft_rows() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Drafts", ChartTemplate::Personal);
-    let id = JournalEntryId::new();
+    let id = JournalEntryId::generate();
     conn.execute(
         "
         INSERT INTO journal_entries (
@@ -465,7 +465,7 @@ fn set_hidden_allows_draft_rows() {
             status, created_at, posted_at, voided_by_entry_id, hidden
         ) VALUES (?1, ?2, '2026-03-01', 'Draft memo', NULL, 'draft', 'unix:1', NULL, NULL, 0)
         ",
-        rusqlite::params![id.0.to_string(), book.entity_id.0.to_string()],
+        rusqlite::params![id.to_string(), book.entity_id.to_string()],
     )
     .expect("insert draft");
 

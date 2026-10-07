@@ -514,7 +514,7 @@ fn pnl_rejects_inverted_and_invalid_dates() {
 fn reports_reject_unknown_entity() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let missing = EntityId::new();
+    let missing = EntityId::generate();
 
     assert_eq!(
         trial_balance(conn, missing, "2026-12-31").expect_err("tb"),

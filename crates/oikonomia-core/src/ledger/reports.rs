@@ -415,7 +415,7 @@ pub fn dashboard_summary(
     let count: i64 = conn
         .query_row(
             &count_sql,
-            rusqlite::params![entity_id.0.to_string(), format_date(from), format_date(to)],
+            rusqlite::params![entity_id.to_string(), format_date(from), format_date(to)],
             |row| row.get(0),
         )
         .database("count entries in period")?;
@@ -659,7 +659,7 @@ fn account_activity_lines(
     let rows = stmt
         .query_map(
             rusqlite::params![
-                entity_id.0.to_string(),
+                entity_id.to_string(),
                 from.map(format_date),
                 format_date(to),
                 account_type.map(account_type_str),

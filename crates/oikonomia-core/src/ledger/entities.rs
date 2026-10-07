@@ -29,7 +29,7 @@
 //!   is accepted as well.
 
 use crate::coa::template_accounts;
-use crate::db::{collect_rows, corrupt_column, read_column, stored_uuid};
+use crate::db::{collect_rows, corrupt_column, read_column, stored_id};
 use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
@@ -100,7 +100,7 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
         SELECT id, name, base_currency, fiscal_year_start_month, chart_template
         FROM entities WHERE id = ?1
         ",
-        [id.0.to_string()],
+        [id.to_string()],
         |row| Ok(map_entity(row)),
     )
     .map_err(|err| match err {
@@ -174,7 +174,7 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
     let renamed = conn
         .execute(
             "UPDATE entities SET name = ?1 WHERE id = ?2 AND archived_at IS NULL",
-            rusqlite::params![name, id.0.to_string()],
+            rusqlite::params![name, id.to_string()],
         )
         .database("rename entity")?;
 
@@ -199,7 +199,7 @@ pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
     let archived = conn
         .execute(
             "UPDATE entities SET archived_at = ?1 WHERE id = ?2 AND archived_at IS NULL",
-            rusqlite::params![now_utc_string(), id.0.to_string()],
+            rusqlite::params![now_utc_string(), id.to_string()],
         )
         .database("archive entity")?;
 
@@ -262,7 +262,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 
     ensure_unique_name(conn, name, None)?;
 
-    let id = EntityId::new();
+    let id = EntityId::generate();
 
     conn.execute(
         "
@@ -271,7 +271,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         ",
         rusqlite::params![
-            id.0.to_string(),
+            id.to_string(),
             name,
             currency,
             month,
@@ -283,7 +283,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 
     for template_account in template_accounts(input.chart_template, locale) {
         let account = Account {
-            id: AccountId::new(),
+            id: AccountId::generate(),
             entity_id: id,
             code: template_account.code.to_owned(),
             name: template_account.name.to_owned(),
@@ -308,7 +308,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 ///
 /// Those of [`delete_entity`].
 fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
-    let entity_id = id.0.to_string();
+    let entity_id = id.to_string();
 
     // No `archived_at` test: an archived entity is deleted like any other.
     let exists: i64 = conn
@@ -395,7 +395,7 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
                   AND fold(name) = fold(?1)
                   AND id != ?2
                 ",
-                rusqlite::params![name, id.0.to_string()],
+                rusqlite::params![name, id.to_string()],
                 |row| row.get(0),
             )
             .database("check entity name is free")?,
@@ -440,12 +440,12 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         ",
         rusqlite::params![
-            account.id.0.to_string(),
-            account.entity_id.0.to_string(),
+            account.id.to_string(),
+            account.entity_id.to_string(),
             account.code,
             account.name,
             account_type_str(account.account_type),
-            account.parent_id.map(|parent| parent.0.to_string()),
+            account.parent_id.map(|parent| parent.to_string()),
             i32::from(account.is_active),
             i32::from(account.is_system),
             account.sort_order,
@@ -464,7 +464,7 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
 /// or the fiscal year start month does not parse, or a column has the wrong
 /// storage class.
 fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
-    let id = stored_uuid("entities.id", &read_column::<String>(row, 0)?)?;
+    let id = stored_id("entities.id", &read_column::<String>(row, 0)?)?;
     let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
 
     // Reports derive the fiscal year from this number, so one outside the
@@ -481,7 +481,7 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
         })?;
 
     Ok(Entity {
-        id: EntityId(id),
+        id,
         name: read_column(row, 1)?,
         base_currency: read_column(row, 2)?,
         fiscal_year_start_month,

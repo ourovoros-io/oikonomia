@@ -137,7 +137,7 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
         .database("read journal for export")?;
 
     let mut rows = statement
-        .query([entity_id.0.to_string()])
+        .query([entity_id.to_string()])
         .database("read journal for export")?;
 
     let mut csv_bytes = Vec::new();

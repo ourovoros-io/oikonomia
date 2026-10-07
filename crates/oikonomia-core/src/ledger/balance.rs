@@ -155,7 +155,7 @@ pub fn account_balance_as_of(
     let (debits, credits): (i64, i64) = conn
         .query_row(
             &sql,
-            rusqlite::params![account_id.0.to_string(), format_date(as_of)],
+            rusqlite::params![account_id.to_string(), format_date(as_of)],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .database("sum account balance")?;
@@ -203,7 +203,7 @@ pub(crate) fn sum_types_as_of(
             .query_row(
                 &sql,
                 rusqlite::params![
-                    entity_id.0.to_string(),
+                    entity_id.to_string(),
                     account_type_str(*account_type),
                     format_date(as_of),
                 ],
@@ -258,7 +258,7 @@ pub(crate) fn sum_types_in_range(
             .query_row(
                 &sql,
                 rusqlite::params![
-                    entity_id.0.to_string(),
+                    entity_id.to_string(),
                     account_type_str(*account_type),
                     format_date(from),
                     format_date(to),

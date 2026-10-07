@@ -295,7 +295,7 @@ fn daily_activity(
     let mut stmt = conn.prepare(&sql).database("read daily activity")?;
     let rows = stmt
         .query_map(
-            rusqlite::params![entity_id.0.to_string(), format_date(from), format_date(to)],
+            rusqlite::params![entity_id.to_string(), format_date(from), format_date(to)],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -355,7 +355,7 @@ fn active_entry_bounds(
         "
     );
     let (earliest, latest): (Option<String>, Option<String>) = conn
-        .query_row(&sql, rusqlite::params![entity_id.0.to_string()], |row| {
+        .query_row(&sql, rusqlite::params![entity_id.to_string()], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
         .database("read entry date bounds")?;

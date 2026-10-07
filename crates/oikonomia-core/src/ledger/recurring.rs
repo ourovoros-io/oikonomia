@@ -27,7 +27,7 @@
 //! `_as_of` functions take that date from the caller so that tests can fix
 //! it.
 
-use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_uuid};
+use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_id};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::journals::{
@@ -227,7 +227,7 @@ pub fn list_recurring_templates_as_of(
         .database("list recurring templates")?;
 
     let rows = stmt
-        .query_map([entity_id.0.to_string()], |row| Ok(map_template_row(row)))
+        .query_map([entity_id.to_string()], |row| Ok(map_template_row(row)))
         .database("list recurring templates")?;
 
     Ok(collect_rows(rows)?
@@ -286,7 +286,7 @@ pub fn create_recurring_template(
     input: &CreateRecurringTemplate,
 ) -> Result<RecurringTemplateView> {
     let fields = validated_fields(conn, input.entity_id, &TemplateInput::from_create(input))?;
-    let id = RecurringTemplateId::new();
+    let id = RecurringTemplateId::generate();
 
     conn.execute(
         "
@@ -297,8 +297,8 @@ pub fn create_recurring_template(
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
         ",
         rusqlite::params![
-            id.0.to_string(),
-            fields.entity_id.0.to_string(),
+            id.to_string(),
+            fields.entity_id.to_string(),
             fields.name,
             kind_str(fields.kind),
             fields.amount_minor,
@@ -366,7 +366,7 @@ pub fn update_recurring_template(
                 fields.memo,
                 format_date(fields.next_date),
                 fields.bill_status.map(bill_status_str),
-                input.id.0.to_string(),
+                input.id.to_string(),
             ],
         )
         .database("update recurring template")?;
@@ -388,7 +388,7 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
     let deleted = conn
         .execute(
             "DELETE FROM recurring_templates WHERE id = ?1",
-            [id.0.to_string()],
+            [id.to_string()],
         )
         .database("delete recurring template")?;
     if deleted == 0 {
@@ -466,7 +466,7 @@ pub fn post_recurring_template(
 
     tx.execute(
         "UPDATE recurring_templates SET next_date = ?1 WHERE id = ?2",
-        rusqlite::params![format_date(advanced), id.0.to_string()],
+        rusqlite::params![format_date(advanced), id.to_string()],
     )
     .database("advance recurring template")?;
 
@@ -866,7 +866,7 @@ fn ensure_entity_exists(conn: &Connection, entity_id: EntityId) -> Result<()> {
     let exists: i64 = conn
         .query_row(
             "SELECT COUNT(1) FROM entities WHERE id = ?1",
-            [entity_id.0.to_string()],
+            [entity_id.to_string()],
             |row| row.get(0),
         )
         .database("check entity exists")?;
@@ -892,7 +892,7 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
         FROM recurring_templates
         WHERE id = ?1
         ",
-        [id.0.to_string()],
+        [id.to_string()],
         |row| Ok(map_template_row(row)),
     )
     .map_err(|err| match err {
@@ -910,8 +910,8 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
 /// cadence, the day of the month, the date or the bill status does not
 /// parse, or a column has the wrong storage class.
 fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
-    let id = stored_uuid("recurring_templates.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_uuid(
+    let id = stored_id("recurring_templates.id", &read_column::<String>(row, 0)?)?;
+    let entity_id = stored_id(
         "recurring_templates.entity_id",
         &read_column::<String>(row, 1)?,
     )?;
@@ -929,8 +929,8 @@ fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
         .transpose()?;
 
     Ok(StoredTemplate {
-        id: RecurringTemplateId(id),
-        entity_id: EntityId(entity_id),
+        id,
+        entity_id,
         name: read_column(row, 2)?,
         kind,
         bill_status,
@@ -979,14 +979,14 @@ fn stored_account(
     column: &str,
 ) -> Result<Option<AccountId>> {
     read_column::<Option<String>>(row, index)?
-        .map(|text| stored_uuid(column, &text).map(AccountId))
+        .map(|text| stored_id(column, &text))
         .transpose()
 }
 
 /// Returns a role account id as the text it is stored as; `None` is stored
 /// as `NULL`.
 fn account_id_text(id: Option<AccountId>) -> Option<String> {
-    id.map(|account| account.0.to_string())
+    id.map(|account| account.to_string())
 }
 
 /// Returns the text `kind` is stored as in `recurring_templates.kind`.

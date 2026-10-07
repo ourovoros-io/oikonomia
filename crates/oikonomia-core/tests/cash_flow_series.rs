@@ -300,7 +300,8 @@ fn an_unknown_book_is_not_found() {
     let conn = vault.connection().expect("conn");
 
     assert_eq!(
-        cash_flow_series(conn, EntityId::new(), "2026-08-01", "2026-08-31").expect_err("unknown"),
+        cash_flow_series(conn, EntityId::generate(), "2026-08-01", "2026-08-31")
+            .expect_err("unknown"),
         Error::NotFound(Resource::Entity)
     );
 }
@@ -423,7 +424,7 @@ fn an_explicit_inverted_window_is_a_validation_error() {
         Err(Error::Validation(ValidationError::DateRangeInverted))
     ));
     assert_eq!(
-        activity_window(conn, EntityId::new(), None, None, today).expect_err("unknown"),
+        activity_window(conn, EntityId::generate(), None, None, today).expect_err("unknown"),
         Error::NotFound(Resource::Entity)
     );
 }

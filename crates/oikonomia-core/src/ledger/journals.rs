@@ -39,7 +39,7 @@
 //! `_unchecked` when it is `pub(crate)` for another module to compose with
 //! writes of its own.
 
-use crate::db::{collect_rows, corrupt_column, fold_case, read_column, stored_date, stored_uuid};
+use crate::db::{collect_rows, corrupt_column, fold_case, read_column, stored_date, stored_id};
 use crate::domain::{
     Account, AccountId, AccountType, EntityId, EntryStatus, JournalEntry, JournalEntryId,
     JournalLine, JournalLineId, validate_lines_for_post,
@@ -269,7 +269,7 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
                    voided_by_entry_id
             FROM journal_entries WHERE id = ?1
             ",
-            [id.0.to_string()],
+            [id.to_string()],
             |row| {
                 let voided_by: Option<String> = row.get(7)?;
                 Ok((map_entry_row(row), voided_by.is_some()))
@@ -315,7 +315,7 @@ pub fn set_entry_hidden(
     let updated = conn
         .execute(
             "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
-            rusqlite::params![i64::from(hidden), id.0.to_string()],
+            rusqlite::params![i64::from(hidden), id.to_string()],
         )
         .database("set journal entry visibility")?;
     if updated == 0 {
@@ -450,10 +450,7 @@ pub fn replace_simple_entry(
 
     tx.execute(
         "UPDATE documents SET entry_id = ?1 WHERE entry_id = ?2",
-        rusqlite::params![
-            replacement.entry.id.0.to_string(),
-            original_id.0.to_string(),
-        ],
+        rusqlite::params![replacement.entry.id.to_string(), original_id.to_string(),],
     )
     .database("move documents to replacement entry")?;
 
@@ -597,7 +594,7 @@ pub fn account_register(
         let (prior_debits, prior_credits): (i64, i64) = conn
             .query_row(
                 &prior_sql,
-                rusqlite::params![account_id.0.to_string(), from],
+                rusqlite::params![account_id.to_string(), from],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .database("sum account activity before period")?;
@@ -622,26 +619,23 @@ pub fn account_register(
     let mut stmt = conn.prepare(&list_sql).database("read account register")?;
 
     let rows = stmt
-        .query_map(
-            rusqlite::params![account_id.0.to_string(), from, to],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
-                ))
-            },
-        )
+        .query_map(rusqlite::params![account_id.to_string(), from, to], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })
         .database("read account register")?;
 
     let mut register = Vec::new();
     for (entry_id, entry_date, description, debit_minor, credit_minor, hidden) in
         collect_rows(rows.map(|row| row.map(Ok)))?
     {
-        let entry_id = JournalEntryId(stored_uuid("journal_entries.id", &entry_id)?);
+        let entry_id: JournalEntryId = stored_id("journal_entries.id", &entry_id)?;
         let entry_date = stored_date("journal_entries.entry_date", &entry_date)?;
         let change = normal_balance(account.account_type, debit_minor, credit_minor)?;
         running = add_minor(running, change)?;
@@ -791,7 +785,7 @@ impl ListedEntries {
         };
 
         Ok(Self {
-            entity_id: entity_id.0.to_string(),
+            entity_id: entity_id.to_string(),
             date_from: normalized(filter.date_from.as_deref())?,
             date_to: normalized(filter.date_to.as_deref())?,
             pattern: filter
@@ -800,7 +794,7 @@ impl ListedEntries {
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(like_pattern),
-            account_id: filter.account_id.map(|id| id.0.to_string()),
+            account_id: filter.account_id.map(|id| id.to_string()),
         })
     }
 
@@ -926,7 +920,7 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
         .database("read journal lines")?;
 
     let rows = stmt
-        .query_map([entry_id.0.to_string()], |row| Ok(map_line_row(row)))
+        .query_map([entry_id.to_string()], |row| Ok(map_line_row(row)))
         .database("read journal lines")?;
 
     collect_rows(rows)
@@ -947,7 +941,7 @@ fn entry_is_void_reverse(conn: &Connection, id: JournalEntryId) -> Result<bool> 
             SELECT COUNT(1) FROM journal_entries
             WHERE voided_by_entry_id = ?1
             ",
-            [id.0.to_string()],
+            [id.to_string()],
             |row| row.get(0),
         )
         .database("check journal entry is a reversal")?;
@@ -986,7 +980,7 @@ fn post_entry_in_tx(
     let description = input.description.trim();
 
     let entry_date = parse_date(&input.entry_date)?;
-    let entry_id = JournalEntryId::new();
+    let entry_id = JournalEntryId::generate();
 
     let mut lines = Vec::with_capacity(input.lines.len());
     for line_input in &input.lines {
@@ -1000,7 +994,7 @@ fn post_entry_in_tx(
         let debit = Money::from_minor(line_input.debit_minor)?;
         let credit = Money::from_minor(line_input.credit_minor)?;
         lines.push(JournalLine {
-            id: JournalLineId::new(),
+            id: JournalLineId::generate(),
             entry_id,
             account_id: line_input.account_id,
             debit,
@@ -1026,8 +1020,8 @@ fn post_entry_in_tx(
         ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7)
         ",
         rusqlite::params![
-            entry_id.0.to_string(),
-            input.entity_id.0.to_string(),
+            entry_id.to_string(),
+            input.entity_id.to_string(),
             format_date(entry_date),
             description,
             reference,
@@ -1045,9 +1039,9 @@ fn post_entry_in_tx(
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ",
             rusqlite::params![
-                line.id.0.to_string(),
-                entry_id.0.to_string(),
-                line.account_id.0.to_string(),
+                line.id.to_string(),
+                entry_id.to_string(),
+                line.account_id.to_string(),
                 line.debit.amount_minor(),
                 line.credit.amount_minor(),
                 line.memo,
@@ -1262,7 +1256,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
 
     conn.execute(
         "UPDATE journal_entries SET voided_by_entry_id = ?1 WHERE id = ?2",
-        rusqlite::params![reverse.entry.id.0.to_string(), id.0.to_string()],
+        rusqlite::params![reverse.entry.id.to_string(), id.to_string()],
     )
     .database("link voided entry to its reversal")?;
 
@@ -1272,7 +1266,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     // also looks for an entry that points at the one it is reading.
     conn.execute(
         "UPDATE journal_entries SET voided_by_entry_id = ?1 WHERE id = ?2",
-        rusqlite::params![id.0.to_string(), reverse.entry.id.0.to_string()],
+        rusqlite::params![id.to_string(), reverse.entry.id.to_string()],
     )
     .database("link reversal to voided entry")?;
 
@@ -1290,14 +1284,14 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
 /// [`Error::VaultCorrupt`] naming the column when an id does not parse, an
 /// amount is negative, or a column has the wrong storage class.
 fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
-    let id = stored_uuid("journal_lines.id", &read_column::<String>(row, 0)?)?;
-    let entry_id = stored_uuid("journal_lines.entry_id", &read_column::<String>(row, 1)?)?;
-    let account_id = stored_uuid("journal_lines.account_id", &read_column::<String>(row, 2)?)?;
+    let id = stored_id("journal_lines.id", &read_column::<String>(row, 0)?)?;
+    let entry_id = stored_id("journal_lines.entry_id", &read_column::<String>(row, 1)?)?;
+    let account_id = stored_id("journal_lines.account_id", &read_column::<String>(row, 2)?)?;
 
     Ok(JournalLine {
-        id: JournalLineId(id),
-        entry_id: JournalEntryId(entry_id),
-        account_id: AccountId(account_id),
+        id,
+        entry_id,
+        account_id,
         debit: stored_amount("journal_lines.debit_minor", read_column(row, 3)?)?,
         credit: stored_amount("journal_lines.credit_minor", read_column(row, 4)?)?,
         memo: read_column(row, 5)?,
@@ -1323,8 +1317,8 @@ fn stored_amount(column: &str, minor: i64) -> Result<Money> {
 /// [`Error::VaultCorrupt`] naming the column when an id, the date or the
 /// status does not parse, or a column has the wrong storage class.
 fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
-    let id = stored_uuid("journal_entries.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_uuid("journal_entries.entity_id", &read_column::<String>(row, 1)?)?;
+    let id = stored_id("journal_entries.id", &read_column::<String>(row, 0)?)?;
+    let entity_id = stored_id("journal_entries.entity_id", &read_column::<String>(row, 1)?)?;
     let entry_date = stored_date(
         "journal_entries.entry_date",
         &read_column::<String>(row, 2)?,
@@ -1341,8 +1335,8 @@ fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
     };
 
     Ok(JournalEntry {
-        id: JournalEntryId(id),
-        entity_id: EntityId(entity_id),
+        id,
+        entity_id,
         entry_date,
         description: read_column(row, 3)?,
         reference: read_column(row, 4)?,

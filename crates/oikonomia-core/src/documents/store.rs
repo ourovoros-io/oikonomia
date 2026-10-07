@@ -46,12 +46,12 @@
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::coa::{DocumentTopic, document_topic_codes};
-use crate::db::{read_column, stored_uuid};
+use crate::db::{read_column, stored_id};
 use crate::default_accounts::{account_by_codes, first_of_type};
 use crate::documents::store::Keyword::{Prefix, Unit, Word};
+use crate::domain::define_id;
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::{
@@ -59,23 +59,9 @@ use crate::ledger::{
 };
 use crate::util::now_utc_string;
 
-/// The primary key of a stored document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct DocumentId(pub Uuid);
-
-impl DocumentId {
-    /// A new random (version 4) id.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for DocumentId {
-    fn default() -> Self {
-        Self::new()
-    }
+define_id! {
+    /// The primary key of a stored document.
+    DocumentId
 }
 
 /// A stored document without its bytes, for lists and for the wire.
@@ -184,7 +170,7 @@ pub fn save_document(
     let clash: i64 = conn
         .query_row(
             "SELECT COUNT(1) FROM documents WHERE entity_id = ?1 AND filename = ?2",
-            rusqlite::params![entity_id.0.to_string(), name],
+            rusqlite::params![entity_id.to_string(), name],
             |row| row.get(0),
         )
         .database("check document name is free")?;
@@ -199,7 +185,7 @@ pub fn save_document(
     // fits an i64.
     let size_bytes = i64::try_from(data.len()).unwrap_or(i64::MAX);
 
-    let id = DocumentId::new();
+    let id = DocumentId::generate();
     let created = now_utc_string();
 
     conn.execute(
@@ -210,9 +196,9 @@ pub fn save_document(
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)
         ",
         rusqlite::params![
-            id.0.to_string(),
-            entity_id.0.to_string(),
-            entry_id.0.to_string(),
+            id.to_string(),
+            entity_id.to_string(),
+            entry_id.to_string(),
             name,
             mime,
             size_bytes,
@@ -350,14 +336,14 @@ const DOCUMENT_META_COLUMNS: &str = "d.id, d.entity_id, d.entry_id, d.filename, 
 /// is in the vault and not in what the caller passed. [`Error::Database`] for any
 /// other driver failure.
 fn map_document_meta(row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
-    let id = stored_uuid("documents.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_uuid("documents.entity_id", &read_column::<String>(row, 1)?)?;
-    let entry_id = stored_uuid("documents.entry_id", &read_column::<String>(row, 2)?)?;
+    let id = stored_id("documents.id", &read_column::<String>(row, 0)?)?;
+    let entity_id = stored_id("documents.entity_id", &read_column::<String>(row, 1)?)?;
+    let entry_id = stored_id("documents.entry_id", &read_column::<String>(row, 2)?)?;
 
     Ok(DocumentMeta {
-        id: DocumentId(id),
-        entity_id: EntityId(entity_id),
-        entry_id: JournalEntryId(entry_id),
+        id,
+        entity_id,
+        entry_id,
         filename: read_column(row, 3)?,
         mime_type: read_column(row, 4)?,
         size_bytes: read_column(row, 5)?,
@@ -392,7 +378,7 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
         .database("list documents")?;
 
     let rows = statement
-        .query_map([entity_id.0.to_string()], |row| Ok(map_document_meta(row)))
+        .query_map([entity_id.to_string()], |row| Ok(map_document_meta(row)))
         .database("list documents")?;
 
     let mut documents = Vec::new();
@@ -422,7 +408,7 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
             WHERE d.id = ?1
             "
         ),
-        [id.0.to_string()],
+        [id.to_string()],
         |row| {
             Ok(map_document_meta(row)
                 .and_then(|meta| Ok((meta, read_column::<Vec<u8>>(row, DATA_COLUMN)?))))
@@ -442,7 +428,7 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
 /// - [`Error::Database`]: the database failed.
 pub fn delete_document(conn: &Connection, id: DocumentId) -> Result<()> {
     let deleted = conn
-        .execute("DELETE FROM documents WHERE id = ?1", [id.0.to_string()])
+        .execute("DELETE FROM documents WHERE id = ?1", [id.to_string()])
         .database("delete document")?;
     if deleted == 0 {
         return Err(Error::NotFound(Resource::Document));
@@ -462,7 +448,7 @@ pub fn save_analysis_json(conn: &Connection, id: DocumentId, json: &str) -> Resu
     let updated = conn
         .execute(
             "UPDATE documents SET analysis_json = ?1 WHERE id = ?2",
-            rusqlite::params![json, id.0.to_string()],
+            rusqlite::params![json, id.to_string()],
         )
         .database("save document analysis")?;
 
@@ -986,13 +972,13 @@ mod tests {
             detail: "not an id: damaged".into(),
         });
 
-        let entity_id = EntityId(Uuid::parse_str(STORED_ENTITY_ID).unwrap());
+        let entity_id = STORED_ENTITY_ID.parse::<EntityId>().unwrap();
         assert_eq!(
             list_documents(&conn, entity_id).map(|documents| documents.len()),
             Err(damaged.clone())
         );
 
-        let id = DocumentId(Uuid::parse_str(STORED_DOCUMENT_ID).unwrap());
+        let id = STORED_DOCUMENT_ID.parse::<DocumentId>().unwrap();
         assert_eq!(
             get_document(&conn, id).map(|(meta, _)| meta.filename),
             Err(damaged)
@@ -1010,7 +996,7 @@ mod tests {
         conn.execute("UPDATE journal_entries SET id = ?1", [STORED_ENTITY_ID])
             .unwrap();
 
-        let id = DocumentId(Uuid::parse_str(STORED_DOCUMENT_ID).unwrap());
+        let id = STORED_DOCUMENT_ID.parse::<DocumentId>().unwrap();
         let read = get_document(&conn, id).map(|(meta, _)| meta.filename);
 
         assert!(

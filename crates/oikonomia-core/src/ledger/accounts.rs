@@ -16,7 +16,7 @@
 //!
 //! Each function writes with a single statement, so none opens a transaction.
 
-use crate::db::{collect_rows, read_column, stored_uuid};
+use crate::db::{collect_rows, read_column, stored_id};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
@@ -84,7 +84,7 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
         .database("list accounts")?;
 
     let rows = stmt
-        .query_map([entity_id.0.to_string()], |row| Ok(map_account(row)))
+        .query_map([entity_id.to_string()], |row| Ok(map_account(row)))
         .database("list accounts")?;
 
     collect_rows(rows)
@@ -105,7 +105,7 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
                is_active, is_system, sort_order
         FROM accounts WHERE id = ?1
         ",
-        [id.0.to_string()],
+        [id.to_string()],
         |row| Ok(map_account(row)),
     )
     .map_err(|err| match err {
@@ -143,7 +143,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
     let exists: i64 = conn
         .query_row(
             "SELECT COUNT(1) FROM entities WHERE id = ?1 AND archived_at IS NULL",
-            [input.entity_id.0.to_string()],
+            [input.entity_id.to_string()],
             |row| row.get(0),
         )
         .database("check entity exists")?;
@@ -151,7 +151,7 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
         return Err(Error::NotFound(Resource::Entity));
     }
 
-    let id = AccountId::new();
+    let id = AccountId::generate();
     let sort_order = input.sort_order.unwrap_or(DEFAULT_SORT_ORDER);
 
     conn.execute(
@@ -162,8 +162,8 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
         ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, 1, 0, ?6)
         ",
         rusqlite::params![
-            id.0.to_string(),
-            input.entity_id.0.to_string(),
+            id.to_string(),
+            input.entity_id.to_string(),
             code,
             name,
             account_type_str(input.account_type),
@@ -217,7 +217,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
                 name,
                 i32::from(input.is_active),
                 input.sort_order,
-                input.id.0.to_string(),
+                input.id.to_string(),
             ],
         )
         .map_err(|err| account_write_error(&err))?;
@@ -249,7 +249,7 @@ pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
 
     conn.execute(
         "UPDATE accounts SET is_active = 0 WHERE id = ?1",
-        [id.0.to_string()],
+        [id.to_string()],
     )
     .database("archive account")?;
     Ok(())
@@ -290,17 +290,17 @@ fn account_write_error(err: &rusqlite::Error) -> Error {
 /// type or the parent does not parse, or a column has the wrong storage
 /// class. No half-read account is returned.
 fn map_account(row: &rusqlite::Row<'_>) -> Result<Account> {
-    let id = stored_uuid("accounts.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_uuid("accounts.entity_id", &read_column::<String>(row, 1)?)?;
+    let id = stored_id("accounts.id", &read_column::<String>(row, 0)?)?;
+    let entity_id = stored_id("accounts.entity_id", &read_column::<String>(row, 1)?)?;
     let account_type = parse_account_type(&read_column::<String>(row, 4)?)?;
 
     let parent_id = read_column::<Option<String>>(row, 5)?
-        .map(|text| stored_uuid("accounts.parent_id", &text).map(AccountId))
+        .map(|text| stored_id("accounts.parent_id", &text))
         .transpose()?;
 
     Ok(Account {
-        id: AccountId(id),
-        entity_id: EntityId(entity_id),
+        id,
+        entity_id,
         code: read_column(row, 2)?,
         name: read_column(row, 3)?,
         account_type,
@@ -315,7 +315,6 @@ fn map_account(row: &rusqlite::Row<'_>) -> Result<Account> {
 mod tests {
     use super::*;
     use crate::error::VaultCorruption;
-    use crate::util::parse_uuid;
 
     const ENTITY: &str = "11111111-1111-4111-8111-111111111111";
     const ACCOUNT: &str = "22222222-2222-4222-8222-222222222222";
@@ -356,7 +355,7 @@ mod tests {
 
     /// The id of the one entity these tests use.
     fn entity() -> EntityId {
-        EntityId(parse_uuid(ENTITY).expect("entity id"))
+        ENTITY.parse().expect("entity id")
     }
 
     /// One entity and an accounts table with the schema's unique code per entity.
@@ -458,13 +457,13 @@ mod tests {
         let [account] = accounts.as_slice() else {
             unreachable!("one row was inserted, got {accounts:?}");
         };
-        assert_eq!(account.id.0.to_string(), ACCOUNT);
+        assert_eq!(account.id.to_string(), ACCOUNT);
         assert_eq!(account.entity_id, entity());
         assert_eq!(account.code, "1000");
         assert_eq!(account.name, "Cash");
         assert_eq!(account.account_type, AccountType::Asset);
         assert_eq!(
-            account.parent_id.map(|id| id.0.to_string()).as_deref(),
+            account.parent_id.map(|id| id.to_string()).as_deref(),
             Some(PARENT)
         );
         assert!(!account.is_active);

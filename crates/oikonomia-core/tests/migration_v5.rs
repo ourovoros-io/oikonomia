@@ -59,7 +59,7 @@ fn v5_rejects_double_sided_journal_line() {
             INSERT INTO journal_lines (id, entry_id, account_id, debit_minor, credit_minor, memo, line_order)
             VALUES ('bad-line', ?1, ?2, 10, 10, NULL, 99)
             ",
-            rusqlite::params![view.entry.id.0.to_string(), food.id.0.to_string()],
+            rusqlite::params![view.entry.id.to_string(), food.id.to_string()],
         )
         .expect_err("xor check");
     let msg = err.to_string();
@@ -159,7 +159,7 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
         INSERT INTO journal_lines (id, entry_id, account_id, debit_minor, credit_minor, memo, line_order)
         VALUES ('bad-v4', ?1, ?2, 10, 10, NULL, 99)
         ",
-        rusqlite::params![view.entry.id.0.to_string(), food.id.0.to_string()],
+        rusqlite::params![view.entry.id.to_string(), food.id.to_string()],
     )
     .expect("insert both-sided v4 line");
     conn.execute("UPDATE vault_meta SET schema_version = 4 WHERE id = 1", [])

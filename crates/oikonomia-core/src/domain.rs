@@ -19,9 +19,13 @@
 //! # Identifiers
 //!
 //! Every record has its own id type ([`EntityId`], [`AccountId`],
-//! [`JournalEntryId`], [`JournalLineId`], [`RecurringTemplateId`]), a wrapper
-//! around a random UUID, so an account id cannot be passed where an entry id
-//! is expected. Each serializes as the bare UUID string.
+//! [`JournalEntryId`], [`JournalLineId`], [`RecurringTemplateId`], and
+//! [`DocumentId`](crate::documents::DocumentId) beside the document store),
+//! a wrapper around a random UUID, so an account id cannot be passed where an
+//! entry id is expected. All of them are written by one macro and so have the
+//! same surface: `generate()` for a new record, `as_uuid()`, `Display` and
+//! `FromStr` for the hyphenated text, and serde as the bare UUID string. None
+//! has a `Default`, so no derived `Default` can mint an id by accident.
 //!
 //! # Wire form
 //!
@@ -32,11 +36,13 @@
 
 mod account;
 mod entity;
+mod id;
 mod journal;
 mod recurring;
 
 pub use account::{Account, AccountId, AccountType};
 pub use entity::{ChartTemplate, Entity, EntityId};
+pub(crate) use id::define_id;
 pub use journal::{
     EntryStatus, JournalEntry, JournalEntryId, JournalLine, JournalLineId, validate_lines_for_post,
 };
