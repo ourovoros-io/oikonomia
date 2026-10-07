@@ -15,16 +15,14 @@ use std::ops::RangeInclusive;
 
 use crate::documents::analyze::{AnalyzeSource, DocumentSuggestion, EntryKindSuggestion};
 use crate::documents::invoice::dates::{first_date_on_line, is_value_date_line};
+use crate::documents::invoice::merchant::{ISSUER_NAME_LABEL, MIN_NAME_CHARS, value_after_colon};
 use crate::documents::invoice::money::{
     is_plausible_money, largest_plausible_amount, money_amounts_on_line,
 };
 use crate::documents::invoice::normalization::{contains_any, folded};
 use crate::documents::invoice::reference::is_rf_then_digits;
 use crate::documents::invoice::total::IBAN_WORD;
-use crate::documents::invoice::{
-    ISSUER_NAME_LABEL, InvoiceReading, MIN_NAME_CHARS, category_hint_of, score_confidence,
-    value_after_colon,
-};
+use crate::documents::invoice::{InvoiceReading, category_hint_of, score_confidence};
 use crate::prefs::Locale;
 use crate::text::bank_transfer_description;
 use crate::ui_text::{UiText, UiTextCode};
