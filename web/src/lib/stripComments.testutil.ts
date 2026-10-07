@@ -1,6 +1,7 @@
 /**
- * Shared by the source-scanning guard tests (`i18n.catalog.test.ts` and
- * `noRawErrorMessage.test.ts`). Both skip files named `*.testutil.ts`.
+ * Shared by the source-scanning guard tests (`i18n.catalog.test.ts`,
+ * `noRawErrorMessage.test.ts` and `moneyDecimals.test.ts`). They skip files
+ * named `*.testutil.ts`.
  */
 
 type Mode = 'code' | 'single' | 'double' | 'template'

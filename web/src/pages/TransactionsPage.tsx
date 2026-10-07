@@ -27,7 +27,7 @@ import {
   type PostedEntryView,
   type SimpleEntryInput,
 } from '../lib/api'
-import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
+import { bookCurrency, minorToInputText, parseMajorToMinor } from '../lib/money'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
@@ -486,11 +486,10 @@ export function TransactionsPage({
     if (s.description) setDescription(s.description)
     else if (s.merchant) setDescription(s.merchant)
     if (s.reference) setReference(s.reference)
-    // The analyzer emits 2-exponent minor units; the backend already clears
-    // amounts for other currencies — this guard is defense in depth.
-    const digits = currencyFractionDigits(entity?.base_currency ?? 'EUR')
-    if (s.amount_minor != null && s.amount_minor > 0 && digits === 2) {
-      setAmount((s.amount_minor / 100).toFixed(2))
+    // Core leaves the amount out for a book whose currency the reader cannot
+    // count in, so an amount that arrives is in the book's minor units.
+    if (entity && s.amount_minor != null && s.amount_minor > 0) {
+      setAmount(minorToInputText(s.amount_minor, bookCurrency(entity)))
     }
     if (s.category_account_id) setCategoryId(s.category_account_id)
     if (s.wallet_account_id) setWalletId(s.wallet_account_id)
@@ -501,7 +500,7 @@ export function TransactionsPage({
     ev.preventDefault()
     if (!entity) return
     if (!beginExclusive(busyRef)) return
-    const minor = parseMajorToMinor(amount, entity.base_currency)
+    const minor = parseMajorToMinor(amount, bookCurrency(entity))
     if (minor === null || minor <= 0) {
       busyRef.current = false
       setError(t('tx.invalidAmount'))
@@ -593,6 +592,7 @@ export function TransactionsPage({
   }
 
   const ccy = entity.base_currency
+  const currency = bookCurrency(entity)
 
   if (subview === 'recurring') {
     return (
@@ -666,9 +666,8 @@ export function TransactionsPage({
       setFromId(credit.account_id)
     }
 
-    const digits = currencyFractionDigits(ccy)
     const amountMinor = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
-    setAmount((amountMinor / 10 ** digits).toFixed(digits))
+    setAmount(minorToInputText(amountMinor, currency))
     setDate(isoDate(view.entry.entry_date))
     setDescription(view.entry.description)
     setReference(view.entry.reference ?? '')
@@ -697,7 +696,7 @@ export function TransactionsPage({
       <CsvPreviewModal
         open={csvStep === 'preview'}
         preview={csvPreview}
-        currency={ccy}
+        currency={currency}
         walletAccounts={walletAccounts}
         expenseAccounts={expenseAccounts}
         incomeAccounts={incomeAccounts}
@@ -739,7 +738,7 @@ export function TransactionsPage({
                   netTone === 'in' ? 'net-figure-in' : netTone === 'out' ? 'net-figure-out' : 'text-[var(--color-fg)]',
                 )}
               >
-                {series ? formatMoney(series.net_minor, ccy, undefined, { signed: true }) : '—'}
+                {series ? formatMoney(series.net_minor, currency, undefined, { signed: true }) : '—'}
               </p>
               {seriesError?.code === 'date_range_inverted' ? (
                 <p className="mt-1.5 text-xs text-[var(--color-danger)]">{t('tx.summary.invalidRange')}</p>
@@ -753,26 +752,26 @@ export function TransactionsPage({
               <MoneyPill
                 tone="in"
                 label={t('dashboard.pill.in')}
-                value={series ? formatMoney(series.total_income_minor, ccy) : '—'}
+                value={series ? formatMoney(series.total_income_minor, currency) : '—'}
               />
               <MoneyPill
                 tone="out"
                 label={t('dashboard.pill.out')}
-                value={series ? formatMoney(series.total_expenses_minor, ccy) : '—'}
+                value={series ? formatMoney(series.total_expenses_minor, currency) : '—'}
               />
             </div>
           </div>
           <CashFlowPulse
             series={series}
-            formatAmount={(minor) => formatMoney(minor, ccy)}
+            formatAmount={(minor) => formatMoney(minor, currency)}
             // Grows with the drop zone beside it, so the pane has no empty band.
             className="mx-5 mt-3 mb-5 min-h-[72px] flex-1"
             label={
               series && range
                 ? t('dashboard.light.label', {
-                    income: formatMoney(series.total_income_minor, ccy),
-                    expenses: formatMoney(series.total_expenses_minor, ccy),
-                    net: formatMoney(series.net_minor, ccy, undefined, { signed: true }),
+                    income: formatMoney(series.total_income_minor, currency),
+                    expenses: formatMoney(series.total_expenses_minor, currency),
+                    net: formatMoney(series.net_minor, currency, undefined, { signed: true }),
                     range,
                   })
                 : t('dashboard.light.empty')
@@ -787,7 +786,7 @@ export function TransactionsPage({
               setError(null)
               applySuggestion(s, source)
               if (s.source === 'none' && !s.amount_minor) {
-                setError(renderUiTexts(s.notes) || t('tx.couldNotReadDoc'))
+                setError(renderUiTexts(s.notes, currency) || t('tx.couldNotReadDoc'))
               }
             }}
             onError={(msg) => setError(msg)}
@@ -867,13 +866,13 @@ export function TransactionsPage({
 
         {scanNotes && scanNotes.length > 0 ? (
           <div className="mb-5 rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-xs text-[var(--color-fg-secondary)]">
-            {renderUiTexts(scanNotes)}
+            {renderUiTexts(scanNotes, currency)}
             {pendingDoc ? (
               <span className="mt-1 block text-[var(--color-muted)]">
                 {t('tx.docWillStore')}
                 {amount
                   ? t('tx.docSuggested', {
-                      amount: fmtMoney(parseMajorToMinor(amount, ccy) ?? 0, ccy),
+                      amount: fmtMoney(parseMajorToMinor(amount, currency) ?? 0, currency),
                     })
                   : ''}
                 {t('tx.docReview')}
@@ -1077,7 +1076,7 @@ export function TransactionsPage({
         view={detailView}
         accounts={accountMap}
         documents={detailId ? (docsByEntry.get(detailId) ?? []) : []}
-        currency={ccy}
+        currency={currency}
         // DocumentViewerModal stacks above this one. The dialog stack routes
         // Escape to the top-most dialog only; this guard is defense in depth
         // so the detail modal can never close while the viewer sits above it.
@@ -1181,7 +1180,7 @@ export function TransactionsPage({
                   <span className="flex shrink-0 items-center gap-2">
                     <span className="flex min-w-32 justify-end">
                       <AmountPill tone={kindLabel === 'income' ? 'in' : kindLabel === 'expense' ? 'out' : 'neutral'}>
-                        {formatMoney(signed, ccy, undefined, {
+                        {formatMoney(signed, currency, undefined, {
                           signed: kindLabel === 'expense' || kindLabel === 'income',
                         })}
                       </AmountPill>

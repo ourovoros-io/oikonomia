@@ -71,6 +71,7 @@ const entity: Entity = {
   id: 'e1',
   name: 'Personal',
   base_currency: 'EUR',
+  base_currency_decimals: 2,
   fiscal_year_start_month: 1,
   chart_template: 'personal',
 }
@@ -818,9 +819,9 @@ describe('TransactionsPage summary', () => {
     const heading = await screen.findByRole('heading', { name: 'In view · 01/08/2026 – 31/08/2026' })
     const pane = heading.closest('section')
     expect(pane?.querySelector('[data-net]')).toHaveAttribute('data-net', 'in')
-    expect(pane?.querySelector('[data-net]')).toHaveTextContent(plain(formatMoney(115750, 'EUR', undefined, { signed: true })))
-    expect(pane?.querySelector('[data-money-pill="in"]')).toHaveTextContent(plain(`In ${formatMoney(120000, 'EUR')}`))
-    expect(pane?.querySelector('[data-money-pill="out"]')).toHaveTextContent(plain(`Out ${formatMoney(4250, 'EUR')}`))
+    expect(pane?.querySelector('[data-net]')).toHaveTextContent(plain(formatMoney(115750, { code: 'EUR', decimals: 2 }, undefined, { signed: true })))
+    expect(pane?.querySelector('[data-money-pill="in"]')).toHaveTextContent(plain(`In ${formatMoney(120000, { code: 'EUR', decimals: 2 })}`))
+    expect(pane?.querySelector('[data-money-pill="out"]')).toHaveTextContent(plain(`Out ${formatMoney(4250, { code: 'EUR', decimals: 2 })}`))
   })
 
   test('a date filter narrows the summary', async () => {

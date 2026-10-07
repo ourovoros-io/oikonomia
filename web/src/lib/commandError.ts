@@ -1,3 +1,4 @@
+import { withShortFileText } from './fileText'
 import { t } from './i18n'
 import type { CommandError } from './tauri'
 
@@ -23,26 +24,29 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   restore_would_overwrite: 'error.restoreWouldOverwrite',
   not_found: 'error.notFound',
   analysis: 'error.analysis',
-  // Every CSV code borrows one sentence until each has wording of its own; an
-  // amount that does not fit reads as every other amount that does not.
-  csv_empty: 'error.csvParse',
-  csv_not_utf8: 'error.csvParse',
-  csv_too_large: 'error.csvParse',
+  csv_empty: 'error.csvEmpty',
+  csv_not_utf8: 'error.csvNotUtf8',
+  csv_too_large: 'error.csvTooLarge',
   csv_parse: 'error.csvParse',
-  csv_missing_header: 'error.csvParse',
-  csv_missing_date_column: 'error.csvParse',
-  csv_missing_amount_column: 'error.csvParse',
-  csv_missing_column: 'error.csvParse',
-  csv_invalid_date: 'error.csvParse',
-  csv_invalid_amount: 'error.csvParse',
-  csv_invalid_type: 'error.csvParse',
-  csv_invalid_status: 'error.csvParse',
-  csv_invalid_integer: 'error.csvParse',
-  csv_missing_date: 'error.csvParse',
-  csv_missing_amount: 'error.csvParse',
-  csv_amount_overflow: 'error.moneyOverflow',
-  csv_zero_amount: 'error.csvParse',
-  csv_invalid_mapping: 'error.csvParse',
+  csv_missing_header: 'error.csvMissingHeader',
+  csv_missing_date_column: 'error.csvMissingDateColumn',
+  csv_missing_amount_column: 'error.csvMissingAmountColumn',
+  csv_missing_column: 'error.csvMissingColumn',
+  // A problem with one cell is worded by the sentence the import preview
+  // shows for a row with the same problem (NOTE_CODE_KEYS in uiText.ts), so
+  // one problem reads one way wherever it turns up.
+  csv_invalid_date: 'tx.csv.rowProblem.invalidDate',
+  csv_invalid_amount: 'tx.csv.rowProblem.invalidAmount',
+  csv_invalid_type: 'tx.csv.rowProblem.invalidType',
+  csv_invalid_status: 'error.csvInvalidStatus',
+  csv_invalid_integer: 'error.csvInvalidInteger',
+  csv_missing_date: 'tx.csv.rowProblem.missingDate',
+  csv_missing_amount: 'tx.csv.rowProblem.missingAmount',
+  csv_amount_overflow: 'tx.csv.rowProblem.amountOverflow',
+  csv_zero_amount: 'tx.csv.rowProblem.zeroAmount',
+  // The sentence for a mapping problem this version has no wording for; each
+  // known problem has its own in VARIANT_KEYS.
+  csv_invalid_mapping: 'error.csvInvalidMapping',
   password_too_short: 'error.passwordTooShort',
   name_required: 'error.nameRequired',
   name_taken: 'error.nameTaken',
@@ -100,6 +104,28 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   update_invalid_feed_url: 'error.update',
   update_invalid_feed_input: 'error.update',
   unknown: 'error.unknown',
+}
+
+/**
+ * Codes whose sentence depends on an identifier Rust sends in one parameter:
+ * the parameter that holds it, and the i18n key for each identifier. The
+ * identifier chooses the sentence and is never shown. One this version does
+ * not list falls back to the code's own key in ERROR_CODE_KEYS.
+ *
+ * The identifiers of `csv_invalid_mapping` are pinned by
+ * csvMappingProblems.json on both sides (`CsvMappingProblem::identifier`).
+ */
+export const VARIANT_KEYS: Record<string, { param: string; keys: Record<string, string> }> = {
+  csv_invalid_mapping: {
+    param: 'problem',
+    keys: {
+      missing_date: 'error.csvMapping.missingDate',
+      missing_description: 'error.csvMapping.missingDescription',
+      missing_amount: 'error.csvMapping.missingAmount',
+      amount_and_debit_or_credit: 'error.csvMapping.amountAndDebitOrCredit',
+      unknown_column: 'error.csvMapping.unknownColumn',
+    },
+  },
 }
 
 /**
@@ -220,6 +246,31 @@ function roleCopy(
 }
 
 /**
+ * The i18n key for the identifier `code` carries in its variant parameter,
+ * or undefined when the code has no variants or the identifier is not listed.
+ */
+function variantKey(code: string, params: Record<string, string> | undefined): string | undefined {
+  if (!Object.hasOwn(VARIANT_KEYS, code)) return undefined
+
+  const { param, keys } = VARIANT_KEYS[code]
+
+  return keyFor(keys, params?.[param] ?? '')
+}
+
+/**
+ * The copy under `key` with `params` filled in. Undefined when the catalog
+ * has no such key or the copy asks for a value `params` does not carry, so a
+ * raw key or a raw `{name}` is never shown.
+ */
+function filledCopy(key: string, params: Record<string, string> | undefined): string | undefined {
+  if (lacksParams(key, params)) return undefined
+
+  const text = t(key, params)
+
+  return text === key ? undefined : text
+}
+
+/**
  * Log the raw error for diagnosis. The sentence the user sees is localized and
  * often vague, so the operating-system detail in `message` is kept here, once,
  * and never shown.
@@ -253,17 +304,20 @@ export function commandErrorMessage(err: unknown, fallbackKey?: string): string 
   const vague = VAGUE_CODES.has(cmd.code)
   const key = keyFor(ERROR_CODE_KEYS, cmd.code) ?? keyFor(WEB_ERROR_KEYS, cmd.code)
 
+  // Text from the user's file is cut to a length a sentence can hold.
+  const params = cmd.params ? withShortFileText(cmd.params) : undefined
+
   let copy: string | undefined
   if (key) {
     const roleFallbackKey = keyFor(ROLE_FALLBACK_KEYS, key)
-    // Copy that still asks for a value the error did not carry would show a
-    // raw `{name}`, so it counts as no copy.
-    if (roleFallbackKey) {
-      copy = roleCopy(key, roleFallbackKey, cmd.params)
-    } else if (!lacksParams(key, cmd.params)) {
-      const text = t(key, cmd.params)
+    const variant = variantKey(cmd.code, params)
 
-      if (text !== key) copy = text
+    if (roleFallbackKey) {
+      copy = roleCopy(key, roleFallbackKey, params)
+    } else {
+      // The sentence for the identifier Rust sent, when there is one and it
+      // has every value it names; otherwise the code's own sentence.
+      copy = (variant && filledCopy(variant, params)) ?? filledCopy(key, params)
     }
   }
 

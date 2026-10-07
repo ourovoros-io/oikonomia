@@ -20,7 +20,7 @@ import {
   type RecurringKind,
   type RecurringTemplate,
 } from '../lib/api'
-import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
+import { bookCurrency, minorToInputText, parseMajorToMinor } from '../lib/money'
 import { beginExclusive } from '../lib/guards'
 import { kindDefaultAccounts } from '../lib/simpleEntry'
 import {
@@ -61,11 +61,6 @@ const CADENCES: RecurringCadence[] = ['monthly', 'weekly', 'yearly']
 
 function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
-}
-
-function majorString(minor: number, currency: string): string {
-  const digits = currencyFractionDigits(currency)
-  return (minor / 10 ** digits).toFixed(digits)
 }
 
 function KindIcon({ kind, className }: { kind: RecurringKind; className: string }) {
@@ -142,6 +137,7 @@ export function RecurringPage({ entity, onBack }: Props) {
   const deleteBusyRef = useRef(false)
 
   const ccy = entity.base_currency
+  const currency = bookCurrency(entity)
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const dueCount = templates.filter((row) => row.due).length
 
@@ -201,7 +197,7 @@ export function RecurringPage({ entity, onBack }: Props) {
     setEditId(row.id)
     setKind(row.kind)
     setName(row.name)
-    setAmount(majorString(row.amount_minor, ccy))
+    setAmount(minorToInputText(row.amount_minor, currency))
     setCadence(row.cadence)
     setDayOfMonth(String(row.day_of_month ?? 1))
     setCategoryId(row.category_account_id ?? '')
@@ -238,7 +234,7 @@ export function RecurringPage({ entity, onBack }: Props) {
   async function onSave(ev: FormEvent) {
     ev.preventDefault()
     if (!beginExclusive(formBusyRef)) return
-    const minor = parseMajorToMinor(amount, ccy)
+    const minor = parseMajorToMinor(amount, currency)
     if (minor === null || minor <= 0 || !name.trim()) {
       formBusyRef.current = false
       setError(t('recurring.form.error'))
@@ -286,12 +282,12 @@ export function RecurringPage({ entity, onBack }: Props) {
   function openPost(row: RecurringTemplate) {
     setPosting(row)
     setPostDate(row.next_date || todayISO())
-    setPostAmount(majorString(row.amount_minor, ccy))
+    setPostAmount(minorToInputText(row.amount_minor, currency))
   }
 
   async function confirmPost() {
     if (!posting || !beginExclusive(postBusyRef)) return
-    const minor = parseMajorToMinor(postAmount, ccy)
+    const minor = parseMajorToMinor(postAmount, currency)
     if (minor === null || minor <= 0) {
       postBusyRef.current = false
       setError(t('recurring.posting.error'))
@@ -639,7 +635,7 @@ export function RecurringPage({ entity, onBack }: Props) {
                       income ? 'text-[var(--color-money-in-text)]' : 'text-[var(--color-fg)]',
                     )}
                   >
-                    {formatMoney(row.amount_minor, ccy, undefined, { signed: income })}
+                    {formatMoney(row.amount_minor, currency, undefined, { signed: income })}
                   </div>
                   <Button
                     variant={row.due ? 'primary' : 'ghost'}

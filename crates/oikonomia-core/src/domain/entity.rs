@@ -14,9 +14,10 @@
 //! default are found by the template's codes (see [`crate::coa`] and
 //! [`crate::default_accounts`]).
 
+use crate::csv::currency_minor_exponent;
 use crate::domain::currency::CurrencyCode;
 use crate::domain::define_id;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use time::Month;
 
 define_id! {
@@ -66,7 +67,19 @@ impl ChartTemplate {
 }
 
 /// One set of books with a single base currency.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// # Wire form
+///
+/// The JSON form has one member the struct does not: `base_currency_decimals`,
+/// the value of [`Entity::base_currency_decimals`], written after
+/// `base_currency`. The UI converts between minor units and a displayed or
+/// typed amount with that number and no other, so its own currency data
+/// cannot disagree with the amounts core stores.
+///
+/// The member is computed on every write and ignored on read. It is not a
+/// field, so an entity cannot hold a number of decimals that is not its
+/// currency's.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Entity {
     /// The entity's own id.
     pub id: EntityId,
@@ -84,9 +97,118 @@ pub struct Entity {
     pub chart_template: ChartTemplate,
 }
 
+impl Entity {
+    /// Returns the number of decimals of the minor unit every amount in these
+    /// books is counted in: 2 for `EUR`, 0 for `JPY`, 3 for `KWD`.
+    ///
+    /// It is [`currency_minor_exponent`] of [`Entity::base_currency`], and it
+    /// is sent to the UI with the entity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::domain::Entity;
+    ///
+    /// let book: Entity = serde_json::from_str(
+    ///     r#"{"id":"11111111-1111-4111-8111-111111111111","name":"Tokyo",
+    ///         "base_currency":"JPY","fiscal_year_start_month":4,
+    ///         "chart_template":"personal"}"#,
+    /// )?;
+    ///
+    /// assert_eq!(book.base_currency_decimals(), 0);
+    /// # Ok::<(), serde_json::Error>(())
+    /// ```
+    #[must_use]
+    pub fn base_currency_decimals(&self) -> u8 {
+        currency_minor_exponent(self.base_currency)
+    }
+}
+
+impl Serialize for Entity {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let json = EntityJson {
+            id: &self.id,
+            name: &self.name,
+            base_currency: self.base_currency,
+            base_currency_decimals: self.base_currency_decimals(),
+            fiscal_year_start_month: self.fiscal_year_start_month,
+            chart_template: self.chart_template,
+        };
+
+        json.serialize(serializer)
+    }
+}
+
+/// The JSON form of an [`Entity`]: its fields, and the number of decimals of
+/// its currency.
+#[derive(Serialize)]
+#[serde(rename = "Entity")]
+struct EntityJson<'entity> {
+    /// [`Entity::id`].
+    id: &'entity EntityId,
+    /// [`Entity::name`].
+    name: &'entity str,
+    /// [`Entity::base_currency`].
+    base_currency: CurrencyCode,
+    /// [`Entity::base_currency_decimals`].
+    base_currency_decimals: u8,
+    /// [`Entity::fiscal_year_start_month`], as its number.
+    #[serde(with = "crate::util::serde_month")]
+    fiscal_year_start_month: Month,
+    /// [`Entity::chart_template`].
+    chart_template: ChartTemplate,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ChartTemplate;
+    use super::{ChartTemplate, Entity};
+
+    /// The JSON of a book in `currency`, as core writes it.
+    fn written_book(currency: &str) -> serde_json::Value {
+        let book: Entity = serde_json::from_value(serde_json::json!({
+            "id": "11111111-1111-4111-8111-111111111111",
+            "name": "Home",
+            "base_currency": currency,
+            "fiscal_year_start_month": 1,
+            "chart_template": "personal",
+        }))
+        .unwrap();
+
+        serde_json::to_value(book).unwrap()
+    }
+
+    #[test]
+    fn the_json_of_an_entity_carries_the_decimals_of_its_currency() {
+        for (currency, decimals) in [("EUR", 2), ("JPY", 0), ("KWD", 3)] {
+            assert_eq!(
+                written_book(currency)["base_currency_decimals"],
+                serde_json::json!(decimals),
+                "{currency}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_decimals_an_entity_is_read_with_are_ignored() {
+        let book: Entity = serde_json::from_value(serde_json::json!({
+            "id": "11111111-1111-4111-8111-111111111111",
+            "name": "Home",
+            "base_currency": "JPY",
+            "base_currency_decimals": 2,
+            "fiscal_year_start_month": 1,
+            "chart_template": "personal",
+        }))
+        .unwrap();
+
+        assert_eq!(book.base_currency_decimals(), 0);
+        assert_eq!(
+            serde_json::to_value(book).unwrap()["base_currency_decimals"],
+            0
+        );
+    }
 
     #[test]
     fn the_identifier_of_a_chart_template_is_the_text_serde_writes() {

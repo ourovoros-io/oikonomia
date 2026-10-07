@@ -49,6 +49,7 @@ describe('AccountsPage account type colours', () => {
     id: 'e1',
     name: 'Personal',
     base_currency: 'EUR',
+    base_currency_decimals: 2,
     fiscal_year_start_month: 1,
     chart_template: 'personal',
   }
@@ -102,6 +103,7 @@ describe('AccountsPage register drill-in', () => {
     id: 'e1',
     name: 'Personal',
     base_currency: 'EUR',
+    base_currency_decimals: 2,
     fiscal_year_start_month: 1,
     chart_template: 'personal',
   }
@@ -153,7 +155,7 @@ describe('AccountsPage register drill-in', () => {
    * normalize the same way or an exact-string match never hits.
    */
   function money(minor: number): string {
-    return formatMoney(minor, 'EUR').replace(/ /g, ' ')
+    return formatMoney(minor, { code: 'EUR', decimals: 2 }).replace(/ /g, ' ')
   }
 
   test('row action shows the register table with running balance', async () => {

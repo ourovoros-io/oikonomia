@@ -38,6 +38,7 @@ const entity: Entity = {
   id: 'e1',
   name: 'Personal',
   base_currency: 'EUR',
+  base_currency_decimals: 2,
   fiscal_year_start_month: 1,
   chart_template: 'personal',
 }
@@ -146,7 +147,7 @@ describe('ReportsPage Export PDF', () => {
     expect(api.reportPnl).toHaveBeenCalledTimes(inAppCalls)
     expect(buildExpensePdfBytes).toHaveBeenCalledWith({
       entityName: 'Personal',
-      currency: 'EUR',
+      currency: { code: 'EUR', decimals: 2 },
       from: '2026-08-01',
       to: '2026-08-31',
       expenses: [expense({ code: '6100', name: 'Rent', balance_minor: 850_00 })],

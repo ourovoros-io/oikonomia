@@ -21,7 +21,7 @@ import {
   type PendingDocSource,
   type UiPrefs,
 } from '../lib/api'
-import { currencyFractionDigits, parseMajorToMinor } from '../lib/money'
+import { bookCurrency, minorToInputText, parseMajorToMinor, type Currency } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import {
   QUICK_ADD_COMPACT_HEIGHT,
@@ -50,7 +50,7 @@ import { useI18n } from '../lib/I18nProvider'
 export type QuickAddPosted = {
   kind: EntryKind
   amountMinor: number
-  currency: string
+  currency: Currency
 }
 
 type Props = {
@@ -215,7 +215,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   const [dragOver, setDragOver] = useState(false)
   const busyRef = useRef(false)
   const accountsGenRef = useRef(0)
-  const baseCurrencyRef = useRef('EUR')
+  const bookCurrencyRef = useRef<Currency | null>(null)
   const analyzeGenRef = useRef(0)
   const amountRef = useRef<HTMLInputElement | null>(null)
 
@@ -224,7 +224,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     [entities, entityId],
   )
 
-  baseCurrencyRef.current = entity?.base_currency ?? 'EUR'
+  bookCurrencyRef.current = entity ? bookCurrency(entity) : null
 
   const roleSetters = useMemo(
     () => ({ setCategoryId, setWalletId, setPayableId, setFromId, setToId }),
@@ -410,9 +410,11 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     if (s.description) setDescription(s.description)
     else if (s.merchant) setDescription(s.merchant)
 
-    const digits = currencyFractionDigits(baseCurrencyRef.current)
-    if (s.amount_minor != null && s.amount_minor > 0 && digits === 2) {
-      setAmount((s.amount_minor / 100).toFixed(2))
+    // Core leaves the amount out for a book whose currency the reader cannot
+    // count in, so an amount that arrives is in the book's minor units.
+    const currency = bookCurrencyRef.current
+    if (currency && s.amount_minor != null && s.amount_minor > 0) {
+      setAmount(minorToInputText(s.amount_minor, currency))
     }
     if (s.category_account_id) setCategoryId(s.category_account_id)
     if (s.wallet_account_id) setWalletId(s.wallet_account_id)
@@ -556,7 +558,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     ev?.preventDefault()
     if (!entity || analyzing) return
     if (!beginExclusive(busyRef)) return
-    const minor = parseMajorToMinor(amount, entity.base_currency)
+    const minor = parseMajorToMinor(amount, bookCurrency(entity))
     if (minor === null || minor <= 0) {
       busyRef.current = false
       setError(t('quickAdd.invalidAmount'))
@@ -649,7 +651,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       setBusy(false)
       busyRef.current = false
       onBusyChange?.(false)
-      onPosted({ kind, amountMinor: minor, currency: entity.base_currency })
+      onPosted({ kind, amountMinor: minor, currency: bookCurrency(entity) })
     } catch (err) {
       setError(commandErrorMessage(err))
       setBusy(false)
@@ -659,7 +661,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   function advanceFromAmount() {
     if (!entity) return
-    const minor = parseMajorToMinor(amount, entity.base_currency)
+    const minor = parseMajorToMinor(amount, bookCurrency(entity))
     if (minor === null || minor <= 0) {
       setError(t('quickAdd.invalidAmount'))
       amountRef.current?.focus()

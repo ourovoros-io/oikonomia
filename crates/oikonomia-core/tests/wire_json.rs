@@ -50,7 +50,21 @@ fn is_refused<T: DeserializeOwned>(json: &str) -> bool {
 fn entity() {
     assert_json_is_pinned::<Entity>(concat!(
         r#"{"id":"11111111-1111-4111-8111-111111111111","name":"Home","base_currency":"EUR","#,
-        r#""fiscal_year_start_month":4,"chart_template":"personal"}"#,
+        r#""base_currency_decimals":2,"fiscal_year_start_month":4,"chart_template":"personal"}"#,
+    ));
+}
+
+/// The number of decimals is core's, for a currency with none and for one
+/// with three as much as for the usual two.
+#[test]
+fn entity_carries_the_decimals_of_its_currency() {
+    assert_json_is_pinned::<Entity>(concat!(
+        r#"{"id":"11111111-1111-4111-8111-111111111111","name":"Tokyo","base_currency":"JPY","#,
+        r#""base_currency_decimals":0,"fiscal_year_start_month":4,"chart_template":"personal"}"#,
+    ));
+    assert_json_is_pinned::<Entity>(concat!(
+        r#"{"id":"11111111-1111-4111-8111-111111111111","name":"Kuwait","base_currency":"KWD","#,
+        r#""base_currency_decimals":3,"fiscal_year_start_month":1,"chart_template":"company"}"#,
     ));
 }
 

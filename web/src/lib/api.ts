@@ -10,6 +10,11 @@ export type Entity = {
   id: string
   name: string
   base_currency: string
+  /**
+   * Decimals of one minor unit of `base_currency`, decided by core. Money code
+   * reads it through `bookCurrency`; nothing else may decide the scale.
+   */
+  base_currency_decimals: number
   fiscal_year_start_month: number
   chart_template: ChartTemplate
 }
@@ -636,7 +641,16 @@ export type CsvImportPostResult = {
   skipped_duplicate_count: number
 }
 
-export { formatMoney, formatDate, isoDate, parseMajorToMinor, localeForCurrency } from './money'
+export {
+  bookCurrency,
+  formatMoney,
+  formatDate,
+  isoDate,
+  minorToInputText,
+  parseMajorToMinor,
+  localeForCurrency,
+  type Currency,
+} from './money'
 
 export function todayISO(): string {
   const d = new Date()
