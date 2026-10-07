@@ -15,8 +15,8 @@ use std::ops::RangeInclusive;
 
 use time::Date;
 
-use crate::documents::invoice::normalization::contains_any;
-use crate::documents::keyword::folded;
+use crate::documents::keyword::Keyword::{Prefix, Word};
+use crate::documents::keyword::{Keyword, contains_any, folded};
 
 /// The first date written on `line`.
 ///
@@ -35,7 +35,7 @@ pub(super) fn first_date_on_line(line: &str) -> Option<Date> {
 }
 
 /// Labels of the value date of a bank transaction.
-pub(super) const VALUE_DATE_LABELS: &[&str] = &["ημερομηνια αξιας", "value date"];
+pub(super) const VALUE_DATE_LABELS: &[Keyword] = &[Word("ημερομηνια αξιας"), Word("value date")];
 
 /// Whether a folded line is the value-date line of a bank transaction.
 pub(super) fn is_value_date_line(folded_line: &str) -> bool {
@@ -247,7 +247,13 @@ pub(super) fn find_best_date(text: &str) -> Option<Date> {
 
 /// Labels of a date line: "date", "issued", "expires", "due". Stems, so they
 /// match every inflection.
-pub(super) const DATE_LABELS: &[&str] = &["ημερομην", "date", "εκδοσ", "ληξ", "due"];
+pub(super) const DATE_LABELS: &[Keyword] = &[
+    Prefix("ημερομην"),
+    Word("date"),
+    Prefix("εκδοσ"),
+    Prefix("ληξ"),
+    Word("due"),
+];
 
 /// The years a document date may have.
 ///

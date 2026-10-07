@@ -8,7 +8,7 @@
 //! ([`folded`](crate::documents::keyword::folded)):
 //!
 //! - [`known_brand`]: who issued this? The first entry of [`BRANDS`] whose
-//!   token stands in the text as a whole token wins, so the order of the
+//!   token stands in the text as a whole word wins, so the order of the
 //!   table is a priority order.
 //! - [`classify_service`]: is this electricity, gas, telecom or water? Each
 //!   keyword of [`SERVICE_KEYWORDS`] found in the text adds its weight to its
@@ -17,6 +17,8 @@
 //! The invoice reader asks the brand first and falls back to the keyword
 //! score only when the brand does not imply a service.
 
+use crate::documents::keyword::Keyword;
+use crate::documents::keyword::Keyword::{Prefix, Unit, Word};
 use crate::text::BillKind;
 
 /// What kind of service a recognized bill covers.
@@ -116,45 +118,46 @@ mod weight {
 /// Keywords of each service in folded form, with their weights, in the order
 /// [`classify_service`] compares them.
 ///
-/// A keyword is matched as a substring, not as a token. So a supply line
-/// also contains the shorter keyword of its service: `προμηθεια ρευματος`
-/// contains `ρευμα`, and scores a `SUPPLY_LINE` and a `MENTION` together.
+/// Each keyword is matched under its own rule, and every keyword that
+/// matches counts. So a supply line also scores the shorter keyword of its
+/// service: `προμηθεια ρευματος` holds the stem `ρευμα`, and scores a
+/// `SUPPLY_LINE` and a `MENTION` together.
 ///
 /// The order of the services breaks ties: the later one wins.
-const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
+const SERVICE_KEYWORDS: &[(Service, &[(Keyword, u32)])] = &[
     (
         Service::Electricity,
         &[
-            ("προμηθεια ρευματος", weight::SUPPLY_LINE),
-            ("kwh", weight::TERM),
-            ("δεδδηε", weight::TERM),
-            ("ρευμα", weight::MENTION),
+            (Word("προμηθεια ρευματος"), weight::SUPPLY_LINE),
+            (Unit("kwh"), weight::TERM),
+            (Word("δεδδηε"), weight::TERM),
+            (Prefix("ρευμα"), weight::MENTION),
         ],
     ),
     (
         Service::Gas,
         &[
-            ("προμηθεια φυσικου αεριου", weight::SUPPLY_LINE),
-            ("ηκασπ", weight::OWN_TERM),
-            ("χρεωση προμηθειας φ.α", weight::OWN_TERM),
-            ("φυσικου αεριου", weight::MENTION),
-            ("φυσικο αεριο", weight::MENTION),
+            (Word("προμηθεια φυσικου αεριου"), weight::SUPPLY_LINE),
+            (Unit("ηκασπ"), weight::OWN_TERM),
+            (Word("χρεωση προμηθειας φ.α"), weight::OWN_TERM),
+            (Word("φυσικου αεριου"), weight::MENTION),
+            (Prefix("φυσικο αεριο"), weight::MENTION),
         ],
     ),
     (
         Service::Telecom,
         &[
-            ("κινητο", weight::TERM),
-            ("σταθερο", weight::MENTION),
-            ("τηλεφων", weight::TERM),
-            ("internet", weight::MENTION),
+            (Prefix("κινητο"), weight::TERM),
+            (Prefix("σταθερο"), weight::MENTION),
+            (Prefix("τηλεφων"), weight::TERM),
+            (Word("internet"), weight::MENTION),
         ],
     ),
     (
         Service::Water,
         &[
-            ("υδρευσ", weight::OWN_TERM),
-            ("καταναλωση νερου", weight::OWN_TERM),
+            (Prefix("υδρευσ"), weight::OWN_TERM),
+            (Word("καταναλωση νερου"), weight::OWN_TERM),
         ],
     ),
 ];
@@ -166,7 +169,7 @@ const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
 pub(crate) fn known_brand(folded_text: &str) -> Option<Brand> {
     BRANDS
         .iter()
-        .find(|(token, _)| contains_token(folded_text, token))
+        .find(|(token, _)| Word(token).occurs_in(folded_text))
         .map(|(_, brand)| *brand)
 }
 
@@ -183,10 +186,10 @@ pub(crate) fn known_brand(folded_text: &str) -> Option<Brand> {
 /// On a tie the service listed later in [`SERVICE_KEYWORDS`] wins. Returns
 /// `None` when no keyword matches.
 pub(crate) fn classify_service(folded_text: &str) -> Option<Service> {
-    let score = |keywords: &[(&str, u32)]| -> u32 {
+    let score = |keywords: &[(Keyword, u32)]| -> u32 {
         keywords
             .iter()
-            .filter(|(keyword, _)| folded_text.contains(keyword))
+            .filter(|(keyword, _)| keyword.occurs_in(folded_text))
             .map(|(_, weight)| *weight)
             .sum()
     };
@@ -198,36 +201,6 @@ pub(crate) fn classify_service(folded_text: &str) -> Option<Service> {
         .max_by_key(|(total, _)| *total)?;
 
     (best_score > 0).then_some(service)
-}
-
-/// Whether `token` occurs in `folded_text` with no letter or digit directly
-/// before or after it, so `nova` does not match inside `innovation`.
-///
-/// Punctuation and whitespace are boundaries; so are the start and the end
-/// of the text.
-#[expect(
-    clippy::string_slice,
-    reason = "`match_indices` yields the offset of a match of `token`, \
-              so both ends of the match are character boundaries"
-)]
-fn contains_token(folded_text: &str, token: &str) -> bool {
-    for (at, _) in folded_text.match_indices(token) {
-        let before_ok = folded_text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !c.is_alphanumeric());
-
-        let after_ok = folded_text[at + token.len()..]
-            .chars()
-            .next()
-            .is_none_or(|c| !c.is_alphanumeric());
-
-        if before_ok && after_ok {
-            return true;
-        }
-    }
-
-    false
 }
 
 #[cfg(test)]
@@ -318,7 +291,11 @@ mod tests {
         }
         for (service, keywords) in SERVICE_KEYWORDS {
             for (keyword, _) in *keywords {
-                assert_eq!(folded(keyword), *keyword, "{service:?} keyword {keyword:?}");
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{service:?} keyword {keyword:?}"
+                );
             }
         }
     }

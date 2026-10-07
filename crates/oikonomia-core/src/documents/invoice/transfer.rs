@@ -24,22 +24,22 @@ use crate::documents::invoice::merchant::{
 use crate::documents::invoice::money::{
     is_plausible_money, largest_plausible_amount, money_amounts_on_line,
 };
-use crate::documents::invoice::normalization::contains_any;
 use crate::documents::invoice::reference::is_rf_then_digits;
 use crate::documents::invoice::total::IBAN_WORD;
-use crate::documents::keyword::folded;
+use crate::documents::keyword::Keyword::{Fragment, Prefix, Word};
+use crate::documents::keyword::{Keyword, contains_any, folded};
 use crate::ui_text::{UiText, UiTextCode};
 
 /// Wording that makes a document a bank transfer receipt: "έμβασμα"
 /// (remittance), "transfer to another bank", or a transaction-code label.
-pub(super) const TRANSFER_MARKERS: &[&str] = &[
-    "εμβασμα",
-    "μεταφορα σε αλλη τραπεζα",
+pub(super) const TRANSFER_MARKERS: &[Keyword] = &[
+    Prefix("εμβασμα"),
+    Word("μεταφορα σε αλλη τραπεζα"),
     TRANSFER_REFERENCE_LABEL,
 ];
 
 /// The label of the transaction code on a transfer receipt.
-pub(super) const TRANSFER_REFERENCE_LABEL: &str = "κωδικος συναλλαγης";
+pub(super) const TRANSFER_REFERENCE_LABEL: Keyword = Word("κωδικος συναλλαγης");
 
 /// Whether folded text carries one of [`TRANSFER_MARKERS`].
 pub(super) fn is_bank_transfer_receipt(folded_text: &str) -> bool {
@@ -80,7 +80,7 @@ fn find_transfer_principal(text: &str) -> Option<i64> {
         if is_transfer_fee_line(&folded_line) {
             continue;
         }
-        if folded_line.contains(TRANSFER_PRINCIPAL_LABEL)
+        if TRANSFER_PRINCIPAL_LABEL.occurs_in(&folded_line)
             && let Some(amount) = amount_on_line_or_next(&lines, index)
         {
             return Some(amount);
@@ -112,29 +112,34 @@ fn amount_on_line_or_next(lines: &[&str], index: usize) -> Option<i64> {
 }
 
 /// The label of the capital debit on a transfer receipt.
-pub(super) const TRANSFER_PRINCIPAL_LABEL: &str = "ποσο χρεωσης κεφαλαιου";
+pub(super) const TRANSFER_PRINCIPAL_LABEL: Keyword = Word("ποσο χρεωσης κεφαλαιου");
 
 /// The plain "amount" label a receipt uses when it has no capital line.
-pub(super) const TRANSFER_AMOUNT_LABEL: &str = "ποσο";
+pub(super) const TRANSFER_AMOUNT_LABEL: Keyword = Word("ποσο");
 
 /// Labels of the fee and charges lines of a transfer receipt.
-pub(super) const TRANSFER_FEE_LABELS: &[&str] = &["προμηθεια", "εξοδων", "εξοδα"];
+pub(super) const TRANSFER_FEE_LABELS: &[Keyword] =
+    &[Prefix("προμηθεια"), Word("εξοδων"), Word("εξοδα")];
 
 /// "Of the beneficiary", as in "name of the beneficiary".
-pub(super) const BENEFICIARY_LABEL: &str = "δικαιουχου";
+pub(super) const BENEFICIARY_LABEL: Keyword = Word("δικαιουχου");
 
 /// The two halves of the `Ονοματεπώνυμο / Επωνυμία` beneficiary label.
-pub(super) const BENEFICIARY_NAME_LABELS: [&str; 2] = ["ονοματεπωνυμο", ISSUER_NAME_LABEL];
+pub(super) const BENEFICIARY_NAME_LABELS: [Keyword; 2] = [Word("ονοματεπωνυμο"), ISSUER_NAME_LABEL];
 
 /// Words that make a name a bank's, not the payee's.
-pub(super) const BANK_WORDS: &[&str] = &["τραπεζα", "bank"];
+///
+/// `bank` is a fragment because banks write it into their names: Eurobank,
+/// Optima bank, Piraeusbank.
+pub(super) const BANK_WORDS: &[Keyword] = &[Prefix("τραπεζα"), Fragment("bank")];
 
 /// Labels of the date a transfer was executed, which is the date to post.
-pub(super) const EXECUTION_DATE_LABELS: &[&str] = &["εκτελεσ", "execution"];
+pub(super) const EXECUTION_DATE_LABELS: &[Keyword] = &[Prefix("εκτελεσ"), Word("execution")];
 
 /// Labels of a date line on a transfer receipt, used when no execution date
 /// is labelled.
-pub(super) const TRANSFER_DATE_LABELS: &[&str] = &["ημερομην", "date", "συναλλαγ"];
+pub(super) const TRANSFER_DATE_LABELS: &[Keyword] =
+    &[Prefix("ημερομην"), Word("date"), Prefix("συναλλαγ")];
 
 /// Lengths of a transfer transaction code.
 ///
@@ -151,14 +156,14 @@ fn is_transfer_fee_line(folded_line: &str) -> bool {
 }
 
 /// Whether a folded line carries the plain amount label: the word `ποσο`
-/// alone on the line, or `ποσο` anywhere on a line that has a colon.
+/// alone on the line, or the word `ποσο` anywhere on a line that has a colon.
 ///
 /// Fee lines also say `ποσο`; the caller has skipped them before it asks.
-/// The label is matched as a substring, so a line such as `Ποσοστό:`
-/// (percentage) also counts.
+/// `Ποσοστό:` (percentage) is another word and does not count.
 fn is_transfer_amount_label(folded_line: &str) -> bool {
-    folded_line.trim() == TRANSFER_AMOUNT_LABEL
-        || (folded_line.contains(TRANSFER_AMOUNT_LABEL) && folded_line.contains(':'))
+    let alone = folded_line.trim() == TRANSFER_AMOUNT_LABEL.text();
+
+    TRANSFER_AMOUNT_LABEL.occurs_in(folded_line) && (alone || folded_line.contains(':'))
 }
 
 /// The fee of a transfer: the smallest plausible amount on the first fee
@@ -190,10 +195,10 @@ fn find_transfer_payee(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     for (index, line) in lines.iter().enumerate() {
         let folded_line = folded(line);
-        let beneficiary = folded_line.contains(BENEFICIARY_LABEL)
+        let beneficiary = BENEFICIARY_LABEL.occurs_in(&folded_line)
             || BENEFICIARY_NAME_LABELS
                 .iter()
-                .all(|label| folded_line.contains(label));
+                .all(|label| label.occurs_in(&folded_line));
         if !beneficiary {
             continue;
         }
@@ -220,7 +225,7 @@ fn is_plausible_payee(name: &str) -> bool {
         return false;
     }
     let folded_name = folded(trimmed);
-    if is_bank_counterparty(&folded_name) || folded_name.contains(IBAN_WORD) {
+    if is_bank_counterparty(&folded_name) || IBAN_WORD.occurs_in(&folded_name) {
         return false;
     }
 
@@ -230,7 +235,7 @@ fn is_plausible_payee(name: &str) -> bool {
         .into_iter()
         .chain([BENEFICIARY_LABEL])
     {
-        stripped = stripped.replace(label, " ");
+        stripped = stripped.replace(label.text(), " ");
     }
     stripped.chars().any(char::is_alphabetic)
 }
@@ -247,7 +252,7 @@ fn find_transfer_reference(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     for (index, line) in lines.iter().enumerate() {
         let folded_line = folded(line);
-        if !folded_line.contains(TRANSFER_REFERENCE_LABEL) {
+        if !TRANSFER_REFERENCE_LABEL.occurs_in(&folded_line) {
             continue;
         }
         for candidate in [*line, lines.get(index + 1).copied().unwrap_or("")] {
@@ -443,6 +448,18 @@ mod tests {
         assert_eq!(suggestion.merchant.as_deref(), Some("HELIOS TRADING IKE"));
         assert_eq!(suggestion.reference.as_deref(), Some("F000TO0000000001"));
         assert_eq!(suggestion.kind, EntryKindSuggestion::Expense);
+    }
+
+    #[test]
+    fn a_percentage_label_is_not_the_amount_label() {
+        let amount = |text: &str| parse_invoice_text(text, crate::prefs::Locale::En).amount_minor;
+
+        // `Ποσοστό` (percentage) starts with `Ποσό` (amount) and is another word.
+        assert_eq!(amount("Έμβασμα\nΠοσοστό: 310,00"), None);
+        assert_eq!(
+            amount("Έμβασμα\nΠοσοστό: 5,00\nΠοσό: 310,00\nΠρομήθεια: 1,40"),
+            Some(31_000)
+        );
     }
 
     #[test]

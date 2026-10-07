@@ -16,26 +16,25 @@ use crate::documents::invoice::kind::is_utility_bill;
 use crate::documents::invoice::money::{
     has_cents, is_plausible_money, largest_plausible_amount, money_amounts_on_line,
 };
-use crate::documents::invoice::normalization::contains_any;
-use crate::documents::keyword::folded;
+use crate::documents::keyword::Keyword::{Fragment, Prefix, Unit, Word};
+use crate::documents::keyword::{Keyword, contains_any, folded};
 
 /// The word that marks a line or a name as holding a bank account number.
-pub(super) const IBAN_WORD: &str = "iban";
+pub(super) const IBAN_WORD: Keyword = Word("iban");
 
 /// The label of a totals row: the largest amount on it is the total.
-pub(super) const TOTALS_ROW_LABELS: &[&str] = &["συνολα", "totals"];
+pub(super) const TOTALS_ROW_LABELS: &[Keyword] = &[Word("συνολα"), Word("totals")];
 
 /// Words that mark a line as holding a value, for the weighted fallback.
-pub(super) const VALUE_WORDS: &[&str] = &["αξια", "value", TOTAL_WORD];
+pub(super) const VALUE_WORDS: &[Keyword] = &[Prefix("αξια"), Word("value"), TOTAL_WORD];
 
 /// The bare word the fallback favours and the percent rule exempts.
-pub(super) const TOTAL_WORD: &str = "total";
+pub(super) const TOTAL_WORD: Keyword = Word("total");
 
 /// Markers of lines that hold identifiers, never an amount: the fallback
 /// skips a line with one.
-///
-/// They are matched as substrings, so `mark` also matches `supermarket`.
-pub(super) const IDENTIFIER_LINE_MARKERS: &[&str] = &[IBAN_WORD, "α.φ.μ", "αφμ", "mark"];
+pub(super) const IDENTIFIER_LINE_MARKERS: &[Keyword] =
+    &[IBAN_WORD, Word("α.φ.μ"), Word("αφμ"), Word("mark")];
 
 /// Weights of the fallback, stage 4 of [`find_total_amount`].
 ///
@@ -133,59 +132,64 @@ pub(super) fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
 }
 
 /// Labels that name the amount to pay. A line with one decides the total.
-///
-/// They are matched as substrings of the folded line, so `subtotal amount`
-/// carries the label `total amount`.
-pub(super) const TOTAL_LABELS: &[&str] = &[
-    "συνολικο ποσο πληρωμης",
-    "ποσο πληρωμης",
-    "συνολο τρεχοντος λογαριασμου",
-    "τρεχοντος λογαριασμου",
-    "πληρωτεο",
-    "payable",
-    "amount due",
-    "grand total",
-    "total due",
-    "amount payable",
-    "amount to pay",
-    "total to pay",
-    "συνολ. αξια",
-    "συνολικη αξια",
-    "τελ. αξια",
-    "τελικη αξια",
-    "total amount",
-    "invoice total",
-    "net payable",
+pub(super) const TOTAL_LABELS: &[Keyword] = &[
+    Word("συνολικο ποσο πληρωμης"),
+    Word("ποσο πληρωμης"),
+    Word("συνολο τρεχοντος λογαριασμου"),
+    Word("τρεχοντος λογαριασμου"),
+    Prefix("πληρωτεο"),
+    Word("payable"),
+    Word("amount due"),
+    Word("grand total"),
+    Word("total due"),
+    Word("amount payable"),
+    Word("amount to pay"),
+    Word("total to pay"),
+    Prefix("συνολ. αξια"),
+    Prefix("συνολικη αξια"),
+    Prefix("τελ. αξια"),
+    Prefix("τελικη αξια"),
+    Word("total amount"),
+    Word("invoice total"),
+    Word("net payable"),
 ];
 
 /// Labels of the payment line on a utility bill, for the vote among amounts.
-pub(super) const PAYMENT_LABELS: &[&str] = &["πληρωμ", "τρεχοντος", "payable", "amount due"];
+pub(super) const PAYMENT_LABELS: &[Keyword] = &[
+    Prefix("πληρωμ"),
+    Word("τρεχοντος"),
+    Word("payable"),
+    Word("amount due"),
+];
 
 /// Deposits and guarantees are not the bill total.
-pub(super) const DEPOSIT_LABELS: &[&str] = &["εγγυηση", "deposit"];
+pub(super) const DEPOSIT_LABELS: &[Keyword] = &[Prefix("εγγυηση"), Prefix("deposit")];
 
 /// Markers of rate, volume, area and energy-mix lines, which hold numbers
 /// that are not the payment total.
-pub(super) const RATE_LINE_MARKERS: &[&str] = &[
-    "kwh",
-    "gwh",
-    "kva",
-    "τ.μ",
-    "τμ ",
-    "τιμη ζωνης",
-    "συντελεστ",
-    "λιγνιτ",
-    "υδροηλεκτ",
-    "διασυνδεσ",
-    "παραγωγ",
-    "x0,",
-    "x 0,",
-    "x0.",
-    "×",
+///
+/// The last four are fragments because they are not words: a multiplication
+/// sign, and an `x` written against a factor under one (`x0,085`).
+pub(super) const RATE_LINE_MARKERS: &[Keyword] = &[
+    Unit("kwh"),
+    Unit("gwh"),
+    Unit("kva"),
+    Unit("τ.μ"),
+    Unit("τμ"),
+    Word("τιμη ζωνης"),
+    Prefix("συντελεστ"),
+    Prefix("λιγνιτ"),
+    Prefix("υδροηλεκτ"),
+    Prefix("διασυνδεσ"),
+    Prefix("παραγωγ"),
+    Fragment("x0,"),
+    Fragment("x 0,"),
+    Fragment("x0."),
+    Fragment("×"),
 ];
 
 /// The heading of a gas volume or calorific table when an `x` follows it.
-pub(super) const CONSUMPTION_LABEL: &str = "καταναλωση";
+pub(super) const CONSUMPTION_LABEL: Keyword = Prefix("καταναλωση");
 
 /// Stage 1: the amount beside the first label that has one.
 ///
@@ -392,15 +396,15 @@ pub(super) fn is_noise_amount_line(folded_line: &str) -> bool {
     }
 
     contains_any(folded_line, RATE_LINE_MARKERS)
-        || (folded_line.contains(CONSUMPTION_LABEL) && folded_line.contains('x'))
+        || (CONSUMPTION_LABEL.occurs_in(folded_line) && folded_line.contains('x'))
 }
 
 /// Whether a folded line carries a total label: one of [`TOTAL_LABELS`] or
 /// the bare word `total`, which the weighted fallback also favours.
 ///
-/// The word is matched as a substring, so `subtotal` names a total too.
+/// `subtotal` is another word and names no total.
 pub(super) fn names_a_total(folded_line: &str) -> bool {
-    folded_line.contains(TOTAL_WORD) || contains_any(folded_line, TOTAL_LABELS)
+    TOTAL_WORD.occurs_in(folded_line) || contains_any(folded_line, TOTAL_LABELS)
 }
 
 /// Whether `line` holds one amount and nothing else: with dates blanked,
@@ -598,7 +602,7 @@ mod amounts_and_dates {
 }
 
 #[cfg(test)]
-mod documented_tradeoffs {
+mod whole_word_labels {
     use super::*;
     use crate::documents::analyze::DocumentSuggestion;
     use crate::documents::analyze::parse_invoice_text;
@@ -608,29 +612,61 @@ mod documented_tradeoffs {
     }
 
     #[test]
-    fn a_subtotal_line_names_a_total() {
-        assert!(names_a_total(&folded("Subtotal 100,00")));
-        // So its percentage does not make it a rate line.
-        assert!(!is_noise_amount_line(&folded("Subtotal (VAT 24%) 100,00")));
+    fn a_subtotal_line_does_not_name_a_total() {
+        assert!(!names_a_total(&folded("Subtotal 100,00")));
+        assert!(names_a_total(&folded("Total 124,00")));
+        assert!(names_a_total(&folded("TOTAL: 124,00")));
+        // So a percentage on it makes it a rate line like any other.
+        assert!(is_noise_amount_line(&folded("Subtotal (VAT 24%) 100,00")));
         assert!(is_noise_amount_line(&folded("Net (VAT 24%) 100,00")));
+        assert!(!is_noise_amount_line(&folded("Total (VAT 24%) 124,00")));
     }
 
     #[test]
-    fn a_label_inside_a_longer_word_still_decides_the_total() {
+    fn a_label_inside_a_longer_word_does_not_decide_the_total() {
         assert_eq!(
             read("Subtotal amount: 100,00\nBalance 124,00 €").amount_minor,
-            Some(10_000)
+            Some(12_400)
+        );
+        assert_eq!(
+            read("Subtotal amount: 100,00\nTotal amount: 124,00").amount_minor,
+            Some(12_400)
         );
     }
 
     #[test]
-    fn an_identifier_marker_inside_a_word_hides_the_line_from_the_fallback() {
-        assert_eq!(read("Supermarket 12,50 €").amount_minor, None);
+    fn an_identifier_marker_inside_a_word_does_not_hide_its_line() {
+        assert_eq!(read("Supermarket 12,50 €").amount_minor, Some(1_250));
         assert_eq!(read("Grocery 12,50 €").amount_minor, Some(1_250));
-        // A labelled total is found before the fallback runs.
         assert_eq!(
             read("Supermarket\nAmount due 12,50 €").amount_minor,
             Some(1_250)
         );
+    }
+
+    #[test]
+    fn an_identifier_line_is_still_skipped_by_the_fallback() {
+        assert_eq!(read("MARK 12,50 €").amount_minor, None);
+        assert_eq!(read("M.AR.K. (mark): 400,50 €").amount_minor, None);
+        assert_eq!(
+            read("IBAN: GR16 0110 1250 0000 0001 2300 695").amount_minor,
+            None
+        );
+        assert_eq!(read("Α.Φ.Μ.: 12,50 €").amount_minor, None);
+        assert_eq!(read("ΑΦΜ 12,50 €").amount_minor, None);
+    }
+
+    #[test]
+    fn a_stem_still_matches_every_ending_of_its_word() {
+        // `πληρωμ` is the stem of the payment label; `συντελεστ` of "rate".
+        assert_eq!(
+            read("Ποσό πληρωμής 76,65 €\nΚαθαρή 60,00 €").amount_minor,
+            Some(7_665)
+        );
+        assert!(is_noise_amount_line(&folded("Συντελεστής 1,05")));
+        assert!(is_noise_amount_line(&folded("Συντελεστές 1,05")));
+        assert!(is_noise_amount_line(&folded("150kWh 12,40")));
+        assert!(is_noise_amount_line(&folded("Εγγύησης 60,00")));
+        assert!(is_noise_amount_line(&folded("3 x0,085 = 0,26")));
     }
 }

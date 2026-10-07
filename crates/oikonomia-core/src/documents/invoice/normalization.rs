@@ -187,11 +187,6 @@ fn is_thousands_group(numbers: &[char], index: usize) -> bool {
         && !is_digit(index + THOUSANDS_GROUP_DIGITS + 1)
 }
 
-/// Whether folded text contains any of `needles`.
-pub(super) fn contains_any(folded_text: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| folded_text.contains(needle))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

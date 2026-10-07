@@ -756,6 +756,10 @@ mod tests {
                             assert!(!keyword.occurs_in(&format!("xyz{text}")), "{keyword:?}");
                             assert!(!keyword.occurs_in(&format!("7{text}")), "{keyword:?}");
                         }
+                        Keyword::Fragment(_) => {
+                            // A fragment would match inside any word.
+                            assert_eq!(None, Some(keyword), "a topic keyword is never a fragment");
+                        }
                         Keyword::Unit(_) => {
                             // A unit may follow a number, but not a letter.
                             assert!(keyword.occurs_in(&format!("150{text}")), "{keyword:?}");

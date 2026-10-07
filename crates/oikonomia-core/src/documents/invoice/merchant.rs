@@ -17,8 +17,8 @@ use crate::documents::invoice::kind::{
     CUSTOMER_BLOCK_LABEL, INVOICE_WORD_GREEK, POWER_BUSINESS_TARIFF, is_sales_invoice,
     is_utility_bill,
 };
-use crate::documents::invoice::normalization::contains_any;
-use crate::documents::keyword::folded;
+use crate::documents::keyword::Keyword::{Prefix, Word};
+use crate::documents::keyword::{Keyword, contains_any, folded};
 use crate::prefs::Locale;
 use crate::text::{
     BillKind, bank_transfer_description, bill_description, customer_invoice_description,
@@ -135,13 +135,13 @@ pub(super) fn find_merchant(text: &str, folded_text: &str) -> Option<Merchant> {
         if contains_any(folded_text, GAS_SUPPLY_MARKERS) {
             return Some(Merchant::UnnamedGasSupplier);
         }
-        if folded_text.contains(POWER_BUSINESS_TARIFF) {
+        if POWER_BUSINESS_TARIFF.occurs_in(folded_text) {
             return Some(Merchant::UnnamedElectricitySupplier);
         }
     }
 
     for line in text.lines() {
-        if folded(line).contains(ISSUER_NAME_LABEL) {
+        if ISSUER_NAME_LABEL.occurs_in(&folded(line)) {
             if let Some(name) = value_after_colon(line)
                 && name.chars().count() >= MIN_NAME_CHARS
             {
@@ -150,7 +150,7 @@ pub(super) fn find_merchant(text: &str, folded_text: &str) -> Option<Merchant> {
             // No colon: the name is what follows the label word.
             let cleaned = line
                 .split_whitespace()
-                .skip_while(|word| *word == ":" || folded(word).contains(ISSUER_NAME_STEM))
+                .skip_while(|word| *word == ":" || ISSUER_NAME_STEM.occurs_in(&folded(word)))
                 .collect::<Vec<_>>()
                 .join(" ");
             if cleaned.chars().count() >= MIN_NAME_CHARS {
@@ -164,7 +164,7 @@ pub(super) fn find_merchant(text: &str, folded_text: &str) -> Option<Merchant> {
         .find(|line| {
             MERCHANT_LINE_CHARS.contains(&line.chars().count())
                 && line.chars().any(char::is_alphabetic)
-                && !folded(line).contains(INVOICE_WORD_GREEK)
+                && !INVOICE_WORD_GREEK.occurs_in(&folded(line))
         })
         .map(|line| Merchant::Named(line.to_owned()))
 }
@@ -180,35 +180,36 @@ const MERCHANT_LINE_CHARS: RangeInclusive<usize> = 5..=80;
 const MIN_CUSTOMER_LINE_CHARS: usize = 5;
 
 /// Markers of a natural gas bill whose supplier is not a known brand.
-pub(super) const GAS_SUPPLY_MARKERS: &[&str] = &[
-    "φυσικου αεριου",
-    "φυσικο αεριο",
-    "gas simple",
-    "προμηθεια φ.α",
+pub(super) const GAS_SUPPLY_MARKERS: &[Keyword] = &[
+    Word("φυσικου αεριου"),
+    Prefix("φυσικο αεριο"),
+    Word("gas simple"),
+    Word("προμηθεια φ.α"),
 ];
 
 /// The label of a legal name, on an issuer or a customer.
-pub(super) const ISSUER_NAME_LABEL: &str = "επωνυμια";
+pub(super) const ISSUER_NAME_LABEL: Keyword = Prefix("επωνυμια");
 
 /// What every inflection of [`ISSUER_NAME_LABEL`] starts with, to skip the
 /// label word itself.
-pub(super) const ISSUER_NAME_STEM: &str = "επων";
+pub(super) const ISSUER_NAME_STEM: Keyword = Prefix("επων");
 
 /// The English label of a name line in a customer block, at the line's
 /// start.
-pub(super) const NAME_LABEL: &str = "name";
+pub(super) const NAME_LABEL: Keyword = Word("name");
 
 /// Headings that open the customer block of a sales invoice.
-pub(super) const CUSTOMER_BLOCK_STARTS: &[&str] = &[CUSTOMER_BLOCK_LABEL, "customer"];
+pub(super) const CUSTOMER_BLOCK_STARTS: &[Keyword] = &[CUSTOMER_BLOCK_LABEL, Word("customer")];
 
 /// Labels of the lines in a customer block that are not the customer's name.
-pub(super) const TAX_ID_OR_ADDRESS_LABELS: &[&str] = &["α.φ.μ", "αφμ", "διευθυν"];
+pub(super) const TAX_ID_OR_ADDRESS_LABELS: &[Keyword] =
+    &[Word("α.φ.μ"), Word("αφμ"), Prefix("διευθυν")];
 
 /// Column headings of the description column of a line-item table.
-pub(super) const DESCRIPTION_HEADERS: &[&str] = &["περιγραφη", "description"];
+pub(super) const DESCRIPTION_HEADERS: &[Keyword] = &[Prefix("περιγραφη"), Word("description")];
 
 /// Column headings that follow the description heading in a table header.
-pub(super) const QUANTITY_HEADERS: &[&str] = &["ποσοτητα", "quantity"];
+pub(super) const QUANTITY_HEADERS: &[Keyword] = &[Prefix("ποσοτητα"), Word("quantity")];
 
 /// The customer's name from the customer block of a sales invoice.
 ///
@@ -232,7 +233,7 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
             continue;
         }
 
-        if (folded_line.contains(ISSUER_NAME_LABEL) || folded_line.starts_with(NAME_LABEL))
+        if (ISSUER_NAME_LABEL.occurs_in(&folded_line) || NAME_LABEL.starts(&folded_line))
             && let Some(name) = value_after_colon(line)
             && name.chars().count() >= MIN_NAME_CHARS
         {
@@ -322,7 +323,7 @@ pub(super) fn find_description(
     if has_reference {
         return Some(Description::InvoiceReference);
     }
-    if folded_text.contains(INVOICE_WORD_GREEK) {
+    if INVOICE_WORD_GREEK.occurs_in(folded_text) {
         return Some(Description::InvoiceWord);
     }
     has_merchant.then_some(Description::MerchantName)

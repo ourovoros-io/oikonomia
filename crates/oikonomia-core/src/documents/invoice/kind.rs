@@ -8,39 +8,40 @@
 
 use crate::documents::analyze::EntryKindSuggestion;
 use crate::documents::brands::known_brand;
-use crate::documents::invoice::normalization::contains_any;
+use crate::documents::keyword::Keyword::{Prefix, Unit, Word};
+use crate::documents::keyword::{Keyword, contains_any};
 
 /// Strong utility markers only. Loose ones such as `ηλεκτρ` also match a
 /// software company's line of business (`ΗΛΕΚΤΡΟΝΙΚΩΝ ΣΥΣΤΗΜΑΤΩΝ`).
-pub(super) const UTILITY_MARKERS: &[&str] = &[
-    "kwh",
-    "ρευμα",
-    "εκκαθαριστικ",
-    "δεδδηε",
-    "ηκασπ",
-    "φυσικου αεριου",
-    "φυσικο αεριο",
-    "προμηθεια φ.α",
-    "χρεωση προμηθειας φ.α",
-    "gas simple",
-    "myon",
-    "κωδικος παροχης",
-    "υδρευσ",
+pub(super) const UTILITY_MARKERS: &[Keyword] = &[
+    Unit("kwh"),
+    Prefix("ρευμα"),
+    Prefix("εκκαθαριστικ"),
+    Word("δεδδηε"),
+    Unit("ηκασπ"),
+    Word("φυσικου αεριου"),
+    Prefix("φυσικο αεριο"),
+    Word("προμηθεια φ.α"),
+    Word("χρεωση προμηθειας φ.α"),
+    Word("gas simple"),
+    Word("myon"),
+    Word("κωδικος παροχης"),
+    Prefix("υδρευσ"),
     POWER_BUSINESS_TARIFF,
 ];
 
 /// A business electricity tariff, printed on bills whose supplier is not
 /// named in the text.
-pub(super) const POWER_BUSINESS_TARIFF: &str = "power business";
+pub(super) const POWER_BUSINESS_TARIFF: Keyword = Word("power business");
 
 /// The heading of the counterparty block on a sales invoice.
-pub(super) const CUSTOMER_BLOCK_LABEL: &str = "στοιχεια πελατη";
+pub(super) const CUSTOMER_BLOCK_LABEL: Keyword = Prefix("στοιχεια πελατη");
 
 /// The English heading of an invoice the book's owner issued.
-pub(super) const SALES_INVOICE_WORDS: &str = "sales invoice";
+pub(super) const SALES_INVOICE_WORDS: Keyword = Word("sales invoice");
 
 /// The word "invoice", in Greek and in English.
-pub(super) const INVOICE_WORDS: &[&str] = &[INVOICE_WORD_GREEK, "invoice"];
+pub(super) const INVOICE_WORDS: &[Keyword] = &[INVOICE_WORD_GREEK, Prefix("invoice")];
 
 /// Wording that marks a utility bill as unpaid: overdue (`ληξιπρόθεσμ-`),
 /// unpaid (`ανεξόφλητ-`), amount due.
@@ -48,20 +49,30 @@ pub(super) const INVOICE_WORDS: &[&str] = &[INVOICE_WORD_GREEK, "invoice"];
 /// Wording that every settlement bill prints, such as "pay by" and "pay
 /// through", is not here; `settlement_bill_is_not_automatically_unpaid` pins
 /// that such a bill is not marked unpaid.
-pub(super) const UTILITY_UNPAID_MARKERS: &[&str] = &["ληξιπροθεσμ", "ανεξοφλητ", "amount due"];
+pub(super) const UTILITY_UNPAID_MARKERS: &[Keyword] = &[
+    Prefix("ληξιπροθεσμ"),
+    Prefix("ανεξοφλητ"),
+    Word("amount due"),
+];
 
 /// Wording of an invoice the book's owner received, which overrides the
 /// signs of a sales invoice.
-pub(super) const PURCHASE_MARKERS: &[&str] = &["τιμολογιο αγορ", "purchase invoice", "supplier"];
+pub(super) const PURCHASE_MARKERS: &[Keyword] = &[
+    Prefix("τιμολογιο αγορ"),
+    Word("purchase invoice"),
+    Prefix("supplier"),
+];
 
 /// Wording that marks a document other than a utility bill as unpaid. `επι
-/// πιστωσει` is "on credit", the payment method of an invoice not yet paid.
-pub(super) const UNPAID_MARKERS: &[&str] = &[
-    "επι πιστωσει",
-    "amount due",
-    "unpaid",
-    "outstanding",
-    "please pay",
+/// πιστωσει` is "on credit", the payment method of an invoice not yet paid;
+/// it is a stem because extraction glues it to the series code that follows
+/// (`Επί πιστώσειB 51`).
+pub(super) const UNPAID_MARKERS: &[Keyword] = &[
+    Prefix("επι πιστωσει"),
+    Word("amount due"),
+    Word("unpaid"),
+    Word("outstanding"),
+    Word("please pay"),
 ];
 
 /// Whether folded text carries one of [`UTILITY_MARKERS`].
@@ -72,7 +83,7 @@ pub(super) fn is_utility_bill(folded_text: &str) -> bool {
 /// Whether folded text is a sales invoice issued by the book's owner: it has
 /// the customer block heading "Στοιχεία Πελάτη" and the word "invoice".
 pub(super) fn is_sales_invoice(folded_text: &str) -> bool {
-    folded_text.contains(CUSTOMER_BLOCK_LABEL) && contains_any(folded_text, INVOICE_WORDS)
+    CUSTOMER_BLOCK_LABEL.occurs_in(folded_text) && contains_any(folded_text, INVOICE_WORDS)
 }
 
 /// What a document is for the books: the entry kind it suggests and, where
@@ -136,7 +147,7 @@ pub(super) fn classify_kind(folded_text: &str) -> DocumentClass {
     }
 
     // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
-    let sales = is_sales_invoice(folded_text) || folded_text.contains(SALES_INVOICE_WORDS);
+    let sales = is_sales_invoice(folded_text) || SALES_INVOICE_WORDS.occurs_in(folded_text);
     let purchase = contains_any(folded_text, PURCHASE_MARKERS);
     let unpaid = contains_any(folded_text, UNPAID_MARKERS);
 
@@ -156,7 +167,7 @@ pub(super) fn classify_kind(folded_text: &str) -> DocumentClass {
 
 /// "Invoice" in Greek. Also part of tariff names ("Σταθερό Τιμολόγιο"), so
 /// on its own it does not make a document an invoice.
-pub(super) const INVOICE_WORD_GREEK: &str = "τιμολογιο";
+pub(super) const INVOICE_WORD_GREEK: Keyword = Prefix("τιμολογιο");
 
 #[cfg(test)]
 mod tests {

@@ -9,8 +9,8 @@
 
 use std::ops::RangeInclusive;
 
-use crate::documents::invoice::normalization::contains_any;
-use crate::documents::keyword::folded;
+use crate::documents::keyword::Keyword::{Prefix, Unit, Word};
+use crate::documents::keyword::{Keyword, contains_any, folded};
 
 /// The document's reference, by the first of these that yields one: a
 /// labelled supply code, a bare NGS supply code, an RF payment code, a MARK
@@ -27,8 +27,11 @@ pub(super) fn find_invoice_reference(text: &str) -> Option<String> {
 }
 
 /// Labels of a supply or meter code. `ηκασπ` is the Greek abbreviation for a
-/// gas delivery point code.
-pub(super) const SUPPLY_CODE_LABELS: &[&str] = &["κωδικος παροχης", "supply", "ηκασπ"];
+/// gas delivery point code. It is matched as a unit, so a digit may stand
+/// right before it: extraction glues the label to the code of the column
+/// before (`SYN000000001ΗΚΑΣΠ:` in `tests/fixtures/ngs_gas_jumbled_extract.txt`).
+pub(super) const SUPPLY_CODE_LABELS: &[Keyword] =
+    &[Word("κωδικος παροχης"), Word("supply"), Unit("ηκασπ")];
 
 /// Lengths of an alphanumeric supply code.
 ///
@@ -104,7 +107,7 @@ pub(super) fn is_rf_then_digits(upper: &str) -> bool {
 /// Labels of the line that carries a MARK number, the registration number
 /// the Greek tax authority gives an invoice. `α.α` (serial number) heads the
 /// same table row as the MARK.
-pub(super) const MARK_LABELS: &[&str] = &["μαρκ", "mark", "α.α", "αα "];
+pub(super) const MARK_LABELS: &[Keyword] = &[Word("μαρκ"), Word("mark"), Word("α.α"), Word("αα")];
 
 /// The MARK number of a Greek invoice: a run of digits on the first MARK or
 /// `Α.Α.` line that has one on it or on the line below.
@@ -123,8 +126,13 @@ fn mark_number(lines: &[&str]) -> Option<String> {
 }
 
 /// Labels of an invoice or reference number.
-pub(super) const REFERENCE_LABELS: &[&str] =
-    &["invoice", "αρ. παραστατ", "αριθμος", "number", "ref"];
+pub(super) const REFERENCE_LABELS: &[Keyword] = &[
+    Word("invoice"),
+    Prefix("αρ. παραστατ"),
+    Word("αριθμος"),
+    Word("number"),
+    Word("ref"),
+];
 
 /// The run of digits on the first line that names an invoice or reference
 /// number and has one.
@@ -275,6 +283,14 @@ mod tests {
         assert_eq!(
             reference("ΚΩΔΙΚΟΣ ΠΑΡΟΧΗΣ: 9 XY99887766 1"),
             Some("XY99887766".into())
+        );
+    }
+
+    #[test]
+    fn reference_reads_a_supply_label_glued_to_the_code_before_it() {
+        assert_eq!(
+            reference("SYN000000001ΗΚΑΣΠ:\nNGS000000001"),
+            Some("SYN000000001".into())
         );
     }
 

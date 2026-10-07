@@ -11,8 +11,8 @@
 //!
 //! 1. The text is normalized ([`normalize`]).
 //! 2. A folded copy is made ([`folded`]): lowercase, Greek accents removed.
-//!    Every label and marker constant in this module is written in that
-//!    form, and a test checks that each one is.
+//!    Every label and marker constant in this module is a [`Keyword`]
+//!    written in that form, and a test checks that each one is.
 //! 3. A Greek bank transfer receipt (`έμβασμα`) is recognized by its wording
 //!    and read by rules of its own ([`parse_bank_transfer`]): the labelled
 //!    principal is the amount, never the fee and never a clock time on the
@@ -45,6 +45,17 @@
 //! The joining step blanks dates and clock times on a private copy of the
 //! line first, so the year of `13/08/2026` is never joined to an amount that
 //! follows it.
+//!
+//! # Matching a label
+//!
+//! A label or marker is matched as a word, never as a bare substring
+//! ([`Keyword`]): a whole word or phrase (`total`, `amount due`), a stem that
+//! takes endings (`πληρωμ`), or a unit that may be glued to a number
+//! (`kwh`). So `Subtotal` does not name a total, `Supermarket` is not a MARK
+//! line, and `Ποσοστό` (percentage) is not the amount label `Ποσό`. The few
+//! markers that are not words are fragments, and say so where they are
+//! defined: the multiplication signs of a rate line, and the `bank` inside a
+//! bank's name.
 //!
 //! # Reading an amount
 //!
@@ -150,14 +161,11 @@
 //!   `amounts_and_dates`).
 //! - **A space before the separator is not joined.** `72, 53` is joined;
 //!   `72 ,53` is not, and reads as 72,00.
-//! - **Labels are matched as substrings.** `subtotal` contains `total`, so
-//!   [`names_a_total`] holds for a subtotal line: such a line is not skipped
-//!   for carrying a percentage, and it gets the value-word weight in the
-//!   fallback. For the same reason `Subtotal amount` carries the label
-//!   `total amount` and can decide stage 1.
-//! - **An identifier marker inside a word hides its line from the
-//!   fallback.** `mark` (the MARK number) is in `supermarket`, so an amount
-//!   on a line with that word is found only by a labelled total.
+//! - **A label glued to its neighbour is not found.** Extraction sometimes
+//!   drops the space between two columns. A whole-word label then has a
+//!   letter or digit against it and does not match, where a substring would
+//!   have. Two labels the corpus shows glued allow for it: `ηκασπ` after a
+//!   code (a unit) and `επι πιστωσει` before one (a stem).
 //! - **Leading zeros in a whole part are accepted beside a decimal mark.**
 //!   `01,50` reads as 1,50, although a bare `08` is not money and `01.234`
 //!   is not a thousands amount.
@@ -177,18 +185,17 @@
 //! [`find_utility_payment_total`]: total::find_utility_payment_total
 //! [`is_noise_amount_line`]: total::is_noise_amount_line
 //! [`money_amounts_on_line`]: money::money_amounts_on_line
-//! [`names_a_total`]: total::names_a_total
 
 use time::Date;
 
 use crate::documents::invoice::dates::find_best_date;
 use crate::documents::invoice::kind::{DocumentClass, classify_kind, is_utility_bill};
 use crate::documents::invoice::merchant::{Description, Merchant, find_description, find_merchant};
-use crate::documents::invoice::normalization::{contains_any, normalize};
+use crate::documents::invoice::normalization::normalize;
 use crate::documents::invoice::reference::find_invoice_reference;
 use crate::documents::invoice::total::find_total_amount;
 use crate::documents::invoice::transfer::{is_bank_transfer_receipt, parse_bank_transfer};
-use crate::documents::keyword::folded;
+use crate::documents::keyword::{Keyword, contains_any, folded};
 use crate::prefs::Locale;
 use crate::ui_text::{UiText, UiTextCode};
 
@@ -325,7 +332,7 @@ pub(crate) fn read_invoice_text(text: &str) -> InvoiceReading {
 
 /// Wording of a document that states it carries no VAT ("without VAT"). A
 /// rate of zero says the same; [`states_a_zero_rate`] finds that.
-const VAT_EXEMPT_MARKERS: &[&str] = &["χωρις φπα"];
+const VAT_EXEMPT_MARKERS: &[Keyword] = &[Keyword::Word("χωρις φπα")];
 
 /// The parts of the confidence that [`InvoiceReading::confidence`] adds up.
 ///
@@ -433,7 +440,7 @@ mod tests {
 
     /// Every label and marker constant of the reader. A constant added to
     /// the module has to be added here to be checked.
-    const LABEL_SETS: &[(&str, &[&str])] = &[
+    const LABEL_SETS: &[(&str, &[Keyword])] = &[
         ("UTILITY_MARKERS", UTILITY_MARKERS),
         ("POWER_BUSINESS_TARIFF", &[POWER_BUSINESS_TARIFF]),
         ("CUSTOMER_BLOCK_LABEL", &[CUSTOMER_BLOCK_LABEL]),
@@ -484,8 +491,8 @@ mod tests {
         for (name, needles) in LABEL_SETS {
             for needle in *needles {
                 assert_eq!(
-                    folded(needle),
-                    *needle,
+                    folded(needle.text()),
+                    needle.text(),
                     "{name}: {needle:?} can never match folded text"
                 );
             }
