@@ -1,14 +1,34 @@
-//! Filesystem locations for the encrypted vault.
+//! Every file name the vault uses, and where the data directory is.
+//!
+//! The names are spelled in this module and nowhere else, so the file set in
+//! the [`crate::vault`] module doc can be checked against one file, and two
+//! protocols cannot pick the same temporary name by accident. Other modules
+//! ask for a path by role (`vault_staged_header_path`, `RestorePaths`) and
+//! never join a literal onto the data directory.
+//!
+//! Names are built on the `OsString` (`with_appended`), not through
+//! `Display`, so a data directory whose path is not valid UTF-8 keeps its
+//! bytes.
 
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
+/// Reverse-domain qualifier of the application identity.
 const QUALIFIER: &str = "io";
+/// Organization part of the application identity.
 const ORGANIZATION: &str = "ourovoros";
+/// Application part of the application identity.
 const APPLICATION: &str = "oikonomia";
 
-/// Platform app-data directory for Oikonomia.
+/// Suffix of the sibling a file is written under before it is renamed over
+/// its destination: an export, a backup archive.
+///
+/// The destination is one the user chose, so unlike the other names in this
+/// module the result is not a file of the data directory.
+pub(crate) const STAGED_SUFFIX: &str = ".tmp";
+
+/// Returns the platform app-data directory for Oikonomia.
 ///
 /// The machine-local directory, never the roaming one: on Windows a roaming
 /// profile copies its files between machines at sign-in, which can replace a
@@ -17,26 +37,30 @@ const APPLICATION: &str = "oikonomia";
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the OS path cannot be resolved.
+/// Returns [`Error::Io`] when the operating system gives no home directory
+/// to derive the path from (`directories::ProjectDirs::from` returns `None`).
 pub fn default_data_dir() -> Result<PathBuf> {
     directories::ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .map(|dirs| dirs.data_local_dir().to_path_buf())
         .ok_or_else(|| Error::Io("could not resolve application data directory".into()))
 }
 
-/// Path to the encrypted `SQLite` / `SQLCipher` database file.
+/// Returns the path of the encrypted `SQLCipher` database, `vault.db`.
 #[must_use]
 pub fn vault_db_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.db")
 }
 
-/// Path to the public vault header (salt + KDF params, not secret).
+/// Returns the path of the public vault header, `vault.header.json`.
+///
+/// The header holds the salt and the key-derivation parameters. None of it
+/// is secret.
 #[must_use]
 pub fn vault_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json")
 }
 
-/// Staging path for the next header during a password change.
+/// Returns the staging path for the next header during a password change.
 ///
 /// If the app dies between the `SQLCipher` rekey and the header rename,
 /// [`crate::vault::Vault::unlock`] falls back to this file so the vault stays
@@ -46,7 +70,7 @@ pub(super) fn vault_staged_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json.tmp")
 }
 
-/// Staging path for the header of a vault that is being created.
+/// Returns the staging path for the header of a vault that is being created.
 ///
 /// [`crate::vault::Vault::init`] renames it to [`vault_header_path`] as its
 /// last step, so this file on its own means an unfinished first run.
@@ -55,7 +79,8 @@ pub(crate) fn vault_init_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json.init")
 }
 
-/// Path of the database snapshot an online backup packs and then removes.
+/// Returns the path of the database snapshot an online backup packs and then
+/// removes.
 #[must_use]
 pub(crate) fn backup_snapshot_db_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.db.backup-tmp")
@@ -64,7 +89,7 @@ pub(crate) fn backup_snapshot_db_path(data_dir: &Path) -> PathBuf {
 /// Every file a restore touches in one data directory.
 ///
 /// The roles, and what each combination of these files means after a crash,
-/// are the restore protocol in the [`crate::vault::backup`] module doc.
+/// are the restore protocol in the `vault::backup` module doc.
 #[derive(Debug)]
 pub(crate) struct RestorePaths {
     /// Live header, [`vault_header_path`].
@@ -112,8 +137,8 @@ impl RestorePaths {
     }
 }
 
-/// Paths of the write-ahead log and the shared-memory index that `SQLite`
-/// keeps next to `db_path` in WAL mode, in that order.
+/// Returns the paths of the write-ahead log and the shared-memory index that
+/// `SQLite` keeps next to `db_path` in WAL mode, in that order.
 #[must_use]
 pub(crate) fn db_sidecar_paths(db_path: &Path) -> [PathBuf; 2] {
     [
