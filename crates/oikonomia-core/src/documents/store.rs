@@ -232,20 +232,26 @@ const DOCUMENT_META_COLUMNS: &str = "d.id, d.entity_id, d.entry_id, d.filename, 
 /// a value of the wrong type: the application wrote the row, so the damage
 /// is in the vault and not in what the caller passed. [`Error::Database`] for any
 /// other driver failure.
-fn map_document_meta(row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
-    let id = stored_id("documents.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_id("documents.entity_id", &read_column::<String>(row, 1)?)?;
-    let entry_id = stored_id("documents.entry_id", &read_column::<String>(row, 2)?)?;
+fn map_document_meta(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<DocumentMeta> {
+    let id = stored_id("documents.id", &read_column::<String>(operation, row, 0)?)?;
+    let entity_id = stored_id(
+        "documents.entity_id",
+        &read_column::<String>(operation, row, 1)?,
+    )?;
+    let entry_id = stored_id(
+        "documents.entry_id",
+        &read_column::<String>(operation, row, 2)?,
+    )?;
 
     Ok(DocumentMeta {
         id,
         entity_id,
         entry_id,
-        filename: read_column(row, 3)?,
-        mime_type: read_column(row, 4)?,
-        size_bytes: read_column(row, 5)?,
-        created_at: read_column(row, 6)?,
-        entry_description: read_column(row, 7)?,
+        filename: read_column(operation, row, 3)?,
+        mime_type: read_column(operation, row, 4)?,
+        size_bytes: read_column(operation, row, 5)?,
+        created_at: read_column(operation, row, 6)?,
+        entry_description: read_column(operation, row, 7)?,
     })
 }
 
@@ -275,7 +281,9 @@ pub fn list_documents(conn: &Connection, entity_id: EntityId) -> Result<Vec<Docu
         .database("list documents")?;
 
     let rows = statement
-        .query_map([entity_id.to_string()], |row| Ok(map_document_meta(row)))
+        .query_map([entity_id.to_string()], |row| {
+            Ok(map_document_meta("list documents", row))
+        })
         .database("list documents")?;
 
     let mut documents = Vec::new();
@@ -307,8 +315,12 @@ pub fn get_document(conn: &Connection, id: DocumentId) -> Result<(DocumentMeta, 
         ),
         [id.to_string()],
         |row| {
-            Ok(map_document_meta(row)
-                .and_then(|meta| Ok((meta, read_column::<Vec<u8>>(row, DATA_COLUMN)?))))
+            Ok(map_document_meta("read document", row).and_then(|meta| {
+                Ok((
+                    meta,
+                    read_column::<Vec<u8>>("read document", row, DATA_COLUMN)?,
+                ))
+            }))
         },
     )
     .map_err(|err| match err {

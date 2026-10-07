@@ -461,7 +461,9 @@ fn load_active_movements(conn: &Connection, entity_id: EntityId) -> Result<SeenM
         .database("read entries for duplicate check")?;
 
     let mapped = statement
-        .query_map([entity_id.to_string()], |row| Ok(map_active_movement(row)))
+        .query_map([entity_id.to_string()], |row| {
+            Ok(map_active_movement("read entries for duplicate check", row))
+        })
         .database("read entries for duplicate check")?;
 
     let mut seen = SeenMovements::default();
@@ -478,14 +480,14 @@ fn load_active_movements(conn: &Connection, entity_id: EntityId) -> Result<SeenM
 ///
 /// [`Error::VaultCorrupt`] naming the column when the date does not parse or
 /// a column has the wrong storage class.
-fn map_active_movement(row: &rusqlite::Row<'_>) -> Result<Movement> {
+fn map_active_movement(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Movement> {
     let date = stored_date(
         "journal_entries.entry_date",
-        &read_column::<String>(row, 0)?,
+        &read_column::<String>(operation, row, 0)?,
     )?;
-    let description: String = read_column(row, 1)?;
-    let amount_minor = read_column(row, 2)?;
-    let flow = Flow::of_result(read_column(row, 3)?);
+    let description: String = read_column(operation, row, 1)?;
+    let amount_minor = read_column(operation, row, 2)?;
+    let flow = Flow::of_result(read_column(operation, row, 3)?);
 
     Ok(Movement::new(date, amount_minor, flow, &description))
 }

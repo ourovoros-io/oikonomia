@@ -306,7 +306,9 @@ pub fn list_recurring_templates_as_of(
         .database("list recurring templates")?;
 
     let rows = stmt
-        .query_map([entity_id.to_string()], |row| Ok(map_template_row(row)))
+        .query_map([entity_id.to_string()], |row| {
+            Ok(map_template_row("list recurring templates", row))
+        })
         .database("list recurring templates")?;
 
     Ok(collect_rows("list recurring templates", rows)?
@@ -762,7 +764,7 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
         WHERE id = ?1
         ",
         [id.to_string()],
-        |row| Ok(map_template_row(row)),
+        |row| Ok(map_template_row("read recurring template", row)),
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::RecurringTemplate),
@@ -780,29 +782,32 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
 /// parse, when the day of a monthly template or an account or the bill
 /// status the kind needs is missing, or when a column has the wrong storage
 /// class.
-fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
-    let id = stored_id("recurring_templates.id", &read_column::<String>(row, 0)?)?;
+fn map_template_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
+    let id = stored_id(
+        "recurring_templates.id",
+        &read_column::<String>(operation, row, 0)?,
+    )?;
     let entity_id = stored_id(
         "recurring_templates.entity_id",
-        &read_column::<String>(row, 1)?,
+        &read_column::<String>(operation, row, 1)?,
     )?;
-    let kind = parse_kind(&read_column::<String>(row, 3)?)?;
-    let cadence = parse_cadence(&read_column::<String>(row, 5)?)?;
-    let schedule = stored_schedule(cadence, read_column(row, 6)?)?;
+    let kind = parse_kind(&read_column::<String>(operation, row, 3)?)?;
+    let cadence = parse_cadence(&read_column::<String>(operation, row, 5)?)?;
+    let schedule = stored_schedule(cadence, read_column(operation, row, 6)?)?;
     let next_date = stored_date(
         "recurring_templates.next_date",
-        &read_column::<String>(row, 13)?,
+        &read_column::<String>(operation, row, 13)?,
     )?;
-    let bill_status = read_column::<Option<String>>(row, 14)?
+    let bill_status = read_column::<Option<String>>(operation, row, 14)?
         .map(|text| parse_bill_status(&text))
         .transpose()?;
 
     let roles = SimpleEntryRoleAccounts {
-        category: stored_account(row, 7, "recurring_templates.category_account_id")?,
-        wallet: stored_account(row, 8, "recurring_templates.wallet_account_id")?,
-        payable: stored_account(row, 9, "recurring_templates.payable_account_id")?,
-        from: stored_account(row, 10, "recurring_templates.from_account_id")?,
-        to: stored_account(row, 11, "recurring_templates.to_account_id")?,
+        category: stored_account(operation, row, 7, "recurring_templates.category_account_id")?,
+        wallet: stored_account(operation, row, 8, "recurring_templates.wallet_account_id")?,
+        payable: stored_account(operation, row, 9, "recurring_templates.payable_account_id")?,
+        from: stored_account(operation, row, 10, "recurring_templates.from_account_id")?,
+        to: stored_account(operation, row, 11, "recurring_templates.to_account_id")?,
     };
     // A template is saved only with the accounts its kind posts to, so a row
     // without one of them was not written by the application.
@@ -813,11 +818,11 @@ fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
         id,
         entity_id,
         fields: RecurringTemplateFields {
-            name: read_column(row, 2)?,
-            amount_minor: read_column(row, 4)?,
+            name: read_column(operation, row, 2)?,
+            amount_minor: read_column(operation, row, 4)?,
             schedule,
             accounts,
-            memo: read_column(row, 12)?,
+            memo: read_column(operation, row, 12)?,
             next_date,
         },
     })
@@ -889,11 +894,12 @@ fn stored_schedule(
 /// [`Error::VaultCorrupt`] naming `column` when the stored text is not an id
 /// or the column has the wrong storage class.
 fn stored_account(
+    operation: &'static str,
     row: &rusqlite::Row<'_>,
     index: usize,
     column: &str,
 ) -> Result<Option<AccountId>> {
-    read_column::<Option<String>>(row, index)?
+    read_column::<Option<String>>(operation, row, index)?
         .map(|text| stored_id(column, &text))
         .transpose()
 }

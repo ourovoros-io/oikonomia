@@ -669,7 +669,7 @@ fn active_lines(conn: &Connection, query: LineQuery) -> Result<Vec<ReportLine>> 
                 format_date(query.to),
                 account_type_str(query.account_type),
             ],
-            |row| Ok(map_report_line(row)),
+            |row| Ok(map_report_line("read account activity", row)),
         )
         .database("read account activity")?;
 
@@ -865,14 +865,14 @@ fn fiscal_year_start(as_of: Date, start_month: Month) -> Date {
 /// - [`Error::VaultCorrupt`] for an account type that does not parse or a
 ///   column of the wrong storage class.
 /// - [`Error::MoneyOverflow`] when the balance does not fit in `i64`.
-fn map_report_line(row: &rusqlite::Row<'_>) -> Result<ReportLine> {
-    let account_type = parse_account_type(&read_column::<String>(row, 2)?)?;
-    let debits: i64 = read_column(row, 3)?;
-    let credits: i64 = read_column(row, 4)?;
+fn map_report_line(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<ReportLine> {
+    let account_type = parse_account_type(&read_column::<String>(operation, row, 2)?)?;
+    let debits: i64 = read_column(operation, row, 3)?;
+    let credits: i64 = read_column(operation, row, 4)?;
 
     Ok(ReportLine {
-        code: read_column(row, 0)?,
-        name: read_column(row, 1)?,
+        code: read_column(operation, row, 0)?,
+        name: read_column(operation, row, 1)?,
         account_type,
         debit_minor: debits,
         credit_minor: credits,

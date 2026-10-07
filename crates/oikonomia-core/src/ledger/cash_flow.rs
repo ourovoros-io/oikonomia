@@ -325,7 +325,7 @@ fn daily_activity(
     let rows = stmt
         .query_map(
             rusqlite::params![entity_id.to_string(), format_date(from), format_date(to)],
-            |row| Ok(map_activity_row(row)),
+            |row| Ok(map_activity_row("read daily activity", row)),
         )
         .database("read daily activity")?;
 
@@ -364,13 +364,20 @@ fn daily_activity(
 ///   amount that is not an integer makes its total a real number, which is
 ///   reported under `debits` or `credits`.
 /// - [`Error::MoneyOverflow`] when the activity does not fit in `i64`.
-fn map_activity_row(row: &rusqlite::Row<'_>) -> Result<(Date, AccountType, i64)> {
+fn map_activity_row(
+    operation: &'static str,
+    row: &rusqlite::Row<'_>,
+) -> Result<(Date, AccountType, i64)> {
     let date = stored_date(
         "journal_entries.entry_date",
-        &read_column::<String>(row, 0)?,
+        &read_column::<String>(operation, row, 0)?,
     )?;
-    let account_type = parse_account_type(&read_column::<String>(row, 1)?)?;
-    let amount = normal_balance(account_type, read_column(row, 2)?, read_column(row, 3)?)?;
+    let account_type = parse_account_type(&read_column::<String>(operation, row, 1)?)?;
+    let amount = normal_balance(
+        account_type,
+        read_column(operation, row, 2)?,
+        read_column(operation, row, 3)?,
+    )?;
 
     Ok((date, account_type, amount))
 }

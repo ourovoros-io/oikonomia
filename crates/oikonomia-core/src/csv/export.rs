@@ -164,14 +164,14 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             .serialization("encode journal CSV")?;
 
         while let Some(row) = rows.next().database("read journal for export")? {
-            let date: String = read_column(row, 0)?;
-            let description: String = read_column(row, 1)?;
-            let reference: Option<String> = read_column(row, 2)?;
-            let code: String = read_column(row, 3)?;
-            let name: String = read_column(row, 4)?;
-            let debit: i64 = read_column(row, 5)?;
-            let credit: i64 = read_column(row, 6)?;
-            let status: String = read_column(row, 7)?;
+            let date: String = read_column("read journal for export", row, 0)?;
+            let description: String = read_column("read journal for export", row, 1)?;
+            let reference: Option<String> = read_column("read journal for export", row, 2)?;
+            let code: String = read_column("read journal for export", row, 3)?;
+            let name: String = read_column("read journal for export", row, 4)?;
+            let debit: i64 = read_column("read journal for export", row, 5)?;
+            let credit: i64 = read_column("read journal for export", row, 6)?;
+            let status: String = read_column("read journal for export", row, 7)?;
 
             let description = neutralize_formula(&description);
             let reference = neutralize_formula(reference.as_deref().unwrap_or(""));

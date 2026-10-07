@@ -78,7 +78,7 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
         .database("list entities")?;
 
     let rows = stmt
-        .query_map([], |row| Ok(map_entity(row)))
+        .query_map([], |row| Ok(map_entity("list entities", row)))
         .database("list entities")?;
 
     collect_rows("list entities", rows)
@@ -102,7 +102,7 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
         FROM entities WHERE id = ?1
         ",
         [id.to_string()],
-        |row| Ok(map_entity(row)),
+        |row| Ok(map_entity("read entity", row)),
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Entity),
@@ -453,13 +453,13 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
 /// [`Error::VaultCorrupt`] naming the column when the id, the base currency,
 /// the chart template or the fiscal year start month does not parse, or a
 /// column has the wrong storage class.
-fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
-    let id = stored_id("entities.id", &read_column::<String>(row, 0)?)?;
-    let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
+fn map_entity(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Entity> {
+    let id = stored_id("entities.id", &read_column::<String>(operation, row, 0)?)?;
+    let chart_template = parse_chart_template(&read_column::<String>(operation, row, 4)?)?;
 
     // Reports derive the fiscal year from this number, so one outside the
     // calendar is refused here instead of shifting every year boundary.
-    let stored_month: i64 = read_column(row, 3)?;
+    let stored_month: i64 = read_column(operation, row, 3)?;
     let fiscal_year_start_month = u8::try_from(stored_month)
         .ok()
         .and_then(|number| Month::try_from(number).ok())
@@ -473,7 +473,7 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
     // The code is a key into the table of decimal digits and is handed to
     // the UI's number formatter, so text that is not a code is refused here
     // instead of being formatted with a guessed number of decimals.
-    let stored_currency: String = read_column(row, 2)?;
+    let stored_currency: String = read_column(operation, row, 2)?;
     let base_currency = stored_currency.parse().map_err(|_| {
         corrupt_column(
             "entities.base_currency",
@@ -483,7 +483,7 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
 
     Ok(Entity {
         id,
-        name: read_column(row, 1)?,
+        name: read_column(operation, row, 1)?,
         base_currency,
         fiscal_year_start_month,
         chart_template,

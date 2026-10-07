@@ -284,7 +284,10 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
             [id.to_string()],
             |row| {
                 let voided_by: Option<String> = row.get(7)?;
-                Ok((map_entry_row(row), voided_by.is_some()))
+                Ok((
+                    map_entry_row("read journal entry", row),
+                    voided_by.is_some(),
+                ))
             },
         )
         .map_err(|err| match err {
@@ -604,7 +607,7 @@ pub fn account_register(
 
     let rows = stmt
         .query_map(rusqlite::params![account_id.to_string(), from, to], |row| {
-            Ok(map_register_row(row))
+            Ok(map_register_row("read account register", row))
         })
         .database("read account register")?;
 
@@ -798,7 +801,7 @@ fn load_listed_headers(
     let rows = stmt
         .query_map(listed.bound(), |row| {
             let is_voided: i64 = row.get(8)?;
-            Ok(map_entry_row(row).map(|entry| (entry, is_voided != 0)))
+            Ok(map_entry_row("list journal entries", row).map(|entry| (entry, is_voided != 0)))
         })
         .database("list journal entries")?;
 
@@ -876,7 +879,9 @@ fn load_listed_lines(
     );
     let mut stmt = conn.prepare(&sql).database("list journal lines")?;
     let rows = stmt
-        .query_map(listed.bound(), |row| Ok(map_line_row(row)))
+        .query_map(listed.bound(), |row| {
+            Ok(map_line_row("list journal lines", row))
+        })
         .database("list journal lines")?;
 
     let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
@@ -905,7 +910,9 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
         .database("read journal lines")?;
 
     let rows = stmt
-        .query_map([entry_id.to_string()], |row| Ok(map_line_row(row)))
+        .query_map([entry_id.to_string()], |row| {
+            Ok(map_line_row("read journal lines", row))
+        })
         .database("read journal lines")?;
 
     collect_rows("read journal lines", rows)
@@ -1199,13 +1206,25 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
 /// [`Error::VaultCorrupt`] naming the column when an id does not parse, an
 /// amount is negative, both amounts are zero or both are greater than zero,
 /// or a column has the wrong storage class.
-fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
-    let id = stored_id("journal_lines.id", &read_column::<String>(row, 0)?)?;
-    let entry_id = stored_id("journal_lines.entry_id", &read_column::<String>(row, 1)?)?;
-    let account_id = stored_id("journal_lines.account_id", &read_column::<String>(row, 2)?)?;
+fn map_line_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<JournalLine> {
+    let id = stored_id(
+        "journal_lines.id",
+        &read_column::<String>(operation, row, 0)?,
+    )?;
+    let entry_id = stored_id(
+        "journal_lines.entry_id",
+        &read_column::<String>(operation, row, 1)?,
+    )?;
+    let account_id = stored_id(
+        "journal_lines.account_id",
+        &read_column::<String>(operation, row, 2)?,
+    )?;
 
-    let debit = stored_amount("journal_lines.debit_minor", read_column(row, 3)?)?;
-    let credit = stored_amount("journal_lines.credit_minor", read_column(row, 4)?)?;
+    let debit = stored_amount("journal_lines.debit_minor", read_column(operation, row, 3)?)?;
+    let credit = stored_amount(
+        "journal_lines.credit_minor",
+        read_column(operation, row, 4)?,
+    )?;
     // The schema's `CHECK` allows a line one side only, so a row with both
     // or neither was not written by the application.
     let (side, amount) = Side::from_columns(debit, credit).map_err(|_| {
@@ -1225,7 +1244,7 @@ fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
         account_id,
         amount,
         side,
-        memo: read_column(row, 5)?,
+        memo: read_column(operation, row, 5)?,
     })
 }
 
@@ -1237,21 +1256,24 @@ fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
 ///
 /// [`Error::VaultCorrupt`] naming the column when the id or the date does
 /// not parse, or a column has the wrong storage class.
-fn map_register_row(row: &rusqlite::Row<'_>) -> Result<RegisterLine> {
-    let entry_id = stored_id("journal_entries.id", &read_column::<String>(row, 0)?)?;
+fn map_register_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<RegisterLine> {
+    let entry_id = stored_id(
+        "journal_entries.id",
+        &read_column::<String>(operation, row, 0)?,
+    )?;
     let entry_date = stored_date(
         "journal_entries.entry_date",
-        &read_column::<String>(row, 1)?,
+        &read_column::<String>(operation, row, 1)?,
     )?;
 
     Ok(RegisterLine {
         entry_id,
         entry_date,
-        description: read_column(row, 2)?,
-        debit_minor: read_column(row, 3)?,
-        credit_minor: read_column(row, 4)?,
+        description: read_column(operation, row, 2)?,
+        debit_minor: read_column(operation, row, 3)?,
+        credit_minor: read_column(operation, row, 4)?,
         balance_minor: 0,
-        hidden: read_column::<i64>(row, 5)? != 0,
+        hidden: read_column::<i64>(operation, row, 5)? != 0,
     })
 }
 
@@ -1273,14 +1295,20 @@ fn stored_amount(column: &str, minor: i64) -> Result<Money> {
 ///
 /// [`Error::VaultCorrupt`] naming the column when an id, the date or the
 /// status does not parse, or a column has the wrong storage class.
-fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
-    let id = stored_id("journal_entries.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_id("journal_entries.entity_id", &read_column::<String>(row, 1)?)?;
+fn map_entry_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
+    let id = stored_id(
+        "journal_entries.id",
+        &read_column::<String>(operation, row, 0)?,
+    )?;
+    let entity_id = stored_id(
+        "journal_entries.entity_id",
+        &read_column::<String>(operation, row, 1)?,
+    )?;
     let entry_date = stored_date(
         "journal_entries.entry_date",
-        &read_column::<String>(row, 2)?,
+        &read_column::<String>(operation, row, 2)?,
     )?;
-    let status = match read_column::<String>(row, 5)?.as_str() {
+    let status = match read_column::<String>(operation, row, 5)?.as_str() {
         "posted" => EntryStatus::Posted,
         "draft" => EntryStatus::Draft,
         other => {
@@ -1295,10 +1323,10 @@ fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
         id,
         entity_id,
         entry_date,
-        description: read_column(row, 3)?,
-        reference: read_column(row, 4)?,
+        description: read_column(operation, row, 3)?,
+        reference: read_column(operation, row, 4)?,
         status,
-        hidden: read_column::<i64>(row, 6)? != 0,
+        hidden: read_column::<i64>(operation, row, 6)? != 0,
     })
 }
 

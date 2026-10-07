@@ -84,7 +84,9 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
         .database("list accounts")?;
 
     let rows = stmt
-        .query_map([entity_id.to_string()], |row| Ok(map_account(row)))
+        .query_map([entity_id.to_string()], |row| {
+            Ok(map_account("list accounts", row))
+        })
         .database("list accounts")?;
 
     collect_rows("list accounts", rows)
@@ -106,7 +108,7 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
         FROM accounts WHERE id = ?1
         ",
         [id.to_string()],
-        |row| Ok(map_account(row)),
+        |row| Ok(map_account("read account", row)),
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Account),
@@ -289,25 +291,28 @@ fn account_write_error(err: &rusqlite::Error) -> Error {
 /// [`Error::VaultCorrupt`] naming the column when the id, the entity, the
 /// type or the parent does not parse, or a column has the wrong storage
 /// class. No half-read account is returned.
-fn map_account(row: &rusqlite::Row<'_>) -> Result<Account> {
-    let id = stored_id("accounts.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_id("accounts.entity_id", &read_column::<String>(row, 1)?)?;
-    let account_type = parse_account_type(&read_column::<String>(row, 4)?)?;
+fn map_account(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Account> {
+    let id = stored_id("accounts.id", &read_column::<String>(operation, row, 0)?)?;
+    let entity_id = stored_id(
+        "accounts.entity_id",
+        &read_column::<String>(operation, row, 1)?,
+    )?;
+    let account_type = parse_account_type(&read_column::<String>(operation, row, 4)?)?;
 
-    let parent_id = read_column::<Option<String>>(row, 5)?
+    let parent_id = read_column::<Option<String>>(operation, row, 5)?
         .map(|text| stored_id("accounts.parent_id", &text))
         .transpose()?;
 
     Ok(Account {
         id,
         entity_id,
-        code: read_column(row, 2)?,
-        name: read_column(row, 3)?,
+        code: read_column(operation, row, 2)?,
+        name: read_column(operation, row, 3)?,
         account_type,
         parent_id,
-        is_active: read_column::<i64>(row, 6)? != 0,
-        is_system: read_column::<i64>(row, 7)? != 0,
-        sort_order: i32::try_from(read_column::<i64>(row, 8)?).unwrap_or(0),
+        is_active: read_column::<i64>(operation, row, 6)? != 0,
+        is_system: read_column::<i64>(operation, row, 7)? != 0,
+        sort_order: i32::try_from(read_column::<i64>(operation, row, 8)?).unwrap_or(0),
     })
 }
 
