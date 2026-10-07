@@ -245,8 +245,9 @@ pub struct EntryFilter {
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] for a stored id, date, status or amount that does
-/// not parse; database errors as [`Error::Database`].
+/// [`Error::VaultCorrupt`] for a stored id, date or amount that does not
+/// parse; database errors as [`Error::Database`]. A stored status that is
+/// not `posted` is not an error here: the query leaves that entry out.
 pub fn list_entries(
     conn: &Connection,
     entity_id: EntityId,
@@ -318,25 +319,29 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
 ///
 /// Any entry can be hidden or shown again, a voided one included.
 ///
+/// The entry is read before the flag is written and returned with the new
+/// flag, so an entry that fails to read is left as it was.
+///
 /// # Errors
 ///
 /// [`Error::NotFound`] for an unknown entry; [`Error::VaultCorrupt`] for a
-/// stored row that does not parse; database errors as [`Error::Database`].
+/// stored row that does not parse, which includes an entry whose stored
+/// status is not `posted`; database errors as [`Error::Database`].
 pub fn set_entry_hidden(
     conn: &Connection,
     id: JournalEntryId,
     hidden: bool,
 ) -> Result<PostedEntryView> {
-    let updated = conn
-        .execute(
-            "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
-            rusqlite::params![i64::from(hidden), id.to_string()],
-        )
-        .database("set journal entry visibility")?;
-    if updated == 0 {
-        return Err(Error::NotFound(Resource::JournalEntry));
-    }
-    get_entry(conn, id)
+    let mut view = get_entry(conn, id)?;
+
+    conn.execute(
+        "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
+        rusqlite::params![i64::from(hidden), id.to_string()],
+    )
+    .database("set journal entry visibility")?;
+
+    view.entry.hidden = hidden;
+    Ok(view)
 }
 
 /// Validates and posts a journal entry atomically.
@@ -787,8 +792,7 @@ fn like_pattern(text: &str) -> String {
 ///
 /// # Errors
 ///
-/// - [`Error::VaultCorrupt`] for a stored id, date or status that does not
-///   parse.
+/// - [`Error::VaultCorrupt`] for a stored id or date that does not parse.
 /// - [`Error::Database`] on database errors.
 fn load_listed_headers(
     conn: &Connection,

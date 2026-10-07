@@ -29,13 +29,16 @@
 //!
 //! - `journal_entries.status` is `TEXT NOT NULL` with no `CHECK`, so the
 //!   schema permits any text, `draft` included. The application writes
-//!   `posted` and nothing else. The entry list and every report select
-//!   `status = 'posted'`, so a row that holds another status is in no list
-//!   and no balance; read by its id, it is reported as a corrupt vault.
+//!   `posted` and nothing else. The entry list, the register, the journal
+//!   export and every report select `status = 'posted'`, so a row that
+//!   holds another status is in none of them and in no balance; read by its
+//!   id, it is reported as a corrupt vault. The document queries join the
+//!   entry without that test, so its documents are still listed.
 //! - `accounts.parent_id` is a nullable reference to another account. The
-//!   column is reserved: no statement of the application names it, so every
-//!   row written from now on holds NULL, and whatever an older row holds
-//!   there is not read.
+//!   column is reserved: no statement after the `CREATE TABLE` names it, so
+//!   every row written from now on holds NULL, and whatever an older row
+//!   holds there is not read. `SQLite` still enforces the reference, so a
+//!   value put there by other means must be the id of an account.
 
 use crate::db::{collect_rows, read_column};
 use crate::error::{DatabaseContext, Error, Result, VaultCorruption};

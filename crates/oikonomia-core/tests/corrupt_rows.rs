@@ -18,7 +18,7 @@ use oikonomia_core::ledger::{
     RecurringSchedule, SimpleEntryKind, account_register, activity_window, balance_sheet,
     cash_flow_series, create_recurring_template, get_entity, get_entry, get_recurring_template,
     list_accounts, list_entities, list_entries, list_recurring_templates, post_recurring_template,
-    post_simple_entry, trial_balance, void_entry,
+    post_simple_entry, set_entry_hidden, trial_balance, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -153,6 +153,13 @@ fn a_stored_draft_entry_is_corrupt() {
 
     assert_corrupt(get_entry(conn, book.entry_id), column);
     assert_corrupt(void_entry(conn, book.entry_id, Locale::En), column);
+
+    // The row is reported before anything is written to it.
+    assert_corrupt(set_entry_hidden(conn, book.entry_id, true), column);
+    let hidden: i64 = conn
+        .query_row("SELECT hidden FROM journal_entries", [], |row| row.get(0))
+        .expect("read the flag");
+    assert_eq!(hidden, 0);
 }
 
 /// A value of the wrong storage class is damage too. The driver reports it
