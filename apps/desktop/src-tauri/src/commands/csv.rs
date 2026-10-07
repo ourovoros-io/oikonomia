@@ -7,7 +7,8 @@
 //! earlier and the webview passes back with a column mapping.
 
 use crate::commands::support::{
-    SaveTarget, dialog_path, require_granted_path, run_blocking, save_with_dialog, with_connection,
+    FileDialog, SaveTarget, dialog_path, require_granted_path, run_blocking, save_with_dialog,
+    with_connection,
 };
 use crate::error::CommandResult;
 use crate::state::{AppState, GrantPurpose};
@@ -35,7 +36,7 @@ use tauri::{Runtime, State};
 ///
 /// Returns `path_not_granted` for a path the user did not pick in the CSV
 /// dialog;
-/// `save_location_invalid` when the dialog's answer is not a path; `io` when
+/// `open_location_invalid` when the dialog's answer is not a path; `io` when
 /// the file cannot be read; one of the `csv_` codes when it is over the size
 /// limit, not UTF-8, empty, malformed, or has no usable date and amount
 /// columns, or when the column mapping is refused; `not_found` when
@@ -138,7 +139,7 @@ pub(crate) async fn csv_export_journal(
 ///
 /// # Errors
 ///
-/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// Returns `open_location_invalid` when the dialog's answer is not a path,
 /// and `task_failed` when the blocking task panics.
 async fn pick_csv_path<R: Runtime>(
     app: &tauri::AppHandle<R>,
@@ -155,7 +156,7 @@ async fn pick_csv_path<R: Runtime>(
             return Ok(None);
         };
 
-        let path = dialog_path(picked, "CSV")?;
+        let path = dialog_path(picked, FileDialog::OpenCsv)?;
         grants.grant(GrantPurpose::Csv, [path.clone()]);
         Ok(Some(path))
     })

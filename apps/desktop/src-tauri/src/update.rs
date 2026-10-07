@@ -24,7 +24,8 @@ use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
 /// Returns where a downloaded update waits to be installed: a directory of
-/// its own under this user's cache location.
+/// its own under `app_cache_dir`, this user's cache location for the app as
+/// Tauri's path resolver reports it.
 ///
 /// Not the system temporary directory. On Linux that is shared by every
 /// account, and whoever creates the directory first could swap the verified
@@ -32,13 +33,12 @@ use tauri::{Manager, State};
 ///
 /// # Errors
 ///
-/// Returns `task_failed` when the system names no cache directory. No task
-/// is involved; `crate::error` lists this among the codes used more broadly
-/// than their name.
-fn updater_cache_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
-    let cache = app.path().app_cache_dir().map_err(|err| {
+/// Returns `cache_dir_unavailable` when the system names no cache directory,
+/// which is when `app_cache_dir` is an error.
+fn updater_cache_dir(app_cache_dir: tauri::Result<PathBuf>) -> CommandResult<PathBuf> {
+    let cache = app_cache_dir.map_err(|err| {
         CommandError::desktop(
-            DesktopError::TaskFailed,
+            DesktopError::CacheDirUnavailable,
             format!("no cache directory for updates: {err}"),
         )
     })?;
@@ -59,14 +59,14 @@ fn updater_cache_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
 ///
 /// # Errors
 ///
-/// Returns `task_failed` when the system names no cache directory or the
-/// blocking task panics.
+/// Returns `cache_dir_unavailable` when the system names no cache directory,
+/// and `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn update_check(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<UpdateStatus> {
-    let cache = updater_cache_dir(&app)?;
+    let cache = updater_cache_dir(app.path().app_cache_dir())?;
     let version = env!("CARGO_PKG_VERSION").to_owned();
 
     run_check(state.update_machine(), move || {
@@ -236,15 +236,15 @@ impl Drop for PendingInstall<'_> {
 ///
 /// Returns `update_install_not_allowed` unless the last check found an
 /// update this copy may install, the code of the
-/// [`UpdateError`] when the client configuration cannot be built, and
-/// `task_failed` when the system names no cache directory or the blocking
-/// task panics.
+/// [`UpdateError`] when the client configuration cannot be built,
+/// `cache_dir_unavailable` when the system names no cache directory, and
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn update_install(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<UpdateStatus> {
-    let cache = updater_cache_dir(&app)?;
+    let cache = updater_cache_dir(app.path().app_cache_dir())?;
     let machine = state.update_machine();
     let version = env!("CARGO_PKG_VERSION").to_owned();
 
@@ -312,11 +312,11 @@ fn install_available_update(
 
 #[cfg(test)]
 mod tests {
-    use super::{install_available_update, run_check};
+    use super::{install_available_update, run_check, updater_cache_dir};
     use crate::update_key::UPDATER_PUBLIC_KEY;
     use oikonomia_update::{
-        ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallRoute, UpdateError,
-        UpdateMachine, UpdateStatus,
+        ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallRoute, InstallStep,
+        UpdateError, UpdateMachine, UpdateStatus,
     };
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -331,8 +331,29 @@ mod tests {
     impl ArtifactInstaller for SpyInstaller {
         fn install(&self, _artifact: &Path) -> oikonomia_update::Result<InstallHandoff> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Err(UpdateError::ArtifactIntegrity)
+            Err(UpdateError::InstallFailed {
+                step: InstallStep::Replace,
+            })
         }
+    }
+
+    #[test]
+    fn the_update_cache_is_a_directory_of_its_own_under_the_app_cache() {
+        let cache = std::path::PathBuf::from("cache").join("io.oikonomia");
+
+        assert_eq!(
+            updater_cache_dir(Ok(cache.clone())).expect("a cache directory"),
+            cache.join("updater")
+        );
+    }
+
+    #[test]
+    fn a_system_that_names_no_cache_directory_is_reported_as_that() {
+        let refused = updater_cache_dir(Err(tauri::Error::UnknownPath)).expect_err("no cache");
+
+        assert_eq!(refused.code, "cache_dir_unavailable");
+        assert_ne!(refused.code, "task_failed", "no task is involved");
+        assert_eq!(refused.params, std::collections::BTreeMap::new());
     }
 
     #[test]

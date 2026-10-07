@@ -65,8 +65,8 @@ pub(crate) async fn settings_set_lock_timeout(
 ///
 /// # Errors
 ///
-/// Returns `task_failed` when the application state was never set up or the
-/// blocking task panics.
+/// Returns `app_state_unavailable` when the application state was never set
+/// up, and `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale> {
     with_prefs_blocking(
@@ -83,9 +83,9 @@ pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written, and
-/// `task_failed` when the application state was never set up or the blocking
-/// task panics.
+/// Returns `io` when the preferences file cannot be written,
+/// `app_state_unavailable` when the application state was never set up, and
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_set_locale(
     app: tauri::AppHandle,
@@ -115,9 +115,9 @@ pub(crate) async fn settings_set_locale(
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written, and
-/// `task_failed` when the application state was never set up or the blocking
-/// task panics.
+/// Returns `io` when the preferences file cannot be written,
+/// `app_state_unavailable` when the application state was never set up, and
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_resolve_locale(
     app: tauri::AppHandle,
@@ -148,8 +148,8 @@ pub(crate) async fn settings_resolve_locale(
 ///
 /// # Errors
 ///
-/// Returns `task_failed` when the application state was never set up or the
-/// blocking task panics.
+/// Returns `app_state_unavailable` when the application state was never set
+/// up, and `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_get_ui_prefs<R: Runtime>(
     app: tauri::AppHandle<R>,
@@ -165,9 +165,9 @@ pub(crate) async fn settings_get_ui_prefs<R: Runtime>(
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written, and
-/// `task_failed` when the application state was never set up or the blocking
-/// task panics.
+/// Returns `io` when the preferences file cannot be written,
+/// `app_state_unavailable` when the application state was never set up, and
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_remember_quick_add<R: Runtime>(
     app: tauri::AppHandle<R>,
@@ -195,8 +195,8 @@ pub(crate) async fn settings_remember_quick_add<R: Runtime>(
 ///
 /// # Errors
 ///
-/// Returns the error `work` returns, and `task_failed` when the application
-/// state was never set up or the blocking task panics.
+/// Returns the error `work` returns, `app_state_unavailable` when the state
+/// was never set up, and `task_failed` when the blocking task panics.
 async fn with_prefs_blocking<R, T, F>(app: tauri::AppHandle<R>, work: F) -> CommandResult<T>
 where
     R: Runtime,
@@ -209,7 +209,7 @@ where
         // webview is still running.
         let Some(state) = app.try_state::<AppState>() else {
             return Err(CommandError::desktop(
-                DesktopError::TaskFailed,
+                DesktopError::AppStateUnavailable,
                 "application state is not set up",
             ));
         };
@@ -226,7 +226,9 @@ where
 #[cfg(test)]
 #[cfg(not(windows))]
 mod ipc_tests {
-    use crate::commands::settings::{settings_get_ui_prefs, settings_remember_quick_add};
+    use crate::commands::settings::{
+        settings_get_ui_prefs, settings_remember_quick_add, with_prefs_blocking,
+    };
     use crate::commands::support::ipc_test_support::MockApp;
 
     /// An entity id as the webview sends it.
@@ -316,6 +318,28 @@ mod ipc_tests {
                 format!("{OTHER_ENTITY}:expense"): first,
             })
         );
+    }
+
+    /// After a failed start the hidden webview still runs and calls the
+    /// preferences commands, with no state for them to read.
+    #[test]
+    fn a_preferences_command_with_no_application_state_says_so_and_does_no_work() {
+        let app = tauri::test::mock_app();
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let work_ran = std::sync::Arc::clone(&ran);
+
+        let refused = tauri::async_runtime::block_on(with_prefs_blocking(
+            app.handle().clone(),
+            move |_app, _state| {
+                work_ran.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        ))
+        .unwrap_err();
+
+        assert_eq!(refused.code, "app_state_unavailable");
+        assert_ne!(refused.code, "task_failed", "no task failed");
+        assert!(!ran.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

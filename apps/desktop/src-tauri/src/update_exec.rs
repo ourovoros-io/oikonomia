@@ -49,15 +49,34 @@
 //!
 //! A wrong kind is [`UpdateError::InstallNotAvailable`] and a wrong file type
 //! is [`UpdateError::ArtifactUrl`]. Every other failure is
-//! [`UpdateError::ArtifactIntegrity`], whatever went wrong: the update crate
-//! has no variant for a failed install step (`crate::error` lists this among
-//! the codes used more broadly than their name). Most paths log the cause
-//! first, but only a debug build keeps a log.
+//! [`UpdateError::InstallFailed`] with the [`InstallStep`] that failed: the
+//! artifact has passed verification by the time it reaches this module, so
+//! nothing here reports a failed verification.
+//!
+//! | Step | Fails when |
+//! |------|------------|
+//! | `FindArtifact` | the verified download is no longer a file, or cannot be opened |
+//! | `FindRunningCopy` | the running executable, or its bundle or image, cannot be named |
+//! | `Unpack` | the archive does not unpack into one app with the running executable |
+//! | `Stage` | the new image cannot be written beside the running one |
+//! | `SetPermissions` | the staged image cannot be made executable |
+//! | `Replace` | the new copy cannot be moved into the place of the old one |
+//! | `StartInstaller` | the installer process cannot be started |
+//!
+//! The step is all the error carries. Most paths log the operating system's
+//! error first, but only a debug build keeps a log.
 
-use oikonomia_update::{ArtifactInstaller, InstallHandoff, InstallRoute, Result, UpdateError};
+use oikonomia_update::{
+    ArtifactInstaller, InstallHandoff, InstallRoute, InstallStep, Result, UpdateError,
+};
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::process::Command;
+
+/// Returns the error for an install that failed at `step`.
+const fn failed_at(step: InstallStep) -> UpdateError {
+    UpdateError::InstallFailed { step }
+}
 
 /// How this copy of the app got onto the machine, which decides how (and
 /// whether) it may replace itself.
@@ -187,8 +206,8 @@ impl ArtifactInstaller for VerifiedPathInstaller {
 ///
 /// Returns [`UpdateError::InstallNotAvailable`] for a package-managed copy,
 /// [`UpdateError::ArtifactUrl`] when the artifact is not the file type this
-/// kind installs, and [`UpdateError::ArtifactIntegrity`] when the file is
-/// missing or the installer fails.
+/// kind installs, and [`UpdateError::InstallFailed`] when the file is
+/// missing ([`InstallStep::FindArtifact`]) or a step of the installer fails.
 pub(crate) fn install_verified_artifact(
     kind: &InstallKind,
     artifact: &Path,
@@ -203,7 +222,7 @@ pub(crate) fn install_verified_artifact(
         return Err(UpdateError::ArtifactUrl);
     }
     if !artifact.is_file() {
-        return Err(UpdateError::ArtifactIntegrity);
+        return Err(failed_at(InstallStep::FindArtifact));
     }
 
     run_platform_installer(kind, artifact)
@@ -214,7 +233,7 @@ pub(crate) fn install_verified_artifact(
 /// # Errors
 ///
 /// Returns [`UpdateError::InstallNotAvailable`] for any other kind, and
-/// [`UpdateError::ArtifactIntegrity`] when the image cannot be replaced.
+/// [`UpdateError::InstallFailed`] when the image cannot be replaced.
 #[cfg(target_os = "linux")]
 fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
     let InstallKind::AppImage(current) = kind else {
@@ -229,7 +248,7 @@ fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<Install
 /// # Errors
 ///
 /// Returns [`UpdateError::InstallNotAvailable`] for any other kind, and
-/// [`UpdateError::ArtifactIntegrity`] when the installer cannot be started.
+/// [`UpdateError::InstallFailed`] when the installer cannot be started.
 #[cfg(target_os = "windows")]
 fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
     let InstallKind::WindowsInstaller = kind else {
@@ -246,7 +265,7 @@ fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<Install
 ///
 /// Returns [`UpdateError::InstallNotAvailable`] for any other kind, or when
 /// the running copy is the bundle a failed update set aside, and
-/// [`UpdateError::ArtifactIntegrity`] when the bundle cannot be replaced.
+/// [`UpdateError::InstallFailed`] when the bundle cannot be replaced.
 #[cfg(target_os = "macos")]
 fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<InstallHandoff> {
     let InstallKind::MacApp = kind else {
@@ -254,7 +273,7 @@ fn run_platform_installer(kind: &InstallKind, artifact: &Path) -> Result<Install
     };
     let current = std::env::current_exe().map_err(|err| {
         log::warn!("current exe path failed: {err}");
-        UpdateError::ArtifactIntegrity
+        failed_at(InstallStep::FindRunningCopy)
     })?;
     extract_macos_app_archive(artifact, &current)?;
     Ok(InstallHandoff::Replaced)
@@ -280,34 +299,61 @@ fn run_platform_installer(_kind: &InstallKind, _artifact: &Path) -> Result<Insta
 ///
 /// Compiled for tests on every Unix so the replacement is exercised on a
 /// development machine; only a Linux `AppImage` copy reaches it otherwise.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::InstallFailed`] with the step that failed:
+/// `FindRunningCopy` when `current` has no parent directory or no UTF-8 file
+/// name, and otherwise the step [`stage_and_swap_appimage`] names.
 #[cfg(any(target_os = "linux", all(test, unix)))]
 fn replace_linux_appimage(verified: &Path, current: &Path) -> Result<()> {
-    let parent = current.parent().ok_or(UpdateError::ArtifactIntegrity)?;
+    let parent = current
+        .parent()
+        .ok_or_else(|| failed_at(InstallStep::FindRunningCopy))?;
     let file_name = current
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or(UpdateError::ArtifactIntegrity)?;
+        .ok_or_else(|| failed_at(InstallStep::FindRunningCopy))?;
     let staging = parent.join(format!(".{file_name}.staging"));
 
-    stage_and_swap_appimage(verified, &staging, current).map_err(|err| {
-        log::warn!("appimage replace failed: {err}");
-        UpdateError::ArtifactIntegrity
+    stage_and_swap_appimage(verified, &staging, current).map_err(|(step, err)| {
+        log::warn!("appimage replace failed: cannot {step}: {err}");
+        failed_at(step)
     })
 }
 
 /// Copies `verified` into a new file at `staging`, then renames it over
 /// `current`. On any failure the staging file is removed again.
+///
+/// # Errors
+///
+/// Returns the step that failed with the operating system's error:
+/// `FindArtifact` when `verified` cannot be opened, `Stage` when the staging
+/// file cannot be created, written or flushed, `SetPermissions` when it
+/// cannot be made executable, and `Replace` when it cannot be renamed over
+/// `current`.
 #[cfg(any(target_os = "linux", all(test, unix)))]
-fn stage_and_swap_appimage(verified: &Path, staging: &Path, current: &Path) -> std::io::Result<()> {
-    let mut source = std::fs::File::open(verified)?;
-    let mut staged = StagingFile::create(staging)?;
+fn stage_and_swap_appimage(
+    verified: &Path,
+    staging: &Path,
+    current: &Path,
+) -> std::result::Result<(), (InstallStep, std::io::Error)> {
+    let at = |step: InstallStep| move |err: std::io::Error| (step, err);
 
-    std::io::copy(&mut source, &mut staged.file)?;
+    let mut source = std::fs::File::open(verified).map_err(at(InstallStep::FindArtifact))?;
+    let mut staged = StagingFile::create(staging).map_err(at(InstallStep::Stage))?;
+    staged
+        .make_executable()
+        .map_err(at(InstallStep::SetPermissions))?;
+
+    std::io::copy(&mut source, &mut staged.file).map_err(at(InstallStep::Stage))?;
     // Without this a power cut shortly after the rename could leave a
     // truncated image under the launch path.
-    staged.file.sync_all()?;
+    staged.file.sync_all().map_err(at(InstallStep::Stage))?;
 
-    staged.rename_over(current)
+    staged
+        .rename_over(current)
+        .map_err(at(InstallStep::Replace))
 }
 
 /// The file a new image is staged in, removed on drop unless it was renamed
@@ -324,14 +370,17 @@ struct StagingFile<'a> {
 
 #[cfg(any(target_os = "linux", all(test, unix)))]
 impl<'a> StagingFile<'a> {
-    /// Creates an empty executable file at `path`.
+    /// Creates an empty file at `path`, asking for an executable mode.
     ///
     /// The name is fixed, so whatever sits there is a leftover of an
     /// interrupted update or was planted. It is removed, and the file is then
     /// created with `create_new`, which fails on an existing name and never
     /// follows a link, so the bytes cannot be written through one.
+    ///
+    /// The process umask may clear bits of the mode asked for here;
+    /// [`Self::make_executable`] sets them.
     fn create(path: &'a Path) -> std::io::Result<Self> {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::OpenOptionsExt;
 
         remove_file_if_present(path)?;
         let file = std::fs::OpenOptions::new()
@@ -339,18 +388,23 @@ impl<'a> StagingFile<'a> {
             .create_new(true)
             .mode(0o755)
             .open(path)?;
-        let staged = Self {
+
+        Ok(Self {
             path,
             file,
             renamed: false,
-        };
+        })
+    }
 
-        // The process umask may have cleared bits of the mode asked for
-        // above. Set on the handle, so the path is not resolved again.
-        staged
-            .file
-            .set_permissions(std::fs::Permissions::from_mode(0o755))?;
-        Ok(staged)
+    /// Sets the file's mode to `0o755`, whatever the process umask left of
+    /// the mode it was created with.
+    ///
+    /// Set on the handle, so the path is not resolved again.
+    fn make_executable(&self) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        self.file
+            .set_permissions(std::fs::Permissions::from_mode(0o755))
     }
 
     /// Moves the file over `target`. After that it is no longer a staging
@@ -398,8 +452,8 @@ const NSIS_UPDATE_ARGS: [&str; 3] = ["/P", "/UPDATE", "/R"];
 ///
 /// # Errors
 ///
-/// Returns [`UpdateError::ArtifactIntegrity`] when the process cannot be
-/// started.
+/// Returns [`UpdateError::InstallFailed`] at [`InstallStep::StartInstaller`]
+/// when the process cannot be started.
 #[cfg(target_os = "windows")]
 fn spawn_windows_installer(artifact: &Path) -> Result<()> {
     Command::new(artifact)
@@ -407,7 +461,7 @@ fn spawn_windows_installer(artifact: &Path) -> Result<()> {
         .spawn()
         .map_err(|err| {
             log::warn!("windows installer spawn failed: {err}");
-            UpdateError::ArtifactIntegrity
+            failed_at(InstallStep::StartInstaller)
         })?;
     Ok(())
 }
@@ -436,9 +490,11 @@ fn extract_macos_app_archive(artifact: &Path, current: &Path) -> Result<()> {
     // directory it points at replaced, not the link.
     let current = current
         .canonicalize()
-        .map_err(|_| UpdateError::ArtifactIntegrity)?;
+        .map_err(|_| failed_at(InstallStep::FindRunningCopy))?;
     let bundle = macos_app_bundle_path(&current)?;
-    let applications = bundle.parent().ok_or(UpdateError::ArtifactIntegrity)?;
+    let applications = bundle
+        .parent()
+        .ok_or_else(|| failed_at(InstallStep::FindRunningCopy))?;
     let extract_root = applications.join(".oikonomia-update-extract");
     let previous = applications.join(PREVIOUS_BUNDLE);
 
@@ -451,7 +507,7 @@ fn extract_macos_app_archive(artifact: &Path, current: &Path) -> Result<()> {
 
     let executable = current
         .strip_prefix(&bundle)
-        .map_err(|_| UpdateError::ArtifactIntegrity)?;
+        .map_err(|_| failed_at(InstallStep::FindRunningCopy))?;
     let _ = std::fs::remove_dir_all(&extract_root);
 
     let result = unpack_app_bundle(artifact, &extract_root, executable).and_then(|new_app| {
@@ -472,7 +528,7 @@ fn extract_macos_app_archive(artifact: &Path, current: &Path) -> Result<()> {
 /// Anything else is refused before the installed app is touched.
 #[cfg(target_os = "macos")]
 fn unpack_app_bundle(artifact: &Path, extract_root: &Path, executable: &Path) -> Result<PathBuf> {
-    std::fs::create_dir_all(extract_root).map_err(|_| UpdateError::ArtifactIntegrity)?;
+    std::fs::create_dir_all(extract_root).map_err(|_| failed_at(InstallStep::Unpack))?;
 
     let status = Command::new(MACOS_TAR)
         .arg("-xzf")
@@ -482,16 +538,16 @@ fn unpack_app_bundle(artifact: &Path, extract_root: &Path, executable: &Path) ->
         .status()
         .map_err(|err| {
             log::warn!("macos tar extract failed: {err}");
-            UpdateError::ArtifactIntegrity
+            failed_at(InstallStep::Unpack)
         })?;
     if !status.success() {
-        return Err(UpdateError::ArtifactIntegrity);
+        return Err(failed_at(InstallStep::Unpack));
     }
 
-    let new_app = only_app_bundle(extract_root).ok_or(UpdateError::ArtifactIntegrity)?;
+    let new_app = only_app_bundle(extract_root).ok_or_else(|| failed_at(InstallStep::Unpack))?;
     if !new_app.join(executable).is_file() {
         log::warn!("macos update archive holds no {}", executable.display());
-        return Err(UpdateError::ArtifactIntegrity);
+        return Err(failed_at(InstallStep::Unpack));
     }
     Ok(new_app)
 }
@@ -503,7 +559,7 @@ fn unpack_app_bundle(artifact: &Path, extract_root: &Path, executable: &Path) ->
 fn swap_app_bundle(new_app: &Path, bundle: &Path, previous: &Path) -> Result<()> {
     std::fs::rename(bundle, previous).map_err(|err| {
         log::warn!("macos app set-aside failed: {err}");
-        UpdateError::ArtifactIntegrity
+        failed_at(InstallStep::Replace)
     })?;
 
     if let Err(err) = std::fs::rename(new_app, bundle) {
@@ -511,7 +567,7 @@ fn swap_app_bundle(new_app: &Path, bundle: &Path, previous: &Path) -> Result<()>
         if let Err(err) = std::fs::rename(previous, bundle) {
             log::error!("macos app restore failed: {err}");
         }
-        return Err(UpdateError::ArtifactIntegrity);
+        return Err(failed_at(InstallStep::Replace));
     }
 
     let _ = std::fs::remove_dir_all(previous);
@@ -541,9 +597,15 @@ fn only_app_bundle(root: &Path) -> Option<PathBuf> {
 /// nothing that may be replaced, so that is an error, not a guess.
 #[cfg(target_os = "macos")]
 fn macos_app_bundle_path(executable: &Path) -> Result<PathBuf> {
-    let macos_dir = executable.parent().ok_or(UpdateError::ArtifactIntegrity)?;
-    let contents = macos_dir.parent().ok_or(UpdateError::ArtifactIntegrity)?;
-    let bundle = contents.parent().ok_or(UpdateError::ArtifactIntegrity)?;
+    let macos_dir = executable
+        .parent()
+        .ok_or_else(|| failed_at(InstallStep::FindRunningCopy))?;
+    let contents = macos_dir
+        .parent()
+        .ok_or_else(|| failed_at(InstallStep::FindRunningCopy))?;
+    let bundle = contents
+        .parent()
+        .ok_or_else(|| failed_at(InstallStep::FindRunningCopy))?;
 
     let is_bundle_layout = macos_dir.ends_with("Contents/MacOS")
         && bundle
@@ -552,7 +614,7 @@ fn macos_app_bundle_path(executable: &Path) -> Result<PathBuf> {
     if is_bundle_layout {
         Ok(bundle.to_path_buf())
     } else {
-        Err(UpdateError::ArtifactIntegrity)
+        Err(failed_at(InstallStep::FindRunningCopy))
     }
 }
 
@@ -574,7 +636,7 @@ fn path_ends_with_ignore_ascii_case(path: &Path, suffix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{AppImageRuntime, InstallKind, VerifiedPathInstaller, install_verified_artifact};
-    use oikonomia_update::{ArtifactInstaller, InstallRoute};
+    use oikonomia_update::{ArtifactInstaller, InstallRoute, InstallStep, UpdateError};
     use std::path::PathBuf;
 
     /// A fresh directory per call. The counter matters: tests run in
@@ -832,8 +894,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The step an install failed at, or `None` for any other outcome.
+    fn failed_step<T>(outcome: &oikonomia_update::Result<T>) -> Option<InstallStep> {
+        match outcome {
+            Err(UpdateError::InstallFailed { step }) => Some(*step),
+            Ok(_) | Err(_) => None,
+        }
+    }
+
     #[test]
-    fn a_missing_artifact_is_an_integrity_failure() {
+    fn a_missing_artifact_fails_at_finding_it_and_not_as_a_failed_verification() {
         let dir = temp_dir();
         let cases = [
             (InstallKind::MacApp, "gone.app.tar.gz"),
@@ -846,7 +916,12 @@ mod tests {
 
         for (kind, name) in cases {
             let err = install_verified_artifact(&kind, &dir.join(name)).expect_err("missing");
-            assert_eq!(err.code(), "update_artifact_integrity", "{kind:?}");
+            assert_eq!(err.code(), "update_install_failed", "{kind:?}");
+            assert_eq!(
+                failed_step::<()>(&Err(err)),
+                Some(InstallStep::FindArtifact),
+                "{kind:?}"
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -926,7 +1001,10 @@ mod tests {
 
         let not_an_archive = dir.join("abc-Oikonomia.app.tar.gz");
         std::fs::write(&not_an_archive, b"garbage").expect("write");
-        assert!(super::extract_macos_app_archive(&not_an_archive, &current).is_err());
+        assert_eq!(
+            failed_step(&super::extract_macos_app_archive(&not_an_archive, &current)),
+            Some(InstallStep::Unpack)
+        );
 
         // A valid archive that holds no app bundle.
         let staging = dir.join("staging");
@@ -942,7 +1020,10 @@ mod tests {
             .status()
             .expect("tar");
         assert!(status.success());
-        assert!(super::extract_macos_app_archive(&no_app, &current).is_err());
+        assert_eq!(
+            failed_step(&super::extract_macos_app_archive(&no_app, &current)),
+            Some(InstallStep::Unpack)
+        );
 
         assert_eq!(
             std::fs::read(&current).expect("still installed"),
@@ -996,8 +1077,9 @@ mod tests {
             let archive = dir.join(format!("{index}-Oikonomia.app.tar.gz"));
             archive_of(root, entries, &archive);
 
-            assert!(
-                super::extract_macos_app_archive(&archive, &current).is_err(),
+            assert_eq!(
+                failed_step(&super::extract_macos_app_archive(&archive, &current)),
+                Some(InstallStep::Unpack),
                 "{entries:?} was installed"
             );
             assert_eq!(std::fs::read(&current).expect("kept"), b"old version");
@@ -1087,7 +1169,10 @@ mod tests {
         let archive = dir.join("abc-Oikonomia.app.tar.gz");
         std::fs::write(&archive, b"irrelevant").expect("archive");
 
-        assert!(super::extract_macos_app_archive(&archive, &bare).is_err());
+        assert_eq!(
+            failed_step(&super::extract_macos_app_archive(&archive, &bare)),
+            Some(InstallStep::FindRunningCopy)
+        );
 
         assert_eq!(std::fs::read(&bare).expect("untouched"), b"dev build");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1239,11 +1324,45 @@ mod tests {
         std::fs::create_dir(&installed).expect("directory");
         std::fs::write(installed.join("kept"), b"old").expect("content");
 
-        let err = super::replace_linux_appimage(&verified, &installed).expect_err("refused");
+        let refused = super::replace_linux_appimage(&verified, &installed);
 
-        assert_eq!(err.code(), "update_artifact_integrity");
+        assert_eq!(failed_step(&refused), Some(InstallStep::Replace));
         assert_eq!(std::fs::read(installed.join("kept")).expect("kept"), b"old");
         assert!(!dir.join(".Installed.AppImage.staging").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn appimage_replace_names_the_step_it_failed_at() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (dir, current, verified) = appimage_and_download();
+
+        // The download is gone by the time it is opened.
+        let gone = super::replace_linux_appimage(&dir.join("gone.AppImage"), &current);
+        assert_eq!(failed_step(&gone), Some(InstallStep::FindArtifact));
+
+        // The root has no parent directory and no file name to stage beside.
+        let rootless = super::replace_linux_appimage(&verified, std::path::Path::new("/"));
+        assert_eq!(failed_step(&rootless), Some(InstallStep::FindRunningCopy));
+
+        // A directory that cannot be written to takes no staging file. The
+        // superuser may write to it anyway, so the step is only asserted
+        // when the write was in fact refused.
+        let locked = dir.join("locked");
+        std::fs::create_dir(&locked).expect("directory");
+        let image = locked.join("Installed.AppImage");
+        std::fs::write(&image, b"old").expect("image");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).expect("lock");
+
+        let unwritable = super::replace_linux_appimage(&verified, &image);
+
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+        if unwritable.is_err() {
+            assert_eq!(failed_step(&unwritable), Some(InstallStep::Stage));
+            assert_eq!(std::fs::read(&image).expect("kept"), b"old");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

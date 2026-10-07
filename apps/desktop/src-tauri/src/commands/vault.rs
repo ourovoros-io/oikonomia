@@ -10,7 +10,7 @@
 //! ([`crate::state::spawn_auto_lock`]).
 
 use crate::commands::support::{
-    dialog_path, require_granted_path, run_blocking, with_vault_blocking,
+    FileDialog, dialog_path, require_granted_path, run_blocking, with_vault_blocking,
 };
 use crate::error::CommandResult;
 use crate::state::{AppState, GrantPurpose};
@@ -212,7 +212,7 @@ pub(crate) async fn vault_backup(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let destination = with_backup_extension(dialog_path(file_path, "save")?);
+    let destination = with_backup_extension(dialog_path(file_path, FileDialog::Save)?);
 
     with_vault_blocking(&state, move |vault| {
         vault.backup_to(&destination)?;
@@ -245,8 +245,9 @@ pub(crate) async fn vault_backup(
 /// # Errors
 ///
 /// Returns `path_not_granted` for a path the user did not pick in the backup
-/// dialog, before the session is touched; `save_location_invalid` when the dialog's answer
-/// is not a path; `backup_invalid` when the file is not a backup archive;
+/// dialog, before the session is touched; `open_location_invalid` when the
+/// dialog's answer is not a path; `backup_invalid` when the file is not a
+/// backup archive;
 /// `restore_would_overwrite` when a vault exists and `replace` is `false`;
 /// and `io` or `vault_corrupt` when the vault files cannot be replaced.
 /// Returns `task_failed` when a blocking task panics.
@@ -294,7 +295,7 @@ pub(crate) async fn vault_restore<R: Runtime>(
 ///
 /// # Errors
 ///
-/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// Returns `open_location_invalid` when the dialog's answer is not a path,
 /// and `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_pick_backup(
@@ -314,7 +315,7 @@ pub(crate) async fn vault_pick_backup(
 ///
 /// # Errors
 ///
-/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// Returns `open_location_invalid` when the dialog's answer is not a path,
 /// and `task_failed` when the blocking task panics.
 async fn pick_backup_path<R: Runtime>(
     app: &tauri::AppHandle<R>,
@@ -338,7 +339,7 @@ async fn pick_backup_path<R: Runtime>(
             return Ok(None);
         };
 
-        let path = dialog_path(picked, "backup")?;
+        let path = dialog_path(picked, FileDialog::OpenBackup)?;
         grants.grant(GrantPurpose::Backup, [path.clone()]);
         Ok(Some(path))
     })

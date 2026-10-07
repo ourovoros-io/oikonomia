@@ -335,7 +335,7 @@ pub(super) async fn save_with_dialog(
             return Ok(None);
         };
 
-        let destination = (target.complete_path)(dialog_path(picked, "save")?);
+        let destination = (target.complete_path)(dialog_path(picked, FileDialog::Save)?);
 
         std::fs::write(&destination, &bytes).map_err(|err| {
             CommandError::desktop(
@@ -348,21 +348,53 @@ pub(super) async fn save_with_dialog(
     .await
 }
 
-/// Converts the location a native file dialog returned into a filesystem path.
-///
-/// `purpose` names the dialog in the diagnostic message: `"save"`,
-/// `"backup"`, `"CSV"`.
+/// A native file dialog the app opens, which decides the code for an answer
+/// that is not a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileDialog {
+    /// A save dialog: an export, or a backup to write.
+    Save,
+    /// The open dialog for a backup archive to restore.
+    OpenBackup,
+    /// The open dialog for a bank statement to import.
+    OpenCsv,
+}
+
+impl FileDialog {
+    /// Returns the error an answer of this dialog that is not a path is
+    /// reported as: one code for the save dialogs, another for the open
+    /// ones.
+    const fn not_a_path(self) -> DesktopError {
+        match self {
+            Self::Save => DesktopError::SaveLocationInvalid,
+            Self::OpenBackup | Self::OpenCsv => DesktopError::OpenLocationInvalid,
+        }
+    }
+
+    /// Returns the words that name the dialog in the diagnostic message.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Save => "save",
+            Self::OpenBackup => "backup",
+            Self::OpenCsv => "CSV",
+        }
+    }
+}
+
+/// Converts the location the native file dialog `dialog` returned into a
+/// filesystem path.
 ///
 /// # Errors
 ///
-/// Returns `save_location_invalid`, for open dialogs as well as save dialogs,
-/// when the location is not a path. A desktop dialog returns paths; the
-/// plugin's other form is a URI, which mobile systems hand out.
-pub(super) fn dialog_path(picked: FilePath, purpose: &str) -> CommandResult<PathBuf> {
+/// Returns `save_location_invalid` for a save dialog and
+/// `open_location_invalid` for an open dialog when the location is not a
+/// path. A desktop dialog returns paths; the plugin's other form is a URI,
+/// which mobile systems hand out.
+pub(super) fn dialog_path(picked: FilePath, dialog: FileDialog) -> CommandResult<PathBuf> {
     picked.into_path().map_err(|err| {
         CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid {purpose} location: {err}"),
+            dialog.not_a_path(),
+            format!("invalid {} location: {err}", dialog.label()),
         )
     })
 }
@@ -447,6 +479,44 @@ mod tests {
         // The document keeps the name it was dropped under.
         assert_eq!(dropped_file_name(named), "link.csv");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dialog_answer_that_is_not_a_path_is_coded_by_the_kind_of_dialog() {
+        // What a mobile system hands out in place of a path.
+        let not_a_path = || {
+            let uri = "content://media/external/file/42".parse::<tauri::Url>();
+            FilePath::Url(uri.expect("a uri"))
+        };
+        let cases = [
+            (FileDialog::Save, "save_location_invalid"),
+            (FileDialog::OpenBackup, "open_location_invalid"),
+            (FileDialog::OpenCsv, "open_location_invalid"),
+        ];
+
+        for (dialog, code) in cases {
+            let refused = dialog_path(not_a_path(), dialog).expect_err("not a path");
+
+            assert_eq!(refused.code, code, "{dialog:?}");
+            assert!(refused.message.contains(dialog.label()), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_dialog_answer_that_is_a_path_is_returned_as_it_is() {
+        let picked = std::path::PathBuf::from("books").join("2026.csv");
+
+        for dialog in [
+            FileDialog::Save,
+            FileDialog::OpenBackup,
+            FileDialog::OpenCsv,
+        ] {
+            assert_eq!(
+                dialog_path(FilePath::Path(picked.clone()), dialog).expect("a path"),
+                picked,
+                "{dialog:?}"
+            );
+        }
     }
 
     #[test]
