@@ -286,7 +286,7 @@ fn ensure_quick_add_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindo
 /// Returns the stored language, or the default when the app has no state.
 fn locale_from_app(app: &AppHandle) -> Locale {
     app.try_state::<crate::state::AppState>()
-        .map(|state| load_ui_prefs(state.data_dir()).locale)
+        .map(|state| load_ui_prefs(state.data_dir()).locale())
         .unwrap_or_default()
 }
 
