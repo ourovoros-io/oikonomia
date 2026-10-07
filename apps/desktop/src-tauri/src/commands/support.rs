@@ -146,7 +146,7 @@ where
 /// [`AppState::lock_prefs`] is for a load-change-save, which this is not, and
 /// taking it here would make every caller wait behind a save's fsync.
 pub(super) fn stored_text_locale(data_dir: &Path) -> Locale {
-    load_ui_prefs(data_dir).locale
+    load_ui_prefs(data_dir).locale()
 }
 
 /// Accepts a webview-supplied path only if the user handed it to the app
@@ -424,10 +424,8 @@ mod tests {
         assert_eq!(stored_text_locale(state.data_dir()), Locale::En);
 
         for locale in [Locale::El, Locale::Fr, Locale::De, Locale::En] {
-            let prefs = UiPrefs {
-                locale,
-                ..UiPrefs::default()
-            };
+            let mut prefs = UiPrefs::default();
+            prefs.set_locale(locale);
             save_ui_prefs(&dir, &prefs).expect("save prefs");
 
             assert_eq!(stored_text_locale(state.data_dir()), locale);

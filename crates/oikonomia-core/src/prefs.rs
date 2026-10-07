@@ -39,6 +39,11 @@
 //! keys and defaults missing ones. There is no theme preference: the app is
 //! dark-only, so a `"theme"` key written by an older build is one of the
 //! ignored keys.
+//!
+//! A `locale` this build does not know is used as the default language but
+//! kept as written, and saved back unchanged. A newer build may have added
+//! the language; an older build that ran in between must not replace the
+//! user's choice with its own default.
 
 use crate::error::{Error, IoContext, Result, SerializationContext};
 use serde::{Deserialize, Serialize};
@@ -183,14 +188,23 @@ pub struct LastRoleAccounts {
 /// locale without affecting the other fields. Any other value of the wrong
 /// shape still fails the whole file, which then loads as the defaults.
 ///
-/// Saving writes only the fields below, so a key or a locale value this build
-/// could not read is not carried over to the saved file.
+/// Saving writes only the fields below, so a key this build could not read
+/// is not carried over to the saved file. A `locale` string this build does
+/// not know is: [`UiPrefs::locale`] reports the default for it, and a save
+/// writes the stored string back as it was read until
+/// [`UiPrefs::set_locale`] replaces it. A `locale` that is not a string at
+/// all (`null`, a number) was not written by any build, so it is not kept.
+///
+/// The serialized form is the file format. A UI that needs the language in
+/// effect gets [`UiPrefsView`] instead.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiPrefs {
-    /// The app language; see [`Locale`] for what it governs.
-    #[serde(deserialize_with = "known_locale_or_default")]
-    pub locale: Locale,
+    /// The app language as stored, read through [`UiPrefs::locale`].
+    ///
+    /// Private so that the stored value cannot be read as a [`Locale`]
+    /// without the fallback, nor replaced except by choosing a language.
+    locale: StoredLocale,
     /// The id of the entity last used in quick add, as text.
     pub last_entity_id: Option<String>,
     /// The accounts last used in quick add, keyed by entity and entry kind
@@ -198,31 +212,136 @@ pub struct UiPrefs {
     pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
 }
 
-/// Reads a stored locale, taking any value this build does not know as the
-/// default locale.
-///
-/// A build with more languages may have written the file. Failing here would
-/// fail the whole [`UiPrefs`], and the next save would then overwrite the
-/// stored entity and account choices with defaults.
-fn known_locale_or_default<'de, D>(deserializer: D) -> std::result::Result<Locale, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    /// A stored locale value: a language of this build, or anything else.
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum StoredLocale {
-        /// One of the values [`Locale`] serializes to.
-        Known(Locale),
-        /// Any other JSON value, read and discarded.
-        Unknown(serde::de::IgnoredAny),
+impl UiPrefs {
+    /// Returns the app language in effect: the stored one, or the default
+    /// [`Locale`] when the stored value is not one this build knows.
+    #[must_use]
+    pub fn locale(&self) -> Locale {
+        self.locale.effective()
     }
 
-    match StoredLocale::deserialize(deserializer)? {
-        StoredLocale::Known(locale) => Ok(locale),
-        StoredLocale::Unknown(serde::de::IgnoredAny) => {
-            log::warn!("stored locale is not one this build knows; using the default");
-            Ok(Locale::default())
+    /// Stores `locale` as the app language, replacing whatever was stored,
+    /// including a value this build does not know.
+    pub fn set_locale(&mut self, locale: Locale) {
+        self.locale = StoredLocale::Known(locale);
+    }
+}
+
+/// The preferences as a UI is shown them: [`UiPrefs`] with the language in
+/// effect, always one of [`Locale`], in place of the stored value.
+///
+/// It serializes with the same keys as the preferences file. It is only
+/// ever sent, never saved, so a stored value this build does not know stays
+/// in the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UiPrefsView {
+    /// The app language in effect; see [`UiPrefs::locale`].
+    pub locale: Locale,
+    /// See [`UiPrefs::last_entity_id`].
+    pub last_entity_id: Option<String>,
+    /// See [`UiPrefs::last_accounts_by_entity_kind`].
+    pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
+}
+
+impl From<UiPrefs> for UiPrefsView {
+    fn from(prefs: UiPrefs) -> Self {
+        // Destructured in full so that a new field cannot be left out of the
+        // view without a compile error.
+        let UiPrefs {
+            locale,
+            last_entity_id,
+            last_accounts_by_entity_kind,
+        } = prefs;
+
+        Self {
+            locale: locale.effective(),
+            last_entity_id,
+            last_accounts_by_entity_kind,
+        }
+    }
+}
+
+/// The stored value of the app language.
+///
+/// Serialized as a plain string, as [`Locale`] is: the code of a known
+/// language, or the unrecognised string exactly as it was read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StoredLocale {
+    /// A language this build knows.
+    Known(Locale),
+    /// A string this build does not know as a language, kept so that it is
+    /// saved back unchanged. A build with more languages may have written it.
+    Unrecognised(String),
+}
+
+impl StoredLocale {
+    /// Returns the stored language, or the default for a value this build
+    /// does not know.
+    fn effective(&self) -> Locale {
+        match self {
+            Self::Known(locale) => *locale,
+            Self::Unrecognised(_) => Locale::default(),
+        }
+    }
+}
+
+impl Default for StoredLocale {
+    fn default() -> Self {
+        Self::Known(Locale::default())
+    }
+}
+
+impl Serialize for StoredLocale {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Known(locale) => locale.serialize(serializer),
+            Self::Unrecognised(raw) => serializer.serialize_str(raw),
+        }
+    }
+}
+
+/// Reads any value. A value that is not a string is not an error: failing
+/// here would fail the whole [`UiPrefs`], and the next save would then
+/// overwrite the stored entity and account choices with defaults.
+impl<'de> Deserialize<'de> for StoredLocale {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        /// A stored locale value: a string, or anything else.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Stored {
+            /// A string, which may or may not name a language of this build.
+            Text(String),
+            /// Any other JSON value, read and discarded.
+            Other(serde::de::IgnoredAny),
+        }
+
+        match Stored::deserialize(deserializer)? {
+            Stored::Text(raw) => {
+                let known = Locale::ALL
+                    .iter()
+                    .copied()
+                    .find(|locale| locale.code() == raw);
+
+                let Some(locale) = known else {
+                    log::warn!(
+                        "stored locale is not one this build knows; \
+                         using the default and keeping the stored value"
+                    );
+                    return Ok(Self::Unrecognised(raw));
+                };
+
+                Ok(Self::Known(locale))
+            }
+            Stored::Other(serde::de::IgnoredAny) => {
+                log::warn!("stored locale is not a string; using the default");
+                Ok(Self::default())
+            }
         }
     }
 }
@@ -297,10 +416,13 @@ pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
     value
         .as_object()?
         .contains_key("locale")
-        .then(|| decode_ui_prefs(&text, &path).locale)
+        .then(|| decode_ui_prefs(&text, &path).locale())
 }
 
 /// Stores `locale`, keeping every other preference this build can read.
+///
+/// The new language replaces the stored one even when that is a value this
+/// build does not know: the user chose it here.
 ///
 /// This loads the file, changes the one field and saves the result with
 /// [`save_ui_prefs`], which replaces the file by renaming a temporary one over
@@ -315,7 +437,7 @@ pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
 /// cannot be encoded, as [`save_ui_prefs`] does.
 pub fn store_locale(data_dir: &Path, locale: Locale) -> Result<()> {
     let mut prefs = load_ui_prefs(data_dir);
-    prefs.locale = locale;
+    prefs.set_locale(locale);
 
     save_ui_prefs(data_dir, &prefs)
 }
@@ -428,7 +550,8 @@ fn remove_stale_temporary(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oikonomia_test_support::listed_variants;
+    use oikonomia_test_support::{PROPERTY_CASES, listed_variants};
+    use proptest::prelude::*;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
 
@@ -512,7 +635,7 @@ mod tests {
         );
 
         let prefs = UiPrefs {
-            locale: Locale::En,
+            locale: StoredLocale::Known(Locale::En),
             last_entity_id: Some("ent-1".into()),
             last_accounts_by_entity_kind: last_accounts,
         };
@@ -527,7 +650,7 @@ mod tests {
         let json = r#"{ "theme": "light" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let prefs = load_ui_prefs(dir.path());
-        assert_eq!(prefs.locale, Locale::En);
+        assert_eq!(prefs.locale(), Locale::En);
         assert_eq!(prefs.last_entity_id, None);
         assert!(prefs.last_accounts_by_entity_kind.is_empty());
     }
@@ -545,13 +668,13 @@ mod tests {
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
 
         let prefs = load_ui_prefs(dir.path());
-        assert_eq!(prefs.locale, Locale::De);
+        assert_eq!(prefs.locale(), Locale::De);
         assert_eq!(prefs.last_entity_id.as_deref(), Some("ent-1"));
     }
 
     #[test]
     fn locale_defaults_to_en() {
-        assert_eq!(UiPrefs::default().locale, Locale::En);
+        assert_eq!(UiPrefs::default().locale(), Locale::En);
     }
 
     #[test]
@@ -559,12 +682,12 @@ mod tests {
         let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
-            locale: Locale::El,
+            locale: StoredLocale::Known(Locale::El),
             ..UiPrefs::default()
         };
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
         assert_eq!(load_ui_prefs(dir.path()), prefs);
-        assert_eq!(load_ui_prefs(dir.path()).locale, Locale::El);
+        assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::El);
     }
 
     #[test]
@@ -572,12 +695,12 @@ mod tests {
         let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
-            locale: Locale::Fr,
+            locale: StoredLocale::Known(Locale::Fr),
             ..UiPrefs::default()
         };
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
         assert_eq!(load_ui_prefs(dir.path()), prefs);
-        assert_eq!(load_ui_prefs(dir.path()).locale, Locale::Fr);
+        assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::Fr);
     }
 
     #[test]
@@ -585,12 +708,12 @@ mod tests {
         let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
-            locale: Locale::De,
+            locale: StoredLocale::Known(Locale::De),
             ..UiPrefs::default()
         };
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
         assert_eq!(load_ui_prefs(dir.path()), prefs);
-        assert_eq!(load_ui_prefs(dir.path()).locale, Locale::De);
+        assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::De);
     }
 
     #[test]
@@ -600,7 +723,7 @@ mod tests {
         let json = r#"{ "theme": "light" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let prefs = load_ui_prefs(dir.path());
-        assert_eq!(prefs.locale, Locale::En);
+        assert_eq!(prefs.locale(), Locale::En);
     }
 
     #[test]
@@ -612,7 +735,7 @@ mod tests {
         assert_eq!(
             load_ui_prefs(dir.path()),
             UiPrefs {
-                locale: Locale::El,
+                locale: StoredLocale::Known(Locale::El),
                 ..UiPrefs::default()
             }
         );
@@ -630,7 +753,7 @@ mod tests {
         assert_eq!(
             load_ui_prefs(dir.path()),
             UiPrefs {
-                locale: Locale::El,
+                locale: StoredLocale::Known(Locale::El),
                 ..UiPrefs::default()
             }
         );
@@ -725,7 +848,7 @@ mod tests {
                 newly_stored: true
             })
         );
-        assert_eq!(load_ui_prefs(dir.path()).locale, Locale::El);
+        assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::El);
         assert_eq!(stored_locale(dir.path()), Some(Locale::El));
 
         let written = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
@@ -816,18 +939,19 @@ mod tests {
             },
         );
         let expected = UiPrefs {
-            locale: Locale::En,
+            locale: StoredLocale::Unrecognised("es".into()),
             last_entity_id: Some("ent-1".into()),
             last_accounts_by_entity_kind: last_accounts,
         };
         assert_eq!(load_ui_prefs(dir.path()), expected);
+        assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::En);
 
         // The next save must not wipe what this build could read.
         assert!(store_locale(dir.path(), Locale::De).is_ok());
         assert_eq!(
             load_ui_prefs(dir.path()),
             UiPrefs {
-                locale: Locale::De,
+                locale: StoredLocale::Known(Locale::De),
                 ..expected
             }
         );
@@ -877,7 +1001,7 @@ mod tests {
         assert_eq!(
             load_ui_prefs(dir.path()),
             UiPrefs {
-                locale: Locale::De,
+                locale: StoredLocale::Known(Locale::De),
                 last_entity_id: Some("ent-1".into()),
                 last_accounts_by_entity_kind: last_accounts,
             }
@@ -901,7 +1025,7 @@ mod tests {
                 }),
                 "{content:?}"
             );
-            assert_eq!(load_ui_prefs(dir.path()).locale, Locale::Fr);
+            assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::Fr);
             assert_eq!(stored_locale(dir.path()), Some(Locale::Fr));
         }
     }
@@ -911,7 +1035,7 @@ mod tests {
         let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
-            locale: Locale::En,
+            locale: StoredLocale::Known(Locale::En),
             last_entity_id: Some("ent-1".into()),
             ..UiPrefs::default()
         };
@@ -921,7 +1045,7 @@ mod tests {
         assert_eq!(
             load_ui_prefs(dir.path()),
             UiPrefs {
-                locale: Locale::Fr,
+                locale: StoredLocale::Known(Locale::Fr),
                 ..prefs
             }
         );
@@ -995,7 +1119,7 @@ mod tests {
         let dir = tempdir().unwrap();
 
         let prefs = UiPrefs {
-            locale: Locale::De,
+            locale: StoredLocale::Known(Locale::De),
             ..UiPrefs::default()
         };
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
@@ -1012,7 +1136,7 @@ mod tests {
         assert!(fs::write(ui_prefs_temporary_path(dir.path()), "{\"locale\": ").is_ok());
 
         let prefs = UiPrefs {
-            locale: Locale::Fr,
+            locale: StoredLocale::Known(Locale::Fr),
             ..UiPrefs::default()
         };
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
@@ -1031,7 +1155,7 @@ mod tests {
         assert_eq!(stored_locale(dir.path()), None);
 
         let prefs = UiPrefs {
-            locale: Locale::El,
+            locale: StoredLocale::Known(Locale::El),
             ..UiPrefs::default()
         };
         assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
@@ -1048,5 +1172,118 @@ mod tests {
 
         assert!(save_ui_prefs(dir.path(), &UiPrefs::default()).is_err());
         assert!(!ui_prefs_temporary_path(dir.path()).exists());
+    }
+
+    /// Returns the `locale` value of the preferences file as raw JSON.
+    fn stored_locale_json(data_dir: &Path) -> serde_json::Value {
+        let text = fs::read_to_string(ui_prefs_path(data_dir)).unwrap();
+        let mut file: serde_json::Value = serde_json::from_str(&text).unwrap();
+
+        file["locale"].take()
+    }
+
+    #[test]
+    fn an_unrecognised_locale_is_used_as_the_default_and_saved_back_unchanged() {
+        let dir = tempdir().unwrap();
+
+        // Written by a newer build with a language this one does not have.
+        let json = r#"{ "locale": "xx-YY", "last_entity_id": "ent-1" }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        let mut prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs.locale(), Locale::En);
+
+        // A save made for another reason, as after a quick-add post.
+        prefs.last_entity_id = Some("ent-2".into());
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+
+        assert_eq!(stored_locale_json(dir.path()), "xx-YY");
+        let reloaded = load_ui_prefs(dir.path());
+        assert_eq!(reloaded, prefs);
+        assert_eq!(reloaded.locale(), Locale::En);
+        assert_eq!(reloaded.last_entity_id.as_deref(), Some("ent-2"));
+        assert_eq!(stored_locale(dir.path()), Some(Locale::En));
+    }
+
+    #[test]
+    fn every_known_locale_is_saved_as_its_code_and_reloads() {
+        for locale in Locale::ALL {
+            let dir = tempdir().unwrap();
+
+            let mut prefs = UiPrefs::default();
+            prefs.set_locale(*locale);
+            assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+
+            assert_eq!(stored_locale_json(dir.path()), locale.code());
+            let reloaded = load_ui_prefs(dir.path());
+            assert_eq!(reloaded, prefs);
+            assert_eq!(reloaded.locale(), *locale);
+        }
+    }
+
+    #[test]
+    fn choosing_a_known_locale_replaces_an_unrecognised_one() {
+        let dir = tempdir().unwrap();
+
+        let json = r#"{ "locale": "xx-YY", "last_entity_id": "ent-1" }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        assert!(store_locale(dir.path(), Locale::Fr).is_ok());
+        assert_eq!(stored_locale_json(dir.path()), "fr");
+        let prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs.locale(), Locale::Fr);
+        assert_eq!(prefs.last_entity_id.as_deref(), Some("ent-1"));
+
+        // Choosing the default language is a choice too: it is written, not
+        // taken as "keep what was stored".
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+        let mut prefs = load_ui_prefs(dir.path());
+        prefs.set_locale(Locale::En);
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+        assert_eq!(stored_locale_json(dir.path()), "en");
+    }
+
+    #[test]
+    fn a_locale_that_is_not_a_string_is_not_kept() {
+        let dir = tempdir().unwrap();
+
+        // No build writes a number; it is read as the default, as before.
+        assert!(fs::write(ui_prefs_path(dir.path()), r#"{ "locale": 42 }"#).is_ok());
+
+        let prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs, UiPrefs::default());
+        assert!(save_ui_prefs(dir.path(), &prefs).is_ok());
+        assert_eq!(stored_locale_json(dir.path()), "en");
+    }
+
+    #[test]
+    fn the_ui_view_has_the_locale_in_effect_under_the_file_keys() {
+        let json = r#"{ "locale": "xx-YY", "last_entity_id": "ent-1" }"#;
+        let prefs: UiPrefs = serde_json::from_str(json).unwrap();
+
+        let view = serde_json::to_value(UiPrefsView::from(prefs)).unwrap();
+
+        assert_eq!(
+            view,
+            serde_json::json!({
+                "locale": "en",
+                "last_entity_id": "ent-1",
+                "last_accounts_by_entity_kind": {},
+            })
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn any_stored_locale_string_is_written_back_unchanged(raw in any::<String>()) {
+            let file = serde_json::json!({ "locale": raw }).to_string();
+            let prefs: UiPrefs = serde_json::from_str(&file).unwrap();
+
+            let saved = serde_json::to_value(&prefs).unwrap();
+
+            prop_assert_eq!(&saved["locale"], &serde_json::Value::from(raw.as_str()));
+        }
     }
 }

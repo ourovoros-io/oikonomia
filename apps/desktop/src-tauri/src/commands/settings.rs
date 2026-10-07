@@ -12,7 +12,7 @@ use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
 use oikonomia_core::ledger::{get_lock_timeout_secs, set_lock_timeout_secs};
 use oikonomia_core::prefs::{
-    LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, resolve_locale,
+    LastRoleAccounts, Locale, UiPrefsView, last_accounts_key, load_ui_prefs, resolve_locale,
     save_ui_prefs, store_locale,
 };
 use tauri::{Manager, State};
@@ -68,10 +68,9 @@ pub(crate) async fn settings_set_lock_timeout(
 /// blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale> {
-    with_prefs_blocking(
-        app,
-        |_app, state| Ok(load_ui_prefs(state.data_dir()).locale),
-    )
+    with_prefs_blocking(app, |_app, state| {
+        Ok(load_ui_prefs(state.data_dir()).locale())
+    })
     .await
 }
 
@@ -145,13 +144,19 @@ pub(crate) async fn settings_resolve_locale(
 /// Works in every vault state. A missing or unreadable preferences file
 /// yields the defaults.
 ///
+/// The locale sent is the one in effect, so the web UI never sees a stored
+/// value this build does not know.
+///
 /// # Errors
 ///
 /// Returns `task_failed` when the application state was never set up or the
 /// blocking task panics.
 #[tauri::command]
-pub(crate) async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResult<UiPrefs> {
-    with_prefs_blocking(app, |_app, state| Ok(load_ui_prefs(state.data_dir()))).await
+pub(crate) async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResult<UiPrefsView> {
+    with_prefs_blocking(app, |_app, state| {
+        Ok(UiPrefsView::from(load_ui_prefs(state.data_dir())))
+    })
+    .await
 }
 
 /// Remembers the entity, and the accounts chosen for an entry kind, that the

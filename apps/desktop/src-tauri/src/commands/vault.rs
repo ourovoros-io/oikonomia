@@ -198,7 +198,7 @@ pub(crate) async fn vault_backup(
 
             // Read in here because it is file I/O, which stays off the
             // async workers.
-            let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale);
+            let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale());
             Ok(app
                 .dialog()
                 .file()
@@ -329,7 +329,7 @@ async fn pick_backup_path(
 
         // The preferences read, like the grant below, is file I/O, which
         // stays off the async workers.
-        let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale);
+        let filter_label = crate::tray::backup_filter_label(load_ui_prefs(&data_dir).locale());
         let dialog = app
             .dialog()
             .file()

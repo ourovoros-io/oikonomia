@@ -151,7 +151,7 @@ pub(crate) fn report_and_exit(app: &tauri::App, failure: &StartupError) {
     // failed, the read falls back to English.
     let locale = failure
         .data_dir()
-        .map(|data_dir| load_ui_prefs(data_dir).locale)
+        .map(|data_dir| load_ui_prefs(data_dir).locale())
         .unwrap_or_default();
     let message = failure_message(locale, failure.problem(), failure.data_dir());
 
