@@ -121,9 +121,9 @@ impl Error {
     /// Returns the error in the form a log line may hold.
     ///
     /// That is the code, followed by the operation or the reason where there
-    /// is one, and never a `detail`, an amount, a name or a cell value; the
-    /// [module documentation](self) lists what each variant keeps. After
-    /// [`enable_log_detail`] it is the `Display` text.
+    /// is one, and never a `detail`, an amount, a name or a cell value. The
+    /// documentation of the private module `error::log_text` lists what each
+    /// variant keeps. After [`enable_log_detail`] it is the `Display` text.
     ///
     /// Use it for every error interpolated into a `log::` call.
     ///
