@@ -394,7 +394,8 @@ mod tests {
 #[cfg(test)]
 mod amounts_and_dates {
     use crate::documents::analyze::DocumentSuggestion;
-    use crate::documents::invoice::{money_amounts_on_line, parse_invoice_text, parse_money_token};
+    use crate::documents::invoice::money::{money_amounts_on_line, parse_money_token};
+    use crate::documents::invoice::parse_invoice_text;
 
     fn read(text: &str) -> DocumentSuggestion {
         parse_invoice_text(text, crate::prefs::Locale::En)
