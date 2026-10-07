@@ -190,10 +190,9 @@ pub fn default_backup_file_name() -> String {
 ///   or when a password change left its staged header behind
 ///   ([`VaultCorruption::UnfinishedPasswordChange`]). The last two are
 ///   settled by unlocking the vault once; see the module doc.
-/// - [`Error::Io`] when `dest` has no file name, or a file cannot be
-///   inspected, read, created, written or renamed.
-/// - [`Error::BackupInvalid`] when a vault file becomes shorter while it is
-///   being copied.
+/// - [`Error::Io`] when `dest` has no file name, when a file cannot be
+///   inspected, read, created, written or renamed, or when a vault file
+///   becomes shorter while it is being copied.
 pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     let db_path = vault_db_path(data_dir);
@@ -311,14 +310,13 @@ impl Vault {
     /// - [`Error::VaultCorrupt`] when the header file is missing or empty,
     ///   and, for a locked vault, in the other cases [`backup_to_path`]
     ///   lists.
-    /// - [`Error::Io`] when `dest` has no file name, or a file cannot be
-    ///   read, created, written or renamed. For an unlocked vault also when
-    ///   the data directory path is not UTF-8.
+    /// - [`Error::Io`] when `dest` has no file name, when a file cannot be
+    ///   read, created, written or renamed, or when a file becomes shorter
+    ///   while it is being copied. For an unlocked vault also when the data
+    ///   directory path is not UTF-8.
     /// - [`Error::Database`] when the snapshot of an unlocked vault fails.
     /// - [`Error::Crypto`] when that snapshot comes out as a plaintext
     ///   database; no archive is written then.
-    /// - [`Error::BackupInvalid`] when a file becomes shorter while it is
-    ///   being copied.
     pub fn backup_to(&self, dest: &Path) -> Result<()> {
         match self.connection() {
             Ok(conn) => backup_from_open_connection(conn, self.data_dir(), dest),
@@ -737,27 +735,54 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
 
 /// Appends the file at `path` to `archive` as the member `name`.
 ///
-/// The length written is the file's size when it was opened, and exactly
-/// that many bytes are copied, so the member matches its length field even
-/// if the file grows meanwhile.
+/// The length written is the file's size when it was opened; see
+/// [`write_member`] for what happens when the file changes meanwhile.
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] when the file is empty: the reader rejects an
-/// empty member, so the archive would not restore. [`Error::Io`] when the
-/// file cannot be read or the archive cannot be written.
-/// [`Error::BackupInvalid`], from [`copy_exact`], when the file became
-/// shorter after its size was read.
+/// [`Error::Io`] when the file cannot be opened or inspected, and
+/// everything [`write_member`] returns.
 fn write_member_from_path(archive: &mut impl Write, name: &'static str, path: &Path) -> Result<()> {
     let mut source = File::open(path).io("open vault file for backup")?;
     let len = source.metadata().io("inspect vault file for backup")?.len();
+    write_member(archive, name, &mut source, len)
+}
+
+/// Appends the next `len` bytes of `source` to `archive` as the member
+/// `name`.
+///
+/// Exactly `len` bytes are copied, so the member matches its length field
+/// even if the file behind `source` grows meanwhile. The source is a
+/// parameter, and not opened here, so that a test can hand in one that ends
+/// early.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] when `len` is 0: the reader rejects an empty
+/// member, so the archive would not restore. [`Error::Io`] when `source`
+/// cannot be read, the archive cannot be written, or `source` ends before
+/// `len` bytes: the file became shorter after its size was read, and the
+/// member already written is not what its length field says.
+fn write_member(
+    archive: &mut impl Write,
+    name: &'static str,
+    source: &mut impl Read,
+    len: u64,
+) -> Result<()> {
     if len == 0 {
         return Err(Error::VaultCorrupt(VaultCorruption::EmptyFile {
             file: name,
         }));
     }
     write_member_prefix(archive, name, len)?;
-    copy_exact(&mut source, archive, len)?;
+
+    let copied = copy_at_most(source, archive, len)?;
+    if copied < len {
+        return Err(Error::io(
+            "copy vault file into backup",
+            format_args!("{name} ended after {copied} of {len} bytes"),
+        ));
+    }
     Ok(())
 }
 
@@ -784,21 +809,34 @@ fn write_member_prefix(archive: &mut impl Write, name: &str, len: u64) -> Result
 
 /// Copies the next `len` bytes of `input` into a new owner-only file at
 /// `dest` and flushes it.
+///
+/// # Errors
+///
+/// [`Error::BackupInvalid`] with [`BackupDefect::Truncated`] when `input`,
+/// the archive, ends before `len` bytes; [`Error::Io`] when it cannot be
+/// read or `dest` cannot be created, written or flushed.
 fn write_exact_member(input: &mut impl Read, dest: &Path, len: u64) -> Result<()> {
     let mut file = create_private_file(dest)?;
-    copy_exact(input, &mut file, len)?;
+    if copy_at_most(input, &mut file, len)? < len {
+        return Err(Error::BackupInvalid(BackupDefect::Truncated));
+    }
     file.sync_all().io("sync restored file")?;
     Ok(())
 }
 
-/// Copies exactly `len` bytes from `reader` to `writer` through a fixed
-/// buffer, so a member of any size is never held in memory.
+/// Copies `len` bytes from `reader` to `writer` through a fixed buffer, so a
+/// member of any size is never held in memory, and returns how many bytes
+/// were copied.
+///
+/// The count is below `len` exactly when `reader` ended first. What that
+/// means differs by direction, so the caller decides: an archive that ends
+/// inside a member is a truncated backup, and a vault file that ends early
+/// while it is packed is a failed copy.
 ///
 /// # Errors
 ///
-/// [`Error::BackupInvalid`] when `reader` ends before `len` bytes;
 /// [`Error::Io`] when a read or a write fails.
-fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Result<()> {
+fn copy_at_most(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Result<u64> {
     let mut remaining = len;
     let mut buffer = vec![0u8; COPY_BUFFER_LEN];
     while remaining > 0 {
@@ -807,11 +845,9 @@ fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Resu
         let capacity = u64::try_from(buffer.len()).map_err(|_| length_overflow())?;
         let wanted = usize::try_from(remaining.min(capacity)).map_err(|_| length_overflow())?;
         let read = match reader.read(&mut buffer[..wanted]) {
-            Ok(0) => return Err(Error::BackupInvalid(BackupDefect::Truncated)),
+            Ok(0) => break,
             Ok(read) => read,
-            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                return Err(Error::BackupInvalid(BackupDefect::Truncated));
-            }
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => break,
             Err(err) => return Err(Error::io("read backup member", err)),
         };
         writer
@@ -820,7 +856,7 @@ fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Resu
         let copied = u64::try_from(read).map_err(|_| length_overflow())?;
         remaining = remaining.checked_sub(copied).ok_or_else(length_overflow)?;
     }
-    Ok(())
+    len.checked_sub(remaining).ok_or_else(length_overflow)
 }
 
 /// The error for a length that does not convert between `usize` and `u64`
@@ -1640,6 +1676,41 @@ mod tests {
         let dest = dir.path().join("x.oikonomia-backup");
         let err = backup_to_path(dir.path(), &dest).expect_err("empty");
         assert_eq!(err, Error::VaultUninitialized);
+    }
+
+    #[test]
+    fn a_vault_file_that_shrinks_while_it_is_packed_is_a_failed_copy() {
+        // The size was read as 4096 bytes and the file then ends after 10.
+        let mut shrunk: &[u8] = b"ten bytes!";
+        let mut archive = Vec::new();
+
+        let err = write_member(&mut archive, MEMBER_DB, &mut shrunk, 4096)
+            .expect_err("the member is shorter than its length field");
+
+        assert_eq!(
+            err,
+            Error::Io {
+                operation: "copy vault file into backup",
+                detail: "vault.db ended after 10 of 4096 bytes".to_owned(),
+            },
+            "nothing is wrong with an archive: none was being read"
+        );
+    }
+
+    #[test]
+    fn a_member_is_as_long_as_its_length_field_when_the_file_grows() {
+        let mut grown: &[u8] = b"0123456789 and bytes appended after the size was read";
+        let mut archive = Vec::new();
+
+        write_member(&mut archive, MEMBER_DB, &mut grown, 10).expect("write member");
+
+        assert!(archive.ends_with(b"0123456789"), "{archive:?}");
+        let contents_len = u64::from_le_bytes(
+            archive[archive.len() - 18..archive.len() - 10]
+                .try_into()
+                .expect("eight bytes"),
+        );
+        assert_eq!(contents_len, 10);
     }
 
     #[test]
