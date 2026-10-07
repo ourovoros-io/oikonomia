@@ -251,9 +251,6 @@ mod tests {
     use oikonomia_core::vault::vault_header_path;
     use std::path::{Path, PathBuf};
 
-    /// Every language the app is worded in.
-    const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
-
     /// Creates a fresh directory for one test.
     fn temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -313,7 +310,7 @@ mod tests {
     fn the_message_names_the_problem_and_the_directory_in_every_language() {
         let data_dir = Path::new("/home/someone/.local/share/oikonomia");
 
-        for locale in LOCALES {
+        for locale in Locale::ALL.iter().copied() {
             for problem in [
                 StartupProblem::VaultDamaged,
                 StartupProblem::DataFolderUnreadable,

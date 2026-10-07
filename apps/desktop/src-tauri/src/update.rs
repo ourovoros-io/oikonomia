@@ -220,17 +220,22 @@ impl Drop for PendingInstall<'_> {
     }
 }
 
-/// Installs the update the last check offered.
+/// Installs the update the last check offered, and returns the update status.
 ///
-/// Downloads into the updater cache, outside the vault data dir, verifies hash
-/// and signature in memory, writes the verified file, then execs that path.
-/// A copy replaced in place restarts into the new version. On Windows the
-/// installer process replaces the files, so the app exits and the installer
-/// starts the new version.
+/// Needs no vault. The command downloads the artifact, verifies its hash and
+/// signature in memory, writes the verified file into the updater cache,
+/// which is outside the vault data directory, and hands that file to the
+/// installer for this copy ([`crate::update_exec`]). A copy replaced in place
+/// restarts into the new version, so the command does not return. On Windows
+/// the installer process replaces the files, so the app exits and the
+/// installer starts the new version.
 ///
-/// From any state but [`UpdateStatus::Available`] this is a typed hard error,
-/// not a silent no-op. An install that was begun and then failed is the
-/// status `Failed` with the code of what stopped it.
+/// The command is refused with an error unless the status is
+/// [`UpdateStatus::Available`]; it is never a silent no-op. An install that
+/// was begun and then failed is not an error: it is the status `Failed` with
+/// the code of what stopped it, such as `update_network`,
+/// `update_artifact_integrity`, `update_cache_io` or `update_install_failed`.
+/// The cause is logged here.
 ///
 /// # Errors
 ///
@@ -279,10 +284,14 @@ pub(crate) async fn update_install(
     }
 }
 
-/// Runs the install for the IPC command: downloads, verifies in memory,
-/// writes the verified file, then execs that path.
+/// Installs the offer `machine` holds with `installer`, and returns how the
+/// install ended.
 ///
-/// Does not call a plugin check and does not read an unsigned feed URL.
+/// This is the body of [`update_install`], apart from the Tauri handles, so
+/// that a test can run it with an installer of its own. The update crate
+/// downloads the artifact, verifies it in memory and writes the verified
+/// file ([`install_offer`]); `installer` is then called with that file. No
+/// updater plugin is involved and no unsigned feed URL is read.
 ///
 /// The machine is not locked during the download: [`PendingInstall`] puts
 /// it in its installing state, in which it refuses a second install and a
