@@ -9,8 +9,10 @@ commands and the invariants a change must not break, read
 Oikonomia is a local-only desktop app for personal and company finance. It keeps
 double-entry books for several entities in one encrypted vault on the user's
 machine. It has no account system and no telemetry. The only network use is a
-signed update check that the user starts by clicking. It is a Tauri 2 shell
-around a Rust core, with a React interface in a webview.
+signed update check that the user starts by clicking. Outside the vault it
+writes a small preferences file and a local error log, neither of which holds
+ledger data ([The error log](#the-error-log)). It is a Tauri 2 shell around a
+Rust core, with a React interface in a webview.
 
 ## Layout
 
@@ -148,6 +150,41 @@ keeps an installable offer for it.
 Nothing checks for updates at startup. GitHub is only a host; the signing key is
 the trust root. See [`release.md`](release.md) for how releases are cut.
 
+## The error log
+
+A release build keeps one local log, so that a failed start or a failed update
+install leaves a record on the machine it happened on. It is never sent
+anywhere; the update path is still the only code that opens a socket.
+
+- **Where.** `errors.log` in the directory Tauri names for the app's logs:
+  `~/Library/Logs/io.ourovoros.oikonomia` on macOS,
+  `$XDG_DATA_HOME/io.ourovoros.oikonomia/logs` (by default under
+  `~/.local/share`) on Linux, `%LOCALAPPDATA%\io.ourovoros.oikonomia\logs` on
+  Windows. This is not the vault's data directory.
+- **How much.** The file is capped at 1 MiB. At the cap it is renamed to
+  `errors.previous.log`, replacing the file of that name, so at most two files
+  and about 2 MiB exist. On Unix the directory is `0700` and the files `0600`,
+  like the vault's.
+- **What passes.** Warnings and errors from this workspace's crates only. Lower
+  levels and every record from a third-party crate are dropped
+  (`error_log.rs`, `is_logged`).
+- **What a line may hold.** Fixed phrases, numbers, operating-system error
+  text, and paths of the app's own files. Nothing from the ledger: no amount,
+  description, merchant, account or entity name, document name or contents,
+  password or key material, and no path the user chose. A log line is
+  formatted where the failure happens, so the rule is kept there: a core error
+  is logged through `Error::log_text`, which writes its code and operation and
+  leaves out the lower-level detail, and a path that may be the user's goes
+  through `PrivateDetail` (`crates/oikonomia-core/src/error/log_text.rs`). A
+  new `log::` call follows the same rule.
+- **The webview has no path to it.** The release logger is not a Tauri plugin
+  and registers no command. `CommandError.message`, the full error text, goes
+  to the webview console only and is never logged by Rust.
+- **Debug builds** log as before: `tauri-plugin-log` at the info level, to
+  standard output and `Oikonomia.log` in the same directory, with full error
+  detail (`enable_log_detail`). The webview holds no `log:` permission, so it
+  cannot write there either.
+
 ## Platforms
 
 The same code ships on macOS, Linux and Windows. The differences are few and
@@ -225,3 +262,39 @@ each lives in one place:
   (`web/src/fonts.css`, `web/public/fonts`; Inter for the expense PDF is in
   `web/src/assets/fonts`). `web/tests/tokens.test.ts` checks
   text contrast against the glass surface.
+
+## Decided, not changed
+
+Three questions that were raised, weighed and closed. Each is recorded here
+with its reason so that it is not raised again without something new to say.
+
+- **An archived entity is fully read-only, voids and corrections included.**
+  Posting, voiding and correcting an entry, setting an opening balance and
+  posting from a template are all refused for an archived entity, and reads
+  answer as before. To correct an entry, the book is un-archived first.
+  Reason: archived should mean the figures cannot change, and a void or a
+  correction changes them. The rule is `ensure_writable_entity` in
+  `crates/oikonomia-core/src/ledger/entities.rs`, whose module documentation
+  tabulates it; every entry is inserted through `post_entry_in_tx`
+  (`ledger/journals.rs`), which makes the check first. No un-archive
+  operation exists yet: until one does, an archived book can be read,
+  exported and deleted, and its entries cannot be corrected.
+- **PDF load-time decompression is bounded only by the 8 MiB upload cap.**
+  `lopdf` inflates object streams and cross-reference streams while it loads a
+  file, before the page, decoded-size and nesting budgets can run on the
+  parsed document, and that step has no limit of its own. Bounding it would
+  take a parser of our own in front of `lopdf`, which was judged a larger risk
+  than the exposure: a slow or memory-hungry load of a hostile file that the
+  user chose to open on their own machine. The cap is `MAX_DOCUMENT_BYTES`
+  (`crates/oikonomia-core/src/documents/file.rs`); `load_pdf`
+  (`documents/pdf_load.rs`) checks it before `lopdf` sees a byte and runs the
+  budgets (`documents/pdf_budget.rs`, `documents/pdf_nesting.rs`) on what
+  `lopdf` returns.
+- **A recurring template's amount is validated, not typed.** The amount is
+  checked to be positive when the template is saved (`check_template_values`
+  in `crates/oikonomia-core/src/ledger/recurring.rs`, and a `CHECK` on the
+  column in `db/schema.rs`) and again when it posts (`post_recurring_template`
+  for an amount given at posting, and `post_simple_entry_in_tx` in
+  `ledger/journals.rs` for every simple entry). A positive-amount type would
+  say the same thing once, but it would touch every place money is
+  constructed, for little gain over two checks that already exist.

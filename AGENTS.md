@@ -66,6 +66,7 @@ make check
 - Journal CSV export neutralizes formula-leading cells; `parse_journal_export`
   reverses it.
 - Idle auto-lock is enforced by the Rust watchdog (`spawn_auto_lock`), not the UI timer.
+- Release builds log warnings and errors only, never ledger data, to a size-capped local file.
 - Tray left-click opens the quick-add companion window (`quick-add` label); right-click is the tray menu. Linux trays report no clicks, so there the menu has a "Quick add" item.
 - One process per user: a second launch on Windows or Linux shows the running app's window and exits (`with_single_instance`).
 - Platform-conditional code is checked by CI on Linux, Windows and macOS runners; the `bundle` job installs and runs the real installers (`scripts/smoke-linux.sh`, `scripts/smoke-windows.ps1`).

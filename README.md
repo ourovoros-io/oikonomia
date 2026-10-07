@@ -140,6 +140,8 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 - Lost password means lost data (there is no recovery key).
 - Vault files (`vault.db` and `vault.header.json`) live in the OS application-data
   directory, together with a small plaintext `ui-prefs.json`.
+- The only other file the app writes on its own is a local error log, which
+  holds nothing from your books; see [Error log](#error-log).
 - Offline by design: the app performs **no background network activity**. The
   only network actions are the update check you click on the unlock screen and,
   if you accept an update, its download, both started by a click. They talk only
@@ -155,6 +157,37 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 - Journal CSV exports neutralize cells that spreadsheets would run as formulas.
 - On first run you will be warned: choose a strong password.
 - Report security issues to info@ourovoros.io.
+
+## Error log
+
+Installed builds keep a small error log on your machine, so that a failed start
+or a failed update leaves something to go on. It never leaves the machine: the
+app sends nothing anywhere, and the log is read only if you open it or decide
+to send it with a bug report.
+
+| Platform | Folder |
+|----------|--------|
+| macOS | `~/Library/Logs/io.ourovoros.oikonomia/` |
+| Linux | `~/.local/share/io.ourovoros.oikonomia/logs/` (under `$XDG_DATA_HOME` when that is set) |
+| Windows | `%LOCALAPPDATA%\io.ourovoros.oikonomia\logs\` |
+
+- **Files.** `errors.log`, at most 1 MB, and `errors.previous.log`, the file
+  before it. Older lines are discarded, so the two together stay under about
+  2 MB. On macOS and Linux only your user account can read them.
+- **Contains.** Warnings and errors from the app itself, one per line: the
+  time, the part of the app, and what failed, such as a step of an update or
+  opening the vault, with the operating system's message ("permission
+  denied"). Paths of the app's own files can appear (its data folder, the
+  update cache, where it is installed), and those include your user name.
+- **Does not contain.** Anything from your books: no amounts, descriptions,
+  merchants, account or book names, document names or contents, no password
+  or key, and no path of a file you chose (a backup, a statement, a
+  document). Nothing the interface shows or sends is written there.
+- **Deleting it.** Delete the two files, or the folder, whenever you like. An
+  empty `errors.log` is created again the next time the app starts.
+
+Development builds (`make app`) log more, with full error detail, to the
+terminal and to `Oikonomia.log` in the same folder.
 
 ## Threat model
 
