@@ -11,9 +11,10 @@
 //! # Amounts
 //!
 //! An amount cell becomes signed integer minor units; no floating point is
-//! involved. [`parse_signed_minor`] does it, for a currency with `exponent`
-//! decimals ([`currency_minor_exponent`]). What it accepts, with the result
-//! for a two-decimal currency:
+//! involved. A statement is read for the book's base currency, which gives
+//! the number of decimals ([`currency_minor_exponent`]) and the one currency
+//! code a cell may carry. What is accepted, with the result for a book in
+//! euros:
 //!
 //! | Part             | Accepted                      | Example                  |
 //! |------------------|-------------------------------|--------------------------|
@@ -28,7 +29,7 @@
 //! |                  | Whitespace between digits     | `1 234,56` → 123456      |
 //! | Three-digit tail | A thousands group             | `1.234` → 123400         |
 //! | Currency sign    | `€ $ £ ¥ ₹ ₺ ₩`, anywhere     | `€1.234,56` → 123456     |
-//! | Currency code    | Three ASCII letters at an end | `12.00 EUR` → 1200       |
+//! | Currency code    | The book's code, at an end    | `12.00 EUR` → 1200       |
 //! | Other whitespace | Ignored                       | `- 25 EUR` → −2500       |
 //! | Exponent         | None                          | `1e3` is rejected        |
 //!
@@ -42,8 +43,11 @@
 //! Anything else is rejected, not guessed at: a second sign (`-25-`), a
 //! fraction longer than the currency has (`0.125` in EUR), irregular
 //! grouping (`1,2,3.45`, `12'34`, `1 2 3,45`), a currency sign outside the
-//! list, and a separator with no digit. The exact rules and their order are
-//! in the `csv/amount.rs` module doc.
+//! list, the code of another currency than the book's (`25 USD` in a book in
+//! euros), and a separator with no digit. The exact rules and their order
+//! are in the `csv/amount.rs` module doc. [`parse_signed_minor`] is the same
+//! grammar for a caller that has a number of decimals and no book: it drops
+//! any three-letter code.
 //!
 //! # Amount sign → kind
 //!

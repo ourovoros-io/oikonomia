@@ -22,7 +22,7 @@
 //! | 1    | Whitespace not between digits | `- 25`, `25 EUR`   | An empty cell     |
 //! | 2    | Parentheses around the cell   | `(25,00)`          |                   |
 //! | 3    | The signs `€ $ £ ¥ ₹ ₺ ₩`     | `€25`, `25 $`      | `₽25`             |
-//! | 4    | Three ASCII letters, each end | `EUR 25`, `25 lei` | `25 kr`, `25 zł`  |
+//! | 4    | The book's code, each end     | `EUR 25`, `25 eur` | `25 USD`, `25 kr` |
 //! | 5    | One sign                      | `-25`, `+25`, `25-`| `-25-`, `25+`     |
 //! | 6    | Step 4 again                  | `-EUR 25`          |                   |
 //! | 7    | Nothing: digits and           | `25`, `.5`, `5.`   | `1e3`, `25%`, `.` |
@@ -37,9 +37,15 @@
 //! 2. Parentheses mean negative. They do not cancel a minus: `(-25)` is
 //!    negative.
 //! 3. The signs are removed wherever they stand.
-//! 4. The letters are not checked against ISO 4217. A code of another
-//!    length, non-ASCII letters, and letters in the middle of the number are
-//!    left in place and fail step 7.
+//! 4. Three ASCII letters at an end of the number are a currency code. For a
+//!    statement they have to be the code of the book's currency, in either
+//!    case: a cell marked `USD` in a book in euros is rejected, because its
+//!    digits read as euros would be a wrong amount that looks right. The
+//!    letters are not checked against ISO 4217, so a currency written as a
+//!    three-letter word (`lei`) is rejected as another currency too.
+//!    [`parse_signed_minor`], which is given no book, drops any three
+//!    letters. A code of another length, non-ASCII letters, and letters in
+//!    the middle of the number are left in place and fail step 7.
 //! 5. The sign is a leading `-`, U+2212 or `+`, or else a trailing `-` or
 //!    U+2212. A second sign (`-25-`, `+25-`, `--25`) is left in place and
 //!    fails step 7, as does a trailing `+`.
@@ -173,8 +179,10 @@ pub fn currency_minor_exponent(code: CurrencyCode) -> u8 {
 ///
 /// Whitespace anywhere else and the currency signs `€$£¥₹₺₩` are ignored. So
 /// are three
-/// ASCII letters directly before or after the number; they are not checked
-/// against the ISO 4217 list, so `1.00 abc` parses like `1.00 EUR`.
+/// ASCII letters directly before or after the number: this function is given
+/// no book to compare them with and does not check them against the ISO 4217
+/// list, so `1.00 abc` parses like `1.00 EUR`. A statement is read through
+/// `parse_book_amount`, which accepts only the code of the book's currency.
 /// Parentheses mean negative (`(25,00)`), as does one minus, written as `-`
 /// or U+2212 MINUS SIGN, before the number or after it (`25-`). A second
 /// sign makes the cell invalid.
@@ -186,7 +194,37 @@ pub fn currency_minor_exponent(code: CurrencyCode) -> u8 {
 /// cell with a separator but no digit;
 /// [`CsvError::AmountOverflow`] when the magnitude does not fit in `i64`.
 pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
-    let (negative, digits) = prepare_amount(raw)?;
+    parse_amount(raw, exponent, None)
+}
+
+/// Parses an amount cell of a statement for a book in `currency`, into
+/// signed minor units of that currency.
+///
+/// This is [`parse_signed_minor`] with the decimals of `currency`
+/// ([`currency_minor_exponent`]) and one more rule: a three-letter code in
+/// the cell has to be `currency`, in either case. A cell marked with any
+/// other three letters is not an amount of this book, and reading its
+/// digits as one would post `25 USD` as 25 euros.
+///
+/// # Errors
+///
+/// Those of [`parse_signed_minor`], and [`CsvError::InvalidAmount`],
+/// carrying the cell as written, for a cell whose code is not `currency`.
+pub(crate) fn parse_book_amount(raw: &str, currency: CurrencyCode) -> Result<i64, CsvError> {
+    parse_amount(raw, currency_minor_exponent(currency), Some(currency))
+}
+
+/// Parses an amount cell into signed minor units of a currency with
+/// `exponent` decimals.
+///
+/// With a `book` currency, a three-letter code in the cell has to be that
+/// currency; without one any three letters pass.
+///
+/// # Errors
+///
+/// Those of [`parse_signed_minor`] and of [`parse_book_amount`].
+fn parse_amount(raw: &str, exponent: u8, book: Option<CurrencyCode>) -> Result<i64, CsvError> {
+    let (negative, digits) = prepare_amount(raw, book)?;
     let (integer_digits, fraction_digits) =
         split_decimal(&digits, exponent).ok_or_else(|| CsvError::InvalidAmount(raw.to_owned()))?;
 
@@ -219,9 +257,12 @@ pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
 /// # Errors
 ///
 /// [`CsvError::MissingAmount`] when nothing but whitespace is in the cell;
-/// [`CsvError::InvalidAmount`], carrying the cell as written, when anything
-/// other than digits and separators is left over.
-fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
+/// [`CsvError::InvalidAmount`], carrying the cell as written, when a
+/// three-letter code is not the currency of `book`, or when anything other
+/// than digits and separators is left over.
+fn prepare_amount(raw: &str, book: Option<CurrencyCode>) -> Result<(bool, String), CsvError> {
+    let invalid = || CsvError::InvalidAmount(raw.to_owned());
+
     let compact = compact_amount(raw);
     if compact.is_empty() {
         return Err(CsvError::MissingAmount);
@@ -231,14 +272,15 @@ fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
     let without_symbols = strip_currency_symbols(unwrapped);
     // A code is dropped on both sides of the sign, so `EUR -12`, `-EUR 12`,
     // `12- EUR` and `12 EUR-` all leave the bare digits.
-    let (signed_negative, unsigned) = strip_sign(strip_letter_code(&without_symbols));
-    let body = strip_letter_code(unsigned);
+    let coded = strip_letter_code(&without_symbols, book).ok_or_else(invalid)?;
+    let (signed_negative, unsigned) = strip_sign(coded);
+    let body = strip_letter_code(unsigned, book).ok_or_else(invalid)?;
 
     let is_digit_or_separator = |character: char| {
         character.is_ascii_digit() || matches!(character, '.' | ',' | SPACE | APOSTROPHE)
     };
     if body.is_empty() || !body.chars().all(is_digit_or_separator) {
-        return Err(CsvError::InvalidAmount(raw.to_owned()));
+        return Err(invalid());
     }
     Ok((parenthesized || signed_negative, body.to_owned()))
 }
@@ -336,18 +378,28 @@ fn strip_sign(text: &str) -> (bool, &str) {
 }
 
 /// Drops a three-letter code from the front, and one from the back of what
-/// is left.
+/// is left, or returns `None` when a code it would drop is not the currency
+/// of `book`.
+///
+/// Without a `book` any code is dropped. The comparison ignores case, so
+/// `eur` is the code of a book in `EUR`.
 ///
 /// A cell that is nothing but three letters is returned as it is. It has no
 /// digits, so the caller rejects it as an invalid amount either way.
-fn strip_letter_code(text: &str) -> &str {
-    let Some((code, rest)) = split_leading_letter_code(text) else {
-        return strip_trailing_letter_code(text);
+fn strip_letter_code(text: &str, book: Option<CurrencyCode>) -> Option<&str> {
+    let is_the_books =
+        |code: &str| book.is_none_or(|book| code.eq_ignore_ascii_case(book.as_str()));
+
+    let rest = match split_leading_letter_code(text) {
+        Some((_, "")) => return Some(text),
+        Some((code, rest)) if is_the_books(code) => rest,
+        Some(_) => return None,
+        None => text,
     };
-    if rest.is_empty() {
-        return code;
+    match split_trailing_letter_code(rest) {
+        Some((head, code)) => is_the_books(code).then_some(head),
+        None => Some(rest),
     }
-    strip_trailing_letter_code(rest)
 }
 
 /// Splits `text` into a three-letter code at its start and the rest, or
@@ -361,25 +413,22 @@ fn split_leading_letter_code(text: &str) -> Option<(&str, &str)> {
     is_letter_code(code).then_some((code, rest))
 }
 
-/// Returns `text` without a three-letter code at its end.
-fn strip_trailing_letter_code(text: &str) -> &str {
-    // `split_at_checked` is `None` when three bytes from the end falls inside
-    // a multi-byte character, which also means the tail is not three letters.
-    let split = text
-        .len()
-        .checked_sub(3)
-        .and_then(|code_start| text.split_at_checked(code_start));
-    match split {
-        Some((head, code)) if is_letter_code(code) => head,
-        _ => text,
-    }
+/// Splits `text` into what stands before a three-letter code at its end and
+/// that code, or returns `None` when it does not end with one.
+///
+/// `split_at_checked` is `None` when three bytes from the end falls inside a
+/// multi-byte character, which also means the tail is not three letters.
+fn split_trailing_letter_code(text: &str) -> Option<(&str, &str)> {
+    let code_start = text.len().checked_sub(3)?;
+    let (head, code) = text.split_at_checked(code_start)?;
+    is_letter_code(code).then_some((head, code))
 }
 
 /// Whether `text` is exactly three ASCII letters, in either case.
 ///
-/// The shape of an ISO 4217 code. The letters are not looked up or compared
-/// with anything: the book's currency, not the cell, decides how the digits
-/// are read, so a cell marked `USD` in a EUR book is read as euros.
+/// The shape of an ISO 4217 code, and all [`CurrencyCode`] asks of one. The
+/// letters are not looked up in a list of currencies; the caller compares
+/// them with the currency of the book.
 fn is_letter_code(text: &str) -> bool {
     text.len() == 3 && text.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
@@ -575,6 +624,75 @@ mod tests {
         assert_invalid_amount("25 kr", 2);
         assert_invalid_amount("25 Ft", 2);
         assert_invalid_amount("R$ 25,00", 2);
+    }
+
+    /// The currency with code `code`.
+    fn currency(code: &str) -> CurrencyCode {
+        code.parse().expect("a currency code")
+    }
+
+    #[test]
+    fn a_cell_marked_with_the_books_currency_is_read() {
+        let eur = currency("EUR");
+
+        for (raw, minor) in [
+            ("25 EUR", 2_500),
+            ("eur 25", 2_500),
+            ("EUR -12.00", -1_200),
+            ("-EUR 12", -1_200),
+            ("12- EUR", -1_200),
+            ("12 EUR-", -1_200),
+            ("(1.234,56 Eur)", -123_456),
+            ("EUR 25 EUR", 2_500),
+            ("€25", 2_500),
+            ("25", 2_500),
+        ] {
+            assert_eq!(parse_book_amount(raw, eur), Ok(minor), "{raw}");
+        }
+    }
+
+    #[test]
+    fn a_cell_marked_with_another_currency_is_not_an_amount_of_the_book() {
+        let eur = currency("EUR");
+
+        for raw in [
+            "25 USD",
+            "USD 25",
+            "usd 25",
+            "USD -12.00",
+            "-USD 12",
+            "12- USD",
+            "12 USD-",
+            "(25,00 USD)",
+            "EUR 25 USD",
+            "USD 25 EUR",
+            "EUR -USD 25",
+            "25,00 lei",
+        ] {
+            assert_eq!(
+                parse_book_amount(raw, eur),
+                Err(CsvError::InvalidAmount(raw.to_owned())),
+                "{raw}"
+            );
+        }
+        assert_eq!(parse_book_amount("25 USD", currency("usd")), Ok(2_500));
+    }
+
+    #[test]
+    fn a_book_amount_has_the_decimals_of_the_books_currency() {
+        assert_eq!(parse_book_amount("1,234 JPY", currency("JPY")), Ok(1_234));
+        assert_eq!(parse_book_amount("0.125 KWD", currency("KWD")), Ok(125));
+        assert_eq!(parse_book_amount("0.1250", currency("CLF")), Ok(1_250));
+        assert_eq!(
+            parse_book_amount("", currency("EUR")),
+            Err(CsvError::MissingAmount)
+        );
+    }
+
+    #[test]
+    fn without_a_book_any_three_letters_pass_as_a_code() {
+        assert_eq!(parse_signed_minor("25 USD", 2), Ok(2_500));
+        assert_eq!(parse_signed_minor("abc 25", 2), Ok(2_500));
     }
 
     #[test]
@@ -933,6 +1051,29 @@ mod properties {
                     minor
                 );
             }
+        }
+
+        // A code is the book's or the cell is refused, wherever it stands.
+        #[test]
+        fn only_the_code_of_the_books_currency_is_accepted(
+            minor in 1_i64..=99_999_999,
+            code in "[A-Za-z]{3}",
+            code_first in any::<bool>(),
+        ) {
+            let book: CurrencyCode = "EUR".parse().unwrap();
+            let amount = written(minor, "", '.');
+            let cell = if code_first {
+                format!("{code} {amount}")
+            } else {
+                format!("{amount} {code}")
+            };
+
+            let expected = if code.eq_ignore_ascii_case("EUR") {
+                Ok(minor)
+            } else {
+                Err(CsvError::InvalidAmount(cell.clone()))
+            };
+            prop_assert_eq!(parse_book_amount(&cell, book), expected, "{}", cell);
         }
 
         #[test]

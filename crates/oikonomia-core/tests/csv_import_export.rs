@@ -343,6 +343,42 @@ fn a_row_is_checked_for_its_date_then_as_a_duplicate_then_for_the_rest() {
 }
 
 #[test]
+fn an_amount_marked_with_another_currency_than_the_books_is_an_invalid_row() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    // The book is in euros.
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let csv = "Date,Description,Amount\n\
+               2026-03-15,Hotel,-25.00 USD\n\
+               2026-03-15,Taxi,USD -12.00\n\
+               2026-03-16,Lunch,-9.50 EUR\n\
+               2026-03-16,Coffee,eur -3.50\n\
+               2026-03-17,Bread,-2.00\n";
+
+    let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
+
+    let outcomes: Vec<(Option<UiText>, Option<i64>)> = preview
+        .rows
+        .into_iter()
+        .map(|row| (row.error, row.signed_amount_minor))
+        .collect();
+    let invalid = |cell: &str| {
+        let reason = UiText::new(UiTextCode::CsvInvalidAmount).with_param("value", cell);
+        (Some(reason), None)
+    };
+    assert_eq!(
+        outcomes,
+        [
+            invalid("-25.00 USD"),
+            invalid("USD -12.00"),
+            (None, Some(-950)),
+            (None, Some(-350)),
+            (None, Some(-200)),
+        ]
+    );
+}
+
+#[test]
 fn export_round_trips_posted_lines_and_marks_voided() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");

@@ -20,8 +20,7 @@ use time::Date;
 use crate::csv::parse::{parse_bank_csv, read_csv_text};
 use crate::csv::{
     CsvColumnMapping, CsvImportAccounts, CsvImportPostResult, CsvImportPreview,
-    CsvImportPreviewRow, CsvRowOutcome, currency_minor_exponent, normalize_description,
-    suggested_entry,
+    CsvImportPreviewRow, CsvRowOutcome, normalize_description, suggested_entry,
 };
 use crate::db::{collect_rows, read_column, stored_date};
 use crate::domain::{AccountId, EntityId};
@@ -350,8 +349,7 @@ fn preview_statement(
     check_role_account(conn, entity_id, accounts.expense_account_id)?;
     check_role_account(conn, entity_id, accounts.income_account_id)?;
 
-    let exponent = currency_minor_exponent(entity.base_currency);
-    let parsed = parse_bank_csv(statement.csv_text, exponent, statement.mapping)?;
+    let parsed = parse_bank_csv(statement.csv_text, entity.base_currency, statement.mapping)?;
     let mut seen = load_active_movements(conn, entity_id)?;
     let mut rows = Vec::with_capacity(parsed.rows.len());
 
