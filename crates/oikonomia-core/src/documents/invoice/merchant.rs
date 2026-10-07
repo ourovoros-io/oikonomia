@@ -112,10 +112,9 @@ impl Description {
 /// 2. a known biller ([`known_brand`]);
 /// 3. on a utility bill of no known brand, a generic supplier: natural gas,
 ///    or electricity for a "Power Business" tariff;
-/// 4. the first `Επωνυμία` (legal name) line: what follows its colon, or
-///    else the line without the label words at its start. When the label is
-///    neither followed by a colon nor at the start, the whole line is
-///    returned, label included;
+/// 4. the first `Επωνυμία` (legal name) line that names someone: what
+///    follows its colon, or else what follows the label word, wherever on
+///    the line the label is;
 /// 5. the first line of [`MERCHANT_LINE_CHARS`] characters that has a letter
 ///    and does not hold the Greek word for "invoice".
 ///
@@ -147,14 +146,16 @@ pub(super) fn find_merchant(text: &str, folded_text: &str) -> Option<Merchant> {
             {
                 return Some(Merchant::Named(name));
             }
-            // No colon: the name is what follows the label word.
-            let cleaned = line
+            // No colon: the name is what follows the label word, wherever
+            // on the line the label is.
+            let name = line
                 .split_whitespace()
+                .skip_while(|word| !ISSUER_NAME_STEM.occurs_in(&folded(word)))
                 .skip_while(|word| *word == ":" || ISSUER_NAME_STEM.occurs_in(&folded(word)))
                 .collect::<Vec<_>>()
                 .join(" ");
-            if cleaned.chars().count() >= MIN_NAME_CHARS {
-                return Some(Merchant::Named(cleaned));
+            if name.chars().count() >= MIN_NAME_CHARS {
+                return Some(Merchant::Named(name));
             }
         }
     }
@@ -342,6 +343,38 @@ mod tests {
             .join("testdata/documents")
             .join(relative);
         std::fs::read_to_string(&path).expect("corpus fixture")
+    }
+
+    /// The merchant of `text`, in English.
+    fn merchant_of(text: &str) -> Option<String> {
+        parse_invoice_text(text, crate::prefs::Locale::En).merchant
+    }
+
+    #[test]
+    fn a_legal_name_after_a_label_in_mid_line_is_returned_without_the_label() {
+        assert_eq!(
+            merchant_of("Στοιχεία εκδότη Επωνυμία ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\nΠληρωτέο 200,00").as_deref(),
+            Some("ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ")
+        );
+        // The label at the start of the line, as before.
+        assert_eq!(
+            merchant_of("Επωνυμία ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\nΠληρωτέο 200,00").as_deref(),
+            Some("ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ")
+        );
+        assert_eq!(
+            merchant_of("Επωνυμία : ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\nΠληρωτέο 200,00").as_deref(),
+            Some("ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ")
+        );
+    }
+
+    #[test]
+    fn a_legal_name_label_with_nothing_after_it_is_passed_over() {
+        // The legal-name step yields nothing here. The last step then takes
+        // the first plain line, as it does for any document without a name.
+        assert_eq!(
+            merchant_of("Στοιχεία Επωνυμία\nACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\nΠληρωτέο 200,00").as_deref(),
+            Some("Στοιχεία Επωνυμία")
+        );
     }
 
     #[test]
