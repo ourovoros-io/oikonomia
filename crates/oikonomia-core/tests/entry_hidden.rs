@@ -204,7 +204,13 @@ fn pnl_includes_hidden_export_omits() {
     .expect("hidden seed");
     set_entry_hidden(conn, hidden.entry.id, true).expect("hide");
 
-    let in_app = profit_and_loss(conn, book.entity_id, "2026-03-01", "2026-03-31").expect("in-app");
+    let in_app = profit_and_loss(
+        conn,
+        book.entity_id,
+        common::date("2026-03-01"),
+        common::date("2026-03-31"),
+    )
+    .expect("in-app");
     assert_eq!(
         in_app.total_expenses, 3_500,
         "in-app Reports include Hidden: {in_app:?}"
@@ -215,8 +221,13 @@ fn pnl_includes_hidden_export_omits() {
         in_app.expenses
     );
 
-    let export =
-        profit_and_loss_export(conn, book.entity_id, "2026-03-01", "2026-03-31").expect("export");
+    let export = profit_and_loss_export(
+        conn,
+        book.entity_id,
+        common::date("2026-03-01"),
+        common::date("2026-03-31"),
+    )
+    .expect("export");
     assert_eq!(
         export.total_expenses, 2_500,
         "export P&L omits Hidden: {export:?}"

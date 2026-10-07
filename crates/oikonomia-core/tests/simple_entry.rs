@@ -7,7 +7,7 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::{AccountRole, ValidationError};
 use oikonomia_core::ledger::{
-    PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, post_simple_entry,
+    PostSimpleEntry, PostSimpleEntryRequest, SimpleBillStatus, SimpleEntryKind, post_simple_entry,
 };
 use rusqlite::Connection;
 
@@ -36,7 +36,7 @@ struct AccountsByCode {
 }
 
 fn base_input(entity_id: EntityId, kind: SimpleEntryKind) -> PostSimpleEntry {
-    PostSimpleEntry {
+    common::strict(PostSimpleEntryRequest {
         entity_id,
         kind,
         bill_status: None,
@@ -49,7 +49,7 @@ fn base_input(entity_id: EntityId, kind: SimpleEntryKind) -> PostSimpleEntry {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
-    }
+    })
 }
 
 #[test]

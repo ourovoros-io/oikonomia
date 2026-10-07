@@ -8,7 +8,9 @@
 //!
 //! An accounting date is a [`time::Date`] in memory and `YYYY-MM-DD` in the
 //! database and over IPC. [`format_date`] writes that form and [`parse_date`]
-//! reads it; [`serde_date`] applies the pair to a struct field. A month on
+//! reads it; [`serde_date`] applies the pair to a struct field, and
+//! [`DateText`] carries a date the UI sent as a bare argument until it is
+//! parsed. A month on
 //! its own, such as the one a fiscal year starts in, is a [`time::Month`] in
 //! memory and its number from 1 to 12 as JSON ([`serde_month`]).
 //!
@@ -149,6 +151,56 @@ fn invalid_date(text: &str) -> Error {
         value: text.to_owned(),
     }
     .into()
+}
+
+/// Text that the UI sent where a date belongs and that has not been parsed
+/// yet.
+///
+/// A command of the desktop shell takes this for a date it receives as a bare
+/// argument, and calls [`DateText::parse`] before it calls into the ledger,
+/// which takes a [`time::Date`]. It deserializes from any JSON string and
+/// never from anything else.
+///
+/// It is not a parsed date on purpose. A value the JSON layer refuses reaches
+/// the UI as text without a code, which the UI can only show as an unknown
+/// error. Parsing after deserializing keeps a malformed date an
+/// [`ValidationError::InvalidDate`], which the UI words.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::util::{DateText, format_date};
+///
+/// let sent: DateText = serde_json::from_str(r#""2026-08-10""#)?;
+/// assert_eq!(format_date(sent.parse()?), "2026-08-10");
+///
+/// let malformed: DateText = serde_json::from_str(r#""10/08/2026""#)?;
+/// assert_eq!(malformed.parse().map_err(|error| error.code()), Err("invalid_date"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(transparent)]
+pub struct DateText(String);
+
+impl DateText {
+    /// Parses the text with the strict rule of [`parse_date`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Validation`] with [`ValidationError::InvalidDate`],
+    /// carrying the text, when it is not a `YYYY-MM-DD` calendar date.
+    pub fn parse(&self) -> Result<Date> {
+        parse_date(&self.0)
+    }
+
+    /// Parses an argument the UI may leave out: `None` stays `None`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`DateText::parse`], when a text is given.
+    pub fn parse_optional(text: Option<&Self>) -> Result<Option<Date>> {
+        text.map(Self::parse).transpose()
+    }
 }
 
 /// Serializes a [`time::Date`] field as a `YYYY-MM-DD` string, for use with

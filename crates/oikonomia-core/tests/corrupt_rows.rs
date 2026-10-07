@@ -12,12 +12,11 @@ use oikonomia_core::csv::export_journal_csv;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
-    CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleEntryKind, account_register,
-    activity_window, balance_sheet, cash_flow_series, create_recurring_template, get_entity,
-    get_entry, get_recurring_template, list_accounts, list_entities, list_entries,
+    CreateRecurringTemplateRequest, EntryFilter, RecurringCadence, SimpleEntryKind,
+    account_register, activity_window, balance_sheet, cash_flow_series, create_recurring_template,
+    get_entity, get_entry, get_recurring_template, list_accounts, list_entities, list_entries,
     list_recurring_templates, post_simple_entry, trial_balance,
 };
-use oikonomia_core::util::parse_date;
 use rusqlite::Connection;
 
 /// A date that sorts inside 2026 as text but is not on the calendar, so
@@ -51,7 +50,7 @@ fn book(conn: &Connection) -> Book {
 fn monthly_template(conn: &Connection, book: &Book) {
     create_recurring_template(
         conn,
-        &CreateRecurringTemplate {
+        &common::strict(CreateRecurringTemplateRequest {
             entity_id: book.entity_id,
             name: "Rent".into(),
             kind: SimpleEntryKind::Expense,
@@ -66,7 +65,7 @@ fn monthly_template(conn: &Connection, book: &Book) {
             to_account_id: None,
             memo: None,
             next_date: "2026-03-01".into(),
-        },
+        }),
     )
     .expect("template");
 }
@@ -107,17 +106,16 @@ fn an_unparseable_entry_date_is_corrupt_wherever_entries_are_read() {
     );
     assert_corrupt(account_register(conn, book.food, None, None), column);
     assert_corrupt(
-        cash_flow_series(conn, book.entity_id, "2026-02-01", "2026-03-31"),
+        cash_flow_series(
+            conn,
+            book.entity_id,
+            common::date("2026-02-01"),
+            common::date("2026-03-31"),
+        ),
         column,
     );
     assert_corrupt(
-        activity_window(
-            conn,
-            book.entity_id,
-            None,
-            None,
-            parse_date("2026-03-01").expect("today"),
-        ),
+        activity_window(conn, book.entity_id, None, None, common::date("2026-03-01")),
         column,
     );
 }
@@ -197,8 +195,14 @@ fn a_fiscal_year_start_month_off_the_calendar_is_corrupt() {
         let column = "entities.fiscal_year_start_month";
 
         assert_corrupt(get_entity(conn, book.entity_id), column);
-        assert_corrupt(trial_balance(conn, book.entity_id, "2026-12-31"), column);
-        assert_corrupt(balance_sheet(conn, book.entity_id, "2026-12-31"), column);
+        assert_corrupt(
+            trial_balance(conn, book.entity_id, common::date("2026-12-31")),
+            column,
+        );
+        assert_corrupt(
+            balance_sheet(conn, book.entity_id, common::date("2026-12-31")),
+            column,
+        );
     }
 }
 

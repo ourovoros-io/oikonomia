@@ -12,8 +12,9 @@ use oikonomia_core::documents::{
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, Resource, ValidationError};
 use oikonomia_core::ledger::{
-    CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, archive_account,
-    delete_entity, list_accounts, list_entities, list_entries, post_entry,
+    CreateJournalLine, EntryFilter, PostJournal, PostJournalRequest, PostSimpleEntry,
+    PostedEntryView, archive_account, delete_entity, list_accounts, list_entities, list_entries,
+    post_entry,
 };
 use rusqlite::Connection;
 
@@ -49,7 +50,7 @@ fn delete_entity_with_linked_document() {
 
     let entry = post_entry(
         conn,
-        &PostJournal {
+        &common::strict(PostJournalRequest {
             entity_id,
             entry_date: "2026-01-15".into(),
             description: "Groceries".into(),
@@ -68,7 +69,7 @@ fn delete_entity_with_linked_document() {
                     memo: None,
                 },
             ],
-        },
+        }),
     )
     .expect("post");
 

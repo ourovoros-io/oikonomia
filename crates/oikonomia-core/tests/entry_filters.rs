@@ -106,8 +106,8 @@ fn date_range_is_inclusive_on_both_ends() {
         conn,
         entity_id,
         &EntryFilter {
-            date_from: Some("2026-01-10".into()),
-            date_to: Some("2026-01-20".into()),
+            date_from: Some(common::date("2026-01-10")),
+            date_to: Some(common::date("2026-01-20")),
             ..EntryFilter::default()
         },
     )
@@ -192,7 +192,7 @@ fn combined_filters_intersect() {
         entity_id,
         &EntryFilter {
             text: Some("groceries".into()),
-            date_from: Some("2026-04-15".into()),
+            date_from: Some(common::date("2026-04-15")),
             ..EntryFilter::default()
         },
     )

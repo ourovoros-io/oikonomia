@@ -31,10 +31,11 @@ use crate::state::AppState;
 use oikonomia_core::documents::post_simple_entry_with_document;
 use oikonomia_core::domain::{AccountId, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
-    EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, VoidResult, get_entry,
-    list_entries, post_entry, post_simple_entry, replace_simple_entry, set_entry_hidden,
-    void_entry,
+    EntryFilter, PostJournal, PostJournalRequest, PostSimpleEntry, PostSimpleEntryRequest,
+    PostedEntryView, VoidResult, get_entry, list_entries, post_entry, post_simple_entry,
+    replace_simple_entry, set_entry_hidden, void_entry,
 };
+use oikonomia_core::util::DateText;
 use tauri::State;
 
 /// Lists an entity's posted entries, voided ones included, optionally
@@ -55,16 +56,16 @@ use tauri::State;
 pub(crate) async fn entry_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
-    from: Option<String>,
-    to: Option<String>,
+    from: Option<DateText>,
+    to: Option<DateText>,
     search: Option<String>,
     account_id: Option<AccountId>,
 ) -> CommandResult<Vec<PostedEntryView>> {
     with_connection(&state, move |conn| {
         let filter = EntryFilter {
             text: search,
-            date_from: from,
-            date_to: to,
+            date_from: DateText::parse_optional(from.as_ref())?,
+            date_to: DateText::parse_optional(to.as_ref())?,
             account_id,
         };
         list_entries(conn, entity_id, &filter)
@@ -105,9 +106,13 @@ pub(crate) async fn entry_get(
 #[tauri::command]
 pub(crate) async fn entry_post(
     state: State<'_, AppState>,
-    input: PostJournal,
+    input: PostJournalRequest,
 ) -> CommandResult<PostedEntryView> {
-    with_connection(&state, move |conn| post_entry(conn, &input)).await
+    with_connection(&state, move |conn| {
+        let input = PostJournal::try_from(input)?;
+        post_entry(conn, &input)
+    })
+    .await
 }
 
 /// Posts an entry from the simple form: a kind, an amount and the accounts
@@ -122,9 +127,13 @@ pub(crate) async fn entry_post(
 #[tauri::command]
 pub(crate) async fn entry_post_simple(
     state: State<'_, AppState>,
-    input: PostSimpleEntry,
+    input: PostSimpleEntryRequest,
 ) -> CommandResult<PostedEntryView> {
-    with_connection(&state, move |conn| post_simple_entry(conn, &input)).await
+    with_connection(&state, move |conn| {
+        let input = PostSimpleEntry::try_from(input)?;
+        post_simple_entry(conn, &input)
+    })
+    .await
 }
 
 /// Posts a simple entry and stores the document it was drafted from, in one
@@ -149,7 +158,7 @@ pub(crate) async fn entry_post_simple(
 )]
 pub(crate) async fn entry_post_simple_with_document(
     state: State<'_, AppState>,
-    input: PostSimpleEntry,
+    input: PostSimpleEntryRequest,
     filename: String,
     mime_type: String,
     data_base64: String,
@@ -158,6 +167,7 @@ pub(crate) async fn entry_post_simple_with_document(
     let data = decode_document_base64(&data_base64)?;
 
     with_connection(&state, move |conn| {
+        let input = PostSimpleEntry::try_from(input)?;
         let (view, _document) = post_simple_entry_with_document(
             conn,
             &input,
@@ -191,7 +201,7 @@ pub(crate) async fn entry_post_simple_with_document(
 #[tauri::command]
 pub(crate) async fn entry_post_simple_with_document_path(
     state: State<'_, AppState>,
-    input: PostSimpleEntry,
+    input: PostSimpleEntryRequest,
     path: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
@@ -222,6 +232,7 @@ pub(crate) async fn entry_post_simple_with_document_path(
 
         let guard = vault.acquire();
         let conn = guard.connection()?;
+        let input = PostSimpleEntry::try_from(input)?;
         let (view, _document) = post_simple_entry_with_document(
             conn,
             &input,
@@ -253,9 +264,10 @@ pub(crate) async fn entry_post_simple_with_document_path(
 pub(crate) async fn entry_replace_simple(
     state: State<'_, AppState>,
     original_id: JournalEntryId,
-    input: PostSimpleEntry,
+    input: PostSimpleEntryRequest,
 ) -> CommandResult<PostedEntryView> {
     with_localized_connection(&state, move |conn, locale| {
+        let input = PostSimpleEntry::try_from(input)?;
         replace_simple_entry(conn, original_id, &input, locale)
     })
     .await

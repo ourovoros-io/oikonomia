@@ -21,9 +21,9 @@ use oikonomia_core::documents::DocumentMeta;
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateJournalLine,
-    CreateRecurringTemplate, DashboardSummary, PnL, PostJournal, PostSimpleEntry, PostedEntryView,
-    RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
-    UpdateRecurringTemplate, VoidResult,
+    CreateRecurringTemplateRequest, DashboardSummary, PnL, PostJournalRequest,
+    PostSimpleEntryRequest, PostedEntryView, RecurringPostResult, RecurringTemplateView,
+    RegisterLine, TrialBalance, UpdateAccount, UpdateRecurringTemplateRequest, VoidResult,
 };
 use oikonomia_core::prefs::UiPrefs;
 use serde::Serialize;
@@ -124,7 +124,7 @@ fn post_journal_request() {
     assert_json_is_pinned::<CreateJournalLine>(
         r#"{"account_id":"22222222-2222-4222-8222-222222222222","debit_minor":4500,"credit_minor":0,"memo":null}"#,
     );
-    assert_json_is_pinned::<PostJournal>(
+    assert_json_is_pinned::<PostJournalRequest>(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"Groceries","reference":null,"lines":[{"account_id":"22222222-2222-4222-8222-222222222222","debit_minor":4500,"credit_minor":0,"memo":null},{"account_id":"66666666-6666-4666-8666-666666666666","debit_minor":0,"credit_minor":4500,"memo":"card"}]}"#,
     );
 }
@@ -132,19 +132,19 @@ fn post_journal_request() {
 #[test]
 fn post_simple_entry_request_of_each_kind() {
     // An expense: category and wallet.
-    assert_json_is_pinned::<PostSimpleEntry>(
+    assert_json_is_pinned::<PostSimpleEntryRequest>(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","kind":"expense","bill_status":null,"entry_date":"2026-08-10","description":"Groceries","reference":null,"amount_minor":4500,"category_account_id":"22222222-2222-4222-8222-222222222222","wallet_account_id":"66666666-6666-4666-8666-666666666666","payable_account_id":null,"from_account_id":null,"to_account_id":null}"#,
     );
     // An unpaid bill: category and payable, with a status.
-    assert_json_is_pinned::<PostSimpleEntry>(
+    assert_json_is_pinned::<PostSimpleEntryRequest>(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","kind":"bill","bill_status":"unpaid","entry_date":"2026-08-10","description":"Power","reference":"B-1","amount_minor":9900,"category_account_id":"22222222-2222-4222-8222-222222222222","wallet_account_id":null,"payable_account_id":"66666666-6666-4666-8666-666666666666","from_account_id":null,"to_account_id":null}"#,
     );
     // Paying an existing bill.
-    assert_json_is_pinned::<PostSimpleEntry>(
+    assert_json_is_pinned::<PostSimpleEntryRequest>(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","kind":"bill","bill_status":"pay_existing","entry_date":"2026-08-10","description":"Power","reference":null,"amount_minor":9900,"category_account_id":null,"wallet_account_id":"22222222-2222-4222-8222-222222222222","payable_account_id":"66666666-6666-4666-8666-666666666666","from_account_id":null,"to_account_id":null}"#,
     );
     // A transfer: from and to.
-    assert_json_is_pinned::<PostSimpleEntry>(
+    assert_json_is_pinned::<PostSimpleEntryRequest>(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","kind":"transfer","bill_status":null,"entry_date":"2026-08-10","description":"","reference":null,"amount_minor":1,"category_account_id":null,"wallet_account_id":null,"payable_account_id":null,"from_account_id":"22222222-2222-4222-8222-222222222222","to_account_id":"66666666-6666-4666-8666-666666666666"}"#,
     );
 }
@@ -155,20 +155,20 @@ fn a_request_with_a_missing_role_or_a_bad_date_still_reads() {
     // malformed is refused by core with its own code (`account_required`,
     // `bill_status_required`, `invalid_date`), not by the JSON layer, whose
     // failure the UI can only show as an unknown error.
-    assert_json_is_pinned::<PostSimpleEntry>(
+    assert_json_is_pinned::<PostSimpleEntryRequest>(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","kind":"bill","bill_status":null,"entry_date":"10/08/2026","description":"","reference":null,"amount_minor":0,"category_account_id":null,"wallet_account_id":null,"payable_account_id":null,"from_account_id":null,"to_account_id":null}"#,
     );
-    assert_json_is_pinned::<PostJournal>(
+    assert_json_is_pinned::<PostJournalRequest>(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","entry_date":"not a date","description":"","reference":null,"lines":[{"account_id":"22222222-2222-4222-8222-222222222222","debit_minor":5,"credit_minor":5,"memo":null}]}"#,
     );
 }
 
 #[test]
 fn recurring_template_requests() {
-    assert_json_is_pinned::<CreateRecurringTemplate>(
+    assert_json_is_pinned::<CreateRecurringTemplateRequest>(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","name":"Rent","kind":"expense","bill_status":null,"amount_minor":80000,"cadence":"monthly","day_of_month":1,"category_account_id":"22222222-2222-4222-8222-222222222222","wallet_account_id":"66666666-6666-4666-8666-666666666666","payable_account_id":null,"from_account_id":null,"to_account_id":null,"memo":null,"next_date":"2026-09-01"}"#,
     );
-    assert_json_is_pinned::<UpdateRecurringTemplate>(
+    assert_json_is_pinned::<UpdateRecurringTemplateRequest>(
         r#"{"id":"88888888-8888-4888-8888-888888888888","name":"Power","kind":"bill","bill_status":"paid","amount_minor":9900,"cadence":"yearly","day_of_month":null,"category_account_id":"22222222-2222-4222-8222-222222222222","wallet_account_id":"66666666-6666-4666-8666-666666666666","payable_account_id":null,"from_account_id":null,"to_account_id":null,"memo":"meter 7","next_date":"2027-01-15"}"#,
     );
 }

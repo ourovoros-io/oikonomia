@@ -10,15 +10,18 @@
               where the test allowance of clippy.toml does not reach"
 )]
 
+use oikonomia_core::Error;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, PostSimpleEntry, PostedEntryView,
-    SimpleEntryKind, create_entity, list_accounts, post_entry,
+    CreateEntity, CreateJournalLine, PostJournal, PostJournalRequest, PostSimpleEntry,
+    PostedEntryView, SimpleEntryKind, create_entity, list_accounts, post_entry,
 };
 use oikonomia_core::prefs::Locale;
+use oikonomia_core::util::parse_date;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
 use tempfile::TempDir;
+use time::Date;
 
 /// The master password of every vault [`vault`] creates.
 pub(crate) const PASSWORD: &str = "correct horse battery staple";
@@ -32,7 +35,33 @@ const _: () = {
     let _ = PASSWORD;
     let _ = (vault, book, account);
     let _ = (two_line, post_two_line, simple_expense);
+    let _ = (date, strict::<PostJournalRequest, PostJournal>);
 };
+
+/// Parses a `YYYY-MM-DD` literal of a test.
+///
+/// # Panics
+///
+/// Panics if `text` is not such a date.
+pub(crate) fn date(text: &str) -> Date {
+    parse_date(text).expect("a test writes its dates as YYYY-MM-DD")
+}
+
+/// Converts a request in its wire form into the strict input the ledger
+/// takes, as the desktop shell does before it calls the ledger.
+///
+/// A test that expects the conversion itself to fail calls `try_from` on the
+/// strict type instead.
+///
+/// # Panics
+///
+/// Panics if the conversion refuses the request.
+pub(crate) fn strict<W, T>(wire: W) -> T
+where
+    T: TryFrom<W, Error = Error>,
+{
+    T::try_from(wire).expect("the request converts into its strict form")
+}
 
 /// Creates and unlocks a vault in a new temporary directory.
 ///
@@ -96,7 +125,7 @@ pub(crate) fn two_line(
 
     PostJournal {
         entity_id,
-        entry_date: date.into(),
+        entry_date: self::date(date),
         description: format!("{debit_code} from {credit_code}: {minor} on {date}"),
         reference: None,
         lines: vec![line(debit_code, minor, 0), line(credit_code, 0, minor)],
@@ -128,7 +157,7 @@ pub(crate) fn simple_expense(
         entity_id,
         kind: SimpleEntryKind::Expense,
         bill_status: None,
-        entry_date: date.into(),
+        entry_date: self::date(date),
         description: "groceries".into(),
         reference: None,
         amount_minor: minor,

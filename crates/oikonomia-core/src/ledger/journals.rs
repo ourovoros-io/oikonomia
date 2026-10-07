@@ -52,7 +52,7 @@ use crate::ledger::balance::{
 use crate::money::Money;
 use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
-use crate::util::{format_date, now_utc_string, parse_date};
+use crate::util::{format_date, now_utc_string};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -75,12 +75,16 @@ pub struct CreateJournalLine {
 }
 
 /// Input for [`post_entry`]: a whole entry, with its lines spelled out.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The UI sends it as a
+/// [`PostJournalRequest`](crate::ledger::PostJournalRequest), which converts
+/// into this.
+#[derive(Debug, Clone)]
 pub struct PostJournal {
     /// Entity whose books the entry goes into.
     pub entity_id: EntityId,
-    /// Accounting date as `YYYY-MM-DD`.
-    pub entry_date: String,
+    /// Accounting date.
+    pub entry_date: Date,
     /// What the entry is for. Surrounding whitespace is trimmed; it may be
     /// empty.
     pub description: String,
@@ -168,7 +172,11 @@ pub enum SimpleBillStatus {
 /// | transfer | to (asset or liability) | from (asset or liability) |
 ///
 /// A role the kind does not read is ignored, whatever it holds.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The UI sends it as a
+/// [`PostSimpleEntryRequest`](crate::ledger::PostSimpleEntryRequest), which
+/// converts into this.
+#[derive(Debug, Clone)]
 pub struct PostSimpleEntry {
     /// Entity whose books the entry goes into.
     pub entity_id: EntityId,
@@ -176,8 +184,8 @@ pub struct PostSimpleEntry {
     pub kind: SimpleEntryKind,
     /// Required when `kind` is [`SimpleEntryKind::Bill`].
     pub bill_status: Option<SimpleBillStatus>,
-    /// Accounting date `YYYY-MM-DD`.
-    pub entry_date: String,
+    /// Accounting date.
+    pub entry_date: Date,
     /// What the entry is for. Surrounding whitespace is trimmed; it may be
     /// empty.
     pub description: String,
@@ -208,15 +216,15 @@ pub struct VoidResult {
 }
 
 /// Optional predicates for [`list_entries`]; every `None` means "no filter".
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct EntryFilter {
     /// Case-insensitive substring over description, reference, and line
     /// memos. Text that is blank after trimming is no filter.
     pub text: Option<String>,
-    /// Inclusive ISO lower bound (`YYYY-MM-DD`).
-    pub date_from: Option<String>,
-    /// Inclusive ISO upper bound (`YYYY-MM-DD`).
-    pub date_to: Option<String>,
+    /// Only entries dated on or after this day.
+    pub date_from: Option<Date>,
+    /// Only entries dated on or before this day.
+    pub date_to: Option<Date>,
     /// Only entries with at least one line on this account.
     pub account_id: Option<AccountId>,
 }
@@ -231,7 +239,6 @@ pub struct EntryFilter {
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date in `filter`;
 /// [`Error::VaultCorrupt`] for a stored id, date, status or amount that does
 /// not parse; database errors as [`Error::Database`].
 pub fn list_entries(
@@ -239,7 +246,7 @@ pub fn list_entries(
     entity_id: EntityId,
     filter: &EntryFilter,
 ) -> Result<Vec<PostedEntryView>> {
-    let listed = ListedEntries::new(entity_id, filter)?;
+    let listed = ListedEntries::new(entity_id, filter);
     let headers = load_listed_headers(conn, &listed)?;
     let mut lines_by_entry = load_listed_lines(conn, &listed)?;
 
@@ -328,7 +335,6 @@ pub fn set_entry_hidden(
 ///
 /// # Errors
 ///
-/// - [`ValidationError::InvalidDate`] for a malformed entry date.
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`Error::AccountWrongEntity`] for an account of another entity.
 /// - [`ValidationError::AccountInactive`] for an archived account.
@@ -367,7 +373,6 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`Error::AccountWrongEntity`] for an account of another entity.
 /// - [`ValidationError::AccountInactive`] for an archived account.
-/// - [`ValidationError::InvalidDate`] for a malformed entry date.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
@@ -476,7 +481,6 @@ pub fn replace_simple_entry(
 /// - [`ValidationError::OpeningBalanceAccountType`] unless the account is an
 ///   asset or a liability.
 /// - [`ValidationError::AccountInactive`] for an archived account.
-/// - [`ValidationError::InvalidDate`] when `as_of` is not a date.
 /// - [`ValidationError::OpeningBalanceUnchanged`] when the account already
 ///   has that balance on that date.
 /// - [`ValidationError::NoEquityAccount`] when the entity has no active
@@ -489,7 +493,7 @@ pub fn set_account_opening_balance(
     conn: &Connection,
     account_id: AccountId,
     target_minor: i64,
-    as_of: &str,
+    as_of: Date,
     locale: Locale,
 ) -> Result<PostedEntryView> {
     let account = get_account(conn, account_id)?;
@@ -499,7 +503,6 @@ pub fn set_account_opening_balance(
     }
     ensure_active(&account)?;
 
-    let as_of = parse_date(as_of)?;
     let current = account_balance_as_of(conn, account_id, account.account_type, as_of)?;
     let delta = target_minor
         .checked_sub(current)
@@ -533,7 +536,7 @@ pub fn set_account_opening_balance(
         conn,
         &PostJournal {
             entity_id: account.entity_id,
-            entry_date: format_date(as_of),
+            entry_date: as_of,
             description: opening_balance_description(locale, &account.name),
             reference: None,
             lines: vec![
@@ -555,7 +558,7 @@ pub fn set_account_opening_balance(
 }
 
 /// Lists the lines of active entries on an account between `from` and `to`
-/// inclusive (`YYYY-MM-DD`), oldest first, each with the running balance.
+/// inclusive, oldest first, each with the running balance.
 ///
 /// `None` leaves that end of the range open. Lines of one date are ordered by
 /// when their entries were created, to the second, and lines of one entry by
@@ -566,19 +569,18 @@ pub fn set_account_opening_balance(
 ///
 /// # Errors
 ///
-/// [`Error::NotFound`] for an unknown account; [`Error::Validation`] for a
-/// malformed date; [`Error::MoneyOverflow`] when the running balance does not
-/// fit in `i64`; [`Error::VaultCorrupt`] for a stored id or date that does not
+/// [`Error::NotFound`] for an unknown account; [`Error::MoneyOverflow`] when
+/// the running balance does not fit in `i64`; [`Error::VaultCorrupt`] for a stored id or date that does not
 /// parse; database errors as [`Error::Database`].
 pub fn account_register(
     conn: &Connection,
     account_id: AccountId,
-    from: Option<&str>,
-    to: Option<&str>,
+    from: Option<Date>,
+    to: Option<Date>,
 ) -> Result<Vec<RegisterLine>> {
     let account = get_account(conn, account_id)?;
-    let from = from.map(parse_date).transpose()?.map(format_date);
-    let to = to.map(parse_date).transpose()?.map(format_date);
+    let from = from.map(format_date);
+    let to = to.map(format_date);
 
     let mut running = if let Some(from) = from.as_deref() {
         let prior_sql = format!(
@@ -709,7 +711,7 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
         conn,
         &PostJournal {
             entity_id: input.entity_id,
-            entry_date: input.entry_date.clone(),
+            entry_date: input.entry_date,
             description: input.description.clone(),
             reference: input.reference.clone(),
             lines,
@@ -773,21 +775,13 @@ struct ListedEntries {
 
 impl ListedEntries {
     /// Normalizes `filter` into the values the predicate binds.
-    ///
-    /// # Errors
-    ///
-    /// [`ValidationError::InvalidDate`] when a date bound is not a date.
-    fn new(entity_id: EntityId, filter: &EntryFilter) -> Result<Self> {
-        // Normalize before binding: SQL compares date TEXT lexicographically, so a
-        // lenient input like `2026-3-5` must become `2026-03-05` first.
-        let normalized = |date: Option<&str>| -> Result<Option<String>> {
-            Ok(date.map(parse_date).transpose()?.map(format_date))
-        };
-
-        Ok(Self {
+    fn new(entity_id: EntityId, filter: &EntryFilter) -> Self {
+        // SQL compares the date column as text, which agrees with date order
+        // because `format_date` writes every date in the same fixed width.
+        Self {
             entity_id: entity_id.to_string(),
-            date_from: normalized(filter.date_from.as_deref())?,
-            date_to: normalized(filter.date_to.as_deref())?,
+            date_from: filter.date_from.map(format_date),
+            date_to: filter.date_to.map(format_date),
             pattern: filter
                 .text
                 .as_deref()
@@ -795,7 +789,7 @@ impl ListedEntries {
                 .filter(|text| !text.is_empty())
                 .map(like_pattern),
             account_id: filter.account_id.map(|id| id.to_string()),
-        })
+        }
     }
 
     /// The bound values, `?1` to `?5`.
@@ -979,7 +973,7 @@ fn post_entry_in_tx(
     // An empty description is accepted: the quick-add form leaves it optional.
     let description = input.description.trim();
 
-    let entry_date = parse_date(&input.entry_date)?;
+    let entry_date = input.entry_date;
     let entry_id = JournalEntryId::generate();
 
     let mut lines = Vec::with_capacity(input.lines.len());
@@ -1242,7 +1236,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
 
     let reverse_input = PostJournal {
         entity_id: view.entry.entity_id,
-        entry_date: format_date(view.entry.entry_date),
+        entry_date: view.entry.entry_date,
         description: void_description(locale, &view.entry.description),
         reference: view.entry.reference.clone(),
         lines: reverse_lines,

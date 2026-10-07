@@ -6,11 +6,11 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleBillStatus,
-    SimpleEntryKind, UpdateRecurringTemplate, archive_account, create_entity,
-    create_recurring_template, delete_entity, delete_recurring_template, list_accounts,
-    list_entries, list_recurring_templates, list_recurring_templates_as_of,
-    post_recurring_template, update_recurring_template,
+    CreateEntity, CreateRecurringTemplate, CreateRecurringTemplateRequest, EntryFilter,
+    RecurringCadence, SimpleBillStatus, SimpleEntryKind, UpdateRecurringTemplateRequest,
+    archive_account, create_entity, create_recurring_template, delete_entity,
+    delete_recurring_template, list_accounts, list_entries, list_recurring_templates,
+    list_recurring_templates_as_of, post_recurring_template, update_recurring_template,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
@@ -39,7 +39,7 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
 }
 
 fn monthly_rent(entity_id: EntityId, accounts: &AccountsByCode) -> CreateRecurringTemplate {
-    CreateRecurringTemplate {
+    common::strict(CreateRecurringTemplateRequest {
         entity_id,
         name: "Rent".into(),
         kind: SimpleEntryKind::Expense,
@@ -54,7 +54,7 @@ fn monthly_rent(entity_id: EntityId, accounts: &AccountsByCode) -> CreateRecurri
         to_account_id: None,
         memo: Some("apartment".into()),
         next_date: "2026-03-01".into(),
-    }
+    })
 }
 
 #[test]
@@ -88,17 +88,17 @@ fn due_is_next_date_on_or_before_today() {
 
     let mut past = monthly_rent(entity_id, &accounts);
     past.name = "Past".into();
-    past.next_date = "2026-03-01".into();
+    past.next_date = common::date("2026-03-01");
     create_recurring_template(conn, &past).expect("past");
 
     let mut today = monthly_rent(entity_id, &accounts);
     today.name = "Today".into();
-    today.next_date = "2026-03-10".into();
+    today.next_date = common::date("2026-03-10");
     create_recurring_template(conn, &today).expect("today");
 
     let mut future = monthly_rent(entity_id, &accounts);
     future.name = "Future".into();
-    future.next_date = "2026-03-11".into();
+    future.next_date = common::date("2026-03-11");
     create_recurring_template(conn, &future).expect("future");
 
     let as_of = parse_date("2026-03-10").expect("pin");
@@ -149,8 +149,13 @@ fn post_override_amount_and_date_do_not_rewrite_template_amount() {
     let template =
         create_recurring_template(conn, &monthly_rent(entity_id, &accounts)).expect("create");
 
-    let result = post_recurring_template(conn, template.id, Some("2026-03-05"), Some(90_000))
-        .expect("post override");
+    let result = post_recurring_template(
+        conn,
+        template.id,
+        Some(common::date("2026-03-05")),
+        Some(90_000),
+    )
+    .expect("post override");
 
     assert_eq!(
         result.entry.entry.entry_date,
@@ -182,7 +187,7 @@ fn weekly_post_advances_by_seven_days() {
     weekly.name = "Allowance".into();
     weekly.cadence = RecurringCadence::Weekly;
     weekly.day_of_month = None;
-    weekly.next_date = "2026-03-10".into();
+    weekly.next_date = common::date("2026-03-10");
     weekly.amount_minor = 2_000;
     let template = create_recurring_template(conn, &weekly).expect("create");
 
@@ -219,7 +224,7 @@ fn update_rewrites_fields() {
 
     let updated = update_recurring_template(
         conn,
-        &UpdateRecurringTemplate {
+        &common::strict(UpdateRecurringTemplateRequest {
             id: template.id,
             name: "Groceries".into(),
             kind: SimpleEntryKind::Expense,
@@ -234,7 +239,7 @@ fn update_rewrites_fields() {
             to_account_id: None,
             memo: None,
             next_date: "2026-03-12".into(),
-        },
+        }),
     )
     .expect("update");
     assert_eq!(updated.name, "Groceries");
@@ -305,7 +310,7 @@ fn transfer_template_posts() {
     let (entity_id, accounts) = entity_with_accounts(conn);
     let template = create_recurring_template(
         conn,
-        &CreateRecurringTemplate {
+        &common::strict(CreateRecurringTemplateRequest {
             entity_id,
             name: "Savings sweep".into(),
             kind: SimpleEntryKind::Transfer,
@@ -320,7 +325,7 @@ fn transfer_template_posts() {
             to_account_id: Some(accounts.savings),
             memo: None,
             next_date: "2026-03-28".into(),
-        },
+        }),
     )
     .expect("create");
     let result = post_recurring_template(conn, template.id, None, None).expect("post");
@@ -334,7 +339,7 @@ fn income_template_and_bill_status() {
     let (entity_id, accounts) = entity_with_accounts(conn);
     let salary = create_recurring_template(
         conn,
-        &CreateRecurringTemplate {
+        &common::strict(CreateRecurringTemplateRequest {
             entity_id,
             name: "Salary".into(),
             kind: SimpleEntryKind::Income,
@@ -349,7 +354,7 @@ fn income_template_and_bill_status() {
             to_account_id: None,
             memo: None,
             next_date: "2026-03-25".into(),
-        },
+        }),
     )
     .expect("income");
     assert_eq!(salary.kind, SimpleEntryKind::Income);
@@ -453,7 +458,7 @@ fn a_template_must_use_accounts_that_posting_would_accept() {
         archived
     );
 
-    let unchanged = UpdateRecurringTemplate {
+    let unchanged = common::strict(UpdateRecurringTemplateRequest {
         id: saved.id,
         name: saved.name,
         kind: saved.kind,
@@ -468,7 +473,7 @@ fn a_template_must_use_accounts_that_posting_would_accept() {
         to_account_id: None,
         memo: None,
         next_date: "2026-03-01".into(),
-    };
+    });
     assert_eq!(
         update_recurring_template(conn, &unchanged).map(|template| template.id),
         archived

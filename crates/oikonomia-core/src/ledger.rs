@@ -15,6 +15,8 @@
 //! - `cash_flow`: income and expenses over time.
 //! - `recurring`: entry templates with a schedule.
 //! - `settings`: settings kept in the vault.
+//! - `wire`: the requests the UI sends, in their JSON shape, and their
+//!   conversion into the strict inputs the functions here take.
 //!
 //! # Invariants
 //!
@@ -41,6 +43,18 @@
 //!   The reports are the gap: they select accounts by type and so never map
 //!   an account whose stored type is unknown. The `reports` module doc says
 //!   what they rely on instead.
+//!
+//! # Inputs
+//!
+//! The functions here take typed values: a [`time::Date`], never date text,
+//! and the strict inputs ([`PostJournal`], [`PostSimpleEntry`],
+//! [`CreateRecurringTemplate`], [`UpdateRecurringTemplate`]). Text is parsed
+//! once, where it enters. A request the UI sends as one JSON object arrives
+//! in its wire form ([`PostJournalRequest`], [`PostSimpleEntryRequest`] and
+//! the two template requests) and converts with `TryFrom`; a date sent as a
+//! bare argument arrives as a [`DateText`](crate::util::DateText). Both
+//! report a malformed date as
+//! [`ValidationError::InvalidDate`](crate::error::ValidationError::InvalidDate).
 //!
 //! # Active entries and voids
 //!
@@ -104,6 +118,7 @@ mod journals;
 mod recurring;
 mod reports;
 mod settings;
+mod wire;
 
 pub use accounts::{
     CreateAccount, UpdateAccount, archive_account, create_account, get_account, list_accounts,
@@ -138,3 +153,7 @@ pub use reports::{
     profit_and_loss_export, trial_balance,
 };
 pub use settings::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs, set_lock_timeout_secs};
+pub use wire::{
+    CreateRecurringTemplateRequest, PostJournalRequest, PostSimpleEntryRequest,
+    UpdateRecurringTemplateRequest,
+};

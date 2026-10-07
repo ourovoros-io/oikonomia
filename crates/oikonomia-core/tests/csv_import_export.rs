@@ -13,7 +13,7 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    EntryFilter, PostSimpleEntry, SimpleEntryKind, list_entries, post_simple_entry,
+    EntryFilter, PostSimpleEntryRequest, SimpleEntryKind, list_entries, post_simple_entry,
     set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
@@ -87,7 +87,7 @@ fn post_selected_rows_are_balanced() {
 
     let csv = "Date,Description,Amount\n2026-03-15,Groceries,-25.00\n2026-03-16,Salary,1000.00\n";
     let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
-    let rows: Vec<PostSimpleEntry> = preview
+    let rows: Vec<PostSimpleEntryRequest> = preview
         .rows
         .iter()
         .filter_map(|r| r.suggested.clone())
@@ -147,7 +147,7 @@ fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
-    let existing = PostSimpleEntry {
+    let existing = common::strict(PostSimpleEntryRequest {
         entity_id,
         kind: SimpleEntryKind::Expense,
         bill_status: None,
@@ -160,7 +160,7 @@ fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
-    };
+    });
     post_simple_entry(conn, &existing).expect("seed");
 
     // Same date+amount; description differs only by whitespace and case.
@@ -173,7 +173,7 @@ fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
         "intra-file duplicate of the first parsed row"
     );
 
-    let rows: Vec<PostSimpleEntry> = preview
+    let rows: Vec<PostSimpleEntryRequest> = preview
         .rows
         .iter()
         .filter_map(|r| r.suggested.clone())
@@ -195,7 +195,7 @@ fn export_round_trips_posted_lines_and_marks_voided() {
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
-    let grocery = PostSimpleEntry {
+    let grocery = common::strict(PostSimpleEntryRequest {
         entity_id,
         kind: SimpleEntryKind::Expense,
         bill_status: None,
@@ -208,11 +208,11 @@ fn export_round_trips_posted_lines_and_marks_voided() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
-    };
+    });
     let view = post_simple_entry(conn, &grocery).expect("post");
     void_entry(conn, view.entry.id, Locale::En).expect("void");
 
-    let salary = PostSimpleEntry {
+    let salary = common::strict(PostSimpleEntryRequest {
         entity_id,
         kind: SimpleEntryKind::Income,
         bill_status: None,
@@ -225,14 +225,14 @@ fn export_round_trips_posted_lines_and_marks_voided() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
-    };
+    });
     post_simple_entry(conn, &salary).expect("salary");
 
     let csv = export_journal_csv(conn, entity_id).expect("export");
     let lines = parse_journal_export(&csv).expect("parse export");
     assert!(
         lines.iter().any(|l| {
-            l.date == "2026-03-16"
+            l.date == common::date("2026-03-16")
                 && l.description == "Salary"
                 && l.account_code == "1010"
                 && l.account_name == "Checking"
@@ -244,7 +244,7 @@ fn export_round_trips_posted_lines_and_marks_voided() {
     );
     assert!(
         lines.iter().any(|l| {
-            l.date == "2026-03-16"
+            l.date == common::date("2026-03-16")
                 && l.description == "Salary"
                 && l.account_code == "4000"
                 && l.debit_minor == 0
@@ -278,7 +278,7 @@ fn export_guards_cells_that_spreadsheets_would_run_as_formulas() {
     // A payer controls the memo that a bank CSV import copies into the
     // description; it must not become a live formula in the accountant's
     // spreadsheet.
-    let hostile = PostSimpleEntry {
+    let hostile = common::strict(PostSimpleEntryRequest {
         entity_id,
         kind: SimpleEntryKind::Expense,
         bill_status: None,
@@ -291,7 +291,7 @@ fn export_guards_cells_that_spreadsheets_would_run_as_formulas() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
-    };
+    });
     post_simple_entry(conn, &hostile).expect("post");
 
     let csv = export_journal_csv(conn, entity_id).expect("export");
@@ -315,7 +315,7 @@ fn export_omits_hidden_rows_until_unhidden() {
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
-    let grocery = PostSimpleEntry {
+    let grocery = common::strict(PostSimpleEntryRequest {
         entity_id,
         kind: SimpleEntryKind::Expense,
         bill_status: None,
@@ -328,7 +328,7 @@ fn export_omits_hidden_rows_until_unhidden() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
-    };
+    });
     let view = post_simple_entry(conn, &grocery).expect("post");
     set_entry_hidden(conn, view.entry.id, true).expect("hide");
 

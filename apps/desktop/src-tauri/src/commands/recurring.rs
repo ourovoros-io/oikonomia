@@ -9,10 +9,12 @@ use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::domain::{EntityId, RecurringTemplateId};
 use oikonomia_core::ledger::{
-    CreateRecurringTemplate, RecurringPostResult, RecurringTemplateView, UpdateRecurringTemplate,
+    CreateRecurringTemplate, CreateRecurringTemplateRequest, RecurringPostResult,
+    RecurringTemplateView, UpdateRecurringTemplate, UpdateRecurringTemplateRequest,
     create_recurring_template, delete_recurring_template, get_recurring_template,
     list_recurring_templates, post_recurring_template, update_recurring_template,
 };
+use oikonomia_core::util::DateText;
 use tauri::State;
 
 /// Lists an entity's recurring templates, each marked due when its next date
@@ -68,9 +70,13 @@ pub(crate) async fn recurring_get(
 #[tauri::command]
 pub(crate) async fn recurring_create(
     state: State<'_, AppState>,
-    input: CreateRecurringTemplate,
+    input: CreateRecurringTemplateRequest,
 ) -> CommandResult<RecurringTemplateView> {
-    with_connection(&state, move |conn| create_recurring_template(conn, &input)).await
+    with_connection(&state, move |conn| {
+        let input = CreateRecurringTemplate::try_from(input)?;
+        create_recurring_template(conn, &input)
+    })
+    .await
 }
 
 /// Replaces the editable fields of a recurring template. Its entity cannot
@@ -86,9 +92,13 @@ pub(crate) async fn recurring_create(
 #[tauri::command]
 pub(crate) async fn recurring_update(
     state: State<'_, AppState>,
-    input: UpdateRecurringTemplate,
+    input: UpdateRecurringTemplateRequest,
 ) -> CommandResult<RecurringTemplateView> {
-    with_connection(&state, move |conn| update_recurring_template(conn, &input)).await
+    with_connection(&state, move |conn| {
+        let input = UpdateRecurringTemplate::try_from(input)?;
+        update_recurring_template(conn, &input)
+    })
+    .await
 }
 
 /// Deletes a recurring template. Entries already posted from it stay.
@@ -125,11 +135,12 @@ pub(crate) async fn recurring_delete(
 pub(crate) async fn recurring_post(
     state: State<'_, AppState>,
     id: RecurringTemplateId,
-    entry_date: Option<String>,
+    entry_date: Option<DateText>,
     amount_minor: Option<i64>,
 ) -> CommandResult<RecurringPostResult> {
     with_connection(&state, move |conn| {
-        post_recurring_template(conn, id, entry_date.as_deref(), amount_minor)
+        let entry_date = DateText::parse_optional(entry_date.as_ref())?;
+        post_recurring_template(conn, id, entry_date, amount_minor)
     })
     .await
 }

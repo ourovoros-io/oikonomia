@@ -1,6 +1,6 @@
 //! Bank CSV import and journal CSV export.
 //!
-//! Import parses a statement into suggested [`PostSimpleEntry`] rows and
+//! Import parses a statement into suggested [`PostSimpleEntryRequest`] rows and
 //! **does not post**. Posting is a separate call ([`post_import_rows`]).
 //!
 //! The import is two steps so that nothing a bank file says reaches the
@@ -85,10 +85,12 @@ mod parse;
 mod post;
 
 use serde::{Deserialize, Serialize};
+use time::Date;
 
 use crate::domain::{AccountId, EntityId};
-use crate::ledger::{PostSimpleEntry, PostedEntryView, SimpleEntryKind};
+use crate::ledger::{PostSimpleEntryRequest, PostedEntryView, SimpleEntryKind};
 use crate::ui_text::UiText;
+use crate::util::format_date;
 
 pub use amount::{currency_minor_exponent, parse_signed_minor};
 pub use error::{CsvError, CsvMappingProblem};
@@ -103,7 +105,7 @@ pub use post::{post_import_rows, preview_bank_csv, preview_bank_csv_file};
 /// [`crate::documents::MAX_DOCUMENT_BYTES`].
 pub const MAX_CSV_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Role accounts filled into each suggested [`PostSimpleEntry`].
+/// Role accounts filled into each suggested [`PostSimpleEntryRequest`].
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct CsvImportAccounts {
     /// Bank / cash / card for expense payments and income deposits.
@@ -151,8 +153,9 @@ impl CsvImportPreviewInput {
 /// IPC payload for `csv_import_post`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CsvImportPostInput {
-    /// Selected suggested rows (typically from preview `suggested`).
-    pub rows: Vec<PostSimpleEntry>,
+    /// Selected suggested rows (typically from preview `suggested`), each in
+    /// the wire form of a simple entry.
+    pub rows: Vec<PostSimpleEntryRequest>,
     /// When false (default), skip rows matching the duplicate rule.
     #[serde(default)]
     pub include_duplicates: bool,
@@ -163,15 +166,15 @@ pub struct CsvImportPostInput {
 pub struct ParsedBankRow {
     /// 1-based CSV record number (the header is record 1).
     pub source_row: u32,
-    /// ISO booking date.
-    pub entry_date: String,
+    /// Booking date.
+    pub entry_date: Date,
     /// Raw description (not normalized).
     pub description: String,
     /// Optional reference / check number.
     pub reference: Option<String>,
     /// Signed minor units: negative = money leaving = Expense.
     pub signed_amount_minor: i64,
-    /// Absolute amount for [`PostSimpleEntry::amount_minor`].
+    /// Absolute amount for [`PostSimpleEntryRequest::amount_minor`].
     pub amount_minor: i64,
     /// Expense or Income from the sign.
     pub kind: SimpleEntryKind,
@@ -266,8 +269,9 @@ pub struct CsvImportPreviewRow {
     /// Set when this row cannot be posted as-is: a code the UI words, never
     /// a sentence.
     pub error: Option<UiText>,
-    /// Suggested simple-form input when `error` is `None`.
-    pub suggested: Option<PostSimpleEntry>,
+    /// Suggested simple-form input when `error` is `None`, in its wire form:
+    /// an account the import was not given is left empty for the user.
+    pub suggested: Option<PostSimpleEntryRequest>,
     /// Signed minor units as parsed (negative = Expense).
     pub signed_amount_minor: Option<i64>,
 }
@@ -310,17 +314,17 @@ pub(crate) fn suggested_entry(
     entity_id: EntityId,
     row: &ParsedBankRow,
     accounts: &CsvImportAccounts,
-) -> PostSimpleEntry {
+) -> PostSimpleEntryRequest {
     let category_account_id = match row.kind {
         SimpleEntryKind::Expense => accounts.expense_account_id,
         SimpleEntryKind::Income => accounts.income_account_id,
         SimpleEntryKind::Bill | SimpleEntryKind::Transfer => None,
     };
-    PostSimpleEntry {
+    PostSimpleEntryRequest {
         entity_id,
         kind: row.kind,
         bill_status: None,
-        entry_date: row.entry_date.clone(),
+        entry_date: format_date(row.entry_date),
         description: row.description.clone(),
         reference: row.reference.clone(),
         amount_minor: row.amount_minor,

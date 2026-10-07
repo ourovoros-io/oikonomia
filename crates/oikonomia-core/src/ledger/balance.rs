@@ -31,7 +31,7 @@ use crate::db::corrupt_column;
 use crate::domain::{AccountId, AccountType, EntityId};
 use crate::error::{DatabaseContext, Error, Result};
 use crate::ledger::accounts::get_account;
-use crate::util::{format_date, parse_date};
+use crate::util::format_date;
 use rusqlite::Connection;
 use time::Date;
 
@@ -103,22 +103,19 @@ pub(crate) fn sum_minor(amounts: impl IntoIterator<Item = i64>) -> Result<i64> {
     amounts.into_iter().try_fold(0_i64, add_minor)
 }
 
-/// Returns the balance of one account through `as_of` (`YYYY-MM-DD`,
-/// inclusive), signed towards the normal side of the account's type.
+/// Returns the balance of one account through `as_of` inclusive, signed
+/// towards the normal side of the account's type.
 ///
 /// This is [`account_balance_as_of`] for a caller that has only the account's
-/// id and the date as text; it looks the account's type up first.
+/// id; it looks the account's type up first.
 ///
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`Error::VaultCorrupt`] when the stored account does not parse.
-/// - [`ValidationError::InvalidDate`](crate::error::ValidationError::InvalidDate)
-///   when `as_of` is not a date.
 /// - The errors of [`account_balance_as_of`].
-pub fn account_balance(conn: &Connection, account_id: AccountId, as_of: &str) -> Result<i64> {
+pub fn account_balance(conn: &Connection, account_id: AccountId, as_of: Date) -> Result<i64> {
     let account = get_account(conn, account_id)?;
-    let as_of = parse_date(as_of)?;
 
     account_balance_as_of(conn, account_id, account.account_type, as_of)
 }

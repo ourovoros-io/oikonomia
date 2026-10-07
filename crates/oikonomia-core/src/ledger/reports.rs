@@ -53,7 +53,7 @@ use crate::ledger::balance::{
     subtract_minor, sum_minor, sum_types_as_of, sum_types_in_range,
 };
 use crate::ledger::entities::get_entity;
-use crate::util::{format_date, parse_date};
+use crate::util::format_date;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::{Date, Month};
@@ -220,7 +220,7 @@ pub struct TopExpense {
     pub share_bps: i64,
 }
 
-/// Computes the trial balance as of `as_of` (`YYYY-MM-DD`).
+/// Computes the trial balance as of `as_of`.
 ///
 /// Permanent accounts are cumulative. Income and expense show only the
 /// current fiscal year through `as_of`; earlier unclosed P&L is folded into a
@@ -229,12 +229,10 @@ pub struct TopExpense {
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Database`].
-pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<TrialBalance> {
-    let as_of = parse_date(as_of)?;
+pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: Date) -> Result<TrialBalance> {
     // An archived entity is found too; its reports stay readable.
     let entity = get_entity(conn, entity_id)?;
     let unclosed = unclosed_pnl(conn, entity_id, as_of, entity.fiscal_year_start_month)?;
@@ -277,20 +275,20 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     })
 }
 
-/// Computes profit and loss between `from` and `to` inclusive
-/// (`YYYY-MM-DD`), hidden entries included.
+/// Computes profit and loss between `from` and `to` inclusive, hidden
+/// entries included.
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date or an inverted range;
+/// [`Error::Validation`] for an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Database`].
 pub fn profit_and_loss(
     conn: &Connection,
     entity_id: EntityId,
-    from: &str,
-    to: &str,
+    from: Date,
+    to: Date,
 ) -> Result<PnL> {
     profit_and_loss_filtered(conn, entity_id, from, to, false)
 }
@@ -303,20 +301,20 @@ pub fn profit_and_loss(
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date or an inverted range;
+/// [`Error::Validation`] for an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Database`].
 pub fn profit_and_loss_export(
     conn: &Connection,
     entity_id: EntityId,
-    from: &str,
-    to: &str,
+    from: Date,
+    to: Date,
 ) -> Result<PnL> {
     profit_and_loss_filtered(conn, entity_id, from, to, true)
 }
 
-/// Computes the balance sheet as of `as_of` (`YYYY-MM-DD`).
+/// Computes the balance sheet as of `as_of`.
 ///
 /// Equity includes the current fiscal year's result and the unclosed result
 /// of earlier years as computed rows, because there is no permanent year-end
@@ -324,12 +322,10 @@ pub fn profit_and_loss_export(
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Database`].
-pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<BalanceSheet> {
-    let as_of = parse_date(as_of)?;
+pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: Date) -> Result<BalanceSheet> {
     // An archived entity is found too; its reports stay readable.
     let entity = get_entity(conn, entity_id)?;
 
@@ -372,7 +368,7 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
 }
 
 /// Computes the dashboard figures for the window `[from, to]`, with assets
-/// as of `assets_as_of` (all `YYYY-MM-DD`).
+/// as of `assets_as_of`.
 ///
 /// The window is typically the full calendar month, so that a bill dated
 /// later in the month is counted, while `assets_as_of` is typically today.
@@ -382,22 +378,19 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date or an inverted range;
+/// [`Error::Validation`] for an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Database`].
 pub fn dashboard_summary(
     conn: &Connection,
     entity_id: EntityId,
-    from: &str,
-    to: &str,
-    assets_as_of: &str,
+    from: Date,
+    to: Date,
+    assets_as_of: Date,
 ) -> Result<DashboardSummary> {
     // An archived entity is found too; its reports stay readable.
     let entity = get_entity(conn, entity_id)?;
-    let from = parse_date(from)?;
-    let to = parse_date(to)?;
-    let assets_as_of = parse_date(assets_as_of)?;
     if from > to {
         return Err(ValidationError::DateRangeInverted.into());
     }
@@ -488,12 +481,10 @@ pub fn previous_window(from: Date, to: Date) -> Option<(Date, Date)> {
 fn profit_and_loss_filtered(
     conn: &Connection,
     entity_id: EntityId,
-    from: &str,
-    to: &str,
+    from: Date,
+    to: Date,
     omit_hidden: bool,
 ) -> Result<PnL> {
-    let from = parse_date(from)?;
-    let to = parse_date(to)?;
     if from > to {
         return Err(ValidationError::DateRangeInverted.into());
     }
@@ -937,7 +928,7 @@ mod tests {
     #[test]
     fn fiscal_year_start_is_the_latest_start_month_on_or_before_the_date() {
         let start = |as_of: &str, month: Month| {
-            parse_date(as_of).map(|date| format_date(fiscal_year_start(date, month)))
+            crate::util::parse_date(as_of).map(|date| format_date(fiscal_year_start(date, month)))
         };
 
         assert_eq!(start("2026-03-15", Month::January), Ok("2026-01-01".into()));

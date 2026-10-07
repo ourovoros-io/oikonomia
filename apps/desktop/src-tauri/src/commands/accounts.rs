@@ -14,6 +14,7 @@ use oikonomia_core::ledger::{
     CreateAccount, PostedEntryView, RegisterLine, UpdateAccount, account_balance, account_register,
     archive_account, create_account, list_accounts, set_account_opening_balance, update_account,
 };
+use oikonomia_core::util::DateText;
 use tauri::State;
 
 /// Lists an entity's accounts, active and inactive.
@@ -123,11 +124,13 @@ pub(crate) async fn account_archive(
 pub(crate) async fn account_register_cmd(
     state: State<'_, AppState>,
     account_id: AccountId,
-    from: Option<String>,
-    to: Option<String>,
+    from: Option<DateText>,
+    to: Option<DateText>,
 ) -> CommandResult<Vec<RegisterLine>> {
     with_connection(&state, move |conn| {
-        account_register(conn, account_id, from.as_deref(), to.as_deref())
+        let from = DateText::parse_optional(from.as_ref())?;
+        let to = DateText::parse_optional(to.as_ref())?;
+        account_register(conn, account_id, from, to)
     })
     .await
 }
@@ -147,10 +150,10 @@ pub(crate) async fn account_register_cmd(
 pub(crate) async fn account_balance_cmd(
     state: State<'_, AppState>,
     account_id: AccountId,
-    as_of: String,
+    as_of: DateText,
 ) -> CommandResult<i64> {
     with_connection(&state, move |conn| {
-        account_balance(conn, account_id, &as_of)
+        account_balance(conn, account_id, as_of.parse()?)
     })
     .await
 }
@@ -176,10 +179,10 @@ pub(crate) async fn account_set_opening_balance(
     state: State<'_, AppState>,
     account_id: AccountId,
     target_minor: i64,
-    as_of: String,
+    as_of: DateText,
 ) -> CommandResult<PostedEntryView> {
     with_localized_connection(&state, move |conn, locale| {
-        set_account_opening_balance(conn, account_id, target_minor, &as_of, locale)
+        set_account_opening_balance(conn, account_id, target_minor, as_of.parse()?, locale)
     })
     .await
 }

@@ -80,7 +80,6 @@ use crate::csv::{
 use crate::error::{Error, IoContext};
 use crate::ledger::SimpleEntryKind;
 use crate::ui_text::{UiText, UiTextCode};
-use crate::util::format_date;
 
 /// Result of a step that can only fail for a reason about the CSV itself.
 type CsvResult<T> = std::result::Result<T, CsvError>;
@@ -123,8 +122,7 @@ pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
     Ok(text.trim_start_matches('\u{feff}').to_owned())
 }
 
-/// Parses a date cell written as `YYYY-MM-DD`, `YYYY/MM/DD` or `DD/MM/YYYY`
-/// and returns it as `YYYY-MM-DD`.
+/// Parses a date cell written as `YYYY-MM-DD`, `YYYY/MM/DD` or `DD/MM/YYYY`.
 ///
 /// Day and month may be unpadded. US `MM/DD/YYYY` is not supported:
 /// `03/13/2026` is rejected (month 13), and `03/04/2026` is read as 3 April.
@@ -134,7 +132,7 @@ pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
 /// [`CsvError::MissingDate`] when the cell is empty or only whitespace;
 /// [`CsvError::InvalidDate`], carrying the trimmed cell, when it is not in
 /// one of the three forms or is not a date of the calendar.
-pub fn parse_csv_date(raw: &str) -> CsvResult<String> {
+pub fn parse_csv_date(raw: &str) -> CsvResult<Date> {
     let cell = raw.trim();
     if cell.is_empty() {
         return Err(CsvError::MissingDate);
@@ -143,17 +141,17 @@ pub fn parse_csv_date(raw: &str) -> CsvResult<String> {
     if let Some([year, month, day]) = split_three(cell, '-')
         && year.len() == 4
     {
-        return Ok(format_date(calendar_date(year, month, day, cell)?));
+        return calendar_date(year, month, day, cell);
     }
     if let Some([year, month, day]) = split_three(cell, '/')
         && year.len() == 4
     {
-        return Ok(format_date(calendar_date(year, month, day, cell)?));
+        return calendar_date(year, month, day, cell);
     }
     if let Some([day, month, year]) = split_three(cell, '/')
         && year.len() == 4
     {
-        return Ok(format_date(calendar_date(year, month, day, cell)?));
+        return calendar_date(year, month, day, cell);
     }
     Err(CsvError::InvalidDate(cell.to_owned()))
 }
@@ -755,7 +753,7 @@ mod tests {
     #[test]
     fn comma_iso_and_dot_amount() {
         let row = first_parsed_row("Date,Description,Amount\n2026-03-15,Coffee,-3.50\n");
-        assert_eq!(row.entry_date, "2026-03-15");
+        assert_eq!(crate::util::format_date(row.entry_date), "2026-03-15");
         assert_eq!(row.description, "Coffee");
         assert_eq!(row.signed_amount_minor, -350);
         assert_eq!(row.kind, SimpleEntryKind::Expense);
@@ -766,7 +764,7 @@ mod tests {
     fn semicolon_quotes_european_date_and_amount() {
         let csv = "Date;Description;Amount\n15/03/2026;\"Coffee, Inc\";-1.234,56\n";
         let row = first_parsed_row(csv);
-        assert_eq!(row.entry_date, "2026-03-15");
+        assert_eq!(crate::util::format_date(row.entry_date), "2026-03-15");
         assert_eq!(row.description, "Coffee, Inc");
         assert_eq!(row.signed_amount_minor, -123_456);
         assert_eq!(row.kind, SimpleEntryKind::Expense);
@@ -931,9 +929,10 @@ mod tests {
 
     #[test]
     fn iso_and_dmy_dates() {
-        assert_eq!(parse_csv_date("2026-03-05").expect("iso"), "2026-03-05");
-        assert_eq!(parse_csv_date("5/3/2026").expect("dmy"), "2026-03-05");
-        assert_eq!(parse_csv_date("2026/03/05").expect("ymd"), "2026-03-05");
+        let fifth_of_march = time::macros::date!(2026 - 03 - 05);
+        assert_eq!(parse_csv_date("2026-03-05"), Ok(fifth_of_march));
+        assert_eq!(parse_csv_date("5/3/2026"), Ok(fifth_of_march));
+        assert_eq!(parse_csv_date("2026/03/05"), Ok(fifth_of_march));
         assert!(parse_csv_date("03/13/2026").is_err());
         assert!(parse_csv_date("32/01/2026").is_err());
     }
@@ -969,7 +968,10 @@ mod tests {
 
     #[test]
     fn a_slash_date_with_the_year_last_is_read_day_first() {
-        assert_eq!(parse_csv_date("03/04/2026").unwrap(), "2026-04-03");
+        assert_eq!(
+            parse_csv_date("03/04/2026"),
+            Ok(time::macros::date!(2026 - 04 - 03))
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ mod common;
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
+    CreateEntity, CreateJournalLine, PostJournalRequest, create_entity, list_accounts, post_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -41,7 +41,7 @@ fn pre_v6_row_becomes_visible() {
     let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
     let view = post_entry(
         conn,
-        &PostJournal {
+        &common::strict(PostJournalRequest {
             entity_id: entity.id,
             entry_date: "2026-01-01".into(),
             description: "legacy".into(),
@@ -60,7 +60,7 @@ fn pre_v6_row_becomes_visible() {
                     memo: None,
                 },
             ],
-        },
+        }),
     )
     .expect("post");
     let entry_id = view.entry.id.to_string();

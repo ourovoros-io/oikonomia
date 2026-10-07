@@ -6,7 +6,7 @@ use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
+    CreateEntity, CreateJournalLine, PostJournalRequest, create_entity, list_accounts, post_entry,
 };
 use oikonomia_core::prefs::Locale;
 
@@ -30,7 +30,7 @@ fn v5_rejects_double_sided_journal_line() {
     let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
     let view = post_entry(
         conn,
-        &PostJournal {
+        &common::strict(PostJournalRequest {
             entity_id: entity.id,
             entry_date: "2026-01-01".into(),
             description: "ok".into(),
@@ -49,7 +49,7 @@ fn v5_rejects_double_sided_journal_line() {
                     memo: None,
                 },
             ],
-        },
+        }),
     )
     .expect("post");
 
@@ -109,7 +109,7 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
     let checking = accounts.iter().find(|a| a.code == "1010").expect("1010");
     let view = post_entry(
         conn,
-        &PostJournal {
+        &common::strict(PostJournalRequest {
             entity_id: entity.id,
             entry_date: "2026-01-01".into(),
             description: "ok".into(),
@@ -128,7 +128,7 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
                     memo: None,
                 },
             ],
-        },
+        }),
     )
     .expect("post");
 

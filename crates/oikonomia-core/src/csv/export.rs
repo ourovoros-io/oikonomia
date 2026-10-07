@@ -28,12 +28,14 @@ use std::path::{Path, PathBuf};
 use csv::{ReaderBuilder, StringRecord, Trim, Writer};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use time::Date;
 
 use crate::csv::CsvError;
 use crate::db::read_column;
 use crate::domain::EntityId;
 use crate::error::{DatabaseContext, Error, Result, SerializationContext};
 use crate::ledger::get_entity;
+use crate::util::parse_date;
 use crate::vault::files::{local_iso_date, replace_private_file};
 
 /// Export column header for integer debit minor units.
@@ -59,8 +61,9 @@ pub enum JournalCsvStatus {
 /// One journal line as written by [`export_journal_csv`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalCsvLine {
-    /// ISO date.
-    pub date: String,
+    /// Date of the entry, serialized as `YYYY-MM-DD`.
+    #[serde(with = "crate::util::serde_date")]
+    pub date: Date,
     /// Entry description.
     pub description: String,
     /// Optional reference.
@@ -292,7 +295,8 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
             }
         };
         lines.push(JournalCsvLine {
-            date: cell(date_column).to_owned(),
+            date: parse_date(cell(date_column))
+                .map_err(|_| CsvError::InvalidDate(cell(date_column).to_owned()))?,
             description: restore_formula(cell(description_column)).to_owned(),
             // The export writes a missing reference as an empty cell.
             reference: (!reference.is_empty()).then(|| reference.to_owned()),
@@ -545,7 +549,7 @@ mod properties {
 
         let entry = PostJournal {
             entity_id: entity.id,
-            entry_date: "2026-03-15".into(),
+            entry_date: parse_date("2026-03-15").unwrap(),
             description: description.into(),
             reference: None,
             lines: vec![line(0, 100, 0), line(1, 0, 100)],

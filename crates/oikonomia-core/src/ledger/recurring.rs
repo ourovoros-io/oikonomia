@@ -34,7 +34,7 @@ use crate::ledger::journals::{
     PostSimpleEntry, PostedEntryView, SimpleBillStatus, SimpleEntryKind, ensure_simple_entry_roles,
     post_simple_entry_unchecked,
 };
-use crate::util::{format_date, now_utc_string, parse_date, utc_today};
+use crate::util::{format_date, now_utc_string, utc_today};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::{Date, Duration, Month};
@@ -65,7 +65,11 @@ pub enum RecurringCadence {
 }
 
 /// Input for [`create_recurring_template`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The UI sends it as a
+/// [`CreateRecurringTemplateRequest`](crate::ledger::CreateRecurringTemplateRequest), which converts
+/// into this.
+#[derive(Debug, Clone)]
 pub struct CreateRecurringTemplate {
     /// Entity the template, and every entry it posts, belongs to.
     pub entity_id: EntityId,
@@ -96,13 +100,17 @@ pub struct CreateRecurringTemplate {
     /// Optional note stored on the template. Posting does not read it: a
     /// posted entry's description is the template's `name`.
     pub memo: Option<String>,
-    /// Next occurrence `YYYY-MM-DD`. Advanced only after a successful post.
-    pub next_date: String,
+    /// Next occurrence. Advanced only after a successful post.
+    pub next_date: Date,
 }
 
 /// Input for [`update_recurring_template`]. Every field but `id` replaces the
 /// stored value; the template's entity cannot be changed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The UI sends it as a
+/// [`UpdateRecurringTemplateRequest`](crate::ledger::UpdateRecurringTemplateRequest), which converts
+/// into this.
+#[derive(Debug, Clone)]
 pub struct UpdateRecurringTemplate {
     /// Template to change.
     pub id: RecurringTemplateId,
@@ -132,8 +140,8 @@ pub struct UpdateRecurringTemplate {
     /// Optional note stored on the template; a blank one is stored as none.
     /// Posting does not read it.
     pub memo: Option<String>,
-    /// Next occurrence `YYYY-MM-DD`.
-    pub next_date: String,
+    /// Next occurrence.
+    pub next_date: Date,
 }
 
 /// A stored template with its due flag, as the Recurring screen shows it.
@@ -275,7 +283,6 @@ pub(super) fn get_recurring_template_as_of(
 /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
 /// - [`ValidationError::DayOfMonthInvalid`] for a monthly template with no
 ///   day or one outside 1–31, and for a weekly or yearly template with a day.
-/// - [`ValidationError::InvalidDate`] when `next_date` is not a date.
 /// - The account errors of
 ///   [`post_simple_entry`](crate::ledger::post_simple_entry): a role that is
 ///   empty or holds an account of the wrong type, entity or state.
@@ -412,7 +419,6 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 /// - [`Error::NotFound`] for an unknown template.
 /// - [`ValidationError::AmountNotPositive`] for an override amount of zero or
 ///   less.
-/// - [`ValidationError::InvalidDate`] when the override date is not a date.
 /// - The errors of [`post_simple_entry`](crate::ledger::post_simple_entry),
 ///   such as [`ValidationError::AccountInactive`] for an account archived
 ///   since the template was saved.
@@ -426,7 +432,7 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 pub fn post_recurring_template(
     conn: &Connection,
     id: RecurringTemplateId,
-    entry_date: Option<&str>,
+    entry_date: Option<Date>,
     amount_minor: Option<i64>,
 ) -> Result<RecurringPostResult> {
     let tx = conn
@@ -441,16 +447,13 @@ pub fn post_recurring_template(
         Some(minor) => minor,
         None => stored.amount_minor,
     };
-    let post_date = match entry_date {
-        Some(date) => parse_date(date)?,
-        None => stored.next_date,
-    };
+    let post_date = entry_date.unwrap_or(stored.next_date);
 
     let input = PostSimpleEntry {
         entity_id: stored.entity_id,
         kind: stored.kind,
         bill_status: stored.bill_status,
-        entry_date: format_date(post_date),
+        entry_date: post_date,
         description: stored.name.clone(),
         reference: None,
         amount_minor: post_amount,
@@ -680,8 +683,8 @@ struct TemplateInput<'a> {
     to_account_id: Option<AccountId>,
     /// Note as typed, untrimmed.
     memo: Option<&'a str>,
-    /// Date of the next occurrence as text, not yet parsed.
-    next_date: &'a str,
+    /// Date of the next occurrence.
+    next_date: Date,
 }
 
 impl<'a> TemplateInput<'a> {
@@ -700,7 +703,7 @@ impl<'a> TemplateInput<'a> {
             from_account_id: input.from_account_id,
             to_account_id: input.to_account_id,
             memo: input.memo.as_deref(),
-            next_date: &input.next_date,
+            next_date: input.next_date,
         }
     }
 
@@ -719,7 +722,7 @@ impl<'a> TemplateInput<'a> {
             from_account_id: input.from_account_id,
             to_account_id: input.to_account_id,
             memo: input.memo.as_deref(),
-            next_date: &input.next_date,
+            next_date: input.next_date,
         }
     }
 }
@@ -793,7 +796,7 @@ fn validated_fields(
         }
     };
 
-    let next_date = parse_date(input.next_date)?;
+    let next_date = input.next_date;
     let memo = input
         .memo
         .map(str::trim)
@@ -823,7 +826,7 @@ fn validated_fields(
         entity_id,
         kind: fields.kind,
         bill_status: fields.bill_status,
-        entry_date: format_date(fields.next_date),
+        entry_date: fields.next_date,
         description: fields.name.clone(),
         reference: None,
         amount_minor: fields.amount_minor,
@@ -1084,6 +1087,7 @@ fn parse_bill_status(stored: &str) -> Result<SimpleBillStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::parse_date;
 
     /// Parses a `YYYY-MM-DD` literal of a test.
     fn date(iso: &str) -> Date {

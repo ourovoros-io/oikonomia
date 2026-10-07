@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use rusqlite::Connection;
+use time::Date;
 
 use crate::csv::parse::{parse_bank_csv, read_csv_text};
 use crate::csv::{
@@ -22,11 +23,14 @@ use crate::csv::{
     CsvImportPreviewRow, CsvRowOutcome, currency_minor_exponent, normalize_description,
     suggested_entry,
 };
+use crate::db::stored_date;
 use crate::domain::{AccountId, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
-    PostSimpleEntry, PostedEntryView, get_account, get_entity, post_simple_entry_unchecked,
+    PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView, get_account, get_entity,
+    post_simple_entry_unchecked,
 };
+use crate::util::parse_date;
 
 /// Parses a bank CSV into suggested entries and flags duplicates. **Does
 /// not post.**
@@ -104,7 +108,7 @@ pub fn preview_bank_csv_file(
 /// - [`Error::Database`] on database errors.
 pub fn post_import_rows(
     conn: &Connection,
-    rows: &[PostSimpleEntry],
+    rows: &[PostSimpleEntryRequest],
     include_duplicates: bool,
 ) -> Result<CsvImportPostResult> {
     let Some(first) = rows.first() else {
@@ -130,12 +134,17 @@ pub fn post_import_rows(
     let mut skipped_duplicate_count = 0u32;
 
     for row in rows {
-        let key = DedupeKey::new(&row.entry_date, row.amount_minor, &row.description);
+        // The date is read first because the duplicate rule needs it. The
+        // rest of the row is checked only once it is known to be posted, so
+        // a skipped duplicate is never refused for what else it holds.
+        let entry_date = parse_date(&row.entry_date)?;
+        let key = DedupeKey::new(entry_date, row.amount_minor, &row.description);
         if !include_duplicates && seen.contains(&key) {
             skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
             continue;
         }
-        let view = post_simple_entry_unchecked(&transaction, row)?;
+        let entry = PostSimpleEntry::try_from(row.clone())?;
+        let view = post_simple_entry_unchecked(&transaction, &entry)?;
         seen.insert(key);
         posted.push(view);
     }
@@ -154,8 +163,8 @@ pub fn post_import_rows(
 /// its normalized form and two keys compare the way the rule says.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct DedupeKey {
-    /// Booking date, `YYYY-MM-DD`.
-    date: String,
+    /// Booking date.
+    date: Date,
     /// Unsigned amount in minor units: an expense and an income of the same
     /// size on the same day with the same text are one key.
     amount_minor: i64,
@@ -165,9 +174,9 @@ struct DedupeKey {
 
 impl DedupeKey {
     /// Returns the key of an entry, normalizing `description`.
-    fn new(date: &str, amount_minor: i64, description: &str) -> Self {
+    fn new(date: Date, amount_minor: i64, description: &str) -> Self {
         Self {
-            date: date.to_owned(),
+            date,
             amount_minor,
             description: normalize_description(description),
         }
@@ -229,7 +238,7 @@ fn preview_row(
             signed_amount_minor: None,
         },
         CsvRowOutcome::Parsed(row) => {
-            let key = DedupeKey::new(&row.entry_date, row.amount_minor, &row.description);
+            let key = DedupeKey::new(row.entry_date, row.amount_minor, &row.description);
             let duplicate = !seen.insert(key);
             CsvImportPreviewRow {
                 source_row: row.source_row,
@@ -296,7 +305,8 @@ fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<De
     let mut keys = HashSet::new();
     for row in mapped {
         let (date, description, amount) = row.database("read entries for duplicate check")?;
-        keys.insert(DedupeKey::new(&date, amount, &description));
+        let date = stored_date("journal_entries.entry_date", &date)?;
+        keys.insert(DedupeKey::new(date, amount, &description));
     }
     Ok(keys)
 }
