@@ -101,8 +101,8 @@ fn post_selected_rows_are_balanced() {
 
     for view in &result.posted {
         validate_lines_for_post(&view.lines).expect("balanced");
-        let debits: i64 = view.lines.iter().map(|l| l.debit.amount_minor()).sum();
-        let credits: i64 = view.lines.iter().map(|l| l.credit.amount_minor()).sum();
+        let debits: i64 = view.lines.iter().map(|l| l.debit().amount_minor()).sum();
+        let credits: i64 = view.lines.iter().map(|l| l.credit().amount_minor()).sum();
         assert_eq!(debits, credits);
         assert!(debits > 0);
     }

@@ -6,7 +6,7 @@ use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournalRequest, create_entity, list_accounts, post_entry,
+    CreateEntity, JournalLineRequest, PostJournalRequest, create_entity, list_accounts, post_entry,
 };
 use oikonomia_core::prefs::Locale;
 
@@ -36,13 +36,13 @@ fn v5_rejects_double_sided_journal_line() {
             description: "ok".into(),
             reference: None,
             lines: vec![
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: food.id,
                     debit_minor: 100,
                     credit_minor: 0,
                     memo: None,
                 },
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: checking.id,
                     debit_minor: 0,
                     credit_minor: 100,
@@ -115,13 +115,13 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
             description: "ok".into(),
             reference: None,
             lines: vec![
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: food.id,
                     debit_minor: 100,
                     credit_minor: 0,
                     memo: None,
                 },
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: checking.id,
                     debit_minor: 0,
                     credit_minor: 100,

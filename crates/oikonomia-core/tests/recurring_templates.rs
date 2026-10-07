@@ -192,7 +192,7 @@ fn post_override_amount_and_date_do_not_rewrite_template_amount() {
         .entry
         .lines
         .iter()
-        .map(|line| line.debit.amount_minor())
+        .map(|line| line.debit().amount_minor())
         .sum();
     assert_eq!(posted_amount, 90_000);
     assert_eq!(

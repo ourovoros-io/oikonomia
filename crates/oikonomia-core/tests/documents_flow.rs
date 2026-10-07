@@ -12,7 +12,7 @@ use oikonomia_core::documents::{
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, Resource, ValidationError};
 use oikonomia_core::ledger::{
-    CreateJournalLine, EntryFilter, PostJournal, PostJournalRequest, PostSimpleEntry,
+    EntryFilter, JournalLineRequest, PostJournal, PostJournalRequest, PostSimpleEntry,
     PostedEntryView, archive_account, delete_entity, list_accounts, list_entities, list_entries,
     post_entry,
 };
@@ -56,13 +56,13 @@ fn delete_entity_with_linked_document() {
             description: "Groceries".into(),
             reference: None,
             lines: vec![
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: food.id,
                     debit_minor: 1_000,
                     credit_minor: 0,
                     memo: None,
                 },
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: checking.id,
                     debit_minor: 0,
                     credit_minor: 1_000,

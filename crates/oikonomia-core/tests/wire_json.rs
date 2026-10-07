@@ -20,10 +20,10 @@ use oikonomia_core::csv::{CsvImportPostInput, CsvImportPreviewRow, JournalCsvLin
 use oikonomia_core::documents::DocumentMeta;
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
-    BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateJournalLine,
-    CreateRecurringTemplateRequest, DashboardSummary, PnL, PostJournalRequest,
-    PostSimpleEntryRequest, PostedEntryView, RecurringPostResult, RecurringTemplateView,
-    RegisterLine, TrialBalance, UpdateAccount, UpdateRecurringTemplateRequest, VoidResult,
+    BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplateRequest,
+    DashboardSummary, JournalLineRequest, PnL, PostJournalRequest, PostSimpleEntryRequest,
+    PostedEntryView, RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance,
+    UpdateAccount, UpdateRecurringTemplateRequest, VoidResult,
 };
 use oikonomia_core::prefs::UiPrefs;
 use serde::Serialize;
@@ -121,7 +121,7 @@ fn void_result() {
 
 #[test]
 fn post_journal_request() {
-    assert_json_is_pinned::<CreateJournalLine>(
+    assert_json_is_pinned::<JournalLineRequest>(
         r#"{"account_id":"22222222-2222-4222-8222-222222222222","debit_minor":4500,"credit_minor":0,"memo":null}"#,
     );
     assert_json_is_pinned::<PostJournalRequest>(

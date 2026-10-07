@@ -27,8 +27,9 @@
 //!   is computed in floating point.
 //! - **A posted entry balances.** It has at least two lines, each line is a
 //!   debit or a credit and never both, and its debits add up to its credits.
-//!   One function writes entries and checks this first; the schema repeats
-//!   the rule for a single line as a `CHECK`.
+//!   A line holds one amount and one side, so the types rule out a line on
+//!   both; one function writes entries and checks the rest first, and the
+//!   schema repeats the rule for a single line as a `CHECK`.
 //! - **Accounting rules are decided here, not in the UI.** The simple entry
 //!   form sends an amount and accounts named by the part they play, and
 //!   [`SimpleEntryAccounts`] decides which is debited.
@@ -48,7 +49,8 @@
 //! # Inputs
 //!
 //! The functions here take typed values: a [`time::Date`], never date text,
-//! and the strict inputs ([`PostJournal`], [`PostSimpleEntry`],
+//! and the strict inputs ([`PostJournal`] and its [`PostJournalLine`]s,
+//! [`PostSimpleEntry`],
 //! [`CreateRecurringTemplate`], [`UpdateRecurringTemplate`]). Text is parsed
 //! once, where it enters. A request the UI sends as one JSON object arrives
 //! in its wire form ([`PostJournalRequest`], [`PostSimpleEntryRequest`] and
@@ -137,7 +139,7 @@ pub use entities::{
 };
 pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{
-    CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine,
+    EntryFilter, PostJournal, PostJournalLine, PostSimpleEntry, PostedEntryView, RegisterLine,
     VoidResult, account_register, get_entry, list_entries, post_entry, post_simple_entry,
     replace_simple_entry, set_account_opening_balance, set_entry_hidden, void_entry,
 };
@@ -158,6 +160,6 @@ pub use simple_entry::{
     SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
 };
 pub use wire::{
-    CreateRecurringTemplateRequest, PostJournalRequest, PostSimpleEntryRequest,
+    CreateRecurringTemplateRequest, JournalLineRequest, PostJournalRequest, PostSimpleEntryRequest,
     UpdateRecurringTemplateRequest,
 };

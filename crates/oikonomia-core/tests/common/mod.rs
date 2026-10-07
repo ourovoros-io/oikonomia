@@ -10,16 +10,16 @@
               where the test allowance of clippy.toml does not reach"
 )]
 
-use oikonomia_core::Error;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, PostJournalRequest, PostSimpleEntry,
+    CreateEntity, PostJournal, PostJournalLine, PostJournalRequest, PostSimpleEntry,
     PostSimpleEntryRequest, PostedEntryView, SimpleEntryAccounts, create_entity, list_accounts,
     post_entry, post_simple_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
 use oikonomia_core::vault::Vault;
+use oikonomia_core::{Error, Money};
 use rusqlite::Connection;
 use tempfile::TempDir;
 use time::Date;
@@ -121,19 +121,17 @@ pub(crate) fn two_line(
     minor: i64,
 ) -> PostJournal {
     let (debit_code, credit_code) = sides;
-    let line = |code: &str, debit_minor: i64, credit_minor: i64| CreateJournalLine {
-        account_id: account(conn, entity_id, code),
-        debit_minor,
-        credit_minor,
-        memo: None,
-    };
+    let amount = Money::from_minor(minor).expect("a test posts an amount that is not negative");
 
     PostJournal {
         entity_id,
         entry_date: self::date(date),
         description: format!("{debit_code} from {credit_code}: {minor} on {date}"),
         reference: None,
-        lines: vec![line(debit_code, minor, 0), line(credit_code, 0, minor)],
+        lines: vec![
+            PostJournalLine::debit(account(conn, entity_id, debit_code), amount),
+            PostJournalLine::credit(account(conn, entity_id, credit_code), amount),
+        ],
     }
 }
 

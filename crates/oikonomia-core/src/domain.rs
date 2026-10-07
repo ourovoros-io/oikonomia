@@ -11,7 +11,8 @@
 //! - An [`Account`] belongs to one entity and has an [`AccountType`], which
 //!   decides whether a debit raises or lowers its balance.
 //! - A [`JournalEntry`] belongs to one entity and is dated. Its
-//!   [`JournalLine`]s each debit or credit one account of the same entity.
+//!   [`JournalLine`]s each put an amount on one [`Side`], debit or credit, of
+//!   one account of the same entity.
 //! - A recurring template, identified by [`RecurringTemplateId`], is a saved
 //!   entry with a cadence and a next date. Its data type lives in
 //!   [`crate::ledger`], which posts it when asked.
@@ -47,6 +48,7 @@ pub use currency::CurrencyCode;
 pub use entity::{ChartTemplate, Entity, EntityId};
 pub(crate) use id::define_id;
 pub use journal::{
-    EntryStatus, JournalEntry, JournalEntryId, JournalLine, JournalLineId, validate_lines_for_post,
+    EntryStatus, JournalEntry, JournalEntryId, JournalLine, JournalLineId, Side,
+    validate_lines_for_post,
 };
 pub use recurring::RecurringTemplateId;

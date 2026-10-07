@@ -3,9 +3,10 @@
 //!
 //! # Posting
 //!
-//! An entry is a header and at least two lines. Each line debits or credits
-//! one account by a positive amount, never both, and the debits of an entry
-//! equal its credits. Every entry is written by the private
+//! An entry is a header and at least two lines. Each line puts a positive
+//! amount on one [`Side`] of one account, and the debits of an entry equal
+//! its credits. A line cannot be on both sides: [`PostJournalLine`] and
+//! [`JournalLine`] hold one amount and one side. Every entry is written by the private
 //! `post_entry_in_tx`, which checks those rules
 //! ([`validate_lines_for_post`]) and that each account belongs to the entry's
 //! entity; no other code inserts into the journal. The schema repeats the
@@ -46,7 +47,7 @@
 use crate::db::{collect_rows, corrupt_column, fold_case, read_column, stored_date, stored_id};
 use crate::domain::{
     Account, AccountId, AccountType, EntityId, EntryStatus, JournalEntry, JournalEntryId,
-    JournalLine, JournalLineId, validate_lines_for_post,
+    JournalLine, JournalLineId, Side, validate_lines_for_post,
 };
 use crate::error::{DatabaseContext, Error, Resource, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
@@ -63,20 +64,46 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use time::Date;
 
-/// One line of a [`PostJournal`].
+/// One line of a [`PostJournal`]: an amount on one side of one account.
 ///
-/// Exactly one of the two amounts is positive and the other is 0.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateJournalLine {
+/// The UI sends it in two columns, as a
+/// [`JournalLineRequest`](crate::ledger::JournalLineRequest), which converts
+/// into this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostJournalLine {
     /// Account the line posts to. It must belong to the entry's entity and
     /// not be archived.
     pub account_id: AccountId,
-    /// Amount debited to the account, in minor units; 0 on a credit line.
-    pub debit_minor: i64,
-    /// Amount credited to the account, in minor units; 0 on a debit line.
-    pub credit_minor: i64,
+    /// Amount debited or credited; it must be greater than zero.
+    pub amount: Money,
+    /// Whether the amount is debited or credited.
+    pub side: Side,
     /// Note on the line, stored as given. `None` stores none.
     pub memo: Option<String>,
+}
+
+impl PostJournalLine {
+    /// Returns a line that debits `account_id` by `amount`, with no memo.
+    #[must_use]
+    pub const fn debit(account_id: AccountId, amount: Money) -> Self {
+        Self {
+            account_id,
+            amount,
+            side: Side::Debit,
+            memo: None,
+        }
+    }
+
+    /// Returns a line that credits `account_id` by `amount`, with no memo.
+    #[must_use]
+    pub const fn credit(account_id: AccountId, amount: Money) -> Self {
+        Self {
+            account_id,
+            amount,
+            side: Side::Credit,
+            memo: None,
+        }
+    }
 }
 
 /// Input for [`post_entry`]: a whole entry, with its lines spelled out.
@@ -97,7 +124,7 @@ pub struct PostJournal {
     /// Surrounding whitespace is trimmed and a blank one is stored as none.
     pub reference: Option<String>,
     /// At least two lines, whose debits add up to their credits.
-    pub lines: Vec<CreateJournalLine>,
+    pub lines: Vec<PostJournalLine>,
 }
 
 /// An entry as the UI shows it: its header, its lines and whether it counts.
@@ -296,9 +323,8 @@ pub fn set_entry_hidden(
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`Error::AccountWrongEntity`] for an account of another entity.
 /// - [`ValidationError::AccountInactive`] for an archived account.
-/// - [`Error::NegativeMoney`] for a negative debit or credit.
 /// - [`Error::TooFewLines`] for fewer than two lines.
-/// - [`Error::InvalidLineAmounts`] for a line that is not debit XOR credit.
+/// - [`Error::InvalidLineAmounts`] for a line whose amount is zero.
 /// - [`Error::MoneyOverflow`] when the debits or the credits do not fit in
 ///   `i64`.
 /// - [`Error::UnbalancedEntry`] when debits and credits differ.
@@ -479,7 +505,7 @@ pub fn set_account_opening_balance(
 
     // A debit-normal account grows by debiting: a positive delta debits the
     // account and credits equity; every other combination flips the sides.
-    let amount = delta.checked_abs().ok_or(Error::MoneyOverflow)?;
+    let amount = Money::from_minor(delta.checked_abs().ok_or(Error::MoneyOverflow)?)?;
     let account_on_debit_side = account.account_type.is_debit_normal() == (delta > 0);
     let (debit_id, credit_id) = if account_on_debit_side {
         (account.id, equity.id)
@@ -495,18 +521,8 @@ pub fn set_account_opening_balance(
             description: opening_balance_description(locale, &account.name),
             reference: None,
             lines: vec![
-                CreateJournalLine {
-                    account_id: debit_id,
-                    debit_minor: amount,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: credit_id,
-                    debit_minor: 0,
-                    credit_minor: amount,
-                    memo: None,
-                },
+                PostJournalLine::debit(debit_id, amount),
+                PostJournalLine::credit(credit_id, amount),
             ],
         },
     )
@@ -648,19 +664,10 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
     let (debit_account, credit_account) =
         simple_entry_sides(conn, input.entity_id, input.accounts)?;
 
+    let amount = Money::from_minor(input.amount_minor)?;
     let lines = vec![
-        CreateJournalLine {
-            account_id: debit_account,
-            debit_minor: input.amount_minor,
-            credit_minor: 0,
-            memo: None,
-        },
-        CreateJournalLine {
-            account_id: credit_account,
-            debit_minor: 0,
-            credit_minor: input.amount_minor,
-            memo: None,
-        },
+        PostJournalLine::debit(debit_account, amount),
+        PostJournalLine::credit(credit_account, amount),
     ];
 
     post_entry_in_tx(
@@ -946,14 +953,12 @@ fn post_entry_in_tx(
             ArchivedAccounts::Accept => {}
         }
 
-        let debit = Money::from_minor(line_input.debit_minor)?;
-        let credit = Money::from_minor(line_input.credit_minor)?;
         lines.push(JournalLine {
             id: JournalLineId::generate(),
             entry_id,
             account_id: line_input.account_id,
-            debit,
-            credit,
+            amount: line_input.amount,
+            side: line_input.side,
             memo: line_input.memo.clone(),
         });
     }
@@ -997,8 +1002,8 @@ fn post_entry_in_tx(
                 line.id.to_string(),
                 entry_id.to_string(),
                 line.account_id.to_string(),
-                line.debit.amount_minor(),
-                line.credit.amount_minor(),
+                line.debit().amount_minor(),
+                line.credit().amount_minor(),
                 line.memo,
                 i32::try_from(order).unwrap_or(i32::MAX),
             ],
@@ -1116,13 +1121,13 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         return Err(ValidationError::EntryNotPosted.into());
     }
 
-    let reverse_lines: Vec<CreateJournalLine> = view
+    let reverse_lines: Vec<PostJournalLine> = view
         .lines
         .iter()
-        .map(|line| CreateJournalLine {
+        .map(|line| PostJournalLine {
             account_id: line.account_id,
-            debit_minor: line.credit.amount_minor(),
-            credit_minor: line.debit.amount_minor(),
+            amount: line.amount,
+            side: line.side.opposite(),
             memo: Some(void_memo(locale).into()),
         })
         .collect();
@@ -1169,18 +1174,34 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
 /// # Errors
 ///
 /// [`Error::VaultCorrupt`] naming the column when an id does not parse, an
-/// amount is negative, or a column has the wrong storage class.
+/// amount is negative, both amounts are zero or both are greater than zero,
+/// or a column has the wrong storage class.
 fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
     let id = stored_id("journal_lines.id", &read_column::<String>(row, 0)?)?;
     let entry_id = stored_id("journal_lines.entry_id", &read_column::<String>(row, 1)?)?;
     let account_id = stored_id("journal_lines.account_id", &read_column::<String>(row, 2)?)?;
 
+    let debit = stored_amount("journal_lines.debit_minor", read_column(row, 3)?)?;
+    let credit = stored_amount("journal_lines.credit_minor", read_column(row, 4)?)?;
+    // The schema's `CHECK` allows a line one side only, so a row with both
+    // or neither was not written by the application.
+    let (side, amount) = Side::from_columns(debit, credit).map_err(|_| {
+        corrupt_column(
+            "journal_lines.debit_minor",
+            format_args!(
+                "a line with a debit of {} and a credit of {}",
+                debit.amount_minor(),
+                credit.amount_minor()
+            ),
+        )
+    })?;
+
     Ok(JournalLine {
         id,
         entry_id,
         account_id,
-        debit: stored_amount("journal_lines.debit_minor", read_column(row, 3)?)?,
-        credit: stored_amount("journal_lines.credit_minor", read_column(row, 4)?)?,
+        amount,
+        side,
         memo: read_column(row, 5)?,
     })
 }

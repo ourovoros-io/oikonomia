@@ -157,6 +157,29 @@ fn text_where_an_amount_belongs_is_corrupt() {
 }
 
 #[test]
+fn a_line_stored_on_both_sides_or_on_neither_is_corrupt() {
+    for amounts in [
+        "debit_minor = 5, credit_minor = 5",
+        "debit_minor = 0, credit_minor = 0",
+    ] {
+        let (_dir, vault) = common::vault();
+        let conn = vault.connection().expect("conn");
+        let book = book(conn);
+        // The schema's CHECK on the two columns is what a damaged file
+        // bypasses.
+        conn.execute_batch("PRAGMA ignore_check_constraints = ON")
+            .expect("pragma");
+        damage(conn, &format!("UPDATE journal_lines SET {amounts}"));
+
+        assert_corrupt(get_entry(conn, book.entry_id), "journal_lines.debit_minor");
+        assert_corrupt(
+            list_entries(conn, book.entity_id, &EntryFilter::default()),
+            "journal_lines.debit_minor",
+        );
+    }
+}
+
+#[test]
 fn an_unknown_account_type_is_corrupt() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");

@@ -7,7 +7,7 @@ mod common;
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournalRequest, create_entity, list_accounts, post_entry,
+    CreateEntity, JournalLineRequest, PostJournalRequest, create_entity, list_accounts, post_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -47,13 +47,13 @@ fn pre_v6_row_becomes_visible() {
             description: "legacy".into(),
             reference: None,
             lines: vec![
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: food.id,
                     debit_minor: 100,
                     credit_minor: 0,
                     memo: None,
                 },
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: checking.id,
                     debit_minor: 0,
                     credit_minor: 100,

@@ -513,8 +513,9 @@ mod properties {
     use super::*;
     use crate::domain::ChartTemplate;
     use crate::ledger::{
-        CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
+        CreateEntity, PostJournal, PostJournalLine, create_entity, list_accounts, post_entry,
     };
+    use crate::money::Money;
     use crate::prefs::Locale;
     use crate::vault::Vault;
 
@@ -540,19 +541,17 @@ mod properties {
         };
         let entity = create_entity(conn, &book, Locale::En).unwrap();
         let accounts = list_accounts(conn, entity.id).unwrap();
-        let line = |index: usize, debit_minor: i64, credit_minor: i64| CreateJournalLine {
-            account_id: accounts[index].id,
-            debit_minor,
-            credit_minor,
-            memo: None,
-        };
+        let amount = Money::from_minor(100).unwrap();
 
         let entry = PostJournal {
             entity_id: entity.id,
             entry_date: parse_date("2026-03-15").unwrap(),
             description: description.into(),
             reference: None,
-            lines: vec![line(0, 100, 0), line(1, 0, 100)],
+            lines: vec![
+                PostJournalLine::debit(accounts[0].id, amount),
+                PostJournalLine::credit(accounts[1].id, amount),
+            ],
         };
         let posted = post_entry(conn, &entry).unwrap();
 

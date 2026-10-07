@@ -64,16 +64,16 @@ fn expense_debits_category_credits_wallet() {
     let debit = view
         .lines
         .iter()
-        .find(|l| l.debit.amount_minor() > 0)
+        .find(|l| l.debit().amount_minor() > 0)
         .expect("debit line");
     let credit = view
         .lines
         .iter()
-        .find(|l| l.credit.amount_minor() > 0)
+        .find(|l| l.credit().amount_minor() > 0)
         .expect("credit line");
     assert_eq!(debit.account_id, acc.food);
     assert_eq!(credit.account_id, acc.checking);
-    assert_eq!(debit.debit.amount_minor(), 2_500);
+    assert_eq!(debit.debit().amount_minor(), 2_500);
 }
 
 /// Tray quick-add memo is optional; empty / whitespace-only description must
@@ -113,7 +113,7 @@ fn income_debits_wallet_credits_category() {
     let debit = view
         .lines
         .iter()
-        .find(|l| l.debit.amount_minor() > 0)
+        .find(|l| l.debit().amount_minor() > 0)
         .expect("debit line");
     assert_eq!(debit.account_id, acc.checking);
 }
@@ -132,7 +132,7 @@ fn bill_statuses_route_to_payable() {
     let credit = view
         .lines
         .iter()
-        .find(|l| l.credit.amount_minor() > 0)
+        .find(|l| l.credit().amount_minor() > 0)
         .expect("credit line");
     assert_eq!(credit.account_id, acc.bills_payable);
 
@@ -144,7 +144,7 @@ fn bill_statuses_route_to_payable() {
     let debit = view
         .lines
         .iter()
-        .find(|l| l.debit.amount_minor() > 0)
+        .find(|l| l.debit().amount_minor() > 0)
         .expect("debit line");
     assert_eq!(debit.account_id, acc.bills_payable);
 
@@ -187,7 +187,7 @@ fn transfer_debits_to_credits_from() {
     let debit = view
         .lines
         .iter()
-        .find(|l| l.debit.amount_minor() > 0)
+        .find(|l| l.debit().amount_minor() > 0)
         .expect("debit line");
     assert_eq!(debit.account_id, acc.savings);
 

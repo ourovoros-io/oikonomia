@@ -12,6 +12,7 @@
 //! | On the wire | Inside the crate |
 //! |-------------|------------------|
 //! | [`PostJournalRequest`] | [`PostJournal`] |
+//! | [`JournalLineRequest`] | [`PostJournalLine`] |
 //! | [`PostSimpleEntryRequest`] | [`PostSimpleEntry`] |
 //! | [`CreateRecurringTemplateRequest`] | [`CreateRecurringTemplate`] |
 //! | [`UpdateRecurringTemplateRequest`] | [`UpdateRecurringTemplate`] |
@@ -46,12 +47,13 @@
 //! Within a conversion the order is the one the ledger had when it checked
 //! everything itself: the amount, then what else the values alone decide (a
 //! template's name and day of the month), then the accounts the kind needs,
-//! debited one first. The date is read last for a simple entry and before
-//! the accounts for a template.
+//! debited one first. The date is read last for a simple entry, before the
+//! accounts for a template, and before the lines for a journal entry.
 
+use crate::domain::Side;
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{Error, Result, ValidationError};
-use crate::ledger::journals::{CreateJournalLine, PostJournal, PostSimpleEntry};
+use crate::ledger::journals::{PostJournal, PostJournalLine, PostSimpleEntry};
 use crate::ledger::recurring::{
     CreateRecurringTemplate, RecurringCadence, RecurringTemplateFields, RecurringTemplateView,
     UpdateRecurringTemplate, check_template_values,
@@ -59,12 +61,53 @@ use crate::ledger::recurring::{
 use crate::ledger::simple_entry::{
     SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
 };
+use crate::money::Money;
 use crate::util::parse_date;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
+/// The wire form of [`PostJournalLine`]: one line in two columns.
+///
+/// A postable line has an amount greater than zero in one of
+/// `debit_minor` and `credit_minor` and zero in the other.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JournalLineRequest {
+    /// Account the line posts to.
+    pub account_id: AccountId,
+    /// Amount debited to the account, in minor units; 0 on a credit line.
+    pub debit_minor: i64,
+    /// Amount credited to the account, in minor units; 0 on a debit line.
+    pub credit_minor: i64,
+    /// Note on the line.
+    pub memo: Option<String>,
+}
+
+impl TryFrom<JournalLineRequest> for PostJournalLine {
+    type Error = Error;
+
+    /// Reads the side and the amount of `request` from its two columns.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NegativeMoney`] when either amount is negative.
+    /// - [`Error::InvalidLineAmounts`] when both amounts are zero or both
+    ///   are greater than zero.
+    fn try_from(request: JournalLineRequest) -> Result<Self> {
+        let debit = Money::from_minor(request.debit_minor)?;
+        let credit = Money::from_minor(request.credit_minor)?;
+        let (side, amount) = Side::from_columns(debit, credit)?;
+
+        Ok(Self {
+            account_id: request.account_id,
+            amount,
+            side,
+            memo: request.memo,
+        })
+    }
+}
+
 /// The wire form of [`PostJournal`]: a whole entry, with its lines spelled
-/// out and its date as text.
+/// out in two columns and its date as text.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostJournalRequest {
     /// Entity whose books the entry goes into.
@@ -76,25 +119,50 @@ pub struct PostJournalRequest {
     /// The user's own reference for the entry, such as an invoice number.
     pub reference: Option<String>,
     /// The lines of the entry.
-    pub lines: Vec<CreateJournalLine>,
+    pub lines: Vec<JournalLineRequest>,
 }
 
 impl TryFrom<PostJournalRequest> for PostJournal {
     type Error = Error;
 
-    /// Parses the date of `request`; everything else is taken as it is.
+    /// Parses the date of `request` and reads each line from its two
+    /// columns.
     ///
     /// # Errors
     ///
-    /// [`ValidationError::InvalidDate`] when `entry_date` is not a
-    /// `YYYY-MM-DD` date.
+    /// The first of these that applies:
+    ///
+    /// - [`ValidationError::InvalidDate`] when `entry_date` is not a
+    ///   `YYYY-MM-DD` date.
+    /// - [`Error::NegativeMoney`] when an amount of any line is negative.
+    /// - [`Error::TooFewLines`] for fewer than two lines.
+    /// - [`Error::InvalidLineAmounts`] for a line whose two amounts are both
+    ///   zero or both greater than zero.
     fn try_from(request: PostJournalRequest) -> Result<Self> {
+        let entry_date = parse_date(&request.entry_date)?;
+
+        // A negative amount anywhere is reported before the number of lines,
+        // and the number of lines before a line with both sides or neither:
+        // the order these had when one function checked them all.
+        for line in &request.lines {
+            Money::from_minor(line.debit_minor)?;
+            Money::from_minor(line.credit_minor)?;
+        }
+        if request.lines.len() < 2 {
+            return Err(Error::TooFewLines);
+        }
+        let lines = request
+            .lines
+            .into_iter()
+            .map(PostJournalLine::try_from)
+            .collect::<Result<Vec<_>>>()?;
+
         Ok(Self {
             entity_id: request.entity_id,
-            entry_date: parse_date(&request.entry_date)?,
+            entry_date,
             description: request.description,
             reference: request.reference,
-            lines: request.lines,
+            lines,
         })
     }
 }
@@ -534,12 +602,120 @@ mod tests {
         created
     }
 
+    /// A line request with these two columns.
+    fn line_request(debit_minor: i64, credit_minor: i64) -> JournalLineRequest {
+        JournalLineRequest {
+            account_id: AccountId::generate(),
+            debit_minor,
+            credit_minor,
+            memo: None,
+        }
+    }
+
+    /// A journal request dated `entry_date` with lines of these columns.
+    fn journal_request(entry_date: &str, lines: &[(i64, i64)]) -> PostJournalRequest {
+        PostJournalRequest {
+            entity_id: EntityId::generate(),
+            entry_date: entry_date.to_owned(),
+            description: "Groceries".to_owned(),
+            reference: None,
+            lines: lines
+                .iter()
+                .map(|&(debit, credit)| line_request(debit, credit))
+                .collect(),
+        }
+    }
+
+    /// The error of converting a journal request.
+    fn journal_error(request: PostJournalRequest) -> Option<Error> {
+        PostJournal::try_from(request).err()
+    }
+
     /// The error for a date written as `text`.
     fn invalid_date(text: &str) -> Error {
         ValidationError::InvalidDate {
             value: text.to_owned(),
         }
         .into()
+    }
+
+    #[test]
+    fn a_line_request_converts_to_the_side_that_has_the_amount() {
+        let debit = PostJournalLine::try_from(line_request(4_500, 0)).unwrap();
+        let credit = PostJournalLine::try_from(line_request(0, 4_500)).unwrap();
+
+        assert_eq!(
+            (debit.side, debit.amount.amount_minor()),
+            (Side::Debit, 4_500)
+        );
+        assert_eq!(
+            (credit.side, credit.amount.amount_minor()),
+            (Side::Credit, 4_500)
+        );
+    }
+
+    #[test]
+    fn a_line_request_on_both_sides_or_neither_or_below_zero_keeps_its_code() {
+        let error = |debit, credit| PostJournalLine::try_from(line_request(debit, credit)).err();
+
+        assert_eq!(error(5, 5), Some(Error::InvalidLineAmounts));
+        assert_eq!(error(0, 0), Some(Error::InvalidLineAmounts));
+        assert_eq!(error(-1, 0), Some(Error::NegativeMoney));
+        assert_eq!(error(0, -1), Some(Error::NegativeMoney));
+        assert_eq!(error(-1, 5), Some(Error::NegativeMoney));
+    }
+
+    #[test]
+    fn a_journal_request_converts_with_its_lines_in_order() {
+        let entry = PostJournal::try_from(journal_request(
+            "2026-08-10",
+            &[(4_500, 0), (0, 4_000), (0, 500)],
+        ))
+        .unwrap();
+
+        assert_eq!(entry.entry_date, parse_date("2026-08-10").unwrap());
+        assert_eq!(
+            entry
+                .lines
+                .iter()
+                .map(|line| (line.side, line.amount.amount_minor()))
+                .collect::<Vec<_>>(),
+            [
+                (Side::Debit, 4_500),
+                (Side::Credit, 4_000),
+                (Side::Credit, 500)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_journal_request_reports_its_faults_in_the_order_posting_did() {
+        // Date, then a negative amount, then the number of lines, then a
+        // line on both sides or neither.
+        assert_eq!(
+            journal_error(journal_request("10/08/2026", &[(-1, 0)])),
+            Some(invalid_date("10/08/2026"))
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[(5, 5), (0, -1)])),
+            Some(Error::NegativeMoney)
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[(5, 5)])),
+            Some(Error::TooFewLines)
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[])),
+            Some(Error::TooFewLines)
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[(5, 0), (5, 5)])),
+            Some(Error::InvalidLineAmounts)
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[(0, 0), (0, 5)])),
+            Some(Error::InvalidLineAmounts)
+        );
     }
 
     #[test]
@@ -793,6 +969,31 @@ mod properties {
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        // Wire to typed to wire, for a line: a request converts exactly when
+        // one column is filled, and the typed line writes the same columns.
+        #[test]
+        fn a_line_request_converts_exactly_when_one_column_is_filled(
+            debit_minor in 0_i64..4,
+            credit_minor in 0_i64..4,
+        ) {
+            let request = JournalLineRequest {
+                account_id: AccountId::from(uuid::Uuid::nil()),
+                debit_minor,
+                credit_minor,
+                memo: None,
+            };
+            let converted = PostJournalLine::try_from(request);
+
+            prop_assert_eq!(converted.is_ok(), (debit_minor > 0) != (credit_minor > 0));
+            if let Ok(line) = converted {
+                let (debit, credit) = line.side.columns(line.amount);
+                prop_assert_eq!(
+                    (debit.amount_minor(), credit.amount_minor()),
+                    (debit_minor, credit_minor)
+                );
+            }
+        }
 
         // Wire to typed to wire: what the typed value serializes is the
         // request with the parts its kind does not have blanked, and typing

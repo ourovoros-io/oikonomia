@@ -11,7 +11,7 @@ use oikonomia_core::domain::{ChartTemplate, EntityId};
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::error::{Error, Resource};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournalRequest, ReportLine, SyntheticLine, balance_sheet,
+    CreateEntity, JournalLineRequest, PostJournalRequest, ReportLine, SyntheticLine, balance_sheet,
     cash_flow_series, create_entity, dashboard_summary, list_accounts, post_entry, profit_and_loss,
     set_account_opening_balance, set_entry_hidden, trial_balance, void_entry,
 };
@@ -443,13 +443,13 @@ fn randomized_entries_keep_reports_consistent() {
                 description: "random".into(),
                 reference: None,
                 lines: vec![
-                    CreateJournalLine {
+                    JournalLineRequest {
                         account_id: accounts[debit_idx].id,
                         debit_minor: minor,
                         credit_minor: 0,
                         memo: None,
                     },
-                    CreateJournalLine {
+                    JournalLineRequest {
                         account_id: accounts[credit_idx].id,
                         debit_minor: 0,
                         credit_minor: minor,
@@ -946,13 +946,13 @@ fn randomized_multi_year_entries_keep_tb_bs_and_ytd_pnl_aligned() {
                 description: "random".into(),
                 reference: None,
                 lines: vec![
-                    CreateJournalLine {
+                    JournalLineRequest {
                         account_id: accounts[debit_idx].id,
                         debit_minor: minor,
                         credit_minor: 0,
                         memo: None,
                     },
-                    CreateJournalLine {
+                    JournalLineRequest {
                         account_id: accounts[credit_idx].id,
                         debit_minor: 0,
                         credit_minor: minor,
@@ -1045,13 +1045,13 @@ fn randomized_ledgers_with_voids_keep_the_series_equal_to_the_dashboard() {
                 description: "random".into(),
                 reference: None,
                 lines: vec![
-                    CreateJournalLine {
+                    JournalLineRequest {
                         account_id: accounts[debit_idx].id,
                         debit_minor: minor,
                         credit_minor: 0,
                         memo: None,
                     },
-                    CreateJournalLine {
+                    JournalLineRequest {
                         account_id: accounts[credit_idx].id,
                         debit_minor: 0,
                         credit_minor: minor,
