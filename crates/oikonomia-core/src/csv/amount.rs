@@ -1,7 +1,7 @@
 //! Integer amount parsing for bank CSV. Never uses `f64`.
 //!
-//! A bank writes `1.234,56`, another `1,234.56`, a third `1 234,56 EUR` or
-//! `(25.00)`. The parser reads all of them into signed minor units by
+//! A bank writes `1.234,56`, another `1,234.56`, a third `1 234,56 EUR`,
+//! `1'234.56` or `(25.00)`. The parser reads all of them into signed minor units by
 //! working on the digits as text: the fraction is padded to the currency's
 //! number of decimals and the digits are parsed as one integer, so no value
 //! passes through a float and none is rounded.
@@ -19,18 +19,21 @@
 //!
 //! | Step | Taken from the cell           | Accepted           | Rejected          |
 //! |------|-------------------------------|--------------------|-------------------|
-//! | 1    | Whitespace, everywhere        | `1 234,56`         | An empty cell     |
+//! | 1    | Whitespace not between digits | `- 25`, `25 EUR`   | An empty cell     |
 //! | 2    | Parentheses around the cell   | `(25,00)`          |                   |
 //! | 3    | The signs `€ $ £ ¥ ₹ ₺ ₩`     | `€25`, `25 $`      | `₽25`             |
 //! | 4    | Three ASCII letters, each end | `EUR 25`, `25 lei` | `25 kr`, `25 zł`  |
 //! | 5    | One sign                      | `-25`, `+25`, `25-`| `-25-`, `25+`     |
 //! | 6    | Step 4 again                  | `-EUR 25`          |                   |
-//! | 7    | Nothing: digits, `.`, `,` left| `25`, `.5`, `5.`   | `1e3`, `25%`, `.` |
+//! | 7    | Nothing: digits and           | `25`, `.5`, `5.`   | `1e3`, `25%`, `.` |
+//! |      | separators are left           |                    |                   |
 //!
 //! Notes on the steps:
 //!
-//! 1. Whitespace inside the number goes too. A cell that is empty or only
-//!    whitespace is a missing amount, not an invalid one.
+//! 1. A run of whitespace between two digits stays, as one space: it is a
+//!    grouping separator, read below. All other whitespace goes. A cell that
+//!    is empty or only whitespace is a missing amount, not an invalid one.
+//!    The typographic apostrophe U+2019 is written as `'` in this step.
 //! 2. Parentheses mean negative. They do not cancel a minus: `(-25)` is
 //!    negative.
 //! 3. The signs are removed wherever they stand.
@@ -42,9 +45,16 @@
 //!    fails step 7, as does a trailing `+`.
 //! 6. The second pass lets a code stand on either side of the sign
 //!    (`25 EUR-`).
-//! 7. At least one digit is required. `1'234.56` fails here.
+//! 7. At least one digit is required. The separators are `.`, `,`, `'` and
+//!    the space step 1 kept.
 //!
-//! Then the separators are read. With `exponent` 2:
+//! Then the separators are read. There are two kinds. `.` and `,` can each
+//! be the decimal mark or a thousands separator. The apostrophe (Swiss
+//! exports: `1'234.56`) and the space (French and Nordic exports, which
+//! write a space, a no-break space U+00A0 or a narrow no-break space U+202F:
+//! `1 234,56`) are thousands separators and nothing else.
+//!
+//! A cell without an apostrophe or a space, with `exponent` 2:
 //!
 //! | Shape                               | Reading           | Example             |
 //! |-------------------------------------|-------------------|---------------------|
@@ -59,9 +69,27 @@
 //! the mark is plain digits (`1234.5` is 123450) or a grouping on the other
 //! separator.
 //!
-//! A thousands grouping is strict: a first group of one to three digits that
-//! does not start with `0`, then groups of exactly three. `1,2,3`, `12,34.56`
-//! and `012,345` are rejected.
+//! A cell with an apostrophe or a space, with `exponent` 2:
+//!
+//! | Shape                                 | Reading          | Example                |
+//! |---------------------------------------|------------------|------------------------|
+//! | Groups only                           | Whole major units| `1'234` → 123400       |
+//! | Groups, a `.` or `,`, up to           | Decimal mark     | `1'234.56` → 123456    |
+//! | `exponent` digits                     |                  | `1 234,5` → 123450     |
+//! | Both an apostrophe and a space        | Rejected         | `1 234'567`            |
+//! | A second `.` or `,`, or a group after | Rejected         | `1'234.567,89`,        |
+//! | the mark                              |                  | `1.234'567`            |
+//! | More digits after the mark than       | Rejected         | `1'234.567`            |
+//! | `exponent`                            |                  |                        |
+//!
+//! Here nothing is ambiguous, so the three-digit tail rule does not apply:
+//! the one `.` or `,` is the decimal mark, and `1'234.567` is 1234.567 for a
+//! currency with three decimals and rejected for any other.
+//!
+//! A thousands grouping is strict, whatever its separator: a first group of
+//! one to three digits that does not start with `0`, then groups of exactly
+//! three. `1,2,3`, `12,34.56`, `012,345`, `12'34` and `1 2 3,45` are
+//! rejected.
 //!
 //! With `exponent` 3 a three-digit tail is always the fraction, so `12,345`
 //! is 12.345 and never twelve thousand. With `exponent` 0 no digit may
@@ -132,12 +160,19 @@ pub fn currency_minor_exponent(code: CurrencyCode) -> u8 {
 /// the fraction, so `12,345` is 12.345 and never twelve thousand; that
 /// reading is a rule of this parser, not something the cell can settle.
 ///
+/// An apostrophe, or whitespace between two digits, is a thousands separator
+/// and never a decimal mark: `1'234.56` and `1 234,56` have one reading. The
+/// same strict grouping applies, and the one `.` or `,` such a cell may hold
+/// is its decimal mark.
+///
 /// Supported examples with `exponent == 2`:
 /// - `1.234,56` / `1234,56` / `1234.56` / `1,234.56`
-/// - `1.234` / `1,234` → `123400`
+/// - `1'234.56` / `1 234,56` → `123456`
+/// - `1.234` / `1,234` / `1'234` → `123400`
 /// - `-25` → `-2500`
 ///
-/// Whitespace and the currency signs `€$£¥₹₺₩` are ignored. So are three
+/// Whitespace anywhere else and the currency signs `€$£¥₹₺₩` are ignored. So
+/// are three
 /// ASCII letters directly before or after the number; they are not checked
 /// against the ISO 4217 list, so `1.00 abc` parses like `1.00 EUR`.
 /// Parentheses mean negative (`(25,00)`), as does one minus, written as `-`
@@ -187,10 +222,7 @@ pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
 /// [`CsvError::InvalidAmount`], carrying the cell as written, when anything
 /// other than digits and separators is left over.
 fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
-    let compact: String = raw
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
+    let compact = compact_amount(raw);
     if compact.is_empty() {
         return Err(CsvError::MissingAmount);
     }
@@ -202,12 +234,51 @@ fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
     let (signed_negative, unsigned) = strip_sign(strip_letter_code(&without_symbols));
     let body = strip_letter_code(unsigned);
 
-    let is_digit_or_separator =
-        |character: char| character.is_ascii_digit() || character == '.' || character == ',';
+    let is_digit_or_separator = |character: char| {
+        character.is_ascii_digit() || matches!(character, '.' | ',' | SPACE | APOSTROPHE)
+    };
     if body.is_empty() || !body.chars().all(is_digit_or_separator) {
         return Err(CsvError::InvalidAmount(raw.to_owned()));
     }
     Ok((parenthesized || signed_negative, body.to_owned()))
+}
+
+/// The grouping separator a run of whitespace between two digits is
+/// reduced to.
+const SPACE: char = ' ';
+
+/// The grouping separator of Swiss exports. U+2019, the typographic
+/// apostrophe some of them write instead, is reduced to it.
+const APOSTROPHE: char = '\'';
+
+/// Runs step 1 of the grammar: returns `raw` without its whitespace, except
+/// that a run of whitespace between two digits is kept as one [`SPACE`].
+///
+/// Whitespace between digits is how French and Nordic exports group
+/// thousands, with a space, a no-break space (U+00A0) or a narrow no-break
+/// space (U+202F), so it is kept for the grouping rule to check. Anywhere
+/// else it separates the number from a sign or a currency and means nothing.
+/// The typographic apostrophe is written as [`APOSTROPHE`] on the way.
+fn compact_amount(raw: &str) -> String {
+    let mut compact = String::with_capacity(raw.len());
+    let mut gap_after_digit = false;
+
+    for character in raw.chars() {
+        if character.is_whitespace() {
+            gap_after_digit = compact.ends_with(|kept: char| kept.is_ascii_digit());
+            continue;
+        }
+        if gap_after_digit && character.is_ascii_digit() {
+            compact.push(SPACE);
+        }
+        gap_after_digit = false;
+        compact.push(if character == '\u{2019}' {
+            APOSTROPHE
+        } else {
+            character
+        });
+    }
+    compact
 }
 
 /// Removes one pair of parentheses around `text` and returns whether there
@@ -313,14 +384,24 @@ fn is_letter_code(text: &str) -> bool {
     text.len() == 3 && text.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
-/// Splits a body of digits, `.` and `,` into integer and fraction digits,
+/// Splits a body of digits and separators into integer and fraction digits,
 /// or returns `None` when the separators do not form an amount.
 ///
-/// The last separator is the decimal mark unless it is followed by exactly
-/// three digits in a currency without three decimals; then the whole body
-/// has to be a thousands grouping, because `0.125` or `1,234.567` read as
-/// thousands would silently multiply the amount.
+/// A space or an apostrophe is only ever a thousands separator, so a body
+/// that has one is read by [`split_grouped_by`]; a body with both is not an
+/// amount. Otherwise the separators are `.` and `,`, either of which can be
+/// the decimal mark: the last one is, unless it is followed by exactly three
+/// digits in a currency without three decimals; then the whole body has to
+/// be a thousands grouping, because `0.125` or `1,234.567` read as thousands
+/// would silently multiply the amount.
 fn split_decimal(body: &str, exponent: u8) -> Option<(String, &str)> {
+    match (body.contains(SPACE), body.contains(APOSTROPHE)) {
+        (true, true) => return None,
+        (true, false) => return split_grouped_by(body, " ", exponent),
+        (false, true) => return split_grouped_by(body, "'", exponent),
+        (false, false) => {}
+    }
+
     let Some(decimal_mark_at) = body.rfind(['.', ',']) else {
         return Some((body.to_owned(), ""));
     };
@@ -341,6 +422,34 @@ fn split_decimal(body: &str, exponent: u8) -> Option<(String, &str)> {
         integer_part.to_owned()
     };
     Some((integer_digits, fraction))
+}
+
+/// Splits a body whose whole part is grouped by `separator`, a space or an
+/// apostrophe, into integer and fraction digits.
+///
+/// Such a separator cannot be a decimal mark, so nothing here is ambiguous:
+/// everything before the first `.` or `,` has to be one grouping on
+/// `separator`, and what follows that mark is the fraction, of at most
+/// `exponent` digits. A three-digit tail is therefore never read as a group:
+/// `1'234.567` is rejected for a currency with two decimals.
+fn split_grouped_by<'body>(
+    body: &'body str,
+    separator: &str,
+    exponent: u8,
+) -> Option<(String, &'body str)> {
+    let (whole, fraction) = match body.find(['.', ',']) {
+        Some(decimal_mark_at) => {
+            let (whole, marked_fraction) = body.split_at(decimal_mark_at);
+            (whole, marked_fraction.split_at(1).1)
+        }
+        None => (body, ""),
+    };
+
+    let fraction_is_digits = fraction.bytes().all(|byte| byte.is_ascii_digit());
+    if !fraction_is_digits || fraction.len() > usize::from(exponent) {
+        return None;
+    }
+    Some((grouped_digits(whole, separator)?, fraction))
 }
 
 /// Returns the digits of `grouped` when it is a thousands grouping on
@@ -477,9 +586,84 @@ mod tests {
         assert_eq!(parse_eur_minor("1,234,567"), 123_456_700);
 
         assert_invalid_amount("1e3", 2);
-        assert_invalid_amount("1'234.56", 2);
         assert_invalid_amount("25%", 2);
         assert_invalid_amount("1,2,3", 2);
+    }
+
+    #[test]
+    fn an_apostrophe_groups_thousands() {
+        assert_eq!(parse_eur_minor("1'234.56"), 123_456);
+        assert_eq!(parse_eur_minor("1'234,56"), 123_456);
+        assert_eq!(parse_eur_minor("1\u{2019}234.56"), 123_456);
+        assert_eq!(parse_eur_minor("1'234'567.89"), 123_456_789);
+        assert_eq!(parse_eur_minor("1'234"), 123_400);
+        assert_eq!(parse_eur_minor("1'234.5"), 123_450);
+        assert_eq!(parse_eur_minor("1'234."), 123_400);
+        assert_eq!(parse_eur_minor("-1'234.50"), -123_450);
+        assert_eq!(parse_eur_minor("CHF 1'234.50"), 123_450);
+        assert_eq!(parse_eur_minor("(1'234.50)"), -123_450);
+    }
+
+    #[test]
+    fn a_space_between_digits_groups_thousands() {
+        assert_eq!(parse_eur_minor("1 234,56"), 123_456);
+        assert_eq!(parse_eur_minor("1\u{202f}234,56"), 123_456);
+        assert_eq!(parse_eur_minor("1\u{a0}234,56"), 123_456);
+        assert_eq!(parse_eur_minor("1\u{202f}234\u{202f}567,89"), 123_456_789);
+        assert_eq!(parse_eur_minor("1 234.56"), 123_456);
+        assert_eq!(parse_eur_minor("12 345"), 1_234_500);
+        assert_eq!(
+            parse_eur_minor("1  234"),
+            123_400,
+            "a run of spaces is one separator"
+        );
+        assert_eq!(parse_eur_minor("-1 234,50 EUR"), -123_450);
+    }
+
+    #[test]
+    fn a_space_that_is_not_between_digits_is_still_ignored() {
+        assert_eq!(parse_eur_minor(" 25 "), 2_500);
+        assert_eq!(parse_eur_minor("- 25"), -2_500);
+        assert_eq!(parse_eur_minor("25 -"), -2_500);
+        assert_eq!(parse_eur_minor("€ 25"), 2_500);
+        assert_eq!(parse_eur_minor("( 25,00 )"), -2_500);
+        assert_eq!(parse_eur_minor("25 , 50"), 2_550);
+    }
+
+    #[test]
+    fn an_apostrophe_or_a_space_is_a_grouping_only_when_it_is_well_formed() {
+        for raw in [
+            "1'23.45",
+            "12'34",
+            "'234",
+            "234'",
+            "1''234",
+            "1'234'56",
+            "0'123",
+            "1234'567",
+            "1 2 3,45",
+            "12 34",
+            "0 500",
+            "1 234'567",
+            "1'234 567",
+            "1'234.567",
+            "1'234.56.78",
+            "1'234,567.89",
+            "1.234'567",
+            "1'234.5'6",
+            "1 234,5 6",
+        ] {
+            assert_invalid_amount(raw, 2);
+        }
+    }
+
+    #[test]
+    fn an_apostrophe_grouping_follows_the_decimals_of_the_currency() {
+        assert_eq!(parse_signed_minor("1'234.567", 3), Ok(1_234_567));
+        assert_eq!(parse_signed_minor("1'234", 3), Ok(1_234_000));
+        assert_eq!(parse_signed_minor("1'234", 0), Ok(1_234));
+        assert_invalid_amount("1'234.5", 0);
+        assert_eq!(parse_signed_minor("1 234,5678", 4), Ok(12_345_678));
     }
 
     #[test]
@@ -673,8 +857,41 @@ mod properties {
         format!("{}{decimal}{:02}", groups.join(group), magnitude % 100)
     }
 
-    /// The four separator conventions the parser documents for two decimals.
-    const CONVENTIONS: [(&str, char); 4] = [("", '.'), ("", ','), (",", '.'), (".", ',')];
+    /// The separator conventions the parser documents for two decimals: a
+    /// grouping separator (none when empty) and a decimal mark.
+    const CONVENTIONS: [(&str, char); 14] = [
+        ("", '.'),
+        ("", ','),
+        (",", '.'),
+        (".", ','),
+        ("'", '.'),
+        ("'", ','),
+        ("\u{2019}", '.'),
+        ("\u{2019}", ','),
+        (" ", ','),
+        (" ", '.'),
+        ("\u{a0}", ','),
+        ("\u{202f}", ','),
+        ("\u{202f}", '.'),
+        ("\u{2009}", ','),
+    ];
+
+    /// The grouping separators that are never a decimal mark: an apostrophe,
+    /// and whitespace between digits.
+    const GROUPING_ONLY: [&str; 5] = ["'", "\u{2019}", " ", "\u{a0}", "\u{202f}"];
+
+    /// `whole` with `group` after every third digit counted from the left,
+    /// which is a thousands grouping only when the digits divide by three.
+    fn grouped_from_the_left(whole: u64, group: &str) -> String {
+        let digits = whole.to_string();
+        let groups: Vec<&str> = digits
+            .as_bytes()
+            .chunks(3)
+            .map(|digits| std::str::from_utf8(digits).unwrap())
+            .collect();
+
+        groups.join(group)
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
@@ -689,10 +906,54 @@ mod properties {
 
         #[test]
         fn parsing_amount_shaped_text_returns_instead_of_panicking(
-            raw in "[0-9.,()€$ A-Za-z\u{2212}-]{0,24}",
+            raw in "[0-9.,()€$ '\u{2019}\u{a0}\u{202f}A-Za-z\u{2212}-]{0,24}",
             exponent in 0_u8..=4,
         ) {
             let _ = parse_signed_minor(&raw, exponent);
+        }
+
+        // Digits, the separators and nothing else: whatever parses is the
+        // digits of the cell read as one number, with at most `exponent`
+        // zeros of padding after them. No separator adds, drops or reorders
+        // a digit, whichever of them the parser took for the decimal mark.
+        #[test]
+        fn a_separator_never_changes_the_digits_of_an_amount(
+            raw in "[0-9]{1,4}([.,' \u{202f}][0-9]{1,4}){0,3}",
+            exponent in 0_u8..=4,
+        ) {
+            if let Ok(minor) = parse_signed_minor(&raw, exponent) {
+                let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
+                let digits: u128 = digits.parse().unwrap();
+                let minor = u128::try_from(minor).unwrap();
+
+                prop_assert!(
+                    (0..=u32::from(exponent)).any(|zeros| digits * 10_u128.pow(zeros) == minor),
+                    "{} read as {}",
+                    raw,
+                    minor
+                );
+            }
+        }
+
+        #[test]
+        fn a_grouping_counted_from_the_wrong_end_is_rejected(
+            // Four, five, seven, eight, ten or eleven digits: more than one
+            // group, and a number of digits that does not divide by three.
+            whole in prop_oneof![
+                1_000_u64..=99_999,
+                1_000_000_u64..=99_999_999,
+                1_000_000_000_u64..=99_999_999_999,
+            ],
+            cents in 0_u8..100,
+        ) {
+            for group in GROUPING_ONLY {
+                let cell = format!("{},{cents:02}", grouped_from_the_left(whole, group));
+                prop_assert!(
+                    matches!(parse_signed_minor(&cell, 2), Err(CsvError::InvalidAmount(_))),
+                    "{}",
+                    cell
+                );
+            }
         }
 
         // `i64::MIN` is left out: its magnitude does not fit an `i64`, and the

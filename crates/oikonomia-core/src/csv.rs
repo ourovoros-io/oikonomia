@@ -24,23 +24,26 @@
 //! | Decimal mark     | `.` or `,`                    | `1234,5` → 123450        |
 //! | Grouping         | The other separator           | `1.234,56` → 123456      |
 //! |                  |                               | `1,234.56` → 123456      |
+//! |                  | An apostrophe, `'` or U+2019  | `1'234.56` → 123456      |
+//! |                  | Whitespace between digits     | `1 234,56` → 123456      |
 //! | Three-digit tail | A thousands group             | `1.234` → 123400         |
 //! | Currency sign    | `€ $ £ ¥ ₹ ₺ ₩`, anywhere     | `€1.234,56` → 123456     |
 //! | Currency code    | Three ASCII letters at an end | `12.00 EUR` → 1200       |
-//! | Whitespace       | Ignored anywhere              | `1 234,56` → 123456      |
+//! | Other whitespace | Ignored                       | `- 25 EUR` → −2500       |
 //! | Exponent         | None                          | `1e3` is rejected        |
 //!
-//! The decimal mark is the last separator in the cell and is followed by at
+//! The decimal mark is the last `.` or `,` in the cell and is followed by at
 //! most `exponent` digits. Groups are of three digits after a first group of
-//! one to three with no leading zero. A three-digit tail is a group and not
-//! a fraction unless the currency has three decimals.
+//! one to three with no leading zero, whichever separator groups them. A
+//! three-digit tail after a `.` or `,` is a group and not a fraction unless
+//! the currency has three decimals. An apostrophe and whitespace between
+//! digits (a space, U+00A0 or the narrow U+202F) are never the decimal mark.
 //!
 //! Anything else is rejected, not guessed at: a second sign (`-25-`), a
 //! fraction longer than the currency has (`0.125` in EUR), irregular
-//! grouping (`1,2,3.45`), an apostrophe as the grouping character
-//! (`1'234.56`), a currency sign outside the list, and a separator with no
-//! digit. The exact rules and their order are in the `csv/amount.rs` module
-//! doc.
+//! grouping (`1,2,3.45`, `12'34`, `1 2 3,45`), a currency sign outside the
+//! list, and a separator with no digit. The exact rules and their order are
+//! in the `csv/amount.rs` module doc.
 //!
 //! # Amount sign → kind
 //!

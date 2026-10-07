@@ -8,11 +8,16 @@
 //!
 //! # Delimiter
 //!
-//! Comma or semicolon. The first non-empty line decides: semicolon when it
-//! has more semicolons than commas outside double quotes, comma otherwise.
-//! Tabs and other delimiters are not detected. Fields may be quoted as in
-//! RFC 4180, cells are trimmed, and a row may have fewer cells than the
-//! header; a missing cell reads as empty.
+//! Comma, semicolon or tab. The first non-empty line, the header, decides:
+//! the delimiter is the one that splits it into the most fields, counting
+//! only delimiters outside double quotes. A tie goes to the comma, and
+//! between semicolon and tab to the semicolon, so a header with no
+//! delimiter in it is read as comma-separated. Only the header is looked
+//! at: a data row may hold any number of decimal commas without changing
+//! the answer. Other delimiters, such as `|`, are not detected.
+//!
+//! Fields may be quoted as in RFC 4180, cells are trimmed, and a row may
+//! have fewer cells than the header; a missing cell reads as empty.
 //!
 //! # Column detection
 //!
@@ -204,7 +209,8 @@ const YEAR_DIGITS: usize = 4;
 
 /// Parses a bank CSV into per-row outcomes. Never writes to the ledger.
 ///
-/// Accepts comma or semicolon delimiters and RFC 4180 quoted fields.
+/// Accepts comma, semicolon or tab delimiters, detected from the header row,
+/// and RFC 4180 quoted fields.
 /// `exponent` is the minor-unit exponent of the book's currency (2 for EUR).
 /// `mapping` replaces header auto-detection when `Some`.
 ///
@@ -350,27 +356,44 @@ fn calendar_date(year: &str, month: &str, day: &str, raw: &str) -> CsvResult<Dat
     Date::from_calendar_date(year, month, day).map_err(|_| invalid())
 }
 
-/// Picks comma or semicolon from the first non-empty line of `text`.
+/// The delimiters a statement may use, in the order a tie is settled: the
+/// earlier one wins.
+const DELIMITERS: [u8; 3] = *b",;\t";
+
+/// Picks the delimiter from the first non-empty line of `text`, the header:
+/// the one of [`DELIMITERS`] that splits it into the most fields.
 ///
-/// Semicolon needs strictly more occurrences than comma outside double
-/// quotes, so a file with neither, or a tie, is read as comma-separated.
+/// A delimiter inside double quotes does not split. A later delimiter needs
+/// strictly more fields than an earlier one, so a header that none of them
+/// splits, and any tie, goes to the comma, and a tie between semicolon and
+/// tab to the semicolon.
 fn detect_delimiter(text: &str) -> u8 {
-    let Some(line) = text.lines().find(|line| !line.trim().is_empty()) else {
+    let Some(header) = text.lines().find(|line| !line.trim().is_empty()) else {
         return b',';
     };
-    let mut commas = 0u32;
-    let mut semicolons = 0u32;
+
+    let mut counts = [0_usize; DELIMITERS.len()];
     let mut in_quotes = false;
-    for character in line.chars() {
-        if character == '"' {
+    for byte in header.bytes() {
+        if byte == b'"' {
             in_quotes = !in_quotes;
-        } else if character == ',' && !in_quotes {
-            commas = commas.saturating_add(1);
-        } else if character == ';' && !in_quotes {
-            semicolons = semicolons.saturating_add(1);
+        } else if !in_quotes {
+            for (count, delimiter) in counts.iter_mut().zip(DELIMITERS) {
+                if byte == delimiter {
+                    *count += 1;
+                }
+            }
         }
     }
-    if semicolons > commas { b';' } else { b',' }
+
+    // Strictly more, so an earlier delimiter keeps a tie.
+    let mut chosen = (b',', 0);
+    for (delimiter, count) in DELIMITERS.into_iter().zip(counts) {
+        if count > chosen.1 {
+            chosen = (delimiter, count);
+        }
+    }
+    chosen.0
 }
 
 /// Detects the column of each role from the header names.
@@ -817,6 +840,44 @@ mod tests {
         assert_eq!(row.description, "Coffee, Inc");
         assert_eq!(row.signed_amount_minor, -123_456);
         assert_eq!(row.kind, SimpleEntryKind::Expense);
+    }
+
+    #[test]
+    fn a_tab_delimited_file_is_read() {
+        let csv = "Date\tDescription\tAmount\n15.03.2026\tCoffee, Inc; Zürich\t-1'234.56\n";
+        let row = first_parsed_row(csv);
+
+        assert_eq!(row.entry_date, time::macros::date!(2026 - 03 - 15));
+        assert_eq!(row.description, "Coffee, Inc; Zürich");
+        assert_eq!(row.signed_amount_minor, -123_456);
+    }
+
+    #[test]
+    fn the_delimiter_is_the_one_that_splits_the_header_into_the_most_fields() {
+        assert_eq!(detect_delimiter("Date,Description,Amount"), b',');
+        assert_eq!(detect_delimiter("Date;Description;Amount"), b';');
+        assert_eq!(detect_delimiter("Date\tDescription\tAmount"), b'\t');
+        assert_eq!(detect_delimiter("Date;Amount, EUR;Text"), b';');
+        assert_eq!(detect_delimiter("Date\tAmount; EUR\tText, long"), b'\t');
+        assert_eq!(
+            detect_delimiter("\n\n  \nDate;Text;Amount\n1,5;2,5;3,5"),
+            b';'
+        );
+    }
+
+    #[test]
+    fn a_tie_between_delimiters_goes_to_the_comma_then_the_semicolon() {
+        assert_eq!(detect_delimiter("Date"), b',', "no delimiter at all");
+        assert_eq!(detect_delimiter("Date,Text;Amount"), b',');
+        assert_eq!(detect_delimiter("Date,Text\tAmount"), b',');
+        assert_eq!(detect_delimiter("Date;Text\tAmount"), b';');
+        assert_eq!(detect_delimiter(""), b',');
+    }
+
+    #[test]
+    fn a_delimiter_inside_quotes_does_not_count() {
+        assert_eq!(detect_delimiter("\"a;b;c\",Date,Amount"), b',');
+        assert_eq!(detect_delimiter("\"a,b,c\"\tDate\tAmount"), b'\t');
     }
 
     #[test]
