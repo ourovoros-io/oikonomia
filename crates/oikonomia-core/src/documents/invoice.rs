@@ -152,10 +152,13 @@
 //!   [`names_a_total`] holds for a subtotal line: such a line is not skipped
 //!   for carrying a percentage, and it gets the value-word weight in the
 //!   fallback. For the same reason `Subtotal amount` carries the label
-//!   `total amount` and can decide stage 1.
-//! - **An identifier marker inside a word hides its line from the
-//!   fallback.** `mark` (the MARK number) is in `supermarket`, so an amount
-//!   on a line with that word is found only by a labelled total.
+//!   `total amount` and can decide stage 1. The MARK label alone is matched
+//!   as a whole word ([`MARK_WORDS`]), because shop names contain it:
+//!   `Supermarket`, `Marks & Spencer`, `ΣΟΥΠΕΡ ΜΑΡΚΕΤ`.
+//! - **A MARK label glued to its number is not a label.** In
+//!   `MARK400001234567890` the label is not a whole word, so the number is
+//!   found only by the later reference steps: a labelled invoice number
+//!   comes first, and the longest number after it.
 //! - **Leading zeros in a whole part are accepted beside a decimal mark.**
 //!   `01,50` reads as 1,50, although a bare `08` is not money and `01.234`
 //!   is not a thousands amount.
@@ -170,6 +173,7 @@ use std::ops::RangeInclusive;
 
 use crate::documents::analyze::{AnalyzeSource, DocumentSuggestion, EntryKindSuggestion};
 use crate::documents::brands::{Service, classify_service, known_brand};
+use crate::documents::store::Keyword;
 use crate::prefs::Locale;
 use crate::text::{
     BillKind, bank_transfer_description, bill_description, customer_invoice_description,
@@ -495,6 +499,14 @@ pub(super) fn folded(text: &str) -> String {
 /// Whether folded text contains any of `needles`.
 fn contains_any(folded_text: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| folded_text.contains(needle))
+}
+
+/// Whether folded text contains any of `keywords`, each under its own
+/// boundary rule ([`Keyword::occurs_in`]).
+fn contains_any_keyword(folded_text: &str, keywords: &[Keyword]) -> bool {
+    keywords
+        .iter()
+        .any(|keyword| keyword.occurs_in(folded_text))
 }
 
 /// Strong utility markers only. Loose ones such as `ηλεκτρ` also match a
@@ -978,10 +990,19 @@ const VALUE_WORDS: &[&str] = &["αξια", "value", TOTAL_WORD];
 const TOTAL_WORD: &str = "total";
 
 /// Markers of lines that hold identifiers, never an amount: the fallback
-/// skips a line with one.
+/// skips a line with one ([`is_identifier_line`]).
 ///
-/// They are matched as substrings, so `mark` also matches `supermarket`.
-const IDENTIFIER_LINE_MARKERS: &[&str] = &[IBAN_WORD, "α.φ.μ", "αφμ", "mark"];
+/// They are matched as substrings, which also finds a tax-number label
+/// glued to its digits (`αφμ123456789`). The MARK label is in
+/// [`MARK_WORDS`] instead.
+const IDENTIFIER_LINE_MARKERS: &[&str] = &[IBAN_WORD, "α.φ.μ", "αφμ"];
+
+/// Whether a folded line holds an identifier, an IBAN, a tax number or a
+/// MARK number, and so no amount.
+fn is_identifier_line(folded_line: &str) -> bool {
+    contains_any(folded_line, IDENTIFIER_LINE_MARKERS)
+        || contains_any_keyword(folded_line, MARK_WORDS)
+}
 
 /// Weights of the fallback, stage 4 of [`find_total_amount`].
 ///
@@ -1058,7 +1079,7 @@ fn find_total_amount(text: &str, folded_text: &str) -> Option<i64> {
         if folded_line.contains('€') {
             line_weight += fallback_weight::EURO_MARK;
         }
-        if contains_any(&folded_line, IDENTIFIER_LINE_MARKERS) {
+        if is_identifier_line(&folded_line) {
             line_weight = 0;
         }
         if line_weight == 0 {
@@ -2077,16 +2098,29 @@ fn is_rf_then_digits(upper: &str) -> bool {
     upper.starts_with("RF") && upper.chars().skip(2).all(|c| c.is_ascii_digit())
 }
 
-/// Labels of the line that carries a MARK number, the registration number
-/// the Greek tax authority gives an invoice. `α.α` (serial number) heads the
-/// same table row as the MARK.
-const MARK_LABELS: &[&str] = &["μαρκ", "mark", "α.α", "αα "];
+/// The label of a MARK number, the registration number the Greek tax
+/// authority gives an invoice, in Greek and in Latin letters.
+///
+/// Whole words, since shop names contain both: `Supermarket`,
+/// `Marks & Spencer`, `ΣΟΥΠΕΡ ΜΑΡΚΕΤ`.
+const MARK_WORDS: &[Keyword] = &[Keyword::Word("μαρκ"), Keyword::Word("mark")];
+
+/// Labels of the serial number (`α.α`), which heads the same table row as
+/// the MARK. Matched as substrings, which also finds one glued to its
+/// digits.
+const MARK_ROW_LABELS: &[&str] = &["α.α", "αα "];
+
+/// Whether a folded line is a MARK line: it has the MARK label or a serial
+/// number label.
+fn is_mark_line(folded_line: &str) -> bool {
+    contains_any_keyword(folded_line, MARK_WORDS) || contains_any(folded_line, MARK_ROW_LABELS)
+}
 
 /// The MARK number of a Greek invoice: a run of digits on the first MARK or
 /// `Α.Α.` line that has one on it or on the line below.
 fn mark_number(lines: &[&str]) -> Option<String> {
     for (index, line) in lines.iter().enumerate() {
-        if !contains_any(&folded(line), MARK_LABELS) {
+        if !is_mark_line(&folded(line)) {
             continue;
         }
 
@@ -2623,7 +2657,7 @@ mod tests {
         ("VALUE_DATE_LABELS", VALUE_DATE_LABELS),
         ("DATE_LABELS", DATE_LABELS),
         ("SUPPLY_CODE_LABELS", SUPPLY_CODE_LABELS),
-        ("MARK_LABELS", MARK_LABELS),
+        ("MARK_ROW_LABELS", MARK_ROW_LABELS),
         ("REFERENCE_LABELS", REFERENCE_LABELS),
         ("GAS_SUPPLY_MARKERS", GAS_SUPPLY_MARKERS),
         ("ISSUER_NAME_LABEL", &[ISSUER_NAME_LABEL]),
@@ -2636,13 +2670,24 @@ mod tests {
         ("VAT_EXEMPT_MARKERS", VAT_EXEMPT_MARKERS),
     ];
 
+    /// Every keyword constant of the reader, checked like [`LABEL_SETS`].
+    const KEYWORD_SETS: &[(&str, &[Keyword])] = &[("MARK_WORDS", MARK_WORDS)];
+
     #[test]
     fn every_label_and_marker_is_in_folded_form() {
-        for (name, needles) in LABEL_SETS {
-            for needle in *needles {
+        let keywords = KEYWORD_SETS.iter().map(|(name, keywords)| {
+            let texts: Vec<&str> = keywords.iter().map(|keyword| keyword.text()).collect();
+            (*name, texts)
+        });
+        let labels = LABEL_SETS
+            .iter()
+            .map(|(name, needles)| (*name, needles.to_vec()));
+
+        for (name, needles) in labels.chain(keywords) {
+            for needle in needles {
                 assert_eq!(
                     folded(needle),
-                    *needle,
+                    needle,
                     "{name}: {needle:?} can never match folded text"
                 );
             }
@@ -2729,6 +2774,30 @@ mod tests {
         // A MARK label with no number nearby falls through to the labelled invoice.
         assert_eq!(
             reference("mark\nno digits here\nInvoice 123456"),
+            Some("123456".into())
+        );
+    }
+
+    #[test]
+    fn reference_reads_a_mark_label_in_either_script_and_any_case() {
+        for label in ["MARK", "Mark", "ΜΑΡΚ", "Μαρκ", "ΜΑΡΚ:"] {
+            assert_eq!(
+                reference(&format!("{label} 400001234567890\nInvoice 123456")),
+                Some("400001234567890".into()),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn reference_does_not_take_a_shop_name_for_a_mark_label() {
+        // The phone number below the name is not a MARK number.
+        assert_eq!(
+            reference("ΣΟΥΠΕΡ ΜΑΡΚΕΤ ΚΡΗΤΙΚΟΣ\nΤΗΛ 2101234567\nΑρ. παραστατικού 123456"),
+            Some("123456".into())
+        );
+        assert_eq!(
+            reference("Supermarket Athens\nTel 2101234567\nInvoice 123456"),
             Some("123456".into())
         );
     }
@@ -3394,6 +3463,35 @@ mod amounts_and_dates {
     }
 
     #[test]
+    fn a_shop_name_that_contains_mark_does_not_hide_its_amount_from_the_fallback() {
+        assert_eq!(read("Supermarket 12,50 €").amount_minor, Some(1_250));
+        assert_eq!(read("Marks & Spencer 8,40 €").amount_minor, Some(840));
+        assert_eq!(read("Supermarkt 12,50 €").amount_minor, Some(1_250));
+        assert_eq!(read("ΣΟΥΠΕΡ ΜΑΡΚΕΤ 12,50 €").amount_minor, Some(1_250));
+        // The change given back is not the amount paid.
+        assert_eq!(
+            read("Supermarket purchase 12,50 €\nChange 7,50").amount_minor,
+            Some(1_250)
+        );
+        // A labelled total is still found before the fallback runs.
+        assert_eq!(
+            read("Supermarket\nAmount due 12,50 €").amount_minor,
+            Some(1_250)
+        );
+    }
+
+    #[test]
+    fn a_mark_line_is_still_skipped_by_the_fallback() {
+        for label in ["MARK", "ΜΑΡΚ"] {
+            assert_eq!(
+                read(&format!("Coffee 3,20 €\n{label} 400001234567890 45,00 €")).amount_minor,
+                Some(320),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
     fn a_date_before_an_amount_is_not_its_thousands_prefix() {
         let padded = read("13/08/2026 172,53 €");
         assert_eq!(padded.amount_minor, Some(17_253));
@@ -3640,13 +3738,18 @@ mod documented_tradeoffs {
     }
 
     #[test]
-    fn an_identifier_marker_inside_a_word_hides_the_line_from_the_fallback() {
-        assert_eq!(read("Supermarket 12,50 €").amount_minor, None);
-        assert_eq!(read("Grocery 12,50 €").amount_minor, Some(1_250));
-        // A labelled total is found before the fallback runs.
+    fn a_mark_label_glued_to_its_number_is_not_a_label() {
         assert_eq!(
-            read("Supermarket\nAmount due 12,50 €").amount_minor,
-            Some(1_250)
+            read("MARK400001234567890").reference.as_deref(),
+            Some("400001234567890"),
+            "the longest number still finds it"
+        );
+        assert_eq!(
+            read("MARK400001234567890\nInvoice 123456")
+                .reference
+                .as_deref(),
+            Some("123456"),
+            "a labelled invoice number comes first"
         );
     }
 
