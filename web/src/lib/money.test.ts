@@ -70,6 +70,11 @@ describe('parseEuropeanDateToISO', () => {
     expect(parseEuropeanDateToISO('nope')).toBeNull()
   })
 
+  test('writes a year below 1000 with four digits', () => {
+    expect(parseEuropeanDateToISO('01/01/0999')).toBe('0999-01-01')
+    expect(parseEuropeanDateToISO('0999-1-1')).toBe('0999-01-01')
+  })
+
   test('accepts ISO as a fallback', () => {
     expect(parseEuropeanDateToISO('2026-03-15')).toBe('2026-03-15')
   })

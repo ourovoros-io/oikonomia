@@ -1,56 +1,89 @@
-//! Chart-of-accounts starter templates.
+//! The starter charts of accounts, and which seeded account plays which part.
+//!
+//! "coa" is the chart of accounts. Creating an entity from a
+//! [`ChartTemplate`] seeds a fixed list of accounts, and this module is that
+//! list plus two maps over it.
+//!
+//! # What an account is made of
+//!
+//! A seeded account has a language-independent shape (code, type, system
+//! flag, sort order) and a name. The shape is defined here; the name comes
+//! from the table in [`crate::text`], looked up by code in the language the
+//! book is created in. Keeping them apart means a translation can change a
+//! name and nothing else, and [`template_accounts`] joins the two.
+//!
+//! # Identity is the code
+//!
+//! Once a book exists its account names are the user's: they can be renamed,
+//! and a chart created in Greek never had the English names. So nothing here
+//! or anywhere else in the crate finds an account by name. A seeded account
+//! is recognised by its template code and its type, and the two maps are
+//! keyed that way:
+//!
+//! - [`default_role_codes`] says which seeded accounts are the default for
+//!   each [`AccountRole`] of a simple entry (the wallet, the category, the
+//!   payable), best first. [`crate::default_accounts`] applies it to a real
+//!   book and falls back to the account type when the codes are gone.
+//! - [`document_topic_codes`] says which seeded accounts cover a
+//!   [`DocumentTopic`] the document reader recognised.
+//!
+//! # Kept true by tests
+//!
+//! The tables are hand-written, so the tests at the bottom check what the
+//! compiler cannot: every code a map names exists in its template with the
+//! expected type, every seeded code has a name in every language, and the
+//! name table has no code the template does not seed.
 
 use crate::domain::{AccountType, ChartTemplate};
 use crate::error::AccountRole;
 use crate::prefs::Locale;
 use crate::text::seeded_account_name;
 
-/// One account row from a template (before IDs are assigned).
+/// One account a template seeds, before it is given an id and stored.
 #[derive(Debug, Clone)]
 pub struct TemplateAccount {
-    /// Account code.
+    /// The account code, which identifies the account within its template.
     pub code: &'static str,
-    /// Display name, in the language the template was seeded in.
+    /// The name in the language the accounts were requested in.
     pub name: &'static str,
-    /// Classification.
+    /// The class of the account.
     pub account_type: AccountType,
-    /// System-protected (e.g. Opening Balances).
+    /// `true` for an account the application relies on, which cannot be
+    /// archived (Opening Balances).
     pub is_system: bool,
-    /// Sort order.
+    /// Position in the chart, ascending.
     pub sort_order: i32,
 }
 
-/// The language-independent shape of one seeded account.
-///
-/// The name is not here: it comes from the [`crate::text`] table by code, so
-/// a translation can never change a code, a type, a flag or the order.
-struct AccountShape {
-    code: &'static str,
-    account_type: AccountType,
-    is_system: bool,
-    sort_order: i32,
-}
-
-impl AccountShape {
-    const fn new(
-        code: &'static str,
-        account_type: AccountType,
-        is_system: bool,
-        sort_order: i32,
-    ) -> Self {
-        Self {
-            code,
-            account_type,
-            is_system,
-            sort_order,
-        }
-    }
-}
-
-/// Accounts seeded when creating an entity, named in `locale`.
+/// Returns the accounts `template` seeds, named in `locale`, in chart order.
 ///
 /// Codes, types, flags and order are the same in every language; only the
-/// names differ. The names are written into the book once, at creation.
+/// names differ. A blank template seeds nothing. The caller writes the names
+/// into the book at creation, and they are not translated again when the app
+/// language changes.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::coa::template_accounts;
+/// use oikonomia_core::domain::ChartTemplate;
+/// use oikonomia_core::prefs::Locale;
+///
+/// let english = template_accounts(ChartTemplate::Personal, Locale::En);
+/// let german = template_accounts(ChartTemplate::Personal, Locale::De);
+///
+/// assert_eq!((english[0].code, english[0].name), ("1000", "Cash"));
+/// assert_eq!((german[0].code, german[0].name), ("1000", "Bargeld"));
+/// assert!(template_accounts(ChartTemplate::Blank, Locale::En).is_empty());
+/// ```
+///
+/// # Panics
+///
+/// In a build with debug assertions, panics if a seeded code has no name in
+/// [`crate::text`]. The test
+/// `every_seeded_code_is_named_and_every_named_code_is_seeded` keeps the two
+/// tables in step, so this is a guard against a table edit, not a condition a
+/// caller can cause. A release build uses the code as the name instead.
 #[must_use]
 pub fn template_accounts(template: ChartTemplate, locale: Locale) -> Vec<TemplateAccount> {
     let shapes = match template {
@@ -64,10 +97,10 @@ pub fn template_accounts(template: ChartTemplate, locale: Locale) -> Vec<Templat
         .map(|shape| {
             let name = seeded_account_name(template, shape.code, locale);
 
-            // A shape without a table entry is a bug: a name written into a
-            // book is never renamed. Debug builds and tests stop on it; a
-            // release build falls back to the code, a visible and harmless
-            // stand-in, rather than an empty name.
+            // A name written into a book is never rewritten, so a missing
+            // table entry must be caught before release rather than papered
+            // over. The release fallback is the code: visible and harmless,
+            // where an empty name would not be.
             debug_assert!(
                 name.is_some(),
                 "{template:?} account {} has no {locale:?} name in text.rs",
@@ -85,7 +118,40 @@ pub fn template_accounts(template: ChartTemplate, locale: Locale) -> Vec<Templat
         .collect()
 }
 
-/// Household chart: cash and cards, owner equity, salary, and living expenses.
+/// The language-independent part of one seeded account.
+///
+/// The name is not here: it comes from the [`crate::text`] table by code, so
+/// a translation can never change a code, a type, a flag or the order.
+struct AccountShape {
+    /// The account code, unique within its template.
+    code: &'static str,
+    /// The class of the account.
+    account_type: AccountType,
+    /// Whether the account is protected from archiving.
+    is_system: bool,
+    /// Position in the chart, ascending.
+    sort_order: i32,
+}
+
+impl AccountShape {
+    /// Returns a shape with the given code, type, system flag and position.
+    const fn new(
+        code: &'static str,
+        account_type: AccountType,
+        is_system: bool,
+        sort_order: i32,
+    ) -> Self {
+        Self {
+            code,
+            account_type,
+            is_system,
+            sort_order,
+        }
+    }
+}
+
+/// Returns the shapes of the personal chart, in chart order: cash and cards,
+/// owner equity, salary, and living expenses.
 fn personal_template_shapes() -> Vec<AccountShape> {
     vec![
         AccountShape::new("1000", AccountType::Asset, false, 10),
@@ -116,7 +182,8 @@ fn personal_template_shapes() -> Vec<AccountShape> {
     ]
 }
 
-/// Company chart: AR/AP, capital, retained earnings, sales, and operating expenses.
+/// Returns the shapes of the company chart, in chart order: receivables and
+/// payables, capital, retained earnings, sales, and operating expenses.
 fn company_template_shapes() -> Vec<AccountShape> {
     vec![
         AccountShape::new("1000", AccountType::Asset, false, 10),
@@ -144,10 +211,16 @@ fn company_template_shapes() -> Vec<AccountShape> {
     ]
 }
 
-/// The account type a role must be filled with.
+/// Returns the account type of the default account for `role`.
 ///
-/// The default for a role is always an active account of this type, whether it
-/// came from a template code or from the by-type fallback.
+/// [`crate::default_accounts`] only ever proposes an active account of this
+/// type for the role, whether it found it by template code or by type.
+///
+/// This is not the full set of types the role accepts. A payment, a transfer
+/// source and a transfer destination default to an asset but may also be
+/// filled with a liability, such as a credit card. The allowed types are
+/// enforced where a simple entry is posted, in
+/// [`crate::ledger::post_simple_entry`].
 #[must_use]
 pub const fn role_account_type(role: AccountRole) -> AccountType {
     match role {
@@ -161,13 +234,30 @@ pub const fn role_account_type(role: AccountRole) -> AccountType {
     }
 }
 
-/// Template account codes that play `role` by default, best first.
+/// Returns the template account codes that play `role` by default, best
+/// first.
 ///
 /// This is the single place that says which seeded account is "the" wallet,
 /// "the" payable and so on. It is keyed on the template code, which a rename
 /// or a translation of the seeded names cannot change, and every code listed
-/// here must exist in that template (a test enforces it). A blank chart seeds
-/// nothing, so it names nothing and relies on the by-type fallback.
+/// here exists in that template with the type [`role_account_type`] gives (a
+/// test enforces it). A blank chart seeds nothing, so its list is empty and
+/// callers fall back to the account type.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::coa::default_role_codes;
+/// use oikonomia_core::domain::ChartTemplate;
+/// use oikonomia_core::error::AccountRole;
+///
+/// // Checking first, then Cash.
+/// assert_eq!(
+///     default_role_codes(ChartTemplate::Personal, AccountRole::Payment),
+///     ["1010", "1000"]
+/// );
+/// assert!(default_role_codes(ChartTemplate::Blank, AccountRole::Payment).is_empty());
+/// ```
 #[must_use]
 pub fn default_role_codes(template: ChartTemplate, role: AccountRole) -> &'static [&'static str] {
     match template {
@@ -177,6 +267,7 @@ pub fn default_role_codes(template: ChartTemplate, role: AccountRole) -> &'stati
     }
 }
 
+/// Returns the personal chart's default codes for `role`, best first.
 fn personal_role_codes(role: AccountRole) -> &'static [&'static str] {
     match role {
         // Food, then Utilities, Bills & services, Other.
@@ -194,6 +285,7 @@ fn personal_role_codes(role: AccountRole) -> &'static [&'static str] {
     }
 }
 
+/// Returns the company chart's default codes for `role`, best first.
 fn company_role_codes(role: AccountRole) -> &'static [&'static str] {
     match role {
         // Other OpEx.
@@ -213,8 +305,10 @@ fn company_role_codes(role: AccountRole) -> &'static [&'static str] {
 
 /// What a scanned document is about, as far as choosing a category goes.
 ///
-/// The document reader matches words in the merchant text to a topic; this
-/// maps the topic to the seeded accounts that cover it.
+/// The document reader in [`crate::documents`] matches words in a document's
+/// text to a topic, and [`document_topic_codes`] maps the topic to the seeded
+/// accounts that cover it. The first ten topics are expenses and the last
+/// four are income.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentTopic {
     /// Electricity, water, gas.
@@ -247,10 +341,48 @@ pub enum DocumentTopic {
     OtherIncome,
 }
 
-/// Template account codes that cover a document topic, best first.
+impl DocumentTopic {
+    /// Every topic, in declaration order.
+    ///
+    /// A test checks the list against the enum, so a new topic cannot be left
+    /// out of it.
+    pub const ALL: &'static [Self] = &[
+        Self::Utilities,
+        Self::Bills,
+        Self::Housing,
+        Self::Subscription,
+        Self::Food,
+        Self::Transport,
+        Self::Software,
+        Self::Health,
+        Self::Tax,
+        Self::OtherExpense,
+        Self::Sales,
+        Self::Freelance,
+        Self::Salary,
+        Self::OtherIncome,
+    ];
+}
+
+/// Returns the template account codes that cover `topic`, best first.
 ///
-/// An empty list means the template has no account for the topic, so the
-/// reader moves on to the next topic it recognised.
+/// An empty list means the template seeds no account for the topic (a blank
+/// template seeds none at all), so the reader moves on to the next topic it
+/// recognised.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::coa::{DocumentTopic, document_topic_codes};
+/// use oikonomia_core::domain::ChartTemplate;
+///
+/// assert_eq!(
+///     document_topic_codes(ChartTemplate::Personal, DocumentTopic::Food),
+///     ["5100"]
+/// );
+/// // The company chart has no food account.
+/// assert!(document_topic_codes(ChartTemplate::Company, DocumentTopic::Food).is_empty());
+/// ```
 #[must_use]
 pub fn document_topic_codes(
     template: ChartTemplate,
@@ -263,6 +395,7 @@ pub fn document_topic_codes(
     }
 }
 
+/// Returns the personal chart's codes for `topic`, best first.
 fn personal_topic_codes(topic: DocumentTopic) -> &'static [&'static str] {
     match topic {
         DocumentTopic::Utilities => &["5300"],
@@ -282,6 +415,7 @@ fn personal_topic_codes(topic: DocumentTopic) -> &'static [&'static str] {
     }
 }
 
+/// Returns the company chart's codes for `topic`, best first.
 fn company_topic_codes(topic: DocumentTopic) -> &'static [&'static str] {
     match topic {
         DocumentTopic::Utilities
@@ -306,29 +440,56 @@ fn company_topic_codes(topic: DocumentTopic) -> &'static [&'static str] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oikonomia_test_support::listed_variants;
 
+    /// Every chart template.
     const TEMPLATES: [ChartTemplate; 3] = [
         ChartTemplate::Blank,
         ChartTemplate::Personal,
         ChartTemplate::Company,
     ];
 
-    const TOPICS: [DocumentTopic; 14] = [
-        DocumentTopic::Utilities,
-        DocumentTopic::Bills,
-        DocumentTopic::Housing,
-        DocumentTopic::Subscription,
-        DocumentTopic::Food,
-        DocumentTopic::Transport,
-        DocumentTopic::Software,
-        DocumentTopic::Health,
-        DocumentTopic::Tax,
-        DocumentTopic::OtherExpense,
-        DocumentTopic::Sales,
-        DocumentTopic::Freelance,
-        DocumentTopic::Salary,
-        DocumentTopic::OtherIncome,
-    ];
+    listed_variants! {
+        units listed_topics for DocumentTopic {
+            DocumentTopic::Utilities,
+            DocumentTopic::Bills,
+            DocumentTopic::Housing,
+            DocumentTopic::Subscription,
+            DocumentTopic::Food,
+            DocumentTopic::Transport,
+            DocumentTopic::Software,
+            DocumentTopic::Health,
+            DocumentTopic::Tax,
+            DocumentTopic::OtherExpense,
+            DocumentTopic::Sales,
+            DocumentTopic::Freelance,
+            DocumentTopic::Salary,
+            DocumentTopic::OtherIncome,
+        }
+    }
+
+    /// Fails unless `DocumentTopic::ALL` is the variants in the
+    /// `listed_topics` list above, in the order the enum declares them (its
+    /// discriminants). The compiler checks that list against the enum with an
+    /// exhaustive `match`, so a topic added to the enum but left out of the
+    /// list does not compile.
+    #[test]
+    fn all_lists_every_topic_once_in_declaration_order() {
+        assert_eq!(DocumentTopic::ALL, listed_topics::variants());
+        assert!(
+            DocumentTopic::ALL
+                .iter()
+                .map(|topic| *topic as usize)
+                .eq(0..DocumentTopic::ALL.len()),
+            "DocumentTopic::ALL is not in declaration order"
+        );
+        listed_topics::assert_every_position_once(
+            DocumentTopic::ALL
+                .iter()
+                .map(listed_topics::position)
+                .collect(),
+        );
+    }
 
     /// The type a topic's accounts must have.
     fn topic_type(topic: DocumentTopic) -> AccountType {
@@ -350,6 +511,8 @@ mod tests {
         }
     }
 
+    /// Fails unless `template` seeds an account `code` of type `expected`;
+    /// `what` names the role or topic being checked in the failure message.
     fn assert_code_has_type(
         template: ChartTemplate,
         code: &str,
@@ -385,7 +548,7 @@ mod tests {
     #[test]
     fn every_topic_code_exists_in_its_template_with_the_topics_type() {
         for template in TEMPLATES {
-            for topic in TOPICS {
+            for &topic in DocumentTopic::ALL {
                 for code in document_topic_codes(template, topic) {
                     assert_code_has_type(template, code, topic_type(topic), &format!("{topic:?}"));
                 }
@@ -455,7 +618,7 @@ mod tests {
     #[test]
     fn no_seeded_name_falls_back_to_its_code() {
         for template in [ChartTemplate::Personal, ChartTemplate::Company] {
-            for locale in [Locale::En, Locale::El, Locale::Fr, Locale::De] {
+            for &locale in Locale::ALL {
                 for account in template_accounts(template, locale) {
                     assert_ne!(account.name, account.code, "{template:?} {locale:?}");
                 }
