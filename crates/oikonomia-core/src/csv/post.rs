@@ -56,7 +56,12 @@ pub fn preview_bank_csv(
     csv_text: &str,
     mapping: Option<&CsvColumnMapping>,
 ) -> Result<CsvImportPreview> {
-    preview_bank_csv_named(conn, entity_id, accounts, csv_text, mapping, String::new())
+    let statement = Statement {
+        csv_text,
+        mapping,
+        source: String::new(),
+    };
+    preview_statement(conn, entity_id, accounts, statement)
 }
 
 /// Reads the CSV file at `path` and previews it as [`preview_bank_csv`]
@@ -78,14 +83,12 @@ pub fn preview_bank_csv_file(
     mapping: Option<&CsvColumnMapping>,
 ) -> Result<CsvImportPreview> {
     let text = read_csv_text(path)?;
-    preview_bank_csv_named(
-        conn,
-        entity_id,
-        accounts,
-        &text,
+    let statement = Statement {
+        csv_text: &text,
         mapping,
-        path.display().to_string(),
-    )
+        source: path.display().to_string(),
+    };
+    preview_statement(conn, entity_id, accounts, statement)
 }
 
 /// Posts the selected suggested rows as simple entries, in one transaction.
@@ -183,19 +186,27 @@ impl DedupeKey {
     }
 }
 
-/// The shared body of the two previews; `source` is what the preview
-/// reports the text came from, empty for in-memory text.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the import source is passed beside the five inputs of the public preview"
-)]
-fn preview_bank_csv_named(
+/// A bank statement to preview.
+struct Statement<'a> {
+    /// The statement as CSV text.
+    csv_text: &'a str,
+    /// The columns to read, or `None` to detect them from the header row.
+    mapping: Option<&'a CsvColumnMapping>,
+    /// What the preview reports the text came from; empty for in-memory
+    /// text.
+    source: String,
+}
+
+/// The shared body of the two previews.
+///
+/// # Errors
+///
+/// Those of [`preview_bank_csv`].
+fn preview_statement(
     conn: &Connection,
     entity_id: EntityId,
     accounts: CsvImportAccounts,
-    csv_text: &str,
-    mapping: Option<&CsvColumnMapping>,
-    source: String,
+    statement: Statement<'_>,
 ) -> Result<CsvImportPreview> {
     let entity = get_entity(conn, entity_id)?;
     check_role_account(conn, entity_id, accounts.wallet_account_id)?;
@@ -203,7 +214,7 @@ fn preview_bank_csv_named(
     check_role_account(conn, entity_id, accounts.income_account_id)?;
 
     let exponent = currency_minor_exponent(entity.base_currency);
-    let parsed = parse_bank_csv(csv_text, exponent, mapping)?;
+    let parsed = parse_bank_csv(statement.csv_text, exponent, statement.mapping)?;
     let mut seen = load_active_keys(conn, entity_id)?;
     let mut rows = Vec::with_capacity(parsed.rows.len());
 
@@ -212,7 +223,7 @@ fn preview_bank_csv_named(
     }
 
     Ok(CsvImportPreview {
-        source,
+        source: statement.source,
         headers: parsed.headers,
         detected_mapping: parsed.detected_mapping,
         rows,

@@ -23,8 +23,8 @@
 //! - `not_found` when an account does not exist.
 
 use crate::commands::support::{
-    decode_document_base64, dropped_file_name, require_granted_path, run_blocking, with_connection,
-    with_localized_connection,
+    Arguments, decode_document_base64, dropped_file_name, require_granted_path, run_blocking,
+    with_connection, with_localized_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
@@ -36,6 +36,7 @@ use oikonomia_core::ledger::{
     replace_simple_entry, set_entry_hidden, void_entry,
 };
 use oikonomia_core::util::DateText;
+use serde::Deserialize;
 use tauri::State;
 
 /// Lists an entity's posted entries, voided ones included, optionally
@@ -49,28 +50,45 @@ use tauri::State;
 /// Returns `invalid_date` when `from` or `to` is not a date, and the
 /// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "each argument is one field of the IPC payload; tracked for the API pass"
-)]
 pub(crate) async fn entry_list(
     state: State<'_, AppState>,
-    entity_id: EntityId,
-    from: Option<DateText>,
-    to: Option<DateText>,
-    search: Option<String>,
-    account_id: Option<AccountId>,
+    arguments: Arguments<EntryListArguments>,
 ) -> CommandResult<Vec<PostedEntryView>> {
+    let Arguments(arguments) = arguments;
+
     with_connection(&state, move |conn| {
         let filter = EntryFilter {
-            text: search,
-            date_from: DateText::parse_optional(from.as_ref())?,
-            date_to: DateText::parse_optional(to.as_ref())?,
-            account_id,
+            text: arguments.search,
+            date_from: DateText::parse_optional(arguments.from.as_ref())?,
+            date_to: DateText::parse_optional(arguments.to.as_ref())?,
+            account_id: arguments.account_id,
         };
-        list_entries(conn, entity_id, &filter)
+        list_entries(conn, arguments.entity_id, &filter)
     })
     .await
+}
+
+/// The arguments of [`entry_list`], as the webview names them: `entityId`,
+/// `from`, `to`, `search` and `accountId`.
+///
+/// Every argument but the entity may be left out or sent as `null`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EntryListArguments {
+    /// Entity whose entries are listed.
+    entity_id: EntityId,
+    /// Inclusive lower bound on the entry date.
+    #[serde(default)]
+    from: Option<DateText>,
+    /// Inclusive upper bound on the entry date.
+    #[serde(default)]
+    to: Option<DateText>,
+    /// Text to look for in descriptions, references and memos.
+    #[serde(default)]
+    search: Option<String>,
+    /// Only entries with a line on this account.
+    #[serde(default)]
+    account_id: Option<AccountId>,
 }
 
 /// Returns one posted entry with its lines.
@@ -308,4 +326,73 @@ pub(crate) async fn entry_void(
     id: JournalEntryId,
 ) -> CommandResult<VoidResult> {
     with_localized_connection(&state, move |conn, locale| void_entry(conn, id, locale)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An entity id and an account id as the webview sends them.
+    const ENTITY: &str = "11111111-1111-4111-8111-111111111111";
+    const ACCOUNT: &str = "22222222-2222-4222-8222-222222222222";
+
+    #[test]
+    fn the_entry_list_arguments_are_read_from_the_camel_case_payload() {
+        let payload = serde_json::json!({
+            "entityId": ENTITY,
+            "from": "2026-08-01",
+            "to": "2026-08-31",
+            "search": "rent",
+            "accountId": ACCOUNT,
+        });
+        let arguments: EntryListArguments = serde_json::from_value(payload).unwrap();
+
+        assert_eq!(arguments.entity_id.to_string(), ENTITY);
+        assert_eq!(
+            arguments.account_id.map(|id| id.to_string()).as_deref(),
+            Some(ACCOUNT)
+        );
+        assert_eq!(arguments.search.as_deref(), Some("rent"));
+        assert!(arguments.from.is_some_and(|from| from.parse().is_ok()));
+        assert!(arguments.to.is_some_and(|to| to.parse().is_ok()));
+    }
+
+    #[test]
+    fn an_optional_entry_list_argument_may_be_left_out_or_null() {
+        let left_out = serde_json::json!({ "entityId": ENTITY });
+        let null = serde_json::json!({
+            "entityId": ENTITY,
+            "from": null,
+            "to": null,
+            "search": null,
+            "accountId": null,
+        });
+
+        for payload in [left_out, null] {
+            let arguments: EntryListArguments = serde_json::from_value(payload).unwrap();
+
+            assert!(arguments.from.is_none() && arguments.to.is_none());
+            assert!(arguments.search.is_none() && arguments.account_id.is_none());
+        }
+    }
+
+    #[test]
+    fn a_malformed_date_is_read_and_left_for_core_to_refuse_with_its_code() {
+        let payload = serde_json::json!({ "entityId": ENTITY, "from": "1/8/2026" });
+        let arguments: EntryListArguments = serde_json::from_value(payload).unwrap();
+
+        assert_eq!(
+            arguments
+                .from
+                .map(|from| from.parse().map_err(|error| error.code())),
+            Some(Err("invalid_date"))
+        );
+    }
+
+    #[test]
+    fn the_entry_list_arguments_need_an_entity() {
+        let payload = serde_json::json!({ "search": "rent" });
+
+        assert!(serde_json::from_value::<EntryListArguments>(payload).is_err());
+    }
 }

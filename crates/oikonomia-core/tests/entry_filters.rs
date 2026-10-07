@@ -10,26 +10,41 @@ use oikonomia_core::ledger::{
 };
 use rusqlite::Connection;
 
-/// Post a balanced two-line entry using personal-template account codes.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "test helper, many parameters by design"
-)]
-fn post_two_line(
-    conn: &Connection,
-    entity_id: EntityId,
-    date: &str,
-    description: &str,
-    reference: Option<&str>,
-    memo: Option<&str>,
-    debit_code: &str,
-    credit_code: &str,
-) -> PostedEntryView {
-    let mut entry = common::two_line(conn, entity_id, date, (debit_code, credit_code), 1_000);
-    entry.description = description.into();
-    entry.reference = reference.map(Into::into);
+/// What one test entry is posted with, besides its book.
+struct Posting<'a> {
+    /// Accounting date as `YYYY-MM-DD`.
+    date: &'a str,
+    /// Description of the entry.
+    description: &'a str,
+    /// Reference of the entry, if any.
+    reference: Option<&'a str>,
+    /// Memo of the debit line, if any.
+    memo: Option<&'a str>,
+    /// Codes of the debited and then the credited account.
+    sides: (&'a str, &'a str),
+}
+
+impl<'a> Posting<'a> {
+    /// Groceries paid from checking, with no reference and no memo.
+    fn groceries(date: &'a str, description: &'a str) -> Self {
+        Self {
+            date,
+            description,
+            reference: None,
+            memo: None,
+            sides: ("5100", "1010"),
+        }
+    }
+}
+
+/// Posts a balanced two-line entry of 10.00 between personal-template
+/// accounts.
+fn post_two_line(conn: &Connection, entity_id: EntityId, posting: &Posting<'_>) -> PostedEntryView {
+    let mut entry = common::two_line(conn, entity_id, posting.date, posting.sides, 1_000);
+    entry.description = posting.description.into();
+    entry.reference = posting.reference.map(Into::into);
     if let Some(debit_line) = entry.lines.first_mut() {
-        debit_line.memo = memo.map(Into::into);
+        debit_line.memo = posting.memo.map(Into::into);
     }
 
     post_entry(conn, &entry).expect("post")
@@ -44,32 +59,23 @@ fn text_filter_matches_description_reference_and_memo() {
     post_two_line(
         conn,
         entity_id,
-        "2026-02-01",
-        "Groceries March",
-        None,
-        None,
-        "5100",
-        "1010",
+        &Posting::groceries("2026-02-01", "Groceries March"),
     );
     post_two_line(
         conn,
         entity_id,
-        "2026-02-02",
-        "Utility bill",
-        Some("INV-42"),
-        None,
-        "5100",
-        "1010",
+        &Posting {
+            reference: Some("INV-42"),
+            ..Posting::groceries("2026-02-02", "Utility bill")
+        },
     );
     post_two_line(
         conn,
         entity_id,
-        "2026-02-03",
-        "Shopping",
-        None,
-        Some("office chair"),
-        "5100",
-        "1010",
+        &Posting {
+            memo: Some("office chair"),
+            ..Posting::groceries("2026-02-03", "Shopping")
+        },
     );
 
     let by = |text: &str| {
@@ -99,7 +105,7 @@ fn date_range_is_inclusive_on_both_ends() {
     let entity_id = common::book(conn, "Filters", ChartTemplate::Personal);
 
     for date in ["2026-01-10", "2026-01-20", "2026-01-31"] {
-        post_two_line(conn, entity_id, date, "Entry", None, None, "5100", "1010");
+        post_two_line(conn, entity_id, &Posting::groceries(date, "Entry"));
     }
 
     let got = list_entries(
@@ -125,22 +131,15 @@ fn account_filter_matches_entries_touching_the_account() {
     post_two_line(
         conn,
         entity_id,
-        "2026-03-01",
-        "Food shop",
-        None,
-        None,
-        "5100",
-        "1010",
+        &Posting::groceries("2026-03-01", "Food shop"),
     );
     post_two_line(
         conn,
         entity_id,
-        "2026-03-02",
-        "Move to savings",
-        None,
-        None,
-        "1020",
-        "1010",
+        &Posting {
+            sides: ("1020", "1010"),
+            ..Posting::groceries("2026-03-02", "Move to savings")
+        },
     );
 
     let accounts = list_accounts(conn, entity_id).expect("accounts");
@@ -169,22 +168,12 @@ fn combined_filters_intersect() {
     post_two_line(
         conn,
         entity_id,
-        "2026-04-01",
-        "Groceries",
-        None,
-        None,
-        "5100",
-        "1010",
+        &Posting::groceries("2026-04-01", "Groceries"),
     );
     post_two_line(
         conn,
         entity_id,
-        "2026-05-01",
-        "Groceries",
-        None,
-        None,
-        "5100",
-        "1010",
+        &Posting::groceries("2026-05-01", "Groceries"),
     );
 
     let got = list_entries(

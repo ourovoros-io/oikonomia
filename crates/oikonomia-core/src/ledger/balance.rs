@@ -160,23 +160,20 @@ pub fn account_balance_as_of(
     normal_balance(account_type, debits, credits)
 }
 
-/// Sums the balances of every account of an entity whose type is in `types`,
-/// through `as_of` (inclusive), counting active entries only.
+/// Sums the balances of every account of one type in an entity, through
+/// `as_of` (inclusive), counting active entries only.
 ///
-/// Each type's balance is signed towards its own normal side before the
-/// types are added, so mixing debit-normal and credit-normal types in one
-/// call adds figures of opposite meaning.
+/// The total is signed towards the normal side of `account_type`.
 ///
 /// # Errors
 ///
-/// - [`Error::MoneyOverflow`] when the total over the types does not fit in
-///   `i64`.
-/// - [`Error::Database`] when a query fails, which includes a total of one type that
+/// - [`Error::MoneyOverflow`] when the balance does not fit in `i64`.
+/// - [`Error::Database`] when the query fails, which includes a total that
 ///   overflows `i64` inside `SQLite`'s `SUM`.
-pub(crate) fn sum_types_as_of(
+pub(crate) fn sum_type_as_of(
     conn: &Connection,
     entity_id: EntityId,
-    types: &[AccountType],
+    account_type: AccountType,
     as_of: Date,
 ) -> Result<i64> {
     let sql = format!(
@@ -194,42 +191,37 @@ pub(crate) fn sum_types_as_of(
         "
     );
 
-    let mut total = 0_i64;
-    for account_type in types {
-        let (debits, credits): (i64, i64) = conn
-            .query_row(
-                &sql,
-                rusqlite::params![
-                    entity_id.to_string(),
-                    account_type_str(*account_type),
-                    format_date(as_of),
-                ],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .database("sum balances by account type")?;
+    let (debits, credits): (i64, i64) = conn
+        .query_row(
+            &sql,
+            rusqlite::params![
+                entity_id.to_string(),
+                account_type_str(account_type),
+                format_date(as_of),
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .database("sum balances by account type")?;
 
-        total = add_minor(total, normal_balance(*account_type, debits, credits)?)?;
-    }
-    Ok(total)
+    normal_balance(account_type, debits, credits)
 }
 
-/// Sums the activity of every account of an entity whose type is in `types`,
-/// between `from` and `to` (both inclusive), counting active entries only.
+/// Sums the activity of every account of one type in an entity, between
+/// `from` and `to` (both inclusive), counting active entries only.
 ///
-/// Signs are as in [`sum_types_as_of`]. Profit and loss figures come from
+/// The sign is as in [`sum_type_as_of`]. Profit and loss figures come from
 /// here: income and expense accounts are read over a window, never as of a
 /// date.
 ///
 /// # Errors
 ///
-/// - [`Error::MoneyOverflow`] when the total over the types does not fit in
-///   `i64`.
-/// - [`Error::Database`] when a query fails, which includes a total of one type that
+/// - [`Error::MoneyOverflow`] when the total does not fit in `i64`.
+/// - [`Error::Database`] when the query fails, which includes a total that
 ///   overflows `i64` inside `SQLite`'s `SUM`.
-pub(crate) fn sum_types_in_range(
+pub(crate) fn sum_type_in_range(
     conn: &Connection,
     entity_id: EntityId,
-    types: &[AccountType],
+    account_type: AccountType,
     from: Date,
     to: Date,
 ) -> Result<i64> {
@@ -249,24 +241,20 @@ pub(crate) fn sum_types_in_range(
         "
     );
 
-    let mut total = 0_i64;
-    for account_type in types {
-        let (debits, credits): (i64, i64) = conn
-            .query_row(
-                &sql,
-                rusqlite::params![
-                    entity_id.to_string(),
-                    account_type_str(*account_type),
-                    format_date(from),
-                    format_date(to),
-                ],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .database("sum activity by account type")?;
+    let (debits, credits): (i64, i64) = conn
+        .query_row(
+            &sql,
+            rusqlite::params![
+                entity_id.to_string(),
+                account_type_str(account_type),
+                format_date(from),
+                format_date(to),
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .database("sum activity by account type")?;
 
-        total = add_minor(total, normal_balance(*account_type, debits, credits)?)?;
-    }
-    Ok(total)
+    normal_balance(account_type, debits, credits)
 }
 
 /// Returns the text `account_type` is stored as in `accounts.account_type`.

@@ -1,10 +1,11 @@
 //! Helpers shared by the command modules.
 //!
-//! Three kinds of helper live here: the ones that take work to the blocking
+//! Four kinds of helper live here: the ones that take work to the blocking
 //! pool ([`run_blocking`], [`with_vault_blocking`], [`with_connection`],
 //! [`with_localized_connection`]), the ones that check what the webview sent
-//! ([`require_granted_path`], [`decode_capped_base64`]), and the native
-//! dialogs more than one module opens ([`save_with_dialog`], [`dialog_path`]).
+//! ([`require_granted_path`], [`decode_capped_base64`]), the native dialogs
+//! more than one module opens ([`save_with_dialog`], [`dialog_path`]), and
+//! [`Arguments`], which reads the arguments of a command as one struct.
 //!
 //! Nothing here is a command. The rules these helpers implement are stated in
 //! the [module above](crate::commands).
@@ -15,9 +16,53 @@ use base64::Engine;
 use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use oikonomia_core::vault::Connection;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
+use tauri::{Runtime, State};
 use tauri_plugin_dialog::FilePath;
+
+/// The named arguments of a command, read together as one `T`.
+///
+/// Tauri reads each parameter of a command from the payload key of the same
+/// name. A command with many arguments would need as many parameters, so it
+/// takes one `Arguments<T>` instead: `T` is deserialized from the whole
+/// payload object, whose keys the webview sends in camelCase. The name of the
+/// parameter itself is not a key of the payload.
+///
+/// What crosses IPC is the same either way, and so is a missing optional
+/// key, which reads as `None` when `T` marks the field `#[serde(default)]`.
+///
+/// The wrapper is needed because Tauri already takes every type that
+/// implements `Deserialize` as an argument read from its own key, so `T`
+/// cannot be given another reading directly.
+#[derive(Debug)]
+pub(crate) struct Arguments<T>(pub(crate) T);
+
+impl<'de, T, R> CommandArg<'de, R> for Arguments<T>
+where
+    T: Deserialize<'de>,
+    R: Runtime,
+{
+    /// Reads `T` from the whole JSON payload of the invocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`InvokeError`] carrying the reason as text when the
+    /// payload is raw bytes, or when it does not deserialize as a `T`. Like
+    /// every argument Tauri refuses, it reaches the webview without a code.
+    fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
+        match command.message.payload() {
+            InvokeBody::Json(payload) => T::deserialize(payload)
+                .map(Self)
+                .map_err(InvokeError::from_error),
+            InvokeBody::Raw(_) => Err(InvokeError::from(format!(
+                "command {} expects named arguments but the IPC call used a bytes payload",
+                command.name
+            ))),
+        }
+    }
+}
 
 /// Runs `work` on the runtime's blocking pool and returns what it returns.
 ///

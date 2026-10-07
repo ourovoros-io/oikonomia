@@ -34,21 +34,18 @@ fn create_book(conn: &Connection, name: &str, template: ChartTemplate) -> Book {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a test helper naming both accounts, the date and the amount; tracked for the API pass"
-)]
-fn expense(
-    entity_id: EntityId,
-    wallet: AccountId,
-    expense: AccountId,
-    date: &str,
-    description: &str,
-    amount_minor: i64,
-) -> PostSimpleEntry {
+/// An expense of `amount_minor` in the book's expense account, paid from its
+/// wallet.
+fn expense(book: &Book, date: &str, description: &str, amount_minor: i64) -> PostSimpleEntry {
     PostSimpleEntry {
         description: description.into(),
-        ..common::simple_expense(entity_id, expense, wallet, date, amount_minor)
+        ..common::simple_expense(
+            book.entity_id,
+            book.expense,
+            book.wallet,
+            date,
+            amount_minor,
+        )
     }
 }
 
@@ -76,60 +73,20 @@ fn export_omits_hidden_keeps_visible_posted_and_voided() {
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
 
-    let visible = post_simple_entry(
-        conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-15",
-            "Groceries",
-            2_500,
-        ),
-    )
-    .expect("visible");
+    let visible = post_simple_entry(conn, &expense(&book, "2026-03-15", "Groceries", 2_500))
+        .expect("visible");
     assert!(!visible.entry.hidden);
 
-    let hidden = post_simple_entry(
-        conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-16",
-            "Secret",
-            1_000,
-        ),
-    )
-    .expect("hidden seed");
+    let hidden = post_simple_entry(conn, &expense(&book, "2026-03-16", "Secret", 1_000))
+        .expect("hidden seed");
     set_entry_hidden(conn, hidden.entry.id, true).expect("hide");
 
-    let voided = post_simple_entry(
-        conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-17",
-            "VoidMe",
-            3_000,
-        ),
-    )
-    .expect("void seed");
+    let voided =
+        post_simple_entry(conn, &expense(&book, "2026-03-17", "VoidMe", 3_000)).expect("void seed");
     void_entry(conn, voided.entry.id, Locale::En).expect("void");
 
-    let hidden_voided = post_simple_entry(
-        conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-18",
-            "HiddenVoid",
-            4_000,
-        ),
-    )
-    .expect("hidden-void seed");
+    let hidden_voided = post_simple_entry(conn, &expense(&book, "2026-03-18", "HiddenVoid", 4_000))
+        .expect("hidden-void seed");
     void_entry(conn, hidden_voided.entry.id, Locale::En).expect("void hidden");
     set_entry_hidden(conn, hidden_voided.entry.id, true).expect("hide voided");
 
@@ -177,25 +134,15 @@ fn pnl_includes_hidden_export_omits() {
         .map(|a| a.id)
         .expect("5200");
 
-    post_simple_entry(
-        conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-15",
-            "Groceries",
-            2_500,
-        ),
-    )
-    .expect("visible");
+    post_simple_entry(conn, &expense(&book, "2026-03-15", "Groceries", 2_500)).expect("visible");
 
     let hidden = post_simple_entry(
         conn,
         &expense(
-            book.entity_id,
-            book.wallet,
-            transport,
+            &Book {
+                expense: transport,
+                ..book
+            },
             "2026-03-16",
             "Secret",
             1_000,
@@ -258,18 +205,8 @@ fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
 
-    let view = post_simple_entry(
-        conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-15",
-            "Secret",
-            2_500,
-        ),
-    )
-    .expect("post");
+    let view =
+        post_simple_entry(conn, &expense(&book, "2026-03-15", "Secret", 2_500)).expect("post");
     set_entry_hidden(conn, view.entry.id, true).expect("hide");
     let voided = void_entry(conn, view.entry.id, Locale::En).expect("void");
 
@@ -308,14 +245,7 @@ fn unhide_puts_entry_back_in_export() {
 
     let view = post_simple_entry(
         conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-15",
-            "HiddenThenShown",
-            2_500,
-        ),
+        &expense(&book, "2026-03-15", "HiddenThenShown", 2_500),
     )
     .expect("post");
 
@@ -347,14 +277,7 @@ fn hidden_persists_across_reopen_and_backup_restore() {
         book = create_book(conn, "Personal", ChartTemplate::Personal);
         let view = post_simple_entry(
             conn,
-            &expense(
-                book.entity_id,
-                book.wallet,
-                book.expense,
-                "2026-03-15",
-                "PersistedSecret",
-                2_500,
-            ),
+            &expense(&book, "2026-03-15", "PersistedSecret", 2_500),
         )
         .expect("post");
         set_entry_hidden(conn, view.entry.id, true).expect("hide");
@@ -410,26 +333,12 @@ fn hidden_works_for_personal_and_company_entities() {
 
     let p = post_simple_entry(
         conn,
-        &expense(
-            personal.entity_id,
-            personal.wallet,
-            personal.expense,
-            "2026-03-15",
-            "PersonalSecret",
-            1_100,
-        ),
+        &expense(&personal, "2026-03-15", "PersonalSecret", 1_100),
     )
     .expect("personal post");
     let c = post_simple_entry(
         conn,
-        &expense(
-            company.entity_id,
-            company.wallet,
-            company.expense,
-            "2026-03-15",
-            "CompanySecret",
-            2_200,
-        ),
+        &expense(&company, "2026-03-15", "CompanySecret", 2_200),
     )
     .expect("company post");
 
@@ -491,18 +400,8 @@ fn register_includes_hidden_and_exposes_flag() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Register", ChartTemplate::Personal);
-    let hidden = post_simple_entry(
-        conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-15",
-            "HiddenReg",
-            2_500,
-        ),
-    )
-    .expect("post");
+    let hidden =
+        post_simple_entry(conn, &expense(&book, "2026-03-15", "HiddenReg", 2_500)).expect("post");
     set_entry_hidden(conn, hidden.entry.id, true).expect("hide");
 
     let lines = account_register(conn, book.wallet, None, None).expect("register");
@@ -520,28 +419,11 @@ fn replacing_hidden_entry_keeps_replacement_hidden_and_omits_from_export() {
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
 
-    let hidden = post_simple_entry(
-        conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-15",
-            "SecretOriginal",
-            2_500,
-        ),
-    )
-    .expect("post hidden");
+    let hidden = post_simple_entry(conn, &expense(&book, "2026-03-15", "SecretOriginal", 2_500))
+        .expect("post hidden");
     set_entry_hidden(conn, hidden.entry.id, true).expect("hide");
 
-    let mut corrected = expense(
-        book.entity_id,
-        book.wallet,
-        book.expense,
-        "2026-03-15",
-        "SecretReplacement",
-        3_100,
-    );
+    let mut corrected = expense(&book, "2026-03-15", "SecretReplacement", 3_100);
     corrected.description = "SecretReplacement".into();
     let replacement = replace_simple_entry(conn, hidden.entry.id, &corrected, Locale::En)
         .expect("replace hidden");
@@ -581,24 +463,10 @@ fn replacing_hidden_entry_keeps_replacement_hidden_and_omits_from_export() {
 
     let visible = post_simple_entry(
         conn,
-        &expense(
-            book.entity_id,
-            book.wallet,
-            book.expense,
-            "2026-03-16",
-            "VisibleOriginal",
-            1_200,
-        ),
+        &expense(&book, "2026-03-16", "VisibleOriginal", 1_200),
     )
     .expect("post visible");
-    let mut visible_fix = expense(
-        book.entity_id,
-        book.wallet,
-        book.expense,
-        "2026-03-16",
-        "VisibleReplacement",
-        1_400,
-    );
+    let mut visible_fix = expense(&book, "2026-03-16", "VisibleReplacement", 1_400);
     visible_fix.description = "VisibleReplacement".into();
     let visible_repl = replace_simple_entry(conn, visible.entry.id, &visible_fix, Locale::En)
         .expect("replace visible");
