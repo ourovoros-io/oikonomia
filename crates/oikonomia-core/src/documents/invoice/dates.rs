@@ -21,12 +21,13 @@ use crate::documents::keyword::{Keyword, contains_any, folded};
 /// The first date written on `line`.
 ///
 /// A date is a whitespace-separated word that, with everything but digits
-/// and `/ . -` trimmed from its ends, is a day-month-year date or an ISO
-/// date. A day the calendar does not have is not a date.
+/// trimmed from its ends, is a day-month-year date or an ISO date. A date
+/// begins and ends with a digit, so the full stop or comma that follows one
+/// in a sentence is trimmed with the rest, although `.` and `-` are also
+/// separators inside a date. A day the calendar does not have is not a date.
 pub(super) fn first_date_on_line(line: &str) -> Option<Date> {
     for word in line.split_whitespace() {
-        let token =
-            word.trim_matches(|c: char| !c.is_ascii_digit() && c != '/' && c != '.' && c != '-');
+        let token = word.trim_matches(|c: char| !c.is_ascii_digit());
         if let Some(date) = parse_eu_date(token).or_else(|| parse_iso_date(token)) {
             return Some(date);
         }
@@ -306,9 +307,9 @@ impl DateShape {
 /// numbers joined by `-` or they do not fit a [`DateShape`].
 fn iso_date_shape(token: &str) -> Option<DateShape> {
     let mut parts = token.split('-');
-    let year = parts.next()?.parse().ok()?;
-    let month = parts.next()?.parse().ok()?;
-    let day = parts.next()?.parse().ok()?;
+    let year = unsigned_number(parts.next()?)?;
+    let month = unsigned_number(parts.next()?)?;
+    let day = unsigned_number(parts.next()?)?;
     if parts.next().is_some() {
         return None;
     }
@@ -328,9 +329,9 @@ fn eu_date_shape(token: &str) -> Option<DateShape> {
         .find(|separator| token.contains(*separator))?;
 
     let mut parts = token.split(separator);
-    let day = parts.next()?.parse().ok()?;
-    let month = parts.next()?.parse().ok()?;
-    let year: i32 = parts.next()?.parse().ok()?;
+    let day = unsigned_number(parts.next()?)?;
+    let month = unsigned_number(parts.next()?)?;
+    let year: i32 = unsigned_number(parts.next()?)?;
     if parts.next().is_some() {
         return None;
     }
@@ -341,6 +342,21 @@ fn eu_date_shape(token: &str) -> Option<DateShape> {
         year
     };
     DateShape::new(year, month, day)
+}
+
+/// The number `part` writes in decimal digits and nothing else, or `None`
+/// when it holds any other character, is empty, or does not fit `T`.
+///
+/// The integer parsers of the standard library accept a leading `+`, and
+/// the signed ones a leading `-`
+/// (<https://doc.rust-lang.org/std/primitive.i32.html#method.from_str_radix>),
+/// which would read `01/02/-5` as a date in 1995.
+fn unsigned_number<T: std::str::FromStr>(part: &str) -> Option<T> {
+    if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+
+    part.parse().ok()
 }
 
 /// A `YYYY-MM-DD` token as a date, or `None` when it is not a day the
@@ -483,6 +499,78 @@ mod tests {
         );
         // Month first, with a day over 12: not a date.
         assert_eq!(read("Date 04/13/2026").entry_date, None);
+    }
+
+    #[test]
+    fn a_date_followed_by_sentence_punctuation_is_still_read() {
+        let march = Some(date!(2026 - 03 - 15));
+
+        for line in [
+            "Date 15/03/2026.",
+            "Date 15.03.2026.",
+            "Date 15-03-2026.",
+            "Paid on 15/03/2026, thank you",
+            "(15/03/2026)",
+            "Date: 2026-03-15.",
+            "Period -15/03/2026-",
+        ] {
+            assert_eq!(first_date_on_line(line), march, "{line:?}");
+        }
+        assert_eq!(read("Invoice\nDate 15/03/2026.").entry_date, march);
+    }
+
+    #[test]
+    fn a_signed_number_is_not_a_part_of_a_date() {
+        for line in [
+            "01/02/-5",
+            "01/02/+5",
+            "01/+2/2026",
+            "01.-2.2026",
+            "2026-+3-15",
+            "2026--3-15",
+        ] {
+            assert_eq!(first_date_on_line(line), None, "{line:?}");
+        }
+        assert_eq!(read("Ref 01/02/-5\nTOTAL 45,90").entry_date, None);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(
+            oikonomia_test_support::PROPERTY_CASES
+        ))]
+
+        /// Every day-first date in the document years is read back, whatever
+        /// separator it uses and whatever punctuation stands around it, and
+        /// is not read once one of its parts carries a sign.
+        #[test]
+        fn a_written_date_is_read_back_and_a_signed_part_is_refused(
+            year in DOCUMENT_YEARS,
+            month in 1_u8..=12,
+            day in 1_u8..=28,
+            separator in "[/.-]",
+            before in "[(\\[.,;:-]{0,2}",
+            after in "[)\\].,;:-]{0,2}",
+            sign in "[+-]",
+            signed_part in 0_usize..3,
+        ) {
+            let written = time::Month::try_from(month)
+                .ok()
+                .and_then(|month| Date::from_calendar_date(year, month, day).ok());
+            let token = |parts: [String; 3]| format!("{before}{}{after}", parts.join(&separator));
+            let parts = [format!("{day:02}"), format!("{month:02}"), year.to_string()];
+
+            proptest::prop_assert_eq!(first_date_on_line(&token(parts.clone())), written);
+
+            // A sign on the first part is punctuation before the token, so
+            // only the month and the year are signed here.
+            let mut signed = parts;
+            let index = signed_part.max(1);
+            signed[index] = format!("{sign}{}", signed[index]);
+            let with_sign = token(signed);
+            // `15--03-2026` is the one shape a sign cannot be told from the
+            // separator in; it has four parts and is refused for that.
+            proptest::prop_assert_eq!(first_date_on_line(&with_sign), None, "{}", with_sign);
+        }
     }
 
     /// Every label and marker constant of this file. A constant added to the

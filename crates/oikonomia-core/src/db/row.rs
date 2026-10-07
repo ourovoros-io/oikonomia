@@ -7,10 +7,16 @@
 //! error through `rusqlite::Error` instead would flatten it to text that the
 //! query's caller can only report as [`Error::Database`].
 //!
-//! A mapper is used from a rusqlite row closure as `|row| Ok(map_thing(row))`:
-//! the outer `rusqlite::Result` carries driver failures and the inner one
-//! carries the mapper's verdict on the row. [`collect_rows`] unwraps both for
-//! a query that returns many rows.
+//! A mapper is used from a rusqlite row closure as
+//! `|row| Ok(map_thing(operation, row))`: the outer `rusqlite::Result`
+//! carries driver failures and the inner one carries the mapper's verdict on
+//! the row. [`collect_rows`] unwraps both for a query that returns many rows.
+//!
+//! `operation` is what the query is for ("list accounts", "read account"),
+//! the same words the caller gives when it prepares the statement and
+//! collects the rows. One mapper serves several queries, so it takes the
+//! operation as its first parameter and hands it to [`read_column`]; a
+//! database error then says what core was doing whichever step raised it.
 //!
 //! Damage shows up at two levels, and both are `vault_corrupt`:
 //!
@@ -42,16 +48,23 @@ pub(crate) fn corrupt_column(column: &str, detail: impl Display) -> Error {
 
 /// Reads column `index` of `row` as `T`.
 ///
+/// `operation` names what the query is for, in the words its caller gave
+/// when it prepared the statement and collects its rows with. A row mapper
+/// takes it as its first parameter and hands it on, so every error of one
+/// query says the same thing about what core was doing.
+///
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`] when the stored value cannot be a `T`: it has
 ///   another storage class, or is out of `T`'s range.
-/// - [`Error::Database`] for any other driver failure, which is an `index`
-///   the query does not select: a mistake in the query, and nothing a stored
-///   value can cause. Its operation is `read stored column` whatever the
-///   query was for; the failures of a query that depend on the vault surface
-///   in [`collect_rows`], under the caller's operation.
-pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> {
+/// - [`Error::Database`], carrying `operation`, for any other driver
+///   failure, which is an `index` the query does not select: a mistake in
+///   the query, and nothing a stored value can cause.
+pub(crate) fn read_column<T: FromSql>(
+    operation: &'static str,
+    row: &Row<'_>,
+    index: usize,
+) -> Result<T> {
     row.get(index).map_err(|err| match err {
         rusqlite::Error::InvalidColumnType(..)
         | rusqlite::Error::IntegralValueOutOfRange(..)
@@ -65,11 +78,11 @@ pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> 
                 .map_or_else(|_| format!("column {index}"), str::to_owned);
             corrupt_column(&column, &err)
         }
-        other => Error::database("read stored column", other),
+        other => Error::database(operation, other),
     })
 }
 
-/// Collects the rows of a query whose row closure is `|row| Ok(mapper(row))`.
+/// Collects the rows of a query whose row closure is `|row| Ok(mapper(operation, row))`.
 ///
 /// Stops at the first row that fails, so a damaged row fails the whole query
 /// instead of being left out of the result.
@@ -152,7 +165,9 @@ mod tests {
             .prepare("SELECT abs(-9223372036854775807 - 1)")
             .unwrap();
         let rows = statement
-            .query_map([], |row| Ok(read_column::<i64>(row, 0)))
+            .query_map([], |row| {
+                Ok(read_column::<i64>("add up the test amounts", row, 0))
+            })
             .unwrap();
 
         let failed = collect_rows("add up the test amounts", rows);
@@ -171,7 +186,9 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let mut statement = conn.prepare("SELECT 'seven' AS amount_minor").unwrap();
         let rows = statement
-            .query_map([], |row| Ok(read_column::<i64>(row, 0)))
+            .query_map([], |row| {
+                Ok(read_column::<i64>("read the test amount", row, 0))
+            })
             .unwrap();
 
         let failed = collect_rows("read the test amount", rows);
@@ -181,6 +198,30 @@ mod tests {
                 &failed,
                 Err(Error::VaultCorrupt(VaultCorruption::Column { column, .. }))
                     if column == "amount_minor"
+            ),
+            "{failed:?}"
+        );
+    }
+
+    /// A column the query does not select is a mistake in the query. It is
+    /// reported under what the query was for, not under a fixed phrase that
+    /// is the same for every query.
+    #[test]
+    fn a_column_the_query_does_not_select_names_the_callers_operation() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut statement = conn.prepare("SELECT 7 AS amount_minor").unwrap();
+        let rows = statement
+            .query_map([], |row| {
+                Ok(read_column::<i64>("read the test amount", row, 1))
+            })
+            .unwrap();
+
+        let failed = collect_rows("collect the test amounts", rows);
+
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::Database { operation, .. }) if *operation == "read the test amount"
             ),
             "{failed:?}"
         );

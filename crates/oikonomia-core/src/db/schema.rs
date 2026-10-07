@@ -405,7 +405,7 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
             )
             .database("list document names")?;
         let mapped = stmt
-            .query_map([], |row| Ok(map_document_name(row)))
+            .query_map([], |row| Ok(map_document_name("list document names", row)))
             .database("list document names")?;
         collect_rows("list document names", mapped)?
     };
@@ -439,11 +439,14 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
 /// # Errors
 ///
 /// [`Error::VaultCorrupt`] naming the column that is not stored as text.
-fn map_document_name(row: &rusqlite::Row<'_>) -> Result<(String, String, String)> {
+fn map_document_name(
+    operation: &'static str,
+    row: &rusqlite::Row<'_>,
+) -> Result<(String, String, String)> {
     Ok((
-        read_column(row, 0)?,
-        read_column(row, 1)?,
-        read_column(row, 2)?,
+        read_column(operation, row, 0)?,
+        read_column(operation, row, 1)?,
+        read_column(operation, row, 2)?,
     ))
 }
 

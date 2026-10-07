@@ -28,7 +28,7 @@ use crate::commands::support::{
     with_localized_connection,
 };
 use crate::error::CommandResult;
-use crate::state::AppState;
+use crate::state::{AppState, GrantPurpose};
 use oikonomia_core::documents::post_simple_entry_with_document;
 use oikonomia_core::domain::{AccountId, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
@@ -217,7 +217,7 @@ pub(crate) struct PostWithDocumentArguments {
 ///
 /// # Errors
 ///
-/// Returns `path_not_granted` for a path the user never handed over;
+/// Returns `path_not_granted` for a path the user did not drop on a window;
 /// `file_unreadable` when the file cannot be read; `file_too_large` (with the
 /// cap as `max_mb`), `file_empty`, `file_type_unsupported` and
 /// `name_required` when the document is refused; `name_taken` when the entity
@@ -233,7 +233,8 @@ pub(crate) async fn entry_post_simple_with_document_path(
 ) -> CommandResult<PostedEntryView> {
     let filename = dropped_file_name(&path);
     let grants = state.path_grants();
-    let path = run_blocking(move || require_granted_path(&grants, &path)).await?;
+    let path =
+        run_blocking(move || require_granted_path(&grants, GrantPurpose::Document, &path)).await?;
 
     let vault = state.vault();
     state.touch();

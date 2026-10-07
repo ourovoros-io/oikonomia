@@ -14,25 +14,42 @@
 //! [`delete_entity`] removes an entity and everything that belongs to it, in
 //! one transaction and in an order the foreign keys allow.
 //!
-//! [`archive_entity`] deletes nothing; it only stamps `archived_at`. The
-//! operations do not treat an archived entity alike:
+//! [`archive_entity`] deletes nothing; it only stamps `archived_at`. One rule
+//! then holds for the entity: **it is readable everywhere and never
+//! writable.**
 //!
-//! - [`list_entities`] leaves it out, and its name no longer counts as taken.
-//! - [`update_entity`], [`archive_entity`] and
-//!   [`create_account`](crate::ledger::create_account) report it as
-//!   [`Error::NotFound`].
-//! - [`get_entity`], [`count_entities`] and [`delete_entity`] treat it like any
-//!   other entity. So do the reports and the cash flow series, which look the
-//!   entity up through [`get_entity`], and the recurring templates, which
-//!   only check that the row exists.
-//! - Posting an entry checks the entry's accounts and never the entity, so it
-//!   is accepted as well.
+//! | Operation on an archived entity | Outcome |
+//! |---------------------------------|---------|
+//! | A read | answers as before |
+//! | A write that takes the entity | [`Error::NotFound`] |
+//! | [`update_entity`], [`archive_entity`] | [`Error::NotFound`] |
+//! | [`delete_entity`] | deletes it |
+//!
+//! The reads are [`get_entity`], the reports, the cash flow series, the
+//! journal export, and the lists of the entity's accounts, entries,
+//! templates and documents. The writes that take the entity are posting an
+//! entry, creating or updating a template, creating an account, importing
+//! CSV rows and attaching a document; each calls
+//! [`ensure_writable_entity`], which reports the entity as if it did not
+//! exist.
+//!
+//! Every entry is inserted in one place, which makes the check, so it also
+//! covers the operations that post on the caller's behalf: voiding or
+//! correcting an entry, setting an opening balance, and posting from a
+//! template.
+//!
+//! Two things follow from being archived without being a read or a write:
+//! [`list_entities`] leaves the entity out, which is how the app hides it,
+//! and its name no longer counts as taken. [`count_entities`] counts it.
+//!
+//! The writes that name a record and no entity do not make the check:
+//! updating or archiving an account, hiding an entry, deleting a template or
+//! a document, and storing the analysis of a document.
 
 use crate::coa::template_accounts;
 use crate::db::{collect_rows, corrupt_column, read_column, stored_id};
 use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode, Entity, EntityId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
-use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
 use crate::util::now_utc_string;
 use rusqlite::Connection;
@@ -78,7 +95,7 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
         .database("list entities")?;
 
     let rows = stmt
-        .query_map([], |row| Ok(map_entity(row)))
+        .query_map([], |row| Ok(map_entity("list entities", row)))
         .database("list entities")?;
 
     collect_rows("list entities", rows)
@@ -102,7 +119,7 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
         FROM entities WHERE id = ?1
         ",
         [id.to_string()],
-        |row| Ok(map_entity(row)),
+        |row| Ok(map_entity("read entity", row)),
     )
     .map_err(|err| match err {
         rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Entity),
@@ -228,6 +245,32 @@ pub fn delete_entity(conn: &Connection, id: EntityId) -> Result<()> {
     Ok(())
 }
 
+/// Checks that `id` names an entity that may be written to: one that exists
+/// and is not archived.
+///
+/// Every write path that takes an entity calls this before it writes; the
+/// module documentation lists them. An archived entity is reported exactly
+/// like an unknown one, so a caller cannot tell the two apart.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown or archived entity.
+/// - [`Error::Database`] on database errors.
+pub(crate) fn ensure_writable_entity(conn: &Connection, id: EntityId) -> Result<()> {
+    let writable: i64 = conn
+        .query_row(
+            "SELECT COUNT(1) FROM entities WHERE id = ?1 AND archived_at IS NULL",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .database("check entity is writable")?;
+
+    if writable == 0 {
+        return Err(Error::NotFound(Resource::Entity));
+    }
+    Ok(())
+}
+
 /// Validates `input`, inserts the entity and seeds its chart.
 ///
 /// The caller owns the transaction: the entity row and each seeded account
@@ -269,7 +312,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
             name,
             currency.as_str(),
             u8::from(month),
-            chart_template_str(input.chart_template),
+            input.chart_template.identifier(),
             now_utc_string(),
         ],
     )
@@ -434,7 +477,7 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
             account.entity_id.to_string(),
             account.code,
             account.name,
-            account_type_str(account.account_type),
+            account.account_type.identifier(),
             account.parent_id.map(|parent| parent.to_string()),
             i32::from(account.is_active),
             i32::from(account.is_system),
@@ -453,13 +496,13 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
 /// [`Error::VaultCorrupt`] naming the column when the id, the base currency,
 /// the chart template or the fiscal year start month does not parse, or a
 /// column has the wrong storage class.
-fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
-    let id = stored_id("entities.id", &read_column::<String>(row, 0)?)?;
-    let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
+fn map_entity(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Entity> {
+    let id = stored_id("entities.id", &read_column::<String>(operation, row, 0)?)?;
+    let chart_template = parse_chart_template(&read_column::<String>(operation, row, 4)?)?;
 
     // Reports derive the fiscal year from this number, so one outside the
     // calendar is refused here instead of shifting every year boundary.
-    let stored_month: i64 = read_column(row, 3)?;
+    let stored_month: i64 = read_column(operation, row, 3)?;
     let fiscal_year_start_month = u8::try_from(stored_month)
         .ok()
         .and_then(|number| Month::try_from(number).ok())
@@ -473,7 +516,7 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
     // The code is a key into the table of decimal digits and is handed to
     // the UI's number formatter, so text that is not a code is refused here
     // instead of being formatted with a guessed number of decimals.
-    let stored_currency: String = read_column(row, 2)?;
+    let stored_currency: String = read_column(operation, row, 2)?;
     let base_currency = stored_currency.parse().map_err(|_| {
         corrupt_column(
             "entities.base_currency",
@@ -483,26 +526,15 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
 
     Ok(Entity {
         id,
-        name: read_column(row, 1)?,
+        name: read_column(operation, row, 1)?,
         base_currency,
         fiscal_year_start_month,
         chart_template,
     })
 }
 
-/// Returns the text `template` is stored as in `entities.chart_template`.
-///
-/// The strings are part of the vault format; [`parse_chart_template`] reads
-/// them back.
-fn chart_template_str(template: ChartTemplate) -> &'static str {
-    match template {
-        ChartTemplate::Personal => "personal",
-        ChartTemplate::Company => "company",
-        ChartTemplate::Blank => "blank",
-    }
-}
-
-/// Parses the text [`chart_template_str`] writes.
+/// Parses the text [`ChartTemplate::identifier`] writes into
+/// `entities.chart_template`.
 ///
 /// # Errors
 ///
@@ -517,5 +549,25 @@ fn parse_chart_template(stored: &str) -> Result<ChartTemplate> {
             "entities.chart_template",
             format_args!("unknown chart template: {other}"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChartTemplate, parse_chart_template};
+
+    #[test]
+    fn a_chart_template_is_read_back_from_the_text_it_is_stored_as() {
+        for template in [
+            ChartTemplate::Personal,
+            ChartTemplate::Company,
+            ChartTemplate::Blank,
+        ] {
+            assert_eq!(parse_chart_template(template.identifier()), Ok(template));
+        }
+        assert_eq!(
+            parse_chart_template("Personal").map_err(|error| error.code()),
+            Err("vault_corrupt")
+        );
     }
 }
