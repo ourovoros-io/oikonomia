@@ -84,12 +84,14 @@
 //!
 //! # Exhaustive on purpose
 //!
-//! None of the enums here is `#[non_exhaustive]`. The workspace is not
-//! published, so its only other user is the desktop crate, and that crate
-//! is meant to break when a variant is added: it matches these enums without
-//! a wildcard arm, so the compiler points at every place that has to decide
-//! what the new variant means. With `#[non_exhaustive]` those matches would
-//! need a wildcard, and a new variant would fall into it unnoticed.
+//! None of the enums here is `#[non_exhaustive]`, which is the rule for every
+//! public type of the crate; the [crate documentation](crate) records it. The
+//! workspace is not published, so its only other user is the desktop crate,
+//! and that crate is meant to break when a variant is added: it matches these
+//! enums without a wildcard arm, so the compiler points at every place that
+//! has to decide what the new variant means. With `#[non_exhaustive]` those
+//! matches would need a wildcard, and a new variant would fall into it
+//! unnoticed.
 
 use crate::csv::CsvError;
 use std::collections::BTreeMap;
