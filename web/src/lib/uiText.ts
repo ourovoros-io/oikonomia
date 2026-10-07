@@ -1,5 +1,5 @@
 import { t } from './i18n'
-import { formatDate, formatMoney } from './money'
+import { formatDate, formatMoney, type Currency } from './money'
 
 /**
  * Text Rust decides on and the UI words: a stable code and the values to fill
@@ -61,7 +61,9 @@ export const SYNTHETIC_LINE_KEYS: Record<string, string> = {
 
 /**
  * Money values a note carries as integer minor units: the placeholder the copy
- * uses, and the params that hold the minor units and their currency.
+ * uses, and the params that hold the minor units and their currency. Core only
+ * sends an amount in the currency of the book the note is about, so the book's
+ * decimals format it.
  */
 const MONEY_PARAMS: Record<string, { placeholder: string; minor: string; currency: string }> = {
   transfer_fee: { placeholder: 'fee', minor: 'fee_minor', currency: 'currency' },
@@ -85,8 +87,13 @@ const LEFTOVER_PLACEHOLDER = /\{\w+\}/
  * code is unknown or its values are unusable. A code is never shown: an
  * unknown one is a version mismatch, so it is logged and skipped. Copy with a
  * value still missing is skipped too, never shown with a raw `{name}` in it.
+ *
+ * `book` is the currency of the book the text is about, or null when there is
+ * no book. A note that carries money is skipped without it, and when it names
+ * another currency: only the book's currency comes with the number of decimals
+ * core counts in.
  */
-export function renderUiText(text: UiText): string {
+export function renderUiText(text: UiText, book: Currency | null): string {
   const key = keyFor(NOTE_CODE_KEYS, text.code)
 
   if (key === undefined) {
@@ -111,9 +118,14 @@ export function renderUiText(text: UiText): string {
       return ''
     }
 
+    if (book === null || book.code !== currency) {
+      console.warn(`UI text "${text.code}" carries money that is not in the book's currency`)
+      return ''
+    }
+
     // The same call as the suggested amount beside the fee in the same banner,
     // so the two always look alike.
-    vars[spec.placeholder] = formatMoney(Number(rawMinor), currency)
+    vars[spec.placeholder] = formatMoney(Number(rawMinor), book)
   }
 
   const copy = t(key, vars)
@@ -129,9 +141,9 @@ export function renderUiText(text: UiText): string {
 }
 
 /** All notes in the current language, in order, joined by a space; unknown codes are skipped. */
-export function renderUiTexts(notes: readonly UiText[]): string {
+export function renderUiTexts(notes: readonly UiText[], book: Currency | null): string {
   return notes
-    .map((note) => renderUiText(note))
+    .map((note) => renderUiText(note, book))
     .filter((sentence) => sentence !== '')
     .join(' ')
 }

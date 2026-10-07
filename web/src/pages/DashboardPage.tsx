@@ -3,6 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, Landmark, Receipt } from 'lucide-react'
 import {
   api,
   formatDate,
+  bookCurrency,
   formatMoney,
   localeForCurrency,
   monthEndISO,
@@ -172,8 +173,8 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
     )
   }
 
-  const ccy = entity.base_currency
-  const loc = localeForCurrency(ccy)
+  const ccy = bookCurrency(entity)
+  const loc = localeForCurrency(ccy.code)
   const money = (n: number, signed = false) => formatMoney(n, ccy, loc, { signed })
 
   const pending = loading && !data
@@ -191,7 +192,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
     <div className="space-y-4">
       <TopBar
         title={entity.name}
-        subtitle={`${periodTitle} · ${ccy}`}
+        subtitle={`${periodTitle} · ${ccy.code}`}
         actions={
           <Segmented<Period>
             value={period}

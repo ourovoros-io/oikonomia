@@ -254,6 +254,7 @@ export function buildLedger(lang: DemoLang): DemoLedger {
     id: ENTITY_ID,
     name: lang === 'el' ? 'Εργαστήριο Νεφελόρα' : 'Nefelora Studio',
     base_currency: 'EUR',
+    base_currency_decimals: 2,
     fiscal_year_start_month: 1,
     chart_template: 'company',
   }

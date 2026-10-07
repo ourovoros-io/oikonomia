@@ -66,7 +66,7 @@ function expense(
 
 const filled = {
   entityName: 'Personal',
-  currency: 'EUR',
+  currency: { code: 'EUR', decimals: 2 },
   from: '2026-08-01',
   to: '2026-08-31',
   expenses: [
@@ -135,7 +135,7 @@ describe('buildExpenseReportSvg', () => {
   test('empty period still builds the dashed empty state', () => {
     const svg = buildExpenseReportSvg({
       entityName: 'Personal',
-      currency: 'EUR',
+      currency: { code: 'EUR', decimals: 2 },
       from: '2026-08-01',
       to: '2026-08-31',
       expenses: [],
@@ -145,7 +145,7 @@ describe('buildExpenseReportSvg', () => {
     expect(svg).toContain('stroke-dasharray')
     const model = buildExpensePdfModel({
       entityName: 'Personal',
-      currency: 'EUR',
+      currency: { code: 'EUR', decimals: 2 },
       from: '2026-08-01',
       to: '2026-08-31',
       expenses: [],
@@ -160,7 +160,7 @@ describe('buildExpensePdfBytes', () => {
   test('empty period still produces a PDF', async () => {
     const bytes = await buildExpensePdfBytes({
       entityName: 'Personal',
-      currency: 'EUR',
+      currency: { code: 'EUR', decimals: 2 },
       from: '2026-08-01',
       to: '2026-08-31',
       expenses: [],
@@ -281,7 +281,7 @@ describe('EL PDF copy', () => {
     setLocale('el')
     const model = buildExpensePdfModel({
       entityName: 'Προσωπικό',
-      currency: 'EUR',
+      currency: { code: 'EUR', decimals: 2 },
       from: '2026-08-01',
       to: '2026-08-31',
       expenses: [],

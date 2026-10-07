@@ -123,26 +123,29 @@ use crate::domain::CurrencyCode;
 /// Returns the number of decimal digits (the minor-unit exponent) of a
 /// currency code, 2 for a code the table does not list.
 ///
-/// This is the one exponent table of the crate: CSV import and the document
-/// analyzer both read it. It has to agree with the webview, which turns
-/// `amount_minor` into a displayed amount (and typed amounts back into minor
-/// units) with the digits `Intl.NumberFormat` reports for the currency. Those
-/// digits come from CLDR, not ISO 4217, and the two differ: CLDR gives `IQD`,
-/// `IRR`, `RSD` and a dozen more no decimals where ISO gives two or three. If
-/// this table followed ISO, an imported IQD amount would show 1000 times too
-/// large.
+/// This table is the source of truth for what one minor unit of a currency
+/// is, everywhere in the app. CSV import and the document analyzer read it
+/// to turn a written amount into `amount_minor`. The UI is told the number
+/// with each book ([`Entity::base_currency_decimals`]) and converts between
+/// minor units and a displayed or typed amount with it, so the table does
+/// not have to match the currency data of the webview, and a webview on
+/// other data shows the same amounts.
 ///
-/// So the table is CLDR's, version 46 as shipped in ICU 76. It lists every
-/// code whose digits there are not 2: 43 codes with none, 6 with three
-/// (`BHD`, `JOD`, `KWD`, `LYD`, `OMR`, `TND`) and 2 with four (`CLF`, `UYW`).
-/// The test `the_non_two_digit_codes_are_exactly_cldrs` pins the three
-/// lists. Withdrawn codes CLDR still knows are kept so an old export lines
-/// up with what the webview shows.
+/// The values are those of CLDR version 46 (ICU 76), not of ISO 4217, and
+/// the two differ: CLDR gives `IQD`, `IRR`, `RSD` and a dozen more no
+/// decimals where ISO gives two or three. The table lists every code whose
+/// digits there are not 2: 43 codes with none, 6 with three (`BHD`, `JOD`,
+/// `KWD`, `LYD`, `OMR`, `TND`) and 2 with four (`CLF`, `UYW`). The test
+/// `the_non_two_digit_codes_are_exactly_cldrs` pins the three lists.
 ///
-/// The agreement holds for a webview on that CLDR version, and CLDR changes
-/// these digits between versions. Node 22.22 (ICU 78, CLDR 48) reports no
-/// decimals for `COP`, `HUF`, `IDR` and `PKR`, which this table reads with
-/// two, and two decimals for `RSD`, which this table reads with none.
+/// A value must not change once a release has shipped with it. The amounts
+/// in every vault are counted in the unit the table gave when they were
+/// posted, and nothing records which table that was, so a changed value
+/// would rescale every stored amount of that currency. Later CLDR versions
+/// do differ (version 48 gives `COP`, `HUF`, `IDR` and `PKR` no decimals and
+/// `RSD` two); following one would take a vault migration.
+///
+/// [`Entity::base_currency_decimals`]: crate::domain::Entity::base_currency_decimals
 #[must_use]
 pub fn currency_minor_exponent(code: CurrencyCode) -> u8 {
     match code.as_str() {
@@ -929,11 +932,11 @@ mod tests {
         assert_eq!(currency_minor_exponent("XXX".parse().unwrap()), 2);
     }
 
-    /// The codes where ISO 4217 and CLDR disagree, or where the table used to
-    /// say 2 while the webview formats with no decimals. Each one, read with
-    /// the wrong exponent, shows an amount 100 or 1000 times off.
+    /// The codes where ISO 4217 and CLDR disagree, or where the table once
+    /// said 2. Vaults hold amounts counted with these values, so a change
+    /// here rescales them by 100 or 1000.
     #[test]
-    fn exponents_match_what_the_webview_formats_with() {
+    fn exponents_stay_what_vaults_were_written_with() {
         for (code, digits) in [
             ("IQD", 0),
             ("XOF", 0),
