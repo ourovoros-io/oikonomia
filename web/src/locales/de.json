@@ -970,6 +970,7 @@
     "io": "Ein Dateivorgang ist fehlgeschlagen.",
     "crypto": "Ein Sicherheitsvorgang ist fehlgeschlagen.",
     "vaultCorrupt": "Die Tresordatei ist beschädigt.",
+    "vaultTooNew": "Dieser Tresor wurde mit einer neueren Version von Oikonomia erstellt. Aktualisieren Sie die App, um ihn zu öffnen.",
     "backupInvalid": "Diese Sicherungsdatei ist ungültig.",
     "restoreWouldOverwrite": "Es existiert bereits ein Tresor; die Wiederherstellung würde ihn überschreiben.",
     "notFound": "Dieses Element wurde nicht gefunden.",

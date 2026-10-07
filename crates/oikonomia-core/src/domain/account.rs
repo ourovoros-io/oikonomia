@@ -21,29 +21,13 @@
 //! `false` and the account's entries stay in the book. Accounts are removed
 //! only together with their whole entity.
 
+use crate::domain::define_id;
 use crate::domain::entity::EntityId;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-/// Identifies one [`Account`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AccountId(pub Uuid);
-
-impl AccountId {
-    /// Returns a new random (version 4) id.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for AccountId {
-    /// Returns a new random id, the same as [`AccountId::new`], not a fixed
-    /// value.
-    fn default() -> Self {
-        Self::new()
-    }
+define_id! {
+    /// Identifies one [`Account`].
+    AccountId
 }
 
 /// The five classes of account in double-entry bookkeeping.
@@ -66,6 +50,31 @@ pub enum AccountType {
 }
 
 impl AccountType {
+    /// Returns the type as the UI and the vault write it: `asset`,
+    /// `liability`, `equity`, `income` or `expense`.
+    ///
+    /// This is the text serde writes and the text stored in
+    /// `accounts.account_type`, so it is part of the vault format: changing
+    /// one of the five would make every existing vault unreadable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::domain::AccountType;
+    ///
+    /// assert_eq!(AccountType::Liability.identifier(), "liability");
+    /// ```
+    #[must_use]
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::Asset => "asset",
+            Self::Liability => "liability",
+            Self::Equity => "equity",
+            Self::Income => "income",
+            Self::Expense => "expense",
+        }
+    }
+
     /// Returns `true` for the types whose balance a debit raises: assets and
     /// expenses.
     ///
@@ -113,4 +122,25 @@ pub struct Account {
     pub is_system: bool,
     /// Position in the chart, ascending; ties are ordered by code.
     pub sort_order: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AccountType;
+
+    #[test]
+    fn the_identifier_of_an_account_type_is_the_text_serde_writes() {
+        for account_type in [
+            AccountType::Asset,
+            AccountType::Liability,
+            AccountType::Equity,
+            AccountType::Income,
+            AccountType::Expense,
+        ] {
+            assert_eq!(
+                serde_json::to_value(account_type).unwrap(),
+                serde_json::Value::from(account_type.identifier())
+            );
+        }
+    }
 }

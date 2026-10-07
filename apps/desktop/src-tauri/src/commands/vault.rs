@@ -10,14 +10,14 @@
 //! ([`crate::state::spawn_auto_lock`]).
 
 use crate::commands::support::{
-    dialog_path, require_granted_path, run_blocking, with_vault_blocking,
+    FileDialog, dialog_path, require_granted_path, run_blocking, with_vault_blocking,
 };
 use crate::error::CommandResult;
-use crate::state::AppState;
+use crate::state::{AppState, GrantPurpose};
 use oikonomia_core::prefs::load_ui_prefs;
 use oikonomia_core::vault::{BACKUP_EXTENSION, VaultStatus, default_backup_file_name};
 use std::path::PathBuf;
-use tauri::{Emitter, State};
+use tauri::{Emitter, Runtime, State};
 use zeroize::Zeroizing;
 
 /// Returns whether the vault is uninitialized, locked or unlocked.
@@ -91,7 +91,7 @@ pub(crate) async fn vault_init(
 /// Returns `vault_uninitialized` when no vault exists, `invalid_password`
 /// when the password is rejected, `vault_corrupt` when the header or the
 /// database cannot be used, `vault_too_new` (with the versions as `found` and
-/// `supported`) for a database written by a newer version, `crypto` when the
+/// `supported`) for a header or database written by a newer version, `crypto` when the
 /// key cannot be derived, `io` when a file cannot be read, and `database`
 /// when the database cannot be read or migrated. Returns `task_failed` when
 /// the blocking task panics.
@@ -179,11 +179,11 @@ pub(crate) async fn vault_lock(
 ///
 /// Returns `save_location_invalid` when the dialog's answer is not a path,
 /// `vault_uninitialized` when there is no vault to back up, `vault_corrupt`
-/// when the vault files are incomplete, `io` when the archive cannot be
-/// written, `database` when the open vault cannot be snapshotted, `crypto`
-/// when that snapshot is not encrypted, and `backup_invalid` when a vault
-/// file becomes shorter while it is copied. Returns `task_failed` when a
-/// blocking task panics.
+/// when the vault files are incomplete or a password change did not finish,
+/// `io` when the archive cannot be written or a vault file becomes shorter
+/// while it is copied, `database` when the open vault cannot be snapshotted,
+/// and `crypto` when that snapshot is not encrypted. Returns `task_failed`
+/// when a blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_backup(
     app: tauri::AppHandle,
@@ -212,7 +212,7 @@ pub(crate) async fn vault_backup(
     let Some(file_path) = picked else {
         return Ok(None);
     };
-    let destination = with_backup_extension(dialog_path(file_path, "save")?);
+    let destination = with_backup_extension(dialog_path(file_path, FileDialog::Save)?);
 
     with_vault_blocking(&state, move |vault| {
         vault.backup_to(&destination)?;
@@ -225,12 +225,11 @@ pub(crate) async fn vault_backup(
 /// Restores a portable vault archive and leaves the vault locked.
 ///
 /// `path` is the archive to unpack. When it is `None`, a native open dialog
-/// chooses the file. A given path is accepted only if the user granted it
-/// ([`AppState::grant_paths`]), so the webview cannot name arbitrary files.
-/// The grant is not tied to this command: besides the path
-/// [`vault_pick_backup`] returned, any file the user dropped on a window or
-/// picked for a CSV import passes the check, and is then rejected only if it
-/// is not a backup archive.
+/// chooses the file. A given path is accepted only if the user picked it in
+/// that dialog ([`GrantPurpose::Backup`]), which is the path
+/// [`vault_pick_backup`] returned, so the webview cannot name arbitrary
+/// files. A file the user dropped on a window or picked for a CSV import is
+/// refused, whatever it holds.
 ///
 /// The session is locked, and `vault-locked` emitted if it was unlocked,
 /// before the dialog opens, so cancelling the dialog still leaves the vault
@@ -245,15 +244,16 @@ pub(crate) async fn vault_backup(
 ///
 /// # Errors
 ///
-/// Returns `path_not_granted` for a path the user never handed over, before
-/// the session is touched; `save_location_invalid` when the dialog's answer
-/// is not a path; `backup_invalid` when the file is not a backup archive;
+/// Returns `path_not_granted` for a path the user did not pick in the backup
+/// dialog, before the session is touched; `open_location_invalid` when the
+/// dialog's answer is not a path; `backup_invalid` when the file is not a
+/// backup archive;
 /// `restore_would_overwrite` when a vault exists and `replace` is `false`;
 /// and `io` or `vault_corrupt` when the vault files cannot be replaced.
 /// Returns `task_failed` when a blocking task panics.
 #[tauri::command]
-pub(crate) async fn vault_restore(
-    app: tauri::AppHandle,
+pub(crate) async fn vault_restore<R: Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, AppState>,
     path: Option<String>,
     replace: bool,
@@ -262,7 +262,8 @@ pub(crate) async fn vault_restore(
     let granted = match path {
         Some(chosen) => {
             let grants = state.path_grants();
-            Some(run_blocking(move || require_granted_path(&grants, &chosen)).await?)
+            let check = move || require_granted_path(&grants, GrantPurpose::Backup, &chosen);
+            Some(run_blocking(check).await?)
         }
         None => None,
     };
@@ -294,7 +295,7 @@ pub(crate) async fn vault_restore(
 ///
 /// # Errors
 ///
-/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// Returns `open_location_invalid` when the dialog's answer is not a path,
 /// and `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_pick_backup(
@@ -309,15 +310,15 @@ pub(crate) async fn vault_pick_backup(
 
 /// Asks for a `.oikonomia-backup` file with a native open dialog.
 ///
-/// The chosen path is granted, so that [`vault_restore`] accepts it back.
-/// Returns `None` if the user cancelled.
+/// The chosen path is granted as a backup and nothing else, so that
+/// [`vault_restore`] accepts it back. Returns `None` if the user cancelled.
 ///
 /// # Errors
 ///
-/// Returns `save_location_invalid` when the dialog's answer is not a path,
+/// Returns `open_location_invalid` when the dialog's answer is not a path,
 /// and `task_failed` when the blocking task panics.
-async fn pick_backup_path(
-    app: &tauri::AppHandle,
+async fn pick_backup_path<R: Runtime>(
+    app: &tauri::AppHandle<R>,
     state: &AppState,
 ) -> CommandResult<Option<PathBuf>> {
     let app = app.clone();
@@ -338,8 +339,8 @@ async fn pick_backup_path(
             return Ok(None);
         };
 
-        let path = dialog_path(picked, "backup")?;
-        grants.grant([path.clone()]);
+        let path = dialog_path(picked, FileDialog::OpenBackup)?;
+        grants.grant(GrantPurpose::Backup, [path.clone()]);
         Ok(Some(path))
     })
     .await
@@ -351,8 +352,8 @@ async fn pick_backup_path(
 /// # Errors
 ///
 /// Returns `task_failed` when the blocking task panics.
-async fn lock_vault_session(
-    app: &tauri::AppHandle,
+async fn lock_vault_session<R: Runtime>(
+    app: &tauri::AppHandle<R>,
     state: &State<'_, AppState>,
 ) -> CommandResult<()> {
     let was_unlocked = with_vault_blocking(state, |vault| {

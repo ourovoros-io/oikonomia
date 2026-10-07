@@ -34,30 +34,12 @@
 //! `backup_invalid`) is diagnostic, may hold operating-system error text,
 //! and is never a parameter. It reaches the webview only in `message`.
 //!
-//! # Codes used more broadly than their name
+//! # One code, one condition
 //!
-//! Three codes are sent for conditions their name does not cover. In each
-//! case no existing code fits better, and a new code is a change to the
-//! contract with the frontend, so they are recorded here instead.
-//!
-//! - `save_location_invalid` is also sent by the open dialogs (a backup to
-//!   restore, a CSV to import), not only by save dialogs. The copy, "Could
-//!   not use that location. Choose a different one.", reads correctly for
-//!   both.
-//! - `task_failed` is documented as a background task that panicked or was
-//!   cancelled. It is also sent when the system names no cache directory for
-//!   a downloaded update (`crate::update`), and when a preferences command
-//!   runs after a failed start, with no application state
-//!   (`crate::commands`). The copy asks the user to try again, which helps in
-//!   neither case.
-//! - `update_artifact_integrity`, worded in the update crate as "failed
-//!   verification", is returned by `crate::update_exec` for every failure of
-//!   the install step, which runs after verification has passed: the
-//!   download is no longer there, a copy, permission change, rename or
-//!   unpack fails, the installer cannot be started, or the running copy
-//!   cannot find its own executable or bundle. The UI gives every update
-//!   code the same sentence, so the user sees no difference; what is lost is
-//!   the distinction in the diagnostics.
+//! A code is sent only for the condition its name states, so that the
+//! diagnostics say what happened even where the UI gives several codes one
+//! sentence. A failure that fits no existing code gets a code of its own; it
+//! does not borrow the nearest one.
 
 use oikonomia_core::Error as CoreError;
 use oikonomia_update::UpdateError;
@@ -140,9 +122,12 @@ pub(crate) enum DesktopError {
     /// A file the user picked or dropped could not be read.
     #[error("file_unreadable: a picked or dropped file cannot be read")]
     FileUnreadable,
-    /// The native dialog returned a location that is not a usable path.
-    #[error("save_location_invalid: the dialog returned a location that is not a path")]
+    /// A native save dialog returned a location that is not a usable path.
+    #[error("save_location_invalid: the save dialog returned a location that is not a path")]
     SaveLocationInvalid,
+    /// A native open dialog returned a location that is not a usable path.
+    #[error("open_location_invalid: the open dialog returned a location that is not a path")]
+    OpenLocationInvalid,
     /// Writing a file to the chosen location failed.
     #[error("save_failed: cannot write the file to the chosen location")]
     SaveFailed,
@@ -155,6 +140,15 @@ pub(crate) enum DesktopError {
     /// A background task panicked or was cancelled.
     #[error("task_failed: a background task panicked or was cancelled")]
     TaskFailed,
+    /// The system names no cache directory for the app, so a downloaded
+    /// update has nowhere to wait.
+    #[error("cache_dir_unavailable: the system names no cache directory for the app")]
+    CacheDirUnavailable,
+    /// A command ran with no application state: the start failed, and the
+    /// hidden webview is still running while the failure is shown
+    /// (`crate::startup`).
+    #[error("app_state_unavailable: the application state was never set up")]
+    AppStateUnavailable,
 }
 
 impl DesktopError {
@@ -164,10 +158,13 @@ impl DesktopError {
         Self::FileDataInvalid,
         Self::FileUnreadable,
         Self::SaveLocationInvalid,
+        Self::OpenLocationInvalid,
         Self::SaveFailed,
         Self::PathNotGranted,
         Self::MailClientFailed,
         Self::TaskFailed,
+        Self::CacheDirUnavailable,
+        Self::AppStateUnavailable,
     ];
 
     /// Returns the stable `snake_case` identifier the UI maps to localized text.
@@ -177,10 +174,13 @@ impl DesktopError {
             Self::FileDataInvalid => "file_data_invalid",
             Self::FileUnreadable => "file_unreadable",
             Self::SaveLocationInvalid => "save_location_invalid",
+            Self::OpenLocationInvalid => "open_location_invalid",
             Self::SaveFailed => "save_failed",
             Self::PathNotGranted => "path_not_granted",
             Self::MailClientFailed => "mail_client_failed",
             Self::TaskFailed => "task_failed",
+            Self::CacheDirUnavailable => "cache_dir_unavailable",
+            Self::AppStateUnavailable => "app_state_unavailable",
         }
     }
 }
@@ -194,7 +194,7 @@ mod tests {
     use oikonomia_core::error::{
         AccountRole, BackupDefect, Resource, ValidationError, VaultCorruption,
     };
-    use oikonomia_update::UpdateError;
+    use oikonomia_update::{InstallStep, UpdateError};
 
     use super::{CommandError, DesktopError};
     use oikonomia_test_support::listed_variants;
@@ -204,10 +204,13 @@ mod tests {
             DesktopError::FileDataInvalid,
             DesktopError::FileUnreadable,
             DesktopError::SaveLocationInvalid,
+            DesktopError::OpenLocationInvalid,
             DesktopError::SaveFailed,
             DesktopError::PathNotGranted,
             DesktopError::MailClientFailed,
             DesktopError::TaskFailed,
+            DesktopError::CacheDirUnavailable,
+            DesktopError::AppStateUnavailable,
         }
     }
 
@@ -534,6 +537,21 @@ mod tests {
         let error = CommandError::from(UpdateError::Network);
 
         assert_eq!(error.code, "update_network");
+        assert_eq!(error.params, BTreeMap::new());
+    }
+
+    /// An install step runs after verification has passed, so its failure
+    /// must not reach the webview as a failed verification. The step is in
+    /// the message, for the console, and in no parameter.
+    #[test]
+    fn a_failed_install_step_has_its_own_code_and_names_the_step_in_the_message() {
+        let error = CommandError::from(UpdateError::InstallFailed {
+            step: InstallStep::StartInstaller,
+        });
+
+        assert_eq!(error.code, "update_install_failed");
+        assert_ne!(error.code, UpdateError::ArtifactIntegrity.code());
+        assert!(error.message.ends_with("start the installer"), "{error}");
         assert_eq!(error.params, BTreeMap::new());
     }
 }

@@ -638,8 +638,8 @@ mod tests {
     fn every_menu_item_round_trips_through_its_id_and_has_a_label() {
         for item in TrayMenuItem::for_tray(false) {
             assert_eq!(TrayMenuItem::from_id(item.id()), Some(*item));
-            for locale in [Locale::En, Locale::El, Locale::Fr, Locale::De] {
-                assert_ne!(item.label(locale), "");
+            for locale in Locale::ALL {
+                assert_ne!(item.label(*locale), "");
             }
         }
         assert_eq!(TrayMenuItem::from_id("unknown"), None);

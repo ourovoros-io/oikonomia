@@ -67,13 +67,14 @@ impl StartupError {
 /// Returns what the user is told when opening the vault failed with `source`.
 ///
 /// Opening works on the files of the data directory and never opens the
-/// database, so only a corrupt vault and a file failure are expected here.
-/// Every other
-/// variant is listed, without a wildcard arm, so that a new core error has to
-/// be given a sentence here before this compiles.
+/// database, so only a corrupt vault, a header from a newer build and a file
+/// failure are expected here. Every other variant is listed, without a
+/// wildcard arm, so that a new core error has to be given a sentence here
+/// before this compiles.
 fn vault_problem(source: &CoreError) -> StartupProblem {
     match source {
         CoreError::VaultCorrupt(_) => StartupProblem::VaultDamaged,
+        CoreError::VaultTooNew { .. } => StartupProblem::VaultTooNew,
         CoreError::VaultUninitialized
         | CoreError::VaultLocked
         | CoreError::InvalidPassword
@@ -88,7 +89,6 @@ fn vault_problem(source: &CoreError) -> StartupProblem {
         | CoreError::Io { .. }
         | CoreError::Serialization { .. }
         | CoreError::Crypto { .. }
-        | CoreError::VaultTooNew { .. }
         | CoreError::BackupInvalid(_)
         | CoreError::RestoreWouldOverwrite
         | CoreError::NotFound(_)
@@ -102,6 +102,8 @@ fn vault_problem(source: &CoreError) -> StartupProblem {
 enum StartupProblem {
     /// The vault header cannot be parsed, or the database has no header.
     VaultDamaged,
+    /// The vault was written by a newer build than this one.
+    VaultTooNew,
     /// The data directory or the header file cannot be read.
     DataFolderUnreadable,
     /// Anything else; the user is told only that the app cannot start.
@@ -201,14 +203,31 @@ fn cannot_start_label(locale: Locale) -> &'static str {
 /// Returns the sentence that says what is wrong, for the problems that have
 /// one.
 ///
-/// The damaged-vault sentences are the ones the web catalog shows for
-/// `error.vaultCorrupt`, so the app names this problem one way.
+/// The damaged-vault and newer-vault sentences are the ones the web catalog
+/// shows for `error.vaultCorrupt` and `error.vaultTooNew`, so the app names
+/// each problem one way.
 fn problem_label(locale: Locale, problem: StartupProblem) -> Option<&'static str> {
     let label = match (problem, locale) {
         (StartupProblem::VaultDamaged, Locale::En) => "The vault file is corrupt.",
         (StartupProblem::VaultDamaged, Locale::El) => "Το αρχείο θυρίδας είναι κατεστραμμένο.",
         (StartupProblem::VaultDamaged, Locale::Fr) => "Le fichier du coffre est corrompu.",
         (StartupProblem::VaultDamaged, Locale::De) => "Die Tresordatei ist beschädigt.",
+
+        (StartupProblem::VaultTooNew, Locale::En) => {
+            "This vault was created by a newer version of Oikonomia. Update the app to open it."
+        }
+        (StartupProblem::VaultTooNew, Locale::El) => {
+            "Αυτή η θυρίδα δημιουργήθηκε από νεότερη έκδοση του Oikonomia. \
+             Ενημερώστε την εφαρμογή για να την ανοίξετε."
+        }
+        (StartupProblem::VaultTooNew, Locale::Fr) => {
+            "Ce coffre a été créé par une version plus récente d’Oikonomia. \
+             Mettez l’application à jour pour l’ouvrir."
+        }
+        (StartupProblem::VaultTooNew, Locale::De) => {
+            "Dieser Tresor wurde mit einer neueren Version von Oikonomia erstellt. \
+             Aktualisieren Sie die App, um ihn zu öffnen."
+        }
 
         (StartupProblem::DataFolderUnreadable, Locale::En) => "Its data folder cannot be read.",
         (StartupProblem::DataFolderUnreadable, Locale::El) => {
@@ -232,9 +251,6 @@ mod tests {
     use oikonomia_core::prefs::Locale;
     use oikonomia_core::vault::vault_header_path;
     use std::path::{Path, PathBuf};
-
-    /// Every language the app is worded in.
-    const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
 
     /// Creates a fresh directory for one test.
     fn temp_dir(label: &str) -> PathBuf {
@@ -295,7 +311,7 @@ mod tests {
     fn the_message_names_the_problem_and_the_directory_in_every_language() {
         let data_dir = Path::new("/home/someone/.local/share/oikonomia");
 
-        for locale in LOCALES {
+        for locale in Locale::ALL.iter().copied() {
             for problem in [
                 StartupProblem::VaultDamaged,
                 StartupProblem::DataFolderUnreadable,
@@ -318,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn the_damaged_vault_wording_is_the_web_catalogs() {
+    fn the_vault_problem_wording_is_the_web_catalogs() {
         let catalogs = [
             (
                 Locale::En,
@@ -339,8 +355,10 @@ mod tests {
         ];
 
         for (locale, catalog) in catalogs {
-            let label = problem_label(locale, StartupProblem::VaultDamaged).expect("worded");
-            assert!(catalog.contains(label), "{locale:?}: {label}");
+            for problem in [StartupProblem::VaultDamaged, StartupProblem::VaultTooNew] {
+                let label = problem_label(locale, problem).expect("worded");
+                assert!(catalog.contains(label), "{locale:?}: {label}");
+            }
         }
     }
 }

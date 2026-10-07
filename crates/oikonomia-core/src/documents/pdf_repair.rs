@@ -34,7 +34,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use crate::documents::store::MAX_DOCUMENT_BYTES;
+use crate::documents::file::MAX_DOCUMENT_BYTES;
 
 /// Largest input the repair reads: the upload cap, so every stored document
 /// can be repaired and nothing larger is scanned.

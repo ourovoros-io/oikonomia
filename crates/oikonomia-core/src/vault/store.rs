@@ -32,7 +32,7 @@ use crate::error::{
     CryptoContext, DatabaseContext, Error, Result, SerializationContext, ValidationError,
     VaultCorruption,
 };
-use crate::vault::backup::recover_interrupted_restore;
+use crate::vault::backup::{recover_interrupted_restore, remove_stale_snapshot};
 use crate::vault::crypto::{self, VaultKey};
 use crate::vault::files::{
     discard_database_files, discard_file, rename_synced, write_private_file,
@@ -72,8 +72,7 @@ pub struct Vault {
     /// Published header, or `None` while no vault exists.
     ///
     /// Every method of this type that replaces `vault.header.json` replaces
-    /// this as well, before anything after the rename can fail. The one
-    /// exception is a restore whose reload fails; see `Vault::restore_from`.
+    /// this as well, before anything after the rename can fail.
     header: Option<VaultHeader>,
     /// Open connection, present exactly while the vault is unlocked.
     conn: Option<Connection>,
@@ -88,20 +87,28 @@ impl Vault {
     ///
     /// Also settles what a crash left half-done: a restore that was swapping
     /// the vault files is undone or finished (the protocol is in the
-    /// `vault::backup` module doc), and an interrupted first run is cleared
-    /// so the vault reads as uninitialized again (see [`Vault::init`]).
+    /// `vault::backup` module doc), the snapshot of an interrupted online
+    /// backup is removed, and an interrupted first run is cleared so the
+    /// vault reads as uninitialized again (see [`Vault::init`]).
+    ///
+    /// Because of the snapshot, this must not be called on a directory
+    /// while another handle is writing an online backup of it
+    /// ([`Vault::backup_to`], unlocked): that backup can fail.
     ///
     /// # Errors
     ///
     /// [`Error::Io`] when the directory cannot be created, an interrupted
-    /// restore cannot be settled, or the header cannot be read;
-    /// [`Error::VaultCorrupt`] when the header is not valid, comes
-    /// from a vault format this build does not know, or is missing while a
-    /// database exists.
+    /// restore cannot be settled, a leftover snapshot cannot be removed, or
+    /// the header cannot be read;
+    /// [`Error::VaultTooNew`] when the header's format version is above the
+    /// one this build reads, so a later build wrote it;
+    /// [`Error::VaultCorrupt`] when the header is not valid, names format
+    /// version 0, or is missing while a database exists.
     pub fn open_path(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         create_private_dir(&data_dir)?;
         recover_interrupted_restore(&data_dir)?;
+        remove_stale_snapshot(&data_dir)?;
 
         let header_path = vault_header_path(&data_dir);
         let db_path = vault_db_path(&data_dir);
@@ -224,7 +231,9 @@ impl Vault {
     /// - [`Error::VaultCorrupt`] when the header cannot be used to derive a
     ///   key, the database file is missing or empty, the database has no
     ///   `vault_meta` row, or its data fails a migration's checks.
-    /// - [`Error::VaultTooNew`] when the schema is newer than this build.
+    /// - [`Error::VaultTooNew`] when the schema is newer than this build,
+    ///   or when the published header's key failed and a staged header is
+    ///   from a newer format.
     /// - [`Error::Crypto`] when Argon2 fails or `SQLCipher` rejects a
     ///   setting.
     /// - [`Error::Database`] for every other failure to read or migrate the
@@ -269,6 +278,12 @@ impl Vault {
     /// database. No staged header, or one that is not a header (a crash can
     /// only truncate it before the rekey starts, while the old key is still
     /// the right one), therefore means the password was simply wrong.
+    ///
+    /// A staged header from a newer format is different: a later build
+    /// staged it, and if that build's rekey ran, it is the header that fits
+    /// and this build cannot use it. That is reported as
+    /// [`Error::VaultTooNew`] instead of sending the user off to retype a
+    /// password that may be right.
     fn unlock_with_staged_header(&mut self, password: &str) -> Result<()> {
         let staged_path = vault_staged_header_path(&self.data_dir);
         if !staged_path.exists() {
@@ -403,6 +418,20 @@ impl Vault {
                 Err(err)
             }
         }
+    }
+
+    /// Records that `header` is the one now published in the data
+    /// directory.
+    ///
+    /// For [`Vault::restore_from`], which replaces the header file from
+    /// another module. The caller has closed the connection: one that is
+    /// still open would belong to the database that was replaced.
+    pub(super) fn adopt_published_header(&mut self, header: VaultHeader) {
+        debug_assert!(
+            self.conn.is_none(),
+            "a connection would outlive the database it was opened on"
+        );
+        self.header = Some(header);
     }
 
     /// Puts back the session a failed password change closed.
@@ -755,28 +784,73 @@ mod tests {
         assert_ne!(&bytes[0..6], b"SQLite");
     }
 
+    /// Writes a copy of the published header of `data_dir` to `dest` with
+    /// its format version replaced.
+    fn write_header_with_version(data_dir: &Path, dest: &Path, version: u32) {
+        let raw = fs::read_to_string(vault_header_path(data_dir)).expect("read header");
+        let mut header: VaultHeader = serde_json::from_str(&raw).expect("parse header");
+        header.version = version;
+        fs::write(dest, serde_json::to_string(&header).expect("encode")).expect("write header");
+    }
+
     #[test]
-    fn a_header_from_a_newer_format_is_rejected_on_open() {
+    fn a_header_from_a_newer_format_is_too_new_not_corrupt() {
         let (dir, vault) = init_vault();
         drop(vault);
-
         let header_path = vault_header_path(dir.path());
-        let raw = fs::read_to_string(&header_path).expect("read header");
-        let mut header: VaultHeader = serde_json::from_str(&raw).expect("parse header");
-        header.version += 1;
-        fs::write(
-            &header_path,
-            serde_json::to_string(&header).expect("encode"),
-        )
-        .expect("write header");
+        write_header_with_version(dir.path(), &header_path, 2);
+        let before = fs::read(&header_path).expect("header");
 
         let err = Vault::open_path(dir.path())
             .map(|vault| vault.status())
             .expect_err("a format this build does not know must not open");
+
         assert_eq!(
             err,
-            Error::VaultCorrupt(VaultCorruption::UnsupportedFormat { version: 2 })
+            Error::VaultTooNew {
+                found: 2,
+                supported: 1
+            }
         );
+        assert_eq!(fs::read(&header_path).expect("header"), before, "untouched");
+    }
+
+    #[test]
+    fn a_header_with_format_version_zero_is_corrupt() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+        write_header_with_version(dir.path(), &vault_header_path(dir.path()), 0);
+
+        let err = Vault::open_path(dir.path())
+            .map(|vault| vault.status())
+            .expect_err("no build writes version 0");
+
+        assert_eq!(
+            err,
+            Error::VaultCorrupt(VaultCorruption::UnsupportedFormat { version: 0 })
+        );
+    }
+
+    #[test]
+    fn a_staged_header_from_a_newer_format_is_reported_when_the_published_key_fails() {
+        let (dir, mut vault) = init_vault();
+        vault.lock();
+        let staged = vault_staged_header_path(dir.path());
+        write_header_with_version(dir.path(), &staged, 2);
+
+        // The password that fails may be the right one for a rekey a later
+        // build ran, so this is not reported as a wrong password.
+        assert_eq!(
+            vault.unlock("wrong password!!"),
+            Err(Error::VaultTooNew {
+                found: 2,
+                supported: 1
+            })
+        );
+        assert_eq!(vault.status(), VaultStatus::Locked);
+
+        vault.unlock(PASSWORD).expect("the published header fits");
+        assert!(!staged.exists(), "a stale staged header is removed");
     }
 
     #[test]

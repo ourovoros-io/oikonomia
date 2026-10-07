@@ -1,4 +1,4 @@
-//! Conversions from a lower-level failure to [`Error`] at the call site.
+//! Conversions from a lower-level failure to [`enum@Error`] at the call site.
 //!
 //! A call that can fail below this crate names what core was doing and picks
 //! the variant by what failed:

@@ -7,17 +7,17 @@
 //!
 //! # Getting the text
 //!
-//! [`read_document_text`] sorts the file by three tests, in this order:
+//! [`read_document_text`] resolves the kind of the file once
+//! ([`DocumentKind::resolve`]) and reads it by that kind:
 //!
-//! 1. an `image/*` type goes to OCR ([`ocr_image`]);
-//! 2. a `text/plain` type or a `.txt` name is taken as it is, decoded as
-//!    UTF-8 with invalid bytes replaced;
-//! 3. a type containing `pdf` or a `.pdf` name goes through
-//!    [`read_pdf_text`], described below.
+//! 1. an image goes to OCR ([`ocr_image`]);
+//! 2. plain text is taken as it is, decoded as UTF-8 with invalid bytes
+//!    replaced;
+//! 3. a PDF goes through [`read_pdf_text`], described below.
 //!
-//! Anything else has no text. The order means a name can decide before a
-//! type does: a file sent as `application/pdf` and named `notes.txt` is
-//! read as plain text.
+//! A file of no kind has no text. The declared type and the name are not
+//! looked at again after the kind is resolved; `file.rs` states the rule,
+//! including what happens when the two disagree.
 //!
 //! # Reading a PDF
 //!
@@ -82,12 +82,15 @@
 //!
 //! # From text to suggestion
 //!
-//! The invoice reader ([`read_invoice_text`]) fills in the amount, date,
-//! reference, merchant, description and kind. [`finalize_suggestion`] adds
-//! the accounts. The notes end up in this order: where the text came from,
-//! the reader's own notes, the transfer fee, the request to add a payable
-//! account, the warning that the amount was withheld because the book's
-//! currency does not have two decimals, and the document's date.
+//! The invoice reader ([`read_invoice_text`]) finds the amount, date,
+//! reference, merchant, description and kind, in no language.
+//! [`suggest_accounts`] chooses the book's accounts for them, and
+//! [`suggestion_from_reading`] words the reading in the language of the
+//! application and builds the suggestion, once. The notes end up in this
+//! order: where the text came from, the reader's own notes, the transfer
+//! fee, the request to add a payable account, the warning that the amount
+//! was withheld because the book's currency does not have two decimals, and
+//! the document's date.
 
 use std::path::Path;
 
@@ -97,18 +100,21 @@ use std::path::Path;
 // version bump of one stops the build (the types no longer match).
 use pdf_extract as lopdf;
 use serde::{Deserialize, Serialize};
+use time::Date;
 
 use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
-use crate::documents::invoice::read_invoice_text;
+use crate::documents::account_match::{match_expense_account, match_income_account};
+use crate::documents::file::{DocumentKind, NewDocument};
+use crate::documents::invoice::{DocumentClass, InvoiceReading, read_invoice_text};
 use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use crate::documents::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
 use crate::documents::pdf_repair::repair_xref_offsets;
-use crate::documents::store::{has_extension, match_expense_account, match_income_account};
-use crate::domain::{Account, AccountId, ChartTemplate};
-use crate::error::{AccountRole, Result};
+use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode};
+use crate::error::AccountRole;
 use crate::prefs::Locale;
 use crate::ui_text::{UiText, UiTextCode};
+use crate::util::format_date;
 
 /// Suggested high-level entry kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +126,17 @@ pub enum EntryKindSuggestion {
     Income,
     /// Bill (may be unpaid).
     Bill,
+}
+
+impl From<DocumentClass> for EntryKindSuggestion {
+    /// The entry kind a classified document suggests.
+    fn from(class: DocumentClass) -> Self {
+        match class {
+            DocumentClass::Expense => Self::Expense,
+            DocumentClass::Income { .. } => Self::Income,
+            DocumentClass::Bill { .. } => Self::Bill,
+        }
+    }
 }
 
 /// Where the suggestion came from.
@@ -143,11 +160,12 @@ pub struct DocumentSuggestion {
     pub model: Option<String>,
     /// Suggested kind.
     pub kind: EntryKindSuggestion,
-    /// Amount in minor units (entity currency assumed).
+    /// Amount in minor units of the book's currency. Withheld when that
+    /// currency does not have two decimals, since the reader reads cents.
     pub amount_minor: Option<i64>,
-    /// The document's date as `YYYY-MM-DD`, if one was found. Always a day
-    /// the calendar has.
-    pub entry_date: Option<String>,
+    /// The document's date, if one was found. Written as `YYYY-MM-DD`.
+    #[serde(with = "optional_date")]
+    pub entry_date: Option<Date>,
     /// Description / merchant line.
     pub description: Option<String>,
     /// Invoice / reference number.
@@ -170,6 +188,53 @@ pub struct DocumentSuggestion {
     pub notes: Vec<UiText>,
 }
 
+/// Writes an optional [`Date`] as a `YYYY-MM-DD` string or `null`, the form
+/// the web UI reads.
+///
+/// [`serde_date`](crate::util::serde_date) does the same for a date that is
+/// always there.
+mod optional_date {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use time::Date;
+
+    use crate::util::{format_date, parse_date};
+
+    /// Serializes `date` as the string [`format_date`] gives, or as `null`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serializer's own error when it cannot write the value.
+    #[expect(
+        clippy::ref_option,
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde calls a `with` serializer with a reference to the field"
+    )]
+    pub(super) fn serialize<S: Serializer>(
+        date: &Option<Date>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match date {
+            Some(date) => serializer.serialize_some(&format_date(*date)),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    /// Deserializes `null` or a string read through [`parse_date`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserializer's error when the value is neither `null`
+    /// nor a string, and a custom error when the string is not a
+    /// `YYYY-MM-DD` date.
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Date>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| parse_date(&text).map_err(serde::de::Error::custom))
+            .transpose()
+    }
+}
+
 /// What the analyzer status line says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -186,14 +251,81 @@ impl AnalyzerHint {
 }
 
 /// Status of the integrated analyzer.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The status is one fact: whether OCR can run. On the wire it is three
+/// fields, `ocr_available`, `offline` and `hint`, which the UI reads; they
+/// are all written from that one fact, so they cannot disagree, and a JSON
+/// object in which they do is refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "AnalyzerStatusWire", try_from = "AnalyzerStatusWire")]
 pub struct AnalyzerStatus {
-    /// Bundled OCR model files are present.
-    pub ocr_available: bool,
-    /// Always offline.
-    pub offline: bool,
+    /// Whether an engine is loaded or the model files are present.
+    ocr_available: bool,
+}
+
+impl AnalyzerStatus {
+    /// Whether the bundled OCR can run: images and scanned PDFs can be read.
+    #[must_use]
+    pub const fn ocr_available(self) -> bool {
+        self.ocr_available
+    }
+
     /// Which status line the UI shows.
-    pub hint: AnalyzerHint,
+    #[must_use]
+    pub const fn hint(self) -> AnalyzerHint {
+        if self.ocr_available {
+            AnalyzerHint::Ready
+        } else {
+            AnalyzerHint::ModelsMissing
+        }
+    }
+}
+
+/// The JSON form of an [`AnalyzerStatus`].
+#[derive(Debug, Serialize, Deserialize)]
+struct AnalyzerStatusWire {
+    /// An OCR engine is loaded or the bundled model files are present.
+    ocr_available: bool,
+    /// Always `true`: the analyzer never uses the network.
+    offline: bool,
+    /// Which status line the UI shows.
+    hint: AnalyzerHint,
+}
+
+impl From<AnalyzerStatus> for AnalyzerStatusWire {
+    fn from(status: AnalyzerStatus) -> Self {
+        Self {
+            ocr_available: status.ocr_available(),
+            offline: true,
+            hint: status.hint(),
+        }
+    }
+}
+
+/// The three fields of a status on the wire do not state the same fact.
+#[derive(Debug, thiserror::Error)]
+#[error("the analyzer status fields contradict each other")]
+struct ContradictoryStatus;
+
+impl TryFrom<AnalyzerStatusWire> for AnalyzerStatus {
+    type Error = ContradictoryStatus;
+
+    /// Reads the status back from its wire form.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an object whose three fields do not state the same fact.
+    fn try_from(wire: AnalyzerStatusWire) -> std::result::Result<Self, Self::Error> {
+        let status = Self {
+            ocr_available: wire.ocr_available,
+        };
+
+        if wire.offline && wire.hint == status.hint() {
+            Ok(status)
+        } else {
+            Err(ContradictoryStatus)
+        }
+    }
 }
 
 /// What the analyzer can read with the models in `model_dir`.
@@ -202,18 +334,22 @@ pub struct AnalyzerStatus {
 /// process has already loaded an engine. With no directory it is
 /// unavailable. The call does not load the models and does not wait for a
 /// running OCR.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::documents::{AnalyzerHint, analyzer_status};
+///
+/// let status = analyzer_status(None);
+/// assert!(!status.ocr_available());
+/// assert_eq!(status.hint(), AnalyzerHint::ModelsMissing);
+/// ```
 #[must_use]
-pub fn analyzer_status(model_dir: Option<&std::path::Path>) -> AnalyzerStatus {
+pub fn analyzer_status(model_dir: Option<&Path>) -> AnalyzerStatus {
     let paths = model_dir.map(OcrModelPaths::from_dir);
-    let available = paths.as_ref().is_some_and(ocr_available);
+
     AnalyzerStatus {
-        ocr_available: available,
-        offline: true,
-        hint: if available {
-            AnalyzerHint::Ready
-        } else {
-            AnalyzerHint::ModelsMissing
-        },
+        ocr_available: paths.as_ref().is_some_and(ocr_available),
     }
 }
 
@@ -225,76 +361,63 @@ pub struct AnalyzeContext<'a> {
     /// The book's accounts the suggestion may point at.
     pub accounts: &'a [Account],
     /// The book's base currency code.
-    pub default_currency: &'a str,
+    pub default_currency: CurrencyCode,
     /// Language of the suggested description and merchant.
     pub locale: Locale,
 }
 
 /// Analyzes the bytes of one file into a draft suggestion, fully offline.
 ///
-/// `mime_type` is compared in lowercase and decides how the file is read;
-/// `filename` is used for its extension only. `model_dir` is where the OCR
-/// models are, and without it images and scanned PDFs are not read.
+/// The kind of `document` decides how it is read; a file of no kind the
+/// vault stores is not read. `model_dir` is where the OCR models are, and
+/// without it images and scanned PDFs are not read.
 ///
 /// The suggested description and merchant are written in `context.locale`;
 /// text taken from the document itself stays as the document has it.
 ///
-/// # Errors
-///
-/// None: a file that cannot be read, decoded or parsed yields an empty
-/// suggestion whose note says why, never an error. The `Result` stays
-/// because the desktop shell (`analyze_readonly` in
-/// `apps/desktop/src-tauri/src/commands/documents.rs`) applies `?` to it; returning the
-/// suggestion directly means changing that caller too.
+/// There is no error to return: a file that cannot be read, decoded or
+/// parsed yields an empty suggestion whose note says why.
+#[must_use]
 pub fn analyze_document_bytes(
-    filename: &str,
-    mime_type: &str,
-    data: &[u8],
+    document: &NewDocument<'_>,
     context: &AnalyzeContext<'_>,
-    model_dir: Option<&std::path::Path>,
-) -> Result<DocumentSuggestion> {
+    model_dir: Option<&Path>,
+) -> DocumentSuggestion {
     let AnalyzeContext {
-        template,
-        accounts,
         default_currency,
         locale,
+        ..
     } = *context;
-    let mime = mime_type.to_ascii_lowercase();
 
-    let mut category_hint = String::new();
-    let mut source = AnalyzeSource::None;
-    let mut model = None;
-
-    let mut suggestion = match read_document_text(filename, &mime, data, model_dir) {
+    let mut suggestion = match read_document_text(document, model_dir) {
         ExtractedText::Read { text, origin } => {
-            let reading = read_invoice_text(&text, locale);
-            category_hint = reading.category_hint;
-            source = origin.source();
+            let reading = read_invoice_text(&text);
+            let kind = EntryKindSuggestion::from(reading.class);
+            let accounts = suggest_accounts(context, kind, &reading.category_hint());
+            let fee_minor = reading.transfer_fee_minor;
 
-            let mut suggestion = reading.suggestion;
-            model = origin
-                .model_label()
-                .map(str::to_owned)
-                .or_else(|| suggestion.model.clone());
-            if let Some(fee_minor) = reading.transfer_fee_minor {
+            let mut suggestion = suggestion_from_reading(reading, origin, locale, accounts);
+            suggestion.notes.insert(0, UiText::new(origin.note()));
+            if let Some(fee_minor) = fee_minor {
                 suggestion
                     .notes
                     .push(transfer_fee_note(fee_minor, default_currency));
             }
-            suggestion.notes.insert(0, UiText::new(origin.note()));
             suggestion
         }
-        ExtractedText::Unread(reason) => empty_suggestion(UiText::new(reason)),
+        ExtractedText::Unread(reason) => {
+            let accounts = suggest_accounts(context, EntryKindSuggestion::Expense, "");
+
+            unread_suggestion(UiText::new(reason), accounts)
+        }
     };
 
-    finalize_suggestion(
-        &mut suggestion,
-        template,
-        accounts,
-        &category_hint,
-        source,
-        model,
-    );
+    let unpaid_bill = suggestion.kind == EntryKindSuggestion::Bill && suggestion.bill_unpaid;
+    if unpaid_bill && lacks_payable_account(context, suggestion.payable_account_id) {
+        suggestion
+            .notes
+            .push(UiText::new(UiTextCode::AddPayableAccount));
+    }
 
     // The invoice reader emits 2-exponent minor units (cents). For currencies
     // with a different exponent the value would be silently wrong, so drop it.
@@ -303,18 +426,18 @@ pub fn analyze_document_bytes(
         suggestion.amount_minor = None;
         suggestion.notes.push(
             UiText::new(UiTextCode::AmountAssumesTwoDecimals)
-                .with_param("currency", default_currency.to_ascii_uppercase()),
+                .with_param("currency", default_currency.as_str()),
         );
     }
 
     // Document dates (issue or due date) often fall outside the current month;
     // say so, or the entry seems to vanish from the dashboard after posting.
-    if let Some(date) = suggestion.entry_date.as_deref() {
-        let note = UiText::new(UiTextCode::DatedFromDocument).with_param("date", date);
+    if let Some(date) = suggestion.entry_date {
+        let note = UiText::new(UiTextCode::DatedFromDocument).with_param("date", format_date(date));
         suggestion.notes.push(note);
     }
 
-    Ok(suggestion)
+    suggestion
 }
 
 /// The note for a transfer fee the receipt shows.
@@ -322,70 +445,130 @@ pub fn analyze_document_bytes(
 /// The reader reads the fee as cents. In a 2-decimal book it is sent as a
 /// figure with the book's currency, which the UI formats. In any other book
 /// the figure would be wrong, so the note states the fee exists without one.
-fn transfer_fee_note(fee_minor: i64, currency: &str) -> UiText {
+fn transfer_fee_note(fee_minor: i64, currency: CurrencyCode) -> UiText {
     if currency_minor_exponent(currency) == 2 {
         UiText::new(UiTextCode::TransferFee)
             .with_param("fee_minor", fee_minor.to_string())
-            .with_param("currency", currency.to_ascii_uppercase())
+            .with_param("currency", currency.as_str())
     } else {
         UiText::new(UiTextCode::TransferFeeUnstated)
     }
 }
 
-/// Completes a suggestion with where it came from and the book's accounts.
+/// The accounts of the book that a suggestion points at.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SuggestedAccounts {
+    /// The expense or income account the document is filed under.
+    category: Option<AccountId>,
+    /// The bank, cash or card account that pays or receives.
+    wallet: Option<AccountId>,
+    /// The account an unpaid bill is owed on.
+    payable: Option<AccountId>,
+}
+
+/// Chooses the accounts for a document of `kind` in the book of `context`.
 ///
-/// An account the suggestion already names is kept. The category comes from
-/// the keyword matcher on `category_hint`, by entry kind; the wallet and the
-/// payable account are the book's defaults for those roles. An unpaid bill
-/// in a book with no payable account to point at gets the note that asks the
-/// user to add one.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the analysis source and model ride beside the chart inputs; tracked for the API pass"
-)]
-fn finalize_suggestion(
-    suggestion: &mut DocumentSuggestion,
-    template: ChartTemplate,
-    accounts: &[Account],
+/// The category comes from the keyword matcher on `category_hint`, by entry
+/// kind. The wallet and the payable account are the book's defaults for
+/// those roles.
+fn suggest_accounts(
+    context: &AnalyzeContext<'_>,
+    kind: EntryKindSuggestion,
     category_hint: &str,
-    source: AnalyzeSource,
-    model: Option<String>,
-) {
-    suggestion.source = source;
-    suggestion.model = model;
+) -> SuggestedAccounts {
+    let AnalyzeContext {
+        template, accounts, ..
+    } = *context;
 
-    if suggestion.category_account_id.is_none() {
-        suggestion.category_account_id = match suggestion.kind {
-            EntryKindSuggestion::Income => match_income_account(template, accounts, category_hint),
-            EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
-                match_expense_account(template, accounts, category_hint)
-            }
-        };
-    }
-    if suggestion.wallet_account_id.is_none() {
-        suggestion.wallet_account_id =
-            default_account_for_role(template, accounts, AccountRole::Payment);
-    }
-    if suggestion.payable_account_id.is_none() {
-        suggestion.payable_account_id =
-            default_account_for_role(template, accounts, AccountRole::BillsPayable);
-    }
+    let category = match kind {
+        EntryKindSuggestion::Income => match_income_account(template, accounts, category_hint),
+        EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
+            match_expense_account(template, accounts, category_hint)
+        }
+    };
 
-    // A seeded book has a real payable account. When identity cannot find it
-    // (deactivated or re-coded), any liability suggested above is only a
-    // stand-in, and the user must still be told to add a payable account. A
-    // blank book seeds none, so there a liability is the legitimate answer.
-    let payable_is_missing = suggestion.payable_account_id.is_none()
-        || (template != ChartTemplate::Blank
-            && seeded_account_for_role(template, accounts, AccountRole::BillsPayable).is_none());
-
-    let unpaid_bill = suggestion.kind == EntryKindSuggestion::Bill && suggestion.bill_unpaid;
-    if unpaid_bill && payable_is_missing {
-        suggestion
-            .notes
-            .push(UiText::new(UiTextCode::AddPayableAccount));
+    SuggestedAccounts {
+        category,
+        wallet: default_account_for_role(template, accounts, AccountRole::Payment),
+        payable: default_account_for_role(template, accounts, AccountRole::BillsPayable),
     }
 }
+
+/// Whether the user still has to add a payable account, given the one that
+/// was suggested.
+///
+/// A seeded book has a real payable account. When identity cannot find it
+/// (deactivated or re-coded), any liability suggested is only a stand-in,
+/// and the user must still be told to add a payable account. A blank book
+/// seeds none, so there a liability is the legitimate answer.
+fn lacks_payable_account(context: &AnalyzeContext<'_>, payable: Option<AccountId>) -> bool {
+    let AnalyzeContext {
+        template, accounts, ..
+    } = *context;
+
+    payable.is_none()
+        || (template != ChartTemplate::Blank
+            && seeded_account_for_role(template, accounts, AccountRole::BillsPayable).is_none())
+}
+
+/// Reads extracted document text into a draft suggestion, worded in
+/// `locale`.
+///
+/// The accounts of the suggestion are left empty: no book is given. The
+/// source and model are those of a document's own text.
+///
+/// A bank transfer receipt stays [`EntryKindSuggestion::Expense`]. Its
+/// amount is the capital debit (`Ποσό Χρέωσης Κεφαλαίου` or `Ποσό:`), not the
+/// fee and not an `hh:mm` time.
+///
+/// The returned notes are the reader's own. They never mention a transfer
+/// fee, even when the receipt shows one: that note needs the book's
+/// currency, so [`analyze_document_bytes`] adds it.
+#[must_use]
+pub fn parse_invoice_text(text: &str, locale: Locale) -> DocumentSuggestion {
+    suggestion_from_reading(
+        read_invoice_text(text),
+        TextOrigin::DocumentText,
+        locale,
+        SuggestedAccounts::default(),
+    )
+}
+
+/// The suggestion for a reading: its fields worded in `locale`, with where
+/// the text came from and the accounts chosen for it.
+///
+/// The notes are the reader's own, in its order.
+fn suggestion_from_reading(
+    reading: InvoiceReading,
+    origin: TextOrigin,
+    locale: Locale,
+    accounts: SuggestedAccounts,
+) -> DocumentSuggestion {
+    let description = reading.description_in(locale);
+    let merchant = reading.merchant_in(locale).map(str::to_owned);
+    let confidence = reading.confidence();
+
+    DocumentSuggestion {
+        source: origin.source(),
+        model: Some(origin.model_label().to_owned()),
+        kind: reading.class.into(),
+        amount_minor: reading.amount_minor,
+        entry_date: reading.entry_date,
+        description,
+        reference: reading.reference,
+        merchant,
+        bill_unpaid: reading.class.is_unpaid(),
+        category_account_id: accounts.category,
+        wallet_account_id: accounts.wallet,
+        payable_account_id: accounts.payable,
+        confidence,
+        notes: reading.notes,
+    }
+}
+
+/// The model label of a suggestion read from a document's own text by the
+/// invoice reader.
+const READER_MODEL_LABEL: &str = "invoice-parser-v1";
 
 /// The model label of a suggestion whose text came from the bundled OCR.
 const OCR_MODEL_LABEL: &str = "ocrs-bundled";
@@ -411,11 +594,12 @@ impl TextOrigin {
         }
     }
 
-    /// The label that replaces the reader's own when OCR produced the text.
-    const fn model_label(self) -> Option<&'static str> {
+    /// The label the suggestion reports as its model: the invoice reader's
+    /// for a document's own text, the OCR's when OCR produced the text.
+    const fn model_label(self) -> &'static str {
         match self {
-            Self::DocumentText => None,
-            Self::ImageOcr | Self::PdfImageOcr => Some(OCR_MODEL_LABEL),
+            Self::DocumentText => READER_MODEL_LABEL,
+            Self::ImageOcr | Self::PdfImageOcr => OCR_MODEL_LABEL,
         }
     }
 
@@ -434,38 +618,39 @@ impl TextOrigin {
 enum ExtractedText {
     /// Text, and where it came from. The text is not empty for OCR and for a
     /// PDF; a plain text file is passed on even when it is empty.
-    Read { text: String, origin: TextOrigin },
+    Read {
+        /// The text that was read.
+        text: String,
+        /// Where it came from.
+        origin: TextOrigin,
+    },
     /// No text. The code is the note that tells the user why.
     Unread(UiTextCode),
 }
 
 /// Extracts the text of a file, choosing how by its kind.
 ///
-/// `mime` is already lowercased. Three tests run in order: an `image/*` type
-/// is read with OCR; `text/plain` or a `.txt` name is decoded as UTF-8,
-/// invalid bytes replaced; a type containing `pdf` or a `.pdf` name is read
-/// as a PDF. So an image named `scan.pdf` is an image, and a file sent as
-/// `application/pdf` and named `notes.txt` is plain text. Anything else is
-/// unread, with the note that no text was found.
-fn read_document_text(
-    filename: &str,
-    mime: &str,
-    data: &[u8],
-    model_dir: Option<&Path>,
-) -> ExtractedText {
-    if mime.starts_with("image/") {
-        return ocr_image(data, model_dir).into_extracted(TextOrigin::ImageOcr);
-    }
-    if mime == "text/plain" || has_extension(filename, "txt") {
-        return ExtractedText::Read {
+/// An image is read with OCR, plain text is decoded as UTF-8 with invalid
+/// bytes replaced, and a PDF is read as one. A file of no kind is unread,
+/// with the note that no text was found.
+fn read_document_text(document: &NewDocument<'_>, model_dir: Option<&Path>) -> ExtractedText {
+    let NewDocument {
+        filename,
+        mime_type,
+        data,
+    } = *document;
+
+    match DocumentKind::resolve(mime_type, filename, data) {
+        Some(DocumentKind::Png | DocumentKind::Jpeg | DocumentKind::Webp) => {
+            ocr_image(data, model_dir).into_extracted(TextOrigin::ImageOcr)
+        }
+        Some(DocumentKind::PlainText) => ExtractedText::Read {
             text: String::from_utf8_lossy(data).into_owned(),
             origin: TextOrigin::DocumentText,
-        };
+        },
+        Some(DocumentKind::Pdf) => read_pdf_text(data, model_dir),
+        None => ExtractedText::Unread(UiTextCode::NoTextExtracted),
     }
-    if mime.contains("pdf") || has_extension(filename, "pdf") {
-        return read_pdf_text(data, model_dir);
-    }
-    ExtractedText::Unread(UiTextCode::NoTextExtracted)
 }
 
 /// How reading one image with the bundled OCR went.
@@ -523,10 +708,11 @@ fn ocr_image(data: &[u8], model_dir: Option<&Path>) -> OcrOutcome {
     }
 }
 
-/// A suggestion with no field read, carrying `note` as its only note.
+/// The suggestion for a file no text was read from: no field, `note` as the
+/// only note, and the accounts an expense with no hint gets.
 ///
 /// The kind is `Expense` and the confidence zero.
-fn empty_suggestion(note: UiText) -> DocumentSuggestion {
+fn unread_suggestion(note: UiText, accounts: SuggestedAccounts) -> DocumentSuggestion {
     DocumentSuggestion {
         source: AnalyzeSource::None,
         model: None,
@@ -537,24 +723,33 @@ fn empty_suggestion(note: UiText) -> DocumentSuggestion {
         reference: None,
         merchant: None,
         bill_unpaid: false,
-        category_account_id: None,
-        wallet_account_id: None,
-        payable_account_id: None,
+        category_account_id: accounts.category,
+        wallet_account_id: accounts.wallet,
+        payable_account_id: accounts.payable,
         confidence: 0.0,
         notes: vec![note],
     }
 }
 
-/// Fewest characters of PDF text that count as a text layer. With less, the
-/// PDF is taken to be a scan and its embedded images are read with OCR.
+/// Fewest characters, once trimmed, of text that counts as the text of a
+/// PDF. One rule, applied by [`is_enough_pdf_text`] in two places:
 ///
-/// The two places that use it do not agree at the boundary. A text layer
-/// counts from 8 characters ([`should_ocr_pdf_images`]); an OCR reading of
-/// an embedded image counts from 9 ([`ocr_pdf_images`]).
+/// - a text layer with fewer is not a text layer: the PDF is taken to be a
+///   scan and its embedded images are read with OCR
+///   ([`should_ocr_pdf_images`]);
+/// - an OCR reading of an embedded image with fewer is not a reading, and
+///   the next image is tried ([`pdf_image_outcome`]).
 ///
-/// The unit test `short_or_missing_pdf_text_triggers_image_ocr` pins the
-/// first boundary. The reason for 8 in particular is not recorded.
+/// The unit tests `short_or_missing_pdf_text_triggers_image_ocr` and
+/// `an_image_reading_counts_from_the_same_length_as_a_text_layer` pin the
+/// boundary on both sides. The reason for 8 in particular is not recorded.
 const MIN_PDF_TEXT_CHARS: usize = 8;
+
+/// Whether `text` has at least [`MIN_PDF_TEXT_CHARS`] characters, not
+/// counting whitespace at its ends.
+fn is_enough_pdf_text(text: &str) -> bool {
+    text.trim().chars().count() >= MIN_PDF_TEXT_CHARS
+}
 
 /// Most embedded JPEG images of one PDF that are tried with OCR. Each try
 /// runs the OCR models once, so this bounds how long a scanned PDF takes.
@@ -563,10 +758,10 @@ const MIN_PDF_TEXT_CHARS: usize = 8;
 /// `at_most_two_page_images_are_taken` pins it.
 const MAX_PDF_OCR_IMAGES: usize = 2;
 
-/// Whether a PDF with this trimmed text layer is taken as a scan: no text,
-/// or fewer than [`MIN_PDF_TEXT_CHARS`] characters.
+/// Whether a PDF with this text layer is taken as a scan: no text, or not
+/// enough of it ([`is_enough_pdf_text`]).
 fn should_ocr_pdf_images(text: Option<&str>) -> bool {
-    text.is_none_or(|text| text.chars().count() < MIN_PDF_TEXT_CHARS)
+    !text.is_some_and(is_enough_pdf_text)
 }
 
 /// Reads a PDF: its text layer, or failing that its embedded images.
@@ -616,7 +811,7 @@ fn pdf_text_or_image_text(
 }
 
 /// Reads the embedded images of a scanned PDF in turn, up to
-/// [`MAX_PDF_OCR_IMAGES`] of them, until one has more than
+/// [`MAX_PDF_OCR_IMAGES`] of them, until one has at least
 /// [`MIN_PDF_TEXT_CHARS`] characters of text.
 ///
 /// Returns `None` for a PDF without images. When no image yields text, the
@@ -625,16 +820,23 @@ fn ocr_pdf_images(jpegs: &[Vec<u8>], model_dir: Option<&Path>) -> Option<OcrOutc
     let mut first_failure = None;
 
     for jpeg in jpegs.iter().take(MAX_PDF_OCR_IMAGES) {
-        let outcome = match ocr_image(jpeg, model_dir) {
-            OcrOutcome::Read(text) if text.chars().count() > MIN_PDF_TEXT_CHARS => {
-                return Some(OcrOutcome::Read(text));
-            }
-            OcrOutcome::Read(_) => OcrOutcome::LittleText,
-            other => other,
+        match pdf_image_outcome(ocr_image(jpeg, model_dir)) {
+            OcrOutcome::Read(text) => return Some(OcrOutcome::Read(text)),
+            failure => first_failure.get_or_insert(failure),
         };
-        first_failure.get_or_insert(outcome);
     }
     first_failure
+}
+
+/// The outcome of reading one embedded image, with a reading that is not
+/// enough text ([`is_enough_pdf_text`]) turned into
+/// [`OcrOutcome::LittleText`].
+fn pdf_image_outcome(outcome: OcrOutcome) -> OcrOutcome {
+    match outcome {
+        OcrOutcome::Read(text) if is_enough_pdf_text(&text) => OcrOutcome::Read(text),
+        OcrOutcome::Read(_) => OcrOutcome::LittleText,
+        other => other,
+    }
 }
 
 /// A PDF after loading: the document if lopdf could parse it, and its text
@@ -1207,9 +1409,33 @@ mod tests {
         assert!(!should_ocr_pdf_images(Some("12345678")));
     }
 
-    /// The notes of an analysis, or none when it failed.
-    fn notes_of(suggestion: Result<DocumentSuggestion>) -> Vec<UiText> {
-        suggestion.map_or_else(|_| Vec::new(), |suggestion| suggestion.notes)
+    #[test]
+    fn an_image_reading_counts_from_the_same_length_as_a_text_layer() {
+        let read = |text: &str| pdf_image_outcome(OcrOutcome::Read(text.into()));
+
+        assert_eq!(read("1234567"), OcrOutcome::LittleText);
+        assert_eq!(read("12345678"), OcrOutcome::Read("12345678".into()));
+        assert_eq!(read("  1234567 \n"), OcrOutcome::LittleText);
+        // The two rules meet at one length: what is too short to be a text
+        // layer is too short to be a reading, and the reverse.
+        for text in ["", "1234567", "12345678", "123456789"] {
+            assert_eq!(
+                should_ocr_pdf_images(Some(text)),
+                read(text) == OcrOutcome::LittleText,
+                "{text:?}"
+            );
+        }
+        // Outcomes that are not readings pass through.
+        assert_eq!(pdf_image_outcome(OcrOutcome::Failed), OcrOutcome::Failed);
+        assert_eq!(
+            pdf_image_outcome(OcrOutcome::ModelsMissing),
+            OcrOutcome::ModelsMissing
+        );
+    }
+
+    /// The notes of an analysis.
+    fn notes_of(suggestion: DocumentSuggestion) -> Vec<UiText> {
+        suggestion.notes
     }
 
     /// The codes of `notes`, without their parameters.
@@ -1221,44 +1447,42 @@ mod tests {
     fn non_two_exponent_currency_drops_amount() {
         let text = b"Invoice\nTOTAL 45,90\nThank you";
         let eur = analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text,
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
         );
         let jpy = analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text,
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "JPY",
+                default_currency: "JPY".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
         );
 
-        let eur_notes = notes_of(eur.clone());
-        assert_eq!(
-            eur.map(|suggestion| suggestion.amount_minor),
-            Ok(Some(4590))
-        );
+        assert_eq!(eur.amount_minor, Some(4590));
+        let eur_notes = notes_of(eur);
         assert!(
             !codes_of(&eur_notes).contains(&UiTextCode::AmountAssumesTwoDecimals),
             "a 2-decimal currency needs no warning"
         );
 
-        let amount = jpy
-            .as_ref()
-            .map_or(Some(-1), |suggestion| suggestion.amount_minor);
-        assert_eq!(amount, None, "JPY amount must not be prefilled");
+        assert_eq!(jpy.amount_minor, None, "JPY amount must not be prefilled");
 
         let jpy_notes = notes_of(jpy);
         assert!(
@@ -1272,28 +1496,30 @@ mod tests {
     /// Whether a 45,90 total survives analysis in a book of `currency`.
     fn keeps_the_amount_in(currency: &str) -> bool {
         let suggestion = analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            b"Invoice\nTOTAL 45,90\nThank you",
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: b"Invoice\nTOTAL 45,90\nThank you",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: currency,
+                default_currency: currency.parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
         );
 
-        suggestion.is_ok_and(|suggestion| suggestion.amount_minor == Some(4590))
+        suggestion.amount_minor == Some(4590)
     }
 
     #[test]
     fn the_shared_exponent_table_knows_the_currencies_the_analyzer_dropped() {
         use crate::csv::currency_minor_exponent;
 
-        assert_eq!(currency_minor_exponent("ISK"), 0);
-        assert_eq!(currency_minor_exponent("IQD"), 0);
-        assert_eq!(currency_minor_exponent("LYD"), 3);
+        assert_eq!(currency_minor_exponent("ISK".parse().unwrap()), 0);
+        assert_eq!(currency_minor_exponent("IQD".parse().unwrap()), 0);
+        assert_eq!(currency_minor_exponent("LYD".parse().unwrap()), 3);
     }
 
     #[test]
@@ -1305,7 +1531,7 @@ mod tests {
             .flat_map(|a| letters().flat_map(move |b| letters().map(move |c| [a, b, c])))
             .map(String::from_iter)
         {
-            let two_decimals = crate::csv::currency_minor_exponent(&code) == 2;
+            let two_decimals = crate::csv::currency_minor_exponent(code.parse().unwrap()) == 2;
 
             assert_eq!(keeps_the_amount_in(&code), two_decimals, "{code}");
             if !two_decimals {
@@ -1323,13 +1549,15 @@ mod tests {
     fn a_text_file_gets_the_source_note_then_the_reader_notes_then_the_date_note() {
         let text = b"Invoice\nDate 15/03/2026\nTOTAL 45,90 EUR\nThank you";
         let notes = notes_of(analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text,
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1352,13 +1580,15 @@ mod tests {
     #[test]
     fn an_unreadable_file_says_no_text_was_found() {
         let notes = notes_of(analyze_document_bytes(
-            "scan.bin",
-            "application/octet-stream",
-            b"\x00\x01",
+            &NewDocument {
+                filename: "scan.bin",
+                mime_type: "application/octet-stream",
+                data: b"\x00\x01",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1367,16 +1597,103 @@ mod tests {
         assert_eq!(notes, [UiText::new(UiTextCode::NoTextExtracted)]);
     }
 
+    /// Where the text of a file with these three properties comes from, or
+    /// the note that says why it has none.
+    fn text_origin(
+        mime_type: &str,
+        filename: &str,
+        data: &[u8],
+    ) -> std::result::Result<TextOrigin, UiTextCode> {
+        let document = NewDocument {
+            filename,
+            mime_type,
+            data,
+        };
+
+        match read_document_text(&document, None) {
+            ExtractedText::Read { origin, .. } => Ok(origin),
+            ExtractedText::Unread(reason) => Err(reason),
+        }
+    }
+
+    #[test]
+    fn a_pdf_sent_under_the_x_pdf_type_is_read_as_a_pdf() {
+        let pdf = pdf_with_text_pages(&[("Paid in full", true)]);
+
+        assert_eq!(
+            text_origin("application/x-pdf", "document", &pdf),
+            Ok(TextOrigin::DocumentText)
+        );
+        // Not a PDF inside: read as one all the same, and found unreadable.
+        assert_eq!(
+            text_origin("application/x-pdf", "document", b"TOTAL 45,90"),
+            Err(UiTextCode::NoTextExtracted)
+        );
+    }
+
+    #[test]
+    fn a_pdf_named_as_a_text_file_is_read_as_a_pdf_and_not_as_its_raw_bytes() {
+        let pdf = pdf_with_text_pages(&[("Paid in full", true)]);
+        let document = NewDocument {
+            filename: "x.txt",
+            mime_type: "application/pdf",
+            data: &pdf,
+        };
+
+        let read = read_document_text(&document, None);
+
+        assert!(
+            matches!(&read, ExtractedText::Read { text, .. } if text.contains("Paid in full")),
+            "{read:?}"
+        );
+        assert!(
+            matches!(&read, ExtractedText::Read { text, .. } if !text.contains("%PDF")),
+            "the PDF source must not be read as text: {read:?}"
+        );
+    }
+
+    #[test]
+    fn text_sent_under_the_pdf_type_and_named_as_text_is_read_as_text() {
+        let document = NewDocument {
+            filename: "x.txt",
+            mime_type: "application/pdf",
+            data: b"TOTAL 45,90",
+        };
+
+        assert_eq!(
+            read_document_text(&document, None),
+            ExtractedText::Read {
+                text: "TOTAL 45,90".into(),
+                origin: TextOrigin::DocumentText
+            }
+        );
+    }
+
+    #[test]
+    fn an_image_type_the_vault_does_not_store_is_not_read() {
+        assert_eq!(
+            text_origin("image/gif", "anim.gif", b"GIF89a"),
+            Err(UiTextCode::NoTextExtracted)
+        );
+        assert_eq!(
+            text_origin("image/jpeg", "scan.pdf", b"\xff\xd8"),
+            Err(UiTextCode::OcrPathMissing),
+            "an image named like a PDF goes to OCR"
+        );
+    }
+
     #[test]
     fn an_image_without_a_model_directory_says_the_path_is_missing() {
         let notes = notes_of(analyze_document_bytes(
-            "scan.jpg",
-            "image/jpeg",
-            b"\xff\xd8",
+            &NewDocument {
+                filename: "scan.jpg",
+                mime_type: "image/jpeg",
+                data: b"\xff\xd8",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1391,13 +1708,15 @@ mod tests {
         let path = dir.as_ref().map(|dir| dir.path().to_path_buf());
 
         let notes = notes_of(analyze_document_bytes(
-            "scan.jpg",
-            "image/jpeg",
-            b"\xff\xd8",
+            &NewDocument {
+                filename: "scan.jpg",
+                mime_type: "image/jpeg",
+                data: b"\xff\xd8",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             path.as_deref().ok(),
@@ -1457,13 +1776,15 @@ mod tests {
         // Larger than any stored document: refused before it is parsed.
         let data = vec![0_u8; MAX_DOCUMENT_BYTES + 1];
         let notes = notes_of(analyze_document_bytes(
-            "big.pdf",
-            "application/pdf",
-            &data,
+            &NewDocument {
+                filename: "big.pdf",
+                mime_type: "application/pdf",
+                data: &data,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1513,13 +1834,15 @@ mod tests {
     /// The notes of analyzing `pdf` in a blank EUR book, in English.
     fn analyze_pdf_notes_with_models(pdf: &[u8], model_dir: Option<&Path>) -> Vec<UiText> {
         notes_of(analyze_document_bytes(
-            "document.pdf",
-            "application/pdf",
-            pdf,
+            &NewDocument {
+                filename: "document.pdf",
+                mime_type: "application/pdf",
+                data: pdf,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             model_dir,
@@ -1603,13 +1926,15 @@ mod tests {
     fn an_unpaid_bill_without_a_payable_account_asks_for_one() {
         let text = "Invoice\nTOTAL 45,90 EUR\nAmount due\nThank you";
         let notes = notes_of(analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text.as_bytes(),
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text.as_bytes(),
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1627,18 +1952,19 @@ mod tests {
         let accounts = seeded_chart_for_tests(ChartTemplate::Personal, true);
 
         let suggestion = analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text.as_bytes(),
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text.as_bytes(),
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Personal,
                 accounts: &accounts,
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
         );
-        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(
             code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -1659,23 +1985,21 @@ mod tests {
     const UNPAID_BILL: &str = "Invoice\nTOTAL 45,90 EUR\nAmount due\nThank you";
 
     /// The suggestion for [`UNPAID_BILL`] in a book with these accounts.
-    fn analyze_unpaid_bill(
-        template: ChartTemplate,
-        accounts: &[Account],
-    ) -> Option<DocumentSuggestion> {
+    fn analyze_unpaid_bill(template: ChartTemplate, accounts: &[Account]) -> DocumentSuggestion {
         analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            UNPAID_BILL.as_bytes(),
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: UNPAID_BILL.as_bytes(),
+            },
             &AnalyzeContext {
                 template,
                 accounts,
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
         )
-        .ok()
     }
 
     /// Archives the account with this chart code.
@@ -1699,8 +2023,6 @@ mod tests {
             deactivate_code(&mut accounts, payable_code);
 
             let suggestion = analyze_unpaid_bill(template, &accounts);
-            assert!(suggestion.is_some(), "{template:?}: analysis must succeed");
-            let suggestion = suggestion.unwrap();
 
             assert_eq!(
                 code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -1723,7 +2045,6 @@ mod tests {
         });
 
         let suggestion = analyze_unpaid_bill(ChartTemplate::Blank, &accounts);
-        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(
             code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
@@ -1742,7 +2063,6 @@ mod tests {
         accounts.retain(|account| account.account_type != AccountType::Liability);
 
         let suggestion = analyze_unpaid_bill(ChartTemplate::Blank, &accounts);
-        let suggestion = suggestion.expect("analysis must succeed");
 
         assert_eq!(suggestion.payable_account_id, None);
         assert!(
@@ -1759,13 +2079,15 @@ mod tests {
     /// The notes for [`TRANSFER_RECEIPT`] in a book of `currency`.
     fn analyze_receipt_in(currency: &str) -> Vec<UiText> {
         notes_of(analyze_document_bytes(
-            "embasma.txt",
-            "text/plain",
-            TRANSFER_RECEIPT.as_bytes(),
+            &NewDocument {
+                filename: "embasma.txt",
+                mime_type: "text/plain",
+                data: TRANSFER_RECEIPT.as_bytes(),
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: currency,
+                default_currency: currency.parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1824,13 +2146,15 @@ mod tests {
     #[test]
     fn a_receipt_without_a_fee_gets_no_fee_note() {
         let notes = notes_of(analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            b"Invoice\nTOTAL 45,90\nThank you",
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: b"Invoice\nTOTAL 45,90\nThank you",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "JPY",
+                default_currency: "JPY".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1846,19 +2170,22 @@ mod tests {
 
     #[test]
     fn the_hint_says_whether_the_models_are_present() {
-        assert_eq!(analyzer_status(None).hint, AnalyzerHint::ModelsMissing);
+        assert_eq!(analyzer_status(None).hint(), AnalyzerHint::ModelsMissing);
 
         let dir = tempfile::tempdir();
         let dir = dir.expect("the temporary directory must be created");
         assert_eq!(
-            analyzer_status(Some(dir.path())).hint,
+            analyzer_status(Some(dir.path())).hint(),
             AnalyzerHint::ModelsMissing
         );
 
         for file in ["text-detection.rten", "text-recognition.rten"] {
             assert!(std::fs::write(dir.path().join(file), b"x").is_ok());
         }
-        assert_eq!(analyzer_status(Some(dir.path())).hint, AnalyzerHint::Ready);
+        assert_eq!(
+            analyzer_status(Some(dir.path())).hint(),
+            AnalyzerHint::Ready
+        );
     }
 
     listed_variants! {

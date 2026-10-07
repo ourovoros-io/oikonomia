@@ -17,7 +17,11 @@
 mod fold;
 mod row;
 mod schema;
+#[cfg(test)]
+mod testing;
 
 pub use fold::{fold_case, register_fold};
-pub(crate) use row::{collect_rows, corrupt_column, read_column, stored_date, stored_uuid};
+pub(crate) use row::{collect_rows, corrupt_column, read_column, stored_date, stored_id};
 pub use schema::{CURRENT_SCHEMA_VERSION, migrate};
+#[cfg(test)]
+pub(crate) use testing::{migrated_connection, query_plan};
