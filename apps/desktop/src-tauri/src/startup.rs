@@ -214,19 +214,20 @@ fn problem_label(locale: Locale, problem: StartupProblem) -> Option<&'static str
         (StartupProblem::VaultDamaged, Locale::De) => "Die Tresordatei ist beschädigt.",
 
         (StartupProblem::VaultTooNew, Locale::En) => {
-            "This vault was created by a newer version of Oikonomia. Update the app to open it."
+            "This vault was saved by a newer version of Oikonomia. \
+             Update the app to open it; nothing has been lost."
         }
         (StartupProblem::VaultTooNew, Locale::El) => {
-            "Αυτή η θυρίδα δημιουργήθηκε από νεότερη έκδοση του Oikonomia. \
-             Ενημερώστε την εφαρμογή για να την ανοίξετε."
+            "Αυτή η θυρίδα αποθηκεύτηκε από νεότερη έκδοση του Oikonomia. \
+             Ενημερώστε την εφαρμογή για να την ανοίξετε· δεν έχει χαθεί τίποτα."
         }
         (StartupProblem::VaultTooNew, Locale::Fr) => {
-            "Ce coffre a été créé par une version plus récente d’Oikonomia. \
-             Mettez l’application à jour pour l’ouvrir."
+            "Ce coffre a été enregistré par une version plus récente d’Oikonomia. \
+             Mettez à jour l’application pour l’ouvrir\u{202f}; rien n’a été perdu."
         }
         (StartupProblem::VaultTooNew, Locale::De) => {
-            "Dieser Tresor wurde mit einer neueren Version von Oikonomia erstellt. \
-             Aktualisieren Sie die App, um ihn zu öffnen."
+            "Dieser Tresor wurde mit einer neueren Version von Oikonomia gespeichert. \
+             Aktualisieren Sie die App, um ihn zu öffnen; es ist nichts verloren gegangen."
         }
 
         (StartupProblem::DataFolderUnreadable, Locale::En) => "Its data folder cannot be read.",

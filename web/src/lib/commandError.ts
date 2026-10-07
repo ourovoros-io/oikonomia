@@ -18,7 +18,6 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   crypto: 'error.crypto',
   vault_corrupt: 'error.vaultCorrupt',
   vault_unlock_before_backup: 'error.vaultUnlockBeforeBackup',
-  // Borrowed copy: a vault from a newer build is sound and needs wording of its own.
   vault_too_new: 'error.vaultTooNew',
   backup_invalid: 'error.backupInvalid',
   restore_would_overwrite: 'error.restoreWouldOverwrite',

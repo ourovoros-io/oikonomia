@@ -970,7 +970,7 @@
     "io": "Ein Dateivorgang ist fehlgeschlagen.",
     "crypto": "Ein Sicherheitsvorgang ist fehlgeschlagen.",
     "vaultCorrupt": "Die Tresordatei ist beschädigt.",
-    "vaultTooNew": "Dieser Tresor wurde mit einer neueren Version von Oikonomia erstellt. Aktualisieren Sie die App, um ihn zu öffnen.",
+    "vaultTooNew": "Dieser Tresor wurde mit einer neueren Version von Oikonomia gespeichert. Aktualisieren Sie die App, um ihn zu öffnen; es ist nichts verloren gegangen.",
     "vaultUnlockBeforeBackup": "Dieser Tresor muss einmal entsperrt werden, bevor er gesichert werden kann. Entsperren Sie ihn und versuchen Sie es dann erneut; es ist nichts verloren gegangen.",
     "backupInvalid": "Diese Sicherungsdatei ist ungültig.",
     "restoreWouldOverwrite": "Es existiert bereits ein Tresor; die Wiederherstellung würde ihn überschreiben.",

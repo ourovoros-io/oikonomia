@@ -88,6 +88,33 @@ describe('command error localization', () => {
     expect(shown).toBe(sentences.en)
   })
 
+  it('resolves vault_too_new to its own key, not the corrupt-vault sentence', () => {
+    expect(ERROR_CODE_KEYS.vault_too_new).toBe('error.vaultTooNew')
+    expect(ERROR_CODE_KEYS.vault_too_new).not.toBe('error.vaultCorrupt')
+
+    const writer = {
+      en: 'This vault was saved by a newer version of Oikonomia. Update the app to open it; nothing has been lost.',
+      el: 'Αυτή η θυρίδα αποθηκεύτηκε από νεότερη έκδοση του Oikonomia. Ενημερώστε την εφαρμογή για να την ανοίξετε· δεν έχει χαθεί τίποτα.',
+      fr: 'Ce coffre a été enregistré par une version plus récente d’Oikonomia. Mettez à jour l’application pour l’ouvrir ; rien n’a été perdu.',
+      de: 'Dieser Tresor wurde mit einer neueren Version von Oikonomia gespeichert. Aktualisieren Sie die App, um ihn zu öffnen; es ist nichts verloren gegangen.',
+    }
+    const catalogs = { en, el, fr, de }
+    for (const [locale, catalog] of Object.entries(catalogs)) {
+      const flat = flattenMessages(catalog)
+      expect(flat['error.vaultTooNew'], locale).toBe(writer[locale as keyof typeof writer])
+      expect(flat['error.vaultTooNew'], locale).not.toBe(flat['error.vaultCorrupt'])
+    }
+
+    const shown = commandErrorMessage({
+      code: 'vault_too_new',
+      message: 'vault schema version 8 is newer than this build supports (7)',
+      params: { found: '8', supported: '7' },
+    })
+
+    expect(shown).toBe(writer.en)
+    expect(shown).not.toBe(t('error.vaultCorrupt'))
+  })
+
   it('maps no code that errorCodes.json does not list', () => {
     // The map holds only codes Rust can send. The codes the web layer raises
     // itself (file_read_failed) live in WEB_ERROR_KEYS and are not in the pin.
