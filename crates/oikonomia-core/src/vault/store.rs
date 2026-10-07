@@ -72,8 +72,7 @@ pub struct Vault {
     /// Published header, or `None` while no vault exists.
     ///
     /// Every method of this type that replaces `vault.header.json` replaces
-    /// this as well, before anything after the rename can fail. The one
-    /// exception is a restore whose reload fails; see `Vault::restore_from`.
+    /// this as well, before anything after the rename can fail.
     header: Option<VaultHeader>,
     /// Open connection, present exactly while the vault is unlocked.
     conn: Option<Connection>,
@@ -427,6 +426,20 @@ impl Vault {
             Ok(conn) => self.conn = Some(conn),
             Err(err) => log::warn!("vault left locked after a failed password change: {err}"),
         }
+    }
+
+    /// Records that `header` is the one now published in the data
+    /// directory.
+    ///
+    /// For [`Vault::restore_from`], which replaces the header file from
+    /// another module. The caller has closed the connection: one that is
+    /// still open would belong to the database that was replaced.
+    pub(super) fn adopt_published_header(&mut self, header: VaultHeader) {
+        debug_assert!(
+            self.conn.is_none(),
+            "a connection would outlive the database it was opened on"
+        );
+        self.header = Some(header);
     }
 
     /// Returns the open connection.

@@ -235,24 +235,39 @@ pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
 ///   removed. When putting the previous files back failed as well, the
 ///   message says so, and the next [`Vault::open_path`] completes the undo.
 pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Result<()> {
+    restore_pair(archive, data_dir, replace).map(|_header| ())
+}
+
+/// Does what [`restore_from_path`] documents and returns the header that is
+/// now published, as it was checked before the swap.
+///
+/// Nothing after the swap commits can fail: the cleanup that follows only
+/// logs. `Ok` therefore means the vault files are the archive's, and `Err`
+/// means they are not.
+fn restore_pair(archive: &Path, data_dir: &Path, replace: bool) -> Result<VaultHeader> {
     create_private_dir(data_dir)?;
     recover_interrupted_restore(data_dir)?;
     let paths = RestorePaths::new(data_dir);
 
     // Unpack and check first, so a bad archive is rejected even when a vault
     // already exists and `replace` is false.
-    let restored = unpack_and_verify(archive, &paths)
-        .and_then(|()| refuse_overwrite(&paths, replace))
-        .and_then(|()| swap_in_unpacked_pair(&paths));
-    if let Err(err) = restored {
-        discard_unpacked_unless_swap_pending(&paths);
-        return Err(err);
-    }
+    let restored = unpack_and_verify(archive, &paths).and_then(|header| {
+        refuse_overwrite(&paths, replace)?;
+        swap_in_unpacked_pair(&paths)?;
+        Ok(header)
+    });
+    let header = match restored {
+        Ok(header) => header,
+        Err(err) => {
+            discard_unpacked_unless_swap_pending(&paths);
+            return Err(err);
+        }
+    };
 
     // Recovery state of the vault that was replaced.
     discard_file(&vault_staged_header_path(data_dir));
     discard_file(&vault_init_header_path(data_dir));
-    Ok(())
+    Ok(header)
 }
 
 /// Settles a restore that a crash interrupted, by the rules in the module
@@ -326,24 +341,38 @@ impl Vault {
     }
 
     /// Closes the connection, unpacks `archive` into the data directory and
-    /// reloads the header, leaving the vault locked.
+    /// takes over the restored header, leaving the vault locked.
     ///
     /// The connection is closed before anything is checked, so the vault is
     /// not unlocked afterwards whether the restore succeeded or not.
     ///
+    /// What the handle holds after each outcome:
+    ///
+    /// | Outcome                               | Vault files    | Header held    |
+    /// |---------------------------------------|----------------|----------------|
+    /// | `Ok`                                  | The archive's. | The archive's. |
+    /// | `Err`, nothing swapped or swap undone | The previous.  | The previous.  |
+    /// | `Err`, and the undo failed as well    | Mid-swap.      | The previous.  |
+    ///
+    /// "The previous" is no header at all when there was no vault. The
+    /// header is not read back from disk after the swap: it is the one that
+    /// was checked before the swap and then renamed into place, so no step
+    /// that could fail follows the commit, and `Ok` never leaves this handle
+    /// on the header of the vault that was replaced.
+    ///
+    /// In the last row the error is the [`Error::Io`] whose operation is
+    /// `put previous vault files back`. The next [`Vault::open_path`]
+    /// completes the undo, after which the files are the previous vault
+    /// again and match the header this handle kept. Until then an unlock
+    /// through this handle can fail, so a new handle has to be opened.
+    ///
     /// # Errors
     ///
-    /// Everything [`restore_from_path`] returns; the vault files are then as
-    /// that function leaves them. After the files were replaced,
-    /// [`Error::VaultCorrupt`] or [`Error::Io`] when the restored header
-    /// cannot be loaded, as [`Vault::open_path`] reports it. This handle
-    /// then still holds the header of the vault that was replaced, and a
-    /// new handle has to be opened.
+    /// Everything [`restore_from_path`] returns.
     pub fn restore_from(&mut self, archive: &Path, replace: bool) -> Result<()> {
         self.lock();
-        let data_dir = self.data_dir().to_path_buf();
-        restore_from_path(archive, &data_dir, replace)?;
-        *self = Self::open_path(data_dir)?;
+        let header = restore_pair(archive, self.data_dir(), replace)?;
+        self.adopt_published_header(header);
         Ok(())
     }
 }
@@ -363,18 +392,18 @@ fn discard_unpacked_unless_swap_pending(paths: &RestorePaths) {
 }
 
 /// Step 1 of the restore protocol: unpacks `archive` to the two
-/// `restore-tmp` files and checks them.
+/// `restore-tmp` files, checks them and returns the unpacked header.
 ///
 /// A header the vault would call corrupt is reported as an invalid backup
 /// here: the vault on disk is fine, and it is the archive that is not.
-fn unpack_and_verify(archive: &Path, paths: &RestorePaths) -> Result<()> {
+fn unpack_and_verify(archive: &Path, paths: &RestorePaths) -> Result<VaultHeader> {
     unpack_archive_to_staging(archive, &paths.unpacked_header, &paths.unpacked_db)?;
 
-    let _header = load_archive_header(&paths.unpacked_header)?;
+    let header = load_archive_header(&paths.unpacked_header)?;
     if is_plaintext_sqlite(&paths.unpacked_db)? {
         return Err(Error::BackupInvalid(BackupDefect::DatabaseNotEncrypted));
     }
-    Ok(())
+    Ok(header)
 }
 
 /// Loads the header unpacked from an archive, with the checks
@@ -1147,6 +1176,47 @@ mod tests {
         assert_eq!(dest.status(), VaultStatus::Locked);
         dest.unlock(PASSWORD)
             .expect("replaced vault unlocks with the backup password");
+    }
+
+    #[test]
+    fn a_restore_leaves_the_handle_on_the_restored_vault_without_reopening_the_directory() {
+        let (_src, source) = init_vault();
+        let (_archive_dir, archive) = backup_of(&source);
+        let (dest_dir, mut dest) = init_vault_with(OTHER_PASSWORD);
+        // Opening this directory fails from here on: a directory sits where
+        // open removes a leftover snapshot. The restore itself does not
+        // touch that name, so the vault files are replaced all the same.
+        fs::create_dir(backup_snapshot_db_path(dest_dir.path())).expect("block reopening");
+        Vault::open_path(dest_dir.path())
+            .map(|vault| vault.status())
+            .expect_err("the scenario needs a directory that cannot be opened");
+
+        dest.restore_from(&archive, true)
+            .expect("the files were replaced, so the restore succeeded");
+
+        assert_eq!(dest.status(), VaultStatus::Locked);
+        dest.unlock(PASSWORD)
+            .expect("the handle derives its key from the restored header");
+    }
+
+    #[test]
+    fn a_refused_restore_leaves_the_handle_on_the_previous_vault() {
+        let (_src, source) = init_vault();
+        let (_archive_dir, archive) = backup_of(&source);
+        let (_dest_dir, mut dest) = init_vault_with(OTHER_PASSWORD);
+
+        assert_eq!(
+            dest.restore_from(&archive, false),
+            Err(Error::RestoreWouldOverwrite)
+        );
+
+        assert_eq!(
+            dest.status(),
+            VaultStatus::Locked,
+            "locked before the check"
+        );
+        dest.unlock(OTHER_PASSWORD)
+            .expect("the previous vault and its header are still in place");
     }
 
     #[test]
