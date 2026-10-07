@@ -60,15 +60,17 @@ define_id! {
     JournalLineId
 }
 
-/// Whether a journal entry counts towards balances.
+/// The status of a journal entry.
+///
+/// Every entry core writes is posted, so this has one variant. It stays an
+/// enum because the status is a column of `journal_entries` and a field of
+/// the entry's JSON. A stored status that is not `posted` is not read as an
+/// entry at all: the reader reports a corrupt vault.
 ///
 /// Serialized in `snake_case`, which is also how the status is stored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryStatus {
-    /// Not posted, so left out of balances and reports. Core reads a stored
-    /// draft but has no function that creates one.
-    Draft,
     /// Posted: it counts towards balances and is corrected only by a void.
     Posted,
 }
@@ -88,7 +90,7 @@ pub struct JournalEntry {
     pub description: String,
     /// An outside reference such as a check or invoice number, if any.
     pub reference: Option<String>,
-    /// Whether the entry is a draft or posted.
+    /// The entry's status, which is always posted.
     pub status: EntryStatus,
     /// `true` when the owner marked the entry hidden. A hidden entry stays in
     /// the book and in every in-app list and balance;

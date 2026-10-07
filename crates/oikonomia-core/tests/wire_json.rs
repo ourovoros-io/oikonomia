@@ -97,6 +97,15 @@ fn journal_entry() {
 }
 
 #[test]
+fn an_entry_whose_status_is_not_posted_is_refused_by_the_json_layer() {
+    assert!(is_refused::<JournalEntry>(concat!(
+        r#"{"id":"33333333-3333-4333-8333-333333333333","entity_id":"#,
+        r#""11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"#,
+        r#""Groceries","reference":"INV-7","status":"draft","hidden":false}"#,
+    )));
+}
+
+#[test]
 fn journal_line_on_each_side() {
     assert_json_is_pinned::<JournalLine>(concat!(
         r#"{"id":"44444444-4444-4444-8444-444444444444","entry_id":"#,

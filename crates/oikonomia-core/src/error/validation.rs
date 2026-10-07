@@ -252,6 +252,12 @@ pub enum ValidationError {
     EntryAlreadyVoided,
 
     /// Only posted entries can be voided.
+    ///
+    /// No function returns this: every entry core reads is posted, and a
+    /// stored status that is not `posted` is [`Error::VaultCorrupt`]. The
+    /// variant remains because its code is in the list the UI pins.
+    ///
+    /// [`Error::VaultCorrupt`]: crate::error::Error::VaultCorrupt
     #[error("only posted entries can be voided")]
     EntryNotPosted,
 

@@ -18,8 +18,9 @@ use oikonomia_core::ledger::{
     RecurringSchedule, SimpleEntryKind, account_register, activity_window, balance_sheet,
     cash_flow_series, create_recurring_template, get_entity, get_entry, get_recurring_template,
     list_accounts, list_entities, list_entries, list_recurring_templates, post_recurring_template,
-    post_simple_entry, trial_balance,
+    post_simple_entry, trial_balance, void_entry,
 };
+use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
 
 /// A date that sorts inside 2026 as text but is not on the calendar, so
@@ -138,6 +139,20 @@ fn an_unparseable_line_id_or_entry_status_is_corrupt() {
 
     damage(conn, "UPDATE journal_entries SET status = 'pending'");
     assert_corrupt(get_entry(conn, book.entry_id), "journal_entries.status");
+}
+
+/// The schema puts no constraint on the status column, so a file can hold
+/// `draft`. Core never writes it and gives it no meaning.
+#[test]
+fn a_stored_draft_entry_is_corrupt() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    damage(conn, "UPDATE journal_entries SET status = 'draft'");
+    let column = "journal_entries.status";
+
+    assert_corrupt(get_entry(conn, book.entry_id), column);
+    assert_corrupt(void_entry(conn, book.entry_id, Locale::En), column);
 }
 
 /// A value of the wrong storage class is damage too. The driver reports it

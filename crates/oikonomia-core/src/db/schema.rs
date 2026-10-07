@@ -20,6 +20,18 @@
 //!
 //! Never edit a step that has shipped: a vault that already ran it will not
 //! run it again, so the change would reach new vaults only.
+//!
+//! # What the schema allows and the application does not write
+//!
+//! The tables are wider than what the application stores in them. No
+//! migration narrows them, because a rebuilt table buys nothing the readers
+//! do not already enforce.
+//!
+//! - `journal_entries.status` is `TEXT NOT NULL` with no `CHECK`, so the
+//!   schema permits any text, `draft` included. The application writes
+//!   `posted` and nothing else. The entry list and every report select
+//!   `status = 'posted'`, so a row that holds another status is in no list
+//!   and no balance; read by its id, it is reported as a corrupt vault.
 
 use crate::db::{collect_rows, read_column};
 use crate::error::{DatabaseContext, Error, Result, VaultCorruption};

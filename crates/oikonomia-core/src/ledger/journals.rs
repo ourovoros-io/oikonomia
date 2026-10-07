@@ -266,7 +266,7 @@ pub fn list_entries(
         .collect())
 }
 
-/// Returns one entry with its lines, whatever its status.
+/// Returns one entry with its lines, voided or not.
 ///
 /// # Errors
 ///
@@ -316,8 +316,7 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
 /// still sees the row via [`list_entries`], [`get_entry`] and
 /// [`account_register`], and every other report counts it.
 ///
-/// Any entry can be hidden or shown again, whatever its status, a voided one
-/// included.
+/// Any entry can be hidden or shown again, a voided one included.
 ///
 /// # Errors
 ///
@@ -403,8 +402,8 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
 /// - [`Error::NotFound`] for an unknown entry, and for an entry of an archived entity.
 /// - [`ValidationError::EntryAlreadyVoided`] when the entry is voided or is
 ///   itself a reversing entry.
-/// - [`ValidationError::EntryNotPosted`] when the entry is a draft.
-/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
+/// - [`Error::VaultCorrupt`] for a stored row that does not parse, which
+///   includes an entry whose stored status is not `posted`.
 /// - [`Error::Database`] on database errors.
 ///
 /// An archived account is not an error here: the reversing entry posts to the
@@ -1152,9 +1151,6 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     if view.is_voided {
         return Err(ValidationError::EntryAlreadyVoided.into());
     }
-    if view.entry.status != EntryStatus::Posted {
-        return Err(ValidationError::EntryNotPosted.into());
-    }
 
     let reverse_lines: Vec<PostJournalLine> = view
         .lines
@@ -1315,7 +1311,8 @@ fn map_entry_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Jou
     )?;
     let status = match read_column::<String>(operation, row, 5)?.as_str() {
         "posted" => EntryStatus::Posted,
-        "draft" => EntryStatus::Draft,
+        // The schema does not constrain the column, so this includes `draft`,
+        // which core has never written.
         other => {
             return Err(corrupt_column(
                 "journal_entries.status",

@@ -59,7 +59,7 @@ export type JournalEntry = {
   entry_date: string
   description: string
   reference: string | null
-  status: 'draft' | 'posted'
+  status: 'posted'
   hidden: boolean
 }
 
