@@ -354,17 +354,41 @@ fn discard_unpacked_unless_swap_pending(paths: &RestorePaths) {
 fn unpack_and_verify(archive: &Path, paths: &RestorePaths) -> Result<()> {
     unpack_archive_to_staging(archive, &paths.unpacked_header, &paths.unpacked_db)?;
 
-    match VaultHeader::load(&paths.unpacked_header) {
-        Ok(_header) => {}
-        Err(Error::VaultCorrupt(reason)) => {
-            return Err(Error::BackupInvalid(BackupDefect::UnusableHeader(reason)));
-        }
-        Err(other) => return Err(other),
-    }
+    let _header = load_archive_header(&paths.unpacked_header)?;
     if is_plaintext_sqlite(&paths.unpacked_db)? {
         return Err(Error::BackupInvalid(BackupDefect::DatabaseNotEncrypted));
     }
     Ok(())
+}
+
+/// Loads the header unpacked from an archive, with the checks
+/// [`VaultHeader::load`] makes.
+///
+/// A header from a later build is a defect of the archive here as well, and
+/// not [`Error::VaultTooNew`]: that error is about the vault in the data
+/// directory, which this restore has not touched.
+///
+/// # Errors
+///
+/// [`Error::BackupInvalid`] with [`BackupDefect::UnusableHeader`] when the
+/// file is not a header or names a format version other than the one this
+/// build reads; [`Error::Io`] when it cannot be read.
+fn load_archive_header(path: &Path) -> Result<VaultHeader> {
+    let unusable = |reason| Error::BackupInvalid(BackupDefect::UnusableHeader(reason));
+
+    let header = match VaultHeader::read(path) {
+        Ok(header) => header,
+        Err(Error::VaultCorrupt(reason)) => return Err(unusable(reason)),
+        Err(other) => return Err(other),
+    };
+    match header.check_format() {
+        Ok(()) => Ok(header),
+        Err(Error::VaultTooNew { .. }) => Err(unusable(VaultCorruption::UnsupportedFormat {
+            version: header.version,
+        })),
+        Err(Error::VaultCorrupt(reason)) => Err(unusable(reason)),
+        Err(other) => Err(other),
+    }
 }
 
 /// Returns [`Error::RestoreWouldOverwrite`] when a live vault file exists
@@ -1279,15 +1303,14 @@ mod tests {
 
         let err = restore_from_path(&archive, live.path(), true).expect_err("newer format");
 
-        assert!(
-            matches!(
-                err,
-                Error::BackupInvalid(BackupDefect::UnusableHeader(
-                    VaultCorruption::UnsupportedFormat { .. }
-                ))
-            ),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::UnusableHeader(
+                VaultCorruption::UnsupportedFormat { version: 2 }
+            )),
+            "the archive is what cannot be used, not the vault in place"
         );
+        assert_no_restore_files(live.path());
         assert_opens_with(live.path(), PASSWORD);
     }
 

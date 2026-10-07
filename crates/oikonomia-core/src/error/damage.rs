@@ -44,7 +44,13 @@ pub enum VaultCorruption {
         detail: String,
     },
 
-    /// The header was written in a format this build does not read.
+    /// The header names a format version this build does not read.
+    ///
+    /// For the header of the vault in place this is only version 0, which
+    /// no build writes: a version above the supported one is
+    /// [`Error::VaultTooNew`](crate::Error::VaultTooNew). The header inside
+    /// a backup is reported with this reason for either, wrapped in
+    /// [`BackupDefect::UnusableHeader`].
     #[error("unsupported vault format {version}")]
     UnsupportedFormat {
         /// The format version the header names.
