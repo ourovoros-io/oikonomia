@@ -13,7 +13,8 @@
 //!   `ipc_commands`, and cannot navigate away from the app's own origin
 //!   (`nav_guard`).
 //! - A path named by the webview is used only if the user handed it over in
-//!   a native drop or a native dialog (`state::PathGrants`).
+//!   a native drop or a native dialog, and only for what it was handed over
+//!   for (`state::PathGrants`, `state::GrantPurpose`).
 //! - The vault locks after the idle timeout whatever the webview is doing
 //!   (`state::spawn_auto_lock`).
 //! - An update is installed the way the running copy was installed, and
@@ -37,7 +38,7 @@ mod update_exec;
 mod update_key;
 
 use startup::StartupError;
-use state::{AppState, resolve_ocr_model_dir};
+use state::{AppState, GrantPurpose, resolve_ocr_model_dir};
 use tauri::Manager;
 
 /// Starts the desktop application and runs it until it exits.
@@ -312,14 +313,16 @@ fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     record_native_drops(window, event);
 }
 
-/// Grants the paths of files the user dropped on a window, so that the
-/// path-taking commands accept them.
+/// Grants the paths of files the user dropped on a window as documents, so
+/// that the two commands that read a dropped document accept them. A drop
+/// grants nothing else: a dropped file is not accepted as a backup to
+/// restore or as a statement to import.
 ///
 /// Does nothing before the state exists.
 fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
     if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event
         && let Some(state) = window.try_state::<AppState>()
     {
-        state.grant_paths(paths.iter().cloned());
+        state.grant_paths(GrantPurpose::Document, paths.iter().cloned());
     }
 }

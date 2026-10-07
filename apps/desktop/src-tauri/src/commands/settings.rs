@@ -10,12 +10,13 @@
 use crate::commands::support::{run_blocking, with_connection, with_vault_blocking};
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
-use oikonomia_core::ledger::{get_lock_timeout_secs, set_lock_timeout_secs};
+use oikonomia_core::domain::EntityId;
+use oikonomia_core::ledger::{SimpleEntryKind, get_lock_timeout_secs, set_lock_timeout_secs};
 use oikonomia_core::prefs::{
-    LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, resolve_locale,
-    save_ui_prefs, store_locale,
+    LastRoleAccounts, Locale, UiPrefs, load_ui_prefs, remember_quick_add, resolve_locale,
+    store_locale,
 };
-use tauri::{Manager, State};
+use tauri::{Manager, Runtime, State};
 
 /// Returns the idle time, in seconds, after which the vault locks itself.
 ///
@@ -64,8 +65,8 @@ pub(crate) async fn settings_set_lock_timeout(
 ///
 /// # Errors
 ///
-/// Returns `task_failed` when the application state was never set up or the
-/// blocking task panics.
+/// Returns `app_state_unavailable` when the application state was never set
+/// up, and `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale> {
     with_prefs_blocking(
@@ -82,9 +83,9 @@ pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written, and
-/// `task_failed` when the application state was never set up or the blocking
-/// task panics.
+/// Returns `io` when the preferences file cannot be written,
+/// `app_state_unavailable` when the application state was never set up, and
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_set_locale(
     app: tauri::AppHandle,
@@ -114,9 +115,9 @@ pub(crate) async fn settings_set_locale(
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written, and
-/// `task_failed` when the application state was never set up or the blocking
-/// task panics.
+/// Returns `io` when the preferences file cannot be written,
+/// `app_state_unavailable` when the application state was never set up, and
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_resolve_locale(
     app: tauri::AppHandle,
@@ -147,10 +148,12 @@ pub(crate) async fn settings_resolve_locale(
 ///
 /// # Errors
 ///
-/// Returns `task_failed` when the application state was never set up or the
-/// blocking task panics.
+/// Returns `app_state_unavailable` when the application state was never set
+/// up, and `task_failed` when the blocking task panics.
 #[tauri::command]
-pub(crate) async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResult<UiPrefs> {
+pub(crate) async fn settings_get_ui_prefs<R: Runtime>(
+    app: tauri::AppHandle<R>,
+) -> CommandResult<UiPrefs> {
     with_prefs_blocking(app, |_app, state| Ok(load_ui_prefs(state.data_dir()))).await
 }
 
@@ -162,26 +165,22 @@ pub(crate) async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResul
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written, and
-/// `task_failed` when the application state was never set up or the blocking
-/// task panics.
+/// Returns `io` when the preferences file cannot be written,
+/// `app_state_unavailable` when the application state was never set up, and
+/// `task_failed` when the blocking task panics.
 #[tauri::command]
-pub(crate) async fn settings_remember_quick_add(
-    app: tauri::AppHandle,
-    entity_id: String,
-    kind: String,
+pub(crate) async fn settings_remember_quick_add<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    entity_id: EntityId,
+    kind: SimpleEntryKind,
     accounts: LastRoleAccounts,
 ) -> CommandResult<()> {
     with_prefs_blocking(app, move |_app, state| {
+        // Core's function is a load-change-save, so it runs under the lock
+        // that keeps a language change from being written over.
         let _prefs_guard = state.lock_prefs();
 
-        let mut prefs = load_ui_prefs(state.data_dir());
-        prefs
-            .last_accounts_by_entity_kind
-            .insert(last_accounts_key(&entity_id, &kind), accounts);
-        prefs.last_entity_id = Some(entity_id);
-
-        save_ui_prefs(state.data_dir(), &prefs)?;
+        remember_quick_add(state.data_dir(), entity_id, kind, accounts)?;
         Ok(())
     })
     .await
@@ -196,12 +195,13 @@ pub(crate) async fn settings_remember_quick_add(
 ///
 /// # Errors
 ///
-/// Returns the error `work` returns, and `task_failed` when the application
-/// state was never set up or the blocking task panics.
-async fn with_prefs_blocking<T, F>(app: tauri::AppHandle, work: F) -> CommandResult<T>
+/// Returns the error `work` returns, `app_state_unavailable` when the state
+/// was never set up, and `task_failed` when the blocking task panics.
+async fn with_prefs_blocking<R, T, F>(app: tauri::AppHandle<R>, work: F) -> CommandResult<T>
 where
+    R: Runtime,
     T: Send + 'static,
-    F: FnOnce(&tauri::AppHandle, &AppState) -> CommandResult<T> + Send + 'static,
+    F: FnOnce(&tauri::AppHandle<R>, &AppState) -> CommandResult<T> + Send + 'static,
 {
     run_blocking(move || {
         // `Manager::state` panics when the state is not managed, which is the
@@ -209,11 +209,156 @@ where
         // webview is still running.
         let Some(state) = app.try_state::<AppState>() else {
             return Err(CommandError::desktop(
-                DesktopError::TaskFailed,
+                DesktopError::AppStateUnavailable,
                 "application state is not set up",
             ));
         };
         work(&app, &state)
     })
     .await
+}
+
+/// `settings_remember_quick_add` invoked through the mock IPC, the way the
+/// webview invokes it, and read back through `settings_get_ui_prefs`.
+///
+/// Not built on Windows, where the mock runtime keeps a test executable from
+/// starting; `commands::support::ipc_test_support` says why.
+#[cfg(test)]
+#[cfg(not(windows))]
+mod ipc_tests {
+    use crate::commands::settings::{
+        settings_get_ui_prefs, settings_remember_quick_add, with_prefs_blocking,
+    };
+    use crate::commands::support::ipc_test_support::MockApp;
+
+    /// An entity id as the webview sends it.
+    const ENTITY: &str = "11111111-1111-4111-8111-111111111111";
+    /// Another entity id.
+    const OTHER_ENTITY: &str = "33333333-3333-4333-8333-333333333333";
+    /// An account id as the webview sends it.
+    const CATEGORY: &str = "22222222-2222-4222-8222-222222222222";
+    /// Another account id.
+    const WALLET: &str = "44444444-4444-4444-8444-444444444444";
+
+    /// Starts the mock app with the two preferences commands registered.
+    /// The preferences need nothing in the vault.
+    fn mock_app(label: &str) -> MockApp {
+        let (app, ()) = MockApp::start(
+            label,
+            tauri::generate_handler![settings_remember_quick_add, settings_get_ui_prefs],
+            |_conn| (),
+        );
+        app
+    }
+
+    /// The accounts object `rememberQuickAdd` in `web/src/lib/api.ts` sends:
+    /// every part named, `null` for a part the entry kind does not use.
+    fn roles(category: Option<&str>, wallet: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "category_account_id": category,
+            "wallet_account_id": wallet,
+            "payable_account_id": null,
+            "from_account_id": null,
+            "to_account_id": null,
+        })
+    }
+
+    /// Invokes the command with the payload the frontend sends.
+    fn remember(app: &MockApp, entity: &str, kind: &str, accounts: &serde_json::Value) {
+        let answer = app
+            .invoke(
+                "settings_remember_quick_add",
+                serde_json::json!({ "entityId": entity, "kind": kind, "accounts": accounts }),
+            )
+            .unwrap();
+
+        assert_eq!(answer, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn the_ipc_call_stores_the_entity_and_the_accounts_under_entity_and_kind() {
+        let app = mock_app("remember-quick-add");
+        let accounts = roles(Some(CATEGORY), Some(WALLET));
+
+        remember(&app, ENTITY, "expense", &accounts);
+
+        let prefs = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(prefs["last_entity_id"], ENTITY);
+        assert_eq!(
+            prefs["last_accounts_by_entity_kind"],
+            serde_json::json!({ format!("{ENTITY}:expense"): accounts })
+        );
+        // The language is not part of the call and keeps its value.
+        assert_eq!(prefs["locale"], "en");
+    }
+
+    #[test]
+    fn a_later_call_replaces_its_own_key_and_keeps_the_others() {
+        let app = mock_app("remember-quick-add-twice");
+        let first = roles(Some(CATEGORY), Some(WALLET));
+        let income = roles(Some(WALLET), None);
+        let replaced = roles(Some(CATEGORY), None);
+
+        remember(&app, ENTITY, "expense", &first);
+        remember(&app, ENTITY, "income", &income);
+        remember(&app, OTHER_ENTITY, "expense", &first);
+        remember(&app, ENTITY, "expense", &replaced);
+
+        let prefs = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(prefs["last_entity_id"], ENTITY);
+        assert_eq!(
+            prefs["last_accounts_by_entity_kind"],
+            serde_json::json!({
+                format!("{ENTITY}:expense"): replaced,
+                format!("{ENTITY}:income"): income,
+                format!("{OTHER_ENTITY}:expense"): first,
+            })
+        );
+    }
+
+    /// After a failed start the hidden webview still runs and calls the
+    /// preferences commands, with no state for them to read.
+    #[test]
+    fn a_preferences_command_with_no_application_state_says_so_and_does_no_work() {
+        let app = tauri::test::mock_app();
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let work_ran = std::sync::Arc::clone(&ran);
+
+        let refused = tauri::async_runtime::block_on(with_prefs_blocking(
+            app.handle().clone(),
+            move |_app, _state| {
+                work_ran.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+        ))
+        .unwrap_err();
+
+        assert_eq!(refused.code, "app_state_unavailable");
+        assert_ne!(refused.code, "task_failed", "no task failed");
+        assert!(!ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn an_entry_kind_the_ledger_does_not_have_is_refused_before_anything_is_stored() {
+        let app = mock_app("remember-quick-add-kind");
+
+        let refused = app.invoke(
+            "settings_remember_quick_add",
+            serde_json::json!({
+                "entityId": ENTITY,
+                "kind": "refund",
+                "accounts": roles(None, None),
+            }),
+        );
+
+        assert!(refused.is_err(), "{refused:?}");
+        let prefs = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(prefs["last_entity_id"], serde_json::Value::Null);
+    }
 }

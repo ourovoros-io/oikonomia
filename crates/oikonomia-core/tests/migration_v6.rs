@@ -7,7 +7,7 @@ mod common;
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
+    CreateEntity, JournalLineRequest, PostJournalRequest, create_entity, list_accounts, post_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -41,29 +41,29 @@ fn pre_v6_row_becomes_visible() {
     let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
     let view = post_entry(
         conn,
-        &PostJournal {
+        &common::strict(PostJournalRequest {
             entity_id: entity.id,
             entry_date: "2026-01-01".into(),
             description: "legacy".into(),
             reference: None,
             lines: vec![
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: food.id,
                     debit_minor: 100,
                     credit_minor: 0,
                     memo: None,
                 },
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: checking.id,
                     debit_minor: 0,
                     credit_minor: 100,
                     memo: None,
                 },
             ],
-        },
+        }),
     )
     .expect("post");
-    let entry_id = view.entry.id.0.to_string();
+    let entry_id = view.entry.id.to_string();
 
     conn.execute("ALTER TABLE journal_entries DROP COLUMN hidden", [])
         .expect("pre-v6 shape");

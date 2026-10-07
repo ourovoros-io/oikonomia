@@ -1,23 +1,68 @@
 //! Helpers shared by the command modules.
 //!
-//! Three kinds of helper live here: the ones that take work to the blocking
+//! Four kinds of helper live here: the ones that take work to the blocking
 //! pool ([`run_blocking`], [`with_vault_blocking`], [`with_connection`],
 //! [`with_localized_connection`]), the ones that check what the webview sent
-//! ([`require_granted_path`], [`decode_capped_base64`]), and the native
-//! dialogs more than one module opens ([`save_with_dialog`], [`dialog_path`]).
+//! ([`require_granted_path`], [`decode_capped_base64`]), the native dialogs
+//! more than one module opens ([`save_with_dialog`], [`dialog_path`]), and
+//! [`Arguments`], which reads the arguments of a command as one struct.
 //!
 //! Nothing here is a command. The rules these helpers implement are stated in
 //! the [module above](crate::commands).
 
 use crate::error::{CommandError, CommandResult, DesktopError};
-use crate::state::{AppState, PathGrants, VaultGuard};
+use crate::state::{AppState, GrantPurpose, PathGrants, VaultGuard};
 use base64::Engine;
 use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use oikonomia_core::vault::Connection;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use tauri::ipc::{CommandArg, CommandItem, InvokeBody, InvokeError};
+use tauri::{Runtime, State};
 use tauri_plugin_dialog::FilePath;
+
+/// The named arguments of a command, read together as one `T`.
+///
+/// Tauri reads each parameter of a command from the payload key of the same
+/// name. A command with many arguments would need as many parameters, so it
+/// takes one `Arguments<T>` instead: `T` is deserialized from the whole
+/// payload object, whose keys the webview sends in camelCase. The name of the
+/// parameter itself is not a key of the payload.
+///
+/// What crosses IPC is the same either way, and so is a missing optional
+/// key: serde reads a missing `Option` field of `T` as `None`.
+///
+/// The wrapper is needed because Tauri already takes every type that
+/// implements `Deserialize` as an argument read from its own key, so `T`
+/// cannot be given another reading directly.
+#[derive(Debug)]
+pub(crate) struct Arguments<T>(pub(crate) T);
+
+impl<'de, T, R> CommandArg<'de, R> for Arguments<T>
+where
+    T: Deserialize<'de>,
+    R: Runtime,
+{
+    /// Reads `T` from the whole JSON payload of the invocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`InvokeError`] carrying the reason as text when the
+    /// payload is raw bytes, or when it does not deserialize as a `T`. Like
+    /// every argument Tauri refuses, it reaches the webview without a code.
+    fn from_command(command: CommandItem<'de, R>) -> Result<Self, InvokeError> {
+        match command.message.payload() {
+            InvokeBody::Json(payload) => T::deserialize(payload)
+                .map(Self)
+                .map_err(InvokeError::from_error),
+            InvokeBody::Raw(_) => Err(InvokeError::from(format!(
+                "command {} expects named arguments but the IPC call used a bytes payload",
+                command.name
+            ))),
+        }
+    }
+}
 
 /// Runs `work` on the runtime's blocking pool and returns what it returns.
 ///
@@ -149,8 +194,8 @@ pub(super) fn stored_text_locale(data_dir: &Path) -> Locale {
     load_ui_prefs(data_dir).locale
 }
 
-/// Accepts a webview-supplied path only if the user handed it to the app
-/// through a native drop or dialog ([`AppState::grant_paths`]).
+/// Accepts a webview-supplied path only if the user handed it to the app for
+/// `purpose`, through a native drop or dialog ([`AppState::grant_paths`]).
 ///
 /// Returns the resolved path that was checked, which is the one to open
 /// ([`PathGrants::resolve`]). Resolving reads the filesystem, so this runs on
@@ -159,12 +204,17 @@ pub(super) fn stored_text_locale(data_dir: &Path) -> Locale {
 /// # Errors
 ///
 /// Returns `path_not_granted` when the path resolves to nothing the user
-/// handed over, which includes a path that does not exist.
-pub(super) fn require_granted_path(grants: &PathGrants, path: &str) -> CommandResult<PathBuf> {
-    grants.resolve(Path::new(path)).ok_or_else(|| {
+/// handed over for `purpose`. That includes a path that does not exist, and
+/// one handed over for another purpose only.
+pub(super) fn require_granted_path(
+    grants: &PathGrants,
+    purpose: GrantPurpose,
+    path: &str,
+) -> CommandResult<PathBuf> {
+    grants.resolve(purpose, Path::new(path)).ok_or_else(|| {
         CommandError::desktop(
             DesktopError::PathNotGranted,
-            "file path was not chosen through the app",
+            "file path was not chosen through the app for this use",
         )
     })
 }
@@ -285,7 +335,7 @@ pub(super) async fn save_with_dialog(
             return Ok(None);
         };
 
-        let destination = (target.complete_path)(dialog_path(picked, "save")?);
+        let destination = (target.complete_path)(dialog_path(picked, FileDialog::Save)?);
 
         std::fs::write(&destination, &bytes).map_err(|err| {
             CommandError::desktop(
@@ -298,21 +348,53 @@ pub(super) async fn save_with_dialog(
     .await
 }
 
-/// Converts the location a native file dialog returned into a filesystem path.
-///
-/// `purpose` names the dialog in the diagnostic message: `"save"`,
-/// `"backup"`, `"CSV"`.
+/// A native file dialog the app opens, which decides the code for an answer
+/// that is not a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FileDialog {
+    /// A save dialog: an export, or a backup to write.
+    Save,
+    /// The open dialog for a backup archive to restore.
+    OpenBackup,
+    /// The open dialog for a bank statement to import.
+    OpenCsv,
+}
+
+impl FileDialog {
+    /// Returns the error an answer of this dialog that is not a path is
+    /// reported as: one code for the save dialogs, another for the open
+    /// ones.
+    const fn not_a_path(self) -> DesktopError {
+        match self {
+            Self::Save => DesktopError::SaveLocationInvalid,
+            Self::OpenBackup | Self::OpenCsv => DesktopError::OpenLocationInvalid,
+        }
+    }
+
+    /// Returns the words that name the dialog in the diagnostic message.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Save => "save",
+            Self::OpenBackup => "backup",
+            Self::OpenCsv => "CSV",
+        }
+    }
+}
+
+/// Converts the location the native file dialog `dialog` returned into a
+/// filesystem path.
 ///
 /// # Errors
 ///
-/// Returns `save_location_invalid`, for open dialogs as well as save dialogs,
-/// when the location is not a path. A desktop dialog returns paths; the
-/// plugin's other form is a URI, which mobile systems hand out.
-pub(super) fn dialog_path(picked: FilePath, purpose: &str) -> CommandResult<PathBuf> {
+/// Returns `save_location_invalid` for a save dialog and
+/// `open_location_invalid` for an open dialog when the location is not a
+/// path. A desktop dialog returns paths; the plugin's other form is a URI,
+/// which mobile systems hand out.
+pub(super) fn dialog_path(picked: FilePath, dialog: FileDialog) -> CommandResult<PathBuf> {
     picked.into_path().map_err(|err| {
         CommandError::desktop(
-            DesktopError::SaveLocationInvalid,
-            format!("invalid {purpose} location: {err}"),
+            dialog.not_a_path(),
+            format!("invalid {} location: {err}", dialog.label()),
         )
     })
 }
@@ -344,14 +426,37 @@ mod tests {
         std::fs::write(&archive, b"OIKOBACK").expect("write");
         let text = archive.to_str().expect("utf-8 path");
 
-        let refused = require_granted_path(&state.path_grants(), text).expect_err("ungranted path");
+        let grants = state.path_grants();
+        let backup = GrantPurpose::Backup;
+
+        let refused = require_granted_path(&grants, backup, text).expect_err("ungranted path");
         assert_eq!(refused.code, "path_not_granted");
 
-        state.grant_paths([archive.clone()]);
+        state.grant_paths(backup, [archive.clone()]);
         assert_eq!(
-            require_granted_path(&state.path_grants(), text).expect("granted path"),
+            require_granted_path(&grants, backup, text).expect("granted path"),
             archive.canonicalize().expect("canonical")
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_path_handed_over_for_another_purpose_is_refused_as_not_granted() {
+        let dir = temp_dir("path-purpose");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        let statement = dir.join("statement.csv");
+        std::fs::write(&statement, b"date,amount\n").expect("write");
+        let text = statement.to_str().expect("utf-8 path");
+        let grants = state.path_grants();
+
+        // What a CSV pick and a file drop record.
+        state.grant_paths(GrantPurpose::Csv, [statement.clone()]);
+        state.grant_paths(GrantPurpose::Document, [statement.clone()]);
+
+        let refused =
+            require_granted_path(&grants, GrantPurpose::Backup, text).expect_err("other purpose");
+        assert_eq!(refused.code, "path_not_granted");
+        assert_eq!(refused.params, std::collections::BTreeMap::new());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -364,15 +469,54 @@ mod tests {
         std::fs::write(&real, b"date,amount\n").expect("write");
         let link = dir.join("link.csv");
         std::os::unix::fs::symlink(&real, &link).expect("link");
-        state.grant_paths([link.clone()]);
+        state.grant_paths(GrantPurpose::Document, [link.clone()]);
         let named = link.to_str().expect("utf-8 path");
 
-        let accepted = require_granted_path(&state.path_grants(), named).expect("granted");
+        let accepted = require_granted_path(&state.path_grants(), GrantPurpose::Document, named)
+            .expect("granted");
 
         assert_eq!(accepted, real.canonicalize().expect("canonical"));
         // The document keeps the name it was dropped under.
         assert_eq!(dropped_file_name(named), "link.csv");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dialog_answer_that_is_not_a_path_is_coded_by_the_kind_of_dialog() {
+        // What a mobile system hands out in place of a path.
+        let not_a_path = || {
+            let uri = "content://media/external/file/42".parse::<tauri::Url>();
+            FilePath::Url(uri.expect("a uri"))
+        };
+        let cases = [
+            (FileDialog::Save, "save_location_invalid"),
+            (FileDialog::OpenBackup, "open_location_invalid"),
+            (FileDialog::OpenCsv, "open_location_invalid"),
+        ];
+
+        for (dialog, code) in cases {
+            let refused = dialog_path(not_a_path(), dialog).expect_err("not a path");
+
+            assert_eq!(refused.code, code, "{dialog:?}");
+            assert!(refused.message.contains(dialog.label()), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_dialog_answer_that_is_a_path_is_returned_as_it_is() {
+        let picked = std::path::PathBuf::from("books").join("2026.csv");
+
+        for dialog in [
+            FileDialog::Save,
+            FileDialog::OpenBackup,
+            FileDialog::OpenCsv,
+        ] {
+            assert_eq!(
+                dialog_path(FilePath::Path(picked.clone()), dialog).expect("a path"),
+                picked,
+                "{dialog:?}"
+            );
+        }
     }
 
     #[test]
@@ -494,5 +638,178 @@ mod tests {
         assert_eq!(encoded.len(), 8);
         let err = decode_capped_base64(&encoded, 3).expect_err("after decode");
         assert_eq!(err.code, "file_too_large");
+    }
+}
+
+/// Scaffolding for tests that invoke a command through Tauri's mock IPC, the
+/// way the webview invokes it.
+///
+/// Such a test covers what a unit test of the command's body cannot: how
+/// Tauri binds the payload the frontend sends to the command's parameters,
+/// and how the answer and the error are serialized back.
+///
+/// A test starts a [`MockApp`] with the commands under test registered and a
+/// closure that fills the vault, then calls [`MockApp::invoke`] with the
+/// object the frontend passes to `invoke`:
+///
+/// ```ignore
+/// let (app, ids) = MockApp::start("label", tauri::generate_handler![entry_list], seed);
+/// let listed = app.invoke("entry_list", serde_json::json!({ "entityId": ids.entity }));
+/// ```
+///
+/// # Not on Windows
+///
+/// The module, and every test module that uses it, is gated `#[cfg(test)]`
+/// and `#[cfg(not(windows))]`, and the `tauri` `test` feature is a
+/// dev-dependency of the other targets only. The gate is two attributes
+/// because clippy allows `unwrap` in tests only under a plain
+/// `#[cfg(test)]`. A test executable carries no
+/// application manifest, and with the mock runtime linked in it imports
+/// webview and common-controls entry points that do not resolve without
+/// one: the binary fails to start (`0xc0000139`,
+/// `STATUS_ENTRYPOINT_NOT_FOUND`) and takes every desktop test with it. The
+/// binding these tests cover is serde over the IPC payload, the same code on
+/// every platform, so the Linux and macOS runs cover it.
+#[cfg(test)]
+#[cfg(not(windows))]
+pub(crate) mod ipc_test_support {
+    use crate::state::{AppState, GrantPurpose};
+    use oikonomia_core::vault::Connection;
+    use std::path::PathBuf;
+    use tauri::Manager;
+    use tauri::ipc::{CallbackFn, Invoke, InvokeBody};
+    use tauri::test::{
+        INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets,
+    };
+    use tauri::webview::InvokeRequest;
+
+    /// The master password of the vault a [`MockApp`] runs over.
+    pub(crate) const PASSWORD: &str = "correct horse battery staple";
+
+    /// A mock application over an unlocked vault in a temporary directory,
+    /// with one webview to make IPC calls from.
+    ///
+    /// The directory is removed when the value is dropped.
+    pub(crate) struct MockApp {
+        /// The app; it owns the [`AppState`] the commands read.
+        app: tauri::App<MockRuntime>,
+        /// The webview the IPC calls are made from.
+        webview: tauri::WebviewWindow<MockRuntime>,
+        /// The vault's directory.
+        data_dir: PathBuf,
+    }
+
+    impl MockApp {
+        /// Starts a mock app whose invoke handler is `handler`, normally
+        /// `tauri::generate_handler![...]` naming the commands under test.
+        ///
+        /// A new vault is created and unlocked with [`PASSWORD`], and `seed`
+        /// is run on its connection before the app is built; what `seed`
+        /// returns, such as the ids it created, is returned beside the app.
+        /// `label` goes into the directory name, to tell tests apart.
+        ///
+        /// # Panics
+        ///
+        /// Panics when the directory, the vault or the mock app cannot be
+        /// set up.
+        pub(crate) fn start<S>(
+            label: &str,
+            handler: impl Fn(Invoke<MockRuntime>) -> bool + Send + Sync + 'static,
+            seed: impl FnOnce(&Connection) -> S,
+        ) -> (Self, S) {
+            let data_dir = std::env::temp_dir().join(format!(
+                "oiko-ipc-{label}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since_epoch| since_epoch.as_nanos())
+            ));
+            std::fs::create_dir_all(&data_dir).unwrap();
+            let state = AppState::open_path(data_dir.clone(), data_dir.clone()).unwrap();
+
+            let seeded = {
+                let vault = state.vault();
+                let mut guard = vault.acquire();
+                guard.init(PASSWORD).unwrap();
+                seed(guard.connection().unwrap())
+            };
+
+            let app = mock_builder()
+                .manage(state)
+                .invoke_handler(handler)
+                .build(mock_context(noop_assets()))
+                .unwrap();
+            let webview =
+                tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+                    .build()
+                    .unwrap();
+
+            let app = Self {
+                app,
+                webview,
+                data_dir,
+            };
+            (app, seeded)
+        }
+
+        /// Writes `bytes` to a new file named `name` in the app's temporary
+        /// directory and returns its path as the webview would name it.
+        ///
+        /// # Panics
+        ///
+        /// Panics when the file cannot be written or its path is not UTF-8.
+        pub(crate) fn write_file(&self, name: &str, bytes: &[u8]) -> String {
+            let path = self.data_dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path.to_str().unwrap().to_owned()
+        }
+
+        /// Grants `path` for `purpose`, as the native dialog or drop that
+        /// stands behind that purpose does.
+        pub(crate) fn grant(&self, purpose: GrantPurpose, path: &str) {
+            self.app
+                .state::<AppState>()
+                .grant_paths(purpose, [PathBuf::from(path)]);
+        }
+
+        /// Invokes `command` with `arguments` as the JSON payload, as
+        /// `invoke(command, arguments)` does in the webview.
+        ///
+        /// # Errors
+        ///
+        /// Returns what the webview's promise would be rejected with: the
+        /// serialized command error, or the text of Tauri's own refusal.
+        ///
+        /// # Panics
+        ///
+        /// Panics when the answer is not JSON.
+        pub(crate) fn invoke(
+            &self,
+            command: &str,
+            arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, serde_json::Value> {
+            let origin = if cfg!(target_os = "android") {
+                "http://tauri.localhost"
+            } else {
+                "tauri://localhost"
+            };
+            let request = InvokeRequest {
+                cmd: command.into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: origin.parse().unwrap(),
+                body: InvokeBody::Json(arguments),
+                headers: tauri::http::HeaderMap::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            };
+
+            get_ipc_response(&self.webview, request).map(|body| body.deserialize().unwrap())
+        }
+    }
+
+    impl Drop for MockApp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.data_dir);
+        }
     }
 }

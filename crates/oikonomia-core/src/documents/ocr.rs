@@ -471,23 +471,15 @@ fn run_ocr_on_rgb(image: &RgbImage) -> Result<String> {
 /// one character is a speck or a rule, not text. No test depends on it.
 const NOISE_LINE_CHARS: usize = 1;
 
-/// Most characters of a first-pass reading that is not returned as it is.
+/// Reads the text of a prepared image, in one pass over the three steps of
+/// the engine: `detect_words`, `find_text_lines`, `recognize_text`.
 ///
-/// The same number as `MIN_PDF_TEXT_CHARS` in the analyzer. The reason for 8
-/// is not recorded, and no test depends on it.
-const SPARSE_TEXT_CHARS: usize = 8;
-
-/// Reads the text of a prepared image.
+/// These are the steps `OcrEngine::get_text` is made of (`ocrs` 0.13
+/// `src/lib.rs`). They are called one by one so that a failure names the
+/// step that failed.
 ///
-/// The first pass is `OcrEngine::get_text`. When it fails, or yields
-/// [`SPARSE_TEXT_CHARS`] characters or fewer, a second pass calls the three
-/// steps `get_text` is made of (`detect_words`, `find_text_lines`,
-/// `recognize_text`; `ocrs` 0.13 `src/lib.rs`) one by one. The second pass
-/// therefore recognizes the same text. What it changes is that a failure
-/// names the step that failed, and that a short reading is returned
-/// untrimmed.
-///
-/// Both passes drop lines of [`NOISE_LINE_CHARS`] or fewer. Returns an empty
+/// Each recognized line is trimmed, and a line of [`NOISE_LINE_CHARS`] or
+/// fewer is dropped. Returns the lines joined with newlines, or an empty
 /// string when nothing was recognized.
 ///
 /// # Errors
@@ -499,31 +491,18 @@ fn infer_text(engine: &mut OcrEngine, image_source: ImageSource<'_>) -> Result<S
         .prepare_input(image_source)
         .analysis("prepare OCR input")?;
 
-    if let Ok(blob) = engine.get_text(&ocr_input) {
-        let cleaned = blob
-            .lines()
-            .map(str::trim)
-            .filter(|line| line.chars().count() > NOISE_LINE_CHARS)
-            .collect::<Vec<_>>()
-            .join("\n");
-        if cleaned.chars().count() > SPARSE_TEXT_CHARS {
-            return Ok(cleaned);
-        }
-    }
-
     let word_rects = engine.detect_words(&ocr_input).analysis("detect words")?;
     let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
     let line_texts = engine
         .recognize_text(&ocr_input, &line_rects)
         .analysis("recognize text")?;
 
-    let mut lines = Vec::new();
-    for line in line_texts.iter().flatten() {
-        let text = line.to_string();
-        if text.chars().count() > NOISE_LINE_CHARS {
-            lines.push(text);
-        }
-    }
+    let lines: Vec<String> = line_texts
+        .iter()
+        .flatten()
+        .map(|line| line.to_string().trim().to_owned())
+        .filter(|line| line.chars().count() > NOISE_LINE_CHARS)
+        .collect();
 
     Ok(lines.join("\n"))
 }

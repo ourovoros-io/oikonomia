@@ -8,8 +8,9 @@
 //!    an unlock with its key derivation, a rekey).
 //! 2. `WatchdogGate::state`, whether the idle watchdog polls or parks. Held
 //!    for a field update, or handed to a condition-variable wait.
-//! 3. `PathGrants::paths`, the paths the user handed over. Held for one
-//!    lookup or insert.
+//! 3. `PathGrants::paths`, the paths the user handed over, each under the
+//!    purpose it was handed over for ([`GrantPurpose`]). Held for one lookup
+//!    or insert.
 //! 4. `AppState::prefs_lock`, which serializes a load-change-save of the
 //!    plaintext preferences file. Held across that file I/O.
 //! 5. `AppState::update`, the update machine. Held for a status change, and
@@ -20,7 +21,9 @@
 //! Only one pair is ever held together: the vault first, then the gate state.
 //! [`VaultGuard`] updates the gate as it is dropped, while it still holds the
 //! vault, so the gate always shows the status the vault was left in and no
-//! other status change can come between the two writes. The opposite order
+//! other status change can come between the two writes. A lock made with no
+//! `AppHandle` at hand is queued on the gate in the same order
+//! (`WatchdogGate::announce_lock`). The opposite order
 //! does not occur: the watchdog takes the gate state only inside
 //! [`WatchdogGate`] methods, each of which releases it before returning, so
 //! it never holds the gate state while it waits for the vault. Every other
@@ -69,7 +72,8 @@ pub(crate) struct AppState {
     /// Seconds since `UNIX_EPOCH` of the last command touching the vault.
     last_activity: Arc<AtomicU64>,
     /// The paths the user handed over through a native drop or a native file
-    /// dialog; path-taking IPC commands accept only these.
+    /// dialog; a path-taking IPC command accepts only those handed over for
+    /// its own purpose.
     path_grants: PathGrants,
     /// Serializes a load-change-save of the plaintext preferences file.
     prefs_lock: Mutex<()>,
@@ -143,9 +147,14 @@ impl AppState {
     }
 
     /// Records paths the user chose through a native drop or dialog, so a
-    /// later path-taking command may accept them ([`PathGrants::grant`]).
-    pub(crate) fn grant_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
-        self.path_grants.grant(paths);
+    /// later command that takes a path for `purpose` may accept them
+    /// ([`PathGrants::grant`]).
+    pub(crate) fn grant_paths(
+        &self,
+        purpose: GrantPurpose,
+        paths: impl IntoIterator<Item = PathBuf>,
+    ) {
+        self.path_grants.grant(purpose, paths);
     }
 
     /// Returns a handle to the granted paths that a blocking task can own.
@@ -169,8 +178,36 @@ impl AppState {
     }
 }
 
+/// What the user handed a path over for.
+///
+/// Each place that grants a path names one purpose, and each command that
+/// takes a path asks for its own, so a file the user picked for one thing is
+/// not accepted for another: a statement picked for a CSV import, or a file
+/// dropped on a window, never reaches the restore that replaces the vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum GrantPurpose {
+    /// A backup archive to restore the vault from. Granted by the open
+    /// dialog of `vault_pick_backup` and `vault_restore`; accepted by
+    /// `vault_restore`.
+    Backup,
+    /// A bank statement to preview for import. Granted by the open dialog of
+    /// `csv_import_preview`, and accepted by that command when the webview
+    /// passes the path back with a column mapping.
+    Csv,
+    /// A document to analyze or to store with an entry. Granted by a file
+    /// drop on a window; accepted by `document_analyze_path` and
+    /// `entry_post_simple_with_document_path`.
+    Document,
+}
+
+impl GrantPurpose {
+    /// Every purpose, so that a test can try each against the others.
+    #[cfg(test)]
+    pub(crate) const ALL: &'static [Self] = &[Self::Backup, Self::Csv, Self::Document];
+}
+
 /// The paths the user handed over through a native drop or a native file
-/// dialog.
+/// dialog, each with the purpose it was handed over for.
 ///
 /// A handle: clones share one set. The Tauri state is borrowed for the length
 /// of a command, so a task on the blocking pool cannot hold it; it holds a
@@ -181,29 +218,32 @@ impl AppState {
 /// not on an async worker.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PathGrants {
-    /// The granted paths, each with its links resolved.
-    paths: Arc<Mutex<HashSet<PathBuf>>>,
+    /// The granted paths, each with its links resolved, under the purpose
+    /// each was granted for. One path may be held under several purposes.
+    paths: Arc<Mutex<HashSet<(GrantPurpose, PathBuf)>>>,
 }
 
 impl PathGrants {
-    /// Records `paths` as handed over, so a later path-taking command may
-    /// accept them.
+    /// Records `paths` as handed over for `purpose`, so a later command that
+    /// takes a path for that purpose may accept them.
     ///
     /// A path that cannot be resolved, such as one that no longer exists, is
     /// skipped: there is nothing a command could open under it.
-    pub(crate) fn grant(&self, paths: impl IntoIterator<Item = PathBuf>) {
+    pub(crate) fn grant(&self, purpose: GrantPurpose, paths: impl IntoIterator<Item = PathBuf>) {
         // Resolved before the set is locked, so the lock is never held across
         // file I/O.
-        let resolved: Vec<PathBuf> = paths
+        let resolved: Vec<(GrantPurpose, PathBuf)> = paths
             .into_iter()
             .filter_map(|path| path.canonicalize().ok())
+            .map(|path| (purpose, path))
             .collect();
 
         self.lock().extend(resolved);
     }
 
-    /// Returns the granted path that `path` resolves to, or `None` if it
-    /// resolves to nothing the user handed over.
+    /// Returns the path granted for `purpose` that `path` resolves to, or
+    /// `None` if it resolves to nothing the user handed over for that
+    /// purpose. A grant for another purpose does not count.
     ///
     /// The result is the resolved path that was compared, and it is the one
     /// to open. Opening `path` itself would resolve its links a second time,
@@ -211,16 +251,16 @@ impl PathGrants {
     /// checked. The resolved path is still opened by name, so this does not
     /// cover a directory on it being replaced after the check.
     #[must_use]
-    pub(crate) fn resolve(&self, path: &Path) -> Option<PathBuf> {
-        let canonical = path.canonicalize().ok()?;
+    pub(crate) fn resolve(&self, purpose: GrantPurpose, path: &Path) -> Option<PathBuf> {
+        let wanted = (purpose, path.canonicalize().ok()?);
         let granted = self.lock();
 
-        granted.contains(&canonical).then_some(canonical)
+        granted.contains(&wanted).then_some(wanted.1)
     }
 
     /// Locks the set, recovering from poisoning: it holds plain paths that
     /// are valid whichever statement a panic interrupted.
-    fn lock(&self) -> MutexGuard<'_, HashSet<PathBuf>> {
+    fn lock(&self) -> MutexGuard<'_, HashSet<(GrantPurpose, PathBuf)>> {
         match self.paths.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -272,13 +312,14 @@ const fn idle_secs(now_secs: u64, last_activity_secs: u64) -> Option<u64> {
 ///
 /// The gate and the cached timeout are functions of the vault. Outside the
 /// tests they are set only with the vault mutex held: whether the watchdog
-/// polls and the timeout by [`VaultGuard`], the pending `vault-locked`
-/// announcement by the two recoveries that force a lock ([`Self::acquire`]
-/// after poisoning, `lock_after_panic`). So no caller can change the vault's
-/// status and forget them, and two status changes cannot apply their gate
-/// updates in the opposite order. The one write made without the vault is
-/// the watchdog clearing a pending announcement as it takes it, under the
-/// gate state alone.
+/// polls and the timeout by [`VaultGuard`], the queued `vault-locked`
+/// announcement by the three places that lock the vault with no `AppHandle`
+/// at hand ([`Self::acquire`] after poisoning, `lock_after_panic` and
+/// `lock_if_idle`). So no caller can change the vault's status and forget
+/// them, and two status changes cannot apply their gate updates in the
+/// opposite order. The writes made without the vault are the watchdog's own
+/// bookkeeping of a queued announcement, under the gate state alone: taking
+/// an attempt at it, dropping it, and clearing it once it is made.
 pub(crate) struct GatedVault {
     /// The vault. Locked only through [`Self::acquire`].
     vault: Mutex<Vault>,
@@ -303,24 +344,25 @@ impl GatedVault {
     /// A panic inside a command closure must not brick the session or disable
     /// the watchdog. The guard is recovered and the poison flag cleared, and
     /// the vault is forced into the locked state, because the panic may have
-    /// interrupted a database operation. If that ended an unlocked session
-    /// the watchdog emits `vault-locked`, as no command is there to do it.
+    /// interrupted a database operation. If that ended an unlocked session,
+    /// the lock is queued for the watchdog to announce when the returned
+    /// guard is dropped, as no command is there to emit `vault-locked`. It
+    /// is not queued if the caller has unlocked the vault again under that
+    /// guard: the UI asked for that unlock and is about to show an open
+    /// session.
     ///
     /// Blocks while another thread holds the vault, which a rekey does for
     /// seconds: call it on the blocking pool, not on an async worker.
     pub(crate) fn acquire(&self) -> VaultGuard<'_> {
-        let vault = match self.vault.lock() {
-            Ok(vault) => vault,
+        let (vault, ended_a_session) = match self.vault.lock() {
+            Ok(vault) => (vault, false),
             Err(poisoned) => {
                 self.vault.clear_poison();
                 let mut vault = poisoned.into_inner();
 
                 let was_unlocked = vault.status() == VaultStatus::Unlocked;
                 vault.lock();
-                if was_unlocked {
-                    self.gate.announce_lock();
-                }
-                vault
+                (vault, was_unlocked)
             }
         };
 
@@ -328,6 +370,7 @@ impl GatedVault {
             status_at_lock: vault.status(),
             vault,
             gated: self,
+            unannounced_lock: ended_a_session,
         }
     }
 
@@ -359,9 +402,24 @@ pub(crate) struct VaultGuard<'a> {
     /// Status when the guard was taken, to tell an unlock from a vault that
     /// was already open.
     status_at_lock: VaultStatus,
+    /// Whether a session was locked under this guard where no command will
+    /// emit `vault-locked` for it: by the recovery from poisoning, or by the
+    /// watchdog. The lock is queued when the guard drops, if the vault is
+    /// not unlocked again by then.
+    unannounced_lock: bool,
 }
 
 impl VaultGuard<'_> {
+    /// Locks the vault and has the watchdog announce that lock once this
+    /// guard is dropped.
+    ///
+    /// For the watchdog's own locks, which no command announces. A command
+    /// that locks the vault calls [`Vault::lock`] and emits the event itself.
+    fn lock_unannounced(&mut self) {
+        self.vault.lock();
+        self.unannounced_lock = true;
+    }
+
     /// Caches the idle timeout so the watchdog needs no database access.
     ///
     /// On the guard so that the cache is written with the vault held, in the
@@ -398,6 +456,14 @@ impl Drop for VaultGuard<'_> {
         // panic in the read below cannot leave an unlocked vault with a
         // parked watchdog.
         self.gated.gate.follow(status);
+
+        // After `follow`, so that the gate already shows the vault locked
+        // when the lock is queued: a queued lock is dropped while the gate
+        // shows an open vault. Skipped when the vault was unlocked again
+        // under this guard, which the UI asked for and will show.
+        if self.unannounced_lock && status != VaultStatus::Unlocked {
+            self.gated.gate.announce_lock();
+        }
 
         // Not while unwinding: the next `GatedVault::acquire` locks the vault
         // again, and a query that panicked here would abort the process. The
@@ -452,7 +518,8 @@ impl WatchdogGate {
         Self {
             state: Mutex::new(GateState {
                 phase: GatePhase::Parked,
-                lock_to_announce: false,
+                lock_to_announce: None,
+                locks_queued: 0,
             }),
             cond: Condvar::new(),
             #[cfg(test)]
@@ -529,12 +596,40 @@ impl WatchdogGate {
         self.cond.notify_all();
     }
 
-    /// Has the watchdog emit `vault-locked` once, for a lock made where no
-    /// `AppHandle` is at hand.
+    /// Queues a `vault-locked` for the watchdog to emit: for a lock made
+    /// where no `AppHandle` is at hand, and for the watchdog's own idle lock.
+    ///
+    /// Called by [`VaultGuard`] as it drops, with the vault mutex held and
+    /// after [`Self::follow`], so the gate shows the vault locked by the time
+    /// the lock is queued. A queued lock is dropped while the gate shows an
+    /// open vault ([`GateState::next_announcement`]).
+    ///
+    /// The lock gets a fresh [`MAX_LOCK_ANNOUNCE_ATTEMPTS`]. It replaces a
+    /// lock still queued: the event carries nothing, so one emission tells
+    /// the UI of both.
     fn announce_lock(&self) {
         let mut state = self.lock_state();
-        state.lock_to_announce = true;
+        state.locks_queued = state.locks_queued.wrapping_add(1);
+        state.lock_to_announce = Some(LockAnnouncement {
+            sequence: LockSequence(state.locks_queued),
+            attempts_left: MAX_LOCK_ANNOUNCE_ATTEMPTS,
+        });
         self.cond.notify_all();
+    }
+
+    /// Records that the announcement of the lock numbered `sequence` reached
+    /// the emitter and was delivered, so it is not retried.
+    ///
+    /// A lock queued while that announcement was being emitted is a later
+    /// one, which the UI may not have been told of, and stays queued.
+    fn lock_announced(&self, sequence: LockSequence) {
+        let mut state = self.lock_state();
+        if state
+            .lock_to_announce
+            .is_some_and(|queued| queued.sequence == sequence)
+        {
+            state.lock_to_announce = None;
+        }
     }
 
     /// Wakes any waiter and ends the loop.
@@ -556,9 +651,8 @@ impl WatchdogGate {
             if state.phase == GatePhase::Shutdown {
                 return Wake::Shutdown;
             }
-            if state.lock_to_announce {
-                state.lock_to_announce = false;
-                return Wake::AnnounceLock;
+            if let Some(sequence) = state.next_announcement() {
+                return Wake::AnnounceLock(sequence);
             }
             if state.phase == GatePhase::Running {
                 return Wake::Poll;
@@ -572,9 +666,14 @@ impl WatchdogGate {
 
     /// Waits one poll interval, or less if the gate changes, and returns the
     /// phase to act on.
+    ///
+    /// A lock queued during the wait is queued with the gate already parked
+    /// ([`Self::announce_lock`]), so the wait ends, this returns `Parked`,
+    /// and the round ends without an idle check; the next round announces
+    /// the lock.
     fn wait_poll_interval(&self, interval: Duration) -> GatePhase {
         let state = self.lock_state();
-        if state.phase != GatePhase::Running || state.lock_to_announce {
+        if state.phase != GatePhase::Running {
             return state.phase;
         }
         #[cfg(test)]
@@ -621,14 +720,70 @@ impl WatchdogGate {
     }
 }
 
+/// How many times the watchdog tries to announce one lock to the UI.
+///
+/// An announcement that fails, by returning an error or by panicking, is
+/// tried again on the next round, because until it gets through the UI shows
+/// an open session over a locked vault. The number is bounded because the
+/// round that follows a failure starts at once: the vault is locked, so
+/// there is no poll interval to wait out, and an emitter that fails every
+/// time would otherwise keep the thread spinning for the rest of the
+/// process. Three is a first try and two more; nothing was measured to
+/// choose it.
+const MAX_LOCK_ANNOUNCE_ATTEMPTS: u8 = 3;
+
 /// What the gate tells the watchdog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct GateState {
     /// Whether the watchdog polls or waits.
     phase: GatePhase,
-    /// A lock the watchdog still has to report to the UI: one forced by a
-    /// recovery from a panic, which happens where no `AppHandle` is at hand.
-    lock_to_announce: bool,
+    /// A lock the watchdog still has to report to the UI: its own idle lock,
+    /// or one forced by a recovery from a panic, which happens where no
+    /// `AppHandle` is at hand.
+    lock_to_announce: Option<LockAnnouncement>,
+    /// How many locks have been queued for announcement, which numbers them.
+    /// Wraps; only equality of two numbers close in time is ever tested.
+    locks_queued: u64,
+}
+
+impl GateState {
+    /// Takes one attempt at the queued announcement and returns the number
+    /// of its lock, or `None` when there is nothing to announce now.
+    ///
+    /// Two queued announcements are dropped here instead of being returned:
+    ///
+    /// - one whose vault is unlocked again. The UI unlocked it, so it shows
+    ///   an open session over an open vault, and the event would drop it to
+    ///   the unlock screen. The phase stands for the vault's status: it is
+    ///   written with the vault mutex held, when a vault operation ends
+    ///   ([`VaultGuard`]), and a lock is queued only after it.
+    /// - one that has used up [`MAX_LOCK_ANNOUNCE_ATTEMPTS`].
+    fn next_announcement(&mut self) -> Option<LockSequence> {
+        let queued = self.lock_to_announce.as_mut()?;
+
+        if self.phase == GatePhase::Running || queued.attempts_left == 0 {
+            self.lock_to_announce = None;
+            return None;
+        }
+        queued.attempts_left -= 1;
+
+        Some(queued.sequence)
+    }
+}
+
+/// The number of a lock queued for announcement: the value of
+/// [`GateState::locks_queued`] when it was queued. It tells a lock from one
+/// queued later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LockSequence(u64);
+
+/// A lock the UI has not been told of yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LockAnnouncement {
+    /// Which lock this is.
+    sequence: LockSequence,
+    /// How many more times the watchdog may try to announce it.
+    attempts_left: u8,
 }
 
 /// What the watchdog loop does next.
@@ -647,8 +802,10 @@ enum GatePhase {
 enum Wake {
     /// The vault is unlocked: start polling.
     Poll,
-    /// The vault was locked behind the UI's back: emit `vault-locked`.
-    AnnounceLock,
+    /// The vault was locked behind the UI's back: emit `vault-locked` for
+    /// this lock, and report it with [`WatchdogGate::lock_announced`] once
+    /// the emitter has delivered it.
+    AnnounceLock(LockSequence),
     /// The loop should end.
     Shutdown,
 }
@@ -684,7 +841,10 @@ pub(crate) const fn should_auto_lock(
 /// A timer in the webview cannot be what closes the vault: the webview may
 /// throttle timers, stall, or be reloaded. The frontend timer is only a
 /// fast-path duplicate; this thread guarantees the lock. It emits
-/// `vault-locked` so the UI can drop to the unlock screen.
+/// `vault-locked` so the UI can drop to the unlock screen. An emission that
+/// fails is tried again, [`MAX_LOCK_ANNOUNCE_ATTEMPTS`] times in all, and
+/// one whose vault has been unlocked again by then is not made
+/// ([`run_auto_lock_loop`]).
 ///
 /// While the vault is not unlocked the thread parks on [`WatchdogGate`]
 /// instead of waking every poll interval, so a locked session can stay
@@ -707,7 +867,7 @@ pub(crate) fn spawn_auto_lock(
         .spawn(move || {
             run_auto_lock_loop(&handles, AUTO_LOCK_POLL_INTERVAL, || {
                 use tauri::Emitter;
-                let _ = app.emit("vault-locked", ());
+                app.emit("vault-locked", ())
             });
         })?;
 
@@ -716,13 +876,26 @@ pub(crate) fn spawn_auto_lock(
 
 /// Runs the idle watchdog until the gate shuts it down.
 ///
-/// `on_locked` runs with no mutex held, each time the watchdog locked the
-/// vault or has a forced lock to announce. A round that panics is contained:
-/// the vault is locked ([`lock_after_panic`]) and the loop goes on.
+/// `on_locked` tells the UI of a lock, returns whether it could, and runs
+/// with no mutex held. Every lock the UI was not told of goes through the
+/// gate's queue ([`WatchdogGate::announce_lock`]): the watchdog's own idle
+/// lock, and a lock forced by a recovery from a panic. A round takes the
+/// queued lock and calls `on_locked` for it, unless the vault has been
+/// unlocked again in the meantime ([`GateState::next_announcement`]).
+///
+/// When `on_locked` returns an error, the error is logged, the lock stays
+/// queued, and the next round calls `on_locked` for it again,
+/// [`MAX_LOCK_ANNOUNCE_ATTEMPTS`] times in all. The same holds when it
+/// panics. A round that panics is contained: the vault is locked
+/// ([`lock_after_panic`]) and the loop goes on.
+///
+/// The decision to announce and the call are two steps. An unlock that
+/// completes between them is still followed by the event, which this loop
+/// cannot prevent.
 fn run_auto_lock_loop(
     handles: &WatchdogHandles,
     poll_interval: Duration,
-    mut on_locked: impl FnMut(),
+    mut on_locked: impl FnMut() -> tauri::Result<()>,
 ) {
     loop {
         // A panic that ended this thread would end auto-lock for the rest of
@@ -731,7 +904,7 @@ fn run_auto_lock_loop(
         //
         // `AssertUnwindSafe`: the handles are mutexes that recover from
         // poisoning and atomics, and `on_locked` is called again only to
-        // announce a later lock.
+        // announce a lock: the one it panicked on, or a later one.
         let round = std::panic::catch_unwind(AssertUnwindSafe(|| {
             watch_one_round(handles, poll_interval, &mut on_locked)
         }));
@@ -744,12 +917,16 @@ fn run_auto_lock_loop(
     }
 }
 
-/// Runs one pass of the watchdog: waits until the vault is unlocked, waits
-/// one poll interval, and locks if idle. `Break` ends the loop.
+/// Runs one pass of the watchdog. `Break` ends the loop.
+///
+/// A pass either announces a queued lock, or waits until the vault is
+/// unlocked, waits one poll interval, and locks if idle. An idle lock is
+/// queued, not announced in the same pass, so that it is retried and
+/// dropped by the same rules as every other lock.
 fn watch_one_round(
     handles: &WatchdogHandles,
     poll_interval: Duration,
-    on_locked: &mut impl FnMut(),
+    on_locked: &mut impl FnMut() -> tauri::Result<()>,
 ) -> ControlFlow<()> {
     let WatchdogHandles {
         vault,
@@ -758,8 +935,13 @@ fn watch_one_round(
 
     match vault.gate.wait_for_work() {
         Wake::Shutdown => return ControlFlow::Break(()),
-        Wake::AnnounceLock => {
-            on_locked();
+        Wake::AnnounceLock(sequence) => {
+            // An error, like a panic, leaves the lock queued for the next
+            // round, which has already taken one of its attempts.
+            match on_locked() {
+                Ok(()) => vault.gate.lock_announced(sequence),
+                Err(err) => log::warn!("could not announce the vault lock: {err}"),
+            }
             return ControlFlow::Continue(());
         }
         Wake::Poll => {}
@@ -774,9 +956,7 @@ fn watch_one_round(
     #[cfg(test)]
     vault.gate.record_tick();
 
-    if lock_if_idle(vault, last_activity) {
-        on_locked();
-    }
+    lock_if_idle(vault, last_activity);
     ControlFlow::Continue(())
 }
 
@@ -785,25 +965,26 @@ fn watch_one_round(
 /// How far the round got is unknown, including whether the idle check ran, so
 /// the vault is locked rather than left open on a guess. That also parks the
 /// gate, which keeps a round that panics every time from spinning: the next
-/// one waits for an unlock.
+/// one waits for an unlock, once any queued lock has used up its attempts.
 ///
-/// A lock made here is announced by the next round, inside the containment.
-/// If the vault is already locked nothing is announced, so an announcement
-/// that itself panicked is not repeated: repeating it could spin.
+/// A lock made here is queued and announced by the next round, inside the
+/// containment. If the vault is already locked nothing new is queued. A lock
+/// still queued then, which is the case when it was its announcement that
+/// panicked, keeps the attempts it has left; it is not given new ones here,
+/// or an emitter that panics every time would be called without end.
 fn lock_after_panic(vault: &GatedVault) {
     // The panic message itself went to the panic hook.
     log::error!("auto-lock watchdog round panicked; locking the vault");
 
     let mut guard = vault.acquire();
     if guard.status() == VaultStatus::Unlocked {
-        guard.lock();
-        vault.gate.announce_lock();
+        guard.lock_unannounced();
     }
 }
 
-/// Locks the vault if it is unlocked and has been idle for the timeout.
-/// Returns whether it did. The guard parks the gate as it drops.
-fn lock_if_idle(vault: &GatedVault, last_activity: &AtomicU64) -> bool {
+/// Locks the vault if it is unlocked and has been idle for the timeout, and
+/// queues the lock for the next round to announce.
+fn lock_if_idle(vault: &GatedVault, last_activity: &AtomicU64) {
     let mut guard = vault.acquire();
 
     // Sampled with the vault held, so the decision uses the activity and the
@@ -812,11 +993,9 @@ fn lock_if_idle(vault: &GatedVault, last_activity: &AtomicU64) -> bool {
     let idle = idle_secs(now_secs(), last_activity.load(Ordering::Relaxed));
     let timeout = vault.lock_timeout_secs.load(Ordering::Relaxed);
 
-    let lock_now = should_auto_lock(idle, timeout, guard.status());
-    if lock_now {
-        guard.lock();
+    if should_auto_lock(idle, timeout, guard.status()) {
+        guard.lock_unannounced();
     }
-    lock_now
 }
 
 /// Returns the directory that holds the OCR models, for a packaged build and
@@ -872,11 +1051,13 @@ fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, idle_secs, now_secs, resolve_ocr_model_dir,
-        run_auto_lock_loop, should_auto_lock,
+        AUTO_LOCK_POLL_INTERVAL, AppState, GatePhase, GateState, GatedVault, GrantPurpose,
+        LockAnnouncement, LockSequence, MAX_LOCK_ANNOUNCE_ATTEMPTS, WatchdogHandles, idle_secs,
+        now_secs, resolve_ocr_model_dir, run_auto_lock_loop, should_auto_lock,
     };
     use oikonomia_core::ledger::set_lock_timeout_secs;
     use oikonomia_core::vault::VaultStatus;
+    use oikonomia_test_support::listed_variants;
     use std::fs;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
@@ -993,22 +1174,87 @@ mod tests {
         fs::create_dir_all(dir.join("sub")).expect("subdir");
         let indirect = dir.join("sub").join("..").join("picked.csv");
 
-        assert_eq!(
-            state.path_grants().resolve(&picked),
-            None,
-            "nothing granted yet"
-        );
+        let grants = state.path_grants();
+        let csv = GrantPurpose::Csv;
+        assert_eq!(grants.resolve(csv, &picked), None, "nothing granted yet");
 
-        state.grant_paths([picked.clone()]);
+        state.grant_paths(csv, [picked.clone()]);
 
         let resolved = picked.canonicalize().expect("canonical");
-        assert_eq!(state.path_grants().resolve(&picked), Some(resolved.clone()));
+        assert_eq!(grants.resolve(csv, &picked), Some(resolved.clone()));
         assert_eq!(
-            state.path_grants().resolve(&indirect),
+            grants.resolve(csv, &indirect),
             Some(resolved),
             "same file through .."
         );
-        assert_eq!(state.path_grants().resolve(&dir.join("other.csv")), None);
+        assert_eq!(grants.resolve(csv, &dir.join("other.csv")), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    listed_variants! {
+        units listed_purposes for GrantPurpose {
+            GrantPurpose::Backup,
+            GrantPurpose::Csv,
+            GrantPurpose::Document,
+        }
+    }
+
+    /// Fails unless `GrantPurpose::ALL` is exactly the listed purposes, each
+    /// once. The listing stops compiling when a purpose is added to the enum
+    /// and not to it, so the tests that try every purpose cannot miss one.
+    #[test]
+    fn all_lists_every_grant_purpose() {
+        assert_eq!(GrantPurpose::ALL.len(), listed_purposes::COUNT);
+        listed_purposes::assert_every_position_once(
+            GrantPurpose::ALL
+                .iter()
+                .map(listed_purposes::position)
+                .collect(),
+        );
+    }
+
+    #[test]
+    fn a_path_granted_for_one_purpose_is_accepted_for_that_purpose_only() {
+        for granted_for in GrantPurpose::ALL.iter().copied() {
+            let (state, dir) = test_state("grant-purpose");
+            let picked = dir.join("picked.bin");
+            fs::write(&picked, b"bytes").expect("write");
+            let resolved = picked.canonicalize().expect("canonical");
+
+            state.grant_paths(granted_for, [picked.clone()]);
+
+            for asked_for in GrantPurpose::ALL.iter().copied() {
+                let expected = (asked_for == granted_for).then(|| resolved.clone());
+                assert_eq!(
+                    state.path_grants().resolve(asked_for, &picked),
+                    expected,
+                    "granted for {granted_for:?}, asked for {asked_for:?}"
+                );
+            }
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn a_path_may_be_granted_for_two_purposes_and_each_grant_stands_alone() {
+        let (state, dir) = test_state("grant-twice");
+        let picked = dir.join("picked.csv");
+        fs::write(&picked, b"date,amount\n").expect("write");
+        let resolved = picked.canonicalize().expect("canonical");
+        let grants = state.path_grants();
+
+        state.grant_paths(GrantPurpose::Csv, [picked.clone()]);
+        state.grant_paths(GrantPurpose::Document, [picked.clone()]);
+
+        assert_eq!(
+            grants.resolve(GrantPurpose::Csv, &picked),
+            Some(resolved.clone())
+        );
+        assert_eq!(
+            grants.resolve(GrantPurpose::Document, &picked),
+            Some(resolved)
+        );
+        assert_eq!(grants.resolve(GrantPurpose::Backup, &picked), None);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1077,29 +1323,307 @@ mod tests {
         let last_activity = Arc::clone(&handles.last_activity);
 
         // The first announcement panics, as a failing emitter would.
-        let (announced, announcements) = mpsc::channel();
-        let mut calls = 0_u32;
-        let join = std::thread::spawn(move || {
-            run_auto_lock_loop(&handles, Duration::from_millis(20), move || {
-                calls += 1;
-                let _ = announced.send(calls);
-                if calls == 1 {
-                    std::panic::resume_unwind(Box::new("emit failed"));
-                }
-            });
-        });
+        let (join, announcements) = spawn_counting_watchdog(handles, SHORT_POLL, |call| call == 1);
 
-        for round in 1..=2_u32 {
+        // The first session's lock is announced twice: the call that panics
+        // and the one that repeats it. The second session's lock is the
+        // third call, which only a watchdog that is still running makes.
+        for calls_expected in [vec![1, 2], vec![3]] {
             vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
             last_activity.store(0, Ordering::Relaxed);
 
-            // The bound only fails the test if the watchdog is gone.
-            let got = announcements.recv_timeout(GIVE_UP_AFTER);
-            assert_eq!(got.ok(), Some(round), "auto-lock round {round}");
+            for call in calls_expected {
+                // The bound only fails the test if the watchdog is gone.
+                let got = announcements.recv_timeout(GIVE_UP_AFTER);
+                assert_eq!(got.ok(), Some(call), "announcement {call}");
+            }
+            assert_eq!(vault.acquire().status(), VaultStatus::Locked);
         }
 
-        assert_eq!(vault.acquire().status(), VaultStatus::Locked);
         shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Checks that a lock whose announcement panicked is announced again.
+    ///
+    /// No unlock follows the idle lock, so the panic recovery finds the
+    /// vault locked and queues nothing: only the retry can tell the UI, which
+    /// otherwise shows an open session over a locked vault.
+    #[test]
+    fn a_lock_announcement_that_panics_is_made_again_until_it_gets_through() {
+        let (state, dir) = test_state("retry");
+        init_locked_vault(&state);
+        let handles = state.watchdog_handles();
+        let vault = Arc::clone(&handles.vault);
+        handles.last_activity.store(0, Ordering::Relaxed);
+        const {
+            assert!(
+                MAX_LOCK_ANNOUNCE_ATTEMPTS >= 3,
+                "the emitter below panics twice, so the test needs two retries"
+            );
+        }
+
+        let (join, announcements) = spawn_counting_watchdog(handles, SHORT_POLL, |call| call < 3);
+        wait_until("the watchdog parks on the locked vault", || {
+            vault.gate.parked_waits() >= 1
+        });
+        let parks_before_unlock = vault.gate.parked_waits();
+
+        vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
+
+        for call in 1..=3_u32 {
+            let got = announcements.recv_timeout(GIVE_UP_AFTER);
+            assert_eq!(got.ok(), Some(call), "announcement {call}");
+        }
+        assert_eq!(vault.acquire().status(), VaultStatus::Locked);
+
+        // The third call returned, so the lock is announced and the watchdog
+        // parks. Parked is a wait only a notification ends, so no fourth
+        // call can follow it.
+        wait_until("the watchdog parks after the announcement", || {
+            vault.gate.parked_waits() > parks_before_unlock
+        });
+        assert_eq!(announcements.try_recv().ok(), None, "announced once more");
+
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Checks the bound on the retries, and that giving up on one lock does
+    /// not stop the watchdog from locking and announcing the next session.
+    #[test]
+    fn a_lock_announcement_that_always_panics_is_given_up_after_the_bound() {
+        let (state, dir) = test_state("retry-bound");
+        init_locked_vault(&state);
+        let handles = state.watchdog_handles();
+        let vault = Arc::clone(&handles.vault);
+        let last_activity = Arc::clone(&handles.last_activity);
+        last_activity.store(0, Ordering::Relaxed);
+        let bound = u32::from(MAX_LOCK_ANNOUNCE_ATTEMPTS);
+
+        let (join, announcements) =
+            spawn_counting_watchdog(handles, SHORT_POLL, move |call| call <= bound);
+        wait_until("the watchdog parks on the locked vault", || {
+            vault.gate.parked_waits() >= 1
+        });
+        let parks_before_unlock = vault.gate.parked_waits();
+
+        vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
+
+        for call in 1..=bound {
+            let got = announcements.recv_timeout(GIVE_UP_AFTER);
+            assert_eq!(got.ok(), Some(call), "announcement {call}");
+        }
+        wait_until("the watchdog gives up and parks", || {
+            vault.gate.parked_waits() > parks_before_unlock
+        });
+        assert_eq!(announcements.try_recv().ok(), None, "tried past the bound");
+        assert_eq!(vault.acquire().status(), VaultStatus::Locked);
+
+        vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
+        last_activity.store(0, Ordering::Relaxed);
+
+        let next = announcements.recv_timeout(GIVE_UP_AFTER);
+        assert_eq!(next.ok(), Some(bound + 1), "the next session's lock");
+
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An emitter that reports an error has not told the UI either, so the
+    /// lock stays queued and is announced again.
+    #[test]
+    fn a_lock_announcement_that_returns_an_error_is_made_again() {
+        let (state, dir) = test_state("retry-error");
+        init_locked_vault(&state);
+        let handles = state.watchdog_handles();
+        let vault = Arc::clone(&handles.vault);
+        handles.last_activity.store(0, Ordering::Relaxed);
+
+        let (announced, announcements) = mpsc::channel();
+        let mut calls = 0_u32;
+        let join = std::thread::spawn(move || {
+            run_auto_lock_loop(&handles, SHORT_POLL, move || {
+                calls += 1;
+                let _ = announced.send(calls);
+                if calls == 1 {
+                    return Err(tauri::Error::WebviewNotFound);
+                }
+                Ok(())
+            });
+        });
+        wait_until("the watchdog parks on the locked vault", || {
+            vault.gate.parked_waits() >= 1
+        });
+        let parks_before_unlock = vault.gate.parked_waits();
+
+        vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
+
+        for call in 1..=2_u32 {
+            let got = announcements.recv_timeout(GIVE_UP_AFTER);
+            assert_eq!(got.ok(), Some(call), "announcement {call}");
+        }
+        wait_until("the watchdog parks after the announcement", || {
+            vault.gate.parked_waits() > parks_before_unlock
+        });
+        assert_eq!(announcements.try_recv().ok(), None, "announced once more");
+        assert_eq!(vault.acquire().status(), VaultStatus::Locked);
+
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Opens the vault of `state` and has a command panic while it holds it,
+    /// which leaves the vault mutex poisoned over an open session.
+    fn poison_an_open_session(state: &AppState) {
+        let vault = state.vault();
+        vault.acquire().unlock(TEST_PASSWORD).expect("unlock");
+        state.touch();
+        vault.acquire().set_lock_timeout_cache(15 * 60);
+
+        let poisoner = Arc::clone(&vault);
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoner.acquire();
+            std::panic::resume_unwind(Box::new("a command panicked"));
+        })
+        .join();
+        assert!(panicked.is_err());
+    }
+
+    /// Checks that a queued lock is not announced once the vault is open
+    /// again.
+    ///
+    /// A command panics with the vault open. The next command only reads the
+    /// status: taking the vault it finds the mutex poisoned, the recovery
+    /// locks the session, and the lock is queued. Then the user unlocks. The
+    /// UI shows an open session; `vault-locked` would drop it to the unlock
+    /// screen over an open vault.
+    ///
+    /// The watchdog is started only once all of that has happened, so the
+    /// order of the unlock and the watchdog's round is not left to the
+    /// scheduler.
+    #[test]
+    fn a_queued_lock_is_not_announced_once_the_vault_is_unlocked_again() {
+        let (state, dir) = test_state("requeue");
+        init_locked_vault(&state);
+        let vault = state.vault();
+        poison_an_open_session(&state);
+
+        assert_eq!(vault.acquire().status(), VaultStatus::Locked);
+        assert!(
+            vault.gate.lock_state().lock_to_announce.is_some(),
+            "the recovery did not queue the lock it made"
+        );
+        vault.acquire().unlock(TEST_PASSWORD).expect("unlock again");
+
+        // The interval does not elapse: a watchdog inside its poll wait has
+        // passed the point where it announces a queued lock.
+        let (join, emits) = spawn_watchdog(&state, NEVER_ELAPSES);
+        wait_until("the watchdog is inside its poll wait", || {
+            vault.gate.poll_waits() >= 1
+        });
+
+        assert_eq!(emits.try_recv().ok(), None, "announced over an open vault");
+        assert_eq!(vault.gate.lock_state().lock_to_announce, None);
+        assert_eq!(vault.acquire().status(), VaultStatus::Unlocked);
+
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Checks that the recovery queues nothing when the command that meets
+    /// the poisoned vault is itself an unlock.
+    ///
+    /// The recovery locks the session as the unlock takes the vault, and the
+    /// unlock then opens it under the same guard, which takes a key
+    /// derivation. A lock queued at the recovery would be announced by the
+    /// running watchdog during that derivation, over the unlock the UI asked
+    /// for. It is queued only when the guard drops, and not at all for a
+    /// vault that is open by then.
+    #[test]
+    fn a_recovery_followed_by_an_unlock_under_the_same_guard_queues_nothing() {
+        let (state, dir) = test_state("recover-unlock");
+        init_locked_vault(&state);
+        let vault = state.vault();
+        poison_an_open_session(&state);
+        let (join, emits) = spawn_watchdog(&state, NEVER_ELAPSES);
+        wait_until("the watchdog is inside its poll wait", || {
+            vault.gate.poll_waits() >= 1
+        });
+
+        {
+            let mut guard = vault.acquire();
+            assert_eq!(guard.status(), VaultStatus::Locked, "the recovery locks");
+            assert_eq!(vault.gate.lock_state().lock_to_announce, None);
+
+            guard.unlock(TEST_PASSWORD).expect("unlock");
+            assert_eq!(vault.gate.lock_state().lock_to_announce, None);
+        }
+
+        assert_eq!(vault.gate.lock_state().lock_to_announce, None);
+        assert!(vault.gate.is_running());
+        assert_eq!(emits.try_recv().ok(), None, "announced over an open vault");
+
+        shutdown_watchdog(&vault, join);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_queued_lock_is_taken_while_parked_and_dropped_once_running_or_spent() {
+        let sequence = LockSequence(7);
+        let parked = |lock_to_announce| GateState {
+            phase: GatePhase::Parked,
+            lock_to_announce,
+            locks_queued: 7,
+        };
+        let queued = |attempts_left| {
+            Some(LockAnnouncement {
+                sequence,
+                attempts_left,
+            })
+        };
+
+        let mut nothing = parked(None);
+        assert_eq!(nothing.next_announcement(), None);
+
+        let mut waiting = parked(queued(2));
+        assert_eq!(waiting.next_announcement(), Some(sequence));
+        assert_eq!(waiting.lock_to_announce, queued(1));
+        assert_eq!(waiting.next_announcement(), Some(sequence));
+        assert_eq!(waiting.next_announcement(), None, "no attempt left");
+        assert_eq!(waiting.lock_to_announce, None);
+
+        let mut unlocked_again = GateState {
+            phase: GatePhase::Running,
+            ..parked(queued(MAX_LOCK_ANNOUNCE_ATTEMPTS))
+        };
+        assert_eq!(unlocked_again.next_announcement(), None);
+        assert_eq!(unlocked_again.lock_to_announce, None);
+    }
+
+    /// A lock queued while an earlier one is being announced is a different
+    /// lock: reporting the earlier one as announced must not clear it.
+    #[test]
+    fn only_the_announcement_of_a_lock_itself_takes_it_off_the_queue() {
+        let (state, dir) = test_state("queue");
+        init_locked_vault(&state);
+        let vault = state.vault();
+
+        vault.gate.announce_lock();
+        let first = vault.gate.lock_state().next_announcement();
+
+        vault.gate.announce_lock();
+        vault
+            .gate
+            .lock_announced(first.expect("the first lock is queued"));
+
+        let second = vault.gate.lock_state().next_announcement();
+        assert!(
+            second.is_some() && second != first,
+            "the later lock was lost"
+        );
+        vault.gate.lock_announced(second.expect("checked above"));
+        assert_eq!(vault.gate.lock_state().next_announcement(), None);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1135,6 +1659,7 @@ mod tests {
                     std::panic::resume_unwind(Box::new("emit failed"));
                 }
                 let _ = announced.send(calls);
+                Ok(())
             });
         });
 
@@ -1402,7 +1927,7 @@ mod tests {
         worker: &std::thread::ScopedJoinHandle<'_, T>,
         condition: impl Fn() -> bool,
     ) {
-        let hang = Instant::now() + Duration::from_secs(300);
+        let hang = Instant::now() + DEADLOCK_AFTER;
 
         while !condition() {
             assert!(!worker.is_finished(), "the worker ended before {what}");
@@ -1459,6 +1984,30 @@ mod tests {
         let join = std::thread::spawn(move || {
             run_auto_lock_loop(&handles, poll, move || {
                 let _ = sender.send(());
+                Ok(())
+            });
+        });
+        (join, receiver)
+    }
+
+    /// Starts the watchdog loop with an emitter that numbers its calls from
+    /// one, sends each number, and then panics, as a failing emitter would,
+    /// when `panics_on` says so for that number.
+    fn spawn_counting_watchdog(
+        handles: WatchdogHandles,
+        poll: Duration,
+        panics_on: impl Fn(u32) -> bool + Send + 'static,
+    ) -> (std::thread::JoinHandle<()>, mpsc::Receiver<u32>) {
+        let (sender, receiver) = mpsc::channel();
+        let mut calls = 0_u32;
+        let join = std::thread::spawn(move || {
+            run_auto_lock_loop(&handles, poll, move || {
+                calls += 1;
+                let _ = sender.send(calls);
+                if panics_on(calls) {
+                    std::panic::resume_unwind(Box::new("emit failed"));
+                }
+                Ok(())
             });
         });
         (join, receiver)

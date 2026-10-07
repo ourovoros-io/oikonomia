@@ -206,12 +206,12 @@ fn first_of_type_except(
 /// word with the English one, so a selection that still reads names fails.
 #[cfg(test)]
 pub(crate) fn seeded_chart_for_tests(template: ChartTemplate, rename: bool) -> Vec<Account> {
-    let entity_id = EntityId::new();
+    let entity_id = EntityId::generate();
 
     crate::coa::template_accounts(template, crate::prefs::Locale::En)
         .into_iter()
         .map(|seed| Account {
-            id: AccountId::new(),
+            id: AccountId::generate(),
             entity_id,
             code: seed.code.to_owned(),
             name: if rename {
