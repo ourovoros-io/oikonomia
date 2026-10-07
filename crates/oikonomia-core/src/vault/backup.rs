@@ -189,7 +189,8 @@ pub fn default_backup_file_name() -> String {
 ///   file copy would leave out ([`VaultCorruption::UnmergedWriteAheadLog`]),
 ///   or when a password change left its staged header behind
 ///   ([`VaultCorruption::UnfinishedPasswordChange`]). The last two are
-///   settled by unlocking the vault once; see the module doc.
+///   settled by unlocking the vault once, see the module doc, and their
+///   [`Error::code`] is `vault_unlock_before_backup`, not `vault_corrupt`.
 /// - [`Error::Io`] when `dest` has no file name, when a file cannot be
 ///   inspected, read, created, written or renamed, or when a vault file
 ///   becomes shorter while it is being copied.
@@ -1336,6 +1337,7 @@ mod tests {
             err,
             Error::VaultCorrupt(VaultCorruption::UnmergedWriteAheadLog)
         );
+        assert_eq!(err.code(), "vault_unlock_before_backup");
         assert!(!dest.exists(), "no partial archive");
     }
 
