@@ -914,7 +914,7 @@ fn print_line(line: impl std::fmt::Display) -> CliResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CliError, USAGE, describe, run, unpublished_assets, utf8_file_name};
+    use super::{CliError, USAGE, describe, run, unpublished_assets};
     use base64::Engine;
     use minisign::KeyPair;
     use oikonomia_update::sha256_hex;
@@ -1574,6 +1574,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_file_name_that_is_not_utf8_is_an_error_not_a_skipped_file() {
+        use super::utf8_file_name;
         use std::os::unix::ffi::OsStringExt;
 
         let name = std::ffi::OsString::from_vec(vec![b'a', 0xff, b'.', b'd', b'e', b'b']);
