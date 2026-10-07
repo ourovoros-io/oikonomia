@@ -264,7 +264,6 @@ export function buildLedger(lang: DemoLang): DemoLedger {
     code: seed.code,
     name: seed.name[lang],
     account_type: seed.type,
-    parent_id: null,
     is_active: true,
     is_system: false,
     sort_order: i,

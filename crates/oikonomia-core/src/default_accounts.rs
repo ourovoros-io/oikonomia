@@ -220,7 +220,6 @@ pub(crate) fn seeded_chart_for_tests(template: ChartTemplate, rename: bool) -> V
                 seed.name.to_owned()
             },
             account_type: seed.account_type,
-            parent_id: None,
             is_active: true,
             is_system: seed.is_system,
             sort_order: seed.sort_order,

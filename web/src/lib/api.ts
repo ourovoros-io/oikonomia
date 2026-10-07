@@ -20,7 +20,6 @@ export type Account = {
   code: string
   name: string
   account_type: AccountType
-  parent_id: string | null
   is_active: boolean
   is_system: boolean
   sort_order: number
@@ -59,7 +58,7 @@ export type JournalEntry = {
   entry_date: string
   description: string
   reference: string | null
-  status: 'draft' | 'posted'
+  status: 'posted'
   hidden: boolean
 }
 

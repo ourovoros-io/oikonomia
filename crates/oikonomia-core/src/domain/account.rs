@@ -20,6 +20,10 @@
 //! An account is archived, not deleted: [`Account::is_active`] goes to
 //! `false` and the account's entries stay in the book. Accounts are removed
 //! only together with their whole entity.
+//!
+//! The chart is flat: an account has no parent. The `accounts` table has a
+//! `parent_id` column that is reserved and not part of an [`Account`]; the
+//! module docs of `db/schema.rs` say what it holds.
 
 use crate::domain::define_id;
 use crate::domain::entity::EntityId;
@@ -110,9 +114,6 @@ pub struct Account {
     pub name: String,
     /// The class of the account, which fixes its normal side.
     pub account_type: AccountType,
-    /// The account this one is nested under, if any. Core stores and returns
-    /// it and gives it no meaning of its own.
-    pub parent_id: Option<AccountId>,
     /// `false` once the account is archived. An archived account keeps its
     /// entries and is refused for new ones, except the reversing entry that
     /// voids one of them.

@@ -16,16 +16,55 @@
 //!
 //! # Reading and writing
 //!
-//! - [`load_ui_prefs`] never fails. A missing or undecodable file gives the
-//!   defaults, because a damaged preferences file must not stop the app from
-//!   starting.
+//! - [`load_ui_prefs`] never fails. A missing, unreadable or undecodable
+//!   file gives the defaults, because a damaged preferences file must not
+//!   stop the app from starting.
 //! - [`save_ui_prefs`] writes a temporary file and renames it over the
 //!   target, so a reader sees the old file or the new one, complete.
 //! - A change is a load, an edit and a save. Nothing here locks, so two
 //!   writers can lose each other's change; callers that change the file
 //!   serialise themselves with a lock of their own.
-//! - [`remember_quick_add`] is that load, edit and save for the book and
-//!   accounts last used in quick add.
+//! - [`store_locale`] is that load, edit and save for the language, and
+//!   [`remember_quick_add`] for the book and accounts last used in quick
+//!   add.
+//!
+//! # A file that gives no preferences is never replaced
+//!
+//! Loading falls back to the defaults, so the preferences a caller holds
+//! after a failed load are not what the file says. Saving them would replace
+//! a file its owner might still repair with the defaults plus one change.
+//! [`save_ui_prefs`] therefore loads the file itself before it writes, and
+//! refuses when a file is there and cannot be read or does not decode:
+//!
+//! | The file at the path | Load gives | Save |
+//! |----------------------|------------|------|
+//! | is not there | the defaults | writes it |
+//! | is blank | the defaults | replaces it |
+//! | decodes | what it holds | replaces it |
+//! | cannot be read | the defaults | refuses with [`Error::Io`] |
+//! | does not decode | the defaults | refuses with [`Error::Serialization`] |
+//!
+//! "Not there" includes a data directory that does not exist yet. "Blank" is
+//! empty or only whitespace. A file decodes whatever its `locale` string is
+//! (see Compatibility). "Cannot be read" is any failure to read other than
+//! the file not existing, such as text that is not UTF-8 or a directory at
+//! the path. "Does not decode" is text that is not JSON, JSON that is not an
+//! object, and an object with a field of the wrong shape.
+//!
+//! The check is inside the save, and the save is the only function that
+//! writes the file, so no caller can forget it and no caller passes anything
+//! for it: [`store_locale`], [`remember_quick_add`] and [`resolve_locale`]
+//! get the refusal by saving. The alternative, a load that returns where the
+//! preferences came from for the save to demand, would change every reader
+//! of the file to protect three writers. The cost here is one more read of a
+//! small file per save.
+//!
+//! A refusal lasts until the file is repaired or removed. Until then the app
+//! runs on the defaults, a language change fails with the error and quick
+//! add remembers nothing. [`resolve_locale`] fails too, unless the file is an
+//! object with a `locale` key: that counts as a stored language, so nothing
+//! is written. A blank file is the exception to all of it because there is
+//! nothing in it to repair.
 //!
 //! # The first run
 //!
@@ -195,7 +234,8 @@ pub struct LastRoleAccounts {
 /// ways: a key this build does not know is ignored, a missing key takes its
 /// default, and a `locale` value this build does not know takes the default
 /// locale without affecting the other fields. Any other value of the wrong
-/// shape still fails the whole file, which then loads as the defaults.
+/// shape still fails the whole file, which then loads as the defaults and is
+/// not replaced by a save ([`save_ui_prefs`]).
 ///
 /// Saving writes only the fields below, so a key this build could not read
 /// is not carried over to the saved file. A `locale` string this build does
@@ -313,8 +353,8 @@ impl Serialize for StoredLocale {
 }
 
 /// Reads any value. A value that is not a string is not an error: failing
-/// here would fail the whole [`UiPrefs`], and the next save would then
-/// overwrite the stored entity and account choices with defaults.
+/// here would fail the whole [`UiPrefs`], so the stored entity and account
+/// choices would not load and every save would be refused.
 impl<'de> Deserialize<'de> for StoredLocale {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -387,27 +427,104 @@ pub fn ui_prefs_path(data_dir: &Path) -> PathBuf {
 /// Returns the stored preferences, or the defaults when there are none to
 /// read.
 ///
-/// A file that is missing or cannot be read gives the defaults silently. A
-/// file that is not a [`UiPrefs`] gives the defaults too, with a warning
-/// through the `log` facade. Nothing is an error: a damaged preferences file must not stop
-/// the app from starting, it only costs the saved choices.
+/// A missing file and a blank one give the defaults silently. A file that
+/// cannot be read, or that is not a [`UiPrefs`], gives the defaults too, with
+/// a warning through the `log` facade. Nothing is an error: a damaged
+/// preferences file must not stop the app from starting. The file itself is
+/// left as it is, and [`save_ui_prefs`] refuses to replace it.
 #[must_use]
 pub fn load_ui_prefs(data_dir: &Path) -> UiPrefs {
-    let path = ui_prefs_path(data_dir);
-    let Ok(text) = fs::read_to_string(&path) else {
-        return UiPrefs::default();
-    };
-
-    decode_ui_prefs(&text, &path)
+    or_defaults(read_ui_prefs(data_dir), &ui_prefs_path(data_dir))
 }
 
-/// Decodes the text of the preferences file at `path`, giving the defaults
-/// (and logging why) when the text is not a [`UiPrefs`].
-fn decode_ui_prefs(text: &str, path: &Path) -> UiPrefs {
-    serde_json::from_str(text).unwrap_or_else(|err| {
-        log::warn!("ignoring corrupt ui prefs at {}: {err}", path.display());
-        UiPrefs::default()
-    })
+/// Why a preferences file that is there gave no preferences.
+///
+/// A file that is not there is not one of these: it is the first run.
+#[derive(Debug, thiserror::Error)]
+enum UnusablePrefs {
+    /// The file could not be read, for a reason other than not existing. Text
+    /// that is not UTF-8 is one such reason.
+    #[error("cannot read the file: {0}")]
+    Read(std::io::Error),
+    /// The file was read and is not a [`UiPrefs`].
+    #[error("cannot decode the file: {0}")]
+    Decode(serde_json::Error),
+}
+
+impl UnusablePrefs {
+    /// Returns the error of a save that would have replaced the file.
+    ///
+    /// The variant says which layer failed and the operation says what was
+    /// refused; both read after "cannot", as every operation does.
+    fn into_refusal(self) -> Error {
+        match self {
+            Self::Read(err) => Error::io("replace a preferences file that cannot be read", err),
+            Self::Decode(err) => {
+                Error::serialization("replace a preferences file that does not decode", err)
+            }
+        }
+    }
+}
+
+/// Reads the preferences file, telling "nothing stored" from "stored and
+/// unusable".
+///
+/// Returns `None` when nothing is stored: there is no file, or the file is
+/// blank ([`decode_ui_prefs`]).
+///
+/// # Errors
+///
+/// [`UnusablePrefs::Read`] when a file is there and cannot be read, and
+/// [`UnusablePrefs::Decode`] when its text is not a [`UiPrefs`].
+fn read_ui_prefs(data_dir: &Path) -> std::result::Result<Option<UiPrefs>, UnusablePrefs> {
+    let text = match fs::read_to_string(ui_prefs_path(data_dir)) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(UnusablePrefs::Read(err)),
+    };
+
+    decode_ui_prefs(&text)
+}
+
+/// Decodes the text of the preferences file.
+///
+/// Returns `None` for text that is empty or only whitespace. Such a file
+/// holds nothing a user could recover, so it counts as nothing stored and a
+/// save may replace it.
+///
+/// # Errors
+///
+/// [`UnusablePrefs::Decode`] when the text is not JSON, is JSON other than
+/// an object, or is an object that is not a [`UiPrefs`].
+fn decode_ui_prefs(text: &str) -> std::result::Result<Option<UiPrefs>, UnusablePrefs> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+
+    // The derived `Deserialize` of a struct also reads a JSON array, field by
+    // position, so `[]` would decode as the defaults. No build writes an
+    // array; reading the text as an object first refuses one.
+    let object: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(text).map_err(UnusablePrefs::Decode)?;
+
+    serde_json::from_value(serde_json::Value::Object(object))
+        .map(Some)
+        .map_err(UnusablePrefs::Decode)
+}
+
+/// Returns what was read from the preferences file at `path`, or the
+/// defaults (logging why) when nothing was stored or it could not be read.
+fn or_defaults(read: std::result::Result<Option<UiPrefs>, UnusablePrefs>, path: &Path) -> UiPrefs {
+    match read {
+        Ok(stored) => stored.unwrap_or_default(),
+        Err(err) => {
+            log::warn!(
+                "using default preferences and leaving {} as it is: {err}",
+                path.display()
+            );
+            UiPrefs::default()
+        }
+    }
 }
 
 /// Returns the locale stored on disk, or `None` when none was ever stored.
@@ -430,7 +547,7 @@ pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
     value
         .as_object()?
         .contains_key("locale")
-        .then(|| decode_ui_prefs(&text, &path).locale())
+        .then(|| or_defaults(decode_ui_prefs(&text), &path).locale())
 }
 
 /// Stores `locale`, keeping every other preference this build can read.
@@ -446,9 +563,9 @@ pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the data directory cannot be created or the
-/// file cannot be written, and [`Error::Serialization`] when the preferences
-/// cannot be encoded, as [`save_ui_prefs`] does.
+/// Those of [`save_ui_prefs`]. In particular a file that is there and cannot
+/// be read or decoded is not replaced: the language is not stored and the
+/// file is left as it is.
 pub fn store_locale(data_dir: &Path, locale: Locale) -> Result<()> {
     let mut prefs = load_ui_prefs(data_dir);
     prefs.set_locale(locale);
@@ -480,8 +597,14 @@ pub struct LocaleResolution {
 /// # Errors
 ///
 /// Returns the error of [`store_locale`] when a language is chosen and cannot
-/// be stored. A
-/// call that finds a stored language writes nothing and cannot fail.
+/// be stored. That includes a file that is there and cannot be read, is not
+/// JSON or is not a JSON object: no language counts as stored
+/// ([`stored_locale`]), and the file is not replaced to store one.
+///
+/// A call that finds a stored language writes nothing and cannot fail. An
+/// object with a `locale` key and another field of the wrong shape is such
+/// a case: the key counts as stored and the default language is returned,
+/// although no save can replace that file.
 pub fn resolve_locale<S: AsRef<str>>(
     data_dir: &Path,
     system_languages: &[S],
@@ -502,7 +625,15 @@ pub fn resolve_locale<S: AsRef<str>>(
     })
 }
 
-/// Writes `prefs` as the preferences file, replacing the one that is there.
+/// Writes `prefs` as the preferences file, replacing the one that is there
+/// unless that one cannot be read or decoded.
+///
+/// The file is read first. When one is there and cannot be read or decoded,
+/// nothing is written and the file is left byte for byte as it was: the
+/// preferences a caller holds for it are the defaults [`load_ui_prefs`] fell
+/// back to, and saving them would destroy a file its owner might still
+/// repair. A missing file and a blank one are nothing stored and are
+/// written.
 ///
 /// The JSON is written to a temporary sibling file, flushed to disk, and
 /// renamed over the target, so a reader (and a crash) sees either the old or
@@ -515,10 +646,30 @@ pub fn resolve_locale<S: AsRef<str>>(
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the data directory cannot be created or the
-/// temporary file cannot be written or renamed into place, and
-/// [`Error::Serialization`] when the preferences cannot be encoded as JSON.
+/// - [`Error::Io`] with the operation `replace a preferences file that
+///   cannot be read` when a file is there and reading it fails, which
+///   includes text that is not UTF-8 and a directory at the file's path.
+/// - [`Error::Serialization`] with the operation `replace a preferences file
+///   that does not decode` when a file is there and is not a [`UiPrefs`].
+/// - [`Error::Io`] when the data directory cannot be created or the
+///   temporary file cannot be written or renamed into place.
+/// - [`Error::Serialization`] when the preferences cannot be encoded as
+///   JSON.
 pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
+    read_ui_prefs(data_dir).map_err(UnusablePrefs::into_refusal)?;
+
+    write_ui_prefs(data_dir, prefs)
+}
+
+/// Writes `prefs` as the preferences file without looking at the file it
+/// replaces. Only [`save_ui_prefs`] calls this, after its check.
+///
+/// # Errors
+///
+/// [`Error::Io`] when the data directory cannot be created or the temporary
+/// file cannot be written or renamed into place, and
+/// [`Error::Serialization`] when the preferences cannot be encoded as JSON.
+fn write_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
     fs::create_dir_all(data_dir).io("create data directory")?;
 
     let json = serde_json::to_string_pretty(prefs).serialization("encode preferences")?;
@@ -540,11 +691,8 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
 ///
 /// The accounts are stored under [`last_accounts_key`] for the book and the
 /// kind, replacing what was remembered for that pair; every other
-/// preference this build can read is kept. A file that cannot be read or
-/// decoded loads as the defaults ([`load_ui_prefs`]), so this call then
-/// saves the defaults with the two values and what the file held is gone.
-/// The ids in `accounts` are stored as given and are not checked against the
-/// vault, which may be locked.
+/// preference this build can read is kept. The ids in `accounts` are stored
+/// as given and are not checked against the vault, which may be locked.
 ///
 /// This loads the file, changes the two values and saves the result with
 /// [`save_ui_prefs`], which replaces the file by renaming a temporary one
@@ -554,9 +702,9 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the data directory cannot be created or the
-/// file cannot be written, and [`Error::Serialization`] when the preferences
-/// cannot be encoded, as [`save_ui_prefs`] does.
+/// Those of [`save_ui_prefs`]. In particular a file that is there and cannot
+/// be read or decoded is not replaced: nothing is remembered and the file is
+/// left as it is.
 pub fn remember_quick_add(
     data_dir: &Path,
     entity_id: EntityId,
@@ -612,6 +760,23 @@ mod tests {
             Locale::El,
             Locale::Fr,
             Locale::De,
+        }
+    }
+
+    /// The operation of the refusal for a file that is not a [`UiPrefs`].
+    const DOES_NOT_DECODE: &str = "replace a preferences file that does not decode";
+
+    /// The operation of the refusal for a file that cannot be read.
+    const CANNOT_BE_READ: &str = "replace a preferences file that cannot be read";
+
+    /// Returns the operation of a failed save, whichever of the two variants
+    /// a save can fail with.
+    fn failed_operation<T>(result: &Result<T>) -> Option<&'static str> {
+        match result {
+            Err(Error::Io { operation, .. } | Error::Serialization { operation, .. }) => {
+                Some(*operation)
+            }
+            _ => None,
         }
     }
 
@@ -1060,8 +1225,30 @@ mod tests {
     }
 
     #[test]
-    fn empty_and_corrupt_files_are_a_first_run() {
-        for content in ["", "not json", "[1, 2]", "null", "{\"locale\": "] {
+    fn a_corrupt_file_has_no_stored_locale_and_a_first_run_does_not_replace_it() {
+        for content in ["not json", "[1, 2]", "null", "{\"locale\": "] {
+            let dir = tempdir().unwrap();
+
+            assert!(fs::write(ui_prefs_path(dir.path()), content).is_ok());
+            assert_eq!(stored_locale(dir.path()), None, "{content:?}");
+
+            let resolved = resolve_locale(dir.path(), &["fr-FR"]);
+            assert_eq!(
+                failed_operation(&resolved),
+                Some(DOES_NOT_DECODE),
+                "{content:?}: {resolved:?}"
+            );
+            assert_eq!(
+                fs::read(ui_prefs_path(dir.path())).unwrap(),
+                content.as_bytes()
+            );
+            assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
+        }
+    }
+
+    #[test]
+    fn a_blank_file_is_a_first_run() {
+        for content in ["", " \n\t "] {
             let dir = tempdir().unwrap();
 
             assert!(fs::write(ui_prefs_path(dir.path()), content).is_ok());
@@ -1100,14 +1287,6 @@ mod tests {
                 ..prefs
             }
         );
-    }
-
-    #[test]
-    fn a_whitespace_only_file_is_a_first_run() {
-        let dir = tempdir().unwrap();
-
-        assert!(fs::write(ui_prefs_path(dir.path()), " \n\t ").is_ok());
-        assert_eq!(stored_locale(dir.path()), None);
     }
 
     #[test]
@@ -1219,9 +1398,11 @@ mod tests {
         let dir = tempdir().unwrap();
 
         // A directory at the target makes the rename fail after the write.
+        // `save_ui_prefs` refuses such a target before writing, so this goes
+        // to the write itself.
         assert!(fs::create_dir(ui_prefs_path(dir.path())).is_ok());
 
-        assert!(save_ui_prefs(dir.path(), &UiPrefs::default()).is_err());
+        assert!(write_ui_prefs(dir.path(), &UiPrefs::default()).is_err());
         assert!(!ui_prefs_temporary_path(dir.path()).exists());
     }
 
@@ -1464,8 +1645,8 @@ mod tests {
     #[test]
     fn remembering_quick_add_reports_a_file_it_cannot_write() {
         let dir = tempdir().unwrap();
-        // A directory at the target makes the rename fail after the write.
-        assert!(fs::create_dir(ui_prefs_path(dir.path())).is_ok());
+        // A directory where the save stages its file makes the write fail.
+        assert!(fs::create_dir(ui_prefs_temporary_path(dir.path())).is_ok());
 
         let failed = remember_quick_add(
             dir.path(),
@@ -1474,11 +1655,216 @@ mod tests {
             LastRoleAccounts::default(),
         );
 
-        let operation = match &failed {
-            Err(Error::Io { operation, .. }) => Some(*operation),
-            _ => None,
-        };
-        assert_eq!(operation, Some("write preferences file"), "{failed:?}");
+        assert_eq!(
+            failed_operation(&failed),
+            Some("write preferences file"),
+            "{failed:?}"
+        );
+        assert!(!ui_prefs_path(dir.path()).exists());
+    }
+
+    /// A function that saves the preferences in a data directory, with a
+    /// change of its own.
+    type SavePath = fn(&Path) -> Result<()>;
+
+    /// The three functions that save the preferences, each under its name.
+    /// [`resolve_locale`] saves through `store_locale`; the tests that need
+    /// it call it themselves, because it writes on a first run only.
+    const SAVE_PATHS: [(&str, SavePath); 3] = [
+        ("save_ui_prefs", |data_dir| {
+            let mut prefs = load_ui_prefs(data_dir);
+            prefs.last_entity_id = Some("ent-2".into());
+            save_ui_prefs(data_dir, &prefs)
+        }),
+        ("store_locale", |data_dir| {
+            store_locale(data_dir, Locale::De)
+        }),
+        ("remember_quick_add", |data_dir| {
+            remember_quick_add(
+                data_dir,
+                BOOK.parse().unwrap(),
+                SimpleEntryKind::Expense,
+                expense_accounts("wal-1"),
+            )
+        }),
+    ];
+
+    /// Runs every save path on `data_dir`, in the order of [`SAVE_PATHS`].
+    fn every_save_path(data_dir: &Path) -> [(&'static str, Result<()>); 3] {
+        SAVE_PATHS.map(|(name, save)| (name, save(data_dir)))
+    }
+
+    #[test]
+    fn no_save_path_replaces_a_file_that_does_not_decode() {
+        // Not JSON, JSON that is not an object (an array would otherwise
+        // read field by position, an empty one as the defaults), a cut-off
+        // object, and an object with a field of the wrong shape.
+        let corrupt = [
+            "not json",
+            "[1, 2]",
+            "[]",
+            r#"["el"]"#,
+            "null",
+            "{\"locale\": \"el\", \"last_entity_id\": ",
+            r#"{ "locale": "el", "last_entity_id": 42 }"#,
+        ];
+
+        for content in corrupt {
+            let dir = tempdir().unwrap();
+            assert!(fs::write(ui_prefs_path(dir.path()), content).is_ok());
+            assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default(), "{content:?}");
+
+            for (path, saved) in every_save_path(dir.path()) {
+                assert!(
+                    matches!(saved, Err(Error::Serialization { .. })),
+                    "{path} on {content:?}: {saved:?}"
+                );
+                assert_eq!(failed_operation(&saved), Some(DOES_NOT_DECODE), "{path}");
+                assert_eq!(saved.as_ref().map_err(Error::code), Err("serialization"));
+                assert_eq!(
+                    fs::read(ui_prefs_path(dir.path())).unwrap(),
+                    content.as_bytes(),
+                    "{path} changed {content:?}"
+                );
+            }
+            assert!(!ui_prefs_temporary_path(dir.path()).exists());
+        }
+    }
+
+    #[test]
+    fn no_save_path_replaces_a_file_that_cannot_be_read() {
+        let dir = tempdir().unwrap();
+        // Bytes that are not UTF-8 fail the read on every platform.
+        let content: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": \"\xff\xfe\"}";
+        assert!(fs::write(ui_prefs_path(dir.path()), content).is_ok());
+
+        assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
+
+        for (path, saved) in every_save_path(dir.path()) {
+            assert!(matches!(saved, Err(Error::Io { .. })), "{path}: {saved:?}");
+            assert_eq!(failed_operation(&saved), Some(CANNOT_BE_READ), "{path}");
+            assert_eq!(saved.as_ref().map_err(Error::code), Err("io"));
+            assert_eq!(
+                fs::read(ui_prefs_path(dir.path())).unwrap(),
+                content,
+                "{path} changed the file"
+            );
+        }
+
+        // No language counts as stored, so a first run tries to store one.
+        let resolved = resolve_locale(dir.path(), &["fr-FR"]);
+        assert_eq!(failed_operation(&resolved), Some(CANNOT_BE_READ));
+        assert_eq!(fs::read(ui_prefs_path(dir.path())).unwrap(), content);
         assert!(!ui_prefs_temporary_path(dir.path()).exists());
+    }
+
+    #[test]
+    fn a_directory_at_the_file_path_is_refused_before_anything_is_written() {
+        let dir = tempdir().unwrap();
+        assert!(fs::create_dir(ui_prefs_path(dir.path())).is_ok());
+
+        for (path, saved) in every_save_path(dir.path()) {
+            assert_eq!(failed_operation(&saved), Some(CANNOT_BE_READ), "{path}");
+        }
+        let resolved = resolve_locale(dir.path(), &["fr-FR"]);
+        assert_eq!(failed_operation(&resolved), Some(CANNOT_BE_READ));
+
+        assert!(ui_prefs_path(dir.path()).is_dir());
+        assert!(!ui_prefs_temporary_path(dir.path()).exists());
+    }
+
+    /// The key counts as a stored language, so nothing is chosen and nothing
+    /// is written, although the file does not decode and no save replaces it.
+    #[test]
+    fn an_undecodable_object_with_a_locale_key_is_not_a_first_run() {
+        let dir = tempdir().unwrap();
+        let json = r#"{ "locale": "el", "last_entity_id": 7 }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        assert_eq!(
+            resolve_locale(dir.path(), &["fr-FR"]),
+            Ok(LocaleResolution {
+                locale: Locale::En,
+                newly_stored: false
+            })
+        );
+        assert_eq!(fs::read_to_string(ui_prefs_path(dir.path())).unwrap(), json);
+    }
+
+    #[test]
+    fn every_save_path_creates_a_missing_file() {
+        for (path, save) in SAVE_PATHS {
+            let dir = tempdir().unwrap();
+            // The data directory itself does not exist yet either.
+            let data_dir = dir.path().join("data");
+
+            assert_eq!(save(&data_dir), Ok(()), "{path}");
+
+            let text = fs::read_to_string(ui_prefs_path(&data_dir)).unwrap();
+            assert!(
+                serde_json::from_str::<UiPrefs>(&text).is_ok(),
+                "{path} wrote {text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_save_path_updates_a_valid_file() {
+        let dir = tempdir().unwrap();
+        let json = r#"{ "locale": "el", "last_entity_id": "ent-1" }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        for (path, saved) in every_save_path(dir.path()) {
+            assert_eq!(saved, Ok(()), "{path}");
+        }
+
+        let prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs.locale(), Locale::De);
+        assert_eq!(prefs.last_entity_id.as_deref(), Some(BOOK));
+        assert_eq!(
+            prefs.last_accounts_by_entity_kind,
+            BTreeMap::from([(
+                last_accounts_key(BOOK.parse().unwrap(), SimpleEntryKind::Expense),
+                expense_accounts("wal-1"),
+            )])
+        );
+    }
+
+    #[test]
+    fn a_file_with_an_unrecognised_locale_is_updated_and_keeps_the_locale_string() {
+        let dir = tempdir().unwrap();
+        let json = r#"{ "locale": "xx-YY", "last_entity_id": "ent-1" }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        let mut prefs = load_ui_prefs(dir.path());
+        prefs.last_entity_id = Some("ent-2".into());
+        assert_eq!(save_ui_prefs(dir.path(), &prefs), Ok(()));
+        assert_eq!(stored_locale_json(dir.path()), "xx-YY");
+
+        let remembered = remember_quick_add(
+            dir.path(),
+            BOOK.parse().unwrap(),
+            SimpleEntryKind::Expense,
+            expense_accounts("wal-1"),
+        );
+        assert_eq!(remembered, Ok(()));
+        assert_eq!(stored_locale_json(dir.path()), "xx-YY");
+        assert_eq!(
+            load_ui_prefs(dir.path()).last_entity_id.as_deref(),
+            Some(BOOK)
+        );
+    }
+
+    #[test]
+    fn a_blank_file_is_replaced_by_every_save_path() {
+        for content in ["", " \n\t "] {
+            let dir = tempdir().unwrap();
+            assert!(fs::write(ui_prefs_path(dir.path()), content).is_ok());
+
+            for (path, saved) in every_save_path(dir.path()) {
+                assert_eq!(saved, Ok(()), "{path} on {content:?}");
+            }
+            assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::De);
+        }
     }
 }

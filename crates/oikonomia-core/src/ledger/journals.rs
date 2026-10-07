@@ -245,8 +245,9 @@ pub struct EntryFilter {
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] for a stored id, date, status or amount that does
-/// not parse; database errors as [`Error::Database`].
+/// [`Error::VaultCorrupt`] for a stored id, date or amount that does not
+/// parse; database errors as [`Error::Database`]. A stored status that is
+/// not `posted` is not an error here: the query leaves that entry out.
 pub fn list_entries(
     conn: &Connection,
     entity_id: EntityId,
@@ -266,7 +267,7 @@ pub fn list_entries(
         .collect())
 }
 
-/// Returns one entry with its lines, whatever its status.
+/// Returns one entry with its lines, voided or not.
 ///
 /// # Errors
 ///
@@ -316,28 +317,31 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
 /// still sees the row via [`list_entries`], [`get_entry`] and
 /// [`account_register`], and every other report counts it.
 ///
-/// Any entry can be hidden or shown again, whatever its status, a voided one
-/// included.
+/// Any entry can be hidden or shown again, a voided one included.
+///
+/// The entry is read before the flag is written and returned with the new
+/// flag, so an entry that fails to read is left as it was.
 ///
 /// # Errors
 ///
 /// [`Error::NotFound`] for an unknown entry; [`Error::VaultCorrupt`] for a
-/// stored row that does not parse; database errors as [`Error::Database`].
+/// stored row that does not parse, which includes an entry whose stored
+/// status is not `posted`; database errors as [`Error::Database`].
 pub fn set_entry_hidden(
     conn: &Connection,
     id: JournalEntryId,
     hidden: bool,
 ) -> Result<PostedEntryView> {
-    let updated = conn
-        .execute(
-            "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
-            rusqlite::params![i64::from(hidden), id.to_string()],
-        )
-        .database("set journal entry visibility")?;
-    if updated == 0 {
-        return Err(Error::NotFound(Resource::JournalEntry));
-    }
-    get_entry(conn, id)
+    let mut view = get_entry(conn, id)?;
+
+    conn.execute(
+        "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
+        rusqlite::params![i64::from(hidden), id.to_string()],
+    )
+    .database("set journal entry visibility")?;
+
+    view.entry.hidden = hidden;
+    Ok(view)
 }
 
 /// Validates and posts a journal entry atomically.
@@ -403,8 +407,8 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
 /// - [`Error::NotFound`] for an unknown entry, and for an entry of an archived entity.
 /// - [`ValidationError::EntryAlreadyVoided`] when the entry is voided or is
 ///   itself a reversing entry.
-/// - [`ValidationError::EntryNotPosted`] when the entry is a draft.
-/// - [`Error::VaultCorrupt`] for a stored row that does not parse.
+/// - [`Error::VaultCorrupt`] for a stored row that does not parse, which
+///   includes an entry whose stored status is not `posted`.
 /// - [`Error::Database`] on database errors.
 ///
 /// An archived account is not an error here: the reversing entry posts to the
@@ -788,8 +792,7 @@ fn like_pattern(text: &str) -> String {
 ///
 /// # Errors
 ///
-/// - [`Error::VaultCorrupt`] for a stored id, date or status that does not
-///   parse.
+/// - [`Error::VaultCorrupt`] for a stored id or date that does not parse.
 /// - [`Error::Database`] on database errors.
 fn load_listed_headers(
     conn: &Connection,
@@ -1152,9 +1155,6 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     if view.is_voided {
         return Err(ValidationError::EntryAlreadyVoided.into());
     }
-    if view.entry.status != EntryStatus::Posted {
-        return Err(ValidationError::EntryNotPosted.into());
-    }
 
     let reverse_lines: Vec<PostJournalLine> = view
         .lines
@@ -1315,7 +1315,8 @@ fn map_entry_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Jou
     )?;
     let status = match read_column::<String>(operation, row, 5)?.as_str() {
         "posted" => EntryStatus::Posted,
-        "draft" => EntryStatus::Draft,
+        // The schema does not constrain the column, so this includes `draft`,
+        // which core has never written.
         other => {
             return Err(corrupt_column(
                 "journal_entries.status",

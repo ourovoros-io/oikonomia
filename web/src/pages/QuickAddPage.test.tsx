@@ -43,7 +43,6 @@ const accounts: Account[] = [
     code: '1000',
     name: 'Checking',
     account_type: 'asset',
-    parent_id: null,
     is_active: true,
     is_system: false,
     sort_order: 0,
@@ -54,7 +53,6 @@ const accounts: Account[] = [
     code: '5000',
     name: 'Meals & dining',
     account_type: 'expense',
-    parent_id: null,
     is_active: true,
     is_system: false,
     sort_order: 1,
@@ -116,8 +114,8 @@ async function afterRoll() {
   await new Promise((resolve) => setTimeout(resolve, ROLL_MS + 40))
 }
 
-async function reachSaveStep() {
-  render(<QuickAddPage onPosted={() => {}} />)
+async function reachSaveStep(onPosted: () => void = () => {}) {
+  render(<QuickAddPage onPosted={onPosted} />)
   await waitFor(() => {
     expect(screen.getByRole('radio', { name: 'Expense' })).toBeTruthy()
   })
@@ -252,6 +250,29 @@ describe('QuickAddPage default accounts', () => {
     })
 
     expect(await categoryAfterChoosingExpense()).toHaveValue('exp1')
+  })
+})
+
+describe('QuickAddPage remembering the accounts', () => {
+  // Rust refuses to save over a preferences file it could not read. The entry
+  // is already posted by then, so the refusal must not look like a failed post.
+  test('a refused preferences save does not block the posted entry', async () => {
+    const onPosted = vi.fn()
+    vi.mocked(api.rememberQuickAdd).mockRejectedValue({
+      code: 'serialization',
+      message: 'replace a preferences file that does not decode: EOF',
+      params: { operation: 'replace a preferences file that does not decode' },
+    })
+    await reachSaveStep(onPosted)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(onPosted).toHaveBeenCalledTimes(1)
+    })
+    expect(api.entryPostSimple).toHaveBeenCalledTimes(1)
+    expect(api.rememberQuickAdd).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 
