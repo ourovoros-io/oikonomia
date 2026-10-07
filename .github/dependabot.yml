@@ -24,7 +24,18 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # ocrs and rten have to stay on the same rten version because ocr.rs
+    # hands our rten::Model to ocrs; bump them together manually.
+    ignore:
+      - dependency-name: "rten"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    # A dependency goes to the first group whose pattern matches it, so the
+    # OCR pair is listed before the catch-all.
     groups:
+      ocr:
+        patterns:
+          - "ocrs"
+          - "rten*"
       cargo:
         applies-to: version-updates
         patterns: ["*"]
