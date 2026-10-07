@@ -48,6 +48,31 @@
 //! whole, without regard to ASCII case, and a column it leaves out is not
 //! read.
 //!
+//! # Debit and credit columns
+//!
+//! A file with a column per direction is read as the credit less the debit,
+//! each cell taken with the sign it was written with. The result is the
+//! row's signed amount, negative for money out:
+//!
+//! | Debit cell | Credit cell | Row              | Reading                      |
+//! |------------|-------------|------------------|------------------------------|
+//! | `800.00`   | blank       | −800.00, expense | Money out.                   |
+//! | blank      | `2500.00`   | +2500.00, income | Money in.                    |
+//! | `-800.00`  | blank       | +800.00, income  | A debit taken back.          |
+//! | blank      | `-2500.00`  | −2500.00, expense| A credit taken back.         |
+//! | `100.00`   | `30.00`     | −70.00, expense  | The credit less the debit.   |
+//! | `0.00`     | `25.00`     | +25.00, income   | A zero written for a blank.  |
+//! | `40.00`    | `40.00`     | invalid          | They cancel: a zero amount.  |
+//! | blank      | blank       | invalid          | A missing amount.            |
+//!
+//! A negative cell is a reversal because that is what the banks that use the
+//! two columns write it for: the column says which way the original
+//! movement went, and the minus says this row undoes one. The reading has a
+//! cost. An export that writes every withdrawal in its debit column with a
+//! minus is read the wrong way round, and nothing in one cell tells the two
+//! conventions apart; the preview shows each row as an expense or an income
+//! before anything is posted.
+//!
 //! # Dates
 //!
 //! | Form | Example | |
@@ -637,12 +662,18 @@ fn parse_record_inner(
 /// Returns the signed amount of a record: negative for money out.
 ///
 /// With an amount column, its own sign counts unless a direction cell says
-/// otherwise. With debit and credit columns the sign written in a cell is
-/// ignored: a debit is money out and a credit is money in, and a row with
-/// both is their difference, credit minus debit.
+/// otherwise. With debit and credit columns a debit is money out and a
+/// credit is money in, each by the amount its cell holds with the sign it
+/// was written with: the row is the credit less the debit. The table in the
+/// module doc has the cases.
 ///
-/// `abs` cannot overflow in here: [`parse_signed_minor`] negates a magnitude
-/// that fits an `i64`, so it never returns `i64::MIN`.
+/// # Errors
+///
+/// The error of [`parse_signed_minor`] for a cell that is not an amount,
+/// [`CsvError::MissingAmount`] when the debit and the credit cell are both
+/// blank, [`CsvError::InvalidType`] for a direction cell that names no
+/// direction, and [`CsvError::AmountOverflow`] when the credit less the
+/// debit does not fit in `i64`.
 fn signed_amount(record: &StringRecord, columns: ColumnMap, exponent: u8) -> CsvResult<i64> {
     if let Some(amount_index) = columns.amount {
         let signed = parse_signed_minor(record_cell(record, amount_index), exponent)?;
@@ -654,16 +685,13 @@ fn signed_amount(record: &StringRecord, columns: ColumnMap, exponent: u8) -> Csv
 
     let debit = optional_signed(record, columns.debit, exponent)?;
     let credit = optional_signed(record, columns.credit, exponent)?;
-    match (debit, credit) {
-        (None, None) => Err(CsvError::MissingAmount),
-        (Some(debit), None) => Ok(-debit.abs()),
-        (None, Some(credit)) => Ok(credit.abs()),
-        (Some(debit), Some(credit)) => debit
-            .abs()
-            .checked_neg()
-            .and_then(|money_out| money_out.checked_add(credit.abs()))
-            .ok_or(CsvError::AmountOverflow),
+    if debit.is_none() && credit.is_none() {
+        return Err(CsvError::MissingAmount);
     }
+    credit
+        .unwrap_or(0)
+        .checked_sub(debit.unwrap_or(0))
+        .ok_or(CsvError::AmountOverflow)
 }
 
 /// Parses the amount in column `index`, or returns `None` when there is no
@@ -800,6 +828,56 @@ mod tests {
         assert_eq!(rent.amount_minor, 80_000);
         assert_eq!(pay.kind, SimpleEntryKind::Income);
         assert_eq!(pay.amount_minor, 250_000);
+    }
+
+    /// The signed amount of the only row of a file with a debit and a credit
+    /// column, whose two cells are `debit` and `credit`.
+    fn debit_credit_amount(debit: &str, credit: &str) -> i64 {
+        let csv = format!("Date,Description,Debit,Credit\n2026-04-01,Row,{debit},{credit}\n");
+        first_parsed_row(&csv).signed_amount_minor
+    }
+
+    #[test]
+    fn a_negative_debit_is_money_in_and_a_negative_credit_is_money_out() {
+        assert_eq!(debit_credit_amount("800.00", ""), -80_000);
+        assert_eq!(
+            debit_credit_amount("-800.00", ""),
+            80_000,
+            "a reversed debit"
+        );
+        assert_eq!(debit_credit_amount("(800.00)", ""), 80_000);
+        assert_eq!(debit_credit_amount("", "2500.00"), 250_000);
+        assert_eq!(
+            debit_credit_amount("", "-2500.00"),
+            -250_000,
+            "a reversed credit"
+        );
+        assert_eq!(debit_credit_amount("", "2500.00-"), -250_000);
+
+        let reversal =
+            first_parsed_row("Date,Description,Debit,Credit\n2026-04-01,Refund,-12.00,\n");
+        assert_eq!(reversal.kind, SimpleEntryKind::Income);
+        assert_eq!(reversal.amount_minor, 1_200);
+    }
+
+    #[test]
+    fn a_row_with_both_a_debit_and_a_credit_is_the_credit_less_the_debit() {
+        assert_eq!(debit_credit_amount("100.00", "30.00"), -7_000);
+        assert_eq!(debit_credit_amount("30.00", "100.00"), 7_000);
+        assert_eq!(
+            debit_credit_amount("0.00", "25.00"),
+            2_500,
+            "a zero for a blank"
+        );
+        assert_eq!(debit_credit_amount("25.00", "0.00"), -2_500);
+        assert_eq!(debit_credit_amount("-100.00", "30.00"), 13_000);
+        assert_eq!(debit_credit_amount("100.00", "-30.00"), -13_000);
+
+        assert_eq!(
+            reason_of_only_row("Date,Description,Debit,Credit\n2026-04-01,Row,40.00,40.00\n"),
+            UiText::new(UiTextCode::CsvZeroAmount),
+            "equal cells cancel, and a row of nothing cannot be posted"
+        );
     }
 
     #[test]

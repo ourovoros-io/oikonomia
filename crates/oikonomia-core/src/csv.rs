@@ -51,10 +51,13 @@
 //! the row invalid.
 //!
 //! A file that does not follow the convention is handled by its columns,
-//! never by a setting that flips every sign: separate debit and credit
-//! columns are read as money out and money in whatever sign they carry, and
-//! a direction column ([`CsvColumnMapping::direction`]) decides the sign of
-//! the amount beside it, whatever sign that amount was written with.
+//! never by a setting that flips every sign. Separate debit and credit
+//! columns are read as money out and money in, and a minus written in one
+//! of them reverses it: a negative debit is money in (a debit taken back)
+//! and a negative credit is money out. A direction column
+//! ([`CsvColumnMapping::direction`]) decides the sign of the amount beside
+//! it, whatever sign that amount was written with. The `csv/parse.rs` module
+//! doc has the table of the debit and credit cases.
 //!
 //! # Duplicate detection
 //!
@@ -233,10 +236,12 @@ pub struct CsvColumnMapping {
     /// Signed amount column. Mutually exclusive with [`Self::debit`] / [`Self::credit`].
     #[serde(default)]
     pub amount: Option<String>,
-    /// Debit (money-out) column; requires [`Self::credit`] when mapping is explicit.
+    /// Debit (money-out) column; requires [`Self::credit`] when mapping is
+    /// explicit. A negative cell is a debit taken back: money in.
     #[serde(default)]
     pub debit: Option<String>,
-    /// Credit (money-in) column; requires [`Self::debit`] when mapping is explicit.
+    /// Credit (money-in) column; requires [`Self::debit`] when mapping is
+    /// explicit. A negative cell is a credit taken back: money out.
     #[serde(default)]
     pub credit: Option<String>,
     /// Optional reference / check-number column.
