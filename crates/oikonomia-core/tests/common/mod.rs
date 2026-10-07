@@ -12,13 +12,17 @@
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, PostJournal, PostSimpleEntry, PostedEntryView,
-    SimpleEntryKind, create_entity, list_accounts, post_entry,
+    CreateEntity, PostJournal, PostJournalLine, PostJournalRequest, PostSimpleEntry,
+    PostSimpleEntryRequest, PostedEntryView, SimpleEntryAccounts, create_entity, list_accounts,
+    post_entry, post_simple_entry,
 };
 use oikonomia_core::prefs::Locale;
+use oikonomia_core::util::parse_date;
 use oikonomia_core::vault::Vault;
+use oikonomia_core::{Error, Money};
 use rusqlite::Connection;
 use tempfile::TempDir;
+use time::Date;
 
 /// The master password of every vault [`vault`] creates.
 pub(crate) const PASSWORD: &str = "correct horse battery staple";
@@ -32,7 +36,37 @@ const _: () = {
     let _ = PASSWORD;
     let _ = (vault, book, account);
     let _ = (two_line, post_two_line, simple_expense);
+    let _ = (
+        date,
+        strict::<PostJournalRequest, PostJournal>,
+        post_simple_request,
+    );
 };
+
+/// Parses a `YYYY-MM-DD` literal of a test.
+///
+/// # Panics
+///
+/// Panics if `text` is not such a date.
+pub(crate) fn date(text: &str) -> Date {
+    parse_date(text).expect("a test writes its dates as YYYY-MM-DD")
+}
+
+/// Converts a request in its wire form into the strict input the ledger
+/// takes, as the desktop shell does before it calls the ledger.
+///
+/// A test that expects the conversion itself to fail calls `try_from` on the
+/// strict type instead.
+///
+/// # Panics
+///
+/// Panics if the conversion refuses the request.
+pub(crate) fn strict<W, T>(wire: W) -> T
+where
+    T: TryFrom<W, Error = Error>,
+{
+    T::try_from(wire).expect("the request converts into its strict form")
+}
 
 /// Creates and unlocks a vault in a new temporary directory.
 ///
@@ -82,24 +116,22 @@ pub(crate) fn account(conn: &Connection, entity_id: EntityId, code: &str) -> Acc
 pub(crate) fn two_line(
     conn: &Connection,
     entity_id: EntityId,
-    date: &str,
+    entry_date: &str,
     sides: (&str, &str),
     minor: i64,
 ) -> PostJournal {
     let (debit_code, credit_code) = sides;
-    let line = |code: &str, debit_minor: i64, credit_minor: i64| CreateJournalLine {
-        account_id: account(conn, entity_id, code),
-        debit_minor,
-        credit_minor,
-        memo: None,
-    };
+    let amount = Money::from_minor(minor).expect("a test posts an amount that is not negative");
 
     PostJournal {
         entity_id,
-        entry_date: date.into(),
-        description: format!("{debit_code} from {credit_code}: {minor} on {date}"),
+        entry_date: date(entry_date),
+        description: format!("{debit_code} from {credit_code}: {minor} on {entry_date}"),
         reference: None,
-        lines: vec![line(debit_code, minor, 0), line(credit_code, 0, minor)],
+        lines: vec![
+            PostJournalLine::debit(account(conn, entity_id, debit_code), amount),
+            PostJournalLine::credit(account(conn, entity_id, credit_code), amount),
+        ],
     }
 }
 
@@ -107,11 +139,25 @@ pub(crate) fn two_line(
 pub(crate) fn post_two_line(
     conn: &Connection,
     entity_id: EntityId,
-    date: &str,
+    entry_date: &str,
     sides: (&str, &str),
     minor: i64,
 ) -> PostedEntryView {
-    post_entry(conn, &two_line(conn, entity_id, date, sides, minor)).expect("post")
+    post_entry(conn, &two_line(conn, entity_id, entry_date, sides, minor)).expect("post")
+}
+
+/// Posts a simple entry from the request the UI sends, converting it first as
+/// the desktop shell does.
+///
+/// # Errors
+///
+/// Returns what the conversion or the post refuses the request for.
+pub(crate) fn post_simple_request(
+    conn: &Connection,
+    request: &PostSimpleEntryRequest,
+) -> Result<PostedEntryView, Error> {
+    let entry = PostSimpleEntry::try_from(request.clone())?;
+    post_simple_entry(conn, &entry)
 }
 
 /// Builds a paid expense of `minor` in `category`, paid from `wallet`.
@@ -121,21 +167,15 @@ pub(crate) fn simple_expense(
     entity_id: EntityId,
     category: AccountId,
     wallet: AccountId,
-    date: &str,
+    entry_date: &str,
     minor: i64,
 ) -> PostSimpleEntry {
     PostSimpleEntry {
         entity_id,
-        kind: SimpleEntryKind::Expense,
-        bill_status: None,
-        entry_date: date.into(),
+        accounts: SimpleEntryAccounts::Expense { category, wallet },
+        entry_date: date(entry_date),
         description: "groceries".into(),
         reference: None,
         amount_minor: minor,
-        category_account_id: Some(category),
-        wallet_account_id: Some(wallet),
-        payable_account_id: None,
-        from_account_id: None,
-        to_account_id: None,
     }
 }

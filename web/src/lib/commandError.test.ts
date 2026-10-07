@@ -341,6 +341,7 @@ describe('command error localization', () => {
     'crypto',
     'unknown',
     'task_failed',
+    'app_state_unavailable',
     'validation_internal',
     'analysis',
   ]

@@ -5,10 +5,10 @@
 //! survive extraction, such as portal names, product lines and brand tokens.
 //!
 //! Two questions are answered here, both on folded text
-//! ([`folded`](crate::documents::invoice::folded)):
+//! ([`folded`](crate::documents::keyword::folded)):
 //!
 //! - [`known_brand`]: who issued this? The first entry of [`BRANDS`] whose
-//!   token stands in the text as a whole token wins, so the order of the
+//!   token stands in the text as a whole word wins, so the order of the
 //!   table is a priority order.
 //! - [`classify_service`]: is this electricity, gas, telecom or water? Each
 //!   keyword of [`SERVICE_KEYWORDS`] found in the text adds its weight to its
@@ -17,6 +17,8 @@
 //! The invoice reader asks the brand first and falls back to the keyword
 //! score only when the brand does not imply a service.
 
+use crate::documents::keyword::Keyword;
+use crate::documents::keyword::Keyword::{Prefix, Unit, Word};
 use crate::text::BillKind;
 
 /// What kind of service a recognized bill covers.
@@ -44,31 +46,56 @@ impl Service {
     }
 }
 
-/// Brand tokens in folded form, with the display name and, when the brand
-/// implies it, the service. The first entry that matches wins.
+/// A biller the reader knows by name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Brand {
+    /// The name to show for the biller.
+    pub name: &'static str,
+    /// The service the brand sells, when it sells only one.
+    pub service: Option<Service>,
+}
+
+impl Brand {
+    /// A brand shown as `name` that implies `service`.
+    const fn new(name: &'static str, service: Option<Service>) -> Self {
+        Self { name, service }
+    }
+}
+
+/// Brand tokens in folded form, each with the brand it stands for. The first
+/// entry that matches wins.
 ///
 /// Suppliers come before ΔΕΔΔΗΕ: the grid operator is printed on every
 /// electricity bill regardless of who issues it, so it may only win when no
 /// supplier brand is present.
-const BRANDS: &[(&str, &str, Option<Service>)] = &[
-    ("zenith", "ZeniΘ", None),
-    ("zeniθ", "ZeniΘ", None),
+const BRANDS: &[(Keyword, Brand)] = &[
+    (Word("zenith"), Brand::new("ZeniΘ", None)),
+    (Word("zeniθ"), Brand::new("ZeniΘ", None)),
     // "MyON" is the customer portal printed on Volton gas bills; the
     // company name itself never survives text extraction.
-    ("volton", "Volton", None),
-    ("myon", "Volton", None),
-    ("nova", "Nova", Some(Service::Telecom)),
-    ("cosmote", "Cosmote", Some(Service::Telecom)),
-    ("vodafone", "Vodafone", Some(Service::Telecom)),
-    ("elpedison", "Elpedison", None),
-    ("protergia", "Protergia", None),
-    ("ηρων", "ΗΡΩΝ", None),
-    ("heron", "ΗΡΩΝ", None),
-    ("nrg", "nrg", None),
-    ("δεη", "ΔΕΗ", Some(Service::Electricity)),
-    ("ευδαπ", "ΕΥΔΑΠ", Some(Service::Water)),
-    ("ευαθ", "ΕΥΑΘ", Some(Service::Water)),
-    ("δεδδηε", "ΔΕΔΔΗΕ", Some(Service::Electricity)),
+    (Word("volton"), Brand::new("Volton", None)),
+    (Word("myon"), Brand::new("Volton", None)),
+    (Word("nova"), Brand::new("Nova", Some(Service::Telecom))),
+    (
+        Word("cosmote"),
+        Brand::new("Cosmote", Some(Service::Telecom)),
+    ),
+    (
+        Word("vodafone"),
+        Brand::new("Vodafone", Some(Service::Telecom)),
+    ),
+    (Word("elpedison"), Brand::new("Elpedison", None)),
+    (Word("protergia"), Brand::new("Protergia", None)),
+    (Word("ηρων"), Brand::new("ΗΡΩΝ", None)),
+    (Word("heron"), Brand::new("ΗΡΩΝ", None)),
+    (Word("nrg"), Brand::new("nrg", None)),
+    (Word("δεη"), Brand::new("ΔΕΗ", Some(Service::Electricity))),
+    (Word("ευδαπ"), Brand::new("ΕΥΔΑΠ", Some(Service::Water))),
+    (Word("ευαθ"), Brand::new("ΕΥΑΘ", Some(Service::Water))),
+    (
+        Word("δεδδηε"),
+        Brand::new("ΔΕΔΔΗΕ", Some(Service::Electricity)),
+    ),
 ];
 
 /// How strongly a keyword points at a service: the scale of
@@ -100,59 +127,59 @@ mod weight {
 /// Keywords of each service in folded form, with their weights, in the order
 /// [`classify_service`] compares them.
 ///
-/// A keyword is matched as a substring, not as a token. So a supply line
-/// also contains the shorter keyword of its service: `προμηθεια ρευματος`
-/// contains `ρευμα`, and scores a `SUPPLY_LINE` and a `MENTION` together.
+/// Each keyword is matched under its own rule, and every keyword that
+/// matches counts. So a supply line also scores the shorter keyword of its
+/// service: `προμηθεια ρευματος` holds the stem `ρευμα`, and scores a
+/// `SUPPLY_LINE` and a `MENTION` together.
 ///
 /// The order of the services breaks ties: the later one wins.
-const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
+const SERVICE_KEYWORDS: &[(Service, &[(Keyword, u32)])] = &[
     (
         Service::Electricity,
         &[
-            ("προμηθεια ρευματος", weight::SUPPLY_LINE),
-            ("kwh", weight::TERM),
-            ("δεδδηε", weight::TERM),
-            ("ρευμα", weight::MENTION),
+            (Word("προμηθεια ρευματος"), weight::SUPPLY_LINE),
+            (Unit("kwh"), weight::TERM),
+            (Word("δεδδηε"), weight::TERM),
+            (Prefix("ρευμα"), weight::MENTION),
         ],
     ),
     (
         Service::Gas,
         &[
-            ("προμηθεια φυσικου αεριου", weight::SUPPLY_LINE),
-            ("ηκασπ", weight::OWN_TERM),
-            ("χρεωση προμηθειας φ.α", weight::OWN_TERM),
-            ("φυσικου αεριου", weight::MENTION),
-            ("φυσικο αεριο", weight::MENTION),
+            (Word("προμηθεια φυσικου αεριου"), weight::SUPPLY_LINE),
+            (Unit("ηκασπ"), weight::OWN_TERM),
+            (Word("χρεωση προμηθειας φ.α"), weight::OWN_TERM),
+            (Word("φυσικου αεριου"), weight::MENTION),
+            (Prefix("φυσικο αεριο"), weight::MENTION),
         ],
     ),
     (
         Service::Telecom,
         &[
-            ("κινητο", weight::TERM),
-            ("σταθερο", weight::MENTION),
-            ("τηλεφων", weight::TERM),
-            ("internet", weight::MENTION),
+            (Prefix("κινητο"), weight::TERM),
+            (Prefix("σταθερο"), weight::MENTION),
+            (Prefix("τηλεφων"), weight::TERM),
+            (Word("internet"), weight::MENTION),
         ],
     ),
     (
         Service::Water,
         &[
-            ("υδρευσ", weight::OWN_TERM),
-            ("καταναλωση νερου", weight::OWN_TERM),
+            (Prefix("υδρευσ"), weight::OWN_TERM),
+            (Word("καταναλωση νερου"), weight::OWN_TERM),
         ],
     ),
 ];
 
 /// Recognizes a known biller in folded document text.
 ///
-/// Returns the display name and, when the brand implies it, the service.
 /// The first entry of [`BRANDS`] whose token appears wins, wherever in the
 /// text each token is. Returns `None` when no token appears.
-pub(crate) fn known_brand(folded_text: &str) -> Option<(&'static str, Option<Service>)> {
+pub(crate) fn known_brand(folded_text: &str) -> Option<Brand> {
     BRANDS
         .iter()
-        .find(|(token, _, _)| contains_token(folded_text, token))
-        .map(|(_, display, service)| (*display, *service))
+        .find(|(token, _)| token.occurs_in(folded_text))
+        .map(|(_, brand)| *brand)
 }
 
 /// Classifies the service of a utility-style bill in folded text by weighted
@@ -168,10 +195,10 @@ pub(crate) fn known_brand(folded_text: &str) -> Option<(&'static str, Option<Ser
 /// On a tie the service listed later in [`SERVICE_KEYWORDS`] wins. Returns
 /// `None` when no keyword matches.
 pub(crate) fn classify_service(folded_text: &str) -> Option<Service> {
-    let score = |keywords: &[(&str, u32)]| -> u32 {
+    let score = |keywords: &[(Keyword, u32)]| -> u32 {
         keywords
             .iter()
-            .filter(|(keyword, _)| folded_text.contains(keyword))
+            .filter(|(keyword, _)| keyword.occurs_in(folded_text))
             .map(|(_, weight)| *weight)
             .sum()
     };
@@ -185,40 +212,10 @@ pub(crate) fn classify_service(folded_text: &str) -> Option<Service> {
     (best_score > 0).then_some(service)
 }
 
-/// Whether `token` occurs in `folded_text` with no letter or digit directly
-/// before or after it, so `nova` does not match inside `innovation`.
-///
-/// Punctuation and whitespace are boundaries; so are the start and the end
-/// of the text.
-#[expect(
-    clippy::string_slice,
-    reason = "`match_indices` yields the offset of a match of `token`, \
-              so both ends of the match are character boundaries"
-)]
-fn contains_token(folded_text: &str, token: &str) -> bool {
-    for (at, _) in folded_text.match_indices(token) {
-        let before_ok = folded_text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !c.is_alphanumeric());
-
-        let after_ok = folded_text[at + token.len()..]
-            .chars()
-            .next()
-            .is_none_or(|c| !c.is_alphanumeric());
-
-        if before_ok && after_ok {
-            return true;
-        }
-    }
-
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::invoice::folded;
+    use crate::documents::keyword::folded;
 
     #[test]
     fn brand_tokens_respect_word_boundaries() {
@@ -231,11 +228,11 @@ mod tests {
     fn a_supplier_wins_over_the_grid_operator_wherever_it_is_printed() {
         assert_eq!(
             known_brand(&folded("Δίκτυο ΔΕΔΔΗΕ\nΠρομήθεια Ρεύματος ΔΕΗ")),
-            Some(("ΔΕΗ", Some(Service::Electricity)))
+            Some(Brand::new("ΔΕΗ", Some(Service::Electricity)))
         );
         assert_eq!(
             known_brand(&folded("Δίκτυο ΔΕΔΔΗΕ")),
-            Some(("ΔΕΔΔΗΕ", Some(Service::Electricity)))
+            Some(Brand::new("ΔΕΔΔΗΕ", Some(Service::Electricity)))
         );
     }
 
@@ -292,18 +289,22 @@ mod tests {
             known_brand(&folded(
                 "Συνδέσου στο MyON και διαχειρίσου τον λογαριασμό σου"
             )),
-            Some(("Volton", None))
+            Some(Brand::new("Volton", None))
         );
     }
 
     #[test]
     fn every_brand_token_and_service_keyword_is_in_folded_form() {
-        for (token, _, _) in BRANDS {
-            assert_eq!(folded(token), *token, "brand token {token:?}");
+        for (token, _) in BRANDS {
+            assert_eq!(folded(token.text()), token.text(), "brand token {token:?}");
         }
         for (service, keywords) in SERVICE_KEYWORDS {
             for (keyword, _) in *keywords {
-                assert_eq!(folded(keyword), *keyword, "{service:?} keyword {keyword:?}");
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{service:?} keyword {keyword:?}"
+                );
             }
         }
     }

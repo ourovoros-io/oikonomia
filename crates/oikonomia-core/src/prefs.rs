@@ -24,6 +24,8 @@
 //! - A change is a load, an edit and a save. Nothing here locks, so two
 //!   writers can lose each other's change; callers that change the file
 //!   serialise themselves with a lock of their own.
+//! - [`remember_quick_add`] is that load, edit and save for the book and
+//!   accounts last used in quick add.
 //!
 //! # The first run
 //!
@@ -40,7 +42,9 @@
 //! dark-only, so a `"theme"` key written by an older build is one of the
 //! ignored keys.
 
+use crate::domain::EntityId;
 use crate::error::{Error, IoContext, Result, SerializationContext};
+use crate::ledger::SimpleEntryKind;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -160,6 +164,11 @@ const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
 /// Each field is an account id as text, or `None` when that kind of entry
 /// does not use the field or nothing was remembered. The ids are not checked
 /// here; an account may have been archived or removed since.
+///
+/// The field names are the keys of the preferences file on users' machines,
+/// so they stay as they are. They are the wire names of the parts of a simple
+/// entry; [`SimpleEntryRoleAccounts`](crate::ledger::SimpleEntryRoleAccounts)
+/// has the table that maps them to the names the ledger and its errors use.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LastRoleAccounts {
@@ -228,21 +237,26 @@ where
 }
 
 /// Returns the key of [`UiPrefs::last_accounts_by_entity_kind`] for an entity
-/// and an entry kind: `"{entity_id}:{kind}"`.
-///
-/// Neither part is checked. The desktop shell passes the entity's id and the
-/// entry kind as the UI names it.
+/// and an entry kind: the entity's id, a colon, and the kind as
+/// [`SimpleEntryKind::identifier`] writes it.
 ///
 /// # Examples
 ///
 /// ```
+/// use oikonomia_core::domain::EntityId;
+/// use oikonomia_core::ledger::SimpleEntryKind;
 /// use oikonomia_core::prefs::last_accounts_key;
 ///
-/// assert_eq!(last_accounts_key("ent-1", "expense"), "ent-1:expense");
+/// let entity_id: EntityId = "11111111-1111-4111-8111-111111111111".parse()?;
+/// assert_eq!(
+///     last_accounts_key(entity_id, SimpleEntryKind::Expense),
+///     "11111111-1111-4111-8111-111111111111:expense"
+/// );
+/// # Ok::<(), oikonomia_core::Error>(())
 /// ```
 #[must_use]
-pub fn last_accounts_key(entity_id: &str, kind: &str) -> String {
-    format!("{entity_id}:{kind}")
+pub fn last_accounts_key(entity_id: EntityId, kind: SimpleEntryKind) -> String {
+    format!("{entity_id}:{}", kind.identifier())
 }
 
 /// Returns the path of the preferences file, `ui-prefs.json` in `data_dir`.
@@ -397,6 +411,43 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
         remove_stale_temporary(&temporary);
         Error::io("write preferences file", err)
     })
+}
+
+/// Remembers `accounts` as the ones last used for a quick-add entry of
+/// `kind` in the book `entity_id`, and that book as the one last used.
+///
+/// The accounts are stored under [`last_accounts_key`] for the book and the
+/// kind, replacing what was remembered for that pair; every other
+/// preference this build can read is kept. A file that cannot be read or
+/// decoded loads as the defaults ([`load_ui_prefs`]), so this call then
+/// saves the defaults with the two values and what the file held is gone.
+/// The ids in `accounts` are stored as given and are not checked against the
+/// vault, which may be locked.
+///
+/// This loads the file, changes the two values and saves the result with
+/// [`save_ui_prefs`], which replaces the file by renaming a temporary one
+/// over it. Nothing here locks: a caller that can race another writer must
+/// hold a lock of its own across the call, or a save made between this load
+/// and this save is lost.
+///
+/// # Errors
+///
+/// Returns [`Error::Io`] when the data directory cannot be created or the
+/// file cannot be written, and [`Error::Serialization`] when the preferences
+/// cannot be encoded, as [`save_ui_prefs`] does.
+pub fn remember_quick_add(
+    data_dir: &Path,
+    entity_id: EntityId,
+    kind: SimpleEntryKind,
+    accounts: LastRoleAccounts,
+) -> Result<()> {
+    let mut prefs = load_ui_prefs(data_dir);
+    prefs
+        .last_accounts_by_entity_kind
+        .insert(last_accounts_key(entity_id, kind), accounts);
+    prefs.last_entity_id = Some(entity_id.to_string());
+
+    save_ui_prefs(data_dir, &prefs)
 }
 
 /// Returns the path of the temporary file a save is staged in before it
@@ -1047,6 +1098,120 @@ mod tests {
         assert!(fs::create_dir(ui_prefs_path(dir.path())).is_ok());
 
         assert!(save_ui_prefs(dir.path(), &UiPrefs::default()).is_err());
+        assert!(!ui_prefs_temporary_path(dir.path()).exists());
+    }
+
+    /// The book the quick-add tests remember accounts for.
+    const BOOK: &str = "11111111-1111-4111-8111-111111111111";
+
+    /// The accounts of an expense paid from `wallet`.
+    fn expense_accounts(wallet: &str) -> LastRoleAccounts {
+        LastRoleAccounts {
+            category_account_id: Some("cat-1".into()),
+            wallet_account_id: Some(wallet.into()),
+            ..LastRoleAccounts::default()
+        }
+    }
+
+    #[test]
+    fn remembering_quick_add_stores_the_accounts_under_the_book_and_kind() {
+        let dir = tempdir().unwrap();
+        let book: EntityId = BOOK.parse().unwrap();
+
+        remember_quick_add(
+            dir.path(),
+            book,
+            SimpleEntryKind::Expense,
+            expense_accounts("wal-1"),
+        )
+        .unwrap();
+
+        // The keys and the shape of the file are what older builds wrote.
+        let stored: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(ui_prefs_path(dir.path())).unwrap()).unwrap();
+        assert_eq!(
+            stored,
+            serde_json::json!({
+                "locale": "en",
+                "last_entity_id": BOOK,
+                "last_accounts_by_entity_kind": {
+                    format!("{BOOK}:expense"): {
+                        "category_account_id": "cat-1",
+                        "wallet_account_id": "wal-1",
+                        "payable_account_id": null,
+                        "from_account_id": null,
+                        "to_account_id": null,
+                    }
+                }
+            })
+        );
+        assert!(!ui_prefs_temporary_path(dir.path()).exists());
+    }
+
+    #[test]
+    fn remembering_quick_add_replaces_one_pair_and_keeps_every_other_preference() {
+        let dir = tempdir().unwrap();
+        let book: EntityId = BOOK.parse().unwrap();
+        let other_book: EntityId = "22222222-2222-4222-8222-222222222222".parse().unwrap();
+        let transfer = LastRoleAccounts {
+            from_account_id: Some("from-1".into()),
+            to_account_id: Some("to-1".into()),
+            ..LastRoleAccounts::default()
+        };
+        let before = UiPrefs {
+            locale: Locale::El,
+            ..UiPrefs::default()
+        };
+        save_ui_prefs(dir.path(), &before).unwrap();
+
+        let remember = |entity_id, kind, accounts| {
+            remember_quick_add(dir.path(), entity_id, kind, accounts).unwrap();
+        };
+        remember(book, SimpleEntryKind::Expense, expense_accounts("wal-1"));
+        remember(
+            other_book,
+            SimpleEntryKind::Expense,
+            expense_accounts("wal-9"),
+        );
+        remember(book, SimpleEntryKind::Transfer, transfer.clone());
+        remember(book, SimpleEntryKind::Expense, expense_accounts("wal-2"));
+
+        let expected = UiPrefs {
+            locale: Locale::El,
+            last_entity_id: Some(BOOK.to_owned()),
+            last_accounts_by_entity_kind: BTreeMap::from([
+                (
+                    last_accounts_key(book, SimpleEntryKind::Expense),
+                    expense_accounts("wal-2"),
+                ),
+                (last_accounts_key(book, SimpleEntryKind::Transfer), transfer),
+                (
+                    last_accounts_key(other_book, SimpleEntryKind::Expense),
+                    expense_accounts("wal-9"),
+                ),
+            ]),
+        };
+        assert_eq!(load_ui_prefs(dir.path()), expected);
+    }
+
+    #[test]
+    fn remembering_quick_add_reports_a_file_it_cannot_write() {
+        let dir = tempdir().unwrap();
+        // A directory at the target makes the rename fail after the write.
+        assert!(fs::create_dir(ui_prefs_path(dir.path())).is_ok());
+
+        let failed = remember_quick_add(
+            dir.path(),
+            BOOK.parse().unwrap(),
+            SimpleEntryKind::Income,
+            LastRoleAccounts::default(),
+        );
+
+        let operation = match &failed {
+            Err(Error::Io { operation, .. }) => Some(*operation),
+            _ => None,
+        };
+        assert_eq!(operation, Some("write preferences file"), "{failed:?}");
         assert!(!ui_prefs_temporary_path(dir.path()).exists());
     }
 }

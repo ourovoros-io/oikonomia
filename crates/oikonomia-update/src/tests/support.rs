@@ -5,7 +5,7 @@ use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, VerifiedOffer,
     install_offer, perform_check, perform_check_inner,
 };
-use crate::error::UpdateError;
+use crate::error::{InstallStep, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::machine::UpdateMachine;
 use crate::status::UpdateStatus;
@@ -41,7 +41,9 @@ impl ArtifactInstaller for SpyInstaller {
         let mut last = self.last_path.lock().expect("spy path");
         *last = Some(artifact.to_path_buf());
         if self.fail {
-            return Err(UpdateError::ArtifactIntegrity);
+            return Err(UpdateError::InstallFailed {
+                step: InstallStep::Replace,
+            });
         }
         Ok(self.handoff)
     }

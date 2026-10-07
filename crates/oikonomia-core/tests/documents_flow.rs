@@ -5,15 +5,16 @@
 mod common;
 
 use oikonomia_core::documents::{
-    DocumentId, MAX_DOCUMENT_BYTES, attach_document, delete_document, get_document, list_documents,
-    post_simple_entry_with_document, save_analysis_json, save_document,
+    DocumentId, MAX_DOCUMENT_BYTES, NewDocument, attach_document, delete_document, get_document,
+    list_documents, post_simple_entry_with_document, save_analysis_json,
     suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, Resource, ValidationError};
 use oikonomia_core::ledger::{
-    CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, archive_account,
-    delete_entity, list_accounts, list_entities, list_entries, post_entry,
+    EntryFilter, JournalLineRequest, PostJournal, PostJournalRequest, PostSimpleEntry,
+    PostedEntryView, archive_account, delete_entity, list_accounts, list_entities, list_entries,
+    post_entry,
 };
 use rusqlite::Connection;
 
@@ -49,36 +50,38 @@ fn delete_entity_with_linked_document() {
 
     let entry = post_entry(
         conn,
-        &PostJournal {
+        &common::strict(PostJournalRequest {
             entity_id,
             entry_date: "2026-01-15".into(),
             description: "Groceries".into(),
             reference: None,
             lines: vec![
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: food.id,
                     debit_minor: 1_000,
                     credit_minor: 0,
                     memo: None,
                 },
-                CreateJournalLine {
+                JournalLineRequest {
                     account_id: checking.id,
                     debit_minor: 0,
                     credit_minor: 1_000,
                     memo: None,
                 },
             ],
-        },
+        }),
     )
     .expect("post");
 
-    save_document(
+    attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "receipt.txt",
-        "text/plain",
-        b"TOTAL 10,00 EUR",
+        &NewDocument {
+            filename: "receipt.txt",
+            mime_type: "text/plain",
+            data: b"TOTAL 10,00 EUR",
+        },
     )
     .expect("save document");
 
@@ -90,32 +93,36 @@ fn delete_entity_with_linked_document() {
 }
 
 #[test]
-fn save_document_rejects_unsupported_empty_and_oversize_files() {
+fn attach_document_rejects_unsupported_empty_and_oversize_files() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_reference_entry(conn, entity_id);
 
-    let exe = save_document(
+    let exe = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "evil.exe",
-        "application/x-msdownload",
-        b"MZ",
+        &NewDocument {
+            filename: "evil.exe",
+            mime_type: "application/x-msdownload",
+            data: b"MZ",
+        },
     );
     assert_eq!(
         exe.expect_err("executables must be rejected"),
         Error::Validation(ValidationError::FileTypeUnsupported)
     );
 
-    let empty = save_document(
+    let empty = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "empty.txt",
-        "text/plain",
-        b"",
+        &NewDocument {
+            filename: "empty.txt",
+            mime_type: "text/plain",
+            data: b"",
+        },
     );
     assert_eq!(
         empty.expect_err("empty files must be rejected"),
@@ -123,13 +130,15 @@ fn save_document_rejects_unsupported_empty_and_oversize_files() {
     );
 
     let one_byte_over = vec![0_u8; MAX_DOCUMENT_BYTES + 1];
-    let oversize = save_document(
+    let oversize = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "huge.pdf",
-        "application/pdf",
-        &one_byte_over,
+        &NewDocument {
+            filename: "huge.pdf",
+            mime_type: "application/pdf",
+            data: &one_byte_over,
+        },
     );
     let megabyte = 1024 * 1024;
     assert_eq!(
@@ -140,40 +149,46 @@ fn save_document_rejects_unsupported_empty_and_oversize_files() {
     );
 
     let at_the_limit = vec![0_u8; MAX_DOCUMENT_BYTES];
-    save_document(
+    attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "largest.pdf",
-        "application/pdf",
-        &at_the_limit,
+        &NewDocument {
+            filename: "largest.pdf",
+            mime_type: "application/pdf",
+            data: &at_the_limit,
+        },
     )
     .expect("a file of exactly the limit is stored");
 }
 
 #[test]
-fn save_document_rejects_duplicate_name_in_book() {
+fn attach_document_rejects_duplicate_name_in_book() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_reference_entry(conn, entity_id);
 
-    save_document(
+    attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "invoice.pdf",
-        "application/pdf",
-        b"%PDF-1.4",
+        &NewDocument {
+            filename: "invoice.pdf",
+            mime_type: "application/pdf",
+            data: b"%PDF-1.4",
+        },
     )
     .expect("first save");
-    let dup = save_document(
+    let dup = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "invoice.pdf",
-        "application/pdf",
-        b"%PDF-1.4",
+        &NewDocument {
+            filename: "invoice.pdf",
+            mime_type: "application/pdf",
+            data: b"%PDF-1.4",
+        },
     );
     assert_eq!(
         dup.expect_err("same name in the same book must be rejected"),
@@ -190,22 +205,26 @@ fn list_get_delete_round_trip() {
     let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_reference_entry(conn, entity_id);
 
-    let a = save_document(
+    let a = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "a.txt",
-        "text/plain",
-        b"alpha",
+        &NewDocument {
+            filename: "a.txt",
+            mime_type: "text/plain",
+            data: b"alpha",
+        },
     )
     .expect("save a");
-    let b = save_document(
+    let b = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "b.txt",
-        "text/plain",
-        b"bravo",
+        &NewDocument {
+            filename: "b.txt",
+            mime_type: "text/plain",
+            data: b"bravo",
+        },
     )
     .expect("save b");
 
@@ -235,7 +254,7 @@ fn delete_missing_document_returns_not_found() {
     let conn = vault.connection().expect("conn");
     common::book(conn, "Docs", ChartTemplate::Personal);
 
-    let missing = DocumentId::new();
+    let missing = DocumentId::generate();
     assert_eq!(
         delete_document(conn, missing),
         Err(Error::NotFound(Resource::Document))
@@ -248,7 +267,7 @@ fn saving_analysis_for_a_missing_document_returns_not_found() {
     let conn = vault.connection().expect("conn");
     common::book(conn, "Docs", ChartTemplate::Personal);
 
-    let missing = DocumentId::new();
+    let missing = DocumentId::generate();
 
     assert_eq!(
         save_analysis_json(conn, missing, "{}"),
@@ -267,13 +286,15 @@ fn saving_analysis_for_a_stored_document_succeeds() {
     let conn = vault.connection().expect("conn");
     let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_expense_entry(conn, entity_id, "Groceries");
-    let meta = save_document(
+    let meta = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "receipt.txt",
-        "text/plain",
-        b"TOTAL 5,00",
+        &NewDocument {
+            filename: "receipt.txt",
+            mime_type: "text/plain",
+            data: b"TOTAL 5,00",
+        },
     )
     .expect("document");
 
@@ -320,22 +341,26 @@ fn list_documents_is_newest_first() {
     let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_reference_entry(conn, entity_id);
 
-    let first = save_document(
+    let first = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "first.txt",
-        "text/plain",
-        b"1",
+        &NewDocument {
+            filename: "first.txt",
+            mime_type: "text/plain",
+            data: b"1",
+        },
     )
     .expect("save");
-    let second = save_document(
+    let second = attach_document(
         conn,
         entity_id,
         entry.entry.id,
-        "second.txt",
-        "text/plain",
-        b"2",
+        &NewDocument {
+            filename: "second.txt",
+            mime_type: "text/plain",
+            data: b"2",
+        },
     )
     .expect("save");
 
@@ -359,9 +384,11 @@ fn attach_document_saves_links_and_skips_analysis() {
         conn,
         entity_id,
         entry.entry.id,
-        "inv.txt",
-        "text/plain",
-        b"total 5",
+        &NewDocument {
+            filename: "inv.txt",
+            mime_type: "text/plain",
+            data: b"total 5",
+        },
     )
     .expect("attach");
     assert_eq!(meta.entry_id, entry.entry.id);
@@ -372,7 +399,7 @@ fn attach_document_saves_links_and_skips_analysis() {
     let analysis: Option<String> = conn
         .query_row(
             "SELECT analysis_json FROM documents WHERE id = ?1",
-            [meta.id.0.to_string()],
+            [meta.id.to_string()],
             |row| row.get(0),
         )
         .expect("row");
@@ -386,8 +413,17 @@ fn attach_document_rejects_missing_and_wrong_entity_entry() {
     let entity_a = common::book(conn, "Docs", ChartTemplate::Personal);
     let entity_b = common::book(conn, "Other", ChartTemplate::Personal);
 
-    let missing = JournalEntryId::new();
-    let no_entry = attach_document(conn, entity_a, missing, "a.txt", "text/plain", b"data");
+    let missing = JournalEntryId::generate();
+    let no_entry = attach_document(
+        conn,
+        entity_a,
+        missing,
+        &NewDocument {
+            filename: "a.txt",
+            mime_type: "text/plain",
+            data: b"data",
+        },
+    );
     assert!(
         matches!(no_entry, Err(Error::NotFound(_))),
         "missing entry must fail: {no_entry:?}"
@@ -398,25 +434,33 @@ fn attach_document_rejects_missing_and_wrong_entity_entry() {
         conn,
         entity_a,
         entry_b.entry.id,
-        "b.txt",
-        "text/plain",
-        b"data",
+        &NewDocument {
+            filename: "b.txt",
+            mime_type: "text/plain",
+            data: b"data",
+        },
     );
     assert_eq!(
         foreign_entry.expect_err("entry from a different book must fail"),
         Error::Validation(ValidationError::WrongBook)
     );
 
-    let err = save_document(
+    // The entry is checked before the file: a file that would itself be
+    // refused does not hide that the entry is in another book.
+    let empty_file = attach_document(
         conn,
         entity_a,
         entry_b.entry.id,
-        "cross.txt",
-        "text/plain",
-        b"data",
-    )
-    .expect_err("save must not link a foreign entry");
-    assert_eq!(err, Error::Validation(ValidationError::WrongBook));
+        &NewDocument {
+            filename: "cross.exe",
+            mime_type: "",
+            data: b"",
+        },
+    );
+    assert_eq!(
+        empty_file.expect_err("a foreign entry must fail whatever the file"),
+        Error::Validation(ValidationError::WrongBook)
+    );
 }
 
 fn simple_expense_input(
@@ -443,9 +487,11 @@ fn post_with_document_is_atomic_and_stores_analysis() {
     let (view, meta) = post_simple_entry_with_document(
         conn,
         &input,
-        "receipt.txt",
-        "text/plain",
-        b"TOTAL 10,00",
+        &NewDocument {
+            filename: "receipt.txt",
+            mime_type: "text/plain",
+            data: b"TOTAL 10,00",
+        },
         Some("{\"notes\":\"scan\"}"),
     )
     .expect("post with document");
@@ -458,7 +504,7 @@ fn post_with_document_is_atomic_and_stores_analysis() {
     let analysis: Option<String> = conn
         .query_row(
             "SELECT analysis_json FROM documents WHERE id = ?1",
-            [meta.id.0.to_string()],
+            [meta.id.to_string()],
             |row| row.get(0),
         )
         .expect("row");
@@ -472,16 +518,33 @@ fn post_with_document_name_clash_rolls_back_the_entry() {
     let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
 
     let first = simple_expense_input(conn, entity_id, "First");
-    post_simple_entry_with_document(conn, &first, "bill.txt", "text/plain", b"a", None)
-        .expect("first post");
+    post_simple_entry_with_document(
+        conn,
+        &first,
+        &NewDocument {
+            filename: "bill.txt",
+            mime_type: "text/plain",
+            data: b"a",
+        },
+        None,
+    )
+    .expect("first post");
 
     let before = list_entries(conn, entity_id, &EntryFilter::default())
         .expect("list")
         .len();
 
     let second = simple_expense_input(conn, entity_id, "Second");
-    let clash =
-        post_simple_entry_with_document(conn, &second, "bill.txt", "text/plain", b"b", None);
+    let clash = post_simple_entry_with_document(
+        conn,
+        &second,
+        &NewDocument {
+            filename: "bill.txt",
+            mime_type: "text/plain",
+            data: b"b",
+        },
+        None,
+    );
     assert_eq!(
         clash.expect_err("duplicate name must fail"),
         Error::Validation(ValidationError::NameTaken {
@@ -505,9 +568,11 @@ fn post_with_document_invalid_file_rolls_back_everything() {
     let result = post_simple_entry_with_document(
         conn,
         &input,
-        "evil.exe",
-        "application/x-msdownload",
-        b"MZ",
+        &NewDocument {
+            filename: "evil.exe",
+            mime_type: "application/x-msdownload",
+            data: b"MZ",
+        },
         None,
     );
     assert_eq!(

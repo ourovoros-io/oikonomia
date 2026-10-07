@@ -13,7 +13,7 @@ use oikonomia_core::Error;
 use oikonomia_core::domain::{ChartTemplate, EntityId};
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleEntryKind,
+    CreateEntity, CreateRecurringTemplateRequest, EntryFilter, RecurringCadence, SimpleEntryKind,
     create_entity, create_recurring_template, list_accounts, list_entities, list_entries,
     list_recurring_templates, post_entry, update_entity,
 };
@@ -391,7 +391,7 @@ fn templates_due_the_same_day_are_listed_by_name_without_regard_to_case() {
     for name in NAMES_IN_ORDER.iter().rev() {
         create_recurring_template(
             conn,
-            &CreateRecurringTemplate {
+            &common::strict(CreateRecurringTemplateRequest {
                 entity_id,
                 name: (*name).into(),
                 kind: SimpleEntryKind::Expense,
@@ -406,7 +406,7 @@ fn templates_due_the_same_day_are_listed_by_name_without_regard_to_case() {
                 to_account_id: None,
                 memo: None,
                 next_date: "2026-03-02".into(),
-            },
+            }),
         )
         .expect("template");
     }
@@ -414,7 +414,7 @@ fn templates_due_the_same_day_are_listed_by_name_without_regard_to_case() {
     let listed: Vec<String> = list_recurring_templates(conn, entity_id)
         .expect("list")
         .into_iter()
-        .map(|template| template.name)
+        .map(|template| template.fields.name)
         .collect();
 
     assert_eq!(listed, NAMES_IN_ORDER);

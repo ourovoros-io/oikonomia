@@ -332,9 +332,10 @@ pub trait ArtifactInstaller {
     ///
     /// # Errors
     ///
-    /// Returns an [`UpdateError`] when the artifact could not be installed.
-    /// [`install_offer`] deletes the artifact and returns the error in
-    /// [`InstallOutcome::Failed`].
+    /// Returns an [`UpdateError`] when the artifact could not be installed:
+    /// [`UpdateError::InstallFailed`], naming the step, for a step that
+    /// failed. [`install_offer`] deletes the artifact and returns the error
+    /// in [`InstallOutcome::Failed`].
     fn install(&self, artifact: &Path) -> Result<InstallHandoff>;
 }
 

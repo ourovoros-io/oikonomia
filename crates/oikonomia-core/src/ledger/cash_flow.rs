@@ -13,11 +13,15 @@
 //! the window. The buckets are contiguous and cover the whole window, empty
 //! ones included, so a chart can draw them without filling gaps.
 //!
+//! A caller whose date filter may be empty on either side asks through
+//! [`cash_flow_series_for_window`], which first settles the window from the
+//! book's entries ([`activity_window`]).
+//!
 //! The ledger is read once, grouped by day and account type. Each day is then
 //! placed in its bucket by binary search, and the running totals are added in
 //! a second pass over the buckets.
 
-use crate::db::{collect_rows, stored_date};
+use crate::db::{collect_rows, read_column, stored_date};
 use crate::domain::{AccountType, EntityId};
 use crate::error::{DatabaseContext, Result, ValidationError};
 // Named only by the documentation below.
@@ -27,7 +31,7 @@ use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, add_minor, normal_balance, parse_account_type, subtract_minor,
 };
 use crate::ledger::entities::get_entity;
-use crate::util::{format_date, parse_date};
+use crate::util::format_date;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
@@ -97,7 +101,7 @@ pub struct CashFlowSeries {
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date or `from > to`;
+/// [`ValidationError::DateRangeInverted`] for `from > to`;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// bucket, a running total or the net does not fit in `i64`;
 /// [`Error::VaultCorrupt`] for a stored date or account type that does not
@@ -105,11 +109,9 @@ pub struct CashFlowSeries {
 pub fn cash_flow_series(
     conn: &Connection,
     entity_id: EntityId,
-    from: &str,
-    to: &str,
+    from: Date,
+    to: Date,
 ) -> Result<CashFlowSeries> {
-    let from = parse_date(from)?;
-    let to = parse_date(to)?;
     if from > to {
         return Err(ValidationError::DateRangeInverted.into());
     }
@@ -176,20 +178,18 @@ pub fn cash_flow_series(
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date or an explicit `from > to`;
+/// [`ValidationError::DateRangeInverted`] for an explicit `from > to`;
 /// [`Error::NotFound`] for an unknown entity; [`Error::VaultCorrupt`] for a
 /// stored entry date that does not parse; database errors as [`Error::Database`].
 pub fn activity_window(
     conn: &Connection,
     entity_id: EntityId,
-    from: Option<&str>,
-    to: Option<&str>,
+    from: Option<Date>,
+    to: Option<Date>,
     today: Date,
 ) -> Result<(Date, Date)> {
     // Only checks that the entity exists; an archived one passes.
     get_entity(conn, entity_id)?;
-    let from = from.map(parse_date).transpose()?;
-    let to = to.map(parse_date).transpose()?;
     if let (Some(start), Some(end)) = (from, to) {
         if start > end {
             return Err(ValidationError::DateRangeInverted.into());
@@ -203,6 +203,35 @@ pub fn activity_window(
         (None, Some(end)) => Ok((earliest.unwrap_or(end).min(end), end)),
         _ => Ok((earliest.unwrap_or(today), latest.unwrap_or(today))),
     }
+}
+
+/// Computes the cash flow series for a date filter that may leave one or
+/// both bounds empty.
+///
+/// This is [`cash_flow_series`] over the window [`activity_window`] draws
+/// for `from` and `to`; its documentation says how each empty bound is
+/// filled, from the book's active entries or from `today`. The
+/// buckets are per day or per month by the length of that window, as in
+/// [`cash_flow_series`]. `today` is the caller's to pass so that the result
+/// does not depend on the clock; the app passes the current date in UTC.
+///
+/// # Errors
+///
+/// [`ValidationError::DateRangeInverted`] for an explicit `from > to`;
+/// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
+/// bucket, a running total or the net does not fit in `i64`;
+/// [`Error::VaultCorrupt`] for a stored date or account type that does not
+/// parse; database errors as [`Error::Database`].
+pub fn cash_flow_series_for_window(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: Option<Date>,
+    to: Option<Date>,
+    today: Date,
+) -> Result<CashFlowSeries> {
+    let (start, end) = activity_window(conn, entity_id, from, to, today)?;
+
+    cash_flow_series(conn, entity_id, start, end)
 }
 
 /// Chooses day buckets for a window of at most [`DAILY_BUCKET_MAX_DAYS`] days,
@@ -278,8 +307,8 @@ fn daily_activity(
     let sql = format!(
         "
         SELECT je.entry_date, a.account_type,
-               COALESCE(SUM(jl.debit_minor), 0),
-               COALESCE(SUM(jl.credit_minor), 0)
+               COALESCE(SUM(jl.debit_minor), 0) AS debits,
+               COALESCE(SUM(jl.credit_minor), 0) AS credits
         FROM journal_lines jl
         JOIN journal_entries je ON je.id = jl.entry_id
         JOIN accounts a ON a.id = jl.account_id
@@ -295,24 +324,13 @@ fn daily_activity(
     let mut stmt = conn.prepare(&sql).database("read daily activity")?;
     let rows = stmt
         .query_map(
-            rusqlite::params![entity_id.0.to_string(), format_date(from), format_date(to)],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            },
+            rusqlite::params![entity_id.to_string(), format_date(from), format_date(to)],
+            |row| Ok(map_activity_row("read daily activity", row)),
         )
         .database("read daily activity")?;
 
     let mut days: Vec<DayActivity> = Vec::new();
-    for (date, account_type, debits, credits) in collect_rows(rows.map(|row| row.map(Ok)))? {
-        let date = stored_date("journal_entries.entry_date", &date)?;
-        let account_type = parse_account_type(&account_type)?;
-        let amount = normal_balance(account_type, debits, credits)?;
-
+    for (date, account_type, amount) in collect_rows("read daily activity", rows)? {
         // Rows arrive ordered by date, at most one per account type, so the
         // rows of a day are adjacent and extend the last element.
         if days.last().map(|day| day.date) != Some(date) {
@@ -335,6 +353,35 @@ fn daily_activity(
     Ok(days)
 }
 
+/// Maps a row of [`daily_activity`], selected as `entry_date, account_type,
+/// debits, credits`, to the date, the account type and the activity signed
+/// towards that type's normal side.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] naming the column when the date or the account
+///   type does not parse, or a column has the wrong storage class. A stored
+///   amount that is not an integer makes its total a real number, which is
+///   reported under `debits` or `credits`.
+/// - [`Error::MoneyOverflow`] when the activity does not fit in `i64`.
+fn map_activity_row(
+    operation: &'static str,
+    row: &rusqlite::Row<'_>,
+) -> Result<(Date, AccountType, i64)> {
+    let date = stored_date(
+        "journal_entries.entry_date",
+        &read_column::<String>(operation, row, 0)?,
+    )?;
+    let account_type = parse_account_type(&read_column::<String>(operation, row, 1)?)?;
+    let amount = normal_balance(
+        account_type,
+        read_column(operation, row, 2)?,
+        read_column(operation, row, 3)?,
+    )?;
+
+    Ok((date, account_type, amount))
+}
+
 /// Returns the earliest and the latest entry date among the active entries
 /// of an entity; both are `None` when it has none.
 ///
@@ -355,7 +402,7 @@ fn active_entry_bounds(
         "
     );
     let (earliest, latest): (Option<String>, Option<String>) = conn
-        .query_row(&sql, rusqlite::params![entity_id.0.to_string()], |row| {
+        .query_row(&sql, rusqlite::params![entity_id.to_string()], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
         .database("read entry date bounds")?;
