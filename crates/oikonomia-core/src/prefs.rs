@@ -1,25 +1,69 @@
 //! Non-secret UI preferences stored as plaintext JSON in the data directory.
 //!
-//! Kept outside the encrypted vault on purpose: the tray menu and window
-//! chrome must be built in the user's locale before any password has been
-//! entered. Nothing stored here is sensitive.
+//! # Why outside the vault
 //!
-//! There is no theme preference: the app is dark-only, so a `"theme"` key in
-//! a file written by an older build is ignored on load.
+//! The file `ui-prefs.json` is kept outside the encrypted vault on purpose:
+//! the tray menu and window chrome must be built in the user's language
+//! before any password has been entered. It holds the app language and the
+//! ids of the book and accounts last used in quick add; no name, amount or
+//! other ledger content.
+//!
+//! # What is stored
+//!
+//! [`UiPrefs`] is the whole file. Its [`Locale`] is the app language, which
+//! is more than a display setting: it also decides the language of text core
+//! writes into books (see [`Locale`]).
+//!
+//! # Reading and writing
+//!
+//! - [`load_ui_prefs`] never fails. A missing or undecodable file gives the
+//!   defaults, because a damaged preferences file must not stop the app from
+//!   starting.
+//! - [`save_ui_prefs`] writes a temporary file and renames it over the
+//!   target, so a reader sees the old file or the new one, complete.
+//! - A change is a load, an edit and a save. Nothing here locks, so two
+//!   writers can lose each other's change; callers that change the file
+//!   serialise themselves with a lock of their own.
+//!
+//! # The first run
+//!
+//! [`resolve_locale`] picks the language from the system's preferred
+//! languages once, when the file has no `locale` key, and stores it. After
+//! that the stored value wins, so a user who chose English on a Greek system
+//! stays in English. [`stored_locale`] is how "never chosen" is told from
+//! "chose English", which the default value of the field cannot express.
+//!
+//! # Compatibility
+//!
+//! Builds of different ages share the file, so [`UiPrefs`] ignores unknown
+//! keys and defaults missing ones. There is no theme preference: the app is
+//! dark-only, so a `"theme"` key written by an older build is one of the
+//! ignored keys.
 
+use crate::error::{Error, Result};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
-
-use crate::error::{Error, Result};
-
-/// Native UI locale (tray, dialogs). Webview i18n is separate.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// The language of the app.
+///
+/// One stored value governs three things:
+///
+/// - the native UI the desktop shell builds itself: the tray menu, native
+///   window titles and file-dialog filters;
+/// - the web UI, which asks the shell for this value at startup and uses it
+///   as its language;
+/// - text that core writes into a book and that stays there: seeded account
+///   names and generated descriptions ([`crate::text`]). That text keeps the
+///   language it was written in when this value changes later.
+///
+/// Serialized as the lowercase two-letter code (`"en"`, `"el"`, `"fr"`,
+/// `"de"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Locale {
-    /// English (the default).
+    /// English, the default.
     #[default]
     En,
     /// Greek.
@@ -30,32 +74,65 @@ pub enum Locale {
     De,
 }
 
-/// Most system language tags considered when picking the first-run language.
-const MAX_SYSTEM_LANGUAGES: usize = 16;
-
-/// Longest system language tag considered, in characters. BCP 47 tags in
-/// practice stay well below this; anything longer is not a language tag.
-const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
-
 impl Locale {
-    /// The supported language a system language tag names, if any.
+    /// Every supported language, in declaration order.
+    ///
+    /// Code that must treat each language (detecting the system language,
+    /// tests over the wording tables) iterates this list instead of naming
+    /// the variants again. A test checks the list against the enum, so a new
+    /// variant cannot be left out of it.
+    pub const ALL: &'static [Self] = &[Self::En, Self::El, Self::Fr, Self::De];
+
+    /// Returns the app language for the system's preferred languages, most
+    /// preferred first.
+    ///
+    /// The first tag naming a supported language wins; tags for other
+    /// languages are skipped. Only the primary subtag of a tag counts,
+    /// compared without regard to ASCII case, and both `-` and `_` separate
+    /// subtags. The result is English when no tag matches, so an empty list,
+    /// empty strings and arbitrary text are all accepted. Only the first 16
+    /// tags are read, and a tag longer than 35 characters is skipped.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::prefs::Locale;
+    ///
+    /// assert_eq!(Locale::from_system_languages(&["el-GR", "en-US"]), Locale::El);
+    /// assert_eq!(Locale::from_system_languages(&["ja-JP", "de_CH"]), Locale::De);
+    /// assert_eq!(Locale::from_system_languages(&["ja-JP"]), Locale::En);
+    /// assert_eq!(Locale::from_system_languages::<&str>(&[]), Locale::En);
+    /// ```
+    #[must_use]
+    pub fn from_system_languages<S: AsRef<str>>(tags: &[S]) -> Self {
+        tags.iter()
+            .take(MAX_SYSTEM_LANGUAGES)
+            .find_map(|tag| Self::from_language_tag(tag.as_ref()))
+            .unwrap_or_default()
+    }
+
+    /// Returns the supported language a system language tag names, if any.
     ///
     /// Only the primary language subtag counts, compared without regard to
-    /// case, and both `-` and `_` separate subtags (`el-GR`, `EL_gr`).
+    /// ASCII case, and both `-` and `_` separate subtags (`el-GR`, `EL_gr`).
+    /// Surrounding whitespace is trimmed before the tag is split; the length
+    /// limit applies to the tag as given, before trimming.
     fn from_language_tag(tag: &str) -> Option<Self> {
-        // Bounded check: never scan past the limit of an absurd input.
+        // `nth` stops at the limit, so an absurdly long input is never
+        // walked to its end.
         if tag.chars().nth(MAX_SYSTEM_LANGUAGE_TAG_CHARS).is_some() {
             return None;
         }
 
         let primary = tag.trim().split(['-', '_']).next()?;
 
-        [Self::En, Self::El, Self::Fr, Self::De]
-            .into_iter()
+        Self::ALL
+            .iter()
+            .copied()
             .find(|locale| primary.eq_ignore_ascii_case(locale.code()))
     }
 
-    /// The lowercase language code, matching the serialized form.
+    /// Returns the lowercase language code, which is also the serialized form.
     const fn code(self) -> &'static str {
         match self {
             Self::En => "en",
@@ -64,25 +141,26 @@ impl Locale {
             Self::De => "de",
         }
     }
-
-    /// Pick the app language from the system's preferred languages, most
-    /// preferred first.
-    ///
-    /// The first tag naming a supported language wins; tags for other
-    /// languages are skipped. English when nothing matches, so an empty list,
-    /// empty strings and garbage are all safe. At most the first 16 tags are
-    /// read and tags longer than 35 characters are ignored.
-    #[must_use]
-    pub fn from_system_languages<S: AsRef<str>>(tags: &[S]) -> Self {
-        tags.iter()
-            .take(MAX_SYSTEM_LANGUAGES)
-            .find_map(|tag| Self::from_language_tag(tag.as_ref()))
-            .unwrap_or_default()
-    }
 }
 
-/// Last role-account picks for a single entity+kind tray post.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// The number of system language tags read when picking the first-run
+/// language; later tags are ignored.
+const MAX_SYSTEM_LANGUAGES: usize = 16;
+
+/// The longest system language tag considered, in characters; a longer one
+/// is skipped.
+///
+/// 35 is the smallest limit RFC 5646 (section 4.4.1) lets a protocol set on
+/// a language tag. A longer tag can be valid; it is skipped here so that the
+/// work per tag stays bounded whatever the system reports.
+const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
+
+/// The accounts last used for one kind of quick-add entry in one entity.
+///
+/// Each field is an account id as text, or `None` when that kind of entry
+/// does not use the field or nothing was remembered. The ids are not checked
+/// here; an account may have been archived or removed since.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LastRoleAccounts {
     /// The expense or income category last posted to.
@@ -97,37 +175,89 @@ pub struct LastRoleAccounts {
     pub to_account_id: Option<String>,
 }
 
-/// Non-secret UI preferences.
+/// The contents of the preferences file.
 ///
-/// Unknown or missing fields fall back to defaults so older and newer app
-/// versions can share the same file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// Older and newer builds share one file, so loading is forgiving in three
+/// ways: a key this build does not know is ignored, a missing key takes its
+/// default, and a `locale` value this build does not know takes the default
+/// locale without affecting the other fields. Any other value of the wrong
+/// shape still fails the whole file, which then loads as the defaults.
+///
+/// Saving writes only the fields below, so a key or a locale value this build
+/// could not read is not carried over to the saved file.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiPrefs {
-    /// Native locale for tray menu, window titles, and file-dialog filters.
+    /// The app language; see [`Locale`] for what it governs.
+    #[serde(deserialize_with = "known_locale_or_default")]
     pub locale: Locale,
-    /// Last entity used in the tray quick-add panel.
+    /// The id of the entity last used in quick add, as text.
     pub last_entity_id: Option<String>,
-    /// Map key: `"{entity_id}:{kind}"` (kind = expense|income|bill|transfer).
+    /// The accounts last used in quick add, keyed by entity and entry kind
+    /// with the key [`last_accounts_key`] builds.
     pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
 }
 
-/// Build the map key for last-used accounts.
+/// Reads a stored locale, taking any value this build does not know as the
+/// default locale.
+///
+/// A build with more languages may have written the file. Failing here would
+/// fail the whole [`UiPrefs`], and the next save would then overwrite the
+/// stored entity and account choices with defaults.
+fn known_locale_or_default<'de, D>(deserializer: D) -> std::result::Result<Locale, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    /// A stored locale value: a language of this build, or anything else.
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StoredLocale {
+        /// One of the values [`Locale`] serializes to.
+        Known(Locale),
+        /// Any other JSON value, read and discarded.
+        Unknown(serde::de::IgnoredAny),
+    }
+
+    match StoredLocale::deserialize(deserializer)? {
+        StoredLocale::Known(locale) => Ok(locale),
+        StoredLocale::Unknown(serde::de::IgnoredAny) => {
+            log::warn!("stored locale is not one this build knows; using the default");
+            Ok(Locale::default())
+        }
+    }
+}
+
+/// Returns the key of [`UiPrefs::last_accounts_by_entity_kind`] for an entity
+/// and an entry kind: `"{entity_id}:{kind}"`.
+///
+/// Neither part is checked. The desktop shell passes the entity's id and the
+/// entry kind as the UI names it.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::prefs::last_accounts_key;
+///
+/// assert_eq!(last_accounts_key("ent-1", "expense"), "ent-1:expense");
+/// ```
 #[must_use]
 pub fn last_accounts_key(entity_id: &str, kind: &str) -> String {
     format!("{entity_id}:{kind}")
 }
 
-/// Path of the preferences file inside the app data directory.
+/// Returns the path of the preferences file, `ui-prefs.json` in `data_dir`.
 #[must_use]
 pub fn ui_prefs_path(data_dir: &Path) -> PathBuf {
     data_dir.join("ui-prefs.json")
 }
 
-/// Load preferences.
+/// Returns the stored preferences, or the defaults when there are none to
+/// read.
 ///
-/// A missing or unreadable file yields the defaults: a corrupt preferences
-/// file must never block startup, it just costs the saved choices.
+/// A file that is missing or cannot be read gives the defaults silently. A
+/// file that is not a [`UiPrefs`] gives the defaults too, with a warning
+/// through the `log` facade. Nothing is an error: a damaged preferences file must not stop
+/// the app from starting, it only costs the saved choices.
 #[must_use]
 pub fn load_ui_prefs(data_dir: &Path) -> UiPrefs {
     let path = ui_prefs_path(data_dir);
@@ -135,37 +265,53 @@ pub fn load_ui_prefs(data_dir: &Path) -> UiPrefs {
         return UiPrefs::default();
     };
 
-    serde_json::from_str(&text).unwrap_or_else(|err| {
+    decode_ui_prefs(&text, &path)
+}
+
+/// Decodes the text of the preferences file at `path`, giving the defaults
+/// (and logging why) when the text is not a [`UiPrefs`].
+fn decode_ui_prefs(text: &str, path: &Path) -> UiPrefs {
+    serde_json::from_str(text).unwrap_or_else(|err| {
         log::warn!("ignoring corrupt ui prefs at {}: {err}", path.display());
         UiPrefs::default()
     })
 }
 
-/// The locale stored on disk, or `None` when none was ever stored.
+/// Returns the locale stored on disk, or `None` when none was ever stored.
 ///
-/// `UiPrefs::locale` defaults to English, which cannot tell "never chosen"
-/// from "chose English", so this reads whether the preferences file is a JSON
-/// object with a `locale` key. Any value counts as stored; the returned
-/// locale is then what [`load_ui_prefs`] reports, exactly as before. A
-/// missing, empty or corrupt file counts as never stored.
+/// [`UiPrefs::locale`] defaults to English, which cannot tell "never chosen"
+/// from "chose English", so this checks whether the preferences file is a
+/// JSON object with a `locale` key. Any value under that key counts as
+/// stored, including one this build cannot read; the locale returned is the
+/// one [`load_ui_prefs`] gives for the same text. A missing file, text that
+/// is not JSON, and JSON that is not an object all count as never stored.
+///
+/// The file is read once, so the key check and the returned locale describe
+/// the same contents.
 #[must_use]
 pub fn stored_locale(data_dir: &Path) -> Option<Locale> {
-    let text = fs::read_to_string(ui_prefs_path(data_dir)).ok()?;
+    let path = ui_prefs_path(data_dir);
+    let text = fs::read_to_string(&path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
 
     value
         .as_object()?
         .contains_key("locale")
-        .then(|| load_ui_prefs(data_dir).locale)
+        .then(|| decode_ui_prefs(&text, &path).locale)
 }
 
-/// Persist `locale`, keeping every other stored preference.
+/// Stores `locale`, keeping every other preference this build can read.
 ///
-/// Callers hold the prefs lock: the file is rewritten in place.
+/// This loads the file, changes the one field and saves the result with
+/// [`save_ui_prefs`], which replaces the file by renaming a temporary one over
+/// it. Nothing here locks: a caller that can race another writer must hold a
+/// lock of its own across the call, or a save made between this load and
+/// this save is lost.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the file cannot be written.
+/// Returns [`Error::Io`] when the data directory cannot be created or the
+/// file cannot be written, as [`save_ui_prefs`] does.
 pub fn store_locale(data_dir: &Path, locale: Locale) -> Result<()> {
     let mut prefs = load_ui_prefs(data_dir);
     prefs.locale = locale;
@@ -173,28 +319,31 @@ pub fn store_locale(data_dir: &Path, locale: Locale) -> Result<()> {
     save_ui_prefs(data_dir, &prefs)
 }
 
-/// Outcome of [`resolve_locale`].
+/// What [`resolve_locale`] found or decided.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocaleResolution {
     /// The language the app uses from now on.
     pub locale: Locale,
-    /// True when this call chose and stored it, so native text needs a refresh.
+    /// `true` when this call chose the language and stored it, so native text
+    /// built from the earlier default needs a refresh.
     pub newly_stored: bool,
 }
 
-/// The app language, choosing it from the system on the very first run.
+/// Returns the app language, choosing it from the system on the very first
+/// run.
 ///
 /// When a locale is already stored it is returned unchanged and nothing is
 /// written: the system language is consulted once per installation, so a user
 /// who chose English on a Greek system stays in English. Otherwise the
 /// language is mapped from `system_languages`, stored, and returned.
 ///
-/// Callers hold the prefs lock so the check and the write cannot interleave
-/// with a language change.
+/// Nothing here locks: a caller holds its own lock across the call so that
+/// the check and the write cannot interleave with a language change.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the chosen locale cannot be written.
+/// Returns [`Error::Io`] when a language is chosen and cannot be stored. A
+/// call that finds a stored language writes nothing and cannot fail.
 pub fn resolve_locale<S: AsRef<str>>(
     data_dir: &Path,
     system_languages: &[S],
@@ -215,31 +364,28 @@ pub fn resolve_locale<S: AsRef<str>>(
     })
 }
 
-/// Path of the temporary file a save is staged in before it replaces the
-/// preferences file.
-fn ui_prefs_temporary_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("ui-prefs.json.tmp")
-}
-
-/// Persist preferences.
+/// Writes `prefs` as the preferences file, replacing the one that is there.
 ///
-/// The JSON is written to a temporary sibling file and renamed over the
-/// target, so a reader (and a crash) sees either the old or the new complete
-/// file, never a truncated one. A stale temporary file left by an earlier
-/// crash is removed first, and a failed write leaves none behind. File modes
-/// are unchanged: the preferences file is not part of the vault and holds
-/// nothing sensitive.
+/// The JSON is written to a temporary sibling file, flushed to disk, and
+/// renamed over the target, so a reader (and a crash) sees either the old or
+/// the new complete file, never a truncated one. A temporary file left by an
+/// earlier crash is removed first, and after a failed write the temporary
+/// file is removed again; a removal that fails is only logged.
+///
+/// The file gets the process's default permissions, not the owner-only mode
+/// of vault files: it is not part of the vault.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Io`] when the data directory cannot be created or the
-/// file cannot be written.
+/// Returns [`Error::Io`], with the cause in its text, when the data directory
+/// cannot be created, the preferences cannot be encoded as JSON, or the
+/// temporary file cannot be written or renamed into place.
 pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
     fs::create_dir_all(data_dir)
-        .map_err(|e| Error::Io(format!("could not create data directory: {e}")))?;
+        .map_err(|err| Error::Io(format!("could not create data directory: {err}")))?;
 
     let json = serde_json::to_string_pretty(prefs)
-        .map_err(|e| Error::Io(format!("could not encode ui prefs: {e}")))?;
+        .map_err(|err| Error::Io(format!("could not encode ui prefs: {err}")))?;
 
     let temporary = ui_prefs_temporary_path(data_dir);
     remove_stale_temporary(&temporary);
@@ -247,13 +393,20 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
     let staged = write_synced(&temporary, json.as_bytes())
         .and_then(|()| fs::rename(&temporary, ui_prefs_path(data_dir)));
 
-    staged.map_err(|e| {
+    staged.map_err(|err| {
         remove_stale_temporary(&temporary);
-        Error::Io(format!("could not write ui prefs: {e}"))
+        Error::Io(format!("could not write ui prefs: {err}"))
     })
 }
 
-/// Write `bytes` to a new file at `path` and flush them to disk.
+/// Returns the path of the temporary file a save is staged in before it
+/// replaces the preferences file.
+fn ui_prefs_temporary_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("ui-prefs.json.tmp")
+}
+
+/// Writes `bytes` to a new file at `path`, truncating one that exists, and
+/// flushes them to disk.
 fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
 
@@ -262,7 +415,8 @@ fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Remove a leftover temporary file; absence is the normal case.
+/// Removes a leftover temporary file, logging a failure other than the file
+/// not being there, which is the normal case.
 fn remove_stale_temporary(path: &Path) {
     match fs::remove_file(path) {
         Ok(()) => {}
@@ -274,8 +428,48 @@ fn remove_stale_temporary(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oikonomia_test_support::listed_variants;
     use std::collections::BTreeMap;
     use tempfile::tempdir;
+
+    listed_variants! {
+        units listed_locales for Locale {
+            Locale::En,
+            Locale::El,
+            Locale::Fr,
+            Locale::De,
+        }
+    }
+
+    /// Fails unless `Locale::ALL` is the variants in the `listed_locales`
+    /// list above, in the order the enum declares them (its discriminants).
+    /// The compiler checks that list against the enum with an exhaustive
+    /// `match`, so a language added to the enum but left out of the list does
+    /// not compile.
+    #[test]
+    fn all_lists_every_locale_once_in_declaration_order() {
+        assert_eq!(Locale::ALL, listed_locales::variants());
+        assert!(
+            Locale::ALL
+                .iter()
+                .map(|locale| *locale as usize)
+                .eq(0..Locale::ALL.len()),
+            "Locale::ALL is not in declaration order"
+        );
+        listed_locales::assert_every_position_once(
+            Locale::ALL.iter().map(listed_locales::position).collect(),
+        );
+    }
+
+    #[test]
+    fn every_locale_code_is_its_serialized_form_and_is_detected() {
+        for locale in Locale::ALL {
+            let serialized = serde_json::to_value(locale).unwrap();
+
+            assert_eq!(serialized, serde_json::Value::from(locale.code()));
+            assert_eq!(Locale::from_system_languages(&[locale.code()]), *locale);
+        }
+    }
 
     #[test]
     fn missing_file_yields_defaults() {
@@ -410,7 +604,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_locale_field_is_ignored() {
+    fn unknown_keys_beside_a_locale_are_ignored() {
         let dir = tempdir().unwrap();
 
         let json = r#"{ "theme": "light", "locale": "el", "future_field": 42 }"#;
@@ -574,10 +768,16 @@ mod tests {
     fn an_unreadable_stored_locale_value_still_counts_as_chosen() {
         let dir = tempdir().unwrap();
 
-        // Today this loads as English; it must not be treated as a first run.
+        // The value loads as the default locale, but the key is present, so
+        // this is not a first run and the system language is not consulted.
         let json = r#"{ "locale": "klingon", "last_entity_id": "ent-1" }"#;
         assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
+
+        assert_eq!(
+            load_ui_prefs(dir.path()).last_entity_id.as_deref(),
+            Some("ent-1")
+        );
 
         let resolved = resolve_locale(dir.path(), &["el-GR"]);
         assert_eq!(
@@ -591,6 +791,57 @@ mod tests {
             fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
             before
         );
+    }
+
+    #[test]
+    fn a_locale_this_build_does_not_know_costs_only_the_locale() {
+        let dir = tempdir().unwrap();
+
+        // Written by a build with a fifth language, Spanish.
+        let json = r#"{
+            "locale": "es",
+            "last_entity_id": "ent-1",
+            "last_accounts_by_entity_kind": {
+                "ent-1:expense": { "category_account_id": "cat-1" }
+            }
+        }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        let mut last_accounts = BTreeMap::new();
+        last_accounts.insert(
+            "ent-1:expense".to_string(),
+            LastRoleAccounts {
+                category_account_id: Some("cat-1".into()),
+                ..LastRoleAccounts::default()
+            },
+        );
+        let expected = UiPrefs {
+            locale: Locale::En,
+            last_entity_id: Some("ent-1".into()),
+            last_accounts_by_entity_kind: last_accounts,
+        };
+        assert_eq!(load_ui_prefs(dir.path()), expected);
+
+        // The next save must not wipe what this build could read.
+        assert!(store_locale(dir.path(), Locale::De).is_ok());
+        assert_eq!(
+            load_ui_prefs(dir.path()),
+            UiPrefs {
+                locale: Locale::De,
+                ..expected
+            }
+        );
+    }
+
+    #[test]
+    fn a_wrongly_shaped_value_other_than_the_locale_still_fails_the_whole_file() {
+        let dir = tempdir().unwrap();
+
+        let json = r#"{ "locale": "el", "last_entity_id": 7 }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
+        assert_eq!(stored_locale(dir.path()), Some(Locale::En));
     }
 
     #[test]
@@ -688,11 +939,19 @@ mod tests {
     fn a_null_locale_counts_as_stored_and_is_not_rewritten() {
         let dir = tempdir().unwrap();
 
-        // Today `null` fails the enum, so the whole file reads as corrupt
-        // and loads as the defaults (English); the key still counts as stored.
-        // Both are pinned here, not endorsed.
-        assert!(fs::write(ui_prefs_path(dir.path()), r#"{"locale": null}"#).is_ok());
+        // `null` is not a language, so the field loads as the default locale
+        // and the rest of the file loads normally; the key counts as stored.
+        let json = r#"{"locale": null, "last_entity_id": "ent-1"}"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
         let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
+
+        assert_eq!(
+            load_ui_prefs(dir.path()),
+            UiPrefs {
+                last_entity_id: Some("ent-1".into()),
+                ..UiPrefs::default()
+            }
+        );
 
         let resolved = resolve_locale(dir.path(), &["el-GR"]);
         assert_eq!(
@@ -712,8 +971,8 @@ mod tests {
     fn a_wrong_case_locale_counts_as_stored_and_is_not_rewritten() {
         let dir = tempdir().unwrap();
 
-        // The enum is lowercase-only, so "EL" does not parse: the file loads
-        // as the defaults (English), but the key counts as chosen.
+        // The stored spelling is lowercase only, so "EL" is not a known value:
+        // the locale loads as the default, but the key counts as chosen.
         assert!(fs::write(ui_prefs_path(dir.path()), r#"{"locale": "EL"}"#).is_ok());
         let before = fs::read_to_string(ui_prefs_path(dir.path())).unwrap();
 
