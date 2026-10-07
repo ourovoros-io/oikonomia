@@ -261,7 +261,8 @@ pub(super) const DATE_LABELS: &[Keyword] = &[
 /// not blanked either and its numbers can be read as money. An ISO-shaped
 /// token is blanked by its shape whatever its year, and is then not a date.
 ///
-/// The reason for these two years is not recorded, and no test pins either.
+/// The reason for these two years is not recorded;
+/// `a_date_is_read_only_within_the_document_years` pins both.
 pub(super) const DOCUMENT_YEARS: RangeInclusive<i32> = 1990..=2100;
 
 /// What a two-digit year is counted from: `26` is 2026.
@@ -361,6 +362,39 @@ mod tests {
     fn time_len(text: &str, at: usize) -> Option<usize> {
         let chars: Vec<char> = text.chars().collect();
         time_len_at(&chars, at)
+    }
+
+    #[test]
+    fn a_date_is_read_only_within_the_document_years() {
+        use time::macros::date;
+
+        assert_eq!(first_date_on_line("31/12/1989"), None);
+        assert_eq!(
+            first_date_on_line("01/01/1990"),
+            Some(date!(1990 - 01 - 01))
+        );
+        assert_eq!(
+            first_date_on_line("31/12/2100"),
+            Some(date!(2100 - 12 - 31))
+        );
+        assert_eq!(first_date_on_line("01/01/2101"), None);
+
+        assert_eq!(first_date_on_line("1989-12-31"), None);
+        assert_eq!(
+            first_date_on_line("1990-01-01"),
+            Some(date!(1990 - 01 - 01))
+        );
+        assert_eq!(
+            first_date_on_line("2100-12-31"),
+            Some(date!(2100 - 12 - 31))
+        );
+        assert_eq!(first_date_on_line("2101-01-01"), None);
+
+        // A day-first token outside the years is not blanked either, so its
+        // numbers stay on the line; an ISO-shaped one is blanked by its shape.
+        assert_eq!(mask_date_tokens("31/12/1989"), "31/12/1989");
+        assert_eq!(mask_date_tokens("01/01/1990"), " ".repeat(10));
+        assert_eq!(mask_date_tokens("1989-12-31"), " ".repeat(10));
     }
 
     #[test]

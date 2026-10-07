@@ -25,9 +25,8 @@ const MINOR_PER_EURO: i64 = 100;
 /// purpose is to keep out numbers that are not currency amounts, at the cost
 /// of not reading a real total or fee under 0,50.
 ///
-/// The reasons for these two bounds in particular are not recorded. Tests
-/// pin 1,40 and 1 234 567,89 as inside and 0,40 as outside; none reaches the
-/// upper bound.
+/// The reasons for these two bounds in particular are not recorded.
+/// `the_plausibility_band_ends_at_its_two_bounds` pins both.
 pub(super) const PLAUSIBLE_MONEY_MINOR: RangeInclusive<i64> = 50..=1_000_000_000;
 
 /// Whether `minor` is not a whole number of euros.
@@ -367,6 +366,25 @@ mod tests {
         for (token, want) in cases {
             assert_eq!(parse_money_token(token), want, "{token:?}");
         }
+    }
+
+    #[test]
+    fn the_plausibility_band_ends_at_its_two_bounds() {
+        assert!(!is_plausible_money(49));
+        assert!(is_plausible_money(50));
+        assert!(is_plausible_money(1_000_000_000));
+        assert!(!is_plausible_money(1_000_000_001));
+
+        // The same bounds as a document writes them.
+        assert_eq!(largest_plausible_amount("0,49"), None);
+        assert_eq!(largest_plausible_amount("0,50"), Some(50));
+        assert_eq!(
+            largest_plausible_amount("10.000.000,00"),
+            Some(1_000_000_000)
+        );
+        assert_eq!(largest_plausible_amount("10.000.000,01"), None);
+        // An amount over the band does not hide a plausible one beside it.
+        assert_eq!(largest_plausible_amount("10.000.000,01 45,90"), Some(4_590));
     }
 
     #[test]

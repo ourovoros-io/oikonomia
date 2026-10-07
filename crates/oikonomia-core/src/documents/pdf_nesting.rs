@@ -72,7 +72,8 @@ pub(super) const MAX_FORM_RUNS: usize = 20_000;
 ///
 /// The same figure as the budget on decoded streams
 /// (`MAX_PDF_DECODED_BYTES`), which counts each stream once; this one counts
-/// a form once per run. No test reaches it.
+/// a form once per run. `form_content_is_counted_once_per_run_up_to_the_limit`
+/// pins it.
 pub(super) const MAX_FORM_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 
 /// Most dictionaries on the way from a page to the root of the page tree,
@@ -80,7 +81,8 @@ pub(super) const MAX_FORM_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 ///
 /// pdf-extract recurses once per link, so this bounds stack as well. A real
 /// page tree is a few levels deep. The reason for 64 in particular is not
-/// recorded, and no test reaches it: the fixture's chain loops.
+/// recorded; `a_parent_chain_is_accepted_up_to_the_limit_and_refused_past_it`
+/// pins it.
 const MAX_PARENT_CHAIN: usize = 64;
 
 /// The walk found a cycle, or a chain or expansion past its limit.
@@ -463,5 +465,108 @@ pub(super) mod tests {
         let pdf = include_bytes!("../../testdata/documents/synthetic/pdf/english_total.pdf");
 
         assert!(within_limits(pdf));
+    }
+
+    /// A document whose one page sits under `ancestors` nested `Pages`
+    /// nodes, so its `Parent` chain is `ancestors + 1` dictionaries long.
+    fn page_under(ancestors: usize) -> lopdf::Document {
+        use lopdf::{Document, Object, dictionary};
+
+        let mut doc = Document::with_version("1.5");
+        let nodes: Vec<lopdf::ObjectId> = (0..ancestors).map(|_| doc.new_object_id()).collect();
+        let lowest = *nodes.last().expect("a page needs a parent");
+        let page_id = doc.add_object(dictionary! { "Type" => "Page", "Parent" => lowest });
+
+        let mut parent = None;
+        let mut kids = nodes.iter().skip(1).copied().chain([page_id]);
+        for node in &nodes {
+            let kid = kids.next().expect("one kid per node");
+            let mut pages = dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![kid.into()],
+                "Count" => 1,
+            };
+            if let Some(parent) = parent {
+                pages.set("Parent", Object::Reference(parent));
+            }
+            doc.objects.insert(*node, Object::Dictionary(pages));
+            parent = Some(*node);
+        }
+
+        let root = *nodes.first().expect("a page needs a parent");
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => root });
+        doc.trailer.set("Root", catalog_id);
+        doc
+    }
+
+    #[test]
+    fn a_parent_chain_is_accepted_up_to_the_limit_and_refused_past_it() {
+        let at_the_limit = page_under(MAX_PARENT_CHAIN - 1);
+        let past_the_limit = page_under(MAX_PARENT_CHAIN);
+
+        // Both pages are found, so both chains are walked.
+        assert_eq!(at_the_limit.get_pages().len(), 1);
+        assert_eq!(past_the_limit.get_pages().len(), 1);
+
+        assert!(nesting_within_limits(&at_the_limit));
+        assert!(!nesting_within_limits(&past_the_limit));
+    }
+
+    /// A document whose page runs one form `runs` times, the form holding
+    /// `form_bytes` bytes of content that draws nothing.
+    fn page_running_a_form(runs: usize, form_bytes: usize) -> lopdf::Document {
+        use lopdf::{Dictionary, Document, Object, Stream, dictionary};
+
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+
+        let form = doc.add_object(Stream::new(
+            dictionary! { "Type" => "XObject", "Subtype" => "Form" },
+            vec![b' '; form_bytes],
+        ));
+        let contents = doc.add_object(Stream::new(
+            Dictionary::new(),
+            "/F0 Do\n".repeat(runs).into_bytes(),
+        ));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "Contents" => contents,
+            "Resources" => dictionary! { "XObject" => dictionary! { "F0" => form } },
+        });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        doc.trailer.set("Root", catalog_id);
+        doc
+    }
+
+    #[test]
+    fn form_content_is_counted_once_per_run_up_to_the_limit() {
+        const FORM_BYTES: usize = 1024 * 1024;
+        let runs_at_the_limit = MAX_FORM_CONTENT_BYTES / FORM_BYTES;
+        assert_eq!(runs_at_the_limit * FORM_BYTES, MAX_FORM_CONTENT_BYTES);
+        assert!(runs_at_the_limit < MAX_FORM_RUNS);
+
+        // One megabyte of form, stored once: the count is per run.
+        assert!(nesting_within_limits(&page_running_a_form(
+            runs_at_the_limit,
+            FORM_BYTES
+        )));
+        assert!(!nesting_within_limits(&page_running_a_form(
+            runs_at_the_limit + 1,
+            FORM_BYTES
+        )));
+        // One byte over, in a single run of a larger form.
+        assert!(!nesting_within_limits(&page_running_a_form(
+            1,
+            MAX_FORM_CONTENT_BYTES + 1
+        )));
     }
 }
