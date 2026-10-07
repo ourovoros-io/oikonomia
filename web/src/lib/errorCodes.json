@@ -13,6 +13,7 @@
   "serialization",
   "crypto",
   "vault_corrupt",
+  "vault_unlock_before_backup",
   "vault_too_new",
   "backup_invalid",
   "restore_would_overwrite",

@@ -183,9 +183,12 @@ fn a_locked_backup_is_refused_while_a_password_change_is_unfinished() {
 
     // The published header does not fit the database, so an archive of the
     // two files as they are would open with neither password.
+    let refused = backup_to_path(dir.path(), &archive).expect_err("the backup is refused");
+    assert_eq!(refused, unfinished.clone());
     assert_eq!(
-        backup_to_path(dir.path(), &archive),
-        Err(unfinished.clone())
+        refused.code(),
+        "vault_unlock_before_backup",
+        "the user is told to unlock once, not that the vault is corrupt"
     );
     assert!(!archive.exists(), "no archive is written");
 

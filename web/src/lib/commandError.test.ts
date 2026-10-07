@@ -60,6 +60,34 @@ describe('command error localization', () => {
     }
   })
 
+  it('resolves vault_unlock_before_backup to its own sentence, not the corrupt-vault one', () => {
+    expect(ERROR_CODE_KEYS.vault_unlock_before_backup).toBe('error.vaultUnlockBeforeBackup')
+
+    const sentences = {
+      en: 'This vault needs to be unlocked once before it can be backed up. Unlock it, then try again; nothing has been lost.',
+      el: 'Αυτή η θυρίδα πρέπει να ξεκλειδωθεί μία φορά πριν από το αντίγραφο ασφαλείας. Ξεκλειδώστε την και δοκιμάστε ξανά· δεν έχει χαθεί τίποτα.',
+      fr: 'Ce coffre doit être déverrouillé une fois avant de pouvoir être sauvegardé. Déverrouillez-le, puis réessayez ; rien n’a été perdu.',
+      de: 'Dieser Tresor muss einmal entsperrt werden, bevor er gesichert werden kann. Entsperren Sie ihn und versuchen Sie es dann erneut; es ist nichts verloren gegangen.',
+    } satisfies Record<(typeof LOCALES)[number], string>
+    const catalogs = { en, el, fr, de }
+
+    for (const locale of LOCALES) {
+      const flat = flattenMessages(catalogs[locale])
+      const sentence = flat['error.vaultUnlockBeforeBackup']
+
+      expect(sentence, locale).toBe(sentences[locale])
+      expect(sentence, locale).not.toBe(flat['error.vaultCorrupt'])
+    }
+
+    const shown = commandErrorMessage({
+      code: 'vault_unlock_before_backup',
+      message: 'unmerged write-ahead log',
+      params: {},
+    })
+
+    expect(shown).toBe(sentences.en)
+  })
+
   it('resolves vault_too_new to its own key, not the corrupt-vault sentence', () => {
     expect(ERROR_CODE_KEYS.vault_too_new).toBe('error.vaultTooNew')
     expect(ERROR_CODE_KEYS.vault_too_new).not.toBe('error.vaultCorrupt')

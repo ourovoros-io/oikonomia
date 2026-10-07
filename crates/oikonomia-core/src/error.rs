@@ -213,6 +213,9 @@ pub enum Error {
 
     /// Stored vault data cannot be interpreted: the header, the database or
     /// a row in it. The reason says which.
+    ///
+    /// Two reasons are refusals of a locked backup that one unlock settles,
+    /// not damage, and give a code of their own; see [`Error::code`].
     #[error("vault is corrupt: {0}")]
     VaultCorrupt(VaultCorruption),
 
@@ -265,7 +268,9 @@ impl Error {
     /// [`Error::Validation`] and [`Error::Csv`], whose codes are
     /// [`ValidationError::ALL_CODES`] and [`CsvError::ALL_CODES`].
     ///
-    /// The codes are in the order of the variants. The desktop crate checks
+    /// The codes are in the order of the variants. [`Error::VaultCorrupt`]
+    /// has two: `vault_corrupt`, and after it `vault_unlock_before_backup`
+    /// for the reasons that one unlock settles. The desktop crate checks
     /// this list against `errorCodes.json`.
     pub const ALL_CODES: &'static [&'static str] = &[
         "vault_uninitialized",
@@ -282,6 +287,7 @@ impl Error {
         "serialization",
         "crypto",
         "vault_corrupt",
+        "vault_unlock_before_backup",
         "vault_too_new",
         "backup_invalid",
         "restore_would_overwrite",
@@ -296,6 +302,15 @@ impl Error {
     /// ([`ValidationError::code`], [`CsvError::code`]). The match has no
     /// wildcard arm, so a new variant does not compile until it has a code
     /// here.
+    ///
+    /// A corrupt vault gives `vault_corrupt`, except for two reasons that
+    /// only the backup of a locked vault returns:
+    /// [`VaultCorruption::UnmergedWriteAheadLog`] and
+    /// [`VaultCorruption::UnfinishedPasswordChange`] give
+    /// `vault_unlock_before_backup`. That vault is sound, and unlocking it
+    /// once lets the backup go through. The reason is matched without a
+    /// wildcard arm too, so a new reason does not compile until its code is
+    /// decided.
     ///
     /// # Examples
     ///
@@ -326,7 +341,7 @@ impl Error {
             Self::Io { .. } => "io",
             Self::Serialization { .. } => "serialization",
             Self::Crypto { .. } => "crypto",
-            Self::VaultCorrupt(_) => "vault_corrupt",
+            Self::VaultCorrupt(reason) => reason.code(),
             Self::VaultTooNew { .. } => "vault_too_new",
             Self::BackupInvalid(_) => "backup_invalid",
             Self::RestoreWouldOverwrite => "restore_would_overwrite",
@@ -450,7 +465,9 @@ mod tests {
     use oikonomia_test_support::listed_variants;
     use std::collections::BTreeMap;
 
-    /// One value of every variant, in the order of the enum.
+    /// One value of every variant, in the order of the enum, and a second
+    /// [`Error::VaultCorrupt`] for the code of the reasons one unlock
+    /// settles.
     fn every_variant() -> Vec<Error> {
         vec![
             Error::VaultUninitialized,
@@ -483,6 +500,7 @@ mod tests {
                 detail: "x".into(),
             },
             Error::VaultCorrupt(VaultCorruption::MissingMetaTable),
+            Error::VaultCorrupt(VaultCorruption::UnfinishedPasswordChange),
             Error::VaultTooNew {
                 found: 8,
                 supported: 7,
@@ -514,6 +532,12 @@ mod tests {
             Error::Io { .. },
             Error::Serialization { .. },
             Error::Crypto { .. },
+            // The listing module imports only `Error`, so the reasons are
+            // named by their full path.
+            Error::VaultCorrupt(
+                crate::error::VaultCorruption::UnmergedWriteAheadLog
+                | crate::error::VaultCorruption::UnfinishedPasswordChange
+            ),
             Error::VaultCorrupt(_),
             Error::VaultTooNew { .. },
             Error::BackupInvalid(_),
@@ -556,6 +580,38 @@ mod tests {
     #[test]
     fn a_csv_error_gives_its_own_code() {
         assert_eq!(Error::from(CsvError::Empty).code(), "csv_empty");
+    }
+
+    #[test]
+    fn a_locked_backup_refusal_that_one_unlock_settles_gives_its_own_code() {
+        for reason in [
+            VaultCorruption::UnmergedWriteAheadLog,
+            VaultCorruption::UnfinishedPasswordChange,
+        ] {
+            let error = Error::VaultCorrupt(reason);
+
+            assert_eq!(error.code(), "vault_unlock_before_backup", "{error:?}");
+            assert_eq!(error.params(), BTreeMap::new(), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn any_other_corrupt_vault_gives_vault_corrupt() {
+        let reasons = [
+            VaultCorruption::MissingMetaTable,
+            VaultCorruption::HeaderWithoutDatabase,
+            VaultCorruption::EmptyFile { file: "vault.db" },
+            VaultCorruption::Column {
+                column: "accounts.id".into(),
+                detail: "not an id".into(),
+            },
+        ];
+
+        for reason in reasons {
+            let error = Error::VaultCorrupt(reason);
+
+            assert_eq!(error.code(), "vault_corrupt", "{error:?}");
+        }
     }
 
     #[test]
