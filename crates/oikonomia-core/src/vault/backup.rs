@@ -277,6 +277,24 @@ pub(crate) fn recover_interrupted_restore(data_dir: &Path) -> Result<()> {
     remove_files_if_present(&[&paths.unpacked_header, &paths.unpacked_db])
 }
 
+/// Removes the database snapshot an online backup left behind when the
+/// process died before the backup removed it.
+///
+/// The snapshot is a full copy of the ciphertext, and nothing reads it
+/// again: each online backup makes its own. A snapshot that is not there is
+/// the usual case and not an error.
+///
+/// An online backup that another handle on the same directory is running at
+/// this moment loses its snapshot and fails with [`Error::Io`]; it writes no
+/// archive and can be repeated.
+///
+/// # Errors
+///
+/// [`Error::Io`] when the snapshot exists and cannot be removed.
+pub(crate) fn remove_stale_snapshot(data_dir: &Path) -> Result<()> {
+    remove_files_if_present(&[&backup_snapshot_db_path(data_dir)])
+}
+
 impl Vault {
     /// Writes a backup archive of this vault to `dest` without changing its
     /// lock state, creating the parent directory of `dest` when it is missing.
@@ -529,7 +547,9 @@ fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
 /// on-disk header into an archive at `dest`. The session stays open.
 ///
 /// The snapshot is `vault.db.backup-tmp` in the data directory. It is
-/// removed before this returns, and one left by a crash is removed first.
+/// removed before this returns. One left by a crash is normally gone by
+/// then, removed when the vault was opened; this removes it first all the
+/// same, because `VACUUM INTO` refuses a target that is not empty.
 fn backup_from_open_connection(conn: &Connection, data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     if !header_path.is_file() {
@@ -1350,6 +1370,44 @@ mod tests {
 
         assert_opens_with(live.path(), PASSWORD);
         assert_no_restore_files(live.path());
+    }
+
+    #[test]
+    fn open_removes_the_snapshot_of_an_interrupted_online_backup() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+        let snapshot = dir.path().join("vault.db.backup-tmp");
+        assert_eq!(snapshot, backup_snapshot_db_path(dir.path()));
+        write_file(&snapshot, b"a second copy of the ciphertext");
+
+        assert_opens_with(dir.path(), PASSWORD);
+
+        assert!(!snapshot.exists(), "the leftover snapshot must be removed");
+    }
+
+    #[test]
+    fn open_reports_a_snapshot_it_cannot_remove() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+        // A directory in the snapshot's place: removing it as a file fails
+        // on every platform, for a reason other than "not found".
+        let snapshot = backup_snapshot_db_path(dir.path());
+        fs::create_dir(&snapshot).expect("directory in the snapshot's place");
+
+        let err = Vault::open_path(dir.path())
+            .map(|vault| vault.status())
+            .expect_err("only a missing snapshot is ignored");
+
+        assert!(
+            matches!(
+                err,
+                Error::Io {
+                    operation: "remove vault file",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
     }
 
     #[test]

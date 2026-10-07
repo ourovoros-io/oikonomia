@@ -32,7 +32,7 @@ use crate::error::{
     CryptoContext, DatabaseContext, Error, Result, SerializationContext, ValidationError,
     VaultCorruption,
 };
-use crate::vault::backup::recover_interrupted_restore;
+use crate::vault::backup::{recover_interrupted_restore, remove_stale_snapshot};
 use crate::vault::crypto::{self, VaultKey};
 use crate::vault::files::{
     discard_database_files, discard_file, rename_synced, write_private_file,
@@ -88,13 +88,15 @@ impl Vault {
     ///
     /// Also settles what a crash left half-done: a restore that was swapping
     /// the vault files is undone or finished (the protocol is in the
-    /// `vault::backup` module doc), and an interrupted first run is cleared
-    /// so the vault reads as uninitialized again (see [`Vault::init`]).
+    /// `vault::backup` module doc), the snapshot of an interrupted online
+    /// backup is removed, and an interrupted first run is cleared so the
+    /// vault reads as uninitialized again (see [`Vault::init`]).
     ///
     /// # Errors
     ///
     /// [`Error::Io`] when the directory cannot be created, an interrupted
-    /// restore cannot be settled, or the header cannot be read;
+    /// restore cannot be settled, a leftover snapshot cannot be removed, or
+    /// the header cannot be read;
     /// [`Error::VaultTooNew`] when the header's format version is above the
     /// one this build reads, so a later build wrote it;
     /// [`Error::VaultCorrupt`] when the header is not valid, names format
@@ -103,6 +105,7 @@ impl Vault {
         let data_dir = data_dir.into();
         create_private_dir(&data_dir)?;
         recover_interrupted_restore(&data_dir)?;
+        remove_stale_snapshot(&data_dir)?;
 
         let header_path = vault_header_path(&data_dir);
         let db_path = vault_db_path(&data_dir);

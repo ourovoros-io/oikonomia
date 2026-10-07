@@ -48,7 +48,7 @@
 //! | `….restore-tmp`       | A restore, while unpacking.    | [`Vault::open_path`] |
 //! | `….restore-new`       | A restore, mid-swap.           | [`Vault::open_path`] |
 //! | `….restore-old`       | A restore, mid-swap or after.  | [`Vault::open_path`] |
-//! | `vault.db.backup-tmp` | [`Vault::backup_to`], unlocked.| The next such backup.|
+//! | `vault.db.backup-tmp` | [`Vault::backup_to`], unlocked.| [`Vault::open_path`] |
 //!
 //! - **Write-ahead log.** It can hold commits that are not in `vault.db`
 //!   yet. Unlocking reads it, and `SQLite` folds it into `vault.db` when the
@@ -70,9 +70,9 @@
 //!   did not commit: the `restore-old` files are renamed back and the
 //!   previous vault is whole again. Once the marker is gone the swap
 //!   committed, and the `restore-old` files are removed.
-//! - **`backup-tmp`.** The next online backup removes it before writing its
-//!   own. Nothing else does: until then a second copy of the ciphertext
-//!   stays in the data directory.
+//! - **`backup-tmp`.** A second copy of the ciphertext, of no use once the
+//!   backup that was packing it is gone. It is removed on the next open, and
+//!   an online backup removes one it finds before writing its own.
 //!
 //! [^checkpoint]: <https://www.sqlite.org/wal.html>, "Avoiding Excessively
 //!     Large WAL Files": the last connection to close does a final checkpoint
