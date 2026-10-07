@@ -60,7 +60,7 @@ pub fn verify_minisign(public_key: &PublicKey, data: &[u8], signature: &str) -> 
 /// # Errors
 ///
 /// Returns [`UpdateError::ArtifactIntegrity`] when the string is not 32 bytes of hex.
-pub fn parse_sha256_hex(hex: &str) -> Result<[u8; 32]> {
+pub(crate) fn parse_sha256_hex(hex: &str) -> Result<[u8; 32]> {
     let hex = hex.trim();
     if hex.len() != 64 {
         return Err(UpdateError::ArtifactIntegrity);
@@ -88,7 +88,7 @@ fn hex_nibble(byte: u8) -> Result<u8> {
 
 /// Lowercase hex encoding for cache file names and tests.
 #[must_use]
-pub fn to_hex(bytes: &[u8]) -> String {
+pub(crate) fn to_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -105,4 +105,61 @@ pub fn to_hex(bytes: &[u8]) -> String {
 /// [`UpdateError::ManifestSignature`] when verification fails.
 pub fn verify_manifest_bytes(key: &PublicKey, body: &[u8], signature: &str) -> Result<()> {
     verify_minisign(key, body, signature)
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::parse_sha256_hex;
+
+    fn hex(digest: [u8; 32], uppercase: bool) -> String {
+        digest
+            .iter()
+            .map(|byte| {
+                if uppercase {
+                    format!("{byte:02X}")
+                } else {
+                    format!("{byte:02x}")
+                }
+            })
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn a_digest_written_as_hex_parses_back(
+            digest in any::<[u8; 32]>(),
+            uppercase in any::<bool>(),
+        ) {
+            let parsed = parse_sha256_hex(&hex(digest, uppercase));
+
+            prop_assert!(matches!(parsed, Ok(bytes) if bytes == digest), "{:?}", parsed);
+        }
+
+        #[test]
+        fn parsing_any_text_returns_instead_of_panicking(text in any::<String>()) {
+            let _ = parse_sha256_hex(&text);
+        }
+
+        #[test]
+        fn parsing_64_bytes_that_are_not_all_hex_returns_instead_of_panicking(
+            text in "[0-9a-fA-Fg-z ]{64}",
+        ) {
+            let _ = parse_sha256_hex(&text);
+        }
+
+        // 64 bytes, so the length check passes, with a two-byte character at
+        // each position in turn for the byte-wise decoding to meet.
+        #[test]
+        fn parsing_64_bytes_with_a_wide_character_is_refused(at in 0_usize..=62) {
+            let text = format!("{}\u{e9}{}", "a".repeat(at), "a".repeat(62 - at));
+            prop_assert_eq!(text.len(), 64);
+
+            prop_assert!(parse_sha256_hex(&text).is_err());
+        }
+    }
 }

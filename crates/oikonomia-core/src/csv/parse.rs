@@ -534,7 +534,6 @@ fn record_cell(record: &StringRecord, idx: usize) -> &str {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 #[expect(clippy::panic, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;

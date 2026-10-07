@@ -9,7 +9,7 @@ use crate::error::{Error, Result, ValidationError};
 pub const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 15 * 60;
 
 /// Shortest idle lock timeout the vault accepts, in seconds.
-pub const MIN_LOCK_TIMEOUT_SECS: u64 = 60;
+pub(super) const MIN_LOCK_TIMEOUT_SECS: u64 = 60;
 
 const KEY_LOCK_TIMEOUT: &str = "lock_timeout_secs";
 
@@ -62,7 +62,6 @@ pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
     use crate::vault::Vault;

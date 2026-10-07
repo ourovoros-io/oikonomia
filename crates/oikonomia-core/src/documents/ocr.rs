@@ -47,7 +47,7 @@ impl OcrModelPaths {
 }
 
 /// True if the OCR engine can be (or already has been) loaded.
-pub fn ocr_available(paths: &OcrModelPaths) -> bool {
+pub(super) fn ocr_available(paths: &OcrModelPaths) -> bool {
     if lock_engine().is_some() {
         return true;
     }
@@ -75,7 +75,7 @@ fn recover_option_mutex<T>(mutex: &Mutex<Option<T>>) -> std::sync::MutexGuard<'_
 /// # Errors
 ///
 /// Missing model files or engine init failure.
-pub fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
+pub(super) fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
     let mut guard = lock_engine();
 
     if guard.is_some() {
@@ -123,7 +123,7 @@ pub fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
 /// Missing models, an image that does not decode or is over the decoding
 /// limits, an image with a zero side or too elongated to read, or an OCR
 /// runtime error.
-pub fn ocr_image_bytes(paths: &OcrModelPaths, data: &[u8]) -> Result<String> {
+pub(super) fn ocr_image_bytes(paths: &OcrModelPaths, data: &[u8]) -> Result<String> {
     ensure_engine(paths)?;
 
     let prepared = prepare_image(data)?;

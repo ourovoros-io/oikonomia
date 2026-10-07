@@ -470,7 +470,6 @@ fn path_ends_with_ignore_ascii_case(path: &Path, suffix: &str) -> bool {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{AppImageRuntime, InstallKind, VerifiedPathInstaller, install_verified_artifact};
     use oikonomia_update::{ArtifactInstaller, InstallRoute};

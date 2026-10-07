@@ -2,37 +2,13 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
 use oikonomia_core::domain::{ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, EntryFilter, PostJournal, PostedEntryView, create_entity,
-    list_accounts, list_entries, post_entry,
+    EntryFilter, PostedEntryView, list_accounts, list_entries, post_entry,
 };
-use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
-
-fn setup_entity(conn: &Connection) -> EntityId {
-    create_entity(
-        conn,
-        &CreateEntity {
-            name: "Filters".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity")
-    .id
-}
 
 /// Post a balanced two-line entry using personal-template account codes.
 #[expect(
@@ -49,46 +25,21 @@ fn post_two_line(
     debit_code: &str,
     credit_code: &str,
 ) -> PostedEntryView {
-    let accounts = list_accounts(conn, entity_id).expect("accounts");
-    let acc = |code: &str| {
-        accounts
-            .iter()
-            .find(|a| a.code == code)
-            .expect("template account")
-            .id
-    };
+    let mut entry = common::two_line(conn, entity_id, date, (debit_code, credit_code), 1_000);
+    entry.description = description.into();
+    entry.reference = reference.map(Into::into);
+    if let Some(debit_line) = entry.lines.first_mut() {
+        debit_line.memo = memo.map(Into::into);
+    }
 
-    post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: date.into(),
-            description: description.into(),
-            reference: reference.map(Into::into),
-            lines: vec![
-                CreateJournalLine {
-                    account_id: acc(debit_code),
-                    debit_minor: 1_000,
-                    credit_minor: 0,
-                    memo: memo.map(Into::into),
-                },
-                CreateJournalLine {
-                    account_id: acc(credit_code),
-                    debit_minor: 0,
-                    credit_minor: 1_000,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post")
+    post_entry(conn, &entry).expect("post")
 }
 
 #[test]
 fn text_filter_matches_description_reference_and_memo() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Filters", ChartTemplate::Personal);
 
     post_two_line(
         conn,
@@ -143,9 +94,9 @@ fn text_filter_matches_description_reference_and_memo() {
 
 #[test]
 fn date_range_is_inclusive_on_both_ends() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Filters", ChartTemplate::Personal);
 
     for date in ["2026-01-10", "2026-01-20", "2026-01-31"] {
         post_two_line(conn, entity_id, date, "Entry", None, None, "5100", "1010");
@@ -167,9 +118,9 @@ fn date_range_is_inclusive_on_both_ends() {
 
 #[test]
 fn account_filter_matches_entries_touching_the_account() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Filters", ChartTemplate::Personal);
 
     post_two_line(
         conn,
@@ -211,9 +162,9 @@ fn account_filter_matches_entries_touching_the_account() {
 
 #[test]
 fn combined_filters_intersect() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Filters", ChartTemplate::Personal);
 
     post_two_line(
         conn,

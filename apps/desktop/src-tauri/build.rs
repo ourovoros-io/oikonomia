@@ -1,3 +1,5 @@
+//! Runs the Tauri build step and refuses to compile without an updater key.
+
 fn main() {
     tauri_build::build();
     enforce_baked_updater_public_key();

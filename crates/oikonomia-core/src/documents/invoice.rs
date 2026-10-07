@@ -1523,10 +1523,10 @@ fn rf_payment_code(line: &str) -> Option<String> {
         return token;
     }
 
-    // ASCII uppercasing keeps byte offsets, so the index is valid in `upper`.
     let upper = line.to_ascii_uppercase();
     let start = upper.find("RF")?;
-    let glued: String = upper[start..]
+    let glued: String = upper
+        .get(start..)?
         .chars()
         .take_while(char::is_ascii_alphanumeric)
         .collect();
@@ -1775,8 +1775,8 @@ fn sales_invoice_customer(text: &str) -> Option<String> {
 }
 
 fn value_after_colon(line: &str) -> Option<String> {
-    let (idx, ch) = line.char_indices().find(|(_, c)| *c == ':' || *c == '：')?;
-    let v = line[idx + ch.len_utf8()..].trim();
+    let (_, value) = line.split_once([':', '：'])?;
+    let v = value.trim();
     if v.is_empty() {
         None
     } else {
@@ -2153,10 +2153,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("testdata/documents")
             .join(relative);
-        #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
-        {
-            std::fs::read_to_string(&path).expect("corpus fixture")
-        }
+        std::fs::read_to_string(&path).expect("corpus fixture")
     }
 
     #[test]
@@ -2336,7 +2333,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn greek_bank_transfer_receipt_principal_not_fee_or_clock() {
         let text = corpus_text("synthetic/text/greek_bank_embasma.txt");
         let suggestion = parse_invoice_text(&text, crate::prefs::Locale::El);
@@ -2558,7 +2554,6 @@ mod jumbled_extract {
     /// Synthetic jumbled layout (the shape `pdf_extract` produces on a
     /// text-layer utility PDF). Placeholders only — not a live dump.
     #[test]
-    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn parse_jumbled_ngs_extract_fixture() {
         let text = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -2803,7 +2798,6 @@ mod jumbled_extract {
 
     #[test]
     #[ignore = "needs tests/fixtures/local_gas_bill.pdf, a private bill that is not in the tree"]
-    #[expect(clippy::expect_used, reason = "fixture tests fail loudly by design")]
     fn parse_local_gas_pdf_bytes() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -2819,5 +2813,72 @@ mod jumbled_extract {
             s.amount_minor,
             text.chars().take(800).collect::<String>()
         );
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// Words, amounts and dates an invoice reader looks for, in the scripts
+    /// the app supports.
+    const FRAGMENTS: [&str; 20] = [
+        "Total",
+        "ΣΥΝΟΛΟ",
+        "Σύνολο",
+        "Montant",
+        "Betrag",
+        "IBAN",
+        "RF",
+        "GR",
+        "€",
+        "EUR",
+        "1.234,56",
+        "1,234.56",
+        "12/03/2026",
+        "2026-03-12",
+        ":",
+        "：",
+        "ΦΠΑ",
+        "Rechnung",
+        "N°",
+        "\u{feff}",
+    ];
+
+    /// Lines built from [`FRAGMENTS`], which reach the parsing code that
+    /// arbitrary text almost never does.
+    fn invoice_like_text() -> impl Strategy<Value = String> {
+        let fragment = prop::sample::select(FRAGMENTS.to_vec());
+        let separator = prop::sample::select(vec!["", " ", "\n", "\t"]);
+
+        prop::collection::vec((fragment, separator), 0..40).prop_map(|pieces| {
+            pieces
+                .into_iter()
+                .flat_map(|(fragment, separator)| [fragment, separator])
+                .collect()
+        })
+    }
+
+    const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn reading_any_text_returns_instead_of_panicking(text in any::<String>()) {
+            for locale in LOCALES {
+                let _ = parse_invoice_text(&text, locale);
+            }
+        }
+
+        #[test]
+        fn reading_invoice_like_text_returns_instead_of_panicking(text in invoice_like_text()) {
+            for locale in LOCALES {
+                let _ = parse_invoice_text(&text, locale);
+            }
+        }
     }
 }

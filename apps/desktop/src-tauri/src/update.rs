@@ -39,7 +39,7 @@ fn updater_cache_dir(app: &tauri::AppHandle) -> CommandResult<PathBuf> {
 ///
 /// HTTP is `ureq` on the blocking pool so the async runtime is not stalled.
 #[tauri::command]
-pub async fn update_check(
+pub(crate) async fn update_check(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<UpdateStatus> {
@@ -132,7 +132,7 @@ impl Drop for PendingCheck<'_> {
 ///
 /// From Idle / Failed / Checking this is a typed hard error, not a silent no-op.
 #[tauri::command]
-pub async fn update_install(
+pub(crate) async fn update_install(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<UpdateStatus> {
@@ -175,6 +175,10 @@ pub async fn update_install(
 /// state, so releasing it in between would let a second install, or a check
 /// that replaces the offer, run against the same cache file. The caller runs
 /// this on the blocking pool, and [`run_check`] waits there too.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the blocking task hands its configuration over; tracked for the API pass"
+)]
 fn install_available_update(
     machine: &Mutex<UpdateMachine>,
     config: ClientConfig,
@@ -185,7 +189,6 @@ fn install_available_update(
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{install_available_update, run_check};
     use crate::update_key::UPDATER_PUBLIC_KEY;

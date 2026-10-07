@@ -222,7 +222,7 @@ pub fn get_recurring_template(
 /// # Errors
 ///
 /// Not found or DB error.
-pub fn get_recurring_template_as_of(
+pub(super) fn get_recurring_template_as_of(
     conn: &Connection,
     id: RecurringTemplateId,
     today: Date,
@@ -855,7 +855,6 @@ fn parse_bill_status(s: &str) -> Result<SimpleBillStatus> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
 

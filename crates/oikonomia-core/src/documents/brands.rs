@@ -133,6 +133,11 @@ pub(crate) fn classify_service(folded_text: &str) -> Option<Service> {
 
 /// Substring match with token boundaries: the neighbors of the match must
 /// not be alphanumeric, so "nova" never fires inside "innovation".
+#[expect(
+    clippy::string_slice,
+    reason = "`match_indices` yields the offset of a match of `token`, \
+              so both ends of the match are character boundaries"
+)]
 fn contains_token(folded_text: &str, token: &str) -> bool {
     for (at, _) in folded_text.match_indices(token) {
         let before_ok = folded_text[..at]

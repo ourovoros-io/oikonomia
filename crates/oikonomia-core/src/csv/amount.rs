@@ -225,7 +225,6 @@ fn grouped_digits(grouped: &str, separator: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
 
@@ -427,5 +426,67 @@ mod tests {
     fn a_four_digit_unit_keeps_all_four_decimals() {
         assert_eq!(parse_signed_minor("1,2345", 4).expect("CLF"), 12_345);
         assert_eq!(parse_signed_minor("40.000,5", 4).expect("CLF"), 400_005_000);
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// `minor` written with two decimals after `decimal`, the whole part
+    /// grouped in thousands by `group` (not grouped when `group` is empty).
+    fn written(minor: i64, group: &str, decimal: char) -> String {
+        let magnitude = minor.unsigned_abs();
+        let whole = (magnitude / 100).to_string();
+        let groups: Vec<&str> = whole
+            .as_bytes()
+            .rchunks(3)
+            .rev()
+            .map(|digits| std::str::from_utf8(digits).unwrap())
+            .collect();
+
+        format!("{}{decimal}{:02}", groups.join(group), magnitude % 100)
+    }
+
+    /// The four separator conventions the parser documents for two decimals.
+    const CONVENTIONS: [(&str, char); 4] = [("", '.'), ("", ','), (",", '.'), (".", ',')];
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn parsing_any_text_returns_instead_of_panicking(
+            raw in any::<String>(),
+            exponent in any::<u8>(),
+        ) {
+            let _ = parse_signed_minor(&raw, exponent);
+        }
+
+        #[test]
+        fn parsing_amount_shaped_text_returns_instead_of_panicking(
+            raw in "[0-9.,()€$ A-Za-z\u{2212}-]{0,24}",
+            exponent in 0_u8..=4,
+        ) {
+            let _ = parse_signed_minor(&raw, exponent);
+        }
+
+        // `i64::MIN` is left out: its magnitude does not fit an `i64`, and the
+        // parser reports that as an overflow.
+        #[test]
+        fn an_amount_written_in_any_convention_parses_back(minor in (i64::MIN + 1)..=i64::MAX) {
+            for (group, decimal) in CONVENTIONS {
+                let unsigned = written(minor, group, decimal);
+                let signed = if minor < 0 { format!("-{unsigned}") } else { unsigned.clone() };
+                prop_assert_eq!(parse_signed_minor(&signed, 2), Ok(minor), "{}", signed);
+
+                if minor < 0 {
+                    let bracketed = format!("({unsigned})");
+                    prop_assert_eq!(parse_signed_minor(&bracketed, 2), Ok(minor), "{}", bracketed);
+                }
+            }
+        }
     }
 }

@@ -2,20 +2,12 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
+use common::PASSWORD;
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::error::Error;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-const PASSWORD: &str = "correct horse battery staple";
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init(PASSWORD).expect("init");
-    (dir, vault)
-}
 
 fn schema_version(conn: &Connection) -> i64 {
     conn.query_row(
@@ -54,7 +46,7 @@ fn reset_to_v1(conn: &Connection) {
 
 #[test]
 fn a_vault_from_a_newer_build_is_refused_and_left_untouched() {
-    let (_dir, mut vault) = setup_vault();
+    let (_dir, mut vault) = common::vault();
     let newer = CURRENT_SCHEMA_VERSION + 1;
     let conn = vault.connection().expect("conn");
     set_schema_version(conn, newer);
@@ -88,7 +80,7 @@ fn table_exists(conn: &Connection, name: &str) -> bool {
 
 #[test]
 fn a_step_that_fails_part_way_is_undone_and_the_steps_before_it_stay() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     reset_to_v1(conn);
     // The v3 step creates `documents` and one index before it reaches the
@@ -115,7 +107,7 @@ fn a_step_that_fails_part_way_is_undone_and_the_steps_before_it_stay() {
 
 #[test]
 fn a_v1_vault_migrates_through_every_step() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     reset_to_v1(conn);
 
@@ -135,4 +127,26 @@ fn a_v1_vault_migrates_through_every_step() {
         )
         .expect("sqlite_master");
     assert_eq!(tables, 7);
+}
+
+#[test]
+fn migrating_a_vault_that_is_already_current_keeps_its_schema() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    // Every table, index and trigger, as the statement that created it.
+    let schema = || -> Vec<String> {
+        let mut statement = conn
+            .prepare("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY name")
+            .expect("prepare");
+        let rows = statement.query_map([], |row| row.get(0)).expect("query");
+        rows.collect::<Result<_, _>>().expect("rows")
+    };
+    let schema_before = schema();
+    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
+
+    migrate(conn).expect("first run on a current vault");
+    migrate(conn).expect("second run on a current vault");
+
+    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
+    assert_eq!(schema(), schema_before);
 }

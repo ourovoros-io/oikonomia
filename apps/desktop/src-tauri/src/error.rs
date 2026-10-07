@@ -15,7 +15,7 @@ use serde::Serialize;
 /// with the rest of the error, where the frontend may write it to the webview
 /// console (`logCommandError` in `web/src/lib/commandError.ts`).
 #[derive(Debug, Clone, Serialize)]
-pub struct CommandError {
+pub(crate) struct CommandError {
     /// Stable machine code for UI branching and localized text.
     pub code: String,
     /// Human-readable message (English). May contain OS error text.
@@ -27,7 +27,7 @@ pub struct CommandError {
 
 /// Failures that only the desktop shell can produce (dialogs, files, tasks).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DesktopError {
+pub(crate) enum DesktopError {
     /// File contents sent from the webview were not valid base64.
     FileDataInvalid,
     /// A file the user picked or dropped could not be read.
@@ -59,7 +59,7 @@ impl DesktopError {
 
     /// Stable `snake_case` identifier the UI maps to localized text.
     #[must_use]
-    pub fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             Self::FileDataInvalid => "file_data_invalid",
             Self::FileUnreadable => "file_unreadable",
@@ -78,7 +78,7 @@ impl CommandError {
     /// `message` is English and may include the OS error. The UI must not
     /// show it, so it is never copied into `params`.
     #[must_use]
-    pub fn desktop(kind: DesktopError, message: impl Into<String>) -> Self {
+    pub(crate) fn desktop(kind: DesktopError, message: impl Into<String>) -> Self {
         Self {
             code: kind.code().to_owned(),
             message: message.into(),
@@ -118,10 +118,9 @@ impl From<UpdateError> for CommandError {
 }
 
 /// Command result alias.
-pub type CommandResult<T> = Result<T, CommandError>;
+pub(crate) type CommandResult<T> = Result<T, CommandError>;
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
@@ -130,7 +129,7 @@ mod tests {
     use oikonomia_update::UpdateError;
 
     use super::{CommandError, DesktopError};
-    use crate::test_macros::listed_variants;
+    use oikonomia_test_support::listed_variants;
 
     listed_variants! {
         units listed_desktop_errors for DesktopError {

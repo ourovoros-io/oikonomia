@@ -4,6 +4,7 @@ members = [
     "crates/oikonomia-core",
     "crates/oikonomia-update",
     "crates/macos-dock-icon",
+    "crates/oikonomia-test-support",
     "apps/desktop/src-tauri",
 ]
 default-members = ["crates/oikonomia-core"]
@@ -17,6 +18,7 @@ license = "GPL-3.0-or-later"
 
 [workspace.dependencies]
 oikonomia-core = { path = "crates/oikonomia-core" }
+oikonomia-test-support = { path = "crates/oikonomia-test-support" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
@@ -36,13 +38,27 @@ pdf-extract = "=0.12.1"
 ocrs = "0.13"
 rten = { version = "0.26", default-features = false, features = ["rten_format"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# Dev-only. Without the default `fork` and `timeout` features, which would
+# bring in a subprocess runner the tests do not use.
+proptest = { version = "1.11", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-missing_docs = "allow"
+rust_2018_idioms = { level = "warn", priority = -1 }
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+trivial_numeric_casts = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+# A byte-offset slice panics inside a multi-byte character; use `get(..)`.
+string_slice = "warn"
 unwrap_used = "deny"
 expect_used = "warn"
 panic = "deny"
@@ -57,5 +73,7 @@ await_holding_lock = "deny"
 large_futures = "deny"
 exit = "deny"
 mem_forget = "deny"
+# House layout: `foo.rs` next to `foo/`, never `foo/mod.rs`.
+mod_module_files = "deny"
 module_name_repetitions = "allow"
 similar_names = "allow"

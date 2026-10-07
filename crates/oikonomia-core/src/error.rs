@@ -149,7 +149,7 @@ impl Error {
 #[cfg(test)]
 mod tests {
     use super::{Error, ValidationError};
-    use crate::test_macros::listed_variants;
+    use oikonomia_test_support::listed_variants;
 
     /// One value of every variant, in the order of the enum.
     fn every_variant() -> Vec<Error> {

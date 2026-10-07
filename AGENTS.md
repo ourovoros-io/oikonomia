@@ -11,6 +11,7 @@ master-password unlock.
 | `crates/oikonomia-core` | Domain, vault, ledger, reports |
 | `crates/oikonomia-update` | Signed update check, the only network path |
 | `crates/macos-dock-icon` | macOS Dock icon for `cargo tauri dev` |
+| `crates/oikonomia-test-support` | Test-only macros shared by the crates (a dev-dependency) |
 | `apps/desktop/src-tauri` | Tauri shell + IPC commands |
 | `web` | React + Vite + Tailwind frontend |
 | `docs/` | Release runbook (`release.md`), brand assets, and the design overview (`DESIGN.md`) |

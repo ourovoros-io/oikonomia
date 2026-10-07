@@ -1,6 +1,6 @@
 //! Recurring templates: CRUD, due, post + advance, overrides, validation.
 
-#![expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod common;
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
@@ -14,16 +14,7 @@ use oikonomia_core::ledger::{
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
 
 struct AccountsByCode {
     checking: AccountId,
@@ -33,27 +24,11 @@ struct AccountsByCode {
 }
 
 fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
-    let entity = create_entity(
-        conn,
-        &CreateEntity {
-            name: "Recurring".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity");
-    let accounts = list_accounts(conn, entity.id).expect("accounts");
-    let by_code = |code: &str| {
-        accounts
-            .iter()
-            .find(|a| a.code == code)
-            .map(|a| a.id)
-            .expect(code)
-    };
+    let entity_id = common::book(conn, "Recurring", ChartTemplate::Personal);
+    let by_code = |code: &str| common::account(conn, entity_id, code);
+
     (
-        entity.id,
+        entity_id,
         AccountsByCode {
             checking: by_code("1010"),
             food: by_code("5100"),
@@ -84,7 +59,7 @@ fn monthly_rent(entity_id: EntityId, accounts: &AccountsByCode) -> CreateRecurri
 
 #[test]
 fn create_and_list_by_entity() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
 
@@ -107,7 +82,7 @@ fn create_and_list_by_entity() {
 
 #[test]
 fn due_is_next_date_on_or_before_today() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
 
@@ -143,7 +118,7 @@ fn due_is_next_date_on_or_before_today() {
 
 #[test]
 fn post_creates_entry_and_advances_next_date() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let template =
@@ -168,7 +143,7 @@ fn post_creates_entry_and_advances_next_date() {
 
 #[test]
 fn post_override_amount_and_date_do_not_rewrite_template_amount() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let template =
@@ -200,7 +175,7 @@ fn post_override_amount_and_date_do_not_rewrite_template_amount() {
 
 #[test]
 fn weekly_post_advances_by_seven_days() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let mut weekly = monthly_rent(entity_id, &accounts);
@@ -220,7 +195,7 @@ fn weekly_post_advances_by_seven_days() {
 
 #[test]
 fn delete_removes_template_not_posted_entry() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let template =
@@ -236,7 +211,7 @@ fn delete_removes_template_not_posted_entry() {
 
 #[test]
 fn update_rewrites_fields() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let template =
@@ -270,7 +245,7 @@ fn update_rewrites_fields() {
 
 #[test]
 fn validation_rejects_empty_name_and_non_positive_amount() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
 
@@ -291,7 +266,7 @@ fn validation_rejects_empty_name_and_non_positive_amount() {
 
 #[test]
 fn validation_monthly_needs_day_of_month() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let mut missing = monthly_rent(entity_id, &accounts);
@@ -312,7 +287,7 @@ fn validation_monthly_needs_day_of_month() {
 
 #[test]
 fn validation_requires_role_accounts_for_kind() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let mut missing_wallet = monthly_rent(entity_id, &accounts);
@@ -325,7 +300,7 @@ fn validation_requires_role_accounts_for_kind() {
 
 #[test]
 fn transfer_template_posts() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let template = create_recurring_template(
@@ -354,7 +329,7 @@ fn transfer_template_posts() {
 
 #[test]
 fn income_template_and_bill_status() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let salary = create_recurring_template(
@@ -389,16 +364,30 @@ fn income_template_and_bill_status() {
 
 #[test]
 fn deleting_entity_removes_templates() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     create_recurring_template(conn, &monthly_rent(entity_id, &accounts)).expect("create");
+
+    // Read from the table itself: the listing would need the book to exist.
+    let template_rows = || -> i64 {
+        conn.query_row(
+            "SELECT COUNT(1) FROM recurring_templates WHERE entity_id = ?1",
+            [entity_id.0.to_string()],
+            |row| row.get(0),
+        )
+        .expect("count templates")
+    };
+    assert_eq!(template_rows(), 1);
+
     delete_entity(conn, entity_id).expect("delete entity");
+
+    assert_eq!(template_rows(), 0);
 }
 
 #[test]
 fn post_rejects_non_positive_override_amount() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
     let template =
@@ -412,7 +401,7 @@ fn post_rejects_non_positive_override_amount() {
 /// could never be posted is refused when it is saved, not at post time.
 #[test]
 fn a_template_must_use_accounts_that_posting_would_accept() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, accounts) = entity_with_accounts(conn);
 

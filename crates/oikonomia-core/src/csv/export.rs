@@ -15,9 +15,9 @@ use crate::util::format_date;
 use crate::vault::files::replace_private_file;
 
 /// Export column header for integer debit minor units.
-pub const DEBIT_MINOR_COLUMN: &str = "debit_minor";
+pub(super) const DEBIT_MINOR_COLUMN: &str = "debit_minor";
 /// Export column header for integer credit minor units.
-pub const CREDIT_MINOR_COLUMN: &str = "credit_minor";
+pub(super) const CREDIT_MINOR_COLUMN: &str = "credit_minor";
 
 /// `posted` or `voided` in the export `status` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -429,5 +429,94 @@ mod tests {
                 .and_then(|e| e.to_str()),
             Some("csv")
         );
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+    use proptest::test_runner::TestRunner;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::domain::ChartTemplate;
+    use crate::ledger::{
+        CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
+    };
+    use crate::prefs::Locale;
+    use crate::vault::Vault;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn restoring_a_guarded_cell_gives_the_cell_back(cell in any::<String>()) {
+            let guarded = neutralize_formula(&cell);
+
+            prop_assert_eq!(restore_formula(&guarded), cell.as_str());
+        }
+    }
+
+    /// Posts one two-line entry with `description` in a new book, and returns
+    /// the book with the description the ledger stored.
+    fn post_in_new_book(conn: &Connection, number: u32, description: &str) -> (EntityId, String) {
+        let book = CreateEntity {
+            name: format!("Book {number}"),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Personal,
+            fiscal_year_start_month: Some(1),
+        };
+        let entity = create_entity(conn, &book, Locale::En).unwrap();
+        let accounts = list_accounts(conn, entity.id).unwrap();
+        let line = |index: usize, debit_minor: i64, credit_minor: i64| CreateJournalLine {
+            account_id: accounts[index].id,
+            debit_minor,
+            credit_minor,
+            memo: None,
+        };
+
+        let entry = PostJournal {
+            entity_id: entity.id,
+            entry_date: "2026-03-15".into(),
+            description: description.into(),
+            reference: None,
+            lines: vec![line(0, 100, 0), line(1, 0, 100)],
+        };
+        let posted = post_entry(conn, &entry).unwrap();
+
+        (entity.id, posted.entry.description)
+    }
+
+    // One vault for the whole run: deriving its key costs far more than a
+    // case does, so the cases share it and each one posts into a book of its
+    // own.
+    #[test]
+    fn an_exported_description_parses_back_as_the_ledger_stores_it() {
+        let dir = TempDir::new().unwrap();
+        let mut vault = Vault::open_path(dir.path()).unwrap();
+        vault.init("correct horse battery staple").unwrap();
+        let conn = vault.connection().unwrap();
+        let books = std::cell::Cell::new(0_u32);
+
+        let mut runner = TestRunner::new(ProptestConfig::with_cases(PROPERTY_CASES));
+        let outcome = runner.run(&any::<String>(), |description| {
+            books.set(books.get() + 1);
+            let (entity_id, stored) = post_in_new_book(conn, books.get(), &description);
+
+            let exported = export_journal_csv(conn, entity_id).unwrap();
+            let lines = parse_journal_export(&exported);
+            prop_assert!(lines.is_ok(), "{:?} from {:?}", lines, exported);
+
+            let descriptions: Vec<String> = lines
+                .unwrap()
+                .into_iter()
+                .map(|line| line.description)
+                .collect();
+            prop_assert_eq!(descriptions, vec![stored.clone(), stored]);
+            Ok(())
+        });
+
+        outcome.unwrap();
     }
 }

@@ -8,34 +8,34 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 
 /// Schema version for the on-disk vault format.
-pub const VAULT_FORMAT_VERSION: u32 = 1;
+pub(super) const VAULT_FORMAT_VERSION: u32 = 1;
 
 /// Minimum master password length (characters).
-pub const MIN_PASSWORD_LEN: usize = 12;
+pub(super) const MIN_PASSWORD_LEN: usize = 12;
 
 /// Argon2id memory cost in kibibytes. Production targets the design's
 /// ~200–500ms band; tests keep the weaker OWASP floor so the suite stays fast.
 #[cfg(not(test))]
-pub const DEFAULT_M_COST: u32 = 65_536;
+pub(super) const DEFAULT_M_COST: u32 = 65_536;
 /// Test-only KDF memory (KiB).
 #[cfg(test)]
-pub const DEFAULT_M_COST: u32 = 19_456;
+pub(super) const DEFAULT_M_COST: u32 = 19_456;
 
 /// Argon2id time cost (iterations).
 #[cfg(not(test))]
-pub const DEFAULT_T_COST: u32 = 3;
+pub(super) const DEFAULT_T_COST: u32 = 3;
 /// Test-only KDF time cost.
 #[cfg(test)]
-pub const DEFAULT_T_COST: u32 = 2;
+pub(super) const DEFAULT_T_COST: u32 = 2;
 
 /// Argon2id parallelism.
-pub const DEFAULT_P_COST: u32 = 1;
+pub(super) const DEFAULT_P_COST: u32 = 1;
 
 /// Derived key length for `SQLCipher` raw key (bytes).
-pub const KEY_LEN: usize = 32;
+pub(super) const KEY_LEN: usize = 32;
 
 /// Salt length (bytes).
-pub const SALT_LEN: usize = 16;
+pub(super) const SALT_LEN: usize = 16;
 
 /// Non-secret parameters needed to derive the database key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

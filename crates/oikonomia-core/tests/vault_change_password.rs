@@ -49,15 +49,16 @@ fn change_password_rekeys_vault() {
     );
 
     vault.lock();
-    assert!(
-        vault.unlock(OLD).is_err(),
+    assert_eq!(
+        vault.unlock(OLD),
+        Err(Error::InvalidPassword),
         "old password must no longer open the vault"
     );
     vault.unlock(NEW).expect("new password unlocks");
 
     // A fresh Vault instance (fresh header read) must also accept only the new password.
     let mut reopened = Vault::open_path(dir.path()).expect("reopen");
-    assert!(reopened.unlock(OLD).is_err());
+    assert_eq!(reopened.unlock(OLD), Err(Error::InvalidPassword));
     reopened.unlock(NEW).expect("new password after reopen");
 }
 
@@ -160,8 +161,9 @@ fn interrupted_change_recovers_via_staged_header() {
     std::fs::write(&header_path, old_header).expect("restore old header");
 
     let mut recovered = Vault::open_path(dir.path()).expect("reopen");
-    assert!(
-        recovered.unlock(OLD).is_err(),
+    assert_eq!(
+        recovered.unlock(OLD),
+        Err(Error::InvalidPassword),
         "old password no longer matches the rekeyed database"
     );
     recovered

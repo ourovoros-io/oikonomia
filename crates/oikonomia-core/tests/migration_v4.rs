@@ -2,17 +2,10 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
-use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
-use oikonomia_core::vault::Vault;
-use rusqlite::Connection;
-use tempfile::TempDir;
+mod common;
 
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
+use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
+use rusqlite::Connection;
 
 /// Rebuild the v3 documents shape (nullable `entry_id`, no unique index) and
 /// seed it with an orphan and a same-book name clash.
@@ -47,9 +40,18 @@ fn downgrade_to_v3_with_bad_data(conn: &Connection) {
     .expect("downgrade to v3 shape");
 }
 
+/// Whether SQLite refused the statement because of a table constraint.
+fn is_constraint_violation(result: &rusqlite::Result<usize>) -> bool {
+    matches!(
+        result,
+        Err(rusqlite::Error::SqliteFailure(failure, _))
+            if failure.code == rusqlite::ErrorCode::ConstraintViolation
+    )
+}
+
 #[test]
 fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     downgrade_to_v3_with_bad_data(conn);
 
@@ -94,19 +96,25 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
          VALUES ('dx', 'e1', NULL, 'x.pdf', 'application/pdf', 1, x'00', 'unix:9', NULL)",
         [],
     );
-    assert!(orphan_insert.is_err(), "NOT NULL rejects orphans");
+    assert!(
+        is_constraint_violation(&orphan_insert),
+        "NOT NULL rejects orphans: {orphan_insert:?}"
+    );
 
     let dup_insert = conn.execute(
         "INSERT INTO documents (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json)
          VALUES ('dy', 'e1', 'j1', 'invoice.pdf', 'application/pdf', 1, x'00', 'unix:9', NULL)",
         [],
     );
-    assert!(dup_insert.is_err(), "UNIQUE rejects duplicate names");
+    assert!(
+        is_constraint_violation(&dup_insert),
+        "UNIQUE rejects duplicate names: {dup_insert:?}"
+    );
 }
 
 #[test]
 fn migrate_is_idempotent_after_v4() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     downgrade_to_v3_with_bad_data(conn);
 

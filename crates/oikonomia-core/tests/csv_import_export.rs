@@ -2,6 +2,8 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
 use oikonomia_core::csv::{
     CsvColumnMapping, CsvImportAccounts, JournalCsvStatus, export_journal_csv,
     parse_journal_export, post_import_rows, preview_bank_csv, preview_bank_csv_file,
@@ -11,21 +13,12 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts,
-    list_entries, post_simple_entry, set_entry_hidden, void_entry,
+    EntryFilter, PostSimpleEntry, SimpleEntryKind, list_entries, post_simple_entry,
+    set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::ui_text::{UiText, UiTextCode};
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
 
 struct Accounts {
     checking: AccountId,
@@ -34,27 +27,11 @@ struct Accounts {
 }
 
 fn entity_with_accounts(conn: &Connection) -> (EntityId, Accounts) {
-    let entity = create_entity(
-        conn,
-        &CreateEntity {
-            name: "CSV Books".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity");
-    let accounts = list_accounts(conn, entity.id).expect("accounts");
-    let by_code = |code: &str| {
-        accounts
-            .iter()
-            .find(|a| a.code == code)
-            .map(|a| a.id)
-            .expect(code)
-    };
+    let entity_id = common::book(conn, "CSV Books", ChartTemplate::Personal);
+    let by_code = |code: &str| common::account(conn, entity_id, code);
+
     (
-        entity.id,
+        entity_id,
         Accounts {
             checking: by_code("1010"),
             food: by_code("5100"),
@@ -83,7 +60,7 @@ fn count_entries(conn: &Connection, entity_id: EntityId) -> usize {
 
 #[test]
 fn preview_does_not_post() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -104,7 +81,7 @@ fn preview_does_not_post() {
 
 #[test]
 fn post_selected_rows_are_balanced() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -136,7 +113,7 @@ fn post_selected_rows_are_balanced() {
 
 #[test]
 fn junk_row_rejected_and_batch_rolls_back() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -166,7 +143,7 @@ fn junk_row_rejected_and_batch_rolls_back() {
 
 #[test]
 fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -214,7 +191,7 @@ fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
 
 #[test]
 fn export_round_trips_posted_lines_and_marks_voided() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -294,7 +271,7 @@ fn export_round_trips_posted_lines_and_marks_voided() {
 
 #[test]
 fn export_guards_cells_that_spreadsheets_would_run_as_formulas() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -334,7 +311,7 @@ fn export_guards_cells_that_spreadsheets_would_run_as_formulas() {
 
 #[test]
 fn export_omits_hidden_rows_until_unhidden() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -384,7 +361,7 @@ fn export_omits_hidden_rows_until_unhidden() {
 
 #[test]
 fn preview_from_file_path_still_does_not_post() {
-    let (dir, vault) = setup();
+    let (dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -401,7 +378,7 @@ fn preview_from_file_path_still_does_not_post() {
 
 #[test]
 fn preview_mapping_override_and_auto_detect() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -443,7 +420,7 @@ fn preview_mapping_override_and_auto_detect() {
 
 #[test]
 fn export_replaces_an_older_file_through_its_temporary_sibling() {
-    let (dir, vault) = setup();
+    let (dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, _accounts) = entity_with_accounts(conn);
     let dest = dir.path().join("journal.csv");
@@ -466,7 +443,7 @@ fn export_replaces_an_older_file_through_its_temporary_sibling() {
 
 #[test]
 fn failed_export_leaves_no_temporary_file() {
-    let (dir, vault) = setup();
+    let (dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, _accounts) = entity_with_accounts(conn);
     // A directory at the destination makes the final rename fail.
@@ -487,7 +464,7 @@ fn failed_export_leaves_no_temporary_file() {
 fn export_file_is_readable_only_by_its_owner() {
     use std::os::unix::fs::PermissionsExt;
 
-    let (dir, vault) = setup();
+    let (dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, _accounts) = entity_with_accounts(conn);
 

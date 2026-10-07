@@ -1,0 +1,7 @@
+# Tests unwrap instead of using `?` so a failure reports its exact location.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
+
+# House limit: at most 5 parameters per function.
+too-many-arguments-threshold = 5

@@ -6,20 +6,20 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
+use common::PASSWORD;
 use oikonomia_core::Error;
 use oikonomia_core::domain::{ChartTemplate, EntityId};
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, CreateRecurringTemplate, EntryFilter, PostJournal,
-    RecurringCadence, SimpleEntryKind, create_entity, create_recurring_template, list_accounts,
-    list_entities, list_entries, list_recurring_templates, post_entry, update_entity,
+    CreateEntity, CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleEntryKind,
+    create_entity, create_recurring_template, list_accounts, list_entities, list_entries,
+    list_recurring_templates, post_entry, update_entity,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-const PASSWORD: &str = "correct horse battery staple";
 
 /// Descriptions in each language, plus text that holds LIKE wildcards.
 const DESCRIPTIONS: &[&str] = &[
@@ -31,14 +31,6 @@ const DESCRIPTIONS: &[&str] = &[
     "snake_case name",
     "a1b plain",
 ];
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init(PASSWORD).expect("init");
-
-    (dir, vault)
-}
 
 fn create_book(conn: &Connection, name: &str) -> Result<EntityId, Error> {
     create_entity(
@@ -67,39 +59,14 @@ fn post_with(
     reference: Option<&str>,
     memo: Option<&str>,
 ) {
-    let accounts = list_accounts(conn, entity_id).expect("accounts");
-    let account = |code: &str| {
-        accounts
-            .iter()
-            .find(|account| account.code == code)
-            .expect("template account")
-            .id
-    };
+    let mut entry = common::two_line(conn, entity_id, "2026-02-01", ("5100", "1010"), 1_000);
+    entry.description = description.into();
+    entry.reference = reference.map(str::to_owned);
+    if let Some(debit_line) = entry.lines.first_mut() {
+        debit_line.memo = memo.map(str::to_owned);
+    }
 
-    post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: "2026-02-01".into(),
-            description: description.into(),
-            reference: reference.map(str::to_owned),
-            lines: vec![
-                CreateJournalLine {
-                    account_id: account("5100"),
-                    debit_minor: 1_000,
-                    credit_minor: 0,
-                    memo: memo.map(str::to_owned),
-                },
-                CreateJournalLine {
-                    account_id: account("1010"),
-                    debit_minor: 0,
-                    credit_minor: 1_000,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post");
+    post_entry(conn, &entry).expect("post");
 }
 
 /// Descriptions of the entries a search for `text` finds, sorted.
@@ -240,25 +207,25 @@ fn assert_name_folding(conn: &Connection) {
 /// whose password changed (the connection is reopened after the rekey), and
 /// one reopened from disk: the case fold must exist on every connection.
 fn on_every_connection(check: fn(&Connection, EntityId)) {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = seed(conn);
     check(conn, entity_id);
 
-    let (_dir, mut vault) = setup_vault();
+    let (_dir, mut vault) = common::vault();
     let entity_id = seed(vault.connection().expect("conn"));
     vault.lock();
     vault.unlock(PASSWORD).expect("unlock");
     check(vault.connection().expect("conn"), entity_id);
 
-    let (_dir, mut vault) = setup_vault();
+    let (_dir, mut vault) = common::vault();
     let entity_id = seed(vault.connection().expect("conn"));
     vault
         .change_password(PASSWORD, "a different long passphrase")
         .expect("change password");
     check(vault.connection().expect("conn"), entity_id);
 
-    let (dir, vault) = setup_vault();
+    let (dir, vault) = common::vault();
     let entity_id = seed(vault.connection().expect("conn"));
     drop(vault);
     let mut reopened = Vault::open_path(dir.path()).expect("reopen");
@@ -278,7 +245,7 @@ fn entity_name_checks_fold_case_for_every_script() {
 
 #[test]
 fn wildcards_and_ascii_names_behave_as_they_always_did() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = seed(conn);
 
@@ -310,7 +277,7 @@ fn an_all_capitals_greek_search_needs_no_accent() {
 
 #[test]
 fn a_greek_name_that_differs_by_accent_and_case_is_a_duplicate() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
 
     create_book(conn, "Τρόφιμα").expect("first");
@@ -332,7 +299,7 @@ fn a_greek_name_that_differs_by_accent_and_case_is_a_duplicate() {
 
 #[test]
 fn references_and_memos_are_searched_in_any_case() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = create_book(conn, "Books").expect("book");
 
@@ -393,7 +360,7 @@ const NAMES_IN_ORDER: &[&str] = &["apple", "Banana", "αλφα", "Βήτα", "γ
 
 #[test]
 fn entities_are_listed_by_name_without_regard_to_case_in_any_script() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     for name in NAMES_IN_ORDER.iter().rev() {
         create_book(conn, name).expect("book");
@@ -410,7 +377,7 @@ fn entities_are_listed_by_name_without_regard_to_case_in_any_script() {
 
 #[test]
 fn templates_due_the_same_day_are_listed_by_name_without_regard_to_case() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = create_book(conn, "Templates").expect("book");
     let accounts = list_accounts(conn, entity_id).expect("accounts");

@@ -141,6 +141,10 @@ impl ClientConfig {
         })
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "every configuration field is its own argument; tracked for the API pass"
+    )]
     fn new(
         feed_url: Url,
         public_key: &str,
@@ -177,6 +181,10 @@ impl ClientConfig {
 
 #[cfg(test)]
 impl ClientConfig {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors `ClientConfig::new`, one argument per field; tracked for the API pass"
+    )]
     pub(crate) fn for_test(
         feed_url: Url,
         public_key: &str,
@@ -700,4 +708,58 @@ pub trait ArtifactInstaller {
     ///
     /// Returns an [`UpdateError`] when the platform installer cannot run.
     fn install(&self, artifact: &Path) -> Result<InstallHandoff>;
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::RawManifest;
+    use crate::feed::{FeedArtifact, assemble_manifest};
+
+    fn artifact() -> impl Strategy<Value = FeedArtifact> {
+        (
+            "[a-z0-9-]{1,12}",
+            "[A-Za-z0-9._-]{1,20}",
+            "[A-Za-z0-9+/=]{1,40}",
+            "[0-9a-fA-F]{64}",
+        )
+            .prop_map(
+                |(platform, file_name, signature, sha256_hex)| FeedArtifact {
+                    platform,
+                    file_name,
+                    signature,
+                    sha256_hex,
+                },
+            )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        // The release lane writes the manifest and this client reads it; any
+        // notes text must survive the trip, whatever JSON has to escape.
+        #[test]
+        fn an_assembled_manifest_parses_as_the_manifest_the_client_reads(
+            version in "v?[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
+            notes in any::<String>(),
+            artifacts in prop::collection::vec(artifact(), 1..4),
+        ) {
+            let base = "https://example.test/releases/";
+            let body = assemble_manifest(&version, &notes, base, &artifacts);
+            prop_assert!(body.is_ok(), "{:?}", body);
+
+            let parsed = serde_json::from_str::<RawManifest>(&body.unwrap());
+            prop_assert!(parsed.is_ok(), "{:?}", parsed);
+            let manifest = parsed.unwrap();
+
+            prop_assert_eq!(manifest.version.as_str(), version.trim_start_matches('v'));
+            prop_assert_eq!(manifest.notes, Some(notes));
+            for artifact in &artifacts {
+                let platform = manifest.platforms.get(&artifact.platform);
+                prop_assert!(platform.is_some(), "{} is missing", artifact.platform);
+            }
+        }
+    }
 }

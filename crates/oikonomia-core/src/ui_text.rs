@@ -156,7 +156,7 @@ mod tests {
     use super::*;
     use crate::documents::AnalyzerHint;
     use crate::ledger::SyntheticLine;
-    use crate::test_macros::listed_variants;
+    use oikonomia_test_support::listed_variants;
 
     /// The wire spelling of a value that serializes as one string.
     fn wire_spelling<T: Serialize>(value: &T) -> String {
@@ -175,10 +175,6 @@ mod tests {
         synthetic_lines: Vec<String>,
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "a malformed fixture must fail the test loudly"
-    )]
     fn fixture() -> Fixture {
         serde_json::from_str(include_str!("../../../web/src/lib/uiTextCodes.json"))
             .expect("uiTextCodes.json parses")

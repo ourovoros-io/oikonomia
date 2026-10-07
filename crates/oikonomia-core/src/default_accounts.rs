@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn the_response_uses_the_role_identifiers_and_null_for_a_missing_role() {
         let defaults = default_accounts(ChartTemplate::Blank, &[]);
-        let json = serde_json::to_value(defaults).unwrap_or_default();
+        let json = serde_json::to_value(defaults).unwrap();
 
         for role in AccountRole::ALL {
             assert_eq!(

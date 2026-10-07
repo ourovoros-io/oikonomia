@@ -1,49 +1,22 @@
 //! The expense/income/bill/transfer form maps to journal lines in Rust,
 //! not in the UI (review: business logic must live in the core crate).
 
-#![expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod common;
 
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::{AccountRole, ValidationError};
 use oikonomia_core::ledger::{
-    CreateEntity, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity, list_accounts,
-    post_simple_entry,
+    PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, post_simple_entry,
 };
-use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
 
 fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
-    let entity = create_entity(
-        conn,
-        &CreateEntity {
-            name: "Simple".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity");
-    let accounts = list_accounts(conn, entity.id).expect("accounts");
-    let by_code = |code: &str| {
-        accounts
-            .iter()
-            .find(|a| a.code == code)
-            .map(|a| a.id)
-            .expect(code)
-    };
+    let entity_id = common::book(conn, "Simple", ChartTemplate::Personal);
+    let by_code = |code: &str| common::account(conn, entity_id, code);
+
     (
-        entity.id,
+        entity_id,
         AccountsByCode {
             checking: by_code("1010"),
             food: by_code("5100"),
@@ -81,7 +54,7 @@ fn base_input(entity_id: EntityId, kind: SimpleEntryKind) -> PostSimpleEntry {
 
 #[test]
 fn expense_debits_category_credits_wallet() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -109,7 +82,7 @@ fn expense_debits_category_credits_wallet() {
 /// post and store as empty (trimmed), not fail validation.
 #[test]
 fn expense_allows_empty_or_whitespace_description() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -129,7 +102,7 @@ fn expense_allows_empty_or_whitespace_description() {
 
 #[test]
 fn income_debits_wallet_credits_category() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -148,7 +121,7 @@ fn income_debits_wallet_credits_category() {
 
 #[test]
 fn bill_statuses_route_to_payable() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -203,7 +176,7 @@ fn bill_statuses_route_to_payable() {
 
 #[test]
 fn transfer_debits_to_credits_from() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -233,7 +206,7 @@ fn transfer_debits_to_credits_from() {
 
 #[test]
 fn wrong_role_types_and_bad_amounts_are_rejected() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 

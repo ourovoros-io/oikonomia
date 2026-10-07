@@ -4,6 +4,8 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
 use std::collections::BTreeSet;
 
 use oikonomia_core::coa::template_accounts;
@@ -16,20 +18,11 @@ use oikonomia_core::ledger::{
     set_account_opening_balance, void_entry,
 };
 use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
 
 const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
 
 const TEMPLATES: [ChartTemplate; 2] = [ChartTemplate::Personal, ChartTemplate::Company];
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
 
 fn new_entity(conn: &Connection, name: &str, template: ChartTemplate, locale: Locale) -> EntityId {
     create_entity(
@@ -233,7 +226,7 @@ fn codes_types_order_and_flags_do_not_depend_on_the_language() {
 #[test]
 fn a_greek_book_has_greek_names_and_the_same_codes_and_defaults() {
     for template in TEMPLATES {
-        let (_dir, vault) = setup_vault();
+        let (_dir, vault) = common::vault();
         let conn = vault.connection().expect("conn");
         let english = new_entity(conn, "English", template, Locale::En);
         let greek = new_entity(conn, "Greek", template, Locale::El);
@@ -304,7 +297,7 @@ fn the_opening_balance_description_is_written_in_the_given_language() {
     ];
 
     for (locale, description) in expected {
-        let (_dir, vault) = setup_vault();
+        let (_dir, vault) = common::vault();
         let conn = vault.connection().expect("conn");
         let entity = new_entity(conn, "Book", ChartTemplate::Personal, locale);
         let accounts = list_accounts(conn, entity).expect("accounts");
@@ -327,7 +320,7 @@ fn a_void_is_written_in_the_given_language() {
     ];
 
     for (locale, description, memo) in expected {
-        let (_dir, vault) = setup_vault();
+        let (_dir, vault) = common::vault();
         let conn = vault.connection().expect("conn");
         let entity = new_entity(conn, "Book", ChartTemplate::Personal, locale);
         let accounts = list_accounts(conn, entity).expect("accounts");
@@ -363,7 +356,7 @@ fn a_void_is_written_in_the_given_language() {
 
 #[test]
 fn changing_the_language_renames_nothing_and_only_new_text_follows_it() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let greek = new_entity(conn, "Greek", ChartTemplate::Personal, Locale::El);
 
@@ -474,7 +467,7 @@ fn the_void_inside_an_edit_is_written_in_the_given_language() {
     ];
 
     for (locale, description, memo) in expected {
-        let (_dir, vault) = setup_vault();
+        let (_dir, vault) = common::vault();
         let conn = vault.connection().expect("conn");
         let entity = new_entity(conn, "Book", ChartTemplate::Personal, locale);
         let accounts = list_accounts(conn, entity).expect("accounts");

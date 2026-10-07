@@ -256,7 +256,6 @@ fn map_account(row: &rusqlite::Row<'_>) -> Result<Account> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
     use crate::util::parse_uuid;

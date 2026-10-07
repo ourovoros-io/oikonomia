@@ -2,22 +2,15 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
 };
 use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
 
 fn hidden_of(conn: &Connection, entry_id: &str) -> i64 {
     conn.query_row(
@@ -30,10 +23,8 @@ fn hidden_of(conn: &Connection, entry_id: &str) -> i64 {
 
 #[test]
 fn pre_v6_row_becomes_visible() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
-
     let entity = create_entity(
         conn,
         &CreateEntity {
@@ -94,20 +85,4 @@ fn pre_v6_row_becomes_visible() {
         0,
         "existing row defaults visible"
     );
-}
-
-#[test]
-fn migrate_is_safe_on_fresh_v6_vault() {
-    let (_dir, vault) = setup_vault();
-    let conn = vault.connection().expect("conn");
-    migrate(conn).expect("idempotent");
-    migrate(conn).expect("idempotent again");
-    let version: i64 = conn
-        .query_row(
-            "SELECT schema_version FROM vault_meta WHERE id = 1",
-            [],
-            |r| r.get(0),
-        )
-        .expect("version");
-    assert_eq!(version, CURRENT_SCHEMA_VERSION);
 }

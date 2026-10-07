@@ -49,7 +49,7 @@ pub(crate) const SUPPORT_EMAIL: &str = "info@ourovoros.io";
 
 /// Static app metadata for the about screen / diagnostics.
 #[derive(Debug, Serialize)]
-pub struct AppInfo {
+pub(crate) struct AppInfo {
     /// Crate version.
     pub version: &'static str,
     /// Product name.
@@ -67,7 +67,7 @@ pub struct AppInfo {
 /// not on the main thread, while a long operation such as a rekey holds it.
 /// A probe does not count as activity; the idle heartbeat is [`vault_touch`].
 #[tauri::command]
-pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
+pub(crate) async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStatus> {
     let vault = state.vault();
 
     await_blocking(tauri::async_runtime::spawn_blocking(move || {
@@ -80,7 +80,11 @@ pub async fn vault_status(state: State<'_, AppState>) -> CommandResult<VaultStat
 /// Heartbeat for the idle watchdog. Separate from [`vault_status`] so lock
 /// probes (quick-add focus) do not extend the idle window.
 #[tauri::command]
-pub fn vault_touch(state: State<'_, AppState>) {
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands a command its arguments by value"
+)]
+pub(crate) fn vault_touch(state: State<'_, AppState>) {
     state.touch();
 }
 
@@ -89,7 +93,7 @@ pub fn vault_touch(state: State<'_, AppState>) {
 /// The password is wiped from memory when the command returns; only the
 /// derived key lives on, inside `SQLCipher`.
 #[tauri::command]
-pub async fn vault_init(
+pub(crate) async fn vault_init(
     state: State<'_, AppState>,
     password: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
@@ -102,7 +106,7 @@ pub async fn vault_init(
 
 /// Unlock an existing vault. The password is wiped when the command returns.
 #[tauri::command]
-pub async fn vault_unlock(
+pub(crate) async fn vault_unlock(
     state: State<'_, AppState>,
     password: Zeroizing<String>,
 ) -> CommandResult<VaultStatus> {
@@ -114,7 +118,6 @@ pub async fn vault_unlock(
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{dropped_file_name, require_granted_path, stored_text_locale};
     use crate::state::AppState;
@@ -237,7 +240,7 @@ mod tests {
 /// it is, so this does not depend on whether core unlocks a locked vault as
 /// part of the change.
 #[tauri::command]
-pub async fn vault_change_password(
+pub(crate) async fn vault_change_password(
     state: State<'_, AppState>,
     old: Zeroizing<String>,
     new: Zeroizing<String>,
@@ -251,7 +254,7 @@ pub async fn vault_change_password(
 
 /// Lock the vault for this session.
 #[tauri::command]
-pub async fn vault_lock(
+pub(crate) async fn vault_lock(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<VaultStatus> {
@@ -276,7 +279,7 @@ pub async fn vault_lock(
 ///
 /// Returns the destination path, or `None` if the user cancelled.
 #[tauri::command]
-pub async fn vault_backup(
+pub(crate) async fn vault_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<Option<String>> {
@@ -335,7 +338,7 @@ pub async fn vault_backup(
 /// Returns the archive path that was restored, or `None` if the user cancelled
 /// the open dialog.
 #[tauri::command]
-pub async fn vault_restore(
+pub(crate) async fn vault_restore(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     path: Option<String>,
@@ -370,7 +373,7 @@ pub async fn vault_restore(
 /// path, or `None` if the user cancelled. The frontend confirms, then calls
 /// [`vault_restore`] with that path and `replace`.
 #[tauri::command]
-pub async fn vault_pick_backup(
+pub(crate) async fn vault_pick_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<Option<String>> {
@@ -454,7 +457,7 @@ fn with_backup_extension(path: std::path::PathBuf) -> std::path::PathBuf {
 
 /// Return build identity and the support address (no secrets).
 #[tauri::command]
-pub fn app_info() -> AppInfo {
+pub(crate) fn app_info() -> AppInfo {
     AppInfo {
         version: env!("CARGO_PKG_VERSION"),
         name: "Oikonomia",
@@ -469,7 +472,11 @@ pub fn app_info() -> AppInfo {
 /// webview never supplies a URL, so `capabilities/default.json` needs no
 /// `mailto:` glob, and a glob that could admit extra recipients never exists.
 #[tauri::command]
-pub fn open_support_email(app: tauri::AppHandle) -> CommandResult<()> {
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands a command its arguments by value"
+)]
+pub(crate) fn open_support_email(app: tauri::AppHandle) -> CommandResult<()> {
     use tauri_plugin_opener::OpenerExt;
 
     app.opener()
@@ -508,7 +515,6 @@ fn percent_encode(input: &str) -> String {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod app_info_tests {
     use super::{SUPPORT_EMAIL, app_info, percent_encode, support_mailto};
 
@@ -568,7 +574,7 @@ mod app_info_tests {
 
 /// List non-archived entities.
 #[tauri::command]
-pub async fn entity_list(state: State<'_, AppState>) -> CommandResult<Vec<Entity>> {
+pub(crate) async fn entity_list(state: State<'_, AppState>) -> CommandResult<Vec<Entity>> {
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         list_entities(conn)
@@ -578,7 +584,7 @@ pub async fn entity_list(state: State<'_, AppState>) -> CommandResult<Vec<Entity
 
 /// Create entity with chart template.
 #[tauri::command]
-pub async fn entity_create(
+pub(crate) async fn entity_create(
     state: State<'_, AppState>,
     input: CreateEntity,
 ) -> CommandResult<Entity> {
@@ -595,7 +601,7 @@ pub async fn entity_create(
 
 /// Rename entity.
 #[tauri::command]
-pub async fn entity_update(
+pub(crate) async fn entity_update(
     state: State<'_, AppState>,
     id: EntityId,
     name: String,
@@ -609,7 +615,7 @@ pub async fn entity_update(
 
 /// Archive entity (soft-hide).
 #[tauri::command]
-pub async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
+pub(crate) async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         archive_entity(conn, id)
@@ -619,7 +625,7 @@ pub async fn entity_archive(state: State<'_, AppState>, id: EntityId) -> Command
 
 /// Permanently delete an entity and all of its books data.
 #[tauri::command]
-pub async fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
+pub(crate) async fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandResult<()> {
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         delete_entity(conn, id)
@@ -631,7 +637,7 @@ pub async fn entity_delete(state: State<'_, AppState>, id: EntityId) -> CommandR
 
 /// List accounts for an entity.
 #[tauri::command]
-pub async fn account_list(
+pub(crate) async fn account_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<Vec<Account>> {
@@ -647,7 +653,7 @@ pub async fn account_list(
 /// Chosen in Rust by the seeded account's template code and type, never by
 /// name, so it is right for a renamed or translated chart.
 #[tauri::command]
-pub async fn account_defaults(
+pub(crate) async fn account_defaults(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<DefaultAccounts> {
@@ -660,7 +666,7 @@ pub async fn account_defaults(
 
 /// Create account.
 #[tauri::command]
-pub async fn account_create(
+pub(crate) async fn account_create(
     state: State<'_, AppState>,
     input: CreateAccount,
 ) -> CommandResult<Account> {
@@ -673,7 +679,7 @@ pub async fn account_create(
 
 /// Update account.
 #[tauri::command]
-pub async fn account_update(
+pub(crate) async fn account_update(
     state: State<'_, AppState>,
     input: UpdateAccount,
 ) -> CommandResult<Account> {
@@ -686,7 +692,10 @@ pub async fn account_update(
 
 /// Archive (deactivate) account.
 #[tauri::command]
-pub async fn account_archive(state: State<'_, AppState>, id: AccountId) -> CommandResult<()> {
+pub(crate) async fn account_archive(
+    state: State<'_, AppState>,
+    id: AccountId,
+) -> CommandResult<()> {
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         archive_account(conn, id)
@@ -696,7 +705,7 @@ pub async fn account_archive(state: State<'_, AppState>, id: AccountId) -> Comma
 
 /// Account register.
 #[tauri::command]
-pub async fn account_register_cmd(
+pub(crate) async fn account_register_cmd(
     state: State<'_, AppState>,
     account_id: AccountId,
     from: Option<String>,
@@ -711,7 +720,7 @@ pub async fn account_register_cmd(
 
 /// Signed normal balance of one account as of a date.
 #[tauri::command]
-pub async fn account_balance_cmd(
+pub(crate) async fn account_balance_cmd(
     state: State<'_, AppState>,
     account_id: AccountId,
     as_of: String,
@@ -726,7 +735,7 @@ pub async fn account_balance_cmd(
 /// Set an account's balance as of a date by posting the difference against
 /// the book's Opening Balances equity account.
 #[tauri::command]
-pub async fn account_set_opening_balance(
+pub(crate) async fn account_set_opening_balance(
     state: State<'_, AppState>,
     account_id: AccountId,
     target_minor: i64,
@@ -745,7 +754,11 @@ pub async fn account_set_opening_balance(
 
 /// List journal entries matching optional search/date/account filters.
 #[tauri::command]
-pub async fn entry_list(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one field of the IPC payload; tracked for the API pass"
+)]
+pub(crate) async fn entry_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: Option<String>,
@@ -768,7 +781,7 @@ pub async fn entry_list(
 
 /// Get one entry.
 #[tauri::command]
-pub async fn entry_get(
+pub(crate) async fn entry_get(
     state: State<'_, AppState>,
     id: JournalEntryId,
 ) -> CommandResult<PostedEntryView> {
@@ -781,7 +794,7 @@ pub async fn entry_get(
 
 /// Post a balanced journal entry.
 #[tauri::command]
-pub async fn entry_post(
+pub(crate) async fn entry_post(
     state: State<'_, AppState>,
     input: PostJournal,
 ) -> CommandResult<PostedEntryView> {
@@ -794,7 +807,7 @@ pub async fn entry_post(
 
 /// Post a simple-form entry (kind + role accounts); line construction is in core.
 #[tauri::command]
-pub async fn entry_post_simple(
+pub(crate) async fn entry_post_simple(
     state: State<'_, AppState>,
     input: PostSimpleEntry,
 ) -> CommandResult<PostedEntryView> {
@@ -807,7 +820,11 @@ pub async fn entry_post_simple(
 
 /// Post a simple entry together with its analyzed document (one transaction).
 #[tauri::command]
-pub async fn entry_post_simple_with_document(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one field of the IPC payload; tracked for the API pass"
+)]
+pub(crate) async fn entry_post_simple_with_document(
     state: State<'_, AppState>,
     input: PostSimpleEntry,
     filename: String,
@@ -836,7 +853,7 @@ pub async fn entry_post_simple_with_document(
 /// The file is re-read and re-validated at post time; if it moved since the
 /// drop, a clean error surfaces and nothing is written.
 #[tauri::command]
-pub async fn entry_post_simple_with_document_path(
+pub(crate) async fn entry_post_simple_with_document_path(
     state: State<'_, AppState>,
     input: PostSimpleEntry,
     path: String,
@@ -884,7 +901,7 @@ pub async fn entry_post_simple_with_document_path(
 /// Correct a posted entry: void the original and post the replacement in one
 /// transaction; attached documents follow the replacement.
 #[tauri::command]
-pub async fn entry_replace_simple(
+pub(crate) async fn entry_replace_simple(
     state: State<'_, AppState>,
     original_id: JournalEntryId,
     input: PostSimpleEntry,
@@ -900,7 +917,7 @@ pub async fn entry_replace_simple(
 
 /// Set the owner-only hidden flag on an existing journal entry.
 #[tauri::command]
-pub async fn entry_set_hidden(
+pub(crate) async fn entry_set_hidden(
     state: State<'_, AppState>,
     id: JournalEntryId,
     hidden: bool,
@@ -914,7 +931,7 @@ pub async fn entry_set_hidden(
 
 /// Void an entry (posts reverse).
 #[tauri::command]
-pub async fn entry_void(
+pub(crate) async fn entry_void(
     state: State<'_, AppState>,
     id: JournalEntryId,
 ) -> CommandResult<VoidResult> {
@@ -931,7 +948,7 @@ pub async fn entry_void(
 
 /// List recurring templates for an entity (`due` when `next_date` ≤ UTC today).
 #[tauri::command]
-pub async fn recurring_list(
+pub(crate) async fn recurring_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<Vec<RecurringTemplateView>> {
@@ -944,7 +961,7 @@ pub async fn recurring_list(
 
 /// Fetch one template.
 #[tauri::command]
-pub async fn recurring_get(
+pub(crate) async fn recurring_get(
     state: State<'_, AppState>,
     id: RecurringTemplateId,
 ) -> CommandResult<RecurringTemplateView> {
@@ -957,7 +974,7 @@ pub async fn recurring_get(
 
 /// Create a local recurring template.
 #[tauri::command]
-pub async fn recurring_create(
+pub(crate) async fn recurring_create(
     state: State<'_, AppState>,
     input: CreateRecurringTemplate,
 ) -> CommandResult<RecurringTemplateView> {
@@ -970,7 +987,7 @@ pub async fn recurring_create(
 
 /// Replace mutable fields on a template.
 #[tauri::command]
-pub async fn recurring_update(
+pub(crate) async fn recurring_update(
     state: State<'_, AppState>,
     input: UpdateRecurringTemplate,
 ) -> CommandResult<RecurringTemplateView> {
@@ -983,7 +1000,7 @@ pub async fn recurring_update(
 
 /// Delete a template. Posted journal entries are left intact.
 #[tauri::command]
-pub async fn recurring_delete(
+pub(crate) async fn recurring_delete(
     state: State<'_, AppState>,
     id: RecurringTemplateId,
 ) -> CommandResult<()> {
@@ -1000,7 +1017,7 @@ pub async fn recurring_delete(
 /// amount. Overrides apply only to this post (confirm-sheet adjust-before-save);
 /// cadence still steps from the stored `next_date`.
 #[tauri::command]
-pub async fn recurring_post(
+pub(crate) async fn recurring_post(
     state: State<'_, AppState>,
     id: RecurringTemplateId,
     entry_date: Option<String>,
@@ -1021,7 +1038,7 @@ pub async fn recurring_post(
 /// `input.mapping` overrides header auto-detect when set.
 /// Returns `None` if the user cancelled the dialog.
 #[tauri::command]
-pub async fn csv_import_preview(
+pub(crate) async fn csv_import_preview(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     input: CsvImportPreviewInput,
@@ -1054,7 +1071,7 @@ pub async fn csv_import_preview(
 /// Duplicates (date + amount + normalized description) are skipped unless
 /// `include_duplicates` is true. Junk / unbalanced rows fail the whole batch.
 #[tauri::command]
-pub async fn csv_import_post(
+pub(crate) async fn csv_import_post(
     state: State<'_, AppState>,
     input: CsvImportPostInput,
 ) -> CommandResult<CsvImportPostResult> {
@@ -1069,7 +1086,7 @@ pub async fn csv_import_post(
 ///
 /// Returns the destination path, or `None` if the user cancelled.
 #[tauri::command]
-pub async fn csv_export_journal(
+pub(crate) async fn csv_export_journal(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     entity_id: EntityId,
@@ -1122,7 +1139,7 @@ async fn pick_csv_path(app: &tauri::AppHandle, state: &AppState) -> CommandResul
 
 /// Trial balance.
 #[tauri::command]
-pub async fn report_trial_balance(
+pub(crate) async fn report_trial_balance(
     state: State<'_, AppState>,
     entity_id: EntityId,
     as_of: String,
@@ -1136,7 +1153,7 @@ pub async fn report_trial_balance(
 
 /// Profit and loss.
 #[tauri::command]
-pub async fn report_pnl(
+pub(crate) async fn report_pnl(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: String,
@@ -1151,7 +1168,7 @@ pub async fn report_pnl(
 
 /// Accountant / PDF export P&L. Same args as [`report_pnl`]; Hidden omitted.
 #[tauri::command]
-pub async fn report_pnl_export(
+pub(crate) async fn report_pnl_export(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: String,
@@ -1166,7 +1183,7 @@ pub async fn report_pnl_export(
 
 /// Balance sheet.
 #[tauri::command]
-pub async fn report_balance_sheet(
+pub(crate) async fn report_balance_sheet(
     state: State<'_, AppState>,
     entity_id: EntityId,
     as_of: String,
@@ -1184,7 +1201,7 @@ pub async fn report_balance_sheet(
 /// The vault is not opened, so this also works while it is locked. The call
 /// counts as activity for the idle watchdog.
 #[tauri::command]
-pub async fn report_export_pdf(
+pub(crate) async fn report_export_pdf(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     bytes_base64: String,
@@ -1282,7 +1299,6 @@ fn ensure_pdf_path(path: std::path::PathBuf) -> std::path::PathBuf {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod pdf_export_tests {
     use super::{
         decode_capped_base64, decode_document_base64, decode_pdf_export_bytes, ensure_pdf_path,
@@ -1390,7 +1406,7 @@ mod pdf_export_tests {
 
 /// Dashboard summary.
 #[tauri::command]
-pub async fn dashboard_summary_cmd(
+pub(crate) async fn dashboard_summary_cmd(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: String,
@@ -1408,7 +1424,7 @@ pub async fn dashboard_summary_cmd(
 /// bound resolves to the book's first or last active entry (Transactions with
 /// no date filter); both bounds set is the dashboard's period.
 #[tauri::command]
-pub async fn cash_flow_series_cmd(
+pub(crate) async fn cash_flow_series_cmd(
     state: State<'_, AppState>,
     entity_id: EntityId,
     from: Option<String>,
@@ -1427,7 +1443,7 @@ pub async fn cash_flow_series_cmd(
 
 /// Get auto-lock timeout seconds.
 #[tauri::command]
-pub async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandResult<u64> {
+pub(crate) async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandResult<u64> {
     with_vault_blocking(&state, move |vault| {
         let conn = vault.connection()?;
         get_lock_timeout_secs(conn)
@@ -1437,7 +1453,10 @@ pub async fn settings_get_lock_timeout(state: State<'_, AppState>) -> CommandRes
 
 /// Set auto-lock timeout seconds.
 #[tauri::command]
-pub async fn settings_set_lock_timeout(state: State<'_, AppState>, secs: u64) -> CommandResult<()> {
+pub(crate) async fn settings_set_lock_timeout(
+    state: State<'_, AppState>,
+    secs: u64,
+) -> CommandResult<()> {
     with_vault_blocking(&state, move |vault| {
         set_lock_timeout_secs(vault.connection()?, secs)?;
 
@@ -1494,7 +1513,7 @@ where
 /// Get the native UI locale. Plaintext preference: readable before unlock so
 /// tray chrome and dialogs match the user's language before a password.
 #[tauri::command]
-pub async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale> {
+pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale> {
     with_prefs_blocking(
         app,
         |_app, state| Ok(load_ui_prefs(state.data_dir()).locale),
@@ -1505,7 +1524,10 @@ pub async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<Locale>
 /// Persist the native UI locale, then rebuild the tray menu and refresh the
 /// quick-add window title when that window exists.
 #[tauri::command]
-pub async fn settings_set_locale(app: tauri::AppHandle, locale: Locale) -> CommandResult<()> {
+pub(crate) async fn settings_set_locale(
+    app: tauri::AppHandle,
+    locale: Locale,
+) -> CommandResult<()> {
     with_prefs_blocking(app, move |app, state| {
         let prefs_guard = state.lock_prefs();
         store_locale(state.data_dir(), locale)?;
@@ -1527,7 +1549,7 @@ pub async fn settings_set_locale(app: tauri::AppHandle, locale: Locale) -> Comma
 /// as after a change in Settings. Works before a vault exists and while
 /// locked, and is safe to call on every launch.
 #[tauri::command]
-pub async fn settings_resolve_locale(
+pub(crate) async fn settings_resolve_locale(
     app: tauri::AppHandle,
     system_languages: Vec<String>,
 ) -> CommandResult<Locale> {
@@ -1550,13 +1572,13 @@ pub async fn settings_resolve_locale(
 
 /// Full plaintext UI prefs (locale, tray last-used). Safe before unlock.
 #[tauri::command]
-pub async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResult<UiPrefs> {
+pub(crate) async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResult<UiPrefs> {
     with_prefs_blocking(app, |_app, state| Ok(load_ui_prefs(state.data_dir()))).await
 }
 
 /// Remember last entity + role accounts after a successful tray post.
 #[tauri::command]
-pub async fn settings_remember_quick_add(
+pub(crate) async fn settings_remember_quick_add(
     app: tauri::AppHandle,
     entity_id: String,
     kind: String,
@@ -1578,12 +1600,20 @@ pub async fn settings_remember_quick_add(
 }
 
 #[tauri::command]
-pub fn open_main_window(app: tauri::AppHandle) {
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands a command its arguments by value"
+)]
+pub(crate) fn open_main_window(app: tauri::AppHandle) {
     crate::tray::show_main_window(&app);
 }
 
 #[tauri::command]
-pub fn quick_add_hide(app: tauri::AppHandle) {
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands a command its arguments by value"
+)]
+pub(crate) fn quick_add_hide(app: tauri::AppHandle) {
     crate::tray::hide_quick_add(&app);
 }
 
@@ -1591,7 +1621,11 @@ pub fn quick_add_hide(app: tauri::AppHandle) {
 
 /// Whether the shipped on-device OCR models are available.
 #[tauri::command]
-pub fn document_analyzer_status(state: State<'_, AppState>) -> AnalyzerStatus {
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "Tauri hands a command its arguments by value"
+)]
+pub(crate) fn document_analyzer_status(state: State<'_, AppState>) -> AnalyzerStatus {
     analyzer_status(Some(state.ocr_model_dir().as_path()))
 }
 
@@ -1601,7 +1635,7 @@ pub fn document_analyzer_status(state: State<'_, AppState>) -> AnalyzerStatus {
 /// posted ([`entry_post_simple_with_document`]). Analysis is fully offline
 /// (bundled OCR + heuristics). Nothing is sent to the network.
 #[tauri::command]
-pub async fn document_analyze(
+pub(crate) async fn document_analyze(
     state: State<'_, AppState>,
     entity_id: EntityId,
     filename: String,
@@ -1625,7 +1659,7 @@ pub async fn document_analyze(
 
 /// Analyze a file from a filesystem path (Tauri native drag-and-drop).
 #[tauri::command]
-pub async fn document_analyze_path(
+pub(crate) async fn document_analyze_path(
     state: State<'_, AppState>,
     entity_id: EntityId,
     path: String,
@@ -1728,6 +1762,10 @@ async fn await_blocking<T>(
 /// Analyze a document in memory and suggest a draft entry. Persists
 /// nothing: the file is stored only when the entry is posted
 /// (`entry_post_simple_with_document`), keeping the no-orphan invariant.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
+)]
 fn analyze_readonly(
     vault: &GatedVault,
     model_dir: &Path,
@@ -1767,7 +1805,7 @@ fn analyze_readonly(
 
 /// Metadata plus base64 payload for the in-app viewer.
 #[derive(Debug, Serialize)]
-pub struct DocumentContent {
+pub(crate) struct DocumentContent {
     /// Metadata.
     pub meta: DocumentMeta,
     /// Raw bytes, base64-encoded for IPC (bounded by the 8 MiB cap).
@@ -1776,7 +1814,7 @@ pub struct DocumentContent {
 
 /// All stored documents for an entity (metadata only).
 #[tauri::command]
-pub async fn document_list(
+pub(crate) async fn document_list(
     state: State<'_, AppState>,
     entity_id: EntityId,
 ) -> CommandResult<Vec<DocumentMeta>> {
@@ -1790,7 +1828,7 @@ pub async fn document_list(
 /// One document's bytes for the in-app viewer. Decrypted content crosses
 /// IPC only; nothing is written to disk.
 #[tauri::command]
-pub async fn document_get(
+pub(crate) async fn document_get(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<DocumentContent> {
@@ -1807,7 +1845,7 @@ pub async fn document_get(
 
 /// Permanently delete a stored document.
 #[tauri::command]
-pub async fn document_delete(
+pub(crate) async fn document_delete(
     state: State<'_, AppState>,
     document_id: DocumentId,
 ) -> CommandResult<()> {
@@ -1821,7 +1859,11 @@ pub async fn document_delete(
 /// Attach a file to an existing posted entry. No OCR pass — analysis only
 /// runs on the drop-zone flow; `analysis_json` stays NULL here.
 #[tauri::command]
-pub async fn document_attach(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one field of the IPC payload; tracked for the API pass"
+)]
+pub(crate) async fn document_attach(
     state: State<'_, AppState>,
     entity_id: EntityId,
     entry_id: JournalEntryId,
@@ -1845,7 +1887,7 @@ pub async fn document_attach(
 /// ([`report_export_pdf`]), this writes plaintext to disk, and like them only
 /// to a path the user picked in the dialog ([`save_with_dialog`]).
 #[tauri::command]
-pub async fn document_export(
+pub(crate) async fn document_export(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     document_id: DocumentId,

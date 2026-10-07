@@ -425,7 +425,7 @@ mod tests {
               xref\n0 1\n0000000000 65535 f \n\
               trailer\n<</Prev 0000007>>\nstartxref\n0000007\n%%EOF";
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
 
         assert_eq!(
             repaired.len(),
@@ -450,7 +450,7 @@ mod tests {
 
         assert_eq!(&data[19..26], b"1 0 obj", "test fixture geometry");
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
         assert!(!repaired.is_empty(), "repair must apply");
 
         let text = String::from_utf8_lossy(&repaired);
@@ -492,7 +492,7 @@ mod tests {
         assert_eq!(&data[25..32], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[40..44], b"xref", "test fixture geometry");
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
 
         let text = String::from_utf8_lossy(&repaired);
         assert!(text.contains("0000000025 00000 n"), "entry patched: {text}");
@@ -509,7 +509,7 @@ mod tests {
         assert_eq!(&data[20..27], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[35..39], b"xref", "test fixture geometry");
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
 
         let text = String::from_utf8_lossy(&repaired);
         assert!(text.contains("0000000020 00000 n"), "entry patched: {text}");
@@ -552,11 +552,14 @@ mod tests {
     /// The offsets a table of 20-byte entries holds, in order.
     fn entry_offsets(data: &[u8], entries: usize) -> Vec<usize> {
         let text = String::from_utf8_lossy(data);
-        let table = text.find("xref\n").unwrap_or_default();
+        let (_, table) = text
+            .split_once("xref\n")
+            .expect("the fixture has a classic table");
 
-        text[table..]
+        // The first line is the subsection header.
+        table
             .lines()
-            .skip(2)
+            .skip(1)
             .take(entries)
             .filter_map(|entry| entry.get(..10)?.parse().ok())
             .collect()
@@ -567,7 +570,7 @@ mod tests {
         let objects = 5_000;
         let (data, offsets) = pdf_with_stale_entries(objects);
 
-        let repaired = repair_xref_offsets(&data).unwrap_or_default();
+        let repaired = repair_xref_offsets(&data).unwrap();
 
         assert_eq!(repaired.len(), data.len(), "width-preserving");
         assert_eq!(entry_offsets(&repaired, objects), offsets);
@@ -578,7 +581,7 @@ mod tests {
         let objects = MAX_REPAIRED_ENTRIES + 10;
         let (data, offsets) = pdf_with_stale_entries(objects);
 
-        let repaired = repair_xref_offsets(&data).unwrap_or_default();
+        let repaired = repair_xref_offsets(&data).unwrap();
 
         assert_eq!(repaired.len(), data.len(), "width-preserving");
         let after = entry_offsets(&repaired, objects);
@@ -605,7 +608,7 @@ mod tests {
         assert_eq!(&data[28..35], b"1 0 obj", "test fixture geometry");
         assert_eq!(&data[45..49], b"xref", "test fixture geometry");
 
-        let repaired = repair_xref_offsets(data).unwrap_or_default();
+        let repaired = repair_xref_offsets(data).unwrap();
 
         let text = String::from_utf8_lossy(&repaired);
         assert!(text.contains("0000000028 00000 n"), "entry patched: {text}");
@@ -619,5 +622,64 @@ mod tests {
               trailer\n<<>>\nstartxref\n7\n%%EOF";
 
         assert!(repair_xref_offsets(data).is_none());
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// The byte sequences the repair searches a file for.
+    const FRAGMENTS: [&[u8]; 12] = [
+        b"xref\n",
+        b"startxref\n",
+        b"/Prev ",
+        b"trailer\n",
+        b"1 0 obj",
+        b"endobj\n",
+        b"0000000009 00000 n \n",
+        b"0000000000 65535 f \n",
+        b"0 2\n",
+        b"7",
+        b"99999999999999999999",
+        b"%%EOF",
+    ];
+
+    /// Files built from [`FRAGMENTS`] and stray bytes, which reach the repair
+    /// code that arbitrary bytes almost never do.
+    fn pdf_like_bytes() -> impl Strategy<Value = Vec<u8>> {
+        let piece = prop_oneof![
+            4 => prop::sample::select(FRAGMENTS.to_vec()).prop_map(<[u8]>::to_vec),
+            1 => prop::collection::vec(any::<u8>(), 0..8),
+        ];
+
+        prop::collection::vec(piece, 0..24).prop_map(|pieces| pieces.concat())
+    }
+
+    /// Checks the one thing every repair promises: a file of the same length.
+    fn assert_repair_keeps_the_length(data: &[u8]) -> Result<(), TestCaseError> {
+        if let Some(repaired) = repair_xref_offsets(data) {
+            prop_assert_eq!(repaired.len(), data.len());
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn repairing_any_bytes_returns_instead_of_panicking(
+            data in prop::collection::vec(any::<u8>(), 0..512),
+        ) {
+            let _ = repair_xref_offsets(&data);
+        }
+
+        #[test]
+        fn repairing_pdf_like_bytes_keeps_the_length(data in pdf_like_bytes()) {
+            assert_repair_keeps_the_length(&data)?;
+        }
     }
 }

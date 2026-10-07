@@ -1,8 +1,5 @@
 //! Tauri application entry: thin IPC over `oikonomia-core`.
 
-// Tauri commands take `State<'_, T>` by value (framework convention).
-#![allow(clippy::needless_pass_by_value)]
-
 mod commands;
 #[cfg(test)]
 mod config_checks;
@@ -11,8 +8,6 @@ mod error;
 mod nav_guard;
 mod startup;
 mod state;
-#[cfg(test)]
-mod test_macros;
 mod tray;
 mod update;
 mod update_exec;
@@ -121,6 +116,15 @@ fn register_debug_logger(app: &tauri::App) -> Result<(), StartupError> {
         .map_err(StartupError::Shell)
 }
 
+// Only macOS inspects the event without consuming it; elsewhere it is moved
+// into the unused-arguments tuple and the lint has nothing to report.
+#[cfg_attr(
+    target_os = "macos",
+    expect(
+        clippy::needless_pass_by_value,
+        reason = "the signature `tauri::App::run` calls back with"
+    )
+)]
 fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
     // Clicking the Dock icon while the window is hidden reopens it.
     #[cfg(target_os = "macos")]

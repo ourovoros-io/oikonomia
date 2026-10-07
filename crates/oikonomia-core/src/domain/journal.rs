@@ -142,8 +142,8 @@ mod tests {
     use super::*;
 
     fn journal_line(debit: i64, credit: i64) -> JournalLine {
-        let debit = Money::from_minor(debit).unwrap_or(Money::ZERO);
-        let credit = Money::from_minor(credit).unwrap_or(Money::ZERO);
+        let debit = Money::from_minor(debit).unwrap();
+        let credit = Money::from_minor(credit).unwrap();
 
         JournalLine {
             id: JournalLineId::new(),
@@ -200,5 +200,56 @@ mod tests {
             validate_lines_for_post(&lines),
             Err(Error::InvalidLineAmounts)
         );
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// The debit and credit of one line: mostly one-sided, as a postable line
+    /// is, and sometimes empty or two-sided.
+    fn line_amounts() -> impl Strategy<Value = (i64, i64)> {
+        prop_oneof![
+            4 => (1_i64..4).prop_map(|debit| (debit, 0)),
+            4 => (1_i64..4).prop_map(|credit| (0, credit)),
+            1 => Just((0, 0)),
+            1 => (1_i64..4, 1_i64..4),
+        ]
+    }
+
+    fn journal_line(debit: i64, credit: i64) -> JournalLine {
+        JournalLine {
+            id: JournalLineId::new(),
+            entry_id: JournalEntryId::new(),
+            account_id: AccountId::new(),
+            debit: Money::from_minor(debit).unwrap(),
+            credit: Money::from_minor(credit).unwrap(),
+            memo: None,
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn lines_are_accepted_exactly_when_they_follow_the_three_rules(
+            amounts in prop::collection::vec(line_amounts(), 0..6),
+        ) {
+            let lines: Vec<JournalLine> =
+                amounts.iter().map(|&(debit, credit)| journal_line(debit, credit)).collect();
+
+            let every_line_is_one_sided =
+                amounts.iter().all(|&(debit, credit)| (debit > 0) != (credit > 0));
+            let debits: i64 = amounts.iter().map(|&(debit, _)| debit).sum();
+            let credits: i64 = amounts.iter().map(|&(_, credit)| credit).sum();
+            let follows_the_rules =
+                amounts.len() >= 2 && every_line_is_one_sided && debits == credits;
+
+            prop_assert_eq!(validate_lines_for_post(&lines).is_ok(), follows_the_rules);
+        }
     }
 }

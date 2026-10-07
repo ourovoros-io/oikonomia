@@ -1,7 +1,7 @@
 //! Vault open/create/lock against an on-disk `SQLCipher` database.
 
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::{fmt, fs};
 
 use rand::Rng;
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
@@ -326,6 +326,17 @@ impl Vault {
     }
 }
 
+// Written by hand so that `{:?}` shows where the vault is and what state it is
+// in, and neither the key-derivation parameters nor the open connection.
+impl fmt::Debug for Vault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Vault")
+            .field("data_dir", &self.data_dir)
+            .field("status", &self.status())
+            .finish_non_exhaustive()
+    }
+}
+
 fn validate_password(password: &str) -> Result<()> {
     if password.chars().count() < MIN_PASSWORD_LEN {
         return Err(Error::Validation(ValidationError::PasswordTooShort {
@@ -564,7 +575,6 @@ fn bootstrap_schema(conn: &Connection) -> Result<()> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
     use tempfile::{TempDir, tempdir};

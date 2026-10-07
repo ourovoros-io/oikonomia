@@ -250,7 +250,6 @@ pub(super) mod tests {
     /// dictionary with the page. The page runs the forms in `page`, and form
     /// `i` runs the forms in `forms[i]`; a form that runs none draws
     /// [`LEAF_TEXT`].
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     pub(in crate::documents) fn pdf_with_forms(page: &[usize], forms: &[Vec<usize>]) -> Vec<u8> {
         use lopdf::{Dictionary, Document, Object, Stream, dictionary};
 
@@ -325,7 +324,6 @@ pub(super) mod tests {
         bytes
     }
 
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn within_limits(data: &[u8]) -> bool {
         nesting_within_limits(&lopdf::Document::load_mem(data).expect("load test pdf"))
     }

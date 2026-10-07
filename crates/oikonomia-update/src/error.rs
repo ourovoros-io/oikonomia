@@ -93,7 +93,7 @@ impl UpdateError {
 #[cfg(test)]
 mod tests {
     use super::UpdateError;
-    use crate::test_macros::listed_variants;
+    use oikonomia_test_support::listed_variants;
 
     listed_variants! {
         units listed_errors for UpdateError {

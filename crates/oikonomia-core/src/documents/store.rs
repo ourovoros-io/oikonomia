@@ -100,6 +100,10 @@ pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Re
 ///
 /// [`Error::Validation`] for invalid files or a duplicate filename in the
 /// book; DB errors otherwise.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
+)]
 pub fn save_document(
     conn: &Connection,
     entity_id: EntityId,
@@ -198,6 +202,10 @@ fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
 ///
 /// [`Error::NotFound`] for a missing entry, [`Error::Validation`] for an
 /// entry in a different book, an invalid file, or a duplicate filename.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
+)]
 pub fn attach_document(
     conn: &Connection,
     entity_id: EntityId,
@@ -224,6 +232,10 @@ pub fn attach_document(
 ///
 /// All [`post_simple_entry`](crate::ledger::post_simple_entry) and
 /// [`save_document`] errors.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
+)]
 pub fn post_simple_entry_with_document(
     conn: &Connection,
     input: &PostSimpleEntry,
@@ -456,7 +468,7 @@ pub(super) fn has_extension(filename: &str, ext: &str) -> bool {
 /// no recognised topic the template's catch-all is used, then the first active
 /// expense account.
 #[must_use]
-pub fn match_expense_account(
+pub(super) fn match_expense_account(
     template: ChartTemplate,
     accounts: &[Account],
     hints: &str,
@@ -474,7 +486,7 @@ pub fn match_expense_account(
 /// Pick the income account a document most likely belongs to (sales, freelance,
 /// salary), by the same rule as [`match_expense_account`].
 #[must_use]
-pub fn match_income_account(
+pub(super) fn match_income_account(
     template: ChartTemplate,
     accounts: &[Account],
     hints: &str,
@@ -519,6 +531,11 @@ impl Keyword {
     /// Whether this keyword occurs in `lowercased_text` under its rule.
     ///
     /// The caller lowercases the text; keywords are written in lowercase.
+    #[expect(
+        clippy::string_slice,
+        reason = "`match_indices` yields the offset of a match of `needle`, \
+                  so both ends of the match are character boundaries"
+    )]
     pub(crate) fn occurs_in(self, lowercased_text: &str) -> bool {
         let needle = self.text();
 
@@ -727,6 +744,10 @@ const INCOME_KEYWORDS: &TopicKeywords = &[
     ),
 ];
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the keyword table and its catch-all are passed separately; tracked for the API pass"
+)]
 fn match_account_of_type(
     template: ChartTemplate,
     accounts: &[Account],
@@ -795,8 +816,7 @@ mod tests {
     #[test]
     fn a_filename_clash_on_insert_is_a_taken_name() {
         let err = clash_error(("id-1", "bill.pdf"), ("id-2", "bill.pdf"));
-        assert!(err.is_some(), "the second insert must fail");
-        let Some(err) = err else { return };
+        let err = err.expect("the second insert must fail");
 
         assert_eq!(
             document_insert_error(&err, "bill.pdf"),
@@ -809,8 +829,7 @@ mod tests {
     #[test]
     fn a_primary_key_clash_on_insert_is_not_a_taken_name() {
         let err = clash_error(("id-1", "bill.pdf"), ("id-1", "other.pdf"));
-        assert!(err.is_some(), "the second insert must fail");
-        let Some(err) = err else { return };
+        let err = err.expect("the second insert must fail");
 
         assert!(
             matches!(document_insert_error(&err, "other.pdf"), Error::Io(_)),

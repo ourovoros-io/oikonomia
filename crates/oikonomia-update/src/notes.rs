@@ -68,3 +68,29 @@ mod tests {
         assert_eq!(notes, "1 &lt; 2 &amp; 3");
     }
 }
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::sanitize_notes;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn sanitized_notes_hold_no_raw_markup_character(input in any::<String>()) {
+            let notes = sanitize_notes(&input);
+
+            prop_assert!(!notes.contains(['<', '>', '"']), "{:?}", notes);
+        }
+
+        #[test]
+        fn sanitized_markup_holds_no_raw_markup_character(input in "[<>\"'&/!?a-z =]{0,40}") {
+            let notes = sanitize_notes(&input);
+
+            prop_assert!(!notes.contains(['<', '>', '"']), "{:?}", notes);
+        }
+    }
+}

@@ -42,7 +42,7 @@ pub fn vault_header_path(data_dir: &Path) -> PathBuf {
 /// [`crate::vault::Vault::unlock`] falls back to this file so the vault stays
 /// openable with the new password.
 #[must_use]
-pub fn vault_staged_header_path(data_dir: &Path) -> PathBuf {
+pub(super) fn vault_staged_header_path(data_dir: &Path) -> PathBuf {
     data_dir.join("vault.header.json.tmp")
 }
 
@@ -157,7 +157,6 @@ mod tests {
     }
 
     #[test]
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn default_data_dir_uses_ourovoros_identity() {
         let data_dir = default_data_dir().expect("app-data dir must be resolvable");
         let path_str = data_dir.to_string_lossy();
@@ -179,7 +178,6 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn windows_data_dir_is_machine_local_not_roaming() {
         let data_dir = default_data_dir().expect("app-data dir must be resolvable");
         let roaming = directories::BaseDirs::new()
@@ -204,7 +202,6 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "linux")]
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn linux_data_dir_is_the_xdg_data_directory() {
         let data_dir = default_data_dir().expect("app-data dir must be resolvable");
         let xdg_data = directories::BaseDirs::new()

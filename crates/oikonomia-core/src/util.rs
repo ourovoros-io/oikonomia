@@ -121,8 +121,8 @@ mod tests {
 
     #[test]
     fn serde_date_round_trips_as_iso_string() {
-        let date = parse_date("2026-08-10").unwrap_or(time::Date::MIN);
-        let json = serde_json::to_string(&Dated { date }).unwrap_or_default();
+        let date = parse_date("2026-08-10").unwrap();
+        let json = serde_json::to_string(&Dated { date }).unwrap();
         assert_eq!(json, r#"{"date":"2026-08-10"}"#);
 
         let back: Result<Dated> = serde_json::from_str(&json).map_err(|e| {
@@ -131,5 +131,66 @@ mod tests {
             })
         });
         assert_eq!(back.map(|d| d.date), Ok(date));
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// The first day of year zero, the earliest date [`parse_date`] reads.
+    const YEAR_ZERO: Date = time::macros::date!(0000 - 01 - 01);
+
+    /// Every date from `first` to the last one the `time` crate can hold.
+    fn dates_from(first: Date) -> impl Strategy<Value = Date> {
+        (first.to_julian_day()..=Date::MAX.to_julian_day())
+            .prop_map(|day| Date::from_julian_day(day).unwrap())
+    }
+
+    // The smallest case of the ignored property below. Which side should
+    // change is undecided: today the rejection also keeps such a date out of
+    // the ledger, where dates are compared as text and a leading minus sign
+    // would sort wrongly.
+    #[test]
+    fn a_date_before_year_zero_is_formatted_but_not_parsed() {
+        let last_day_before_year_zero = YEAR_ZERO.previous_day().unwrap();
+        let text = format_date(last_day_before_year_zero);
+
+        assert_eq!(text, "-001-12-31");
+        assert_eq!(
+            parse_date(&text),
+            Err(Error::Validation(ValidationError::InvalidDate {
+                value: text
+            }))
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        #[test]
+        fn parsing_any_text_returns_instead_of_panicking(text in any::<String>()) {
+            let _ = parse_date(&text);
+        }
+
+        #[test]
+        fn parsing_date_shaped_text_returns_instead_of_panicking(text in "[-+0-9 ]{0,14}") {
+            let _ = parse_date(&text);
+        }
+
+        #[test]
+        fn a_formatted_date_from_year_zero_on_parses_back(date in dates_from(YEAR_ZERO)) {
+            prop_assert_eq!(parse_date(&format_date(date)), Ok(date));
+        }
+
+        #[test]
+        #[ignore = "format_date writes a year before zero with a leading minus sign, \
+                    which parse_date takes for a separator and rejects"]
+        fn a_formatted_date_of_any_year_parses_back(date in dates_from(Date::MIN)) {
+            prop_assert_eq!(parse_date(&format_date(date)), Ok(date));
+        }
     }
 }

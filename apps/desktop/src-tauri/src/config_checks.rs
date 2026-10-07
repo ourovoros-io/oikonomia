@@ -6,8 +6,6 @@
 //! policy or the Windows installer a deliberate, reviewed change rather than
 //! a silent one.
 
-#![expect(clippy::expect_used, reason = "tests fail loudly by design")]
-
 use std::collections::BTreeMap;
 
 const CONFIG: &str = include_str!("../tauri.conf.json");

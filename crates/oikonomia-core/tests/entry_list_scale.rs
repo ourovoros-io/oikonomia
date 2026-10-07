@@ -8,16 +8,12 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
-use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, list_accounts,
-    list_entries, post_simple_entry,
-};
-use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
+use oikonomia_core::ledger::{EntryFilter, PostSimpleEntry, list_entries, post_simple_entry};
 use rusqlite::Connection;
 use rusqlite::limits::Limit;
-use tempfile::TempDir;
 
 /// More entries than [`LOWERED_VARIABLE_LIMIT`], and more than the five
 /// variables a listing binds.
@@ -26,64 +22,26 @@ const ENTRY_COUNT: usize = 12;
 /// Fewer variables than entries, and at least the five a listing binds.
 const LOWERED_VARIABLE_LIMIT: i32 = 8;
 
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
-
-fn account(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
-    list_accounts(conn, entity_id)
-        .expect("accounts")
-        .iter()
-        .find(|account| account.code == code)
-        .map(|account| account.id)
-        .expect(code)
-}
-
 /// A book with [`ENTRY_COUNT`] expenses, each with a memo-free pair of lines.
 fn book_with_entries(conn: &Connection) -> (EntityId, AccountId) {
-    let entity = create_entity(
-        conn,
-        &CreateEntity {
-            name: "Busy".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity");
-    let food = account(conn, entity.id, "5100");
-    let checking = account(conn, entity.id, "1010");
+    let entity_id = common::book(conn, "Busy", ChartTemplate::Personal);
+    let food = common::account(conn, entity_id, "5100");
+    let checking = common::account(conn, entity_id, "1010");
 
     for number in 1..=ENTRY_COUNT {
-        post_simple_entry(
-            conn,
-            &PostSimpleEntry {
-                entity_id: entity.id,
-                kind: SimpleEntryKind::Expense,
-                bill_status: None,
-                entry_date: "2026-03-15".into(),
-                description: format!("lunch {number}"),
-                reference: None,
-                amount_minor: 100,
-                category_account_id: Some(food),
-                wallet_account_id: Some(checking),
-                payable_account_id: None,
-                from_account_id: None,
-                to_account_id: None,
-            },
-        )
-        .expect("post");
+        let lunch = PostSimpleEntry {
+            description: format!("lunch {number}"),
+            ..common::simple_expense(entity_id, food, checking, "2026-03-15", 100)
+        };
+        post_simple_entry(conn, &lunch).expect("post");
     }
-    (entity.id, food)
+
+    (entity_id, food)
 }
 
 #[test]
 fn the_bundled_sqlite_accepts_32766_bound_variables() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
 
     assert_eq!(conn.limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER), Ok(32_766));
@@ -91,7 +49,7 @@ fn the_bundled_sqlite_accepts_32766_bound_variables() {
 
 #[test]
 fn a_listing_of_more_entries_than_the_variable_limit_returns_every_entry_with_its_lines() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, food) = book_with_entries(conn);
     conn.set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, LOWERED_VARIABLE_LIMIT)

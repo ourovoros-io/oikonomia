@@ -51,7 +51,7 @@ use oikonomia_core::vault::{Vault, VaultStatus};
 use oikonomia_update::UpdateMachine;
 
 /// Shared state behind Tauri commands.
-pub struct AppState {
+pub(crate) struct AppState {
     /// The vault, with the watchdog gate and timeout that follow its status.
     vault: Arc<GatedVault>,
     /// App data directory: vault files plus the plaintext UI prefs.
@@ -92,30 +92,30 @@ impl AppState {
 
     /// App data directory (UI prefs live here as plaintext).
     #[must_use]
-    pub fn data_dir(&self) -> &std::path::Path {
+    pub(crate) fn data_dir(&self) -> &std::path::Path {
         &self.data_dir
     }
 
     /// Path to bundled OCR models.
     #[must_use]
-    pub fn ocr_model_dir(&self) -> &PathBuf {
+    pub(crate) fn ocr_model_dir(&self) -> &PathBuf {
         &self.ocr_model_dir
     }
 
     /// Shared vault handle for blocking work off the command thread.
     #[must_use]
-    pub fn vault(&self) -> Arc<GatedVault> {
+    pub(crate) fn vault(&self) -> Arc<GatedVault> {
         Arc::clone(&self.vault)
     }
 
     /// Shared update machine. Never awaited from `vault_unlock`.
     #[must_use]
-    pub fn update_machine(&self) -> Arc<Mutex<UpdateMachine>> {
+    pub(crate) fn update_machine(&self) -> Arc<Mutex<UpdateMachine>> {
         Arc::clone(&self.update)
     }
 
     /// Hold across a prefs load-mutate-save so locale and tray last-used cannot clobber.
-    pub fn lock_prefs(&self) -> MutexGuard<'_, ()> {
+    pub(crate) fn lock_prefs(&self) -> MutexGuard<'_, ()> {
         match self.prefs_lock.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -127,7 +127,7 @@ impl AppState {
 
     /// Record paths the user chose through a native drop or dialog, so a
     /// later path-taking command may accept them.
-    pub fn grant_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
+    pub(crate) fn grant_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
         let mut granted = self.lock_granted_paths();
         for path in paths {
             if let Ok(canonical) = path.canonicalize() {
@@ -145,7 +145,7 @@ impl AppState {
     /// checked. The resolved path is still opened by name, so this does not
     /// cover a directory on it being replaced after the check.
     #[must_use]
-    pub fn granted_path(&self, path: &Path) -> Option<PathBuf> {
+    pub(crate) fn granted_path(&self, path: &Path) -> Option<PathBuf> {
         let canonical = path.canonicalize().ok()?;
         let granted = self.lock_granted_paths();
 
@@ -163,13 +163,13 @@ impl AppState {
     }
 
     /// Record command activity for the idle watchdog.
-    pub fn touch(&self) {
+    pub(crate) fn touch(&self) {
         self.last_activity.store(now_secs(), Ordering::Relaxed);
     }
 
     /// Handles for the idle watchdog thread.
     #[must_use]
-    pub fn watchdog_handles(&self) -> WatchdogHandles {
+    pub(crate) fn watchdog_handles(&self) -> WatchdogHandles {
         WatchdogHandles {
             vault: Arc::clone(&self.vault),
             last_activity: Arc::clone(&self.last_activity),
@@ -209,7 +209,7 @@ const fn idle_secs(now_secs: u64, last_activity_secs: u64) -> Option<u64> {
 /// ([`Self::acquire`] after poisoning, `lock_after_panic`). So no caller can
 /// change the vault's status and forget them, and two status changes cannot
 /// apply their gate updates in the opposite order.
-pub struct GatedVault {
+pub(crate) struct GatedVault {
     /// The vault. Locked only through [`Self::acquire`].
     vault: Mutex<Vault>,
     /// Parks the idle watchdog while the vault is not unlocked.
@@ -238,7 +238,7 @@ impl GatedVault {
     ///
     /// Blocks while another thread holds the vault, which a rekey does for
     /// seconds: call it on the blocking pool, not on an async worker.
-    pub fn acquire(&self) -> VaultGuard<'_> {
+    pub(crate) fn acquire(&self) -> VaultGuard<'_> {
         let vault = match self.vault.lock() {
             Ok(vault) => vault,
             Err(poisoned) => {
@@ -280,7 +280,7 @@ impl GatedVault {
 /// Dropping it brings the watchdog in line with the status the vault was left
 /// in, before the vault mutex is released.
 #[must_use = "the vault mutex is released as soon as the guard is dropped"]
-pub struct VaultGuard<'a> {
+pub(crate) struct VaultGuard<'a> {
     /// The locked vault.
     vault: MutexGuard<'a, Vault>,
     /// Owner of the gate and the timeout cache this guard keeps in step.
@@ -295,7 +295,7 @@ impl VaultGuard<'_> {
     ///
     /// On the guard so that the cache is written with the vault held, in the
     /// same order as the stored values it mirrors.
-    pub fn set_lock_timeout_cache(&self, secs: u64) {
+    pub(crate) fn set_lock_timeout_cache(&self, secs: u64) {
         self.gated.lock_timeout_secs.store(secs, Ordering::Relaxed);
     }
 }
@@ -337,10 +337,10 @@ impl Drop for VaultGuard<'_> {
 }
 
 /// How often the watchdog re-checks idle time while the vault is unlocked.
-pub const AUTO_LOCK_POLL_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const AUTO_LOCK_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Shared handles for [`spawn_auto_lock`].
-pub struct WatchdogHandles {
+pub(crate) struct WatchdogHandles {
     /// The vault, which the watchdog locks only for a status check / idle
     /// lock, and whose gate it waits on.
     pub vault: Arc<GatedVault>,
@@ -353,7 +353,7 @@ pub struct WatchdogHandles {
 /// [`VaultGuard`] moves the gate to match the vault and notifies on a change:
 /// an unlock wakes the parked thread, a lock ends an in-flight poll wait at
 /// once. The watchdog never holds the vault mutex across a wait.
-pub struct WatchdogGate {
+pub(crate) struct WatchdogGate {
     /// What the watchdog should be doing.
     state: Mutex<GateState>,
     /// Notified whenever `state` changes.
@@ -534,7 +534,7 @@ impl WatchdogGate {
 }
 
 /// Lock the update machine, recovering from poisoning.
-pub fn lock_update(machine: &Mutex<UpdateMachine>) -> MutexGuard<'_, UpdateMachine> {
+pub(crate) fn lock_update(machine: &Mutex<UpdateMachine>) -> MutexGuard<'_, UpdateMachine> {
     match machine.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
@@ -552,7 +552,7 @@ pub fn lock_update(machine: &Mutex<UpdateMachine>) -> MutexGuard<'_, UpdateMachi
 /// Pure predicate for the idle watchdog. Tests cover the four launch cases
 /// without sleeping the 5s loop or constructing an `AppHandle`.
 #[must_use]
-pub const fn should_auto_lock(
+pub(crate) const fn should_auto_lock(
     idle_secs: Option<u64>,
     timeout_secs: u64,
     status: VaultStatus,
@@ -588,7 +588,10 @@ pub const fn should_auto_lock(
 ///
 /// Returns the operating system's error when the thread cannot be started.
 /// The app must not run without the watchdog, so the caller fails startup.
-pub fn spawn_auto_lock(app: tauri::AppHandle, handles: WatchdogHandles) -> std::io::Result<()> {
+pub(crate) fn spawn_auto_lock(
+    app: tauri::AppHandle,
+    handles: WatchdogHandles,
+) -> std::io::Result<()> {
     std::thread::Builder::new()
         .name("auto-lock".into())
         .spawn(move || {
@@ -705,7 +708,7 @@ fn lock_if_idle(vault: &GatedVault, last_activity: &AtomicU64) -> bool {
 
 /// Resolve OCR model directory for dev and packaged builds.
 #[must_use]
-pub fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
+pub(crate) fn resolve_ocr_model_dir(resource_dir: Option<PathBuf>) -> PathBuf {
     // Dev layout: apps/desktop/src-tauri/resources/ocr. Also the answer when
     // no candidate holds the models, so the caller always gets a path.
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/ocr");
@@ -750,7 +753,6 @@ fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{
         AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, idle_secs, resolve_ocr_model_dir,

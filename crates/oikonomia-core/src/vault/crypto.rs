@@ -8,14 +8,14 @@ use super::header::{KEY_LEN, SALT_LEN, VaultHeader};
 use crate::error::{Error, Result};
 
 /// 32-byte `SQLCipher` raw key, zeroized on drop.
-pub type VaultKey = Zeroizing<[u8; KEY_LEN]>;
+pub(super) type VaultKey = Zeroizing<[u8; KEY_LEN]>;
 
 /// Decode the salt from a header.
 ///
 /// # Errors
 ///
 /// Returns [`Error::VaultCorrupt`] if the salt is not valid base64 of the expected length.
-pub fn decode_salt(header: &VaultHeader) -> Result<[u8; SALT_LEN]> {
+pub(super) fn decode_salt(header: &VaultHeader) -> Result<[u8; SALT_LEN]> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(header.salt_b64.as_bytes())
         .map_err(|_| Error::VaultCorrupt("invalid salt encoding".into()))?;
@@ -39,7 +39,7 @@ pub fn decode_salt(header: &VaultHeader) -> Result<[u8; SALT_LEN]> {
 /// range, or a salt that does not decode to [`SALT_LEN`] bytes.
 /// [`Error::Crypto`] when Argon2 itself rejects the parameters or fails to
 /// hash.
-pub fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKey> {
+pub(super) fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKey> {
     if header.kdf != "argon2id" {
         return Err(Error::VaultCorrupt(format!(
             "unsupported kdf: {}",
@@ -76,7 +76,7 @@ pub fn derive_key(password: &str, header: &VaultHeader) -> Result<VaultKey> {
 
 /// Format a raw key for `SQLCipher` `PRAGMA key = "x'…'"`.
 #[must_use]
-pub fn key_to_sqlcipher_pragma(key: &VaultKey) -> Zeroizing<String> {
+pub(super) fn key_to_sqlcipher_pragma(key: &VaultKey) -> Zeroizing<String> {
     let mut hex = String::with_capacity(KEY_LEN * 2 + 3);
     hex.push_str("x'");
     for byte in key.iter() {

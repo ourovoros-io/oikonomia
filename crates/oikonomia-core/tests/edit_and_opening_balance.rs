@@ -1,28 +1,19 @@
 //! Editing posted entries (void + repost in one transaction) and setting
 //! opening balances against equity — the accounting stays in the core crate.
 
-#![expect(clippy::expect_used, reason = "tests fail loudly by design")]
+mod common;
 
 use oikonomia_core::documents::{attach_document, list_documents};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, UpdateAccount, account_balance,
-    archive_account, create_entity, list_accounts, list_entries, post_simple_entry,
-    replace_simple_entry, set_account_opening_balance, trial_balance, update_account, void_entry,
+    CreateEntity, EntryFilter, PostSimpleEntry, UpdateAccount, account_balance, archive_account,
+    create_entity, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
+    set_account_opening_balance, trial_balance, update_account, void_entry,
 };
 use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
 
 struct Accounts {
     checking: AccountId,
@@ -31,29 +22,11 @@ struct Accounts {
 }
 
 fn entity_with_accounts(conn: &Connection) -> (EntityId, Accounts) {
-    let entity = create_entity(
-        conn,
-        &CreateEntity {
-            name: "Edits".into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity");
-
-    let accounts = list_accounts(conn, entity.id).expect("accounts");
-    let by_code = |code: &str| {
-        accounts
-            .iter()
-            .find(|a| a.code == code)
-            .map(|a| a.id)
-            .expect(code)
-    };
+    let entity_id = common::book(conn, "Edits", ChartTemplate::Personal);
+    let by_code = |code: &str| common::account(conn, entity_id, code);
 
     (
-        entity.id,
+        entity_id,
         Accounts {
             checking: by_code("1010"),
             food: by_code("5100"),
@@ -63,25 +36,18 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, Accounts) {
 }
 
 fn expense(entity_id: EntityId, acc: &Accounts, amount_minor: i64) -> PostSimpleEntry {
-    PostSimpleEntry {
+    common::simple_expense(
         entity_id,
-        kind: SimpleEntryKind::Expense,
-        bill_status: None,
-        entry_date: "2026-03-15".into(),
-        description: "groceries".into(),
-        reference: None,
+        acc.food,
+        acc.checking,
+        "2026-03-15",
         amount_minor,
-        category_account_id: Some(acc.food),
-        wallet_account_id: Some(acc.checking),
-        payable_account_id: None,
-        from_account_id: None,
-        to_account_id: None,
-    }
+    )
 }
 
 #[test]
 fn replace_updates_amount_and_hides_original() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -112,7 +78,7 @@ fn replace_updates_amount_and_hides_original() {
 
 #[test]
 fn replace_moves_documents_to_replacement() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -142,7 +108,7 @@ fn replace_moves_documents_to_replacement() {
 
 #[test]
 fn replace_rejects_voided_and_foreign_entries() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -180,7 +146,7 @@ fn replace_rejects_voided_and_foreign_entries() {
 
 #[test]
 fn opening_balance_converges_on_the_stated_target() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
@@ -205,7 +171,7 @@ fn opening_balance_converges_on_the_stated_target() {
 
 #[test]
 fn opening_balance_handles_liability_negative_and_no_op_targets() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (_entity_id, acc) = entity_with_accounts(conn);
 
@@ -234,7 +200,7 @@ fn opening_balance_handles_liability_negative_and_no_op_targets() {
 
 #[test]
 fn update_account_cannot_deactivate_system_accounts() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, _acc) = entity_with_accounts(conn);
     let accounts = list_accounts(conn, entity_id).expect("accounts");
@@ -265,18 +231,9 @@ fn update_account_cannot_deactivate_system_accounts() {
         .expect("still there");
     assert!(after.is_active, "system account must stay active");
 }
-fn account_by_code(conn: &Connection, entity_id: EntityId, code: &str) -> AccountId {
-    list_accounts(conn, entity_id)
-        .expect("accounts")
-        .iter()
-        .find(|account| account.code == code)
-        .map(|account| account.id)
-        .expect(code)
-}
-
 #[test]
 fn an_entry_on_an_archived_account_can_still_be_voided() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
     let posted = post_simple_entry(conn, &expense(entity_id, &acc, 4_200)).expect("post");
@@ -291,10 +248,10 @@ fn an_entry_on_an_archived_account_can_still_be_voided() {
 
 #[test]
 fn an_entry_on_an_archived_account_can_be_moved_to_an_active_one() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
-    let other_expenses = account_by_code(conn, entity_id, "5900");
+    let other_expenses = common::account(conn, entity_id, "5900");
     let posted = post_simple_entry(conn, &expense(entity_id, &acc, 4_200)).expect("post");
     archive_account(conn, acc.food).expect("archive");
 
@@ -311,7 +268,7 @@ fn an_entry_on_an_archived_account_can_be_moved_to_an_active_one() {
 
 #[test]
 fn a_replacement_cannot_post_to_an_archived_account_and_leaves_the_original() {
-    let (_dir, vault) = setup();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
     let posted = post_simple_entry(conn, &expense(entity_id, &acc, 4_200)).expect("post");

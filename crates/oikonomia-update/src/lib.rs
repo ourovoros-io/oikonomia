@@ -14,8 +14,6 @@ mod machine;
 mod notes;
 pub mod release_set;
 mod status;
-#[cfg(test)]
-mod test_macros;
 mod verify;
 
 pub use artifact_limit::{ArtifactSizeError, MAX_ARTIFACT_BYTES, check_artifact_file};

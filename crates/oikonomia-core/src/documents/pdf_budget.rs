@@ -239,7 +239,6 @@ mod tests {
     use super::*;
 
     /// `len` zero bytes as a zlib stream.
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn deflated_zeros(len: usize) -> Vec<u8> {
         let mut encoder =
             flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
@@ -290,7 +289,7 @@ mod tests {
         );
 
         for packed in [flate, lzw, ascii, chain] {
-            let decoded = packed.decompressed_content().unwrap_or_default();
+            let decoded = packed.decompressed_content().unwrap();
 
             assert!(!decoded.is_empty(), "lopdf must decode the fixture");
             assert_eq!(
@@ -317,7 +316,7 @@ mod tests {
         for input in inputs {
             let by_lopdf = stream(name("ASCII85Decode"), input.to_vec())
                 .decompressed_content()
-                .unwrap_or_default();
+                .unwrap();
 
             assert_eq!(
                 decode_ascii85(input, usize::MAX),
@@ -374,7 +373,7 @@ mod tests {
         data.truncate(data.len() / 2);
         let packed = stream(name("FlateDecode"), data);
 
-        let counted = decoded_len(&packed, usize::MAX).unwrap_or_default();
+        let counted = decoded_len(&packed, usize::MAX).unwrap();
 
         assert!(
             counted > packed.content.len() && counted < 200_000,
@@ -399,7 +398,6 @@ mod tests {
     }
 
     /// `data` packed the way a PDF `LZWDecode` stream is.
-    #[expect(clippy::expect_used, reason = "test fails loudly by design")]
     fn weezl_packed(data: &[u8]) -> Vec<u8> {
         weezl::encode::Encoder::with_tiff_size_switch(weezl::BitOrder::Msb, 8)
             .encode(data)
@@ -416,7 +414,7 @@ mod tests {
             let mut value = u32::from_be_bytes(bytes);
             let mut digits = [0_u8; 5];
             for digit in digits.iter_mut().rev() {
-                *digit = b'!' + u8::try_from(value % 85).unwrap_or(0);
+                *digit = b'!' + u8::try_from(value % 85).expect("a remainder of 85 fits a byte");
                 value /= 85;
             }
             out.extend_from_slice(&digits[..=group.len()]);

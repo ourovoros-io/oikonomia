@@ -449,7 +449,6 @@ fn report_sizes(files: Vec<(String, PathBuf)>) -> Result<(), String> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{USAGE, run, sha256_hex, unpublished_assets};
     use base64::Engine;

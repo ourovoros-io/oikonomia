@@ -1,0 +1,13 @@
+[package]
+name = "oikonomia-test-support"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Macros shared by the tests of the Oikonomia crates"
+# A dev-dependency of the workspace's own crates; never shipped.
+publish = false
+
+[lints]
+workspace = true

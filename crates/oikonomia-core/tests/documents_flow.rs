@@ -2,48 +2,20 @@
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
+mod common;
+
 use oikonomia_core::documents::{
-    DocumentId, attach_document, delete_document, get_document, list_documents,
+    DocumentId, MAX_DOCUMENT_BYTES, attach_document, delete_document, get_document, list_documents,
     post_simple_entry_with_document, save_analysis_json, save_document,
     suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, ValidationError};
 use oikonomia_core::ledger::{
-    CreateEntity, CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView,
-    SimpleEntryKind, archive_account, create_entity, delete_entity, list_accounts, list_entities,
-    list_entries, post_entry,
+    CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, archive_account,
+    delete_entity, list_accounts, list_entities, list_entries, post_entry,
 };
-use oikonomia_core::prefs::Locale;
-use oikonomia_core::vault::Vault;
 use rusqlite::Connection;
-use tempfile::TempDir;
-
-fn setup_vault() -> (TempDir, Vault) {
-    let dir = TempDir::new().expect("tempdir");
-    let mut vault = Vault::open_path(dir.path()).expect("open vault");
-    vault.init("correct horse battery staple").expect("init");
-    (dir, vault)
-}
-
-fn setup_entity(conn: &Connection) -> EntityId {
-    setup_named_entity(conn, "Docs")
-}
-
-fn setup_named_entity(conn: &Connection, name: &str) -> EntityId {
-    create_entity(
-        conn,
-        &CreateEntity {
-            name: name.into(),
-            base_currency: "EUR".into(),
-            chart_template: ChartTemplate::Personal,
-            fiscal_year_start_month: Some(1),
-        },
-        Locale::En,
-    )
-    .expect("entity")
-    .id
-}
 
 /// Post a trivial balanced expense entry so a document has something to
 /// attach to.
@@ -52,34 +24,12 @@ fn post_expense_entry(
     entity_id: EntityId,
     description: &str,
 ) -> oikonomia_core::ledger::PostedEntryView {
-    let accounts = list_accounts(conn, entity_id).expect("accounts");
-    let checking = accounts.iter().find(|a| a.code == "1010").expect("1010");
-    let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
+    let entry = PostJournal {
+        description: description.into(),
+        ..common::two_line(conn, entity_id, "2026-03-01", ("5100", "1010"), 500)
+    };
 
-    post_entry(
-        conn,
-        &PostJournal {
-            entity_id,
-            entry_date: "2026-03-01".into(),
-            description: description.into(),
-            reference: None,
-            lines: vec![
-                CreateJournalLine {
-                    account_id: food.id,
-                    debit_minor: 500,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: checking.id,
-                    debit_minor: 0,
-                    credit_minor: 500,
-                    memo: None,
-                },
-            ],
-        },
-    )
-    .expect("post")
+    post_entry(conn, &entry).expect("post")
 }
 
 /// Post a trivial balanced entry so a document has something to link to.
@@ -89,9 +39,9 @@ fn post_reference_entry(conn: &Connection, entity_id: EntityId) -> PostedEntryVi
 
 #[test]
 fn delete_entity_with_linked_document() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
 
     let accounts = list_accounts(conn, entity_id).expect("accounts");
     let checking = accounts.iter().find(|a| a.code == "1010").expect("1010");
@@ -140,10 +90,10 @@ fn delete_entity_with_linked_document() {
 }
 
 #[test]
-fn save_document_rejects_unsupported_and_oversize() {
-    let (_dir, vault) = setup_vault();
+fn save_document_rejects_unsupported_empty_and_oversize_files() {
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_reference_entry(conn, entity_id);
 
     let exe = save_document(
@@ -154,7 +104,10 @@ fn save_document_rejects_unsupported_and_oversize() {
         "application/x-msdownload",
         b"MZ",
     );
-    assert!(exe.is_err(), "executables must be rejected");
+    assert_eq!(
+        exe.expect_err("executables must be rejected"),
+        Error::Validation(ValidationError::FileTypeUnsupported)
+    );
 
     let empty = save_document(
         conn,
@@ -164,14 +117,45 @@ fn save_document_rejects_unsupported_and_oversize() {
         "text/plain",
         b"",
     );
-    assert!(empty.is_err(), "empty files must be rejected");
+    assert_eq!(
+        empty.expect_err("empty files must be rejected"),
+        Error::Validation(ValidationError::FileEmpty)
+    );
+
+    let one_byte_over = vec![0_u8; MAX_DOCUMENT_BYTES + 1];
+    let oversize = save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "huge.pdf",
+        "application/pdf",
+        &one_byte_over,
+    );
+    let megabyte = 1024 * 1024;
+    assert_eq!(
+        oversize.expect_err("a file over the limit must be rejected"),
+        Error::Validation(ValidationError::FileTooLarge {
+            max_mb: u64::try_from(MAX_DOCUMENT_BYTES / megabyte).unwrap()
+        })
+    );
+
+    let at_the_limit = vec![0_u8; MAX_DOCUMENT_BYTES];
+    save_document(
+        conn,
+        entity_id,
+        entry.entry.id,
+        "largest.pdf",
+        "application/pdf",
+        &at_the_limit,
+    )
+    .expect("a file of exactly the limit is stored");
 }
 
 #[test]
 fn save_document_rejects_duplicate_name_in_book() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_reference_entry(conn, entity_id);
 
     save_document(
@@ -191,14 +175,19 @@ fn save_document_rejects_duplicate_name_in_book() {
         "application/pdf",
         b"%PDF-1.4",
     );
-    assert!(dup.is_err(), "same name in the same book must be rejected");
+    assert_eq!(
+        dup.expect_err("same name in the same book must be rejected"),
+        Error::Validation(ValidationError::NameTaken {
+            name: "invoice.pdf".into()
+        })
+    );
 }
 
 #[test]
 fn list_get_delete_round_trip() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_reference_entry(conn, entity_id);
 
     let a = save_document(
@@ -233,28 +222,31 @@ fn list_get_delete_round_trip() {
     assert_eq!(data, b"bravo");
 
     delete_document(conn, a.id).expect("delete a");
-    assert!(
-        get_document(conn, a.id).is_err(),
-        "deleted document is gone"
+    assert_eq!(
+        get_document(conn, a.id).expect_err("deleted document is gone"),
+        Error::NotFound("document".into())
     );
     assert_eq!(list_documents(conn, entity_id).expect("list").len(), 1);
 }
 
 #[test]
 fn delete_missing_document_returns_not_found() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    setup_entity(conn);
+    common::book(conn, "Docs", ChartTemplate::Personal);
 
     let missing = DocumentId::new();
-    assert!(delete_document(conn, missing).is_err());
+    assert_eq!(
+        delete_document(conn, missing),
+        Err(Error::NotFound("document".into()))
+    );
 }
 
 #[test]
 fn saving_analysis_for_a_missing_document_returns_not_found() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    setup_entity(conn);
+    common::book(conn, "Docs", ChartTemplate::Personal);
 
     let missing = DocumentId::new();
 
@@ -271,9 +263,9 @@ fn saving_analysis_for_a_missing_document_returns_not_found() {
 
 #[test]
 fn saving_analysis_for_a_stored_document_succeeds() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_expense_entry(conn, entity_id, "Groceries");
     let meta = save_document(
         conn,
@@ -293,9 +285,9 @@ fn saving_analysis_for_a_stored_document_succeeds() {
 
 #[test]
 fn an_archived_account_is_not_offered_for_matching() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
 
     let offered = suggest_accounts_for_entity(conn, entity_id).expect("accounts");
     let archived = offered
@@ -323,9 +315,9 @@ fn an_archived_account_is_not_offered_for_matching() {
 
 #[test]
 fn list_documents_is_newest_first() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_reference_entry(conn, entity_id);
 
     let first = save_document(
@@ -358,9 +350,9 @@ fn list_documents_is_newest_first() {
 
 #[test]
 fn attach_document_saves_links_and_skips_analysis() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
     let entry = post_expense_entry(conn, entity_id, "Lunch invoice");
 
     let meta = attach_document(
@@ -389,29 +381,30 @@ fn attach_document_saves_links_and_skips_analysis() {
 
 #[test]
 fn attach_document_rejects_missing_and_wrong_entity_entry() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_a = setup_entity(conn);
-    let entity_b = setup_named_entity(conn, "Other");
+    let entity_a = common::book(conn, "Docs", ChartTemplate::Personal);
+    let entity_b = common::book(conn, "Other", ChartTemplate::Personal);
 
     let missing = JournalEntryId::new();
+    let no_entry = attach_document(conn, entity_a, missing, "a.txt", "text/plain", b"data");
     assert!(
-        attach_document(conn, entity_a, missing, "a.txt", "text/plain", b"data").is_err(),
-        "missing entry must fail"
+        matches!(no_entry, Err(Error::NotFound(_))),
+        "missing entry must fail: {no_entry:?}"
     );
 
     let entry_b = post_expense_entry(conn, entity_b, "Other book expense");
-    assert!(
-        attach_document(
-            conn,
-            entity_a,
-            entry_b.entry.id,
-            "b.txt",
-            "text/plain",
-            b"data"
-        )
-        .is_err(),
-        "entry from a different book must fail"
+    let foreign_entry = attach_document(
+        conn,
+        entity_a,
+        entry_b.entry.id,
+        "b.txt",
+        "text/plain",
+        b"data",
+    );
+    assert_eq!(
+        foreign_entry.expect_err("entry from a different book must fail"),
+        Error::Validation(ValidationError::WrongBook)
     );
 
     let err = save_document(
@@ -431,30 +424,20 @@ fn simple_expense_input(
     entity_id: EntityId,
     description: &str,
 ) -> PostSimpleEntry {
-    let accounts = list_accounts(conn, entity_id).expect("accounts");
-    let food = accounts.iter().find(|a| a.code == "5100").expect("5100");
-    let checking = accounts.iter().find(|a| a.code == "1010").expect("1010");
+    let food = common::account(conn, entity_id, "5100");
+    let checking = common::account(conn, entity_id, "1010");
+
     PostSimpleEntry {
-        entity_id,
-        kind: SimpleEntryKind::Expense,
-        bill_status: None,
-        entry_date: "2026-03-01".into(),
         description: description.into(),
-        reference: None,
-        amount_minor: 1_000,
-        category_account_id: Some(food.id),
-        wallet_account_id: Some(checking.id),
-        payable_account_id: None,
-        from_account_id: None,
-        to_account_id: None,
+        ..common::simple_expense(entity_id, food, checking, "2026-03-01", 1_000)
     }
 }
 
 #[test]
 fn post_with_document_is_atomic_and_stores_analysis() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
 
     let input = simple_expense_input(conn, entity_id, "Scanned groceries");
     let (view, meta) = post_simple_entry_with_document(
@@ -484,9 +467,9 @@ fn post_with_document_is_atomic_and_stores_analysis() {
 
 #[test]
 fn post_with_document_name_clash_rolls_back_the_entry() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
 
     let first = simple_expense_input(conn, entity_id, "First");
     post_simple_entry_with_document(conn, &first, "bill.txt", "text/plain", b"a", None)
@@ -499,7 +482,12 @@ fn post_with_document_name_clash_rolls_back_the_entry() {
     let second = simple_expense_input(conn, entity_id, "Second");
     let clash =
         post_simple_entry_with_document(conn, &second, "bill.txt", "text/plain", b"b", None);
-    assert!(clash.is_err(), "duplicate name must fail");
+    assert_eq!(
+        clash.expect_err("duplicate name must fail"),
+        Error::Validation(ValidationError::NameTaken {
+            name: "bill.txt".into()
+        })
+    );
 
     let after = list_entries(conn, entity_id, &EntryFilter::default())
         .expect("list")
@@ -509,9 +497,9 @@ fn post_with_document_name_clash_rolls_back_the_entry() {
 
 #[test]
 fn post_with_document_invalid_file_rolls_back_everything() {
-    let (_dir, vault) = setup_vault();
+    let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
-    let entity_id = setup_entity(conn);
+    let entity_id = common::book(conn, "Docs", ChartTemplate::Personal);
 
     let input = simple_expense_input(conn, entity_id, "Bad file");
     let result = post_simple_entry_with_document(
@@ -522,7 +510,10 @@ fn post_with_document_invalid_file_rolls_back_everything() {
         b"MZ",
         None,
     );
-    assert!(result.is_err(), "unsupported file must fail");
+    assert_eq!(
+        result.expect_err("unsupported file must fail"),
+        Error::Validation(ValidationError::FileTypeUnsupported)
+    );
 
     let entries = list_entries(conn, entity_id, &EntryFilter::default()).expect("list");
     assert!(

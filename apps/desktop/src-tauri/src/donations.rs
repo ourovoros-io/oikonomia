@@ -64,7 +64,12 @@ pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
         coin: Coin::Xmr,
         network: "Monero",
         also_accepts: &[],
-        address: "8ABaPsJS6754dY7YsZLKuHRrYFMtE5BBmi8SwZ7n79ukMAHkN987PZFHPMwaD4QhLegX6MPAjwEup69RbMAEnRcENDdfavg",
+        // One address, split only to fit the line; `concat!` joins it at
+        // compile time.
+        address: concat!(
+            "8ABaPsJS6754dY7YsZLKuHRrYFMtE5BBmi8SwZ7n79ukMAHk",
+            "N987PZFHPMwaD4QhLegX6MPAjwEup69RbMAEnRcENDdfavg",
+        ),
     },
     DonationAddress {
         coin: Coin::Dash,
@@ -94,12 +99,11 @@ pub(crate) const DONATION_ADDRESSES: &[DonationAddress] = &[
 
 /// Donation addresses for the Settings page. Readable while locked.
 #[tauri::command]
-pub fn donation_addresses() -> Vec<DonationAddress> {
+pub(crate) fn donation_addresses() -> Vec<DonationAddress> {
     DONATION_ADDRESSES.to_vec()
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use std::collections::HashSet;
 
@@ -199,7 +203,7 @@ mod tests {
         assert!(!has_valid_shape(Coin::Eth, &format!(" {ether}")));
 
         // Truncated, empty, or a character outside the alphabet.
-        assert!(!has_valid_shape(Coin::Eth, &ether[..41]));
+        assert!(!has_valid_shape(Coin::Eth, ether.get(..41).unwrap()));
         assert!(!has_valid_shape(Coin::Btc, ""));
         assert!(!has_valid_shape(
             Coin::Sol,

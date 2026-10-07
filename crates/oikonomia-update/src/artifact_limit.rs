@@ -91,7 +91,6 @@ pub fn check_artifact_file(path: &Path) -> Result<u64, ArtifactSizeError> {
 }
 
 #[cfg(test)]
-#[expect(clippy::expect_used, reason = "tests fail loudly by design")]
 mod tests {
     use super::{MAX_ARTIFACT_BYTES, check_artifact_file};
 
