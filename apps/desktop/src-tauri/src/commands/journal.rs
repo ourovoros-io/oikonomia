@@ -266,8 +266,8 @@ pub(crate) async fn entry_post_simple_with_document_path(
 /// # Errors
 ///
 /// Returns `not_found` when the original does not exist, `wrong_book` when
-/// the replacement names another entity, `entry_already_voided` and
-/// `entry_not_posted` when the original cannot be voided, the
+/// the replacement names another entity, `entry_already_voided` when the
+/// original has been voided or is itself a reversal, the
 /// [simple-entry errors](self#simple-entry-errors), and the
 /// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
@@ -309,8 +309,7 @@ pub(crate) async fn entry_set_hidden(
 /// # Errors
 ///
 /// Returns `not_found` when the entry does not exist, `entry_already_voided`
-/// when it has been voided or is itself a reversal, `entry_not_posted` when
-/// it is not a posted entry, and the
+/// when it has been voided or is itself a reversal, and the
 /// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
 pub(crate) async fn entry_void(

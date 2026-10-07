@@ -325,7 +325,6 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
             code: template_account.code.to_owned(),
             name: template_account.name.to_owned(),
             account_type: template_account.account_type,
-            parent_id: None,
             is_active: true,
             is_system: template_account.is_system,
             sort_order: template_account.sort_order,
@@ -459,7 +458,8 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
 ///
 /// Only for the accounts a chart template seeds, whose codes and names the
 /// crate wrote itself. An account from user input goes through
-/// [`create_account`](crate::ledger::accounts::create_account).
+/// [`create_account`](crate::ledger::accounts::create_account). Like that
+/// function it does not write the `parent_id` column, which holds NULL.
 ///
 /// # Errors
 ///
@@ -468,9 +468,9 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
     conn.execute(
         "
         INSERT INTO accounts (
-            id, entity_id, code, name, account_type, parent_id,
+            id, entity_id, code, name, account_type,
             is_active, is_system, sort_order
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
         ",
         rusqlite::params![
             account.id.to_string(),
@@ -478,7 +478,6 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
             account.code,
             account.name,
             account.account_type.identifier(),
-            account.parent_id.map(|parent| parent.to_string()),
             i32::from(account.is_active),
             i32::from(account.is_system),
             account.sort_order,

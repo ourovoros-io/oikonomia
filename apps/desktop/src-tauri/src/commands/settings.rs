@@ -6,6 +6,20 @@
 //! preferences file beside the vault, so that the tray and the unlock screen
 //! can use them before a password is entered; their commands work in every
 //! vault state and go through [`with_prefs_blocking`].
+//!
+//! # Preferences save errors
+//!
+//! A command that saves the preferences file returns what core's save
+//! returns ([`oikonomia_core::prefs::save_ui_prefs`]):
+//!
+//! - `io` when the file cannot be written;
+//! - `io` when a file is there and cannot be read;
+//! - `serialization` when a file is there and does not decode.
+//!
+//! When a file is there and cannot be read or decoded, core has refused to
+//! replace it and it is left as it was: the command changed nothing. The
+//! commands that only read the preferences answer with the defaults for such
+//! a file and never fail on it.
 
 use crate::commands::support::{run_blocking, with_connection, with_vault_blocking};
 use crate::error::{CommandError, CommandResult, DesktopError};
@@ -82,7 +96,8 @@ pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written,
+/// Returns the [preferences save errors](self#preferences-save-errors), in
+/// which case the tray and the window keep the language they had,
 /// `app_state_unavailable` when the application state was never set up, and
 /// `task_failed` when the blocking task panics.
 #[tauri::command]
@@ -114,8 +129,10 @@ pub(crate) async fn settings_set_locale(
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written,
-/// `app_state_unavailable` when the application state was never set up, and
+/// Returns the [preferences save errors](self#preferences-save-errors) when
+/// a language is chosen and cannot be stored, which includes every call made
+/// while the preferences file is there and cannot be read or is not a JSON
+/// object, `app_state_unavailable` when the application state was never set up, and
 /// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_resolve_locale(
@@ -170,7 +187,7 @@ pub(crate) async fn settings_get_ui_prefs<R: Runtime>(
 ///
 /// # Errors
 ///
-/// Returns `io` when the preferences file cannot be written,
+/// Returns the [preferences save errors](self#preferences-save-errors),
 /// `app_state_unavailable` when the application state was never set up, and
 /// `task_failed` when the blocking task panics.
 #[tauri::command]
@@ -345,6 +362,41 @@ mod ipc_tests {
         assert_eq!(refused.code, "app_state_unavailable");
         assert_ne!(refused.code, "task_failed", "no task failed");
         assert!(!ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// Core refuses to save over a preferences file it could not decode. The
+    /// command answers with that error, as with any other, and the file
+    /// stays as it was.
+    #[test]
+    fn a_preferences_file_that_does_not_decode_is_reported_and_left_as_it_is() {
+        let app = mock_app("remember-quick-add-corrupt");
+        let corrupt = b"{\"locale\": \"el\", \"last_entity_id\": ";
+        let path = app.write_file("ui-prefs.json", corrupt);
+
+        let refused = app
+            .invoke(
+                "settings_remember_quick_add",
+                serde_json::json!({
+                    "entityId": ENTITY,
+                    "kind": "expense",
+                    "accounts": roles(Some(CATEGORY), Some(WALLET)),
+                }),
+            )
+            .unwrap_err();
+
+        assert_eq!(refused["code"], "serialization", "{refused}");
+        assert_eq!(
+            refused["params"]["operation"],
+            "replace a preferences file that does not decode"
+        );
+        assert_eq!(std::fs::read(path).unwrap(), corrupt);
+
+        // Reading still works, on the defaults.
+        let prefs = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(prefs["locale"], "en");
+        assert_eq!(prefs["last_entity_id"], serde_json::Value::Null);
     }
 
     #[test]

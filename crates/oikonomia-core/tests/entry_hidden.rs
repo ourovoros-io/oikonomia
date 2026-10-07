@@ -6,7 +6,7 @@ mod common;
 
 use common::PASSWORD;
 use oikonomia_core::csv::{export_journal_csv, parse_journal_export};
-use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, EntryStatus, JournalEntryId};
+use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
     EntryFilter, PostSimpleEntry, account_register, get_entry, list_accounts, list_entries,
@@ -370,29 +370,6 @@ fn set_hidden_missing_id_is_not_found() {
     let conn = vault.connection().expect("conn");
     let err = set_entry_hidden(conn, JournalEntryId::generate(), true).expect_err("missing");
     assert!(matches!(err, Error::NotFound(_)), "{err:?}");
-}
-
-#[test]
-fn set_hidden_allows_draft_rows() {
-    let (_dir, vault) = common::vault();
-    let conn = vault.connection().expect("conn");
-    let book = create_book(conn, "Drafts", ChartTemplate::Personal);
-    let id = JournalEntryId::generate();
-    conn.execute(
-        "
-        INSERT INTO journal_entries (
-            id, entity_id, entry_date, description, reference,
-            status, created_at, posted_at, voided_by_entry_id, hidden
-        ) VALUES (?1, ?2, '2026-03-01', 'Draft memo', NULL, 'draft', 'unix:1', NULL, NULL, 0)
-        ",
-        rusqlite::params![id.to_string(), book.entity_id.to_string()],
-    )
-    .expect("insert draft");
-
-    let hidden = set_entry_hidden(conn, id, true).expect("hide draft");
-    assert!(hidden.entry.hidden);
-    assert_eq!(hidden.entry.status, EntryStatus::Draft);
-    assert_eq!(entry_hidden_flag(conn, id), 1);
 }
 
 #[test]

@@ -85,7 +85,7 @@ fn account() {
     assert_json_is_pinned::<Account>(concat!(
         r#"{"id":"22222222-2222-4222-8222-222222222222","entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","code":"1000","name":"Cash","account_type":"#,
-        r#""asset","parent_id":null,"is_active":true,"is_system":false,"sort_order":10}"#,
+        r#""asset","is_active":true,"is_system":false,"sort_order":10}"#,
     ));
 }
 
@@ -108,6 +108,15 @@ fn journal_entry() {
         r#""11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"#,
         r#""Groceries","reference":"INV-7","status":"posted","hidden":false}"#,
     ));
+}
+
+#[test]
+fn an_entry_whose_status_is_not_posted_is_refused_by_the_json_layer() {
+    assert!(is_refused::<JournalEntry>(concat!(
+        r#"{"id":"33333333-3333-4333-8333-333333333333","entity_id":"#,
+        r#""11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"#,
+        r#""Groceries","reference":"INV-7","status":"draft","hidden":false}"#,
+    )));
 }
 
 #[test]

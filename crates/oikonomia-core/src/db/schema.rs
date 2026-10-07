@@ -20,6 +20,25 @@
 //!
 //! Never edit a step that has shipped: a vault that already ran it will not
 //! run it again, so the change would reach new vaults only.
+//!
+//! # What the schema allows and the application does not write
+//!
+//! The tables are wider than what the application stores in them. No
+//! migration narrows them, because a rebuilt table buys nothing the readers
+//! do not already enforce.
+//!
+//! - `journal_entries.status` is `TEXT NOT NULL` with no `CHECK`, so the
+//!   schema permits any text, `draft` included. The application writes
+//!   `posted` and nothing else. The entry list, the register, the journal
+//!   export and every report select `status = 'posted'`, so a row that
+//!   holds another status is in none of them and in no balance; read by its
+//!   id, it is reported as a corrupt vault. The document queries join the
+//!   entry without that test, so its documents are still listed.
+//! - `accounts.parent_id` is a nullable reference to another account. The
+//!   column is reserved: no statement after the `CREATE TABLE` names it, so
+//!   every row written from now on holds NULL, and whatever an older row
+//!   holds there is not read. `SQLite` still enforces the reference, so a
+//!   value put there by other means must be the id of an account.
 
 use crate::db::{collect_rows, read_column};
 use crate::error::{DatabaseContext, Error, Result, VaultCorruption};

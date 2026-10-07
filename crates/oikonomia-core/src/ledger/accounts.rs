@@ -67,15 +67,15 @@ pub struct UpdateAccount {
 ///
 /// # Errors
 ///
-/// - [`Error::VaultCorrupt`] for a stored account whose id, entity, type or
-///   parent does not parse. The whole list fails: an account left out would
-///   be missing from every report built on it.
+/// - [`Error::VaultCorrupt`] for a stored account whose id, entity or type
+///   does not parse. The whole list fails: an account left out would be
+///   missing from every report built on it.
 /// - [`Error::Database`] on database errors.
 pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
     let mut stmt = conn
         .prepare(
             "
-            SELECT id, entity_id, code, name, account_type, parent_id,
+            SELECT id, entity_id, code, name, account_type,
                    is_active, is_system, sort_order
             FROM accounts
             WHERE entity_id = ?1
@@ -98,13 +98,13 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown account.
-/// - [`Error::VaultCorrupt`] for a stored account whose id, entity, type or
-///   parent does not parse.
+/// - [`Error::VaultCorrupt`] for a stored account whose id, entity or type
+///   does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
     conn.query_row(
         "
-        SELECT id, entity_id, code, name, account_type, parent_id,
+        SELECT id, entity_id, code, name, account_type,
                is_active, is_system, sort_order
         FROM accounts WHERE id = ?1
         ",
@@ -119,7 +119,8 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
 
 /// Adds an account to an entity's chart.
 ///
-/// The account is active, has no parent and is not a system account.
+/// The account is active and is not a system account. The `parent_id` column
+/// is not written, so it holds NULL.
 ///
 /// # Errors
 ///
@@ -148,9 +149,9 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
     conn.execute(
         "
         INSERT INTO accounts (
-            id, entity_id, code, name, account_type, parent_id,
+            id, entity_id, code, name, account_type,
             is_active, is_system, sort_order
-        ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, 1, 0, ?6)
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 1, 0, ?6)
         ",
         rusqlite::params![
             id.to_string(),
@@ -269,17 +270,20 @@ fn account_write_error(err: &rusqlite::Error) -> Error {
     }
 }
 
-/// Maps a row selected as `id, entity_id, code, name, account_type, parent_id,
+/// Maps a row selected as `id, entity_id, code, name, account_type,
 /// is_active, is_system, sort_order`.
+///
+/// The table's `parent_id` column is not selected, so whatever a vault holds
+/// there has no effect on the account that is read.
 ///
 /// A sort order outside `i32` reads as 0: it only orders the chart, and
 /// refusing the row for it would take the account out of every report.
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] naming the column when the id, the entity, the
-/// type or the parent does not parse, or a column has the wrong storage
-/// class. No half-read account is returned.
+/// [`Error::VaultCorrupt`] naming the column when the id, the entity or the
+/// type does not parse, or a column has the wrong storage class. No
+/// half-read account is returned.
 fn map_account(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Account> {
     let id = stored_id("accounts.id", &read_column::<String>(operation, row, 0)?)?;
     let entity_id = stored_id(
@@ -288,20 +292,15 @@ fn map_account(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Accou
     )?;
     let account_type = parse_account_type(&read_column::<String>(operation, row, 4)?)?;
 
-    let parent_id = read_column::<Option<String>>(operation, row, 5)?
-        .map(|text| stored_id("accounts.parent_id", &text))
-        .transpose()?;
-
     Ok(Account {
         id,
         entity_id,
         code: read_column(operation, row, 2)?,
         name: read_column(operation, row, 3)?,
         account_type,
-        parent_id,
-        is_active: read_column::<i64>(operation, row, 6)? != 0,
-        is_system: read_column::<i64>(operation, row, 7)? != 0,
-        sort_order: i32::try_from(read_column::<i64>(operation, row, 8)?).unwrap_or(0),
+        is_active: read_column::<i64>(operation, row, 5)? != 0,
+        is_system: read_column::<i64>(operation, row, 6)? != 0,
+        sort_order: i32::try_from(read_column::<i64>(operation, row, 7)?).unwrap_or(0),
     })
 }
 
@@ -336,7 +335,8 @@ mod tests {
     }
 
     /// Writes an archived system account `1000 Cash` of [`ENTITY`] with the
-    /// given id, stored type, parent and sort order, valid or not.
+    /// given id, stored type and sort order, valid or not, and with `parent`
+    /// in the reserved `parent_id` column.
     fn insert(conn: &Connection, id: &str, account_type: &str, parent: Option<&str>, sort: i64) {
         conn.execute(
             "INSERT INTO accounts (id, entity_id, code, name, account_type, parent_id,
@@ -456,24 +456,57 @@ mod tests {
         assert_eq!(account.code, "1000");
         assert_eq!(account.name, "Cash");
         assert_eq!(account.account_type, AccountType::Asset);
-        assert_eq!(
-            account.parent_id.map(|id| id.to_string()).as_deref(),
-            Some(PARENT)
-        );
         assert!(!account.is_active);
         assert!(account.is_system);
         assert_eq!(account.sort_order, 7);
     }
 
     #[test]
-    fn a_missing_parent_and_an_out_of_range_sort_order_are_tolerated() {
+    fn an_out_of_range_sort_order_is_tolerated() {
         let conn = accounts_table();
         insert(&conn, ACCOUNT, "expense", None, i64::MAX);
 
         let accounts = list_accounts(&conn, entity()).expect("list");
 
-        assert_eq!(accounts[0].parent_id, None);
         assert_eq!(accounts[0].sort_order, 0);
+    }
+
+    /// The column is reserved: a vault may hold a parent there, an id or
+    /// anything else, and the account reads as it would without one.
+    #[test]
+    fn a_stored_parent_is_ignored_when_an_account_is_read() {
+        let without_parent = accounts_table();
+        insert(&without_parent, ACCOUNT, "asset", None, 7);
+        let expected = list_accounts(&without_parent, entity()).expect("list");
+
+        for parent in [PARENT, "not-a-uuid"] {
+            let conn = accounts_table();
+            insert(&conn, ACCOUNT, "asset", Some(parent), 7);
+
+            assert_eq!(
+                list_accounts(&conn, entity()).as_ref(),
+                Ok(&expected),
+                "{parent}"
+            );
+            let account_id = ACCOUNT.parse().expect("account id");
+            assert_eq!(get_account(&conn, account_id).as_ref(), Ok(&expected[0]));
+        }
+    }
+
+    #[test]
+    fn a_created_account_stores_no_parent() {
+        let conn = chart_with_unique_codes();
+        let account = create_account(&conn, &new_account("1000")).expect("create");
+
+        let parent: Option<String> = conn
+            .query_row(
+                "SELECT parent_id FROM accounts WHERE id = ?1",
+                [account.id.to_string()],
+                |row| row.get(0),
+            )
+            .expect("read the column");
+
+        assert_eq!(parent, None);
     }
 
     #[test]
@@ -482,7 +515,6 @@ mod tests {
         let corrupt_rows = [
             ("not-a-uuid", "asset", None, "accounts.id"),
             (ACCOUNT, "treasure", None, "accounts.account_type"),
-            (ACCOUNT, "asset", Some("not-a-uuid"), "accounts.parent_id"),
             ("not-a-uuid", "treasure", Some("not-a-uuid"), "accounts.id"),
         ];
 
