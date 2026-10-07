@@ -5,7 +5,7 @@ use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, VerifiedOffer,
     install_offer, perform_check, perform_check_inner,
 };
-use crate::error::UpdateError;
+use crate::error::{InstallStep, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::machine::UpdateMachine;
 use crate::status::UpdateStatus;
@@ -41,7 +41,9 @@ impl ArtifactInstaller for SpyInstaller {
         let mut last = self.last_path.lock().expect("spy path");
         *last = Some(artifact.to_path_buf());
         if self.fail {
-            return Err(UpdateError::ArtifactIntegrity);
+            return Err(UpdateError::InstallFailed {
+                step: InstallStep::Replace,
+            });
         }
         Ok(self.handoff)
     }
@@ -80,8 +82,16 @@ pub(super) fn install(
 ) -> crate::Result<InstallOutcome> {
     let offer = machine.begin_install()?;
     let outcome = install_offer(config, &offer, installer);
-    machine.finish_install(outcome);
+    machine.finish_install(&outcome);
     Ok(outcome)
+}
+
+/// Returns the status of a check or an install that failed with the error
+/// whose code is `code`.
+pub(super) fn failed_with(code: &str) -> UpdateStatus {
+    UpdateStatus::Failed {
+        code: Some(code.to_owned()),
+    }
 }
 
 /// Serves a signed manifest offering `payload` at `artifact_path` as 0.2.0

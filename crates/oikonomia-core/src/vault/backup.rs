@@ -5,22 +5,35 @@
 //! `vault.header.json.tmp`, the header staged by a password change, is never
 //! packed.
 //!
-//! That leaves one gap. If a password change crashed after the rekey and
-//! before the staged header was published, the staged header is the one
-//! whose key fits the database, and a backup of the locked vault taken
-//! before the next unlock packs the published header instead. No password
-//! opens such an archive. Unlocking once publishes the staged header and
-//! closes the gap; nothing here checks for it.
-//!
 //! An unlocked vault is snapshotted with `VACUUM INTO` so WAL is folded
-//! without closing the session. A locked vault is copied file by file, which
-//! is only complete when `vault.db-wal` is absent or empty: the database
-//! runs in WAL mode, and after a crash committed transactions can still sit
-//! in that log. Such a vault is refused until a session has been opened and
-//! closed once: unlocking reads the log, and `SQLite` folds it into
-//! `vault.db` when the last connection closes
-//! (<https://www.sqlite.org/wal.html>, "Avoiding Excessively Large WAL
-//! Files").
+//! without closing the session. A locked vault is copied file by file, and
+//! that copy is a usable backup only when the two files are the whole vault
+//! and belong together. Two things a crash leaves break that, and a locked
+//! backup refuses the vault while either is there:
+//!
+//! | Leftover                  | Crash during       | Why a file copy is wrong          |
+//! |---------------------------|--------------------|-----------------------------------|
+//! | `vault.db-wal`, not empty | A session.         | Commits in the log are left out.  |
+//! | `vault.header.json.tmp`   | A password change. | The published header may not fit. |
+//!
+//! - **Write-ahead log.** The database runs in WAL mode, and after a crash
+//!   committed transactions can still sit in the log. Unlocking reads it,
+//!   and `SQLite` folds it into `vault.db` when the last connection closes
+//!   (<https://www.sqlite.org/wal.html>, "Avoiding Excessively Large WAL
+//!   Files").
+//! - **Staged header.** A password change writes it before the rekey and
+//!   renames it over the published header after. If the process died
+//!   between the two, the staged header is the one whose key fits the
+//!   database, and an archive with the published one opens with no
+//!   password. If it died before the rekey, the published header still
+//!   fits. Telling the two cases apart takes the key, which a locked backup
+//!   does not have, so both are refused. A successful unlock settles
+//!   either: it publishes the staged header when that is the one that fits
+//!   and removes it otherwise.
+//!
+//! Both refusals end the same way: unlock the vault once, then back up. The
+//! backup of an unlocked vault checks neither. Its snapshot includes the
+//! log, and the unlock it follows has already settled the header.
 //!
 //! # Format
 //!
@@ -112,7 +125,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use crate::error::{Error, Result};
+use crate::error::{BackupDefect, DatabaseContext, Error, IoContext, Result, VaultCorruption};
 use crate::vault::files::{
     discard_database_files, discard_file, local_iso_date, remove_files_if_present,
     rename_if_present, rename_synced, sibling_path, sync_parent_dir,
@@ -169,17 +182,23 @@ pub fn default_backup_file_name() -> String {
 /// # Errors
 ///
 /// - [`Error::VaultUninitialized`] when neither vault file exists.
-/// - [`Error::VaultCorrupt`] when only one of the two files exists, when
-///   either is empty, or when `vault.db-wal` holds pages a file copy would
-///   leave out.
-/// - [`Error::Io`] when `dest` has no file name, or a file cannot be read,
-///   created, written or renamed.
-/// - [`Error::BackupInvalid`] when a vault file becomes shorter while it is
-///   being copied.
+/// - [`Error::VaultCorrupt`] when only one of the two files exists
+///   ([`VaultCorruption::HeaderWithoutDatabase`],
+///   [`VaultCorruption::DatabaseWithoutHeader`]), when either is empty
+///   ([`VaultCorruption::EmptyFile`]), when `vault.db-wal` holds pages a
+///   file copy would leave out ([`VaultCorruption::UnmergedWriteAheadLog`]),
+///   or when a password change left its staged header behind
+///   ([`VaultCorruption::UnfinishedPasswordChange`]). The last two are
+///   settled by unlocking the vault once; see the module doc.
+/// - [`Error::Io`] when `dest` has no file name, when a file cannot be
+///   inspected, read, created, written or renamed, or when a vault file
+///   becomes shorter while it is being copied.
 pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     let db_path = vault_db_path(data_dir);
     ensure_vault_files(&header_path, &db_path)?;
+    ensure_no_unmerged_wal(&db_path)?;
+    ensure_no_staged_header(data_dir)?;
     write_archive_from_paths(&header_path, &db_path, dest)
 }
 
@@ -216,24 +235,39 @@ pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
 ///   removed. When putting the previous files back failed as well, the
 ///   message says so, and the next [`Vault::open_path`] completes the undo.
 pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Result<()> {
+    restore_pair(archive, data_dir, replace).map(|_header| ())
+}
+
+/// Does what [`restore_from_path`] documents and returns the header that is
+/// now published, as it was checked before the swap.
+///
+/// Nothing after the swap commits can fail: the cleanup that follows only
+/// logs. `Ok` therefore means the vault files are the archive's, and `Err`
+/// means they are not.
+fn restore_pair(archive: &Path, data_dir: &Path, replace: bool) -> Result<VaultHeader> {
     create_private_dir(data_dir)?;
     recover_interrupted_restore(data_dir)?;
     let paths = RestorePaths::new(data_dir);
 
     // Unpack and check first, so a bad archive is rejected even when a vault
     // already exists and `replace` is false.
-    let restored = unpack_and_verify(archive, &paths)
-        .and_then(|()| refuse_overwrite(&paths, replace))
-        .and_then(|()| swap_in_unpacked_pair(&paths));
-    if let Err(err) = restored {
-        discard_unpacked_unless_swap_pending(&paths);
-        return Err(err);
-    }
+    let restored = unpack_and_verify(archive, &paths).and_then(|header| {
+        refuse_overwrite(&paths, replace)?;
+        swap_in_unpacked_pair(&paths)?;
+        Ok(header)
+    });
+    let header = match restored {
+        Ok(header) => header,
+        Err(err) => {
+            discard_unpacked_unless_swap_pending(&paths);
+            return Err(err);
+        }
+    };
 
     // Recovery state of the vault that was replaced.
     discard_file(&vault_staged_header_path(data_dir));
     discard_file(&vault_init_header_path(data_dir));
-    Ok(())
+    Ok(header)
 }
 
 /// Settles a restore that a crash interrupted, by the rules in the module
@@ -257,6 +291,30 @@ pub(crate) fn recover_interrupted_restore(data_dir: &Path) -> Result<()> {
     remove_files_if_present(&[&paths.unpacked_header, &paths.unpacked_db])
 }
 
+/// Removes the database snapshot an online backup left behind when the
+/// process died before the backup removed it.
+///
+/// The snapshot is a full copy of the ciphertext, and nothing reads it
+/// again: each online backup makes its own. A snapshot that is not there is
+/// the usual case and not an error.
+///
+/// The names `SQLite` would use for a write-ahead log and its index beside
+/// the snapshot are removed with it, as the backup's own cleanup does.
+///
+/// Must not run while another handle on the same directory is writing an
+/// online backup: that backup can then fail with [`Error::Io`] for its
+/// missing snapshot, or this call can fail because the snapshot is open.
+/// A failed backup leaves no archive and can be repeated.
+///
+/// # Errors
+///
+/// [`Error::Io`] when one of these files exists and cannot be removed.
+pub(crate) fn remove_stale_snapshot(data_dir: &Path) -> Result<()> {
+    let snapshot = backup_snapshot_db_path(data_dir);
+    let [wal, shm] = db_sidecar_paths(&snapshot);
+    remove_files_if_present(&[&snapshot, &wal, &shm])
+}
+
 impl Vault {
     /// Writes a backup archive of this vault to `dest` without changing its
     /// lock state, creating the parent directory of `dest` when it is missing.
@@ -273,13 +331,13 @@ impl Vault {
     /// - [`Error::VaultCorrupt`] when the header file is missing or empty,
     ///   and, for a locked vault, in the other cases [`backup_to_path`]
     ///   lists.
-    /// - [`Error::Io`] when `dest` has no file name, or a file cannot be
-    ///   read, created, written or renamed. For an unlocked vault also when
-    ///   the data directory path is not UTF-8, the snapshot fails, or the
-    ///   snapshot comes out as a plaintext database; no archive is written
-    ///   in that last case.
-    /// - [`Error::BackupInvalid`] when a file becomes shorter while it is
-    ///   being copied.
+    /// - [`Error::Io`] when `dest` has no file name, when a file cannot be
+    ///   read, created, written or renamed, or when a file becomes shorter
+    ///   while it is being copied. For an unlocked vault also when the data
+    ///   directory path is not UTF-8.
+    /// - [`Error::Database`] when the snapshot of an unlocked vault fails.
+    /// - [`Error::Crypto`] when that snapshot comes out as a plaintext
+    ///   database; no archive is written then.
     pub fn backup_to(&self, dest: &Path) -> Result<()> {
         match self.connection() {
             Ok(conn) => backup_from_open_connection(conn, self.data_dir(), dest),
@@ -289,24 +347,40 @@ impl Vault {
     }
 
     /// Closes the connection, unpacks `archive` into the data directory and
-    /// reloads the header, leaving the vault locked.
+    /// takes over the restored header, leaving the vault locked.
     ///
     /// The connection is closed before anything is checked, so the vault is
     /// not unlocked afterwards whether the restore succeeded or not.
     ///
+    /// What the handle holds after each outcome:
+    ///
+    /// | Outcome                               | Vault files    | Header held    |
+    /// |---------------------------------------|----------------|----------------|
+    /// | `Ok`                                  | The archive's. | The archive's. |
+    /// | `Err`, nothing swapped or swap undone | The previous.  | The previous.  |
+    /// | `Err`, and the undo failed as well    | Mid-swap.      | The previous.  |
+    ///
+    /// "The previous" is no header at all when there was no vault. The
+    /// header is not read back from disk after the swap: it is the one that
+    /// was checked before the swap and then renamed into place, so no step
+    /// that could fail follows the commit, and `Ok` never leaves this handle
+    /// on the header of the vault that was replaced.
+    ///
+    /// In the last row the error is the [`Error::Io`] whose operation is
+    /// `put previous vault files back`. The next [`Vault::open_path`]
+    /// completes the undo, after which the files are the previous vault
+    /// again and match the header this handle kept. Until then this handle
+    /// must not be used: an unlock through it fails, or, when the archive
+    /// was made from this same vault, opens a database that the undo will
+    /// move away again. Open a new handle.
+    ///
     /// # Errors
     ///
-    /// Everything [`restore_from_path`] returns; the vault files are then as
-    /// that function leaves them. After the files were replaced,
-    /// [`Error::VaultCorrupt`] or [`Error::Io`] when the restored header
-    /// cannot be loaded, as [`Vault::open_path`] reports it. This handle
-    /// then still holds the header of the vault that was replaced, and a
-    /// new handle has to be opened.
+    /// Everything [`restore_from_path`] returns.
     pub fn restore_from(&mut self, archive: &Path, replace: bool) -> Result<()> {
         self.lock();
-        let data_dir = self.data_dir().to_path_buf();
-        restore_from_path(archive, &data_dir, replace)?;
-        *self = Self::open_path(data_dir)?;
+        let header = restore_pair(archive, self.data_dir(), replace)?;
+        self.adopt_published_header(header);
         Ok(())
     }
 }
@@ -326,28 +400,48 @@ fn discard_unpacked_unless_swap_pending(paths: &RestorePaths) {
 }
 
 /// Step 1 of the restore protocol: unpacks `archive` to the two
-/// `restore-tmp` files and checks them.
+/// `restore-tmp` files, checks them and returns the unpacked header.
 ///
 /// A header the vault would call corrupt is reported as an invalid backup
 /// here: the vault on disk is fine, and it is the archive that is not.
-fn unpack_and_verify(archive: &Path, paths: &RestorePaths) -> Result<()> {
+fn unpack_and_verify(archive: &Path, paths: &RestorePaths) -> Result<VaultHeader> {
     unpack_archive_to_staging(archive, &paths.unpacked_header, &paths.unpacked_db)?;
 
-    match VaultHeader::load(&paths.unpacked_header) {
-        Ok(_header) => {}
-        Err(Error::VaultCorrupt(reason)) => {
-            return Err(Error::BackupInvalid(format!(
-                "{MEMBER_HEADER} is not a usable vault header: {reason}"
-            )));
-        }
-        Err(other) => return Err(other),
-    }
+    let header = load_archive_header(&paths.unpacked_header)?;
     if is_plaintext_sqlite(&paths.unpacked_db)? {
-        return Err(Error::BackupInvalid(format!(
-            "{MEMBER_DB} is not encrypted"
-        )));
+        return Err(Error::BackupInvalid(BackupDefect::DatabaseNotEncrypted));
     }
-    Ok(())
+    Ok(header)
+}
+
+/// Loads the header unpacked from an archive, with the checks
+/// [`VaultHeader::load`] makes.
+///
+/// A header from a later build is a defect of the archive here as well, and
+/// not [`Error::VaultTooNew`]: that error is about the vault in the data
+/// directory, which this restore has not touched.
+///
+/// # Errors
+///
+/// [`Error::BackupInvalid`] with [`BackupDefect::UnusableHeader`] when the
+/// file is not a header or names a format version other than the one this
+/// build reads; [`Error::Io`] when it cannot be read.
+fn load_archive_header(path: &Path) -> Result<VaultHeader> {
+    let unusable = |reason| Error::BackupInvalid(BackupDefect::UnusableHeader(reason));
+
+    let header = match VaultHeader::read(path) {
+        Ok(header) => header,
+        Err(Error::VaultCorrupt(reason)) => return Err(unusable(reason)),
+        Err(other) => return Err(other),
+    };
+    match header.check_format() {
+        Ok(()) => Ok(header),
+        Err(Error::VaultTooNew { .. }) => Err(unusable(VaultCorruption::UnsupportedFormat {
+            version: header.version,
+        })),
+        Err(Error::VaultCorrupt(reason)) => Err(unusable(reason)),
+        Err(other) => Err(other),
+    }
 }
 
 /// Returns [`Error::RestoreWouldOverwrite`] when a live vault file exists
@@ -370,9 +464,10 @@ fn swap_in_unpacked_pair(paths: &RestorePaths) -> Result<()> {
     if let Err(err) = replace_live_pair(paths) {
         return Err(match undo_swap(paths) {
             Ok(()) => err,
-            Err(undo_err) => Error::Io(format!(
-                "{err}; putting the previous vault files back also failed: {undo_err}"
-            )),
+            Err(undo_err) => Error::io(
+                "put previous vault files back",
+                format_args!("{undo_err}; the restore had failed with: {err}"),
+            ),
         });
     }
 
@@ -391,7 +486,7 @@ fn replace_live_pair(paths: &RestorePaths) -> Result<()> {
     rename_if_present(&paths.wal, &paths.old_wal)?;
     rename_if_present(&paths.db, &paths.old_db)?;
 
-    fs::rename(&paths.unpacked_db, &paths.db).map_err(|err| Error::Io(err.to_string()))?;
+    fs::rename(&paths.unpacked_db, &paths.db).io("move restored database into place")?;
     rename_synced(&paths.verified_header, &paths.header)
 }
 
@@ -418,25 +513,45 @@ fn undo_swap(paths: &RestorePaths) -> Result<()> {
     Ok(())
 }
 
-/// Checks that the header and the database both exist as files and that a
-/// file copy of them is a complete backup.
+/// Checks that the header and the database both exist as files.
 ///
 /// # Errors
 ///
 /// [`Error::VaultUninitialized`] when neither exists; [`Error::VaultCorrupt`]
-/// when one does, or when [`ensure_no_unmerged_wal`] refuses the database;
-/// [`Error::Io`] when the write-ahead log cannot be inspected.
+/// when only one does.
 fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
     match (header_path.is_file(), db_path.is_file()) {
-        (true, true) => ensure_no_unmerged_wal(db_path),
+        (true, true) => Ok(()),
         (false, false) => Err(Error::VaultUninitialized),
-        (true, false) => Err(Error::VaultCorrupt(
-            "vault header exists without database".into(),
-        )),
-        (false, true) => Err(Error::VaultCorrupt(
-            "vault database exists without header".into(),
-        )),
+        (true, false) => Err(Error::VaultCorrupt(VaultCorruption::HeaderWithoutDatabase)),
+        (false, true) => Err(Error::VaultCorrupt(VaultCorruption::DatabaseWithoutHeader)),
     }
+}
+
+/// Refuses a vault beside which a password change left its staged header.
+///
+/// The staged header is there either because the change died before the
+/// rekey, and the published header still fits the database, or because it
+/// died after, and only the staged one does. Deciding takes the key, so the
+/// file's presence alone is the refusal. Packing the staged header instead
+/// would get the first case wrong the same way.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] with [`VaultCorruption::UnfinishedPasswordChange`]
+/// when the staged header exists; [`Error::Io`] when that cannot be
+/// determined.
+fn ensure_no_staged_header(data_dir: &Path) -> Result<()> {
+    let staged_header_exists = vault_staged_header_path(data_dir)
+        .try_exists()
+        .io("look for a staged vault header")?;
+
+    if staged_header_exists {
+        return Err(Error::VaultCorrupt(
+            VaultCorruption::UnfinishedPasswordChange,
+        ));
+    }
+    Ok(())
 }
 
 /// Refuses a database whose write-ahead log still holds pages.
@@ -444,20 +559,21 @@ fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
 /// `SQLite` removes the log when the last connection closes cleanly, so a
 /// non-empty one next to a locked vault is left from a crash and can hold
 /// committed transactions that are not in `vault.db` yet.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] with [`VaultCorruption::UnmergedWriteAheadLog`]
+/// when the log is not empty; [`Error::Io`] when it cannot be inspected.
 fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
     let [wal_path, _shm_path] = db_sidecar_paths(db_path);
     let wal_len = match fs::metadata(&wal_path) {
         Ok(metadata) => metadata.len(),
         Err(err) if err.kind() == io::ErrorKind::NotFound => 0,
-        Err(err) => return Err(Error::Io(err.to_string())),
+        Err(err) => return Err(Error::io("inspect write-ahead log", err)),
     };
 
     if wal_len > 0 {
-        return Err(Error::VaultCorrupt(
-            "vault database has changes still in its write-ahead log; \
-             unlock the vault once before backing up"
-                .into(),
-        ));
+        return Err(Error::VaultCorrupt(VaultCorruption::UnmergedWriteAheadLog));
     }
     Ok(())
 }
@@ -466,13 +582,13 @@ fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
 /// on-disk header into an archive at `dest`. The session stays open.
 ///
 /// The snapshot is `vault.db.backup-tmp` in the data directory. It is
-/// removed before this returns, and one left by a crash is removed first.
+/// removed before this returns. One left by a crash is normally gone by
+/// then, removed when the vault was opened; this removes it first all the
+/// same, because `VACUUM INTO` refuses a target that is not empty.
 fn backup_from_open_connection(conn: &Connection, data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     if !header_path.is_file() {
-        return Err(Error::VaultCorrupt(
-            "database exists without vault header".into(),
-        ));
+        return Err(Error::VaultCorrupt(VaultCorruption::DatabaseWithoutHeader));
     }
 
     let snapshot = backup_snapshot_db_path(data_dir);
@@ -497,12 +613,13 @@ fn backup_from_open_connection(conn: &Connection, data_dir: &Path, dest: &Path) 
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when `dest` is not UTF-8, cannot be created, the statement
-/// fails, or the copy starts with the plaintext `SQLite` magic.
+/// [`Error::Io`] when `dest` is not UTF-8 or cannot be created;
+/// [`Error::Database`] when the statement fails; [`Error::Crypto`] when the
+/// copy starts with the plaintext `SQLite` magic.
 fn vacuum_into_encrypted(conn: &Connection, dest: &Path) -> Result<()> {
     let path = dest
         .to_str()
-        .ok_or_else(|| Error::Io("backup snapshot path is not UTF-8".into()))?;
+        .ok_or_else(|| Error::io("name backup snapshot", "the path is not UTF-8"))?;
     let escaped = path.replace('\'', "''");
 
     // SQLite would create the snapshot under the umask, leaving a copy of the
@@ -512,10 +629,11 @@ fn vacuum_into_encrypted(conn: &Connection, dest: &Path) -> Result<()> {
     drop(create_private_file(dest)?);
 
     conn.execute(&format!("VACUUM INTO '{escaped}'"), [])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("snapshot vault database")?;
     if is_plaintext_sqlite(dest)? {
-        return Err(Error::Io(
-            "online backup produced a plaintext database".into(),
+        return Err(Error::crypto(
+            "snapshot vault database",
+            "the snapshot is not encrypted",
         ));
     }
     Ok(())
@@ -527,11 +645,11 @@ fn is_plaintext_sqlite(path: &Path) -> Result<bool> {
     const SQLITE_MAGIC: &[u8; 6] = b"SQLite";
 
     let mut magic = [0u8; SQLITE_MAGIC.len()];
-    let mut file = File::open(path).map_err(|err| Error::Io(err.to_string()))?;
+    let mut file = File::open(path).io("open database to check encryption")?;
     match file.read_exact(&mut magic) {
         Ok(()) => Ok(&magic == SQLITE_MAGIC),
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => Ok(false),
-        Err(err) => Err(Error::Io(err.to_string())),
+        Err(err) => Err(Error::io("read database to check encryption", err)),
     }
 }
 
@@ -547,21 +665,17 @@ fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> 
     let result = (|| {
         let parent = dest.parent().filter(|dir| !dir.as_os_str().is_empty());
         if let Some(parent) = parent {
-            fs::create_dir_all(parent).map_err(|err| Error::Io(err.to_string()))?;
+            fs::create_dir_all(parent).io("create backup directory")?;
         }
 
         let mut archive = create_private_file(&staged)?;
-        archive
-            .write_all(MAGIC)
-            .map_err(|err| Error::Io(err.to_string()))?;
+        archive.write_all(MAGIC).io("write backup archive")?;
         archive
             .write_all(&FORMAT_VERSION.to_le_bytes())
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .io("write backup archive")?;
         write_member_from_path(&mut archive, MEMBER_HEADER, header_path)?;
         write_member_from_path(&mut archive, MEMBER_DB, db_path)?;
-        archive
-            .sync_all()
-            .map_err(|err| Error::Io(err.to_string()))?;
+        archive.sync_all().io("sync backup archive")?;
         drop(archive);
 
         rename_synced(&staged, dest)
@@ -585,18 +699,18 @@ fn write_archive_from_paths(header_path: &Path, db_path: &Path, dest: &Path) -> 
 /// [`Error::Io`] when it cannot be opened or read, or a destination cannot
 /// be written.
 fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path) -> Result<()> {
-    let mut input = File::open(archive).map_err(|err| Error::Io(err.to_string()))?;
+    let mut input = File::open(archive).io("open backup archive")?;
     let mut magic = [0u8; 8];
     read_exact_or_truncated(&mut input, &mut magic)?;
     if &magic != MAGIC {
-        return Err(Error::BackupInvalid("not an Oikonomia vault backup".into()));
+        return Err(Error::BackupInvalid(BackupDefect::NotABackup));
     }
 
     let version = read_u16_le(&mut input)?;
     if version != FORMAT_VERSION {
-        return Err(Error::BackupInvalid(format!(
-            "unsupported backup version {version}"
-        )));
+        return Err(Error::BackupInvalid(BackupDefect::UnsupportedVersion {
+            version,
+        }));
     }
 
     let mut saw_header = false;
@@ -607,77 +721,105 @@ fn unpack_archive_to_staging(archive: &Path, header_dest: &Path, db_dest: &Path)
         };
         let len = read_u64_le(&mut input)?;
         if len == 0 {
-            return Err(Error::BackupInvalid(format!("{name} is empty")));
+            return Err(Error::BackupInvalid(BackupDefect::EmptyMember { name }));
         }
 
         match name.as_str() {
             MEMBER_HEADER => {
                 if saw_header {
-                    return Err(Error::BackupInvalid(format!(
-                        "backup has duplicate {MEMBER_HEADER}"
-                    )));
+                    return Err(Error::BackupInvalid(BackupDefect::DuplicateMember {
+                        name: MEMBER_HEADER,
+                    }));
                 }
                 write_exact_member(&mut input, header_dest, len)?;
                 saw_header = true;
             }
             MEMBER_DB => {
                 if saw_db {
-                    return Err(Error::BackupInvalid(format!(
-                        "backup has duplicate {MEMBER_DB}"
-                    )));
+                    return Err(Error::BackupInvalid(BackupDefect::DuplicateMember {
+                        name: MEMBER_DB,
+                    }));
                 }
                 write_exact_member(&mut input, db_dest, len)?;
                 saw_db = true;
             }
-            other => {
-                return Err(Error::BackupInvalid(format!("unexpected member {other}")));
+            _ => {
+                return Err(Error::BackupInvalid(BackupDefect::UnexpectedMember {
+                    name,
+                }));
             }
         }
     }
 
     if !saw_header {
-        return Err(Error::BackupInvalid(format!(
-            "backup is missing {MEMBER_HEADER}"
-        )));
+        return Err(Error::BackupInvalid(BackupDefect::MissingMember {
+            name: MEMBER_HEADER,
+        }));
     }
     if !saw_db {
-        return Err(Error::BackupInvalid(format!(
-            "backup is missing {MEMBER_DB}"
-        )));
+        return Err(Error::BackupInvalid(BackupDefect::MissingMember {
+            name: MEMBER_DB,
+        }));
     }
 
     let mut extra = [0u8; 1];
     match input.read(&mut extra) {
         Ok(0) => Ok(()),
-        Ok(_) => Err(Error::BackupInvalid("backup has trailing data".into())),
-        Err(err) => Err(Error::Io(err.to_string())),
+        Ok(_) => Err(Error::BackupInvalid(BackupDefect::TrailingData)),
+        Err(err) => Err(Error::io("read backup archive", err)),
     }
 }
 
 /// Appends the file at `path` to `archive` as the member `name`.
 ///
-/// The length written is the file's size when it was opened, and exactly
-/// that many bytes are copied, so the member matches its length field even
-/// if the file grows meanwhile.
+/// The length written is the file's size when it was opened; see
+/// [`write_member`] for what happens when the file changes meanwhile.
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] when the file is empty: the reader rejects an
-/// empty member, so the archive would not restore. [`Error::Io`] when the
-/// file cannot be read or the archive cannot be written.
-/// [`Error::BackupInvalid`], from [`copy_exact`], when the file became
-/// shorter after its size was read.
-fn write_member_from_path(archive: &mut impl Write, name: &str, path: &Path) -> Result<()> {
-    let mut source = File::open(path).map_err(|err| Error::Io(err.to_string()))?;
-    let len = source
-        .metadata()
-        .map_err(|err| Error::Io(err.to_string()))?
-        .len();
+/// [`Error::Io`] when the file cannot be opened or inspected, and
+/// everything [`write_member`] returns.
+fn write_member_from_path(archive: &mut impl Write, name: &'static str, path: &Path) -> Result<()> {
+    let mut source = File::open(path).io("open vault file for backup")?;
+    let len = source.metadata().io("inspect vault file for backup")?.len();
+    write_member(archive, name, &mut source, len)
+}
+
+/// Appends the next `len` bytes of `source` to `archive` as the member
+/// `name`.
+///
+/// Exactly `len` bytes are copied, so the member matches its length field
+/// even if the file behind `source` grows meanwhile. The source is a
+/// parameter, and not opened here, so that a test can hand in one that ends
+/// early.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] when `len` is 0: the reader rejects an empty
+/// member, so the archive would not restore. [`Error::Io`] when `source`
+/// cannot be read, the archive cannot be written, or `source` ends before
+/// `len` bytes: the file became shorter after its size was read, and the
+/// member already written is not what its length field says.
+fn write_member(
+    archive: &mut impl Write,
+    name: &'static str,
+    source: &mut impl Read,
+    len: u64,
+) -> Result<()> {
     if len == 0 {
-        return Err(Error::VaultCorrupt(format!("{name} is empty")));
+        return Err(Error::VaultCorrupt(VaultCorruption::EmptyFile {
+            file: name,
+        }));
     }
     write_member_prefix(archive, name, len)?;
-    copy_exact(&mut source, archive, len)?;
+
+    let copied = copy_at_most(source, archive, len)?;
+    if copied < len {
+        return Err(Error::io(
+            "copy vault file into backup",
+            format_args!("{name} ended after {copied} of {len} bytes"),
+        ));
+    }
     Ok(())
 }
 
@@ -691,63 +833,73 @@ fn write_member_from_path(archive: &mut impl Write, name: &str, path: &Path) -> 
 fn write_member_prefix(archive: &mut impl Write, name: &str, len: u64) -> Result<()> {
     let name_bytes = name.as_bytes();
     let name_len = u16::try_from(name_bytes.len())
-        .map_err(|_| Error::BackupInvalid("member name too long".into()))?;
+        .map_err(|_| Error::BackupInvalid(BackupDefect::MemberNameLength))?;
     archive
         .write_all(&name_len.to_le_bytes())
-        .map_err(|err| Error::Io(err.to_string()))?;
-    archive
-        .write_all(name_bytes)
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .io("write backup archive")?;
+    archive.write_all(name_bytes).io("write backup archive")?;
     archive
         .write_all(&len.to_le_bytes())
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .io("write backup archive")?;
     Ok(())
 }
 
 /// Copies the next `len` bytes of `input` into a new owner-only file at
 /// `dest` and flushes it.
-fn write_exact_member(input: &mut impl Read, dest: &Path, len: u64) -> Result<()> {
-    let mut file = create_private_file(dest)?;
-    copy_exact(input, &mut file, len)?;
-    file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(())
-}
-
-/// Copies exactly `len` bytes from `reader` to `writer` through a fixed
-/// buffer, so a member of any size is never held in memory.
 ///
 /// # Errors
 ///
-/// [`Error::BackupInvalid`] when `reader` ends before `len` bytes;
+/// [`Error::BackupInvalid`] with [`BackupDefect::Truncated`] when `input`,
+/// the archive, ends before `len` bytes; [`Error::Io`] when it cannot be
+/// read or `dest` cannot be created, written or flushed.
+fn write_exact_member(input: &mut impl Read, dest: &Path, len: u64) -> Result<()> {
+    let mut file = create_private_file(dest)?;
+    if copy_at_most(input, &mut file, len)? < len {
+        return Err(Error::BackupInvalid(BackupDefect::Truncated));
+    }
+    file.sync_all().io("sync restored file")?;
+    Ok(())
+}
+
+/// Copies `len` bytes from `reader` to `writer` through a fixed buffer, so a
+/// member of any size is never held in memory, and returns how many bytes
+/// were copied.
+///
+/// The count is below `len` exactly when `reader` ended first. What that
+/// means differs by direction, so the caller decides: an archive that ends
+/// inside a member is a truncated backup, and a vault file that ends early
+/// while it is packed is a failed copy.
+///
+/// # Errors
+///
 /// [`Error::Io`] when a read or a write fails.
-fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Result<()> {
+fn copy_at_most(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Result<u64> {
     let mut remaining = len;
     let mut buffer = vec![0u8; COPY_BUFFER_LEN];
     while remaining > 0 {
         // `usize` to `u64` and back only fails on a platform where one does
         // not fit the other; it is reported instead of truncated.
-        let capacity = u64::try_from(buffer.len())
-            .map_err(|_| Error::Io("backup copy length overflow".into()))?;
-        let wanted = usize::try_from(remaining.min(capacity))
-            .map_err(|_| Error::Io("backup copy length overflow".into()))?;
+        let capacity = u64::try_from(buffer.len()).map_err(|_| length_overflow())?;
+        let wanted = usize::try_from(remaining.min(capacity)).map_err(|_| length_overflow())?;
         let read = match reader.read(&mut buffer[..wanted]) {
-            Ok(0) => return Err(Error::BackupInvalid("backup is truncated".into())),
+            Ok(0) => break,
             Ok(read) => read,
-            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                return Err(Error::BackupInvalid("backup is truncated".into()));
-            }
-            Err(err) => return Err(Error::Io(err.to_string())),
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(err) => return Err(Error::io("read backup member", err)),
         };
         writer
             .write_all(&buffer[..read])
-            .map_err(|err| Error::Io(err.to_string()))?;
-        let copied =
-            u64::try_from(read).map_err(|_| Error::Io("backup copy length overflow".into()))?;
-        remaining = remaining
-            .checked_sub(copied)
-            .ok_or_else(|| Error::Io("backup copy length overflow".into()))?;
+            .io("write backup member")?;
+        let copied = u64::try_from(read).map_err(|_| length_overflow())?;
+        remaining = remaining.checked_sub(copied).ok_or_else(length_overflow)?;
     }
-    Ok(())
+    len.checked_sub(remaining).ok_or_else(length_overflow)
+}
+
+/// The error for a length that does not convert between `usize` and `u64`
+/// while a member is copied.
+fn length_overflow() -> Error {
+    Error::io("copy backup member", "length does not fit this platform")
 }
 
 /// Reads the name of the next member, or returns `None` when the archive
@@ -764,14 +916,16 @@ fn read_member_name_or_eof(reader: &mut impl Read) -> Result<Option<String>> {
         return Ok(None);
     };
     if name_len == 0 || name_len > MAX_MEMBER_NAME_LEN {
-        return Err(Error::BackupInvalid("invalid member name length".into()));
+        return Err(Error::BackupInvalid(BackupDefect::MemberNameLength));
     }
     let mut name_bytes = vec![0u8; usize::from(name_len)];
     read_exact_or_truncated(reader, &mut name_bytes)?;
     let name = String::from_utf8(name_bytes)
-        .map_err(|_| Error::BackupInvalid("member name is not UTF-8".into()))?;
+        .map_err(|_| Error::BackupInvalid(BackupDefect::MemberNameNotUtf8))?;
     if name.contains('/') || name.contains('\\') || name.contains('\0') || name.contains("..") {
-        return Err(Error::BackupInvalid(format!("unexpected member {name}")));
+        return Err(Error::BackupInvalid(BackupDefect::UnexpectedMember {
+            name,
+        }));
     }
     Ok(Some(name))
 }
@@ -790,7 +944,7 @@ fn read_optional_u16_le(reader: &mut impl Read) -> Result<Option<u16>> {
             Ok(Some(u16::from_le_bytes(bytes)))
         }
         Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => Ok(None),
-        Err(err) => Err(Error::Io(err.to_string())),
+        Err(err) => Err(Error::io("read backup archive", err)),
     }
 }
 
@@ -817,9 +971,9 @@ fn read_u64_le(reader: &mut impl Read) -> Result<u64> {
 fn read_exact_or_truncated(reader: &mut impl Read, buffer: &mut [u8]) -> Result<()> {
     reader.read_exact(buffer).map_err(|err| {
         if err.kind() == io::ErrorKind::UnexpectedEof {
-            Error::BackupInvalid("backup is truncated".into())
+            Error::BackupInvalid(BackupDefect::Truncated)
         } else {
-            Error::Io(err.to_string())
+            Error::io("read backup archive", err)
         }
     })
 }
@@ -832,7 +986,8 @@ fn encode_members(members: &[(&str, &[u8])]) -> Result<Vec<u8>> {
     archive.extend_from_slice(MAGIC);
     archive.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
     for (name, data) in members {
-        let len = u64::try_from(data.len()).map_err(|_| Error::Io("member too large".into()))?;
+        let len = u64::try_from(data.len())
+            .map_err(|_| Error::io("encode backup member", "member too large"))?;
         write_member_prefix(&mut archive, name, len)?;
         archive.extend_from_slice(data);
     }
@@ -918,9 +1073,9 @@ mod tests {
         let path = dest.path().join("header-only.oikonomia-backup");
         write_file(&path, &header_only);
         let err = restore_from_path(&path, dest.path(), true).expect_err("header-only");
-        assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("vault.db")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::MissingMember { name: MEMBER_DB })
         );
 
         let db_only =
@@ -928,9 +1083,11 @@ mod tests {
         let path = dest.path().join("db-only.oikonomia-backup");
         write_file(&path, &db_only);
         let err = restore_from_path(&path, dest.path(), true).expect_err("db-only");
-        assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("vault.header.json")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::MissingMember {
+                name: MEMBER_HEADER
+            })
         );
 
         let valid = encode_members(&[
@@ -941,10 +1098,7 @@ mod tests {
         let truncated_path = dest.path().join("truncated.oikonomia-backup");
         write_file(&truncated_path, &valid[..valid.len() - 4]);
         let err = restore_from_path(&truncated_path, dest.path(), true).expect_err("truncated");
-        assert!(
-            matches!(err, Error::BackupInvalid(_)),
-            "truncated must be BackupInvalid, got {err:?}"
-        );
+        assert_eq!(err, Error::BackupInvalid(BackupDefect::Truncated));
     }
 
     #[test]
@@ -1033,15 +1187,53 @@ mod tests {
     }
 
     #[test]
+    fn a_restore_leaves_the_handle_on_the_restored_vault_without_reopening_the_directory() {
+        let (_src, source) = init_vault();
+        let (_archive_dir, archive) = backup_of(&source);
+        let (dest_dir, mut dest) = init_vault_with(OTHER_PASSWORD);
+        // Opening this directory fails from here on: a directory sits where
+        // open removes a leftover snapshot. The restore itself does not
+        // touch that name, so the vault files are replaced all the same.
+        fs::create_dir(backup_snapshot_db_path(dest_dir.path())).expect("block reopening");
+        Vault::open_path(dest_dir.path())
+            .map(|vault| vault.status())
+            .expect_err("the scenario needs a directory that cannot be opened");
+
+        dest.restore_from(&archive, true)
+            .expect("the files were replaced, so the restore succeeded");
+
+        assert_eq!(dest.status(), VaultStatus::Locked);
+        dest.unlock(PASSWORD)
+            .expect("the handle derives its key from the restored header");
+    }
+
+    #[test]
+    fn a_refused_restore_leaves_the_handle_on_the_previous_vault() {
+        let (_src, source) = init_vault();
+        let (_archive_dir, archive) = backup_of(&source);
+        let (_dest_dir, mut dest) = init_vault_with(OTHER_PASSWORD);
+
+        assert_eq!(
+            dest.restore_from(&archive, false),
+            Err(Error::RestoreWouldOverwrite)
+        );
+
+        assert_eq!(
+            dest.status(),
+            VaultStatus::Locked,
+            "locked before the check"
+        );
+        dest.unlock(OTHER_PASSWORD)
+            .expect("the previous vault and its header are still in place");
+    }
+
+    #[test]
     fn random_non_magic_file_is_rejected() {
         let dest = TempDir::new().expect("dir");
         let garbage = dest.path().join("garbage.oikonomia-backup");
         write_file(&garbage, b"this is not a backup file at all");
         let err = restore_from_path(&garbage, dest.path(), true).expect_err("garbage");
-        assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("not an Oikonomia")),
-            "got {err:?}"
-        );
+        assert_eq!(err, Error::BackupInvalid(BackupDefect::NotABackup));
 
         let zipish = dest.path().join("random.bin");
         write_file(&zipish, &[0x50, 0x4b, 0x03, 0x04, 0xff, 0x00]);
@@ -1140,9 +1332,9 @@ mod tests {
 
         let err = backup_to_path(image.path(), &dest).expect_err("the log is not in the archive");
 
-        assert!(
-            matches!(err, Error::VaultCorrupt(ref message) if message.contains("unlock")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::VaultCorrupt(VaultCorruption::UnmergedWriteAheadLog)
         );
         assert!(!dest.exists(), "no partial archive");
     }
@@ -1224,7 +1416,7 @@ mod tests {
         let err = restore_from_path(&archive, live.path(), true).expect_err("junk header");
 
         assert!(
-            matches!(err, Error::BackupInvalid(ref message) if message.contains("header")),
+            matches!(err, Error::BackupInvalid(BackupDefect::UnusableHeader(_))),
             "got {err:?}"
         );
         assert_no_restore_files(live.path());
@@ -1245,7 +1437,14 @@ mod tests {
 
         let err = restore_from_path(&archive, live.path(), true).expect_err("newer format");
 
-        assert!(matches!(err, Error::BackupInvalid(_)), "got {err:?}");
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::UnusableHeader(
+                VaultCorruption::UnsupportedFormat { version: 2 }
+            )),
+            "the archive is what cannot be used, not the vault in place"
+        );
+        assert_no_restore_files(live.path());
         assert_opens_with(live.path(), PASSWORD);
     }
 
@@ -1266,9 +1465,9 @@ mod tests {
 
         let err = restore_from_path(&archive, live.path(), true).expect_err("plaintext db");
 
-        assert!(
-            matches!(err, Error::BackupInvalid(ref message) if message.contains("not encrypted")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::DatabaseNotEncrypted)
         );
         assert_no_restore_files(live.path());
         assert_opens_with(live.path(), PASSWORD);
@@ -1285,6 +1484,44 @@ mod tests {
 
         assert_opens_with(live.path(), PASSWORD);
         assert_no_restore_files(live.path());
+    }
+
+    #[test]
+    fn open_removes_the_snapshot_of_an_interrupted_online_backup() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+        let snapshot = dir.path().join("vault.db.backup-tmp");
+        assert_eq!(snapshot, backup_snapshot_db_path(dir.path()));
+        write_file(&snapshot, b"a second copy of the ciphertext");
+
+        assert_opens_with(dir.path(), PASSWORD);
+
+        assert!(!snapshot.exists(), "the leftover snapshot must be removed");
+    }
+
+    #[test]
+    fn open_reports_a_snapshot_it_cannot_remove() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+        // A directory in the snapshot's place: removing it as a file fails
+        // on every platform, for a reason other than "not found".
+        let snapshot = backup_snapshot_db_path(dir.path());
+        fs::create_dir(&snapshot).expect("directory in the snapshot's place");
+
+        let err = Vault::open_path(dir.path())
+            .map(|vault| vault.status())
+            .expect_err("only a missing snapshot is ignored");
+
+        assert!(
+            matches!(
+                err,
+                Error::Io {
+                    operation: "remove vault file",
+                    ..
+                }
+            ),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -1474,10 +1711,13 @@ mod tests {
         write_file(&crafted_path, &crafted);
         let err =
             restore_from_path(&crafted_path, restore_dir.path(), true).expect_err("tmp member");
-        let names_the_extra_member =
-            |message: &str| message.contains("trailing") || message.contains("unexpected");
         assert!(
-            matches!(err, Error::BackupInvalid(ref message) if names_the_extra_member(message)),
+            matches!(
+                err,
+                Error::BackupInvalid(
+                    BackupDefect::TrailingData | BackupDefect::UnexpectedMember { .. }
+                )
+            ),
             "got {err:?}"
         );
     }
@@ -1517,6 +1757,42 @@ mod tests {
     }
 
     #[test]
+    fn a_vault_file_that_shrinks_while_it_is_packed_is_a_failed_copy() {
+        // The size was read as 4096 bytes and the file then ends after 10.
+        let mut shrunk: &[u8] = b"ten bytes!";
+        let mut archive = Vec::new();
+
+        let err = write_member(&mut archive, MEMBER_DB, &mut shrunk, 4096)
+            .expect_err("the member is shorter than its length field");
+
+        assert_eq!(
+            err,
+            Error::Io {
+                operation: "copy vault file into backup",
+                detail: "vault.db ended after 10 of 4096 bytes".to_owned(),
+            },
+            "nothing is wrong with an archive: none was being read"
+        );
+    }
+
+    #[test]
+    fn a_member_is_as_long_as_its_length_field_when_the_file_grows() {
+        let contents = b"0123456789";
+        let mut grown: &[u8] = b"0123456789 and bytes appended after the size was read";
+        let mut archive = Vec::new();
+
+        write_member(&mut archive, MEMBER_DB, &mut grown, 10).expect("write member");
+
+        // A member ends with its eight-byte length field and its contents.
+        let contents_start = archive.len() - contents.len();
+        let length_field: [u8; 8] = archive[contents_start - 8..contents_start]
+            .try_into()
+            .expect("eight bytes");
+        assert_eq!(&archive[contents_start..], contents);
+        assert_eq!(u64::from_le_bytes(length_field), 10);
+    }
+
+    #[test]
     fn unsupported_version_is_rejected() {
         let dir = TempDir::new().expect("dir");
         let mut bytes = encode_members(&[
@@ -1528,9 +1804,9 @@ mod tests {
         let path = dir.path().join("v99.oikonomia-backup");
         write_file(&path, &bytes);
         let err = restore_from_path(&path, dir.path(), true).expect_err("v99");
-        assert!(
-            matches!(err, Error::BackupInvalid(ref msg) if msg.contains("version")),
-            "got {err:?}"
+        assert_eq!(
+            err,
+            Error::BackupInvalid(BackupDefect::UnsupportedVersion { version: 99 })
         );
     }
 
@@ -1561,7 +1837,7 @@ mod tests {
 
         let err = swap_in_unpacked_pair(&paths).expect_err("no database to swap in");
 
-        assert!(matches!(err, Error::Io(_)), "got {err:?}");
+        assert!(matches!(err, Error::Io { .. }), "got {err:?}");
         assert!(!paths.verified_header.exists(), "swap marker");
         assert!(!paths.old_header.exists() && !paths.old_db.exists());
         assert_opens_with(live.path(), PASSWORD);

@@ -14,29 +14,47 @@
 //! [`delete_entity`] removes an entity and everything that belongs to it, in
 //! one transaction and in an order the foreign keys allow.
 //!
-//! [`archive_entity`] deletes nothing; it only stamps `archived_at`. The
-//! operations do not treat an archived entity alike:
+//! [`archive_entity`] deletes nothing; it only stamps `archived_at`. One rule
+//! then holds for the entity: **it is readable everywhere and never
+//! writable.**
 //!
-//! - [`list_entities`] leaves it out, and its name no longer counts as taken.
-//! - [`update_entity`], [`archive_entity`] and
-//!   [`create_account`](crate::ledger::create_account) report it as
-//!   [`Error::NotFound`].
-//! - [`get_entity`], [`count_entities`] and [`delete_entity`] treat it like any
-//!   other entity. So do the reports and the cash flow series, which look the
-//!   entity up through [`get_entity`], and the recurring templates, which
-//!   only check that the row exists.
-//! - Posting an entry checks the entry's accounts and never the entity, so it
-//!   is accepted as well.
+//! | Operation on an archived entity | Outcome |
+//! |---------------------------------|---------|
+//! | A read | answers as before |
+//! | A write that takes the entity | [`Error::NotFound`] |
+//! | [`update_entity`], [`archive_entity`] | [`Error::NotFound`] |
+//! | [`delete_entity`] | deletes it |
+//!
+//! The reads are [`get_entity`], the reports, the cash flow series, the
+//! journal export, and the lists of the entity's accounts, entries,
+//! templates and documents. The writes that take the entity are posting an
+//! entry, creating or updating a template, creating an account, importing
+//! CSV rows and attaching a document; each calls
+//! [`ensure_writable_entity`], which reports the entity as if it did not
+//! exist.
+//!
+//! Every entry is inserted in one place, which makes the check, so it also
+//! covers the operations that post on the caller's behalf: voiding or
+//! correcting an entry, setting an opening balance, and posting from a
+//! template.
+//!
+//! Two things follow from being archived without being a read or a write:
+//! [`list_entities`] leaves the entity out, which is how the app hides it,
+//! and its name no longer counts as taken. [`count_entities`] counts it.
+//!
+//! The writes that name a record and no entity do not make the check:
+//! updating or archiving an account, hiding an entry, deleting a template or
+//! a document, and storing the analysis of a document.
 
 use crate::coa::template_accounts;
-use crate::db::{collect_rows, corrupt_column, read_column, stored_uuid};
-use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
-use crate::error::{Error, Result, ValidationError};
-use crate::ledger::balance::account_type_str;
+use crate::db::{collect_rows, corrupt_column, read_column, stored_id};
+use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode, Entity, EntityId};
+use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::prefs::Locale;
 use crate::util::now_utc_string;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use time::Month;
 
 /// Input for [`create_entity`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,7 +81,7 @@ pub struct CreateEntity {
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`] for a stored entity that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
     let mut stmt = conn
         .prepare(
@@ -74,13 +92,13 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
             ORDER BY fold(name), name
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list entities")?;
 
     let rows = stmt
-        .query_map([], |row| Ok(map_entity(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .query_map([], |row| Ok(map_entity("list entities", row)))
+        .database("list entities")?;
 
-    collect_rows(rows)
+    collect_rows("list entities", rows)
 }
 
 /// Returns one entity, archived or not.
@@ -93,19 +111,19 @@ pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
 /// - [`Error::NotFound`] for an unknown entity.
 /// - [`Error::VaultCorrupt`] for a stored entity whose id, chart template or
 ///   fiscal year start month does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
     conn.query_row(
         "
         SELECT id, name, base_currency, fiscal_year_start_month, chart_template
         FROM entities WHERE id = ?1
         ",
-        [id.0.to_string()],
-        |row| Ok(map_entity(row)),
+        [id.to_string()],
+        |row| Ok(map_entity("read entity", row)),
     )
     .map_err(|err| match err {
-        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("entity".into()),
-        other => Error::Io(other.to_string()),
+        rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Entity),
+        other => Error::database("read entity", other),
     })?
 }
 
@@ -126,13 +144,13 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
 ///   the same name, compared without case.
 /// - [`Error::VaultCorrupt`] when the entity does not parse on being read
 ///   back.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn create_entity(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin entity creation")?;
     let entity = create_entity_in_tx(&tx, input, locale)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit entity creation")?;
     Ok(entity)
 }
 
@@ -140,12 +158,12 @@ pub fn create_entity(conn: &Connection, input: &CreateEntity, locale: Locale) ->
 ///
 /// # Errors
 ///
-/// [`Error::Io`] on database errors.
+/// [`Error::Database`] on database errors.
 pub fn count_entities(conn: &Connection) -> Result<u64> {
     let count: i64 = conn
         .query_row("SELECT COUNT(1) FROM entities", [], |row| row.get(0))
-        .map_err(|err| Error::Io(err.to_string()))?;
-    u64::try_from(count).map_err(|_| Error::Io("entity count overflow".into()))
+        .database("count entities")?;
+    u64::try_from(count).map_err(|_| Error::database("count entities", "the count is negative"))
 }
 
 /// Renames an entity.
@@ -157,13 +175,14 @@ pub fn count_entities(conn: &Connection) -> Result<u64> {
 ///   has the same name, compared without case.
 /// - [`Error::NotFound`] for an unknown or archived entity.
 /// - [`Error::VaultCorrupt`] when the stored entity does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Entity> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
-            field: "entity name",
-        }));
+        return Err(ValidationError::NameRequired {
+            field: NameField::EntityName,
+        }
+        .into());
     }
 
     ensure_unique_name(conn, name, Some(id))?;
@@ -173,12 +192,12 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
     let renamed = conn
         .execute(
             "UPDATE entities SET name = ?1 WHERE id = ?2 AND archived_at IS NULL",
-            rusqlite::params![name, id.0.to_string()],
+            rusqlite::params![name, id.to_string()],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("rename entity")?;
 
     if renamed == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
 
     get_entity(conn, id)
@@ -193,17 +212,17 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
 ///
 /// - [`Error::NotFound`] for an unknown entity, or one that is already
 ///   archived.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
     let archived = conn
         .execute(
             "UPDATE entities SET archived_at = ?1 WHERE id = ?2 AND archived_at IS NULL",
-            rusqlite::params![now_utc_string(), id.0.to_string()],
+            rusqlite::params![now_utc_string(), id.to_string()],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("archive entity")?;
 
     if archived == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
     Ok(())
 }
@@ -216,13 +235,39 @@ pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entity.
-/// - [`Error::Io`] on database errors. Nothing is deleted in that case.
+/// - [`Error::Database`] on database errors. Nothing is deleted in that case.
 pub fn delete_entity(conn: &Connection, id: EntityId) -> Result<()> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin entity deletion")?;
     delete_entity_in_tx(&tx, id)?;
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit entity deletion")?;
+    Ok(())
+}
+
+/// Checks that `id` names an entity that may be written to: one that exists
+/// and is not archived.
+///
+/// Every write path that takes an entity calls this before it writes; the
+/// module documentation lists them. An archived entity is reported exactly
+/// like an unknown one, so a caller cannot tell the two apart.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown or archived entity.
+/// - [`Error::Database`] on database errors.
+pub(crate) fn ensure_writable_entity(conn: &Connection, id: EntityId) -> Result<()> {
+    let writable: i64 = conn
+        .query_row(
+            "SELECT COUNT(1) FROM entities WHERE id = ?1 AND archived_at IS NULL",
+            [id.to_string()],
+            |row| row.get(0),
+        )
+        .database("check entity is writable")?;
+
+    if writable == 0 {
+        return Err(Error::NotFound(Resource::Entity));
+    }
     Ok(())
 }
 
@@ -237,29 +282,24 @@ pub fn delete_entity(conn: &Connection, id: EntityId) -> Result<()> {
 fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) -> Result<Entity> {
     let name = input.name.trim();
     if name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
-            field: "entity name",
-        }));
+        return Err(ValidationError::NameRequired {
+            field: NameField::EntityName,
+        }
+        .into());
     }
 
-    // An ISO 4217 code is three ASCII letters. Checking the letters makes the
-    // byte length a character count too, so "12$" and "€" are both refused.
-    let currency = input.base_currency.trim();
-    if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_alphabetic()) {
-        return Err(Error::Validation(ValidationError::CurrencyInvalid));
-    }
-    let currency = currency.to_ascii_uppercase();
+    let currency: CurrencyCode = input.base_currency.parse()?;
 
-    let month = input.fiscal_year_start_month.unwrap_or(1);
-    if !(1..=12).contains(&month) {
-        return Err(Error::Validation(ValidationError::Internal {
+    let month = match input.fiscal_year_start_month {
+        None => Month::January,
+        Some(number) => Month::try_from(number).map_err(|_| ValidationError::Internal {
             detail: "fiscal_year_start_month must be 1-12".into(),
-        }));
-    }
+        })?,
+    };
 
     ensure_unique_name(conn, name, None)?;
 
-    let id = EntityId::new();
+    let id = EntityId::generate();
 
     conn.execute(
         "
@@ -268,19 +308,19 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         ",
         rusqlite::params![
-            id.0.to_string(),
+            id.to_string(),
             name,
-            currency,
-            month,
-            chart_template_str(input.chart_template),
+            currency.as_str(),
+            u8::from(month),
+            input.chart_template.identifier(),
             now_utc_string(),
         ],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("insert entity")?;
 
     for template_account in template_accounts(input.chart_template, locale) {
         let account = Account {
-            id: AccountId::new(),
+            id: AccountId::generate(),
             entity_id: id,
             code: template_account.code.to_owned(),
             name: template_account.name.to_owned(),
@@ -305,7 +345,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 ///
 /// Those of [`delete_entity`].
 fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
-    let entity_id = id.0.to_string();
+    let entity_id = id.to_string();
 
     // No `archived_at` test: an archived entity is deleted like any other.
     let exists: i64 = conn
@@ -314,9 +354,9 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
             [&entity_id],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("check entity exists")?;
     if exists == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
 
     // A voided entry and its reversal reference each other, so neither could
@@ -329,7 +369,7 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         ",
         [&entity_id],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("clear void links of entity")?;
 
     conn.execute(
         "
@@ -338,35 +378,31 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         ",
         [&entity_id],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("delete journal lines of entity")?;
 
     // Documents reference journal entries, so they go before the entries.
     conn.execute("DELETE FROM documents WHERE entity_id = ?1", [&entity_id])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete documents of entity")?;
 
     // Templates reference accounts, so they go before the accounts.
     conn.execute(
         "DELETE FROM recurring_templates WHERE entity_id = ?1",
         [&entity_id],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("delete recurring templates of entity")?;
 
     conn.execute(
         "DELETE FROM journal_entries WHERE entity_id = ?1",
         [&entity_id],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("delete journal entries of entity")?;
 
     conn.execute("DELETE FROM accounts WHERE entity_id = ?1", [&entity_id])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete accounts of entity")?;
 
-    let deleted = conn
-        .execute("DELETE FROM entities WHERE id = ?1", [&entity_id])
-        .map_err(|err| Error::Io(err.to_string()))?;
-
-    if deleted == 0 {
-        return Err(Error::NotFound("entity".into()));
-    }
+    // The row is there: it was counted above, in the caller's transaction.
+    conn.execute("DELETE FROM entities WHERE id = ?1", [&entity_id])
+        .database("delete entity")?;
 
     Ok(())
 }
@@ -381,7 +417,7 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
 /// # Errors
 ///
 /// - [`ValidationError::NameTaken`] when the name is in use.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) -> Result<()> {
     let count: i64 = match exclude {
         Some(id) => conn
@@ -392,10 +428,10 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
                   AND fold(name) = fold(?1)
                   AND id != ?2
                 ",
-                rusqlite::params![name, id.0.to_string()],
+                rusqlite::params![name, id.to_string()],
                 |row| row.get(0),
             )
-            .map_err(|err| Error::Io(err.to_string()))?,
+            .database("check entity name is free")?,
         None => conn
             .query_row(
                 "
@@ -406,13 +442,14 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
                 [name],
                 |row| row.get(0),
             )
-            .map_err(|err| Error::Io(err.to_string()))?,
+            .database("check entity name is free")?,
     };
 
     if count > 0 {
-        return Err(Error::Validation(ValidationError::NameTaken {
+        return Err(ValidationError::NameTaken {
             name: name.to_owned(),
-        }));
+        }
+        .into());
     }
 
     Ok(())
@@ -426,7 +463,7 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
 ///
 /// # Errors
 ///
-/// [`Error::Io`] on database errors.
+/// [`Error::Database`] on database errors.
 fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
     conn.execute(
         "
@@ -436,18 +473,18 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         ",
         rusqlite::params![
-            account.id.0.to_string(),
-            account.entity_id.0.to_string(),
+            account.id.to_string(),
+            account.entity_id.to_string(),
             account.code,
             account.name,
-            account_type_str(account.account_type),
-            account.parent_id.map(|parent| parent.0.to_string()),
+            account.account_type.identifier(),
+            account.parent_id.map(|parent| parent.to_string()),
             i32::from(account.is_active),
             i32::from(account.is_system),
             account.sort_order,
         ],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("insert account")?;
     Ok(())
 }
 
@@ -456,19 +493,19 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] naming the column when the id, the chart template
-/// or the fiscal year start month does not parse, or a column has the wrong
-/// storage class.
-fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
-    let id = stored_uuid("entities.id", &read_column::<String>(row, 0)?)?;
-    let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
+/// [`Error::VaultCorrupt`] naming the column when the id, the base currency,
+/// the chart template or the fiscal year start month does not parse, or a
+/// column has the wrong storage class.
+fn map_entity(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Entity> {
+    let id = stored_id("entities.id", &read_column::<String>(operation, row, 0)?)?;
+    let chart_template = parse_chart_template(&read_column::<String>(operation, row, 4)?)?;
 
     // Reports derive the fiscal year from this number, so one outside the
     // calendar is refused here instead of shifting every year boundary.
-    let stored_month: i64 = read_column(row, 3)?;
+    let stored_month: i64 = read_column(operation, row, 3)?;
     let fiscal_year_start_month = u8::try_from(stored_month)
         .ok()
-        .filter(|month| (1..=12).contains(month))
+        .and_then(|number| Month::try_from(number).ok())
         .ok_or_else(|| {
             corrupt_column(
                 "entities.fiscal_year_start_month",
@@ -476,28 +513,28 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
             )
         })?;
 
+    // The code is a key into the table of decimal digits and is handed to
+    // the UI's number formatter, so text that is not a code is refused here
+    // instead of being formatted with a guessed number of decimals.
+    let stored_currency: String = read_column(operation, row, 2)?;
+    let base_currency = stored_currency.parse().map_err(|_| {
+        corrupt_column(
+            "entities.base_currency",
+            format_args!("not a currency code: {stored_currency}"),
+        )
+    })?;
+
     Ok(Entity {
-        id: EntityId(id),
-        name: read_column(row, 1)?,
-        base_currency: read_column(row, 2)?,
+        id,
+        name: read_column(operation, row, 1)?,
+        base_currency,
         fiscal_year_start_month,
         chart_template,
     })
 }
 
-/// Returns the text `template` is stored as in `entities.chart_template`.
-///
-/// The strings are part of the vault format; [`parse_chart_template`] reads
-/// them back.
-fn chart_template_str(template: ChartTemplate) -> &'static str {
-    match template {
-        ChartTemplate::Personal => "personal",
-        ChartTemplate::Company => "company",
-        ChartTemplate::Blank => "blank",
-    }
-}
-
-/// Parses the text [`chart_template_str`] writes.
+/// Parses the text [`ChartTemplate::identifier`] writes into
+/// `entities.chart_template`.
 ///
 /// # Errors
 ///
@@ -512,5 +549,25 @@ fn parse_chart_template(stored: &str) -> Result<ChartTemplate> {
             "entities.chart_template",
             format_args!("unknown chart template: {other}"),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChartTemplate, parse_chart_template};
+
+    #[test]
+    fn a_chart_template_is_read_back_from_the_text_it_is_stored_as() {
+        for template in [
+            ChartTemplate::Personal,
+            ChartTemplate::Company,
+            ChartTemplate::Blank,
+        ] {
+            assert_eq!(parse_chart_template(template.identifier()), Ok(template));
+        }
+        assert_eq!(
+            parse_chart_template("Personal").map_err(|error| error.code()),
+            Err("vault_corrupt")
+        );
     }
 }

@@ -12,12 +12,18 @@ export type UpdateCheckKind = 'upToDate' | 'available' | 'availableManually' | '
  * Result of `update_check`. `available` carries only the version string.
  * `availableManually` is a newer version this copy must not install itself:
  * the system package manager owns its files (a `.deb` install).
+ * `failed` carries the stable code of what stopped the check or the install
+ * (`update_network`, `update_manifest_signature`, ...) when Rust names one.
+ * It is a code from errorCodes.json, never text, and the dialog words it.
  */
 export type UpdateCheckResult =
   | { kind: 'upToDate' }
   | { kind: 'available'; version: string }
   | { kind: 'availableManually'; version: string }
-  | { kind: 'failed' }
+  | FailedUpdate
+
+/** A check or an install that failed, with the code of its cause when known. */
+export type FailedUpdate = { kind: 'failed'; code?: string }
 
 /** The only state from which `update_install` may be invoked. */
 export type AvailableUpdate = Extract<UpdateCheckResult, { kind: 'available' }>
@@ -56,7 +62,9 @@ export type ParsedIpcUpdate = UpdateCheckResult | { kind: 'idle' } | { kind: 'in
  * `notes`, `url`, `size`, and pubkey never enter the UI union — available
  * keeps `version` only. Non-terminal `idle` / `checking` become `idle`
  * so they cannot leak a leftover version into the form. `installing` stays
- * `installing`, so the dialog keeps showing the install in flight.
+ * `installing`, so the dialog keeps showing the install in flight. `failed`
+ * keeps its `code` when it is a non-empty string; a status without one, as
+ * older builds send and as a check whose task died sends, is still `failed`.
  */
 export function parseUpdateCheckResult(value: unknown): ParsedIpcUpdate {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -74,7 +82,9 @@ export function parseUpdateCheckResult(value: unknown): ParsedIpcUpdate {
     return { kind: 'upToDate' }
   }
   if (kind === 'failed') {
-    return { kind: 'failed' }
+    return typeof record.code === 'string' && record.code !== ''
+      ? { kind: 'failed', code: record.code }
+      : { kind: 'failed' }
   }
   if (kind === 'available' && typeof record.version === 'string') {
     const version = record.version.trim()

@@ -48,7 +48,7 @@ use image::{DynamicImage, ImageReader, Limits, RgbImage};
 use ocrs::{ImageSource, OcrEngine, OcrEngineParams};
 use rten::Model;
 
-use crate::error::{Error, Result};
+use crate::error::{AnalysisContext, Error, Result};
 
 /// The one OCR engine of the process, or `None` until [`ensure_engine`] has
 /// loaded it and again after it panicked.
@@ -164,11 +164,14 @@ pub(super) fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
     }
 
     if !paths.available() {
-        return Err(Error::Analysis(format!(
-            "bundled OCR models not found (expected {} and {})",
-            paths.detection.display(),
-            paths.recognition.display()
-        )));
+        return Err(Error::analysis(
+            "find OCR models",
+            format_args!(
+                "expected {} and {}",
+                paths.detection.display(),
+                paths.recognition.display()
+            ),
+        ));
     }
 
     log::info!(
@@ -177,17 +180,15 @@ pub(super) fn ensure_engine(paths: &OcrModelPaths) -> Result<()> {
         paths.recognition.display()
     );
 
-    let detection = Model::load_file(&paths.detection)
-        .map_err(|err| Error::Analysis(format!("load detection model: {err}")))?;
-    let recognition = Model::load_file(&paths.recognition)
-        .map_err(|err| Error::Analysis(format!("load recognition model: {err}")))?;
+    let detection = Model::load_file(&paths.detection).analysis("load detection model")?;
+    let recognition = Model::load_file(&paths.recognition).analysis("load recognition model")?;
 
     let engine = OcrEngine::new(OcrEngineParams {
         detection_model: Some(detection),
         recognition_model: Some(recognition),
         ..Default::default()
     })
-    .map_err(|err| Error::Analysis(format!("init OCR engine: {err}")))?;
+    .analysis("start OCR engine")?;
 
     set_engine(&mut guard, Some(engine));
     Ok(())
@@ -265,12 +266,10 @@ fn prepare_image(data: &[u8]) -> Result<RgbImage> {
     // decoding is refused before any pixel is decoded.
     let (width, height) = image_reader(data)?
         .into_dimensions()
-        .map_err(|err| Error::Analysis(format!("image dimensions: {err}")))?;
+        .analysis("read image dimensions")?;
     ocr_scale(width, height)?;
 
-    let decoded = image_reader(data)?
-        .decode()
-        .map_err(|err| Error::Analysis(format!("decode image: {err}")))?;
+    let decoded = image_reader(data)?.decode().analysis("decode image")?;
 
     preprocess_for_receipt(decoded)
 }
@@ -290,7 +289,7 @@ fn image_reader(data: &[u8]) -> Result<ImageReader<Cursor<&[u8]>>> {
 
     let mut reader = ImageReader::new(Cursor::new(data))
         .with_guessed_format()
-        .map_err(|err| Error::Analysis(format!("image format: {err}")))?;
+        .analysis("guess image format")?;
     reader.limits(limits);
     Ok(reader)
 }
@@ -323,14 +322,16 @@ fn ocr_scale(width: u32, height: u32) -> Result<f64> {
     let long_side = width.max(height);
 
     if short_side == 0 {
-        return Err(Error::Analysis(format!(
-            "image has a zero side: {width}x{height}"
-        )));
+        return Err(Error::analysis(
+            "check image shape",
+            format_args!("image has a zero side: {width}x{height}"),
+        ));
     }
     if u64::from(long_side) > u64::from(short_side) * u64::from(MAX_ASPECT_RATIO) {
-        return Err(Error::Analysis(format!(
-            "image is too elongated to read: {width}x{height}"
-        )));
+        return Err(Error::analysis(
+            "check image shape",
+            format_args!("image is too elongated to read: {width}x{height}"),
+        ));
     }
 
     let scale = if long_side > MAX_LONG_SIDE {
@@ -447,12 +448,12 @@ fn contrast_stretched(luma: &image::GrayImage) -> RgbImage {
 /// [`ensure_engine`] loads a new one on the next call.
 fn run_ocr_on_rgb(image: &RgbImage) -> Result<String> {
     let image_source = ImageSource::from_bytes(image.as_raw(), image.dimensions())
-        .map_err(|err| Error::Analysis(format!("image source: {err}")))?;
+        .analysis("wrap image for OCR")?;
 
     let mut guard = lock_engine();
     let engine = guard
         .as_mut()
-        .ok_or_else(|| Error::Analysis("OCR engine not loaded".into()))?;
+        .ok_or_else(|| Error::analysis("run OCR engine", "the engine is not loaded"))?;
 
     let inferred = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         infer_text(engine, image_source)
@@ -462,7 +463,7 @@ fn run_ocr_on_rgb(image: &RgbImage) -> Result<String> {
         result
     } else {
         set_engine(&mut guard, None);
-        Err(Error::Analysis("OCR engine panicked".into()))
+        Err(Error::analysis("run OCR engine", "the engine panicked"))
     }
 }
 
@@ -470,23 +471,15 @@ fn run_ocr_on_rgb(image: &RgbImage) -> Result<String> {
 /// one character is a speck or a rule, not text. No test depends on it.
 const NOISE_LINE_CHARS: usize = 1;
 
-/// Most characters of a first-pass reading that is not returned as it is.
+/// Reads the text of a prepared image, in one pass over the three steps of
+/// the engine: `detect_words`, `find_text_lines`, `recognize_text`.
 ///
-/// The same number as `MIN_PDF_TEXT_CHARS` in the analyzer. The reason for 8
-/// is not recorded, and no test depends on it.
-const SPARSE_TEXT_CHARS: usize = 8;
-
-/// Reads the text of a prepared image.
+/// These are the steps `OcrEngine::get_text` is made of (`ocrs` 0.13
+/// `src/lib.rs`). They are called one by one so that a failure names the
+/// step that failed.
 ///
-/// The first pass is `OcrEngine::get_text`. When it fails, or yields
-/// [`SPARSE_TEXT_CHARS`] characters or fewer, a second pass calls the three
-/// steps `get_text` is made of (`detect_words`, `find_text_lines`,
-/// `recognize_text`; `ocrs` 0.13 `src/lib.rs`) one by one. The second pass
-/// therefore recognizes the same text. What it changes is that a failure
-/// names the step that failed, and that a short reading is returned
-/// untrimmed.
-///
-/// Both passes drop lines of [`NOISE_LINE_CHARS`] or fewer. Returns an empty
+/// Each recognized line is trimmed, and a line of [`NOISE_LINE_CHARS`] or
+/// fewer is dropped. Returns the lines joined with newlines, or an empty
 /// string when nothing was recognized.
 ///
 /// # Errors
@@ -496,35 +489,20 @@ const SPARSE_TEXT_CHARS: usize = 8;
 fn infer_text(engine: &mut OcrEngine, image_source: ImageSource<'_>) -> Result<String> {
     let ocr_input = engine
         .prepare_input(image_source)
-        .map_err(|err| Error::Analysis(format!("OCR prepare: {err}")))?;
+        .analysis("prepare OCR input")?;
 
-    if let Ok(blob) = engine.get_text(&ocr_input) {
-        let cleaned = blob
-            .lines()
-            .map(str::trim)
-            .filter(|line| line.chars().count() > NOISE_LINE_CHARS)
-            .collect::<Vec<_>>()
-            .join("\n");
-        if cleaned.chars().count() > SPARSE_TEXT_CHARS {
-            return Ok(cleaned);
-        }
-    }
-
-    let word_rects = engine
-        .detect_words(&ocr_input)
-        .map_err(|err| Error::Analysis(format!("OCR detect: {err}")))?;
+    let word_rects = engine.detect_words(&ocr_input).analysis("detect words")?;
     let line_rects = engine.find_text_lines(&ocr_input, &word_rects);
     let line_texts = engine
         .recognize_text(&ocr_input, &line_rects)
-        .map_err(|err| Error::Analysis(format!("OCR recognize: {err}")))?;
+        .analysis("recognize text")?;
 
-    let mut lines = Vec::new();
-    for line in line_texts.iter().flatten() {
-        let text = line.to_string();
-        if text.chars().count() > NOISE_LINE_CHARS {
-            lines.push(text);
-        }
-    }
+    let lines: Vec<String> = line_texts
+        .iter()
+        .flatten()
+        .map(|line| line.to_string().trim().to_owned())
+        .filter(|line| line.chars().count() > NOISE_LINE_CHARS)
+        .collect();
 
     Ok(lines.join("\n"))
 }

@@ -12,15 +12,13 @@
 //! blocking calls must not be used on the main thread, which is where the
 //! setup hook runs.
 
-use std::path::{Path, PathBuf};
-
+use crate::state::AppState;
 use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use oikonomia_core::vault::default_data_dir;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-
-use crate::state::AppState;
 
 /// Process exit code after a failed start.
 const STARTUP_FAILURE_EXIT_CODE: i32 = 1;
@@ -49,7 +47,7 @@ pub(crate) enum StartupError {
 }
 
 impl StartupError {
-    /// The data directory the failure is about, when there is one.
+    /// Returns the data directory the failure is about, when there is one.
     fn data_dir(&self) -> Option<&Path> {
         match self {
             Self::Vault { data_dir, .. } => Some(data_dir),
@@ -57,16 +55,45 @@ impl StartupError {
         }
     }
 
-    /// What the user is told went wrong.
+    /// Returns what the user is told went wrong.
     fn problem(&self) -> StartupProblem {
         match self {
-            Self::Vault {
-                source: CoreError::VaultCorrupt(_),
-                ..
-            } => StartupProblem::VaultDamaged,
-            Self::Vault { .. } => StartupProblem::DataFolderUnreadable,
+            Self::Vault { source, .. } => vault_problem(source),
             Self::NoDataDir(_) | Self::Watchdog(_) | Self::Shell(_) => StartupProblem::Other,
         }
+    }
+}
+
+/// Returns what the user is told when opening the vault failed with `source`.
+///
+/// Opening works on the files of the data directory and never opens the
+/// database, so only a corrupt vault, a header from a newer build and a file
+/// failure are expected here. Every other variant is listed, without a
+/// wildcard arm, so that a new core error has to be given a sentence here
+/// before this compiles.
+fn vault_problem(source: &CoreError) -> StartupProblem {
+    match source {
+        CoreError::VaultCorrupt(_) => StartupProblem::VaultDamaged,
+        CoreError::VaultTooNew { .. } => StartupProblem::VaultTooNew,
+        CoreError::VaultUninitialized
+        | CoreError::VaultLocked
+        | CoreError::InvalidPassword
+        | CoreError::UnbalancedEntry { .. }
+        | CoreError::TooFewLines
+        | CoreError::InvalidLineAmounts
+        | CoreError::AccountWrongEntity
+        | CoreError::MoneyOverflow
+        | CoreError::NegativeMoney
+        | CoreError::Validation(_)
+        | CoreError::Database { .. }
+        | CoreError::Io { .. }
+        | CoreError::Serialization { .. }
+        | CoreError::Crypto { .. }
+        | CoreError::BackupInvalid(_)
+        | CoreError::RestoreWouldOverwrite
+        | CoreError::NotFound(_)
+        | CoreError::Analysis { .. }
+        | CoreError::Csv(_) => StartupProblem::DataFolderUnreadable,
     }
 }
 
@@ -75,6 +102,8 @@ impl StartupError {
 enum StartupProblem {
     /// The vault header cannot be parsed, or the database has no header.
     VaultDamaged,
+    /// The vault was written by a newer build than this one.
+    VaultTooNew,
     /// The data directory or the header file cannot be read.
     DataFolderUnreadable,
     /// Anything else; the user is told only that the app cannot start.
@@ -93,6 +122,12 @@ pub(crate) fn open_app_state(ocr_model_dir: PathBuf) -> Result<AppState, Startup
     open_app_state_in(data_dir, ocr_model_dir)
 }
 
+/// Opens the vault in `data_dir`.
+///
+/// # Errors
+///
+/// Returns [`StartupError::Vault`], naming `data_dir`, when the directory or
+/// the vault header in it cannot be used.
 fn open_app_state_in(data_dir: PathBuf, ocr_model_dir: PathBuf) -> Result<AppState, StartupError> {
     AppState::open_path(data_dir.clone(), ocr_model_dir)
         .map_err(|source| StartupError::Vault { data_dir, source })
@@ -130,14 +165,14 @@ pub(crate) fn report_and_exit(app: &tauri::App, failure: &StartupError) {
         .show(move |_acknowledged| handle.exit(STARTUP_FAILURE_EXIT_CODE));
 }
 
-/// The lower-level cause of `failure`, for the log.
+/// Returns the lower-level cause of `failure` as text, for the log.
 fn source_text(failure: &StartupError) -> String {
     std::error::Error::source(failure)
         .map_or_else(|| "no further detail".to_owned(), ToString::to_string)
 }
 
-/// The text of the failure message: that the app cannot start, what is wrong
-/// when that is known, and the data directory on a line of its own.
+/// Returns the text of the failure message: that the app cannot start, what
+/// is wrong when that is known, and the data directory on a line of its own.
 ///
 /// The cause is worded here per language. Core's error text is English and
 /// may hold operating-system text, so it goes to the log, never to the user.
@@ -155,7 +190,7 @@ fn failure_message(locale: Locale, problem: StartupProblem, data_dir: Option<&Pa
     message
 }
 
-/// Failure message: the app cannot start.
+/// Returns the sentence that says the app cannot start.
 fn cannot_start_label(locale: Locale) -> &'static str {
     match locale {
         Locale::En => "Oikonomia cannot start.",
@@ -165,16 +200,34 @@ fn cannot_start_label(locale: Locale) -> &'static str {
     }
 }
 
-/// Failure message: what is wrong, for the problems that have a sentence.
+/// Returns the sentence that says what is wrong, for the problems that have
+/// one.
 ///
-/// The damaged-vault sentences are the ones the web catalog shows for
-/// `error.vaultCorrupt`, so the app names this problem one way.
+/// The damaged-vault and newer-vault sentences are the ones the web catalog
+/// shows for `error.vaultCorrupt` and `error.vaultTooNew`, so the app names
+/// each problem one way.
 fn problem_label(locale: Locale, problem: StartupProblem) -> Option<&'static str> {
     let label = match (problem, locale) {
         (StartupProblem::VaultDamaged, Locale::En) => "The vault file is corrupt.",
         (StartupProblem::VaultDamaged, Locale::El) => "Το αρχείο θυρίδας είναι κατεστραμμένο.",
         (StartupProblem::VaultDamaged, Locale::Fr) => "Le fichier du coffre est corrompu.",
         (StartupProblem::VaultDamaged, Locale::De) => "Die Tresordatei ist beschädigt.",
+
+        (StartupProblem::VaultTooNew, Locale::En) => {
+            "This vault was created by a newer version of Oikonomia. Update the app to open it."
+        }
+        (StartupProblem::VaultTooNew, Locale::El) => {
+            "Αυτή η θυρίδα δημιουργήθηκε από νεότερη έκδοση του Oikonomia. \
+             Ενημερώστε την εφαρμογή για να την ανοίξετε."
+        }
+        (StartupProblem::VaultTooNew, Locale::Fr) => {
+            "Ce coffre a été créé par une version plus récente d’Oikonomia. \
+             Mettez l’application à jour pour l’ouvrir."
+        }
+        (StartupProblem::VaultTooNew, Locale::De) => {
+            "Dieser Tresor wurde mit einer neueren Version von Oikonomia erstellt. \
+             Aktualisieren Sie die App, um ihn zu öffnen."
+        }
 
         (StartupProblem::DataFolderUnreadable, Locale::En) => "Its data folder cannot be read.",
         (StartupProblem::DataFolderUnreadable, Locale::El) => {
@@ -199,8 +252,7 @@ mod tests {
     use oikonomia_core::vault::vault_header_path;
     use std::path::{Path, PathBuf};
 
-    const LOCALES: [Locale; 4] = [Locale::En, Locale::El, Locale::Fr, Locale::De];
-
+    /// Creates a fresh directory for one test.
     fn temp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "oiko-startup-{label}-{}-{}",
@@ -259,7 +311,7 @@ mod tests {
     fn the_message_names_the_problem_and_the_directory_in_every_language() {
         let data_dir = Path::new("/home/someone/.local/share/oikonomia");
 
-        for locale in LOCALES {
+        for locale in Locale::ALL.iter().copied() {
             for problem in [
                 StartupProblem::VaultDamaged,
                 StartupProblem::DataFolderUnreadable,
@@ -282,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn the_damaged_vault_wording_is_the_web_catalogs() {
+    fn the_vault_problem_wording_is_the_web_catalogs() {
         let catalogs = [
             (
                 Locale::En,
@@ -303,8 +355,10 @@ mod tests {
         ];
 
         for (locale, catalog) in catalogs {
-            let label = problem_label(locale, StartupProblem::VaultDamaged).expect("worded");
-            assert!(catalog.contains(label), "{locale:?}: {label}");
+            for problem in [StartupProblem::VaultDamaged, StartupProblem::VaultTooNew] {
+                let label = problem_label(locale, problem).expect("worded");
+                assert!(catalog.contains(label), "{locale:?}: {label}");
+            }
         }
     }
 }

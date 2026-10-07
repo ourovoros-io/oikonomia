@@ -21,13 +21,13 @@
 //! Never edit a step that has shipped: a vault that already ran it will not
 //! run it again, so the change would reach new vaults only.
 
-use crate::db::collect_rows;
-use crate::error::{Error, Result};
+use crate::db::{collect_rows, read_column};
+use crate::error::{DatabaseContext, Error, Result, VaultCorruption};
 use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
 /// The schema version [`migrate`] brings a vault to.
-pub const CURRENT_SCHEMA_VERSION: i64 = 7;
+pub const CURRENT_SCHEMA_VERSION: i64 = 8;
 
 /// One schema change, made through the transaction the runner opened for it.
 type Migration = fn(&Transaction<'_>) -> Result<()>;
@@ -43,6 +43,7 @@ const MIGRATIONS: &[(i64, Migration)] = &[
     (5, migrate_v5),
     (6, migrate_v6),
     (7, migrate_v7),
+    (8, migrate_v8),
 ];
 
 /// Applies the migrations a vault has not run yet.
@@ -52,12 +53,14 @@ const MIGRATIONS: &[(i64, Migration)] = &[
 ///
 /// # Errors
 ///
-/// - [`Error::VaultCorrupt`] when the vault's schema version is newer than
+/// - [`Error::VaultTooNew`] when the vault's schema version is newer than
 ///   [`CURRENT_SCHEMA_VERSION`]: it was written by a later build, and this one
 ///   does not know its schema. Nothing is changed.
 /// - [`Error::VaultCorrupt`] when existing data cannot satisfy a constraint a
-///   step adds (the v5 step and journal lines that are not debit XOR credit).
-/// - [`Error::Io`] when the schema version cannot be read or a statement of a
+///   step adds (the v5 step and journal lines that are not debit XOR credit),
+///   or a step reads a stored value of the wrong kind (the v4 step and a
+///   document name that is not text).
+/// - [`Error::Database`] when the schema version cannot be read or a statement of a
 ///   step fails.
 ///
 /// A failed step is rolled back and the steps before it stay applied.
@@ -68,13 +71,13 @@ pub fn migrate(conn: &Connection) -> Result<()> {
             [],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read schema version")?;
 
     if version > CURRENT_SCHEMA_VERSION {
-        return Err(Error::VaultCorrupt(format!(
-            "vault schema version {version} is newer than this build supports \
-             ({CURRENT_SCHEMA_VERSION})"
-        )));
+        return Err(Error::VaultTooNew {
+            found: version,
+            supported: CURRENT_SCHEMA_VERSION,
+        });
     }
 
     for (target, step) in MIGRATIONS {
@@ -89,35 +92,34 @@ pub fn migrate(conn: &Connection) -> Result<()> {
 ///
 /// # Errors
 ///
-/// The error of `step`, or [`Error::Io`] when the transaction cannot be
+/// The error of `step`, or [`Error::Database`] when the transaction cannot be
 /// opened, the version cannot be written, or the commit fails. In every case
 /// the vault is as it was before the call.
 fn apply_migration(conn: &Connection, target: i64, step: Migration) -> Result<()> {
     // Dropping the transaction on an early return rolls it back.
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin migration transaction")?;
 
     step(&tx)?;
     tx.execute(
         "UPDATE vault_meta SET schema_version = ?1 WHERE id = 1",
         [target],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("record schema version")?;
 
-    tx.commit().map_err(|err| Error::Io(err.to_string()))
+    tx.commit().database("commit migration")
 }
 
 /// v2: the ledger tables (entities, accounts, journal) and app settings.
 fn migrate_v2(tx: &Transaction<'_>) -> Result<()> {
-    tx.execute_batch(SCHEMA_V2)
-        .map_err(|err| Error::Io(err.to_string()))
+    tx.execute_batch(SCHEMA_V2).database("create ledger tables")
 }
 
 /// v3: documents stored in the vault.
 fn migrate_v3(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(SCHEMA_V3)
-        .map_err(|err| Error::Io(err.to_string()))
+        .database("create documents table")
 }
 
 /// The tables and indexes [`migrate_v2`] creates.
@@ -214,7 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
 fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
     let deleted = tx
         .execute("DELETE FROM documents WHERE entry_id IS NULL", [])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete unlinked documents")?;
     if deleted > 0 {
         log::info!("v4 migration: deleted {deleted} unlinked document(s)");
     }
@@ -245,7 +247,7 @@ fn migrate_v4(tx: &Transaction<'_>) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_documents_entry ON documents(entry_id);
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))
+    .database("rebuild documents table")
 }
 
 /// v5: every journal line is a debit or a credit, never both and never
@@ -267,11 +269,11 @@ fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
             [],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("count invalid journal lines")?;
     if violations > 0 {
-        return Err(Error::VaultCorrupt(format!(
-            "cannot migrate to v5: {violations} journal line(s) are not debit XOR credit"
-        )));
+        return Err(Error::VaultCorrupt(VaultCorruption::InvalidJournalLines {
+            count: violations,
+        }));
     }
 
     tx.execute_batch(
@@ -295,7 +297,7 @@ fn migrate_v5(tx: &Transaction<'_>) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_lines_account ON journal_lines(account_id);
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))
+    .database("rebuild journal lines table")
 }
 
 /// v6: the `hidden` flag on `journal_entries`.
@@ -312,15 +314,15 @@ fn migrate_v6(tx: &Transaction<'_>) -> Result<()> {
             ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))
+    .database("add hidden column to journal entries")
 }
 
 /// v7: the `recurring_templates` table.
 ///
 /// A template is posted only when the user asks. Nothing but such a post
 /// advances `next_date`; the user can also set it by editing the template.
-/// The five role-account columns are those of
-/// [`crate::ledger::PostSimpleEntry`].
+/// The five role-account columns are the fields of
+/// [`crate::ledger::SimpleEntryRoleAccounts`], under their wire names.
 fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
         "
@@ -350,7 +352,37 @@ fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
             ON recurring_templates(entity_id, next_date);
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))
+    .database("create recurring templates table")
+}
+
+/// v8: two indexes for lookups that were made once per listed entry.
+///
+/// Nothing stored changes. Both lookups read a whole table, or a whole
+/// account, for each entry of a listing, so the time grew with the square of
+/// the book:
+///
+/// - `idx_entries_voided_by` finds the entry that names a given one in
+///   `voided_by_entry_id`. Every query that asks whether an entry is voided
+///   or active makes that lookup. The index is partial because most entries
+///   are never voided; `SQLite` uses an `IS NOT NULL` partial index for an
+///   equality on the same column
+///   (<https://www.sqlite.org/partialindex.html#queries_using_partial_indexes>).
+/// - `idx_lines_entry_account` finds the lines of one entry on one account,
+///   which the account filter of the entry list asks for. It starts with
+///   `entry_id`, so it also serves every lookup `idx_lines_entry` served, and
+///   that index is dropped.
+fn migrate_v8(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_entries_voided_by
+            ON journal_entries(voided_by_entry_id)
+            WHERE voided_by_entry_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_lines_entry_account
+            ON journal_lines(entry_id, account_id);
+        DROP INDEX IF EXISTS idx_lines_entry;
+        ",
+    )
+    .database("index void links and entry lines")
 }
 
 /// Renames documents so that no two in one book share a filename.
@@ -361,7 +393,9 @@ fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when the documents cannot be read or a rename fails.
+/// - [`Error::VaultCorrupt`] naming the column when a document's id, entity
+///   or filename is not stored as text.
+/// - [`Error::Database`] when the documents cannot be read or a rename fails.
 fn dedup_document_names(conn: &Connection) -> Result<()> {
     let rows: Vec<(String, String, String)> = {
         let mut stmt = conn
@@ -369,11 +403,11 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
                 "SELECT id, entity_id, filename FROM documents
                  ORDER BY entity_id, created_at ASC, rowid ASC",
             )
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .database("list document names")?;
         let mapped = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .map_err(|err| Error::Io(err.to_string()))?;
-        collect_rows(mapped.map(|row| row.map(Ok)))?
+            .query_map([], |row| Ok(map_document_name("list document names", row)))
+            .database("list document names")?;
+        collect_rows("list document names", mapped)?
     };
 
     let mut taken: HashSet<(String, String)> = HashSet::new();
@@ -390,11 +424,30 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
                 "UPDATE documents SET filename = ?1 WHERE id = ?2",
                 rusqlite::params![name, id],
             )
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .database("rename duplicate document")?;
         }
         taken.insert((entity_id, name));
     }
     Ok(())
+}
+
+/// Maps a row selected as `id, entity_id, filename` to those three texts.
+///
+/// The ids are compared and written back as the text they are stored as, so
+/// they are not parsed here.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column that is not stored as text.
+fn map_document_name(
+    operation: &'static str,
+    row: &rusqlite::Row<'_>,
+) -> Result<(String, String, String)> {
+    Ok((
+        read_column(operation, row, 0)?,
+        read_column(operation, row, 1)?,
+        read_column(operation, row, 2)?,
+    ))
 }
 
 /// Returns `filename` with ` (suffix)` before its last extension:

@@ -5,17 +5,25 @@
 //! contract with `web/src/lib/errorCodes.json`: [`UpdateError::ALL_CODES`]
 //! lists them, and a desktop test compares that list with the fixture.
 //!
-//! A check does not hand these to its caller. [`perform_check`] logs the
-//! error and reports [`CheckOutcome::Failed`], and [`install_offer`] does the
-//! same with [`InstallOutcome::Failed`]. The variants that do reach a caller
-//! come from building a [`ClientConfig`], from
+//! A failed check or install hands its error to the caller inside the
+//! outcome: [`perform_check`] in [`CheckOutcome::Failed`] and
+//! [`install_offer`] in [`InstallOutcome::Failed`]. This crate does not log
+//! it. The desktop crate logs it and gives it to the [`UpdateMachine`], which
+//! keeps the code for the [`UpdateStatus`] the webview is shown. The other
+//! errors are returned as errors: from building a [`ClientConfig`], from
 //! [`UpdateMachine::begin_install`] and from the release-side functions.
+//!
+//! [`FeedRefusal`] is the release lane's: it says which entry of a feed
+//! installed copies would refuse, and wraps the [`UpdateError`] they would
+//! refuse it with. It never crosses IPC and has no code.
 //!
 //! [`perform_check`]: crate::perform_check
 //! [`install_offer`]: crate::install_offer
 //! [`CheckOutcome::Failed`]: crate::CheckOutcome::Failed
 //! [`InstallOutcome::Failed`]: crate::InstallOutcome::Failed
 //! [`ClientConfig`]: crate::ClientConfig
+//! [`UpdateMachine`]: crate::UpdateMachine
+//! [`UpdateStatus`]: crate::UpdateStatus
 //! [`UpdateMachine::begin_install`]: crate::UpdateMachine::begin_install
 
 use thiserror::Error;
@@ -107,6 +115,19 @@ pub enum UpdateError {
     #[error("update cache could not be written")]
     CacheIo(#[source] std::io::Error),
 
+    /// The artifact was downloaded and verified, and putting it in place of
+    /// the running copy failed at `step`.
+    ///
+    /// Returned by the [`ArtifactInstaller`](crate::ArtifactInstaller) the
+    /// desktop crate supplies; nothing in this crate constructs it. The
+    /// operating-system error behind a step is logged by that installer and
+    /// is not carried here.
+    #[error("update could not be installed: cannot {step}")]
+    InstallFailed {
+        /// The step that failed.
+        step: InstallStep,
+    },
+
     /// The feed URL built into the crate does not parse. No input reaches
     /// this; it guards the constant.
     #[error("update feed url is invalid")]
@@ -136,6 +157,7 @@ impl UpdateError {
         "update_artifact_integrity",
         "update_artifact_too_large",
         "update_cache_io",
+        "update_install_failed",
         "update_invalid_feed_url",
         "update_invalid_feed_input",
     ];
@@ -155,15 +177,108 @@ impl UpdateError {
             Self::ArtifactIntegrity => "update_artifact_integrity",
             Self::ArtifactTooLarge => "update_artifact_too_large",
             Self::CacheIo(_) => "update_cache_io",
+            Self::InstallFailed { .. } => "update_install_failed",
             Self::InvalidFeedUrl => "update_invalid_feed_url",
             Self::InvalidFeedInput { .. } => "update_invalid_feed_input",
         }
     }
 }
 
+/// A step of putting a verified artifact in place of the running copy.
+///
+/// Which steps an install has depends on how the copy was installed: an
+/// archive is unpacked, an image is staged, an installer is started. The
+/// desktop crate's installer says which step each of its kinds can fail at.
+///
+/// Exhaustive on purpose, like [`UpdateError`]: a new step should stop the
+/// tests that list the steps from compiling until it is listed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallStep {
+    /// Finding the verified artifact where the client wrote it.
+    FindArtifact,
+    /// Finding what is to be replaced: the running executable, and the
+    /// bundle or image that holds it.
+    FindRunningCopy,
+    /// Unpacking the artifact into the one app it must hold.
+    Unpack,
+    /// Copying the artifact to a staging file beside the running copy.
+    Stage,
+    /// Making the staged copy executable.
+    SetPermissions,
+    /// Moving the new copy into the place of the running one.
+    Replace,
+    /// Starting the installer program.
+    StartInstaller,
+}
+
+impl InstallStep {
+    /// Every step, for tests that check each has its own wording.
+    pub const ALL: &'static [Self] = &[
+        Self::FindArtifact,
+        Self::FindRunningCopy,
+        Self::Unpack,
+        Self::Stage,
+        Self::SetPermissions,
+        Self::Replace,
+        Self::StartInstaller,
+    ];
+}
+
+impl std::fmt::Display for InstallStep {
+    /// Writes the step as the words that follow "cannot" in the message of
+    /// [`UpdateError::InstallFailed`].
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::FindArtifact => "find the downloaded update",
+            Self::FindRunningCopy => "find the running copy",
+            Self::Unpack => "unpack the update",
+            Self::Stage => "copy the update beside the running copy",
+            Self::SetPermissions => "make the new copy executable",
+            Self::Replace => "move the new copy into place",
+            Self::StartInstaller => "start the installer",
+        })
+    }
+}
+
+/// Why installed copies would refuse a feed, as
+/// [`check_feed_as_client`](crate::check_feed_as_client) reports it to the
+/// release lane.
+///
+/// It names the platform and the URL, which [`UpdateError`] does not: the
+/// person promoting a release needs to know which entry to fix. The cause
+/// is the error a copy would end its check with.
+///
+/// Exhaustive on purpose, like [`UpdateError`].
+#[derive(Debug, Error)]
+pub enum FeedRefusal {
+    /// No copy can read the feed: it is not the JSON the client expects, or
+    /// its version is not `SemVer`.
+    #[error("installed copies cannot read the feed")]
+    Unreadable(#[source] UpdateError),
+
+    /// The feed has no entry for a platform that was to be checked.
+    #[error("{platform}: the feed has no entry for this platform")]
+    MissingPlatform {
+        /// The platform key that is missing.
+        platform: String,
+    },
+
+    /// Copies on one platform would refuse their entry.
+    #[error("{platform}: installed copies refuse {url}")]
+    Entry {
+        /// The platform key of the entry.
+        platform: String,
+        /// The artifact URL the entry gives, as written in the feed.
+        url: String,
+        /// What a copy would end its check with.
+        #[source]
+        source: UpdateError,
+    },
+}
+
 #[cfg(test)]
 mod tests {
-    use super::UpdateError;
+    use super::{InstallStep, UpdateError};
     use oikonomia_test_support::listed_variants;
     use std::error::Error;
 
@@ -183,6 +298,9 @@ mod tests {
             UpdateError::ArtifactIntegrity,
             UpdateError::ArtifactTooLarge,
             UpdateError::CacheIo(std::io::Error::other("x")),
+            UpdateError::InstallFailed {
+                step: InstallStep::Replace,
+            },
             UpdateError::InvalidFeedUrl,
             UpdateError::InvalidFeedInput { field: "x" },
         ]
@@ -201,6 +319,7 @@ mod tests {
             UpdateError::ArtifactIntegrity,
             UpdateError::ArtifactTooLarge,
             UpdateError::CacheIo(_),
+            UpdateError::InstallFailed { .. },
             UpdateError::InvalidFeedUrl,
             UpdateError::InvalidFeedInput { .. },
         }
@@ -233,6 +352,58 @@ mod tests {
         for code in codes {
             assert!(code.starts_with("update_"), "{code}");
         }
+    }
+
+    listed_variants! {
+        units listed_steps for InstallStep {
+            InstallStep::FindArtifact,
+            InstallStep::FindRunningCopy,
+            InstallStep::Unpack,
+            InstallStep::Stage,
+            InstallStep::SetPermissions,
+            InstallStep::Replace,
+            InstallStep::StartInstaller,
+        }
+    }
+
+    #[test]
+    fn a_failed_install_says_which_step_failed_and_every_step_reads_differently() {
+        let messages: Vec<String> = InstallStep::ALL
+            .iter()
+            .map(|step| UpdateError::InstallFailed { step: *step }.to_string())
+            .collect();
+
+        assert_eq!(InstallStep::ALL.len(), listed_steps::COUNT);
+        listed_steps::assert_every_position_once(
+            InstallStep::ALL
+                .iter()
+                .map(listed_steps::position)
+                .collect(),
+        );
+        assert_eq!(
+            messages[listed_steps::position(&InstallStep::StartInstaller)],
+            "update could not be installed: cannot start the installer"
+        );
+
+        let mut distinct = messages.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), messages.len(), "{messages:?}");
+        for message in &messages {
+            assert_eq!(*message, message.to_lowercase());
+            assert!(!message.ends_with('.'), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_failed_install_is_not_reported_as_a_failed_verification() {
+        let error = UpdateError::InstallFailed {
+            step: InstallStep::Stage,
+        };
+
+        assert_eq!(error.code(), "update_install_failed");
+        assert_ne!(error.code(), UpdateError::ArtifactIntegrity.code());
+        assert!(error.source().is_none());
     }
 
     #[test]

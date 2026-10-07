@@ -28,11 +28,14 @@ use std::path::{Path, PathBuf};
 use csv::{ReaderBuilder, StringRecord, Trim, Writer};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use time::Date;
 
 use crate::csv::CsvError;
+use crate::db::read_column;
 use crate::domain::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{DatabaseContext, Error, Result, SerializationContext};
 use crate::ledger::get_entity;
+use crate::util::parse_date;
 use crate::vault::files::{local_iso_date, replace_private_file};
 
 /// Export column header for integer debit minor units.
@@ -58,8 +61,9 @@ pub enum JournalCsvStatus {
 /// One journal line as written by [`export_journal_csv`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalCsvLine {
-    /// ISO date.
-    pub date: String,
+    /// Date of the entry, serialized as `YYYY-MM-DD`.
+    #[serde(with = "crate::util::serde_date")]
+    pub date: Date,
     /// Entry description.
     pub description: String,
     /// Optional reference.
@@ -79,8 +83,10 @@ pub struct JournalCsvLine {
 /// Returns the file name to suggest when saving an export,
 /// `oikonomia-journal-<entity>-YYYY-MM-DD.csv`.
 ///
-/// `<entity>` is `entity_name` reduced to lowercase ASCII letters, digits
-/// and single hyphens, or `entity` when nothing is left of it.
+/// `<entity>` is `entity_name` in lowercase with its letters and digits, of
+/// any script, kept and each run of anything else as one hyphen, or `entity`
+/// when it has no letter or digit. The name is not shortened, so a very long
+/// entity name gives a very long file name.
 #[must_use]
 pub fn default_journal_export_file_name(entity_name: &str) -> String {
     let slug = sanitize_file_stem(entity_name);
@@ -93,7 +99,9 @@ pub fn default_journal_export_file_name(entity_name: &str) -> String {
 /// Columns: `date`, `description`, `reference`, `account_code`, `account_name`,
 /// `debit_minor`, `credit_minor`, `status`. Amounts are **integer minor units**,
 /// never floating point. `status` is `posted` or `voided`. One row is written
-/// per journal line, ordered by entry date, then creation time, then line.
+/// per journal line, ordered by entry date, then creation time, then the
+/// order the entries were posted in, then line, so the lines of an entry are
+/// always together.
 ///
 /// Text cells that a spreadsheet would run as a formula are prefixed with an
 /// apostrophe; [`parse_journal_export`] removes it again.
@@ -104,8 +112,9 @@ pub fn default_journal_export_file_name(entity_name: &str) -> String {
 /// # Errors
 ///
 /// - [`Error::NotFound`] when the entity does not exist.
-/// - [`Error::Io`] on database errors.
-/// - [`Error::CsvParse`] when the CSV writer reports an error.
+/// - [`Error::Database`] on database errors.
+/// - [`Error::VaultCorrupt`] for a stored value of the wrong kind.
+/// - [`Error::Serialization`] when the CSV writer reports an error.
 pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<String> {
     let _entity = get_entity(conn, entity_id)?;
     let mut statement = conn
@@ -128,15 +137,15 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             JOIN accounts a ON a.id = jl.account_id
             WHERE je.entity_id = ?1
               AND je.status = 'posted'
-              AND (je.hidden = 0 OR je.hidden IS NULL)
-            ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
+              AND je.hidden = 0
+            ORDER BY je.entry_date ASC, je.created_at ASC, je.rowid ASC, jl.line_order ASC
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read journal for export")?;
 
     let mut rows = statement
-        .query([entity_id.0.to_string()])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .query([entity_id.to_string()])
+        .database("read journal for export")?;
 
     let mut csv_bytes = Vec::new();
     {
@@ -152,17 +161,17 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
                 CREDIT_MINOR_COLUMN,
                 "status",
             ])
-            .map_err(|err| Error::CsvParse(err.to_string()))?;
+            .serialization("encode journal CSV")?;
 
-        while let Some(row) = rows.next().map_err(|err| Error::Io(err.to_string()))? {
-            let date: String = row.get(0).map_err(|err| Error::Io(err.to_string()))?;
-            let description: String = row.get(1).map_err(|err| Error::Io(err.to_string()))?;
-            let reference: Option<String> = row.get(2).map_err(|err| Error::Io(err.to_string()))?;
-            let code: String = row.get(3).map_err(|err| Error::Io(err.to_string()))?;
-            let name: String = row.get(4).map_err(|err| Error::Io(err.to_string()))?;
-            let debit: i64 = row.get(5).map_err(|err| Error::Io(err.to_string()))?;
-            let credit: i64 = row.get(6).map_err(|err| Error::Io(err.to_string()))?;
-            let status: String = row.get(7).map_err(|err| Error::Io(err.to_string()))?;
+        while let Some(row) = rows.next().database("read journal for export")? {
+            let date: String = read_column("read journal for export", row, 0)?;
+            let description: String = read_column("read journal for export", row, 1)?;
+            let reference: Option<String> = read_column("read journal for export", row, 2)?;
+            let code: String = read_column("read journal for export", row, 3)?;
+            let name: String = read_column("read journal for export", row, 4)?;
+            let debit: i64 = read_column("read journal for export", row, 5)?;
+            let credit: i64 = read_column("read journal for export", row, 6)?;
+            let status: String = read_column("read journal for export", row, 7)?;
 
             let description = neutralize_formula(&description);
             let reference = neutralize_formula(reference.as_deref().unwrap_or(""));
@@ -179,11 +188,11 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
                     &credit.to_string(),
                     status.as_str(),
                 ])
-                .map_err(|err| Error::CsvParse(err.to_string()))?;
+                .serialization("encode journal CSV")?;
         }
         writer
             .flush()
-            .map_err(|err| Error::CsvParse(err.to_string()))?;
+            .map_err(|err| Error::serialization("encode journal CSV", err))?;
     }
 
     // Every cell came from a `String`, so this cannot fail; the conversion
@@ -244,10 +253,12 @@ pub fn ensure_csv_path(path: PathBuf) -> PathBuf {
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] in every case: the text is empty, the header row or
-/// a record cannot be read, one of the eight columns is missing, a `status`
-/// cell is neither `posted` nor `voided`, or a `debit_minor` or
-/// `credit_minor` cell is not an integer.
+/// [`Error::Csv`] in every case, with the [`CsvError`] that says which: the
+/// text is empty, the header row or a record cannot be read, one of the
+/// eight columns is missing, a `status` cell is neither `posted` nor
+/// `voided`, a `date` cell is not a `YYYY-MM-DD` date
+/// ([`CsvError::InvalidDate`]), or a `debit_minor` or `credit_minor` cell is
+/// not an integer.
 pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -261,7 +272,9 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
 
     let headers = reader
         .headers()
-        .map_err(|err| Error::CsvParse(err.to_string()))?
+        .map_err(|err| CsvError::Malformed {
+            detail: err.to_string(),
+        })?
         .clone();
     let date_column = require_column(&headers, "date")?;
     let description_column = require_column(&headers, "description")?;
@@ -274,7 +287,9 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
 
     let mut lines = Vec::new();
     for record in reader.records() {
-        let record = record.map_err(|err| Error::CsvParse(err.to_string()))?;
+        let record = record.map_err(|err| CsvError::Malformed {
+            detail: err.to_string(),
+        })?;
         let cell = |column: usize| record.get(column).unwrap_or("");
 
         let reference = restore_formula(cell(reference_column).trim());
@@ -282,11 +297,12 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
             "posted" => JournalCsvStatus::Posted,
             "voided" => JournalCsvStatus::Voided,
             other => {
-                return Err(Error::CsvParse(format!("unknown journal status: {other}")));
+                return Err(CsvError::InvalidStatus(other.to_owned()).into());
             }
         };
         lines.push(JournalCsvLine {
-            date: cell(date_column).to_owned(),
+            date: parse_date(cell(date_column))
+                .map_err(|_| CsvError::InvalidDate(cell(date_column).to_owned()))?,
             description: restore_formula(cell(description_column)).to_owned(),
             // The export writes a missing reference as an empty cell.
             reference: (!reference.is_empty()).then(|| reference.to_owned()),
@@ -333,18 +349,26 @@ fn restore_formula(cell: &str) -> &str {
         .unwrap_or(cell)
 }
 
-/// Reduces an entity name to a file-name stem that is safe on every
-/// platform: lowercase ASCII letters and digits, with each run of spaces,
-/// hyphens and underscores as one hyphen.
+/// Reduces an entity name to a file-name stem: its letters and digits, of
+/// any script, in lowercase, with each run of anything else as one hyphen.
 ///
-/// Every other character is dropped, so a name in a non-Latin script comes
-/// out empty and the stem falls back to `entity`.
+/// Letters and digits are what `char::is_alphanumeric` says they are, so a
+/// name in Greek or Japanese keeps its words. Everything else becomes a
+/// hyphen, which takes out the characters a file name cannot hold on some
+/// platform (`/ \ : * ? " < > |`, control characters) along with spaces and
+/// punctuation; a mark that combines with a letter but is not one itself is
+/// among them. The name is lowered as a whole, not letter by letter, so a
+/// Greek capital sigma that ends a word gets its final form. A name with no
+/// letter or digit gives `entity`.
+///
+/// The stem is not shortened and is not checked against the device names
+/// Windows reserves: the caller puts it in the middle of a longer name.
 fn sanitize_file_stem(name: &str) -> String {
     let mut stem = String::new();
-    for character in name.chars() {
-        if character.is_ascii_alphanumeric() {
-            stem.push(character.to_ascii_lowercase());
-        } else if matches!(character, ' ' | '-' | '_') && !stem.ends_with('-') {
+    for character in name.to_lowercase().chars() {
+        if character.is_alphanumeric() {
+            stem.push(character);
+        } else if !stem.ends_with('-') {
             stem.push('-');
         }
     }
@@ -360,24 +384,25 @@ fn sanitize_file_stem(name: &str) -> String {
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] naming the column when the export has none.
-fn require_column(headers: &StringRecord, name: &str) -> Result<usize> {
+/// [`Error::Csv`] with [`CsvError::MissingColumn`] naming the column when the
+/// export has none.
+fn require_column(headers: &StringRecord, name: &'static str) -> Result<usize> {
     headers
         .iter()
         .position(|header| header.eq_ignore_ascii_case(name))
-        .ok_or_else(|| Error::CsvParse(format!("journal CSV is missing column {name}")))
+        .ok_or(Error::Csv(CsvError::MissingColumn { column: name }))
 }
 
 /// Parses a `debit_minor` or `credit_minor` cell.
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] carrying the cell when it is not an integer that
-/// fits an `i64`.
+/// [`Error::Csv`] with [`CsvError::InvalidInteger`] carrying the cell when it
+/// is not an integer that fits an `i64`.
 fn parse_minor_units(raw: &str) -> Result<i64> {
     raw.trim()
         .parse()
-        .map_err(|_| Error::CsvParse(format!("invalid integer: {raw}")))
+        .map_err(|_| CsvError::InvalidInteger(raw.to_owned()).into())
 }
 
 #[cfg(test)]
@@ -490,6 +515,47 @@ mod tests {
             Some("csv")
         );
     }
+
+    #[test]
+    fn a_name_in_another_script_keeps_its_letters_in_the_file_name() {
+        assert_eq!(sanitize_file_stem("Οικονομία ΑΕ"), "οικονομία-αε");
+        assert_eq!(
+            sanitize_file_stem("ΛΟΓΑΡΙΑΣΜΟΣ"),
+            "λογαριασμος",
+            "a capital sigma at the end of a word is lowered to the final form"
+        );
+        assert_eq!(
+            sanitize_file_stem("Müller & Söhne GmbH"),
+            "müller-söhne-gmbh"
+        );
+        assert_eq!(sanitize_file_stem("家計簿 2026"), "家計簿-2026");
+        assert_eq!(sanitize_file_stem("Книга №1"), "книга-1");
+
+        let greek = default_journal_export_file_name("Σπίτι");
+        assert!(greek.starts_with("oikonomia-journal-σπίτι-"), "{greek}");
+    }
+
+    #[test]
+    fn everything_that_is_not_a_letter_or_a_digit_becomes_one_hyphen() {
+        assert_eq!(sanitize_file_stem("Smith & Sons, Ltd."), "smith-sons-ltd");
+        assert_eq!(sanitize_file_stem("  a__b--c  "), "a-b-c");
+        assert_eq!(
+            sanitize_file_stem("a/b\\c:d*e?f\"g<h>i|j"),
+            "a-b-c-d-e-f-g-h-i-j"
+        );
+        assert_eq!(sanitize_file_stem("../../etc/passwd"), "etc-passwd");
+        assert_eq!(
+            sanitize_file_stem("tab\there\nnewline\0nul"),
+            "tab-here-newline-nul"
+        );
+    }
+
+    #[test]
+    fn a_name_with_no_letter_or_digit_falls_back_to_entity() {
+        for name in ["", "   ", "!!!", "—…—", "€$£", "- _ -", "🙂🙂"] {
+            assert_eq!(sanitize_file_stem(name), "entity", "{name:?}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -502,8 +568,9 @@ mod properties {
     use super::*;
     use crate::domain::ChartTemplate;
     use crate::ledger::{
-        CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
+        CreateEntity, PostJournal, PostJournalLine, create_entity, list_accounts, post_entry,
     };
+    use crate::money::Money;
     use crate::prefs::Locale;
     use crate::vault::Vault;
 
@@ -529,19 +596,17 @@ mod properties {
         };
         let entity = create_entity(conn, &book, Locale::En).unwrap();
         let accounts = list_accounts(conn, entity.id).unwrap();
-        let line = |index: usize, debit_minor: i64, credit_minor: i64| CreateJournalLine {
-            account_id: accounts[index].id,
-            debit_minor,
-            credit_minor,
-            memo: None,
-        };
+        let amount = Money::from_minor(100).unwrap();
 
         let entry = PostJournal {
             entity_id: entity.id,
-            entry_date: "2026-03-15".into(),
+            entry_date: parse_date("2026-03-15").unwrap(),
             description: description.into(),
             reference: None,
-            lines: vec![line(0, 100, 0), line(1, 0, 100)],
+            lines: vec![
+                PostJournalLine::debit(accounts[0].id, amount),
+                PostJournalLine::credit(accounts[1].id, amount),
+            ],
         };
         let posted = post_entry(conn, &entry).unwrap();
 

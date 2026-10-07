@@ -21,6 +21,8 @@ serde_json = { workspace = true }
 oikonomia-core = { workspace = true }
 oikonomia-update = { path = "../../../crates/oikonomia-update" }
 macos-dock-icon = { path = "../../../crates/macos-dock-icon" }
+# Only to name `Connection`, the type core hands out for an unlocked vault.
+# The workspace entry core builds with, so no crate or feature is added.
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
@@ -36,6 +38,18 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 oikonomia-test-support = { workspace = true }
+
+# The mock runtime, to invoke a command through the real IPC path in a test.
+# The feature adds no crate, and only test builds of this package enable it.
+#
+# Not on Windows. A test executable carries no application manifest, and with
+# the mock runtime linked in it imports webview and common-controls entry
+# points that then do not resolve: the binary fails to start at all
+# (0xc0000139, STATUS_ENTRYPOINT_NOT_FOUND) and every desktop test is lost.
+# What these tests cover is serde over the IPC payload, which is the same on
+# every platform, so Linux and macOS cover it.
+[target.'cfg(not(windows))'.dev-dependencies]
+tauri = { version = "2.11.2", features = ["test"] }
 
 # Windows and Linux start a new process every time the app is launched. A
 # second launch must surface the first one's window (which may be hidden in

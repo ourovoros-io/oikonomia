@@ -9,9 +9,11 @@
 //! The crate also holds the release-side half of the same contract
 //! ([`assemble_manifest`], the release-set functions, the artifact size
 //! check and the `assemble_feed` binary). The client's tests parse what the
-//! release side writes, and the release side checks signatures, digests and
-//! sizes before publication with the functions and the limit the client
-//! uses, so the two cannot drift apart.
+//! release side writes, and the release side checks a feed, its signatures,
+//! digests and sizes before publication with the functions and the limit
+//! the client uses ([`verify_signature`], [`sha256_hex`],
+//! [`check_feed_as_client`] and [`check_artifact_file`]), so the two cannot
+//! drift apart.
 //!
 //! # Trust root
 //!
@@ -49,7 +51,8 @@
 //!    copy the system package manager owns,
 //!    [`CheckOutcome::AvailableManually`] with the version and notes only.
 //!
-//! The check downloads no artifact and writes no file.
+//! The check downloads no artifact and writes no file. A step that fails
+//! ends it as [`CheckOutcome::Failed`], which holds the [`UpdateError`].
 //!
 //! # Install
 //!
@@ -57,21 +60,40 @@
 //! order, stopping at the first that fails:
 //!
 //! 1. Creates the cache directory and, on Unix, sets its mode to `0700`.
-//! 2. Removes the files earlier installs left in it.
-//! 3. Checks the artifact URL against the allow-list again and downloads the
+//! 2. Removes the files earlier installs left in it, except one under the
+//!    name this artifact will have: the digest from the signed feed, then
+//!    the artifact's file name.
+//! 3. Looks for a file under that name, which an earlier attempt at the same
+//!    release may have left. It is read only if it is a regular file, not a
+//!    link, and on Unix one that belongs to the owner of the cache directory
+//!    and grants nothing to group or others. When its
+//!    bytes pass the checks of steps 5 and 6, the install continues at
+//!    step 8 with that file and downloads nothing. A regular file there that
+//!    is longer than [`MAX_ARTIFACT_BYTES`] cannot be the artifact of an
+//!    install this copy would make: the install fails as
+//!    [`UpdateError::ArtifactTooLarge`] and the file is removed.
+//! 4. Checks the artifact URL against the allow-list again and downloads the
 //!    artifact into memory.
-//! 4. Compares the SHA-256 of the bytes with the one in the signed feed.
-//! 5. Verifies the artifact's minisign signature over the same bytes.
-//! 6. Writes the bytes to a new file in the cache directory, named after the
-//!    digest and the artifact. The file is created with `create_new`, so an
-//!    existing path or a planted symbolic link is refused, and on Unix with
-//!    mode `0600`.
-//! 7. Hands the path to the caller's [`ArtifactInstaller`].
-//! 8. Deletes the file, unless the installer reports a separate installer
+//! 5. Compares the SHA-256 of the bytes with the one in the signed feed.
+//! 6. Verifies the artifact's minisign signature over the same bytes.
+//! 7. Writes the bytes to a new file in the cache directory, created with
+//!    `create_new` and, on Unix, mode `0600`, and renames it to the
+//!    artifact's name. The rename replaces a file or a link that step 3
+//!    found and did not use: a planted symbolic link is removed, never
+//!    written through. A directory at that name is not replaced, and the
+//!    install fails here.
+//! 8. Hands the path to the caller's [`ArtifactInstaller`].
+//! 9. Deletes the file, unless the installer reports a separate installer
 //!    process that is still running from it.
 //!
 //! After a failure at any step the artifact, if it was written at all, is
-//! removed.
+//! removed, and the install ends as [`InstallOutcome::Failed`], which holds
+//! the [`UpdateError`].
+//!
+//! Neither function logs its outcome. The caller has the error and decides
+//! what to record of it. The one thing logged here is the transport error of
+//! a request that got no response: [`UpdateError::Network`] does not carry
+//! it, so it would be lost where it is dropped.
 //!
 //! # Host allow-list
 //!
@@ -124,8 +146,11 @@
 //!
 //! Each install starts by removing the files earlier ones left, so the
 //! directory normally holds only the artifact of the install in flight, or
-//! the one a still-running installer was started from. Nothing in it is ever
-//! read back as trusted input: each install downloads and verifies again.
+//! the one a still-running installer was started from. Nothing in it is
+//! trusted for being there. The one file ever read back is the one under the
+//! name of the artifact being installed, and its bytes are used only after
+//! the digest and signature checks a download gets; a retry of the same
+//! release therefore neither fails on that file nor downloads it again.
 //!
 //! # State
 //!
@@ -133,7 +158,10 @@
 //! available (to install, or only to report), installing or failed. The
 //! desktop keeps it behind a mutex and
 //! never holds that mutex across a request: it begins a step, releases the
-//! machine, does the work, and finishes the step.
+//! machine, does the work, and finishes the step. Of a failure the machine
+//! keeps the error's code, and [`UpdateStatus::Failed`] carries it to the
+//! webview, which words it; a step whose task died is abandoned and has
+//! none.
 //!
 //! # Not defended
 //!
@@ -173,9 +201,9 @@ mod version;
 pub use crate::artifact_limit::{ArtifactSizeError, MAX_ARTIFACT_BYTES, check_artifact_file};
 pub use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
-    VerifiedOffer, install_offer, perform_check,
+    VerifiedOffer, check_feed_as_client, install_offer, perform_check,
 };
-pub use crate::error::{Result, UpdateError};
+pub use crate::error::{FeedRefusal, InstallStep, Result, UpdateError};
 pub use crate::feed::{FeedArtifact, assemble_manifest};
 pub use crate::machine::{CheckStart, UpdateMachine};
 pub use crate::release_set::{

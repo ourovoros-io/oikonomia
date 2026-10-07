@@ -86,7 +86,6 @@ Security reports: see [SECURITY.md](SECURITY.md).
 - Node 22.22.2 or newer on 22.x, 24.15 or newer, or 26 or newer
 - [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode CLT on macOS; the WebKitGTK packages on Linux; the MSVC build tools on Windows)
 - On Windows, [Strawberry Perl](https://strawberryperl.com/) ahead of any other `perl` on `PATH`: the vault's SQLCipher builds OpenSSL from source, and the `perl` that ships with Git Bash lacks the modules that build needs
-- Tauri CLI: `cargo install tauri-cli --version "^2" --locked`
 - cargo-deny: `cargo install cargo-deny --locked`
 
 ## Develop
@@ -94,22 +93,28 @@ Security reports: see [SECURITY.md](SECURITY.md).
 The Tauri shell crate needs `web/dist` to exist at compile time, so run
 `cd web && npm ci && npm run build` once (or `mkdir -p web/dist`) before any
 workspace-wide `cargo` command such as `cargo clippy --workspace` or
-`cargo test --workspace`.
+`cargo test --workspace`. Every `cargo` command takes `--locked`, as CI's
+do, so a build never changes `Cargo.lock` behind your back.
+
+The Tauri CLI is not a prerequisite. It is an exact devDependency in
+`web/package.json`, and `make app` and `make bundle` run that copy; a
+globally installed `cargo tauri` may be another version.
 
 ```bash
-# Full desktop app (from the repo root; `make app` does the same)
-cargo tauri dev
+# Full desktop app in dev mode, from the repo root. Runs
+# `node web/node_modules/@tauri-apps/cli/tauri.js dev -- --locked`.
+make app
 
 # Core library tests (domain + vault + ledger + reports + documents)
-cargo test -p oikonomia-core        # or: make test
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test -p oikonomia-core --locked        # or: make test
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
 # Dependency policy: network crates are banned everywhere except the signed
 # update path (crates/oikonomia-update)
 cargo deny check
 
 # Frontend
-cd web && npm install && npm run dev
+cd web && npm ci && npm run dev
 cd web && npm test        # vitest: UI and library tests
 cd web && npm run build
 
@@ -197,7 +202,8 @@ the author's model card declares as CC BY-SA 4.0; see `apps/desktop/src-tauri/re
 |------|------|
 | `crates/oikonomia-core` | Domain, vault, ledger, reports |
 | `crates/oikonomia-update` | Signed update check (network isolated from core) |
-| `crates/macos-dock-icon` | Sets the macOS Dock icon for `cargo tauri dev` |
+| `crates/macos-dock-icon` | Sets the macOS Dock icon in dev mode (`make app`) |
+| `crates/oikonomia-test-support` | Test-only macros shared by the crates |
 | `apps/desktop/src-tauri` | Tauri shell + IPC |
 | `web` | React UI |
 | `docs` | Design overview (`DESIGN.md`), release runbook, brand assets |

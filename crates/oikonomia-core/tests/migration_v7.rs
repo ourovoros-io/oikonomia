@@ -4,7 +4,7 @@
 
 mod common;
 
-use oikonomia_core::db::migrate;
+use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 
 fn schema_version(conn: &rusqlite::Connection) -> i64 {
     conn.query_row(
@@ -38,9 +38,9 @@ fn v6_vault_gains_recurring_templates() {
         .expect("mark v6");
     assert!(!table_exists(conn, "recurring_templates"));
 
-    migrate(conn).expect("v6 -> v7");
+    migrate(conn).expect("v6 -> current");
 
-    assert_eq!(schema_version(conn), 7);
+    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
     assert!(table_exists(conn, "recurring_templates"));
 
     let indexed: i64 = conn

@@ -13,8 +13,8 @@ use oikonomia_core::default_accounts::default_accounts_for_entity;
 use oikonomia_core::documents::parse_invoice_text;
 use oikonomia_core::domain::{Account, AccountId, ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryKind, create_entity, get_entry,
-    list_accounts, list_entries, post_simple_entry, replace_simple_entry,
+    CreateEntity, EntryFilter, PostSimpleEntry, PostSimpleEntryRequest, SimpleEntryKind,
+    create_entity, get_entry, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
     set_account_opening_balance, void_entry,
 };
 use oikonomia_core::prefs::Locale;
@@ -303,8 +303,14 @@ fn the_opening_balance_description_is_written_in_the_given_language() {
         let accounts = list_accounts(conn, entity).expect("accounts");
         let checking = account_by_code(&accounts, "1010");
 
-        let posted = set_account_opening_balance(conn, checking.id, 10_000, "2026-01-01", locale)
-            .expect("opening balance");
+        let posted = set_account_opening_balance(
+            conn,
+            checking.id,
+            10_000,
+            common::date("2026-01-01"),
+            locale,
+        )
+        .expect("opening balance");
 
         assert_eq!(posted.entry.description, description);
     }
@@ -327,7 +333,7 @@ fn a_void_is_written_in_the_given_language() {
 
         let posted = post_simple_entry(
             conn,
-            &PostSimpleEntry {
+            &common::strict(PostSimpleEntryRequest {
                 entity_id: entity,
                 kind: SimpleEntryKind::Expense,
                 bill_status: None,
@@ -340,7 +346,7 @@ fn a_void_is_written_in_the_given_language() {
                 payable_account_id: None,
                 from_account_id: None,
                 to_account_id: None,
-            },
+            }),
         )
         .expect("post");
 
@@ -382,8 +388,14 @@ fn changing_the_language_renames_nothing_and_only_new_text_follows_it() {
     // and quotes the stored (Greek) account name as it is.
     let greek_accounts = list_accounts(conn, greek).expect("accounts");
     let checking = account_by_code(&greek_accounts, "1010");
-    let posted = set_account_opening_balance(conn, checking.id, 5_000, "2026-01-01", Locale::En)
-        .expect("opening balance");
+    let posted = set_account_opening_balance(
+        conn,
+        checking.id,
+        5_000,
+        common::date("2026-01-01"),
+        Locale::En,
+    )
+    .expect("opening balance");
     assert_eq!(
         posted.entry.description,
         "Opening balance — Λογαριασμός όψεως"
@@ -472,7 +484,7 @@ fn the_void_inside_an_edit_is_written_in_the_given_language() {
         let entity = new_entity(conn, "Book", ChartTemplate::Personal, locale);
         let accounts = list_accounts(conn, entity).expect("accounts");
 
-        let expense = PostSimpleEntry {
+        let expense = common::strict(PostSimpleEntryRequest {
             entity_id: entity,
             kind: SimpleEntryKind::Expense,
             bill_status: None,
@@ -485,7 +497,7 @@ fn the_void_inside_an_edit_is_written_in_the_given_language() {
             payable_account_id: None,
             from_account_id: None,
             to_account_id: None,
-        };
+        });
         let original = post_simple_entry(conn, &expense).expect("post");
 
         let corrected = PostSimpleEntry {

@@ -11,10 +11,15 @@
 //!   register of one account.
 //! - `balance`: the sign of a balance, the active-entry rule, and checked
 //!   arithmetic on amounts.
+//! - `calendar`: arithmetic on calendar months, shared by the reports and the
+//!   recurring templates.
 //! - `reports`: trial balance, profit and loss, balance sheet, dashboard.
 //! - `cash_flow`: income and expenses over time.
 //! - `recurring`: entry templates with a schedule.
 //! - `settings`: settings kept in the vault.
+//! - `simple_entry`: the kinds of simple entry and the accounts each needs.
+//! - `wire`: the requests the UI sends, in their JSON shape, and their
+//!   conversion into the strict inputs the functions here take.
 //!
 //! # Invariants
 //!
@@ -24,11 +29,12 @@
 //!   is computed in floating point.
 //! - **A posted entry balances.** It has at least two lines, each line is a
 //!   debit or a credit and never both, and its debits add up to its credits.
-//!   One function writes entries and checks this first; the schema repeats
-//!   the rule for a single line as a `CHECK`.
+//!   A line holds one amount and one side, so the types rule out a line on
+//!   both; one function writes entries and checks the rest first, and the
+//!   schema repeats the rule for a single line as a `CHECK`.
 //! - **Accounting rules are decided here, not in the UI.** The simple entry
-//!   form sends an amount and accounts named by role, and
-//!   [`post_simple_entry`] decides which is debited.
+//!   form sends an amount and accounts named by the part they play, and
+//!   [`SimpleEntryAccounts`] decides which is debited.
 //! - **A write of several rows is atomic.** See [Transactions](#transactions).
 //! - **A report filters entries inside its subquery**, never in the `ON`
 //!   clause of a `LEFT JOIN`, where the filter would have no effect.
@@ -41,6 +47,22 @@
 //!   The reports are the gap: they select accounts by type and so never map
 //!   an account whose stored type is unknown. The `reports` module doc says
 //!   what they rely on instead.
+//!
+//! # Inputs
+//!
+//! The functions here take typed values: a [`time::Date`], never date text,
+//! and the strict inputs ([`PostJournal`] and its [`PostJournalLine`]s,
+//! [`PostSimpleEntry`],
+//! [`CreateRecurringTemplate`], [`UpdateRecurringTemplate`]). Text is parsed
+//! once, where it enters. A request the UI sends as one JSON object arrives
+//! in its wire form ([`PostJournalRequest`], [`PostSimpleEntryRequest`] and
+//! the two template requests) and converts with `TryFrom`; a date sent as a
+//! bare argument arrives as a [`DateText`](crate::util::DateText). Both
+//! report a malformed date as
+//! [`ValidationError::InvalidDate`](crate::error::ValidationError::InvalidDate).
+//!
+//! [`CreateEntity`] is the one input without a twin: it is the wire shape
+//! itself, and [`create_entity`] parses its currency text and month number.
 //!
 //! # Active entries and voids
 //!
@@ -71,8 +93,8 @@
 //! commits it, so a failure part-way leaves nothing behind. Functions take a
 //! shared `&Connection`, so the transaction is rusqlite's
 //! `unchecked_transaction`. Opening a second one inside it fails at run
-//! time; rusqlite documents that it does and leaves the error unspecified
-//! (<https://docs.rs/rusqlite/0.40.2/rusqlite/struct.Connection.html#method.unchecked_transaction>).
+//! time; rusqlite documents that it does and leaves the error unspecified:
+//! <https://docs.rs/rusqlite/0.40.2/rusqlite/struct.Connection.html#method.unchecked_transaction>.
 //! Such a function can therefore not be called from inside another
 //! transaction.
 //!
@@ -93,44 +115,48 @@
 //! Totals that `SQLite` adds up with `SUM` are covered too, by a different
 //! route: `SUM` over integers raises an error on overflow instead of wrapping
 //! (<https://www.sqlite.org/lang_aggfunc.html#sumunc>), so the query fails.
-//! That failure is reported as [`Error::Io`](crate::error::Error::Io), not as
+//! That failure is reported as [`Error::Database`](crate::error::Error::Database), not as
 //! `MoneyOverflow`.
 
 mod accounts;
 mod balance;
+mod calendar;
 mod cash_flow;
 mod entities;
 mod journals;
 mod recurring;
 mod reports;
 mod settings;
+mod simple_entry;
+mod wire;
 
 pub use accounts::{
     CreateAccount, UpdateAccount, archive_account, create_account, get_account, list_accounts,
     update_account,
 };
+pub(crate) use balance::ACTIVE_ENTRY_PREDICATE;
 pub use balance::{account_balance, account_balance_as_of, normal_balance};
 pub use cash_flow::{
     CashFlowBucket, CashFlowGranularity, CashFlowSeries, DAILY_BUCKET_MAX_DAYS, activity_window,
-    cash_flow_series,
+    cash_flow_series, cash_flow_series_for_window,
 };
+pub(crate) use entities::ensure_writable_entity;
 pub use entities::{
     CreateEntity, archive_entity, count_entities, create_entity, delete_entity, get_entity,
     list_entities, update_entity,
 };
 pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{
-    CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine,
-    SimpleBillStatus, SimpleEntryKind, VoidResult, account_register, get_entry, list_entries,
-    post_entry, post_simple_entry, replace_simple_entry, set_account_opening_balance,
-    set_entry_hidden, void_entry,
+    EntryFilter, PostJournal, PostJournalLine, PostSimpleEntry, PostedEntryView, RegisterLine,
+    VoidResult, account_register, get_entry, list_entries, post_entry, post_simple_entry,
+    replace_simple_entry, set_account_opening_balance, set_entry_hidden, void_entry,
 };
 pub use recurring::{
-    CreateRecurringTemplate, RecurringCadence, RecurringPostResult, RecurringTemplateView,
-    UpdateRecurringTemplate, advance_next_date, create_recurring_template,
-    delete_recurring_template, get_recurring_template, list_recurring_templates,
-    list_recurring_templates_as_of, post_recurring_template, template_is_due,
-    update_recurring_template,
+    CreateRecurringTemplate, DayOfMonth, RecurringCadence, RecurringPostResult, RecurringSchedule,
+    RecurringTemplateFields, RecurringTemplateView, UpdateRecurringTemplate, advance_next_date,
+    create_recurring_template, delete_recurring_template, get_recurring_template,
+    list_recurring_templates, list_recurring_templates_as_of, post_recurring_template,
+    template_is_due, update_recurring_template,
 };
 pub use reports::{
     BalanceSheet, BalanceSheetSection, DashboardSummary, PnL, ReportLine, SyntheticLine,
@@ -138,3 +164,10 @@ pub use reports::{
     profit_and_loss_export, trial_balance,
 };
 pub use settings::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs, set_lock_timeout_secs};
+pub use simple_entry::{
+    SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
+};
+pub use wire::{
+    CreateRecurringTemplateRequest, JournalLineRequest, PostJournalRequest, PostSimpleEntryRequest,
+    UpdateRecurringTemplateRequest,
+};

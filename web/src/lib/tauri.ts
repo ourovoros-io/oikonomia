@@ -6,6 +6,7 @@ import {
   readDevUnlockUpdatePreview,
   stubUpdateCheckResult,
   type AvailableUpdate,
+  type FailedUpdate,
   type ParsedIpcUpdate,
 } from './updateCheck'
 
@@ -190,11 +191,12 @@ export async function updateCheck(): Promise<ParsedIpcUpdate> {
  * so Checking / Failed / Up-to-date cannot request an install.
  *
  * The webview passes no URL, endpoint, or pubkey. On success Rust restarts
- * the app. On `{ kind: "failed" }` the UI shows Failed and unlock stays usable.
+ * the app. On `{ kind: "failed" }` the UI shows Failed and unlock stays usable;
+ * the result keeps the code Rust gave for the failure, when it gave one.
  */
 export async function updateInstall(
   available: AvailableUpdate,
-): Promise<{ kind: 'failed' } | undefined> {
+): Promise<FailedUpdate | undefined> {
   if (!isAvailableUpdate(available)) {
     return undefined
   }
@@ -204,7 +206,7 @@ export async function updateInstall(
   try {
     const raw = await invoke<unknown>('update_install')
     const parsed = parseUpdateCheckResult(raw)
-    if (parsed.kind === 'failed') return { kind: 'failed' }
+    if (parsed.kind === 'failed') return parsed
     return undefined
   } catch (err) {
     const cmd = asCommandError(err)

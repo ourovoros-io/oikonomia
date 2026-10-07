@@ -5,12 +5,18 @@
 //! return the crate's [`Result`] and report such a value with
 //! [`corrupt_column`], so it reaches the UI as `vault_corrupt`. Passing the
 //! error through `rusqlite::Error` instead would flatten it to text that the
-//! query's caller can only report as [`Error::Io`].
+//! query's caller can only report as [`Error::Database`].
 //!
-//! A mapper is used from a rusqlite row closure as `|row| Ok(map_thing(row))`:
-//! the outer `rusqlite::Result` carries driver failures and the inner one
-//! carries the mapper's verdict on the row. [`collect_rows`] unwraps both for
-//! a query that returns many rows.
+//! A mapper is used from a rusqlite row closure as
+//! `|row| Ok(map_thing(operation, row))`: the outer `rusqlite::Result`
+//! carries driver failures and the inner one carries the mapper's verdict on
+//! the row. [`collect_rows`] unwraps both for a query that returns many rows.
+//!
+//! `operation` is what the query is for ("list accounts", "read account"),
+//! the same words the caller gives when it prepares the statement and
+//! collects the rows. One mapper serves several queries, so it takes the
+//! operation as its first parameter and hands it to [`read_column`]; a
+//! database error then says what core was doing whichever step raised it.
 //!
 //! Damage shows up at two levels, and both are `vault_corrupt`:
 //!
@@ -20,7 +26,7 @@
 //! - the value reads, but does not parse (text that is not a date). The
 //!   mapper reports it with [`corrupt_column`] under `table.column`.
 
-use crate::error::{Error, Result};
+use crate::error::{DatabaseContext, Error, Result, VaultCorruption};
 use crate::util::{parse_date, parse_uuid};
 use rusqlite::Row;
 use rusqlite::types::FromSql;
@@ -34,18 +40,31 @@ use uuid::Uuid;
 /// calls this, the column's name in the query when [`read_column`] does.
 /// `detail` says what is wrong with the value.
 pub(crate) fn corrupt_column(column: &str, detail: impl Display) -> Error {
-    Error::VaultCorrupt(format!("{column}: {detail}"))
+    Error::VaultCorrupt(VaultCorruption::Column {
+        column: column.to_owned(),
+        detail: detail.to_string(),
+    })
 }
 
 /// Reads column `index` of `row` as `T`.
+///
+/// `operation` names what the query is for, in the words its caller gave
+/// when it prepared the statement and collects its rows with. A row mapper
+/// takes it as its first parameter and hands it on, so every error of one
+/// query says the same thing about what core was doing.
 ///
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`] when the stored value cannot be a `T`: it has
 ///   another storage class, or is out of `T`'s range.
-/// - [`Error::Io`] for any other driver failure, such as an `index` the query
-///   does not select.
-pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> {
+/// - [`Error::Database`], carrying `operation`, for any other driver
+///   failure, which is an `index` the query does not select: a mistake in
+///   the query, and nothing a stored value can cause.
+pub(crate) fn read_column<T: FromSql>(
+    operation: &'static str,
+    row: &Row<'_>,
+    index: usize,
+) -> Result<T> {
     row.get(index).map_err(|err| match err {
         rusqlite::Error::InvalidColumnType(..)
         | rusqlite::Error::IntegralValueOutOfRange(..)
@@ -59,33 +78,45 @@ pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> 
                 .map_or_else(|_| format!("column {index}"), str::to_owned);
             corrupt_column(&column, &err)
         }
-        other => Error::Io(other.to_string()),
+        other => Error::database(operation, other),
     })
 }
 
-/// Collects the rows of a query whose row closure is `|row| Ok(mapper(row))`.
+/// Collects the rows of a query whose row closure is `|row| Ok(mapper(operation, row))`.
 ///
 /// Stops at the first row that fails, so a damaged row fails the whole query
 /// instead of being left out of the result.
 ///
+/// `operation` names what the query is for, in the words the caller gave
+/// when it prepared the statement. A query does its work as its rows are
+/// stepped, so most of its failures (a `SUM` that overflows, a page that
+/// cannot be read) surface here and not at the prepare.
+///
 /// # Errors
 ///
-/// - [`Error::Io`] when the driver fails to step to a row.
+/// - [`Error::Database`], carrying `operation`, when the driver fails to
+///   step to a row.
 /// - The mapper's own error for the first row it refuses.
 pub(crate) fn collect_rows<T>(
+    operation: &'static str,
     rows: impl Iterator<Item = rusqlite::Result<Result<T>>>,
 ) -> Result<Vec<T>> {
-    rows.map(|row| row.map_err(|err| Error::Io(err.to_string()))?)
-        .collect()
+    rows.map(|row| row.database(operation)?).collect()
 }
 
-/// Parses an id stored as text in `column`.
+/// Parses an id stored as text in `column` into the id type `T`.
+///
+/// `T` is one of the record id types of [`crate::domain`]. This is how an id
+/// leaves a stored row: their `FromStr` would report bad text as a caller
+/// mistake, and here the application wrote the text itself.
 ///
 /// # Errors
 ///
 /// [`Error::VaultCorrupt`] naming `column` when `text` is not a UUID.
-pub(crate) fn stored_uuid(column: &str, text: &str) -> Result<Uuid> {
-    parse_uuid(text).map_err(|_| corrupt_column(column, format_args!("not an id: {text}")))
+pub(crate) fn stored_id<T: From<Uuid>>(column: &str, text: &str) -> Result<T> {
+    parse_uuid(text)
+        .map(T::from)
+        .map_err(|_| corrupt_column(column, format_args!("not an id: {text}")))
 }
 
 /// Parses a `YYYY-MM-DD` date stored as text in `column`.
@@ -100,27 +131,107 @@ pub(crate) fn stored_date(column: &str, text: &str) -> Result<Date> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::AccountId;
 
     #[test]
     fn a_damaged_value_is_reported_as_a_corrupt_vault_naming_the_column() {
         assert_eq!(
-            stored_uuid("accounts.id", "nope"),
-            Err(Error::VaultCorrupt("accounts.id: not an id: nope".into()))
+            stored_id::<AccountId>("accounts.id", "nope"),
+            Err(corrupt_column("accounts.id", "not an id: nope"))
         );
         assert_eq!(
             stored_date("journal_entries.entry_date", "2026-13-01"),
-            Err(Error::VaultCorrupt(
-                "journal_entries.entry_date: not a date: 2026-13-01".into()
+            Err(corrupt_column(
+                "journal_entries.entry_date",
+                "not a date: 2026-13-01"
             ))
         );
+        assert_eq!(
+            corrupt_column("a.b", "bad"),
+            Error::VaultCorrupt(VaultCorruption::Column {
+                column: "a.b".into(),
+                detail: "bad".into(),
+            })
+        );
         assert_eq!(corrupt_column("a.b", "bad").code(), "vault_corrupt");
+    }
+
+    #[test]
+    fn a_query_that_fails_while_its_rows_are_read_names_the_callers_operation() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // `abs` of the smallest integer overflows, which `SQLite` reports
+        // when the row is stepped to and not when the statement is prepared.
+        let mut statement = conn
+            .prepare("SELECT abs(-9223372036854775807 - 1)")
+            .unwrap();
+        let rows = statement
+            .query_map([], |row| {
+                Ok(read_column::<i64>("add up the test amounts", row, 0))
+            })
+            .unwrap();
+
+        let failed = collect_rows("add up the test amounts", rows);
+
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::Database { operation, .. }) if *operation == "add up the test amounts"
+            ),
+            "{failed:?}"
+        );
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_storage_class_is_corrupt_under_its_column_name() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut statement = conn.prepare("SELECT 'seven' AS amount_minor").unwrap();
+        let rows = statement
+            .query_map([], |row| {
+                Ok(read_column::<i64>("read the test amount", row, 0))
+            })
+            .unwrap();
+
+        let failed = collect_rows("read the test amount", rows);
+
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::VaultCorrupt(VaultCorruption::Column { column, .. }))
+                    if column == "amount_minor"
+            ),
+            "{failed:?}"
+        );
+    }
+
+    /// A column the query does not select is a mistake in the query. It is
+    /// reported under what the query was for, not under a fixed phrase that
+    /// is the same for every query.
+    #[test]
+    fn a_column_the_query_does_not_select_names_the_callers_operation() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let mut statement = conn.prepare("SELECT 7 AS amount_minor").unwrap();
+        let rows = statement
+            .query_map([], |row| {
+                Ok(read_column::<i64>("read the test amount", row, 1))
+            })
+            .unwrap();
+
+        let failed = collect_rows("collect the test amounts", rows);
+
+        assert!(
+            matches!(
+                &failed,
+                Err(Error::Database { operation, .. }) if *operation == "read the test amount"
+            ),
+            "{failed:?}"
+        );
     }
 
     #[test]
     fn a_sound_value_parses() {
         let id = "22222222-2222-4222-8222-222222222222";
         assert_eq!(
-            stored_uuid("accounts.id", id).map(|uuid| uuid.to_string()),
+            stored_id::<AccountId>("accounts.id", id).map(|account| account.to_string()),
             Ok(id.to_owned())
         );
         assert_eq!(

@@ -148,7 +148,7 @@ pub fn default_accounts(template: ChartTemplate, accounts: &[Account]) -> Defaul
 ///   `entity_id`.
 /// - [`Error::VaultCorrupt`](crate::Error::VaultCorrupt) when the entity or
 ///   one of its accounts is stored with a value that cannot be read.
-/// - [`Error::Io`](crate::Error::Io) when the database query fails.
+/// - [`Error::Database`](crate::Error::Database) when the database query fails.
 pub fn default_accounts_for_entity(
     conn: &Connection,
     entity_id: EntityId,
@@ -206,12 +206,12 @@ fn first_of_type_except(
 /// word with the English one, so a selection that still reads names fails.
 #[cfg(test)]
 pub(crate) fn seeded_chart_for_tests(template: ChartTemplate, rename: bool) -> Vec<Account> {
-    let entity_id = EntityId::new();
+    let entity_id = EntityId::generate();
 
     crate::coa::template_accounts(template, crate::prefs::Locale::En)
         .into_iter()
         .map(|seed| Account {
-            id: AccountId::new(),
+            id: AccountId::generate(),
             entity_id,
             code: seed.code.to_owned(),
             name: if rename {

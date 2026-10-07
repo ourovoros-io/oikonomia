@@ -1,0 +1,1140 @@
+//! The requests the UI sends and the views it reads, in the flat shape they
+//! have as JSON.
+//!
+//! # Two types per shape
+//!
+//! A request crosses IPC as JSON whose shape the web UI mirrors by hand, and
+//! that shape is loose on purpose: a date is text, and a form is sent as far
+//! as the user has filled it in, so an account may be missing or a bill may
+//! not say whether it is paid. Inside the crate the same request is a strict
+//! type that cannot say any of that. Each request therefore exists twice:
+//!
+//! | On the wire | Inside the crate |
+//! |-------------|------------------|
+//! | [`PostJournalRequest`] | [`PostJournal`] |
+//! | [`JournalLineRequest`] | [`PostJournalLine`] |
+//! | [`PostSimpleEntryRequest`] | [`PostSimpleEntry`] |
+//! | [`CreateRecurringTemplateRequest`] | [`CreateRecurringTemplate`] |
+//! | [`UpdateRecurringTemplateRequest`] | [`UpdateRecurringTemplate`] |
+//!
+//! The wire type derives the serde traits and nothing else is done to it.
+//! One `TryFrom` turns it into the strict type, and the ledger functions take
+//! only the strict type.
+//!
+//! A view goes the other way. [`RecurringTemplateView`] is strict in memory
+//! and serializes through a flat twin that stays inside the crate, so the UI
+//! keeps reading the kind, the bill status and five optional accounts side
+//! by side.
+//!
+//! The strict types are strict about what this module converts: dates, the
+//! accounts of a simple entry, the side of a line, and the schedule of a
+//! template, whose cadence and day of the month become one
+//! [`RecurringSchedule`]. An amount is still an `i64` that must be positive
+//! and a template's name still text that must not be blank, so the ledger
+//! functions check those again.
+//!
+//! The test `tests/wire_json.rs` pins the JSON of every type here.
+//!
+//! # Why the wire types stay loose
+//!
+//! A value the JSON layer refuses never reaches this crate. The desktop
+//! shell reports such a failure as text, which the UI can only show as an
+//! unknown error. A date that is not a date must reach the user as
+//! `invalid_date` and a missing account as `account_required`, so the wire
+//! types accept both and the conversion reports them as a
+//! [`ValidationError`]. Types that only leave the crate, the views, carry a
+//! [`time::Date`] and serialize it with [`crate::util::serde_date`], because
+//! nothing can be wrong with a value core wrote itself.
+//!
+//! # Order of the checks
+//!
+//! A conversion looks at the request alone and so runs before anything that
+//! needs the database. A request with two faults, a missing account and an
+//! account that does not exist, is reported for the missing one.
+//!
+//! Within a conversion the order is the one the ledger had when it checked
+//! everything itself. A simple entry: the amount, the accounts its kind
+//! needs with the debited one first, then the date. A template: the name,
+//! the amount, the day of the month, the date, then the accounts. A journal
+//! entry: the date, then its lines.
+
+use crate::domain::{AccountId, EntityId, RecurringTemplateId, Side};
+use crate::error::{Error, Result, ValidationError};
+use crate::ledger::journals::{PostJournal, PostJournalLine, PostSimpleEntry};
+use crate::ledger::recurring::{
+    CreateRecurringTemplate, RecurringCadence, RecurringSchedule, RecurringTemplateFields,
+    RecurringTemplateView, UpdateRecurringTemplate, check_template_values,
+};
+use crate::ledger::simple_entry::{
+    SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
+};
+use crate::money::Money;
+use crate::util::parse_date;
+use serde::{Deserialize, Serialize};
+use time::Date;
+
+/// The wire form of [`PostJournalLine`]: one line in two columns.
+///
+/// A postable line has an amount greater than zero in one of
+/// `debit_minor` and `credit_minor` and zero in the other.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JournalLineRequest {
+    /// Account the line posts to.
+    pub account_id: AccountId,
+    /// Amount debited to the account, in minor units; 0 on a credit line.
+    pub debit_minor: i64,
+    /// Amount credited to the account, in minor units; 0 on a debit line.
+    pub credit_minor: i64,
+    /// Note on the line.
+    pub memo: Option<String>,
+}
+
+impl TryFrom<JournalLineRequest> for PostJournalLine {
+    type Error = Error;
+
+    /// Reads the side and the amount of `request` from its two columns.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NegativeMoney`] when either amount is negative.
+    /// - [`Error::InvalidLineAmounts`] when both amounts are zero or both
+    ///   are greater than zero.
+    fn try_from(request: JournalLineRequest) -> Result<Self> {
+        let debit = Money::from_minor(request.debit_minor)?;
+        let credit = Money::from_minor(request.credit_minor)?;
+        let (side, amount) = Side::from_columns(debit, credit)?;
+
+        Ok(Self {
+            account_id: request.account_id,
+            amount,
+            side,
+            memo: request.memo,
+        })
+    }
+}
+
+/// The wire form of [`PostJournal`]: a whole entry, with its lines spelled
+/// out in two columns and its date as text.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostJournalRequest {
+    /// Entity whose books the entry goes into.
+    pub entity_id: EntityId,
+    /// Accounting date as `YYYY-MM-DD`.
+    pub entry_date: String,
+    /// What the entry is for.
+    pub description: String,
+    /// The user's own reference for the entry, such as an invoice number.
+    pub reference: Option<String>,
+    /// The lines of the entry.
+    pub lines: Vec<JournalLineRequest>,
+}
+
+impl TryFrom<PostJournalRequest> for PostJournal {
+    type Error = Error;
+
+    /// Parses the date of `request` and reads each line from its two
+    /// columns.
+    ///
+    /// # Errors
+    ///
+    /// The first of these that applies:
+    ///
+    /// - [`ValidationError::InvalidDate`] when `entry_date` is not a
+    ///   `YYYY-MM-DD` date.
+    /// - [`Error::NegativeMoney`] when an amount of any line is negative.
+    /// - [`Error::TooFewLines`] for fewer than two lines.
+    /// - [`Error::InvalidLineAmounts`] for a line whose two amounts are both
+    ///   zero or both greater than zero.
+    fn try_from(request: PostJournalRequest) -> Result<Self> {
+        let entry_date = parse_date(&request.entry_date)?;
+
+        // A negative amount anywhere is reported before the number of lines,
+        // and the number of lines before a line with both sides or neither:
+        // the order these had when one function checked them all.
+        let columns = request
+            .lines
+            .iter()
+            .map(|line| {
+                let debit = Money::from_minor(line.debit_minor)?;
+                let credit = Money::from_minor(line.credit_minor)?;
+                Ok((debit, credit))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if columns.len() < 2 {
+            return Err(Error::TooFewLines);
+        }
+        let lines = request
+            .lines
+            .into_iter()
+            .zip(columns)
+            .map(|(line, (debit, credit))| {
+                let (side, amount) = Side::from_columns(debit, credit)?;
+                Ok(PostJournalLine {
+                    account_id: line.account_id,
+                    amount,
+                    side,
+                    memo: line.memo,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Self {
+            entity_id: request.entity_id,
+            entry_date,
+            description: request.description,
+            reference: request.reference,
+            lines,
+        })
+    }
+}
+
+/// The wire form of [`PostSimpleEntry`]: the simple entry form as the user
+/// has filled it in so far.
+///
+/// It is also the shape of a suggestion the crate hands to the UI, such as a
+/// row of a bank statement before the user has picked its accounts, which is
+/// why every account is optional here.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostSimpleEntryRequest {
+    /// Entity whose books the entry goes into.
+    pub entity_id: EntityId,
+    /// What kind of entry this is.
+    pub kind: SimpleEntryKind,
+    /// Payment state of a bill; required when `kind` is
+    /// [`SimpleEntryKind::Bill`].
+    pub bill_status: Option<SimpleBillStatus>,
+    /// Accounting date as `YYYY-MM-DD`.
+    pub entry_date: String,
+    /// What the entry is for.
+    pub description: String,
+    /// The user's own reference for the entry.
+    pub reference: Option<String>,
+    /// Amount in minor units.
+    pub amount_minor: i64,
+    /// Expense or income category account.
+    pub category_account_id: Option<AccountId>,
+    /// Bank, cash or card account.
+    pub wallet_account_id: Option<AccountId>,
+    /// Bills payable liability account.
+    pub payable_account_id: Option<AccountId>,
+    /// Account a transfer takes from.
+    pub from_account_id: Option<AccountId>,
+    /// Account a transfer pays into.
+    pub to_account_id: Option<AccountId>,
+}
+
+impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
+    type Error = Error;
+
+    /// Checks that `request` holds what its kind needs and types it.
+    ///
+    /// An account in a part the kind does not have is dropped, and so is a
+    /// bill status on an entry that is not a bill.
+    ///
+    /// # Errors
+    ///
+    /// The first of these that applies:
+    ///
+    /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
+    /// - [`ValidationError::BillStatusRequired`] for a bill without a status.
+    /// - [`ValidationError::AccountRequired`], naming the part, when an
+    ///   account the kind needs is missing.
+    /// - [`ValidationError::InvalidDate`] when `entry_date` is not a
+    ///   `YYYY-MM-DD` date.
+    fn try_from(request: PostSimpleEntryRequest) -> Result<Self> {
+        let accounts = request.checked_accounts()?;
+
+        Ok(Self {
+            entity_id: request.entity_id,
+            accounts,
+            entry_date: parse_date(&request.entry_date)?,
+            description: request.description,
+            reference: request.reference,
+            amount_minor: request.amount_minor,
+        })
+    }
+}
+
+impl PostSimpleEntryRequest {
+    /// Types the request for a caller that has already parsed its date, and
+    /// so reads `entry_date` from the argument and not from the request.
+    ///
+    /// The CSV import parses the date of every row first, for its duplicate
+    /// rule, and converts only the rows it posts; this is that second step,
+    /// without a second parse.
+    ///
+    /// # Errors
+    ///
+    /// The first of these that applies:
+    ///
+    /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
+    /// - [`ValidationError::BillStatusRequired`] for a bill without a status.
+    /// - [`ValidationError::AccountRequired`], naming the part, when an
+    ///   account the kind needs is missing.
+    pub(crate) fn dated(&self, entry_date: Date) -> Result<PostSimpleEntry> {
+        Ok(PostSimpleEntry {
+            entity_id: self.entity_id,
+            accounts: self.checked_accounts()?,
+            entry_date,
+            description: self.description.clone(),
+            reference: self.reference.clone(),
+            amount_minor: self.amount_minor,
+        })
+    }
+
+    /// Checks the amount of the request and returns the accounts its kind
+    /// needs: everything a conversion checks but the date.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`PostSimpleEntryRequest::dated`], in the same order.
+    fn checked_accounts(&self) -> Result<SimpleEntryAccounts> {
+        if self.amount_minor <= 0 {
+            return Err(ValidationError::AmountNotPositive.into());
+        }
+
+        SimpleEntryAccounts::from_roles(
+            self.kind,
+            self.bill_status,
+            SimpleEntryRoleAccounts {
+                category: self.category_account_id,
+                wallet: self.wallet_account_id,
+                payable: self.payable_account_id,
+                from: self.from_account_id,
+                to: self.to_account_id,
+            },
+        )
+    }
+}
+
+/// The wire form of [`CreateRecurringTemplate`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRecurringTemplateRequest {
+    /// Entity the template, and every entry it posts, belongs to.
+    pub entity_id: EntityId,
+    /// Name of the template.
+    pub name: String,
+    /// Kind of entry the template posts.
+    pub kind: SimpleEntryKind,
+    /// Payment state of a bill; required when `kind` is
+    /// [`SimpleEntryKind::Bill`].
+    pub bill_status: Option<SimpleBillStatus>,
+    /// Amount in minor units.
+    pub amount_minor: i64,
+    /// How often the template recurs.
+    pub cadence: RecurringCadence,
+    /// Day of the month, for a monthly cadence.
+    pub day_of_month: Option<u8>,
+    /// Expense or income category account.
+    pub category_account_id: Option<AccountId>,
+    /// Bank, cash or card account.
+    pub wallet_account_id: Option<AccountId>,
+    /// Bills payable liability account.
+    pub payable_account_id: Option<AccountId>,
+    /// Account a transfer takes from.
+    pub from_account_id: Option<AccountId>,
+    /// Account a transfer pays into.
+    pub to_account_id: Option<AccountId>,
+    /// Note stored on the template.
+    pub memo: Option<String>,
+    /// Next occurrence as `YYYY-MM-DD`.
+    pub next_date: String,
+}
+
+impl TryFrom<CreateRecurringTemplateRequest> for CreateRecurringTemplate {
+    type Error = Error;
+
+    /// Checks that `request` holds what its kind needs and types it.
+    ///
+    /// # Errors
+    ///
+    /// The first of these that applies:
+    ///
+    /// - [`ValidationError::NameRequired`] for a name that is blank.
+    /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
+    /// - [`ValidationError::DayOfMonthInvalid`] for a monthly cadence with no
+    ///   day or one outside 1 to 31, and for another cadence with a day.
+    /// - [`ValidationError::InvalidDate`] when `next_date` is not a
+    ///   `YYYY-MM-DD` date.
+    /// - [`ValidationError::BillStatusRequired`] for a bill without a status.
+    /// - [`ValidationError::AccountRequired`], naming the part, when an
+    ///   account the kind needs is missing.
+    fn try_from(request: CreateRecurringTemplateRequest) -> Result<Self> {
+        check_template_values(&request.name, request.amount_minor)?;
+        let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
+        let next_date = parse_date(&request.next_date)?;
+        let accounts = SimpleEntryAccounts::from_roles(
+            request.kind,
+            request.bill_status,
+            SimpleEntryRoleAccounts {
+                category: request.category_account_id,
+                wallet: request.wallet_account_id,
+                payable: request.payable_account_id,
+                from: request.from_account_id,
+                to: request.to_account_id,
+            },
+        )?;
+
+        Ok(Self {
+            entity_id: request.entity_id,
+            fields: RecurringTemplateFields {
+                name: request.name,
+                amount_minor: request.amount_minor,
+                schedule,
+                accounts,
+                memo: request.memo,
+                next_date,
+            },
+        })
+    }
+}
+
+/// The wire form of [`UpdateRecurringTemplate`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateRecurringTemplateRequest {
+    /// Template to change.
+    pub id: RecurringTemplateId,
+    /// Name of the template.
+    pub name: String,
+    /// Kind of entry the template posts.
+    pub kind: SimpleEntryKind,
+    /// Payment state of a bill; required when `kind` is
+    /// [`SimpleEntryKind::Bill`].
+    pub bill_status: Option<SimpleBillStatus>,
+    /// Amount in minor units.
+    pub amount_minor: i64,
+    /// How often the template recurs.
+    pub cadence: RecurringCadence,
+    /// Day of the month, for a monthly cadence.
+    pub day_of_month: Option<u8>,
+    /// Expense or income category account.
+    pub category_account_id: Option<AccountId>,
+    /// Bank, cash or card account.
+    pub wallet_account_id: Option<AccountId>,
+    /// Bills payable liability account.
+    pub payable_account_id: Option<AccountId>,
+    /// Account a transfer takes from.
+    pub from_account_id: Option<AccountId>,
+    /// Account a transfer pays into.
+    pub to_account_id: Option<AccountId>,
+    /// Note stored on the template.
+    pub memo: Option<String>,
+    /// Next occurrence as `YYYY-MM-DD`.
+    pub next_date: String,
+}
+
+impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
+    type Error = Error;
+
+    /// Checks that `request` holds what its kind needs and types it.
+    ///
+    /// # Errors
+    ///
+    /// Those of the conversion of a [`CreateRecurringTemplateRequest`], in
+    /// the same order.
+    fn try_from(request: UpdateRecurringTemplateRequest) -> Result<Self> {
+        check_template_values(&request.name, request.amount_minor)?;
+        let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
+        let next_date = parse_date(&request.next_date)?;
+        let accounts = SimpleEntryAccounts::from_roles(
+            request.kind,
+            request.bill_status,
+            SimpleEntryRoleAccounts {
+                category: request.category_account_id,
+                wallet: request.wallet_account_id,
+                payable: request.payable_account_id,
+                from: request.from_account_id,
+                to: request.to_account_id,
+            },
+        )?;
+
+        Ok(Self {
+            id: request.id,
+            fields: RecurringTemplateFields {
+                name: request.name,
+                amount_minor: request.amount_minor,
+                schedule,
+                accounts,
+                memo: request.memo,
+                next_date,
+            },
+        })
+    }
+}
+
+/// The JSON shape of a [`RecurringTemplateView`].
+///
+/// The view converts into this to be serialized and out of it when read
+/// back, so no function outside those two conversions names the type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RecurringTemplateViewWire {
+    /// Id of the template.
+    id: RecurringTemplateId,
+    /// Entity the template belongs to.
+    entity_id: EntityId,
+    /// Name of the template and description of the entries it posts.
+    name: String,
+    /// Kind of entry the template posts.
+    kind: SimpleEntryKind,
+    /// Payment state of a bill; `None` for the other kinds.
+    bill_status: Option<SimpleBillStatus>,
+    /// Amount in minor units.
+    amount_minor: i64,
+    /// How often the template recurs.
+    cadence: RecurringCadence,
+    /// Day of the month for a monthly template; `None` for the others.
+    day_of_month: Option<u8>,
+    /// Expense or income category account, when the kind has one.
+    category_account_id: Option<AccountId>,
+    /// Bank, cash or card account, when the kind has one.
+    wallet_account_id: Option<AccountId>,
+    /// Bills payable liability account, when the kind has one.
+    payable_account_id: Option<AccountId>,
+    /// Account a transfer takes from.
+    from_account_id: Option<AccountId>,
+    /// Account a transfer pays into.
+    to_account_id: Option<AccountId>,
+    /// Note stored on the template; `None` when there is none.
+    memo: Option<String>,
+    /// Next scheduled occurrence.
+    #[serde(with = "crate::util::serde_date")]
+    next_date: Date,
+    /// Whether the next occurrence is on or before the day the view was
+    /// built for.
+    due: bool,
+}
+
+impl From<RecurringTemplateView> for RecurringTemplateViewWire {
+    /// Spells the accounts of `view` out as a kind, a bill status and five
+    /// optional accounts.
+    fn from(view: RecurringTemplateView) -> Self {
+        let fields = view.fields;
+        let roles = fields.accounts.roles();
+
+        Self {
+            id: view.id,
+            entity_id: view.entity_id,
+            name: fields.name,
+            kind: fields.accounts.kind(),
+            bill_status: fields.accounts.bill_status(),
+            amount_minor: fields.amount_minor,
+            cadence: fields.schedule.cadence(),
+            day_of_month: fields.schedule.day_of_month(),
+            category_account_id: roles.category,
+            wallet_account_id: roles.wallet,
+            payable_account_id: roles.payable,
+            from_account_id: roles.from,
+            to_account_id: roles.to,
+            memo: fields.memo,
+            next_date: fields.next_date,
+            due: view.due,
+        }
+    }
+}
+
+impl TryFrom<RecurringTemplateViewWire> for RecurringTemplateView {
+    type Error = Error;
+
+    /// Reads a serialized view back.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::DayOfMonthInvalid`] when the day of the month does
+    /// not go with the cadence, and [`ValidationError::BillStatusRequired`]
+    /// or [`ValidationError::AccountRequired`] when `wire` does not hold
+    /// what its kind needs. A view this crate serialized has none of these
+    /// faults.
+    fn try_from(wire: RecurringTemplateViewWire) -> Result<Self> {
+        let schedule = RecurringSchedule::from_cadence(wire.cadence, wire.day_of_month)?;
+        let accounts = SimpleEntryAccounts::from_roles(
+            wire.kind,
+            wire.bill_status,
+            SimpleEntryRoleAccounts {
+                category: wire.category_account_id,
+                wallet: wire.wallet_account_id,
+                payable: wire.payable_account_id,
+                from: wire.from_account_id,
+                to: wire.to_account_id,
+            },
+        )?;
+
+        Ok(Self {
+            id: wire.id,
+            entity_id: wire.entity_id,
+            fields: RecurringTemplateFields {
+                name: wire.name,
+                amount_minor: wire.amount_minor,
+                schedule,
+                accounts,
+                memo: wire.memo,
+                next_date: wire.next_date,
+            },
+            due: wire.due,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::{AccountRole, NameField};
+
+    /// A complete expense of 45.00 on 10 August 2026.
+    fn expense_request() -> PostSimpleEntryRequest {
+        PostSimpleEntryRequest {
+            entity_id: EntityId::generate(),
+            kind: SimpleEntryKind::Expense,
+            bill_status: None,
+            entry_date: "2026-08-10".to_owned(),
+            description: "Groceries".to_owned(),
+            reference: None,
+            amount_minor: 4_500,
+            category_account_id: Some(AccountId::generate()),
+            wallet_account_id: Some(AccountId::generate()),
+            payable_account_id: None,
+            from_account_id: None,
+            to_account_id: None,
+        }
+    }
+
+    /// A complete weekly expense template.
+    fn template_request() -> CreateRecurringTemplateRequest {
+        let expense = expense_request();
+
+        CreateRecurringTemplateRequest {
+            entity_id: expense.entity_id,
+            name: "Rent".to_owned(),
+            kind: expense.kind,
+            bill_status: None,
+            amount_minor: 80_000,
+            cadence: RecurringCadence::Weekly,
+            day_of_month: None,
+            category_account_id: expense.category_account_id,
+            wallet_account_id: expense.wallet_account_id,
+            payable_account_id: None,
+            from_account_id: None,
+            to_account_id: None,
+            memo: None,
+            next_date: "2026-09-01".to_owned(),
+        }
+    }
+
+    /// The update request that holds what `create` holds.
+    fn as_update(create: CreateRecurringTemplateRequest) -> UpdateRecurringTemplateRequest {
+        UpdateRecurringTemplateRequest {
+            id: RecurringTemplateId::generate(),
+            name: create.name,
+            kind: create.kind,
+            bill_status: create.bill_status,
+            amount_minor: create.amount_minor,
+            cadence: create.cadence,
+            day_of_month: create.day_of_month,
+            category_account_id: create.category_account_id,
+            wallet_account_id: create.wallet_account_id,
+            payable_account_id: create.payable_account_id,
+            from_account_id: create.from_account_id,
+            to_account_id: create.to_account_id,
+            memo: create.memo,
+            next_date: create.next_date,
+        }
+    }
+
+    /// The error of converting a simple entry request.
+    fn simple_error(request: PostSimpleEntryRequest) -> Option<Error> {
+        PostSimpleEntry::try_from(request).err()
+    }
+
+    /// The errors of converting `request` as a create and as an update, which
+    /// must be the same.
+    fn template_error(request: CreateRecurringTemplateRequest) -> Option<Error> {
+        let created = CreateRecurringTemplate::try_from(request.clone()).err();
+        let updated = UpdateRecurringTemplate::try_from(as_update(request)).err();
+
+        assert_eq!(created, updated);
+        created
+    }
+
+    /// A line request with these two columns.
+    fn line_request(debit_minor: i64, credit_minor: i64) -> JournalLineRequest {
+        JournalLineRequest {
+            account_id: AccountId::generate(),
+            debit_minor,
+            credit_minor,
+            memo: None,
+        }
+    }
+
+    /// A journal request dated `entry_date` with lines of these columns.
+    fn journal_request(entry_date: &str, lines: &[(i64, i64)]) -> PostJournalRequest {
+        PostJournalRequest {
+            entity_id: EntityId::generate(),
+            entry_date: entry_date.to_owned(),
+            description: "Groceries".to_owned(),
+            reference: None,
+            lines: lines
+                .iter()
+                .map(|&(debit, credit)| line_request(debit, credit))
+                .collect(),
+        }
+    }
+
+    /// The error of converting a journal request.
+    fn journal_error(request: PostJournalRequest) -> Option<Error> {
+        PostJournal::try_from(request).err()
+    }
+
+    /// The error for a date written as `text`.
+    fn invalid_date(text: &str) -> Error {
+        ValidationError::InvalidDate {
+            value: text.to_owned(),
+        }
+        .into()
+    }
+
+    #[test]
+    fn a_line_request_converts_to_the_side_that_has_the_amount() {
+        let debit = PostJournalLine::try_from(line_request(4_500, 0)).unwrap();
+        let credit = PostJournalLine::try_from(line_request(0, 4_500)).unwrap();
+
+        assert_eq!(
+            (debit.side, debit.amount.amount_minor()),
+            (Side::Debit, 4_500)
+        );
+        assert_eq!(
+            (credit.side, credit.amount.amount_minor()),
+            (Side::Credit, 4_500)
+        );
+    }
+
+    #[test]
+    fn a_line_request_on_both_sides_or_neither_or_below_zero_keeps_its_code() {
+        let error = |debit, credit| PostJournalLine::try_from(line_request(debit, credit)).err();
+
+        assert_eq!(error(5, 5), Some(Error::InvalidLineAmounts));
+        assert_eq!(error(0, 0), Some(Error::InvalidLineAmounts));
+        assert_eq!(error(-1, 0), Some(Error::NegativeMoney));
+        assert_eq!(error(0, -1), Some(Error::NegativeMoney));
+        assert_eq!(error(-1, 5), Some(Error::NegativeMoney));
+    }
+
+    #[test]
+    fn a_journal_request_converts_with_its_lines_in_order() {
+        let entry = PostJournal::try_from(journal_request(
+            "2026-08-10",
+            &[(4_500, 0), (0, 4_000), (0, 500)],
+        ))
+        .unwrap();
+
+        assert_eq!(entry.entry_date, parse_date("2026-08-10").unwrap());
+        assert_eq!(
+            entry
+                .lines
+                .iter()
+                .map(|line| (line.side, line.amount.amount_minor()))
+                .collect::<Vec<_>>(),
+            [
+                (Side::Debit, 4_500),
+                (Side::Credit, 4_000),
+                (Side::Credit, 500)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_journal_request_reports_its_faults_in_the_order_posting_did() {
+        // Date, then a negative amount, then the number of lines, then a
+        // line on both sides or neither.
+        assert_eq!(
+            journal_error(journal_request("10/08/2026", &[(-1, 0)])),
+            Some(invalid_date("10/08/2026"))
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[(5, 5), (0, -1)])),
+            Some(Error::NegativeMoney)
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[(5, 5)])),
+            Some(Error::TooFewLines)
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[])),
+            Some(Error::TooFewLines)
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[(5, 0), (5, 5)])),
+            Some(Error::InvalidLineAmounts)
+        );
+        assert_eq!(
+            journal_error(journal_request("2026-08-10", &[(0, 0), (0, 5)])),
+            Some(Error::InvalidLineAmounts)
+        );
+    }
+
+    #[test]
+    fn a_complete_simple_entry_request_converts_to_its_accounts_and_date() {
+        let request = expense_request();
+        let (category, wallet) = (request.category_account_id, request.wallet_account_id);
+        let entry = PostSimpleEntry::try_from(request).unwrap();
+
+        assert_eq!(
+            entry.accounts.roles(),
+            SimpleEntryRoleAccounts {
+                category,
+                wallet,
+                ..SimpleEntryRoleAccounts::default()
+            }
+        );
+        assert_eq!(entry.accounts.kind(), SimpleEntryKind::Expense);
+        assert_eq!(entry.entry_date, parse_date("2026-08-10").unwrap());
+        assert_eq!(entry.amount_minor, 4_500);
+    }
+
+    #[test]
+    fn each_fault_of_a_simple_entry_request_keeps_its_code() {
+        let request = expense_request;
+
+        assert_eq!(
+            simple_error(PostSimpleEntryRequest {
+                amount_minor: 0,
+                ..request()
+            }),
+            Some(ValidationError::AmountNotPositive.into())
+        );
+        assert_eq!(
+            simple_error(PostSimpleEntryRequest {
+                wallet_account_id: None,
+                ..request()
+            }),
+            Some(
+                ValidationError::AccountRequired {
+                    role: AccountRole::Payment
+                }
+                .into()
+            )
+        );
+        assert_eq!(
+            simple_error(PostSimpleEntryRequest {
+                kind: SimpleEntryKind::Bill,
+                ..request()
+            }),
+            Some(ValidationError::BillStatusRequired.into())
+        );
+        assert_eq!(
+            simple_error(PostSimpleEntryRequest {
+                entry_date: "10/08/2026".to_owned(),
+                ..request()
+            }),
+            Some(invalid_date("10/08/2026"))
+        );
+    }
+
+    #[test]
+    fn a_simple_entry_request_with_several_faults_reports_the_amount_then_the_accounts() {
+        let everything_wrong = PostSimpleEntryRequest {
+            amount_minor: -1,
+            category_account_id: None,
+            entry_date: "soon".to_owned(),
+            ..expense_request()
+        };
+        let accounts_and_date_wrong = PostSimpleEntryRequest {
+            amount_minor: 1,
+            ..everything_wrong.clone()
+        };
+
+        assert_eq!(
+            simple_error(everything_wrong),
+            Some(ValidationError::AmountNotPositive.into())
+        );
+        assert_eq!(
+            simple_error(accounts_and_date_wrong),
+            Some(
+                ValidationError::AccountRequired {
+                    role: AccountRole::Category
+                }
+                .into()
+            )
+        );
+    }
+
+    #[test]
+    fn a_complete_template_request_converts_as_a_create_and_as_an_update() {
+        let request = template_request();
+        let created = CreateRecurringTemplate::try_from(request.clone()).unwrap();
+        let updated = UpdateRecurringTemplate::try_from(as_update(request.clone())).unwrap();
+
+        assert_eq!(created.entity_id, request.entity_id);
+        assert_eq!(created.fields, updated.fields);
+        assert_eq!(created.fields.name, "Rent");
+        assert_eq!(created.fields.next_date, parse_date("2026-09-01").unwrap());
+        assert_eq!(created.fields.accounts.kind(), SimpleEntryKind::Expense);
+    }
+
+    #[test]
+    fn each_fault_of_a_template_request_keeps_its_code() {
+        let request = template_request;
+
+        assert_eq!(
+            template_error(CreateRecurringTemplateRequest {
+                name: "  ".to_owned(),
+                ..request()
+            }),
+            Some(
+                ValidationError::NameRequired {
+                    field: NameField::TemplateName
+                }
+                .into()
+            )
+        );
+        assert_eq!(
+            template_error(CreateRecurringTemplateRequest {
+                amount_minor: 0,
+                ..request()
+            }),
+            Some(ValidationError::AmountNotPositive.into())
+        );
+        assert_eq!(
+            template_error(CreateRecurringTemplateRequest {
+                day_of_month: Some(3),
+                ..request()
+            }),
+            Some(ValidationError::DayOfMonthInvalid.into())
+        );
+        assert_eq!(
+            template_error(CreateRecurringTemplateRequest {
+                next_date: "2026-9-1".to_owned(),
+                ..request()
+            }),
+            Some(invalid_date("2026-9-1"))
+        );
+        assert_eq!(
+            template_error(CreateRecurringTemplateRequest {
+                kind: SimpleEntryKind::Transfer,
+                ..request()
+            }),
+            Some(
+                ValidationError::AccountRequired {
+                    role: AccountRole::TransferDestination
+                }
+                .into()
+            )
+        );
+        assert_eq!(
+            template_error(CreateRecurringTemplateRequest {
+                kind: SimpleEntryKind::Bill,
+                ..request()
+            }),
+            Some(ValidationError::BillStatusRequired.into())
+        );
+    }
+
+    #[test]
+    fn a_template_request_with_several_faults_reports_them_in_one_order() {
+        // Name, amount, day of the month, date, accounts.
+        let everything_wrong = CreateRecurringTemplateRequest {
+            name: String::new(),
+            amount_minor: 0,
+            day_of_month: Some(3),
+            next_date: "soon".to_owned(),
+            wallet_account_id: None,
+            ..template_request()
+        };
+        let named = CreateRecurringTemplateRequest {
+            name: "Rent".to_owned(),
+            ..everything_wrong.clone()
+        };
+        let with_amount = CreateRecurringTemplateRequest {
+            amount_minor: 1,
+            ..named.clone()
+        };
+        let with_schedule = CreateRecurringTemplateRequest {
+            day_of_month: None,
+            ..with_amount.clone()
+        };
+        let with_date = CreateRecurringTemplateRequest {
+            next_date: "2026-09-01".to_owned(),
+            ..with_schedule.clone()
+        };
+
+        assert_eq!(
+            template_error(everything_wrong),
+            Some(
+                ValidationError::NameRequired {
+                    field: NameField::TemplateName
+                }
+                .into()
+            )
+        );
+        assert_eq!(
+            template_error(named),
+            Some(ValidationError::AmountNotPositive.into())
+        );
+        assert_eq!(
+            template_error(with_amount),
+            Some(ValidationError::DayOfMonthInvalid.into())
+        );
+        assert_eq!(template_error(with_schedule), Some(invalid_date("soon")));
+        assert_eq!(
+            template_error(with_date),
+            Some(
+                ValidationError::AccountRequired {
+                    role: AccountRole::Payment
+                }
+                .into()
+            )
+        );
+    }
+
+    #[test]
+    fn a_view_serializes_flat_and_reads_back_as_the_same_view() {
+        let request = template_request();
+        let view = RecurringTemplateView {
+            id: RecurringTemplateId::generate(),
+            entity_id: request.entity_id,
+            fields: CreateRecurringTemplate::try_from(request).unwrap().fields,
+            due: true,
+        };
+
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["kind"], "expense");
+        assert_eq!(json["bill_status"], serde_json::Value::Null);
+        assert_eq!(json["payable_account_id"], serde_json::Value::Null);
+        assert_eq!(json["next_date"], "2026-09-01");
+        assert_eq!(json["due"], true);
+        assert!(json.get("fields").is_none() && json.get("accounts").is_none());
+
+        assert_eq!(
+            serde_json::from_value::<RecurringTemplateView>(json).unwrap(),
+            view
+        );
+    }
+}
+
+#[cfg(test)]
+mod properties {
+    use oikonomia_test_support::PROPERTY_CASES;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    /// Any kind.
+    fn kinds() -> impl Strategy<Value = SimpleEntryKind> {
+        prop_oneof![
+            Just(SimpleEntryKind::Expense),
+            Just(SimpleEntryKind::Income),
+            Just(SimpleEntryKind::Bill),
+            Just(SimpleEntryKind::Transfer),
+        ]
+    }
+
+    /// Any bill status, or none.
+    fn statuses() -> impl Strategy<Value = Option<SimpleBillStatus>> {
+        prop_oneof![
+            Just(None),
+            Just(Some(SimpleBillStatus::Paid)),
+            Just(Some(SimpleBillStatus::Unpaid)),
+            Just(Some(SimpleBillStatus::PayExisting)),
+        ]
+    }
+
+    /// An account that is filled in or left empty.
+    fn optional_account() -> impl Strategy<Value = Option<AccountId>> {
+        prop::option::of(
+            any::<[u8; 16]>().prop_map(|bytes| AccountId::from(uuid::Uuid::from_bytes(bytes))),
+        )
+    }
+
+    /// A template request with any kind, status and accounts, and otherwise
+    /// valid.
+    fn template_requests() -> impl Strategy<Value = CreateRecurringTemplateRequest> {
+        let accounts = (
+            optional_account(),
+            optional_account(),
+            optional_account(),
+            optional_account(),
+            optional_account(),
+        );
+
+        (kinds(), statuses(), accounts).prop_map(
+            |(kind, bill_status, (category, wallet, payable, from, to))| {
+                CreateRecurringTemplateRequest {
+                    entity_id: EntityId::from(uuid::Uuid::nil()),
+                    name: "Rent".to_owned(),
+                    kind,
+                    bill_status,
+                    amount_minor: 1,
+                    cadence: RecurringCadence::Monthly,
+                    day_of_month: Some(1),
+                    category_account_id: category,
+                    wallet_account_id: wallet,
+                    payable_account_id: payable,
+                    from_account_id: from,
+                    to_account_id: to,
+                    memo: None,
+                    next_date: "2026-09-01".to_owned(),
+                }
+            },
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        // Wire to typed to wire, for a line: a request converts exactly when
+        // one column is filled, and the typed line writes the same columns.
+        #[test]
+        fn a_line_request_converts_exactly_when_one_column_is_filled(
+            debit_minor in 0_i64..4,
+            credit_minor in 0_i64..4,
+        ) {
+            let request = JournalLineRequest {
+                account_id: AccountId::from(uuid::Uuid::nil()),
+                debit_minor,
+                credit_minor,
+                memo: None,
+            };
+            let converted = PostJournalLine::try_from(request);
+
+            prop_assert_eq!(converted.is_ok(), (debit_minor > 0) != (credit_minor > 0));
+            if let Ok(line) = converted {
+                let (debit, credit) = line.side.columns(line.amount);
+                prop_assert_eq!(
+                    (debit.amount_minor(), credit.amount_minor()),
+                    (debit_minor, credit_minor)
+                );
+            }
+        }
+
+        // Wire to typed to wire: what the typed value serializes is the
+        // request with the parts its kind does not have blanked, and typing
+        // that again changes nothing.
+        #[test]
+        fn a_template_survives_the_wire_once_it_is_typed(request in template_requests()) {
+            let Ok(created) = CreateRecurringTemplate::try_from(request.clone()) else {
+                return Ok(());
+            };
+            let view = RecurringTemplateView {
+                id: RecurringTemplateId::from(uuid::Uuid::nil()),
+                entity_id: created.entity_id,
+                fields: created.fields,
+                due: false,
+            };
+
+            let wire = RecurringTemplateViewWire::from(view.clone());
+            prop_assert_eq!(wire.kind, request.kind);
+            for (written, sent) in [
+                (wire.category_account_id, request.category_account_id),
+                (wire.wallet_account_id, request.wallet_account_id),
+                (wire.payable_account_id, request.payable_account_id),
+                (wire.from_account_id, request.from_account_id),
+                (wire.to_account_id, request.to_account_id),
+            ] {
+                prop_assert!(written.is_none() || written == sent);
+            }
+
+            let json = serde_json::to_string(&view).unwrap();
+            let read: RecurringTemplateView = serde_json::from_str(&json).unwrap();
+            prop_assert_eq!(&read, &view);
+            prop_assert_eq!(serde_json::to_string(&read).unwrap(), json);
+        }
+    }
+}

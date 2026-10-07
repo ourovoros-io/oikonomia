@@ -53,18 +53,16 @@ fn a_vault_from_a_newer_build_is_refused_and_left_untouched() {
 
     let refused = migrate(conn);
 
-    assert!(
-        matches!(&refused, Err(Error::VaultCorrupt(detail)) if detail.contains("newer")),
-        "{refused:?}"
-    );
+    let too_new = Error::VaultTooNew {
+        found: newer,
+        supported: CURRENT_SCHEMA_VERSION,
+    };
+    assert_eq!(refused, Err(too_new.clone()));
     assert_eq!(schema_version(conn), newer);
 
     vault.lock();
     let unlocked = vault.unlock(PASSWORD);
-    assert!(
-        matches!(&unlocked, Err(Error::VaultCorrupt(detail)) if detail.contains("newer")),
-        "unlock runs the same check: {unlocked:?}"
-    );
+    assert_eq!(unlocked, Err(too_new), "unlock runs the same check");
 }
 
 fn table_exists(conn: &Connection, name: &str) -> bool {
@@ -90,7 +88,13 @@ fn a_step_that_fails_part_way_is_undone_and_the_steps_before_it_stay() {
 
     let failed = migrate(conn);
 
-    assert!(matches!(failed, Err(Error::Io(_))), "{failed:?}");
+    assert!(
+        matches!(
+            &failed,
+            Err(Error::Database { operation, .. }) if *operation == "create documents table"
+        ),
+        "{failed:?}"
+    );
     assert_eq!(
         schema_version(conn),
         2,

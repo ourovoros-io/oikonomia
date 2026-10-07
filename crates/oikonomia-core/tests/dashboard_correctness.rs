@@ -8,15 +8,20 @@ mod common;
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::ledger::SimpleEntryKind::{Bill, Expense, Income, Transfer};
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, SimpleBillStatus, SimpleEntryKind, create_entity,
-    dashboard_summary, list_entries, post_simple_entry, previous_window, void_entry,
+    CreateEntity, EntryFilter, PostSimpleEntryRequest, SimpleBillStatus, SimpleEntryKind,
+    create_entity, dashboard_summary, list_entries, previous_window, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::{format_date, parse_date};
 use rusqlite::Connection;
 
-fn base(entity_id: EntityId, kind: SimpleEntryKind, date: &str, minor: i64) -> PostSimpleEntry {
-    PostSimpleEntry {
+fn base(
+    entity_id: EntityId,
+    kind: SimpleEntryKind,
+    date: &str,
+    minor: i64,
+) -> PostSimpleEntryRequest {
+    PostSimpleEntryRequest {
         entity_id,
         kind,
         bill_status: None,
@@ -32,8 +37,8 @@ fn base(entity_id: EntityId, kind: SimpleEntryKind, date: &str, minor: i64) -> P
     }
 }
 
-fn post(conn: &Connection, input: &PostSimpleEntry) -> JournalEntryId {
-    post_simple_entry(conn, input)
+fn post(conn: &Connection, input: &PostSimpleEntryRequest) -> JournalEntryId {
+    common::post_simple_request(conn, input)
         .expect("post simple")
         .entry
         .id
@@ -107,7 +112,14 @@ fn dashboard_numbers_hand_checked() {
     .id;
     seed_august_ledger(conn, e);
 
-    let s = dashboard_summary(conn, e, "2026-08-01", "2026-08-31", "2026-08-10").expect("summary");
+    let s = dashboard_summary(
+        conn,
+        e,
+        common::date("2026-08-01"),
+        common::date("2026-08-31"),
+        common::date("2026-08-10"),
+    )
+    .expect("summary");
 
     assert_eq!(s.income, 100_000, "income = salary only");
     assert_eq!(
@@ -117,7 +129,8 @@ fn dashboard_numbers_hand_checked() {
     assert_eq!(s.net_income, 85_247);
     assert_eq!(
         s.cash_like_assets, 97_500,
-        "assets AS OF Aug 10 = 100000 salary − 2500 groceries; the Aug 20 payment must not count yet"
+        "assets AS OF Aug 10 = 100000 salary − 2500 groceries; \
+         the Aug 20 payment must not count yet"
     );
     assert_eq!(
         s.recent_entry_count, 6,
@@ -129,8 +142,8 @@ fn dashboard_numbers_hand_checked() {
         conn,
         e,
         &EntryFilter {
-            date_from: Some("2026-08-01".into()),
-            date_to: Some("2026-08-31".into()),
+            date_from: Some(common::date("2026-08-01")),
+            date_to: Some(common::date("2026-08-31")),
             ..EntryFilter::default()
         },
     )
@@ -167,7 +180,14 @@ fn arc_metrics_hand_checked() {
     let e = common::book(conn, "Probe", ChartTemplate::Personal);
     seed_august_ledger(conn, e);
 
-    let s = dashboard_summary(conn, e, "2026-08-01", "2026-08-31", "2026-08-10").expect("summary");
+    let s = dashboard_summary(
+        conn,
+        e,
+        common::date("2026-08-01"),
+        common::date("2026-08-31"),
+        common::date("2026-08-10"),
+    )
+    .expect("summary");
 
     assert_eq!(
         s.savings_rate_bps,
@@ -214,9 +234,15 @@ fn net_vs_previous_compares_with_the_previous_calendar_month() {
     income_on(conn, recovered, "2026-08-10", 5_000);
 
     let change = |entity: EntityId| {
-        dashboard_summary(conn, entity, "2026-08-01", "2026-08-31", "2026-08-31")
-            .expect("summary")
-            .net_vs_previous_bps
+        dashboard_summary(
+            conn,
+            entity,
+            common::date("2026-08-01"),
+            common::date("2026-08-31"),
+            common::date("2026-08-31"),
+        )
+        .expect("summary")
+        .net_vs_previous_bps
     };
     assert_eq!(change(grew), Some(2_000));
     assert_eq!(change(shrank), Some(-2_000));
@@ -232,7 +258,14 @@ fn arc_metrics_are_empty_when_there_is_nothing_to_divide_by() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let summary = |entity: EntityId| {
-        dashboard_summary(conn, entity, "2026-08-01", "2026-08-31", "2026-08-31").expect("summary")
+        dashboard_summary(
+            conn,
+            entity,
+            common::date("2026-08-01"),
+            common::date("2026-08-31"),
+            common::date("2026-08-31"),
+        )
+        .expect("summary")
     };
 
     let empty = summary(common::book(conn, "Empty", ChartTemplate::Personal));

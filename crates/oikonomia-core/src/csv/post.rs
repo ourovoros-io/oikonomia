@@ -15,18 +15,21 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use rusqlite::Connection;
+use time::Date;
 
 use crate::csv::parse::{parse_bank_csv, read_csv_text};
 use crate::csv::{
     CsvColumnMapping, CsvImportAccounts, CsvImportPostResult, CsvImportPreview,
-    CsvImportPreviewRow, CsvRowOutcome, currency_minor_exponent, normalize_description,
-    suggested_entry,
+    CsvImportPreviewRow, CsvRowOutcome, normalize_description, suggested_entry,
 };
+use crate::db::{collect_rows, read_column, stored_date};
 use crate::domain::{AccountId, EntityId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
-    PostSimpleEntry, PostedEntryView, get_account, get_entity, post_simple_entry_unchecked,
+    ACTIVE_ENTRY_PREDICATE, PostSimpleEntryRequest, PostedEntryView, SimpleBillStatus,
+    SimpleEntryKind, ensure_writable_entity, get_account, get_entity, post_simple_entry_unchecked,
 };
+use crate::util::parse_date;
 
 /// Parses a bank CSV into suggested entries and flags duplicates. **Does
 /// not post.**
@@ -41,10 +44,13 @@ use crate::ledger::{
 ///   `accounts` does not exist.
 /// - [`Error::AccountWrongEntity`] when a role account belongs to another
 ///   entity.
-/// - [`Error::CsvParse`] for a problem with the file as a whole, as
+/// - [`Error::Csv`] for a problem with the file as a whole, as
 ///   [`parse_bank_csv`] lists them. A bad row is not an error; it is a row
 ///   of the preview with `error` set.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::VaultCorrupt`] for a stored entry the duplicate rule cannot
+///   read: a date that does not parse, or a date, a description or an amount
+///   of the wrong storage class.
+/// - [`Error::Database`] on database errors.
 pub fn preview_bank_csv(
     conn: &Connection,
     entity_id: EntityId,
@@ -52,7 +58,12 @@ pub fn preview_bank_csv(
     csv_text: &str,
     mapping: Option<&CsvColumnMapping>,
 ) -> Result<CsvImportPreview> {
-    preview_bank_csv_named(conn, entity_id, accounts, csv_text, mapping, String::new())
+    let statement = Statement {
+        csv_text,
+        mapping,
+        source: String::new(),
+    };
+    preview_statement(conn, entity_id, accounts, statement)
 }
 
 /// Reads the CSV file at `path` and previews it as [`preview_bank_csv`]
@@ -63,7 +74,7 @@ pub fn preview_bank_csv(
 /// # Errors
 ///
 /// - [`Error::Io`] when `path` cannot be read or is not a regular file.
-/// - [`Error::CsvParse`] when the file is larger than
+/// - [`Error::Csv`] when the file is larger than
 ///   [`MAX_CSV_BYTES`](crate::csv::MAX_CSV_BYTES) or is not UTF-8.
 /// - Every error of [`preview_bank_csv`].
 pub fn preview_bank_csv_file(
@@ -74,14 +85,12 @@ pub fn preview_bank_csv_file(
     mapping: Option<&CsvColumnMapping>,
 ) -> Result<CsvImportPreview> {
     let text = read_csv_text(path)?;
-    preview_bank_csv_named(
-        conn,
-        entity_id,
-        accounts,
-        &text,
+    let statement = Statement {
+        csv_text: &text,
         mapping,
-        path.display().to_string(),
-    )
+        source: path.display().to_string(),
+    };
+    preview_statement(conn, entity_id, accounts, statement)
 }
 
 /// Posts the selected suggested rows as simple entries, in one transaction.
@@ -97,14 +106,23 @@ pub fn preview_bank_csv_file(
 ///
 /// - [`Error::Validation`] with [`ValidationError::Internal`] when the rows
 ///   do not all carry the same `entity_id`.
-/// - [`Error::NotFound`] when that entity does not exist.
+/// - [`Error::NotFound`] when that entity does not exist or is archived.
+/// - [`ValidationError::InvalidDate`] for a row whose `entry_date` is not a
+///   `YYYY-MM-DD` date. The date is read before the duplicate rule is
+///   applied, so this is reported for any row.
+/// - [`ValidationError::AmountNotPositive`],
+///   [`ValidationError::BillStatusRequired`] or
+///   [`ValidationError::AccountRequired`] for a row that is to be posted and
+///   does not convert into a
+///   [`PostSimpleEntry`](crate::ledger::PostSimpleEntry). A row skipped as a
+///   duplicate is not converted.
 /// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry)
-///   for a row the ledger refuses: a non-positive amount, a missing or
-///   mistyped role account.
-/// - [`Error::Io`] on database errors.
+///   for a row the ledger refuses, such as an account of the wrong type.
+/// - [`Error::VaultCorrupt`] for a stored entry date that does not parse.
+/// - [`Error::Database`] on database errors.
 pub fn post_import_rows(
     conn: &Connection,
-    rows: &[PostSimpleEntry],
+    rows: &[PostSimpleEntryRequest],
     include_duplicates: bool,
 ) -> Result<CsvImportPostResult> {
     let Some(first) = rows.first() else {
@@ -116,89 +134,226 @@ pub fn post_import_rows(
     let entity_id = first.entity_id;
     for row in rows {
         if row.entity_id != entity_id {
-            return Err(Error::Validation(ValidationError::Internal {
+            return Err(ValidationError::Internal {
                 detail: "import rows must belong to a single entity".into(),
-            }));
+            }
+            .into());
         }
     }
-    let _entity = get_entity(conn, entity_id)?;
+    ensure_writable_entity(conn, entity_id)?;
 
-    let transaction = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-    let mut seen = load_active_keys(&transaction, entity_id)?;
+    let transaction = conn.unchecked_transaction().database("begin CSV import")?;
+    let mut seen = load_active_movements(&transaction, entity_id)?;
     let mut posted: Vec<PostedEntryView> = Vec::new();
     let mut skipped_duplicate_count = 0u32;
 
     for row in rows {
-        let key = DedupeKey::new(&row.entry_date, row.amount_minor, &row.description);
-        if !include_duplicates && seen.contains(&key) {
+        // The date is read first because the duplicate rule needs it. The
+        // rest of the row is checked only once it is known to be posted, so
+        // a skipped duplicate is never refused for what else it holds. The
+        // conversion below takes the date parsed here.
+        let entry_date = parse_date(&row.entry_date)?;
+        let movement = Movement::new(
+            entry_date,
+            row.amount_minor,
+            Flow::of_request(row),
+            &row.description,
+        );
+        if !include_duplicates && seen.contains(&movement) {
             skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
             continue;
         }
-        let view = post_simple_entry_unchecked(&transaction, row)?;
-        seen.insert(key);
+        let entry = row.dated(entry_date)?;
+        let view = post_simple_entry_unchecked(&transaction, &entry)?;
+        seen.record(&movement);
         posted.push(view);
     }
 
-    transaction
-        .commit()
-        .map_err(|err| Error::Io(err.to_string()))?;
+    transaction.commit().database("commit CSV import")?;
     Ok(CsvImportPostResult {
         posted,
         skipped_duplicate_count,
     })
 }
 
-/// What makes two entries the same for duplicate detection: the three
-/// values the [`crate::csv`] module doc names.
-///
-/// Built only through [`DedupeKey::new`], so the description is always in
-/// its normalized form and two keys compare the way the rule says.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct DedupeKey {
-    /// Booking date, `YYYY-MM-DD`.
-    date: String,
-    /// Unsigned amount in minor units: an expense and an income of the same
-    /// size on the same day with the same text are one key.
-    amount_minor: i64,
-    /// Description after [`normalize_description`].
-    description: String,
+/// Which way an entry moves money, as a bank statement signs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    /// Money received: a positive amount on a statement.
+    In,
+    /// Money spent or owed: a negative amount on a statement.
+    Out,
+    /// Money moved between the book's own accounts, which changes no income
+    /// and no expense: a transfer, or the payment of a bill recorded before.
+    /// The statement of the account it left shows it negative and the
+    /// statement of the account it reached shows it positive, so it counts
+    /// as both.
+    Internal,
 }
 
-impl DedupeKey {
-    /// Returns the key of an entry, normalizing `description`.
-    fn new(date: &str, amount_minor: i64, description: &str) -> Self {
-        Self {
-            date: date.to_owned(),
-            amount_minor,
-            description: normalize_description(description),
+impl Flow {
+    /// Returns the flow of a parsed statement row from its signed amount.
+    const fn of_signed(signed_amount_minor: i64) -> Self {
+        if signed_amount_minor < 0 {
+            Self::Out
+        } else {
+            Self::In
+        }
+    }
+
+    /// Returns the flow of a row to post, from its kind and bill status
+    /// alone.
+    ///
+    /// A bill that does not say whether it is paid counts as money out. Such
+    /// a row cannot be posted, so the answer only decides whether it is
+    /// skipped as a duplicate before it is refused.
+    const fn of_request(row: &PostSimpleEntryRequest) -> Self {
+        match (row.kind, row.bill_status) {
+            (SimpleEntryKind::Income, _) => Self::In,
+            (SimpleEntryKind::Expense, _)
+            | (
+                SimpleEntryKind::Bill,
+                Some(SimpleBillStatus::Paid | SimpleBillStatus::Unpaid) | None,
+            ) => Self::Out,
+            (SimpleEntryKind::Bill, Some(SimpleBillStatus::PayExisting))
+            | (SimpleEntryKind::Transfer, _) => Self::Internal,
+        }
+    }
+
+    /// Returns the flow of a ledger entry from what it adds to the result:
+    /// the credits minus the debits of its lines on income and expense
+    /// accounts.
+    const fn of_result(result_minor: i64) -> Self {
+        match result_minor {
+            0 => Self::Internal,
+            minor if minor > 0 => Self::In,
+            _ => Self::Out,
         }
     }
 }
 
-/// The shared body of the two previews; `source` is what the preview
-/// reports the text came from, empty for in-memory text.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the import source is passed beside the five inputs of the public preview"
-)]
-fn preview_bank_csv_named(
+/// One entry as the duplicate rule sees it: the values the [`crate::csv`]
+/// module doc names.
+///
+/// Built only through [`Movement::new`], so the description is always in its
+/// normalized form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Movement {
+    /// Booking date.
+    date: Date,
+    /// Size of the entry in minor units, without a sign.
+    amount_minor: i64,
+    /// Which way the money moved.
+    flow: Flow,
+    /// Description after [`normalize_description`].
+    description: String,
+}
+
+impl Movement {
+    /// Returns the movement of an entry, normalizing `description`.
+    fn new(date: Date, amount_minor: i64, flow: Flow, description: &str) -> Self {
+        Self {
+            date,
+            amount_minor,
+            flow,
+            description: normalize_description(description),
+        }
+    }
+
+    /// Returns the keys two movements have in common exactly when they are
+    /// duplicates: one for money in or out, and both signs for an internal
+    /// movement.
+    ///
+    /// A movement whose amount is not positive has no key. No entry in the
+    /// ledger has such an amount, and a row with one is refused when it is
+    /// posted; without a key it is never skipped as a duplicate first.
+    fn keys(&self) -> impl Iterator<Item = DedupeKey> + '_ {
+        let amount = Some(self.amount_minor).filter(|minor| *minor > 0);
+        // A positive `i64` always has a negation that fits.
+        let negated = amount.and_then(i64::checked_neg);
+        let signed = match self.flow {
+            Flow::In => [amount, None],
+            Flow::Out => [negated, None],
+            Flow::Internal => [amount, negated],
+        };
+
+        signed
+            .into_iter()
+            .flatten()
+            .map(|signed_amount_minor| DedupeKey {
+                date: self.date,
+                signed_amount_minor,
+                description: self.description.clone(),
+            })
+    }
+}
+
+/// What two duplicate entries share: the date, the amount signed as a bank
+/// statement signs it (negative for money out), and the normalized
+/// description.
+///
+/// The sign is part of the key so that an expense and an income of one size
+/// on one day with one text, such as a purchase and its refund, are two
+/// entries and not one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DedupeKey {
+    /// Booking date.
+    date: Date,
+    /// Amount in minor units, negative for money out.
+    signed_amount_minor: i64,
+    /// Description after [`normalize_description`].
+    description: String,
+}
+
+/// The movements a row is compared with: the active entries of the ledger,
+/// and the rows that came before it.
+#[derive(Debug, Default)]
+struct SeenMovements {
+    /// Every key of every movement recorded.
+    keys: HashSet<DedupeKey>,
+}
+
+impl SeenMovements {
+    /// Returns whether `movement` duplicates one recorded before.
+    fn contains(&self, movement: &Movement) -> bool {
+        movement.keys().any(|key| self.keys.contains(&key))
+    }
+
+    /// Adds `movement` to what later ones are compared with.
+    fn record(&mut self, movement: &Movement) {
+        self.keys.extend(movement.keys());
+    }
+}
+
+/// A bank statement to preview.
+struct Statement<'a> {
+    /// The statement as CSV text.
+    csv_text: &'a str,
+    /// The columns to read, or `None` to detect them from the header row.
+    mapping: Option<&'a CsvColumnMapping>,
+    /// What the preview reports the text came from; empty for in-memory
+    /// text.
+    source: String,
+}
+
+/// The shared body of the two previews.
+///
+/// # Errors
+///
+/// Those of [`preview_bank_csv`].
+fn preview_statement(
     conn: &Connection,
     entity_id: EntityId,
     accounts: CsvImportAccounts,
-    csv_text: &str,
-    mapping: Option<&CsvColumnMapping>,
-    source: String,
+    statement: Statement<'_>,
 ) -> Result<CsvImportPreview> {
     let entity = get_entity(conn, entity_id)?;
     check_role_account(conn, entity_id, accounts.wallet_account_id)?;
     check_role_account(conn, entity_id, accounts.expense_account_id)?;
     check_role_account(conn, entity_id, accounts.income_account_id)?;
 
-    let exponent = currency_minor_exponent(&entity.base_currency);
-    let parsed = parse_bank_csv(csv_text, exponent, mapping)?;
-    let mut seen = load_active_keys(conn, entity_id)?;
+    let parsed = parse_bank_csv(statement.csv_text, entity.base_currency, statement.mapping)?;
+    let mut seen = load_active_movements(conn, entity_id)?;
     let mut rows = Vec::with_capacity(parsed.rows.len());
 
     for outcome in parsed.rows {
@@ -206,21 +361,21 @@ fn preview_bank_csv_named(
     }
 
     Ok(CsvImportPreview {
-        source,
+        source: statement.source,
         headers: parsed.headers,
         detected_mapping: parsed.detected_mapping,
         rows,
     })
 }
 
-/// Turns one parse outcome into a preview row, recording its key in `seen`.
+/// Turns one parse outcome into a preview row, recording it in `seen`.
 ///
-/// A parsed row is a duplicate when its key was already in `seen`: from the
-/// ledger, or from an earlier row of this file.
+/// A parsed row is a duplicate when `seen` already held its movement: from
+/// the ledger, or from an earlier row of this file.
 fn preview_row(
     entity_id: EntityId,
     accounts: CsvImportAccounts,
-    seen: &mut HashSet<DedupeKey>,
+    seen: &mut SeenMovements,
     outcome: CsvRowOutcome,
 ) -> CsvImportPreviewRow {
     match outcome {
@@ -232,8 +387,14 @@ fn preview_row(
             signed_amount_minor: None,
         },
         CsvRowOutcome::Parsed(row) => {
-            let key = DedupeKey::new(&row.entry_date, row.amount_minor, &row.description);
-            let duplicate = !seen.insert(key);
+            let movement = Movement::new(
+                row.entry_date,
+                row.amount_minor,
+                Flow::of_signed(row.signed_amount_minor),
+                &row.description,
+            );
+            let duplicate = seen.contains(&movement);
+            seen.record(&movement);
             CsvImportPreviewRow {
                 source_row: row.source_row,
                 duplicate,
@@ -261,45 +422,131 @@ fn check_role_account(conn: &Connection, entity_id: EntityId, id: Option<Account
     Ok(())
 }
 
-/// Loads the key of every active entry of `entity_id`: posted, not voided,
-/// and not itself the reversal of a voided entry.
+/// Loads the movement of every active entry of `entity_id`: posted, not
+/// voided, and not itself the reversal of a voided entry.
 ///
 /// An entry's amount is the sum of its debit lines, which for a balanced
-/// entry is its total. Every entry of the book is read on each call; there
-/// is no index on the key.
-fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<DedupeKey>> {
+/// entry is its total, and its flow follows what its lines on income and
+/// expense accounts add to the result ([`Flow::of_result`]). Every entry of
+/// the book is read on each call; there is no index on the key.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] naming the column when a stored entry date does
+///   not parse, or a date, a description or an amount has the wrong storage
+///   class.
+/// - [`Error::Database`] on database errors, which include a total that
+///   overflows `i64` inside `SQLite`'s `SUM`.
+fn load_active_movements(conn: &Connection, entity_id: EntityId) -> Result<SeenMovements> {
+    let sql = format!(
+        "
+        SELECT je.entry_date, je.description,
+               COALESCE(SUM(jl.debit_minor), 0) AS amount_minor,
+               COALESCE(SUM(
+                   CASE WHEN a.account_type IN ('income', 'expense')
+                        THEN jl.credit_minor - jl.debit_minor
+                        ELSE 0
+                   END
+               ), 0) AS result_minor
+        FROM journal_entries je
+        JOIN journal_lines jl ON jl.entry_id = je.id
+        JOIN accounts a ON a.id = jl.account_id
+        WHERE je.entity_id = ?1
+          AND {ACTIVE_ENTRY_PREDICATE}
+        GROUP BY je.id, je.entry_date, je.description
+        "
+    );
     let mut statement = conn
-        .prepare(
-            "
-            SELECT je.entry_date, je.description, COALESCE(SUM(jl.debit_minor), 0)
-            FROM journal_entries je
-            JOIN journal_lines jl ON jl.entry_id = je.id
-            WHERE je.entity_id = ?1
-              AND je.status = 'posted'
-              AND je.voided_by_entry_id IS NULL
-              AND NOT EXISTS (
-                  SELECT 1 FROM journal_entries je_void
-                  WHERE je_void.voided_by_entry_id = je.id
-              )
-            GROUP BY je.id, je.entry_date, je.description
-            ",
-        )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .prepare(&sql)
+        .database("read entries for duplicate check")?;
 
     let mapped = statement
-        .query_map([entity_id.0.to_string()], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
+        .query_map([entity_id.to_string()], |row| {
+            Ok(map_active_movement("read entries for duplicate check", row))
         })
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read entries for duplicate check")?;
 
-    let mut keys = HashSet::new();
-    for row in mapped {
-        let (date, description, amount) = row.map_err(|err| Error::Io(err.to_string()))?;
-        keys.insert(DedupeKey::new(&date, amount, &description));
+    let mut seen = SeenMovements::default();
+    for movement in collect_rows("read entries for duplicate check", mapped)? {
+        seen.record(&movement);
     }
-    Ok(keys)
+    Ok(seen)
+}
+
+/// Maps a row selected as `entry_date, description, amount_minor,
+/// result_minor` to its movement.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when the date does not parse or
+/// a column has the wrong storage class.
+fn map_active_movement(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<Movement> {
+    let date = stored_date(
+        "journal_entries.entry_date",
+        &read_column::<String>(operation, row, 0)?,
+    )?;
+    let description: String = read_column(operation, row, 1)?;
+    let amount_minor = read_column(operation, row, 2)?;
+    let flow = Flow::of_result(read_column(operation, row, 3)?);
+
+    Ok(Movement::new(date, amount_minor, flow, &description))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A movement of `amount_minor` on 15 March 2026 described as "Shop".
+    fn movement(amount_minor: i64, flow: Flow) -> Movement {
+        Movement::new(
+            time::macros::date!(2026 - 03 - 15),
+            amount_minor,
+            flow,
+            "Shop",
+        )
+    }
+
+    /// The signed amounts of the keys of a movement.
+    fn signed_amounts(amount_minor: i64, flow: Flow) -> Vec<i64> {
+        movement(amount_minor, flow)
+            .keys()
+            .map(|key| key.signed_amount_minor)
+            .collect()
+    }
+
+    #[test]
+    fn a_key_is_signed_by_the_flow_and_an_internal_movement_has_both_signs() {
+        assert_eq!(signed_amounts(2_500, Flow::In), [2_500]);
+        assert_eq!(signed_amounts(2_500, Flow::Out), [-2_500]);
+        assert_eq!(signed_amounts(2_500, Flow::Internal), [2_500, -2_500]);
+        assert_eq!(signed_amounts(i64::MAX, Flow::Out), [-i64::MAX]);
+    }
+
+    #[test]
+    fn an_amount_that_is_not_positive_has_no_key_and_so_duplicates_nothing() {
+        for amount_minor in [0, -2_500, i64::MIN] {
+            for flow in [Flow::In, Flow::Out, Flow::Internal] {
+                assert_eq!(
+                    signed_amounts(amount_minor, flow),
+                    [0_i64; 0],
+                    "{amount_minor}"
+                );
+            }
+        }
+
+        let mut seen = SeenMovements::default();
+        seen.record(&movement(2_500, Flow::Out));
+        assert!(!seen.contains(&movement(-2_500, Flow::In)));
+    }
+
+    #[test]
+    fn opposite_flows_are_not_duplicates_and_an_internal_one_matches_both() {
+        let mut seen = SeenMovements::default();
+        seen.record(&movement(2_500, Flow::Out));
+
+        assert!(seen.contains(&movement(2_500, Flow::Out)));
+        assert!(!seen.contains(&movement(2_500, Flow::In)));
+        assert!(seen.contains(&movement(2_500, Flow::Internal)));
+        assert!(!seen.contains(&movement(2_501, Flow::Out)));
+    }
 }

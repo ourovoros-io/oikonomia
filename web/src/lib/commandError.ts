@@ -12,14 +12,37 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   account_wrong_entity: 'error.accountWrongEntity',
   money_overflow: 'error.moneyOverflow',
   negative_money: 'error.negativeMoney',
+  database: 'error.io',
   io: 'error.io',
+  serialization: 'error.io',
   crypto: 'error.crypto',
   vault_corrupt: 'error.vaultCorrupt',
+  // Borrowed copy: a vault from a newer build is sound and needs wording of its own.
+  vault_too_new: 'error.vaultTooNew',
   backup_invalid: 'error.backupInvalid',
   restore_would_overwrite: 'error.restoreWouldOverwrite',
   not_found: 'error.notFound',
   analysis: 'error.analysis',
+  // Every CSV code borrows one sentence until each has wording of its own; an
+  // amount that does not fit reads as every other amount that does not.
+  csv_empty: 'error.csvParse',
+  csv_not_utf8: 'error.csvParse',
+  csv_too_large: 'error.csvParse',
   csv_parse: 'error.csvParse',
+  csv_missing_header: 'error.csvParse',
+  csv_missing_date_column: 'error.csvParse',
+  csv_missing_amount_column: 'error.csvParse',
+  csv_missing_column: 'error.csvParse',
+  csv_invalid_date: 'error.csvParse',
+  csv_invalid_amount: 'error.csvParse',
+  csv_invalid_type: 'error.csvParse',
+  csv_invalid_status: 'error.csvParse',
+  csv_invalid_integer: 'error.csvParse',
+  csv_missing_date: 'error.csvParse',
+  csv_missing_amount: 'error.csvParse',
+  csv_amount_overflow: 'error.moneyOverflow',
+  csv_zero_amount: 'error.csvParse',
+  csv_invalid_mapping: 'error.csvParse',
   password_too_short: 'error.passwordTooShort',
   name_required: 'error.nameRequired',
   name_taken: 'error.nameTaken',
@@ -51,10 +74,17 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   file_data_invalid: 'error.fileDataInvalid',
   file_unreadable: 'error.fileUnreadable',
   save_location_invalid: 'error.saveLocationInvalid',
+  // The sentence names no dialog, so it reads the same for a file to open.
+  open_location_invalid: 'error.saveLocationInvalid',
   save_failed: 'error.saveFailed',
   path_not_granted: 'error.pathNotGranted',
   mail_client_failed: 'error.mailClientFailed',
   task_failed: 'error.taskFailed',
+  // Only the update commands need the cache directory.
+  cache_dir_unavailable: 'error.update',
+  // Sent while a failed start is being reported natively; no screen is up to
+  // show it, so it has no sentence of its own.
+  app_state_unavailable: 'error.unknown',
   update_install_not_allowed: 'error.update',
   update_missing_public_key: 'error.update',
   update_network: 'error.update',
@@ -66,6 +96,7 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   update_artifact_integrity: 'error.update',
   update_artifact_too_large: 'error.update',
   update_cache_io: 'error.update',
+  update_install_failed: 'error.update',
   update_invalid_feed_url: 'error.update',
   update_invalid_feed_input: 'error.update',
   unknown: 'error.unknown',
@@ -132,10 +163,13 @@ function keyFor(map: Record<string, string>, code: string): string | undefined {
  * over these. Every other code is specific enough to show as it is.
  */
 const VAGUE_CODES: ReadonlySet<string> = new Set([
+  'database',
   'io',
+  'serialization',
   'crypto',
   'unknown',
   'task_failed',
+  'app_state_unavailable',
   'validation_internal',
   'analysis',
 ])

@@ -28,15 +28,19 @@ use rand::Rng;
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 use crate::db::register_fold;
-use crate::error::{Error, Result, ValidationError};
-use crate::vault::backup::recover_interrupted_restore;
+use crate::error::{
+    CryptoContext, DatabaseContext, Error, Result, SerializationContext, ValidationError,
+    VaultCorruption,
+};
+use crate::vault::backup::{recover_interrupted_restore, remove_stale_snapshot};
 use crate::vault::crypto::{self, VaultKey};
 use crate::vault::files::{
     discard_database_files, discard_file, rename_synced, write_private_file,
 };
 use crate::vault::header::{MIN_PASSWORD_LEN, SALT_LEN, VaultHeader};
 use crate::vault::paths::{
-    vault_db_path, vault_header_path, vault_init_header_path, vault_staged_header_path,
+    DB_FILE_NAME, vault_db_path, vault_header_path, vault_init_header_path,
+    vault_staged_header_path,
 };
 use crate::vault::permissions::{create_private_dir, create_private_file, restrict_to_owner};
 
@@ -68,8 +72,7 @@ pub struct Vault {
     /// Published header, or `None` while no vault exists.
     ///
     /// Every method of this type that replaces `vault.header.json` replaces
-    /// this as well, before anything after the rename can fail. The one
-    /// exception is a restore whose reload fails; see `Vault::restore_from`.
+    /// this as well, before anything after the rename can fail.
     header: Option<VaultHeader>,
     /// Open connection, present exactly while the vault is unlocked.
     conn: Option<Connection>,
@@ -84,20 +87,28 @@ impl Vault {
     ///
     /// Also settles what a crash left half-done: a restore that was swapping
     /// the vault files is undone or finished (the protocol is in the
-    /// `vault::backup` module doc), and an interrupted first run is cleared
-    /// so the vault reads as uninitialized again (see [`Vault::init`]).
+    /// `vault::backup` module doc), the snapshot of an interrupted online
+    /// backup is removed, and an interrupted first run is cleared so the
+    /// vault reads as uninitialized again (see [`Vault::init`]).
+    ///
+    /// Because of the snapshot, this must not be called on a directory
+    /// while another handle is writing an online backup of it
+    /// ([`Vault::backup_to`], unlocked): that backup can fail.
     ///
     /// # Errors
     ///
     /// [`Error::Io`] when the directory cannot be created, an interrupted
-    /// restore cannot be settled, or the header cannot be read;
-    /// [`Error::VaultCorrupt`] when the header is not valid, comes
-    /// from a vault format this build does not know, or is missing while a
-    /// database exists.
+    /// restore cannot be settled, a leftover snapshot cannot be removed, or
+    /// the header cannot be read;
+    /// [`Error::VaultTooNew`] when the header's format version is above the
+    /// one this build reads, so a later build wrote it;
+    /// [`Error::VaultCorrupt`] when the header is not valid, names format
+    /// version 0, or is missing while a database exists.
     pub fn open_path(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
         create_private_dir(&data_dir)?;
         recover_interrupted_restore(&data_dir)?;
+        remove_stale_snapshot(&data_dir)?;
 
         let header_path = vault_header_path(&data_dir);
         let db_path = vault_db_path(&data_dir);
@@ -119,9 +130,7 @@ impl Vault {
                 discard_partial_init(&data_dir);
             }
             if db_path.exists() {
-                return Err(Error::VaultCorrupt(
-                    "database exists without vault header".into(),
-                ));
+                return Err(Error::VaultCorrupt(VaultCorruption::DatabaseWithoutHeader));
             }
             None
         };
@@ -175,13 +184,15 @@ impl Vault {
     ///   when `password` has fewer than 12 characters.
     /// - [`Error::Crypto`] when the key cannot be derived or `SQLCipher`
     ///   rejects a setting.
-    /// - [`Error::Io`] when a file cannot be written or the schema cannot be
-    ///   created.
+    /// - [`Error::Io`] when a file cannot be written.
+    /// - [`Error::Database`] when the database cannot be opened or the schema
+    ///   cannot be created.
+    /// - [`Error::Serialization`] when the header cannot be encoded.
     ///
     /// A failed attempt removes what it created.
     pub fn init(&mut self, password: &str) -> Result<()> {
         if self.header.is_some() || vault_db_path(&self.data_dir).exists() {
-            return Err(Error::Validation(ValidationError::VaultAlreadyInitialized));
+            return Err(ValidationError::VaultAlreadyInitialized.into());
         }
 
         validate_password(password)?;
@@ -219,12 +230,16 @@ impl Vault {
     ///   under neither the published header nor a staged one.
     /// - [`Error::VaultCorrupt`] when the header cannot be used to derive a
     ///   key, the database file is missing or empty, the database has no
-    ///   `vault_meta` row, or its schema is newer than this build or fails a
-    ///   migration's checks.
+    ///   `vault_meta` row, or its data fails a migration's checks.
+    /// - [`Error::VaultTooNew`] when the schema is newer than this build,
+    ///   or when the published header's key failed and a staged header is
+    ///   from a newer format.
     /// - [`Error::Crypto`] when Argon2 fails or `SQLCipher` rejects a
     ///   setting.
-    /// - [`Error::Io`] for every other failure to read or migrate the
+    /// - [`Error::Database`] for every other failure to read or migrate the
     ///   database, including one that is busy in another process.
+    /// - [`Error::Io`] when the database file cannot be inspected, or a
+    ///   staged header cannot be read or published.
     ///
     /// After an error the vault is still locked.
     pub fn unlock(&mut self, password: &str) -> Result<()> {
@@ -263,6 +278,12 @@ impl Vault {
     /// database. No staged header, or one that is not a header (a crash can
     /// only truncate it before the rekey starts, while the old key is still
     /// the right one), therefore means the password was simply wrong.
+    ///
+    /// A staged header from a newer format is different: a later build
+    /// staged it, and if that build's rekey ran, it is the header that fits
+    /// and this build cannot use it. That is reported as
+    /// [`Error::VaultTooNew`] instead of sending the user off to retype a
+    /// password that may be right.
     fn unlock_with_staged_header(&mut self, password: &str) -> Result<()> {
         let staged_path = vault_staged_header_path(&self.data_dir);
         if !staged_path.exists() {
@@ -348,8 +369,11 @@ impl Vault {
     /// - [`Error::Crypto`] when Argon2 fails or `SQLCipher` rejects the
     ///   rekey.
     /// - [`Error::Io`] when the staged header cannot be written or renamed,
-    ///   the database cannot be read, or its write-ahead log cannot be
-    ///   folded in because another connection holds it.
+    ///   or the database file cannot be inspected.
+    /// - [`Error::Database`] when the database cannot be read, or its
+    ///   write-ahead log cannot be folded in because another connection
+    ///   holds it.
+    /// - [`Error::Serialization`] when the new header cannot be encoded.
     ///
     /// A failed verification leaves any open connection untouched. A failure
     /// after that reopens an unlocked vault under the old key when that key
@@ -394,6 +418,20 @@ impl Vault {
                 Err(err)
             }
         }
+    }
+
+    /// Records that `header` is the one now published in the data
+    /// directory.
+    ///
+    /// For [`Vault::restore_from`], which replaces the header file from
+    /// another module. The caller has closed the connection: one that is
+    /// still open would belong to the database that was replaced.
+    pub(super) fn adopt_published_header(&mut self, header: VaultHeader) {
+        debug_assert!(
+            self.conn.is_none(),
+            "a connection would outlive the database it was opened on"
+        );
+        self.header = Some(header);
     }
 
     /// Puts back the session a failed password change closed.
@@ -451,9 +489,10 @@ impl fmt::Debug for Vault {
 /// has fewer than [`MIN_PASSWORD_LEN`] characters.
 fn validate_password(password: &str) -> Result<()> {
     if password.chars().count() < MIN_PASSWORD_LEN {
-        return Err(Error::Validation(ValidationError::PasswordTooShort {
+        return Err(ValidationError::PasswordTooShort {
             min: MIN_PASSWORD_LEN,
-        }));
+        }
+        .into());
     }
     Ok(())
 }
@@ -478,17 +517,17 @@ fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result
             [],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|err| key_check_error(&err))?;
+        .map_err(|err| key_check_error("look for vault metadata table", &err))?;
     if !has_meta_table {
-        return Err(Error::VaultCorrupt("vault_meta table is missing".into()));
+        return Err(Error::VaultCorrupt(VaultCorruption::MissingMetaTable));
     }
 
     conn.query_row("SELECT schema_version FROM vault_meta LIMIT 1", [], |row| {
         row.get::<_, i64>(0)
     })
     .optional()
-    .map_err(|err| key_check_error(&err))?
-    .ok_or_else(|| Error::VaultCorrupt("vault_meta has no schema version".into()))?;
+    .map_err(|err| key_check_error("read schema version", &err))?
+    .ok_or(Error::VaultCorrupt(VaultCorruption::MissingSchemaVersion))?;
 
     Ok(conn)
 }
@@ -500,11 +539,11 @@ fn open_verified(db_path: &Path, password: &str, header: &VaultHeader) -> Result
 /// `SQLITE_NOTADB`. That code alone means the password may be wrong. A busy
 /// database or a disk error says nothing about the password, and reporting
 /// it as one would send the user off retyping a password that is correct.
-fn key_check_error(err: &rusqlite::Error) -> Error {
+fn key_check_error(operation: &'static str, err: &rusqlite::Error) -> Error {
     if err.sqlite_error_code() == Some(ErrorCode::NotADatabase) {
         Error::InvalidPassword
     } else {
-        Error::Io(err.to_string())
+        Error::database(operation, err)
     }
 }
 
@@ -519,18 +558,20 @@ fn key_check_error(err: &rusqlite::Error) -> Error {
 ///
 /// [`Error::VaultCorrupt`] when `create` is false and the file is missing or
 /// empty; [`Error::InvalidPassword`] when `key` does not decrypt it;
-/// [`Error::Crypto`] or [`Error::Io`] for everything else.
+/// [`Error::Crypto`], [`Error::Database`] or [`Error::Io`] for everything else.
 fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connection> {
     if !create {
         let metadata = fs::metadata(path).map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
-                Error::VaultCorrupt("vault database is missing".into())
+                Error::VaultCorrupt(VaultCorruption::HeaderWithoutDatabase)
             } else {
-                Error::Io(err.to_string())
+                Error::io("inspect vault database", err)
             }
         })?;
         if metadata.len() == 0 {
-            return Err(Error::VaultCorrupt("vault database is empty".into()));
+            return Err(Error::VaultCorrupt(VaultCorruption::EmptyFile {
+                file: DB_FILE_NAME,
+            }));
         }
     }
 
@@ -543,8 +584,7 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     }
 
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_URI;
-    let conn =
-        Connection::open_with_flags(path, flags).map_err(|err| Error::Io(err.to_string()))?;
+    let conn = Connection::open_with_flags(path, flags).database("open vault database")?;
 
     silence_sqlcipher_log(&conn)?;
 
@@ -555,34 +595,34 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     // cipher_memory_security").
     // Set before the key so the key's own handling is covered.
     conn.pragma_update(None, "cipher_memory_security", "ON")
-        .map_err(|err| Error::Crypto(err.to_string()))?;
+        .crypto("enable cipher memory security")?;
 
     // The key has to be set before any statement that touches the database.
     // `pragma_update` copies it into a statement string that is not wiped;
     // see `crypto::key_to_sqlcipher_pragma`.
     let pragma_key = crypto::key_to_sqlcipher_pragma(key);
     conn.pragma_update(None, "key", pragma_key.as_str())
-        .map_err(|err| key_check_error(&err))?;
+        .map_err(|err| key_check_error("set database key", &err))?;
 
     // The key pragma only stores the key; the first read is what proves it.
     conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
         row.get::<_, i64>(0)
     })
-    .map_err(|err| key_check_error(&err))?;
+    .map_err(|err| key_check_error("verify database key", &err))?;
 
     // WAL keeps readers and the writer from blocking each other. Its pages
     // are encrypted with the database key
     // (https://www.zetetic.net/sqlcipher/design/, "Write Ahead Log Files").
     conn.pragma_update(None, "journal_mode", "WAL")
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("enable write-ahead log")?;
     conn.pragma_update(None, "foreign_keys", "ON")
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("enable foreign keys")?;
 
     // Case-insensitive search and name checks call `fold(...)`, which exists
     // only on the connection that registered it. This is the one place every
     // vault connection is made (open, unlock, rekey and its restore), so no
     // query can meet a connection without it.
-    register_fold(&conn).map_err(|err| Error::Io(err.to_string()))?;
+    register_fold(&conn).database("register fold function")?;
 
     Ok(conn)
 }
@@ -602,7 +642,7 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
 #[cfg(windows)]
 fn silence_sqlcipher_log(conn: &Connection) -> Result<()> {
     conn.pragma_update(None, "cipher_log_level", "NONE")
-        .map_err(|err| Error::Crypto(err.to_string()))
+        .crypto("silence cipher log")
 }
 
 /// Leaves `SQLCipher`'s log on: outside Windows it is written without
@@ -633,19 +673,22 @@ fn rekey_database(
 
     let staged_path = vault_staged_header_path(data_dir);
     let header_json =
-        serde_json::to_string_pretty(&new_header).map_err(|err| Error::Io(err.to_string()))?;
+        serde_json::to_string_pretty(&new_header).serialization("encode vault header")?;
     write_private_file(&staged_path, header_json.as_bytes())?;
 
     // Fold WAL pages into the main file so the rekey covers everything.
     let blocked: i64 = conn
         .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| row.get(0))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("checkpoint write-ahead log")?;
     if blocked != 0 {
-        return Err(Error::Io("wal checkpoint blocked; will not rekey".into()));
+        return Err(Error::database(
+            "checkpoint write-ahead log",
+            "the checkpoint was blocked; the database is not rekeyed",
+        ));
     }
     let pragma_key = crypto::key_to_sqlcipher_pragma(&new_key);
     conn.pragma_update(None, "rekey", pragma_key.as_str())
-        .map_err(|err| Error::Crypto(err.to_string()))?;
+        .crypto("rekey vault database")?;
     drop(conn);
 
     rename_synced(&staged_path, &vault_header_path(data_dir))?;
@@ -655,8 +698,7 @@ fn rekey_database(
 /// Writes the files of a new vault in the order [`Vault::init`] documents and
 /// returns the open connection.
 fn create_vault_files(data_dir: &Path, header: &VaultHeader, key: &VaultKey) -> Result<Connection> {
-    let header_json =
-        serde_json::to_string_pretty(header).map_err(|err| Error::Io(err.to_string()))?;
+    let header_json = serde_json::to_string_pretty(header).serialization("encode vault header")?;
     let staged_header = vault_init_header_path(data_dir);
     write_private_file(&staged_header, header_json.as_bytes())?;
 
@@ -694,7 +736,7 @@ fn bootstrap_schema(conn: &Connection) -> Result<()> {
         VALUES (1, 1, datetime('now'));
         ",
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("create vault metadata table")?;
     crate::db::migrate(conn)?;
     Ok(())
 }
@@ -742,28 +784,73 @@ mod tests {
         assert_ne!(&bytes[0..6], b"SQLite");
     }
 
+    /// Writes a copy of the published header of `data_dir` to `dest` with
+    /// its format version replaced.
+    fn write_header_with_version(data_dir: &Path, dest: &Path, version: u32) {
+        let raw = fs::read_to_string(vault_header_path(data_dir)).expect("read header");
+        let mut header: VaultHeader = serde_json::from_str(&raw).expect("parse header");
+        header.version = version;
+        fs::write(dest, serde_json::to_string(&header).expect("encode")).expect("write header");
+    }
+
     #[test]
-    fn a_header_from_a_newer_format_is_rejected_on_open() {
+    fn a_header_from_a_newer_format_is_too_new_not_corrupt() {
         let (dir, vault) = init_vault();
         drop(vault);
-
         let header_path = vault_header_path(dir.path());
-        let raw = fs::read_to_string(&header_path).expect("read header");
-        let mut header: VaultHeader = serde_json::from_str(&raw).expect("parse header");
-        header.version += 1;
-        fs::write(
-            &header_path,
-            serde_json::to_string(&header).expect("encode"),
-        )
-        .expect("write header");
+        write_header_with_version(dir.path(), &header_path, 2);
+        let before = fs::read(&header_path).expect("header");
 
         let err = Vault::open_path(dir.path())
             .map(|vault| vault.status())
             .expect_err("a format this build does not know must not open");
+
         assert_eq!(
             err,
-            Error::VaultCorrupt("unsupported vault format 2".into())
+            Error::VaultTooNew {
+                found: 2,
+                supported: 1
+            }
         );
+        assert_eq!(fs::read(&header_path).expect("header"), before, "untouched");
+    }
+
+    #[test]
+    fn a_header_with_format_version_zero_is_corrupt() {
+        let (dir, vault) = init_vault();
+        drop(vault);
+        write_header_with_version(dir.path(), &vault_header_path(dir.path()), 0);
+
+        let err = Vault::open_path(dir.path())
+            .map(|vault| vault.status())
+            .expect_err("no build writes version 0");
+
+        assert_eq!(
+            err,
+            Error::VaultCorrupt(VaultCorruption::UnsupportedFormat { version: 0 })
+        );
+    }
+
+    #[test]
+    fn a_staged_header_from_a_newer_format_is_reported_when_the_published_key_fails() {
+        let (dir, mut vault) = init_vault();
+        vault.lock();
+        let staged = vault_staged_header_path(dir.path());
+        write_header_with_version(dir.path(), &staged, 2);
+
+        // The password that fails may be the right one for a rekey a later
+        // build ran, so this is not reported as a wrong password.
+        assert_eq!(
+            vault.unlock("wrong password!!"),
+            Err(Error::VaultTooNew {
+                found: 2,
+                supported: 1
+            })
+        );
+        assert_eq!(vault.status(), VaultStatus::Locked);
+
+        vault.unlock(PASSWORD).expect("the published header fits");
+        assert!(!staged.exists(), "a stale staged header is removed");
     }
 
     #[test]
@@ -810,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn a_busy_database_is_an_io_error_not_a_wrong_password() {
+    fn a_busy_database_is_a_database_error_not_a_wrong_password() {
         let (dir, mut vault) = init_vault();
         vault.lock();
 
@@ -828,7 +915,7 @@ mod tests {
 
         let err = vault.unlock(PASSWORD).expect_err("database is held");
 
-        assert!(matches!(err, Error::Io(_)), "got {err:?}");
+        assert!(matches!(err, Error::Database { .. }), "got {err:?}");
         assert_eq!(vault.status(), VaultStatus::Locked);
     }
 

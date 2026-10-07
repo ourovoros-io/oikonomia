@@ -41,7 +41,7 @@
 //! - **Money is integer minor units.** Amounts are `i64` counts of the
 //!   currency's smallest unit and are never held in floating point. Sums are
 //!   checked: a total that does not fit is an error, never a wrapped or
-//!   clamped figure. The error is [`Error::MoneyOverflow`], or [`Error::Io`]
+//!   clamped figure. The error is [`Error::MoneyOverflow`], or [`Error::Database`]
 //!   when it is `SQLite`'s `SUM` that overflows (see [`ledger`]).
 //! - **A posted entry balances.** It has at least two lines, each line has an
 //!   amount on exactly one side, and total debits equal total credits
@@ -66,6 +66,35 @@
 //!   [`ui_text::UiText`]) that the UI words in the user's language. The
 //!   exception is text stored in the book itself, which [`text`] supplies.
 //! - **No `unsafe`.** The crate forbids it.
+//!
+//! # Public types are exhaustive
+//!
+//! No public enum or struct of this crate is `#[non_exhaustive]`, and none
+//! is declared frozen. That is one decision for the whole crate, recorded
+//! here once; the test `tests/exhaustive_types.rs` fails when the attribute
+//! appears.
+//!
+//! The workspace is not published. The only other user of these types is the
+//! desktop shell, built from the same commit, so there is no downstream
+//! build that a new variant or field could break by surprise. A build that
+//! breaks here is the point. A match on one of these enums
+//! ([`domain::AccountType`], [`ledger::SimpleEntryKind`], [`prefs::Locale`],
+//! [`ui_text::UiTextCode`], [`Error`] and the rest) is written without a
+//! wildcard arm, here and in the shell, so the compiler lists every place
+//! that has to decide what a new variant means. A struct literal names its
+//! fields, so a new field stops the build wherever one is built, except
+//! where the literal falls back on the struct's `Default`. With
+//! `#[non_exhaustive]` each of those matches would need a wildcard arm and a
+//! new variant would fall into it unnoticed, and no struct could be built
+//! outside this crate at all.
+//!
+//! Adding a variant or a field is therefore always allowed, and is a change
+//! to make everywhere at once. For many of these types the compiler is not
+//! the only reader: an enum that is serialized or stored also has its text
+//! in the vault format, in the JSON the web UI mirrors in
+//! `web/src/lib/api.ts`, or in a fixture the UI's tests read, and those
+//! have to change with it. [`error`] says the same for the error enums in
+//! particular.
 
 #![forbid(unsafe_code)]
 

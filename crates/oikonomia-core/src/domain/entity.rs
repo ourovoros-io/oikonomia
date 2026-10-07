@@ -14,28 +14,14 @@
 //! default are found by the template's codes (see [`crate::coa`] and
 //! [`crate::default_accounts`]).
 
+use crate::domain::currency::CurrencyCode;
+use crate::domain::define_id;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use time::Month;
 
-/// Identifies one [`Entity`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct EntityId(pub Uuid);
-
-impl EntityId {
-    /// Returns a new random (version 4) id.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for EntityId {
-    /// Returns a new random id, the same as [`EntityId::new`], not a fixed
-    /// value.
-    fn default() -> Self {
-        Self::new()
-    }
+define_id! {
+    /// Identifies one [`Entity`].
+    EntityId
 }
 
 /// The starter chart of accounts an entity is created with.
@@ -55,6 +41,30 @@ pub enum ChartTemplate {
     Blank,
 }
 
+impl ChartTemplate {
+    /// Returns the template as the UI and the vault write it: `personal`,
+    /// `company` or `blank`.
+    ///
+    /// This is the text serde writes and the text stored in
+    /// `entities.chart_template`, so it is part of the vault format.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::domain::ChartTemplate;
+    ///
+    /// assert_eq!(ChartTemplate::Company.identifier(), "company");
+    /// ```
+    #[must_use]
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::Personal => "personal",
+            Self::Company => "company",
+            Self::Blank => "blank",
+        }
+    }
+}
+
 /// One set of books with a single base currency.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entity {
@@ -62,13 +72,33 @@ pub struct Entity {
     pub id: EntityId,
     /// The name shown to the user, such as "Personal" or "Acme Ltd".
     pub name: String,
-    /// The currency of every amount in these books, as three capital
-    /// letters such as `EUR`. It is meant to be an ISO 4217 code; only the
-    /// shape is checked when the entity is created.
-    pub base_currency: String,
-    /// The month the fiscal year starts in, from 1 (January) to 12.
-    pub fiscal_year_start_month: u8,
+    /// The currency of every amount in these books, serialized as its three
+    /// capital letters such as `EUR`.
+    pub base_currency: CurrencyCode,
+    /// The month the fiscal year starts in, serialized as its number from 1
+    /// (January) to 12.
+    #[serde(with = "crate::util::serde_month")]
+    pub fiscal_year_start_month: Month,
     /// The template the chart was seeded from, which also decides the
     /// seeded accounts that are defaults for each role.
     pub chart_template: ChartTemplate,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChartTemplate;
+
+    #[test]
+    fn the_identifier_of_a_chart_template_is_the_text_serde_writes() {
+        for template in [
+            ChartTemplate::Personal,
+            ChartTemplate::Company,
+            ChartTemplate::Blank,
+        ] {
+            assert_eq!(
+                serde_json::to_value(template).unwrap(),
+                serde_json::Value::from(template.identifier())
+            );
+        }
+    }
 }

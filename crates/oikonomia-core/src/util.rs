@@ -8,7 +8,11 @@
 //!
 //! An accounting date is a [`time::Date`] in memory and `YYYY-MM-DD` in the
 //! database and over IPC. [`format_date`] writes that form and [`parse_date`]
-//! reads it; [`serde_date`] applies the pair to a struct field.
+//! reads it; [`serde_date`] applies the pair to a struct field, and
+//! [`DateText`] carries a date the UI sent as a bare argument until it is
+//! parsed. A month on
+//! its own, such as the one a fiscal year starts in, is a [`time::Month`] in
+//! memory and its number from 1 to 12 as JSON ([`serde_month`]).
 //!
 //! The form is fixed-width on purpose. Queries compare and sort date columns
 //! as text, and text order equals date order only when every date has the
@@ -31,6 +35,7 @@
 //! # Ids
 //!
 //! Ids are UUIDs stored as their hyphenated text; [`parse_uuid`] reads one.
+//! The id types of [`crate::domain`] parse through it in their `FromStr`.
 
 use crate::error::{Error, Result, ValidationError};
 use time::{Date, Month};
@@ -47,9 +52,10 @@ use uuid::Uuid;
 /// application, never typed by the user, so a bad one is a caller bug.
 pub fn parse_uuid(text: &str) -> Result<Uuid> {
     Uuid::parse_str(text).map_err(|_| {
-        Error::Validation(ValidationError::Internal {
+        ValidationError::Internal {
             detail: format!("invalid id: {text}"),
-        })
+        }
+        .into()
     })
 }
 
@@ -141,9 +147,60 @@ fn decimal_value(digits: &[u8]) -> Option<u16> {
 
 /// Returns the error for `text` that is not a `YYYY-MM-DD` calendar date.
 fn invalid_date(text: &str) -> Error {
-    Error::Validation(ValidationError::InvalidDate {
+    ValidationError::InvalidDate {
         value: text.to_owned(),
-    })
+    }
+    .into()
+}
+
+/// Text that the UI sent where a date belongs and that has not been parsed
+/// yet.
+///
+/// A command of the desktop shell takes this for a date it receives as a bare
+/// argument, and calls [`DateText::parse`] before it calls into the ledger,
+/// which takes a [`time::Date`]. It deserializes from any JSON string and
+/// never from anything else.
+///
+/// It is not a parsed date on purpose. A value the JSON layer refuses reaches
+/// the UI as text without a code, which the UI can only show as an unknown
+/// error. Parsing after deserializing keeps a malformed date an
+/// [`ValidationError::InvalidDate`], which the UI words.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::util::{DateText, format_date};
+///
+/// let sent: DateText = serde_json::from_str(r#""2026-08-10""#)?;
+/// assert_eq!(format_date(sent.parse()?), "2026-08-10");
+///
+/// let malformed: DateText = serde_json::from_str(r#""10/08/2026""#)?;
+/// assert_eq!(malformed.parse().map_err(|error| error.code()), Err("invalid_date"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(transparent)]
+pub struct DateText(String);
+
+impl DateText {
+    /// Parses the text with the strict rule of [`parse_date`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Validation`] with [`ValidationError::InvalidDate`],
+    /// carrying the text, when it is not a `YYYY-MM-DD` calendar date.
+    pub fn parse(&self) -> Result<Date> {
+        parse_date(&self.0)
+    }
+
+    /// Parses an argument the UI may leave out: `None` stays `None`.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`DateText::parse`], when a text is given.
+    pub fn parse_optional(text: Option<&Self>) -> Result<Option<Date>> {
+        text.map(Self::parse).transpose()
+    }
 }
 
 /// Serializes a [`time::Date`] field as a `YYYY-MM-DD` string, for use with
@@ -197,6 +254,59 @@ pub mod serde_date {
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
         let text = String::deserialize(deserializer)?;
         parse_date(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Serializes a [`time::Month`] field as its number, 1 for January to 12 for
+/// December, for use with `#[serde(with = "crate::util::serde_month")]`.
+///
+/// The number is what the web UI exchanges. It is written out here so that
+/// the wire form does not depend on which features the `time` crate is built
+/// with.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::util::serde_month;
+/// use serde::{Deserialize, Serialize};
+/// use time::Month;
+///
+/// #[derive(Debug, PartialEq, Serialize, Deserialize)]
+/// struct FiscalYear {
+///     #[serde(with = "serde_month")]
+///     starts_in: Month,
+/// }
+///
+/// let year = FiscalYear { starts_in: Month::April };
+/// let json = serde_json::to_string(&year)?;
+/// assert_eq!(json, r#"{"starts_in":4}"#);
+/// assert_eq!(serde_json::from_str::<FiscalYear>(&json)?, year);
+/// assert!(serde_json::from_str::<FiscalYear>(r#"{"starts_in":13}"#).is_err());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub mod serde_month {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use time::Month;
+
+    /// Serializes `month` as its number from 1 to 12.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serializer's own error when it cannot write a number.
+    pub fn serialize<S: Serializer>(month: &Month, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(u8::from(*month))
+    }
+
+    /// Deserializes a number from 1 to 12 as its month.
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserializer's error when the value is not a number that
+    /// fits `u8`, and a custom error when the number is outside 1 to 12.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Month, D::Error> {
+        let number = u8::deserialize(deserializer)?;
+        Month::try_from(number)
+            .map_err(|_| serde::de::Error::custom(format_args!("not a month: {number}")))
     }
 }
 
@@ -262,6 +372,60 @@ mod tests {
             })
         });
         assert_eq!(back.map(|dated| dated.date), Ok(date));
+    }
+
+    /// A struct with one month field that goes through [`serde_month`].
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Starting {
+        /// The month under test.
+        #[serde(with = "crate::util::serde_month")]
+        month: Month,
+    }
+
+    #[test]
+    fn serde_month_reads_only_the_numbers_one_to_twelve() {
+        let read = |json: &str| serde_json::from_str::<Starting>(json).map(|value| value.month);
+
+        assert_eq!(read(r#"{"month":1}"#).ok(), Some(Month::January));
+        assert_eq!(read(r#"{"month":12}"#).ok(), Some(Month::December));
+        for json in [
+            r#"{"month":0}"#,
+            r#"{"month":13}"#,
+            r#"{"month":-1}"#,
+            r#"{"month":"4"}"#,
+            r#"{"month":"April"}"#,
+            r#"{"month":null}"#,
+        ] {
+            assert!(read(json).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn date_text_reads_any_json_string_and_nothing_else() {
+        assert!(serde_json::from_str::<DateText>(r#""2026-08-10""#).is_ok());
+        assert!(serde_json::from_str::<DateText>(r#""not a date""#).is_ok());
+        for json in ["20260810", "null", "[]", r#"{"date":"2026-08-10"}"#] {
+            assert!(serde_json::from_str::<DateText>(json).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn date_text_parses_with_the_strict_rule_and_an_absent_one_stays_absent() {
+        let sent: DateText = serde_json::from_str(r#""2026-08-10""#).unwrap();
+        let malformed: DateText = serde_json::from_str(r#""2026-8-10""#).unwrap();
+
+        assert_eq!(sent.parse(), parse_date("2026-08-10"));
+        assert_eq!(
+            DateText::parse_optional(Some(&sent)),
+            parse_date("2026-08-10").map(Some)
+        );
+        assert_eq!(DateText::parse_optional(None), Ok(None));
+        assert_eq!(
+            DateText::parse_optional(Some(&malformed)),
+            Err(Error::Validation(ValidationError::InvalidDate {
+                value: "2026-8-10".to_owned()
+            }))
+        );
     }
 
     #[test]

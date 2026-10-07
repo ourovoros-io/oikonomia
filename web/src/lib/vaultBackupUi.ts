@@ -70,9 +70,10 @@ export function restoreConfirm(kind: RestoreConfirmKind): {
 
 /**
  * Failures of backing up or restoring. A code with its own copy shows that
- * copy; the generic ones (invalid file, missing file, io) get a sentence about
- * backups. `fallbackKey` says what was being attempted for any other code, so
- * a vague failure while restoring does not read as one about making a backup.
+ * copy; the generic ones (invalid file, missing file, a file or database
+ * failure) get a sentence about backups. `fallbackKey` says what was being
+ * attempted for any other code, so a vague failure while restoring does not
+ * read as one about making a backup.
  * Takes `unknown` because a rejection can be anything, including nothing.
  */
 function vaultCommandError(err: unknown, fallbackKey: string): string {
@@ -86,6 +87,8 @@ function vaultCommandError(err: unknown, fallbackKey: string): string {
     case 'not_found':
       return t('settings.vaultBackup.errNotFound')
     case 'io':
+    case 'database':
+    case 'serialization':
       // The shared rule keeps this sentence over the generic file one and logs the cause.
       return commandErrorMessage(err, 'settings.vaultBackup.errIo')
     default:

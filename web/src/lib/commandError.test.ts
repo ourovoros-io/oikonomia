@@ -22,6 +22,31 @@ afterEach(() => {
   resetI18nForTests()
 })
 
+/**
+ * Parameters Rust sends that no copy uses yet, by code. Each is a value the
+ * wording could name (which field is blank, what was not found) once someone
+ * writes that wording in every language. Until then the copy must not use
+ * them, and an entry here that Rust stops sending fails the test below.
+ */
+const UNWORDED_PARAMS: Record<string, string[]> = {
+  analysis: ['operation'],
+  crypto: ['operation'],
+  csv_invalid_amount: ['value'],
+  csv_invalid_date: ['value'],
+  csv_invalid_integer: ['value'],
+  csv_invalid_mapping: ['column', 'problem'],
+  csv_invalid_status: ['value'],
+  csv_invalid_type: ['value'],
+  csv_missing_column: ['column'],
+  database: ['operation'],
+  io: ['operation'],
+  name_required: ['field'],
+  not_found: ['resource'],
+  serialization: ['operation'],
+  unbalanced_entry: ['credits', 'debits'],
+  vault_too_new: ['found', 'supported'],
+}
+
 describe('command error localization', () => {
   it('maps every canonical code in every locale', () => {
     const catalogs = { en, el, fr, de }
@@ -43,14 +68,24 @@ describe('command error localization', () => {
   })
 
   it('has copy that uses exactly the parameters Rust sends, in every locale', () => {
-    // errorCodeParams.json is pinned to ValidationError::params by a Rust test, so
-    // this is checked against what Rust sends, not a hand copy. Where a
-    // parameter depends on the value, the file lists every name the copy may use.
+    // errorCodeParams.json is pinned to the params() of the Rust error types by
+    // Rust tests, so this is checked against what Rust sends, not a hand copy.
+    // Where a parameter depends on the value, the file lists every name the
+    // copy may use.
     const paramsByCode: Record<string, string[]> = codeParams
     const catalogs = { en, el, fr, de }
 
+    for (const [code, unworded] of Object.entries(UNWORDED_PARAMS)) {
+      for (const name of unworded) {
+        expect(paramsByCode[code] ?? [], `${code} no longer sends ${name}`).toContain(name)
+      }
+    }
+
     for (const code of codes) {
-      const expected = [...(paramsByCode[code] ?? [])].sort()
+      const unworded = UNWORDED_PARAMS[code] ?? []
+      const expected = [...(paramsByCode[code] ?? [])]
+        .filter((name) => !unworded.includes(name))
+        .sort()
       for (const [locale, catalog] of Object.entries(catalogs)) {
         const copy = flattenMessages(catalog)[ERROR_CODE_KEYS[code]]
         const used = [...new Set([...copy.matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort()
@@ -271,7 +306,17 @@ describe('command error localization', () => {
   })
 
   // The codes whose copy says little; a screen's own sentence says more.
-  const VAGUE_CODES = ['io', 'crypto', 'unknown', 'task_failed', 'validation_internal', 'analysis']
+  const VAGUE_CODES = [
+    'database',
+    'io',
+    'serialization',
+    'crypto',
+    'unknown',
+    'task_failed',
+    'app_state_unavailable',
+    'validation_internal',
+    'analysis',
+  ]
 
   it('lets the screen sentence replace the copy of every vague code', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
