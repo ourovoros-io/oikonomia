@@ -96,12 +96,6 @@ pub enum CsvError {
     /// First row could not be used as headers.
     #[error("the CSV has no header row")]
     MissingHeader,
-    /// No date-like column.
-    #[error("the CSV has no date column")]
-    MissingDateColumn,
-    /// No amount, debit, or credit column.
-    #[error("the CSV has no amount column")]
-    MissingAmountColumn,
     /// A journal CSV lacks one of the columns the export writes.
     #[error("the journal CSV has no {column} column")]
     MissingColumn {
@@ -152,8 +146,6 @@ impl CsvError {
         "csv_too_large",
         "csv_parse",
         "csv_missing_header",
-        "csv_missing_date_column",
-        "csv_missing_amount_column",
         "csv_missing_column",
         "csv_invalid_date",
         "csv_invalid_amount",
@@ -182,8 +174,6 @@ impl CsvError {
             Self::TooLarge => "csv_too_large",
             Self::Malformed { .. } => "csv_parse",
             Self::MissingHeader => "csv_missing_header",
-            Self::MissingDateColumn => "csv_missing_date_column",
-            Self::MissingAmountColumn => "csv_missing_amount_column",
             Self::MissingColumn { .. } => "csv_missing_column",
             Self::InvalidDate(_) => "csv_invalid_date",
             Self::InvalidAmount(_) => "csv_invalid_amount",
@@ -230,8 +220,6 @@ impl CsvError {
             | Self::TooLarge
             | Self::Malformed { .. }
             | Self::MissingHeader
-            | Self::MissingDateColumn
-            | Self::MissingAmountColumn
             | Self::MissingDate
             | Self::MissingAmount
             | Self::AmountOverflow
@@ -256,8 +244,6 @@ mod tests {
             CsvError::TooLarge,
             CsvError::Malformed { .. },
             CsvError::MissingHeader,
-            CsvError::MissingDateColumn,
-            CsvError::MissingAmountColumn,
             CsvError::MissingColumn { .. },
             CsvError::InvalidDate(_),
             CsvError::InvalidAmount(_),
@@ -283,8 +269,6 @@ mod tests {
             CsvError::TooLarge,
             CsvError::Malformed { detail: "x".into() },
             CsvError::MissingHeader,
-            CsvError::MissingDateColumn,
-            CsvError::MissingAmountColumn,
             CsvError::MissingColumn { column: "date" },
             CsvError::InvalidDate("x".into()),
             CsvError::InvalidAmount("x".into()),

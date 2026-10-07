@@ -38,6 +38,12 @@ use crate::util::parse_date;
 /// [`CsvColumnMapping`]. The amounts are read with the exponent of the
 /// entity's base currency.
 ///
+/// Without a `mapping`, a file in which no date column or no amount column
+/// is detected is not an error: the preview comes back with the headers, the
+/// columns that were detected, the missing ones in
+/// [`CsvImportPreview::missing_columns`] and no rows, for the caller to ask
+/// again with a mapping.
+///
 /// # Errors
 ///
 /// - [`Error::NotFound`] when the entity or one of the role accounts in
@@ -367,6 +373,7 @@ fn preview_statement(
         source: statement.source,
         headers: parsed.headers,
         detected_mapping: parsed.detected_mapping,
+        missing_columns: parsed.missing_columns,
         rows,
     })
 }

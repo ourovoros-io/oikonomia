@@ -4,9 +4,15 @@
 //! **does not post**. Posting is a separate call ([`post_import_rows`]).
 //!
 //! The import is two steps so that nothing a bank file says reaches the
-//! ledger without the user seeing it first. A file-level problem (no header,
-//! no date column) is an error; a problem in one row makes that row invalid
-//! and leaves the others usable.
+//! ledger without the user seeing it first. A file-level problem (an empty
+//! file, no header row) is an error; a problem in one row makes that row
+//! invalid and leaves the others usable.
+//!
+//! A header row in which no date column or no amount column can be detected
+//! is neither. The user can say which column is which, so the preview
+//! succeeds with the headers, what was detected and no rows, and names what
+//! is missing in [`CsvImportPreview::missing_columns`]. The Map columns step
+//! then sends a complete [`CsvColumnMapping`] with the second preview.
 //!
 //! # Amounts
 //!
@@ -247,7 +253,8 @@ pub enum CsvRowOutcome {
 /// column left out here is not read.
 ///
 /// When omitted (`None` on [`CsvImportPreviewInput::mapping`]), the parser
-/// auto-detects columns from header aliases.
+/// auto-detects columns from header aliases, and the direction column from
+/// its values as well.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CsvColumnMapping {
     /// Date column header.
@@ -280,6 +287,22 @@ pub struct CsvColumnMapping {
     pub direction: Option<String>,
 }
 
+/// A column no statement can be read without.
+///
+/// Frozen until the next major version: the two are what a row needs to
+/// become an entry, and the Map columns step words each of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CsvRequiredColumn {
+    /// The booking date.
+    Date,
+    /// The amount: one signed column, or a debit or a credit column.
+    ///
+    /// Detection is content with either a debit or a credit column. An
+    /// explicit [`CsvColumnMapping`] has to name both.
+    Amount,
+}
+
 /// Preview of a bank CSV: suggested simple entries, duplicate flags, per-row errors.
 ///
 /// Does not write to the ledger.
@@ -289,9 +312,17 @@ pub struct CsvImportPreview {
     pub source: String,
     /// Header row, in file order (trimmed). For the Map columns UI.
     pub headers: Vec<String>,
-    /// Auto-detected mapping from header aliases, for Map UI pre-fill.
+    /// Auto-detected mapping, from the header aliases and for the direction
+    /// column from its values, for Map UI pre-fill.
     /// Present even when the caller supplied [`CsvImportPreviewInput::mapping`].
     pub detected_mapping: CsvColumnMapping,
+    /// The required columns detection did not find, date before amount.
+    ///
+    /// Not empty only for a preview without a
+    /// [`CsvImportPreviewInput::mapping`] of a file whose headers do not name
+    /// them. No row of such a file has been read, so [`Self::rows`] is empty
+    /// and the user has to map the columns before anything can be previewed.
+    pub missing_columns: Vec<CsvRequiredColumn>,
     /// Data rows in file order.
     pub rows: Vec<CsvImportPreviewRow>,
 }
