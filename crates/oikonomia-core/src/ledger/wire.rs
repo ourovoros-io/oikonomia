@@ -242,20 +242,7 @@ impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
     /// - [`ValidationError::InvalidDate`] when `entry_date` is not a
     ///   `YYYY-MM-DD` date.
     fn try_from(request: PostSimpleEntryRequest) -> Result<Self> {
-        if request.amount_minor <= 0 {
-            return Err(ValidationError::AmountNotPositive.into());
-        }
-        let accounts = SimpleEntryAccounts::from_roles(
-            request.kind,
-            request.bill_status,
-            SimpleEntryRoleAccounts {
-                category: request.category_account_id,
-                wallet: request.wallet_account_id,
-                payable: request.payable_account_id,
-                from: request.from_account_id,
-                to: request.to_account_id,
-            },
-        )?;
+        let accounts = request.checked_accounts()?;
 
         Ok(Self {
             entity_id: request.entity_id,
@@ -265,6 +252,58 @@ impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
             reference: request.reference,
             amount_minor: request.amount_minor,
         })
+    }
+}
+
+impl PostSimpleEntryRequest {
+    /// Types the request for a caller that has already parsed its date, and
+    /// so reads `entry_date` from the argument and not from the request.
+    ///
+    /// The CSV import parses the date of every row first, for its duplicate
+    /// rule, and converts only the rows it posts; this is that second step,
+    /// without a second parse.
+    ///
+    /// # Errors
+    ///
+    /// The first of these that applies:
+    ///
+    /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
+    /// - [`ValidationError::BillStatusRequired`] for a bill without a status.
+    /// - [`ValidationError::AccountRequired`], naming the part, when an
+    ///   account the kind needs is missing.
+    pub(crate) fn dated(&self, entry_date: Date) -> Result<PostSimpleEntry> {
+        Ok(PostSimpleEntry {
+            entity_id: self.entity_id,
+            accounts: self.checked_accounts()?,
+            entry_date,
+            description: self.description.clone(),
+            reference: self.reference.clone(),
+            amount_minor: self.amount_minor,
+        })
+    }
+
+    /// Checks the amount of the request and returns the accounts its kind
+    /// needs: everything a conversion checks but the date.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`PostSimpleEntryRequest::dated`], in the same order.
+    fn checked_accounts(&self) -> Result<SimpleEntryAccounts> {
+        if self.amount_minor <= 0 {
+            return Err(ValidationError::AmountNotPositive.into());
+        }
+
+        SimpleEntryAccounts::from_roles(
+            self.kind,
+            self.bill_status,
+            SimpleEntryRoleAccounts {
+                category: self.category_account_id,
+                wallet: self.wallet_account_id,
+                payable: self.payable_account_id,
+                from: self.from_account_id,
+                to: self.to_account_id,
+            },
+        )
     }
 }
 

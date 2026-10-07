@@ -27,8 +27,8 @@ use crate::db::{collect_rows, read_column, stored_date};
 use crate::domain::{AccountId, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
-    ACTIVE_ENTRY_PREDICATE, PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView,
-    SimpleBillStatus, SimpleEntryKind, get_account, get_entity, post_simple_entry_unchecked,
+    ACTIVE_ENTRY_PREDICATE, PostSimpleEntryRequest, PostedEntryView, SimpleBillStatus,
+    SimpleEntryKind, get_account, get_entity, post_simple_entry_unchecked,
 };
 use crate::util::parse_date;
 
@@ -112,7 +112,8 @@ pub fn preview_bank_csv_file(
 ///   [`ValidationError::BillStatusRequired`] or
 ///   [`ValidationError::AccountRequired`] for a row that is to be posted and
 ///   does not convert into a
-///   [`PostSimpleEntry`]. A row skipped as a duplicate is not converted.
+///   [`PostSimpleEntry`](crate::ledger::PostSimpleEntry). A row skipped as a
+///   duplicate is not converted.
 /// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry)
 ///   for a row the ledger refuses, such as an account of the wrong type.
 /// - [`Error::VaultCorrupt`] for a stored entry date that does not parse.
@@ -147,7 +148,8 @@ pub fn post_import_rows(
     for row in rows {
         // The date is read first because the duplicate rule needs it. The
         // rest of the row is checked only once it is known to be posted, so
-        // a skipped duplicate is never refused for what else it holds.
+        // a skipped duplicate is never refused for what else it holds. The
+        // conversion below takes the date parsed here.
         let entry_date = parse_date(&row.entry_date)?;
         let movement = Movement::new(
             entry_date,
@@ -159,7 +161,7 @@ pub fn post_import_rows(
             skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
             continue;
         }
-        let entry = PostSimpleEntry::try_from(row.clone())?;
+        let entry = row.dated(entry_date)?;
         let view = post_simple_entry_unchecked(&transaction, &entry)?;
         seen.record(&movement);
         posted.push(view);

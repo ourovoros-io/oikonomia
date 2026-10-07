@@ -286,6 +286,63 @@ fn a_transfer_in_the_ledger_matches_a_statement_row_of_either_sign() {
 }
 
 #[test]
+fn a_row_is_checked_for_its_date_then_as_a_duplicate_then_for_the_rest() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let complete = preview_bank_csv(conn, entity_id, roles(&acc), grocery_csv(), None)
+        .expect("preview")
+        .rows[0]
+        .suggested
+        .clone()
+        .expect("suggested");
+    post_import_rows(conn, std::slice::from_ref(&complete), false).expect("post");
+    let without_accounts = PostSimpleEntryRequest {
+        category_account_id: None,
+        wallet_account_id: None,
+        ..complete.clone()
+    };
+
+    // A duplicate is skipped before anything else it holds is looked at.
+    let skipped =
+        post_import_rows(conn, std::slice::from_ref(&without_accounts), false).expect("skip");
+    assert_eq!(skipped.skipped_duplicate_count, 1);
+
+    // A row that is to be posted reports its amount before its accounts.
+    let refused = |row: PostSimpleEntryRequest| {
+        post_import_rows(conn, &[row], true)
+            .map(|result| result.posted.len())
+            .expect_err("refused")
+    };
+    assert!(matches!(
+        refused(without_accounts.clone()),
+        Error::Validation(ValidationError::AccountRequired { .. })
+    ));
+    assert_eq!(
+        refused(PostSimpleEntryRequest {
+            amount_minor: 0,
+            ..without_accounts.clone()
+        }),
+        Error::Validation(ValidationError::AmountNotPositive)
+    );
+
+    // The date comes before the duplicate rule, so it is reported even for a
+    // row that would have been skipped.
+    assert!(matches!(
+        post_import_rows(
+            conn,
+            &[PostSimpleEntryRequest {
+                entry_date: "15/03/2026".into(),
+                ..without_accounts
+            }],
+            false
+        ),
+        Err(Error::Validation(ValidationError::InvalidDate { .. }))
+    ));
+    assert_eq!(count_entries(conn, entity_id), 1);
+}
+
+#[test]
 fn export_round_trips_posted_lines_and_marks_voided() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
