@@ -486,17 +486,17 @@ fn ui_prefs_view() {
         r#""from_account_id":null,"to_account_id":null}}"#,
     );
     let dir = tempfile::tempdir().expect("a temporary directory");
-    let written = |text: &str| {
+    let view_of = |text: &str| {
         std::fs::write(ui_prefs_path(dir.path()), text).expect("write the preferences file");
         serde_json::to_string(&load_ui_prefs_view(dir.path())).expect("the view serializes")
     };
 
     assert_eq!(
-        written(&format!("{stored}}}")),
+        view_of(&format!("{stored}}}")),
         format!(r#"{stored},"unreadable":false}}"#)
     );
     assert_eq!(
-        written("not json"),
+        view_of("not json"),
         concat!(
             r#"{"locale":"en","last_entity_id":null,"last_accounts_by_entity_kind":{},"#,
             r#""unreadable":true}"#,

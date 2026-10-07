@@ -77,12 +77,28 @@
 //! and gave no preferences, so the UI can say so without attempting a save.
 //!
 //! [`reset_unreadable_ui_prefs`] ends the refusal. It renames the file to
-//! `ui-prefs.damaged.json` beside it ([`damaged_ui_prefs_path`]), replacing
-//! an earlier file of that name, and leaves no preferences file, so the next
-//! save writes a new one. The file is moved and never deleted: its owner may
-//! still want what is in it. A file that is missing, blank or decodes is
-//! left alone and the call succeeds, so the reset cannot be used to discard
-//! preferences that work.
+//! `ui-prefs.damaged.json` beside it ([`damaged_ui_prefs_path`]) and leaves
+//! no preferences file, so the next save writes a new one. The file is moved
+//! and not deleted, because its owner may still want what is in it; only one
+//! such file is kept, so the one an earlier reset left is replaced.
+//!
+//! The reset moves a file only when what the file holds is the problem:
+//!
+//! | The file at the path | Reset |
+//! |----------------------|-------|
+//! | is not there, is blank, or decodes | does nothing and succeeds |
+//! | is not UTF-8, or does not decode | moves it aside |
+//! | cannot be read for another reason | fails with [`Error::Io`] |
+//!
+//! The last row is a file whose permissions refuse the read, a directory at
+//! the path, or a failing disk. Such a file may hold preferences that work,
+//! and moving it would discard them, so it is left where it is. That keeps
+//! the reset from being a way to lose good preferences.
+//!
+//! A reset stores nothing. The app runs on the defaults until the next save,
+//! and that save writes the default language with whatever it saves, which
+//! then counts as chosen ([`stored_locale`]). The language is picked from
+//! the system again only when [`resolve_locale`] runs before any other save.
 //!
 //! # The first run
 //!
@@ -310,9 +326,9 @@ pub struct UiPrefsView {
     /// See [`UiPrefs::last_accounts_by_entity_kind`].
     pub last_accounts_by_entity_kind: BTreeMap<String, LastRoleAccounts>,
     /// `true` when a preferences file is there and could not be read or
-    /// decoded. The other fields are then the defaults, every save is
-    /// refused with [`Error::PrefsUnreadable`], and
-    /// [`reset_unreadable_ui_prefs`] is the way out.
+    /// decoded. The other fields are then the defaults and every save is
+    /// refused with [`Error::PrefsUnreadable`], until the file is repaired
+    /// or [`reset_unreadable_ui_prefs`] moves it aside.
     pub unreadable: bool,
 }
 
@@ -451,11 +467,23 @@ pub fn ui_prefs_path(data_dir: &Path) -> PathBuf {
     data_dir.join("ui-prefs.json")
 }
 
-/// Returns the path a preferences file that cannot be read is moved to,
+/// Returns the path a damaged preferences file is moved to,
 /// `ui-prefs.damaged.json` in `data_dir`.
 ///
 /// [`reset_unreadable_ui_prefs`] is the only function that writes there. No
 /// function reads the file: it is kept for its owner.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::prefs::damaged_ui_prefs_path;
+/// use std::path::Path;
+///
+/// assert_eq!(
+///     damaged_ui_prefs_path(Path::new("data")),
+///     Path::new("data").join("ui-prefs.damaged.json")
+/// );
+/// ```
 #[must_use]
 pub fn damaged_ui_prefs_path(data_dir: &Path) -> PathBuf {
     data_dir.join("ui-prefs.damaged.json")
@@ -488,33 +516,48 @@ pub fn load_ui_prefs_view(data_dir: &Path) -> UiPrefsView {
     UiPrefsView::new(or_defaults(read, &ui_prefs_path(data_dir)), unreadable)
 }
 
-/// Moves a preferences file that cannot be read or decoded out of the way,
-/// so that the next save writes a new one.
+/// Moves a damaged preferences file out of the way, so that the next save
+/// writes a new one.
 ///
-/// The file is renamed to [`damaged_ui_prefs_path`], replacing a file an
-/// earlier reset left there, and is never deleted. No preferences file is
-/// left behind: the app runs on the defaults until something is saved, and
-/// the next launch chooses the language as on a first run
-/// ([`resolve_locale`]).
+/// A file is damaged when what it holds is the problem: it is not UTF-8, or
+/// its text is not a [`UiPrefs`]. It is renamed to
+/// [`damaged_ui_prefs_path`], where it replaces the file an earlier reset
+/// left, and no preferences file is left behind. Nothing is stored: the app
+/// runs on the defaults until the next save.
 ///
 /// A file that is missing, blank or decodes is left as it is and the call
-/// succeeds: this is not a way to discard preferences that work.
-///
-/// The file is judged by reading it, as a save judges it. A file that fails
-/// to read for a passing reason, such as its permissions, is moved too; it
-/// is still there under the other name.
+/// succeeds.
 ///
 /// Nothing here locks: a caller that can race a save must hold the lock it
 /// holds for one across the call.
 ///
 /// # Errors
 ///
-/// [`Error::Io`] with the operation `move the damaged preferences file
-/// aside` when the rename fails. The preferences file is then still where it
-/// was. A directory at either path is one way for it to fail.
+/// - [`Error::Io`] with the operation `read the preferences file before
+///   moving it aside` when the file cannot be read for a reason other than
+///   what it holds: its permissions, a directory at the path, a failing
+///   disk. It may hold preferences that work, so it is not moved, although
+///   [`UiPrefsView::unreadable`] is set for it and every save is refused.
+/// - [`Error::Io`] with the operation `move the damaged preferences file
+///   aside` when the rename fails, which a directory at
+///   [`damaged_ui_prefs_path`] is one way to cause.
+///
+/// In both cases the preferences file is still where it was.
 pub fn reset_unreadable_ui_prefs(data_dir: &Path) -> Result<()> {
-    if read_ui_prefs(data_dir).is_ok() {
-        return Ok(());
+    match read_ui_prefs(data_dir) {
+        Ok(_) => return Ok(()),
+        // `InvalidData` is the kind a read into a string fails with when the
+        // bytes are not UTF-8
+        // (<https://doc.rust-lang.org/std/io/enum.ErrorKind.html#variant.InvalidData>).
+        // Every other kind is about reaching the file, not about what is in
+        // it.
+        Err(UnusablePrefs::Read(err)) if err.kind() != std::io::ErrorKind::InvalidData => {
+            return Err(Error::io(
+                "read the preferences file before moving it aside",
+                err,
+            ));
+        }
+        Err(UnusablePrefs::Read(_) | UnusablePrefs::Decode(_)) => {}
     }
 
     // One rename, so a crash leaves the file under one name or the other and
@@ -863,6 +906,13 @@ mod tests {
 
     /// The operation of the refusal for a file that cannot be read.
     const CANNOT_BE_READ: &str = "replace a preferences file that cannot be read";
+
+    /// A file that does not decode: an object cut off part way.
+    const CUT_OFF: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": ";
+
+    /// A file that cannot be read: bytes that are not UTF-8, which fail the
+    /// read on every platform.
+    const NOT_UTF8: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": \"\xff\xfe\"}";
 
     /// Returns the operation of a failed save, whichever of the variants a
     /// save can fail with.
@@ -1832,8 +1882,7 @@ mod tests {
     #[test]
     fn no_save_path_replaces_a_file_that_cannot_be_read() {
         let dir = tempdir().unwrap();
-        // Bytes that are not UTF-8 fail the read on every platform.
-        let content: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": \"\xff\xfe\"}";
+        let content = NOT_UTF8;
         assert!(fs::write(ui_prefs_path(dir.path()), content).is_ok());
 
         assert_eq!(load_ui_prefs(dir.path()), UiPrefs::default());
@@ -1968,12 +2017,6 @@ mod tests {
             assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::De);
         }
     }
-
-    /// A file that does not decode: an object cut off part way.
-    const CUT_OFF: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": ";
-
-    /// A file that cannot be read: bytes that are not UTF-8.
-    const NOT_UTF8: &[u8] = b"{\"locale\": \"el\", \"last_entity_id\": \"\xff\xfe\"}";
 
     /// Returns the names of the files in `data_dir`, sorted.
     fn file_names(data_dir: &Path) -> Vec<String> {
@@ -2131,6 +2174,96 @@ mod tests {
         );
         assert_eq!(fs::read(ui_prefs_path(dir.path())).unwrap(), CUT_OFF);
         assert!(load_ui_prefs_view(dir.path()).unreadable);
+    }
+
+    /// A directory at the path fails the read, but nothing says its owner's
+    /// preferences are bad, and once moved it would block every later reset.
+    #[test]
+    fn a_reset_does_not_move_a_directory_at_the_file_path() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(ui_prefs_path(dir.path())).unwrap();
+        assert!(load_ui_prefs_view(dir.path()).unreadable);
+
+        let failed = reset_unreadable_ui_prefs(dir.path());
+
+        assert!(matches!(failed, Err(Error::Io { .. })), "{failed:?}");
+        assert_eq!(
+            failed_operation(&failed),
+            Some("read the preferences file before moving it aside")
+        );
+        assert_eq!(file_names(dir.path()), ["ui-prefs.json"]);
+        assert!(ui_prefs_path(dir.path()).is_dir());
+    }
+
+    /// Permissions are checked on Unix only: on Windows the read-only flag
+    /// does not refuse a read, and root reads any file, so the test does
+    /// nothing where the file can still be read.
+    #[cfg(unix)]
+    #[test]
+    fn a_reset_does_not_move_a_good_file_that_cannot_be_read_for_its_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let path = ui_prefs_path(dir.path());
+        let good = r#"{ "locale": "fr", "last_entity_id": "ent-1" }"#;
+        fs::write(&path, good).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+        if fs::read(&path).is_ok() {
+            return;
+        }
+        assert!(load_ui_prefs_view(dir.path()).unreadable);
+
+        let failed = reset_unreadable_ui_prefs(dir.path());
+
+        assert_eq!(
+            failed_operation(&failed),
+            Some("read the preferences file before moving it aside"),
+            "{failed:?}"
+        );
+        assert_eq!(file_names(dir.path()), ["ui-prefs.json"]);
+
+        // With the read allowed again the preferences are as they were.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), good);
+        assert_eq!(load_ui_prefs(dir.path()).locale(), Locale::Fr);
+    }
+
+    /// A reset stores nothing, so what happens to the language depends on
+    /// which save comes first.
+    #[test]
+    fn after_a_reset_the_first_save_decides_whether_the_system_language_is_asked() {
+        let asked_first = tempdir().unwrap();
+        fs::write(ui_prefs_path(asked_first.path()), CUT_OFF).unwrap();
+        assert_eq!(reset_unreadable_ui_prefs(asked_first.path()), Ok(()));
+        assert_eq!(stored_locale(asked_first.path()), None);
+
+        assert_eq!(
+            resolve_locale(asked_first.path(), &["el-GR"]),
+            Ok(LocaleResolution {
+                locale: Locale::El,
+                newly_stored: true,
+            })
+        );
+
+        let saved_first = tempdir().unwrap();
+        fs::write(ui_prefs_path(saved_first.path()), CUT_OFF).unwrap();
+        assert_eq!(reset_unreadable_ui_prefs(saved_first.path()), Ok(()));
+        let remembered = remember_quick_add(
+            saved_first.path(),
+            BOOK.parse().unwrap(),
+            SimpleEntryKind::Expense,
+            expense_accounts("wal-1"),
+        );
+        assert_eq!(remembered, Ok(()));
+
+        // The save wrote the default language, which now counts as chosen.
+        assert_eq!(
+            resolve_locale(saved_first.path(), &["el-GR"]),
+            Ok(LocaleResolution {
+                locale: Locale::En,
+                newly_stored: false,
+            })
+        );
     }
 
     /// The decoder's message can quote what it could not read, so its text

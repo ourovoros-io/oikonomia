@@ -221,7 +221,7 @@ export type UiPrefs = {
   /**
    * True when a preferences file is there and Rust could not read or decode
    * it. The other fields are then the defaults, every save is refused with
-   * `prefs_unreadable`, and `resetUiPrefs` is the way out.
+   * `prefs_unreadable` until the file is repaired or `resetUiPrefs` moves it aside.
    */
   unreadable: boolean
 }
@@ -451,7 +451,7 @@ export const api = {
   /** Full plaintext UI prefs (tray last-used + locale). Safe before unlock. */
   getUiPrefs: () => call<UiPrefs>('settings_get_ui_prefs'),
   /**
-   * Moves a preferences file Rust cannot read aside (never deletes it) and
+   * Moves a damaged preferences file aside (it is kept, not deleted) and
    * returns the preferences as they are afterwards. Leaves a file that is
    * missing or readable alone.
    */
