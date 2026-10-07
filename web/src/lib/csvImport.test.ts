@@ -6,6 +6,7 @@ import {
   defaultChecked,
   draftFromDetected,
   draftToMapping,
+  mapNeededKey,
   mappingsEqual,
   mappingReady,
   matchHeader,
@@ -244,5 +245,20 @@ describe('column mapping helpers', () => {
     expect(previewHasColumnMap({ headers: ['Date'] })).toBe(true)
     expect(previewHasColumnMap({ headers: [] })).toBe(false)
     expect(previewHasColumnMap({})).toBe(false)
+  })
+})
+
+describe('mapNeededKey', () => {
+  test('names the missing column, or both, whatever order they come in', () => {
+    expect(mapNeededKey(['date'])).toBe('tx.csv.mapNeeded.date')
+    expect(mapNeededKey(['amount'])).toBe('tx.csv.mapNeeded.amount')
+    expect(mapNeededKey(['date', 'amount'])).toBe('tx.csv.mapNeeded.dateAndAmount')
+    expect(mapNeededKey(['amount', 'date'])).toBe('tx.csv.mapNeeded.dateAndAmount')
+  })
+
+  test('is null when nothing is missing or the preview does not say', () => {
+    expect(mapNeededKey([])).toBeNull()
+    expect(mapNeededKey(undefined)).toBeNull()
+    expect(mapNeededKey(null)).toBeNull()
   })
 })
