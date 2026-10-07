@@ -7,11 +7,11 @@ use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, CreateRecurringTemplate, CreateRecurringTemplateRequest, EntryFilter,
-    RecurringCadence, RecurringSchedule, RecurringTemplateView, SimpleBillStatus, SimpleEntryKind,
-    UpdateRecurringTemplate, UpdateRecurringTemplateRequest, archive_account, create_entity,
-    create_recurring_template, delete_entity, delete_recurring_template, list_accounts,
-    list_entries, list_recurring_templates, list_recurring_templates_as_of,
-    post_recurring_template, update_recurring_template,
+    RecurringCadence, RecurringSchedule, RecurringTemplateFields, RecurringTemplateView,
+    SimpleBillStatus, SimpleEntryKind, UpdateRecurringTemplate, UpdateRecurringTemplateRequest,
+    archive_account, create_entity, create_recurring_template, delete_entity,
+    delete_recurring_template, list_accounts, list_entries, list_recurring_templates,
+    list_recurring_templates_as_of, post_recurring_template, update_recurring_template,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
@@ -490,4 +490,57 @@ fn a_template_must_use_accounts_that_posting_would_accept() {
         update_recurring_template(conn, &unchanged).map(|template| template.id),
         archived
     );
+}
+
+#[test]
+fn a_post_that_committed_succeeds_even_when_the_template_cannot_be_read_again() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, accounts) = entity_with_accounts(conn);
+    let template = create_template(conn, &monthly_rent(entity_id, &accounts)).expect("create");
+    // The moment the post moves the date, the row is damaged, so that reading
+    // it afterwards fails although the entry and the new date are stored.
+    conn.execute_batch(
+        "
+        CREATE TRIGGER damage_after_advance AFTER UPDATE OF next_date ON recurring_templates
+        BEGIN
+            UPDATE recurring_templates SET cadence = 'daily' WHERE id = NEW.id;
+        END;
+        ",
+    )
+    .expect("trigger");
+
+    let result = post_recurring_template(conn, template.id, None, None).expect("post");
+
+    assert_eq!(
+        result.template.fields.next_date,
+        parse_date("2026-04-01").expect("date")
+    );
+    assert_eq!(
+        result.template.fields,
+        RecurringTemplateFields {
+            next_date: result.template.fields.next_date,
+            ..template.fields
+        }
+    );
+    assert_eq!(
+        (result.template.id, result.template.entity_id),
+        (template.id, entity_id)
+    );
+    let entries = list_entries(conn, entity_id, &EntryFilter::default()).expect("entries");
+    assert_eq!(entries.len(), 1, "the entry the result reports is stored");
+    assert_eq!(entries[0].entry.id, result.entry.entry.id);
+}
+
+#[test]
+fn the_template_a_post_returns_is_the_one_a_later_read_returns() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, accounts) = entity_with_accounts(conn);
+    let template = create_template(conn, &monthly_rent(entity_id, &accounts)).expect("create");
+
+    let result = post_recurring_template(conn, template.id, None, None).expect("post");
+
+    let listed = list_recurring_templates(conn, entity_id).expect("list");
+    assert_eq!(listed, [result.template]);
 }

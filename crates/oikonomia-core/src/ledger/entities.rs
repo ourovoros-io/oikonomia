@@ -357,13 +357,9 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
     conn.execute("DELETE FROM accounts WHERE entity_id = ?1", [&entity_id])
         .database("delete accounts of entity")?;
 
-    let deleted = conn
-        .execute("DELETE FROM entities WHERE id = ?1", [&entity_id])
+    // The row is there: it was counted above, in the caller's transaction.
+    conn.execute("DELETE FROM entities WHERE id = ?1", [&entity_id])
         .database("delete entity")?;
-
-    if deleted == 0 {
-        return Err(Error::NotFound(Resource::Entity));
-    }
 
     Ok(())
 }

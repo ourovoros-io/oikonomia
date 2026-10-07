@@ -137,7 +137,7 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             JOIN accounts a ON a.id = jl.account_id
             WHERE je.entity_id = ?1
               AND je.status = 'posted'
-              AND (je.hidden = 0 OR je.hidden IS NULL)
+              AND je.hidden = 0
             ORDER BY je.entry_date ASC, je.created_at ASC, je.rowid ASC, jl.line_order ASC
             ",
         )

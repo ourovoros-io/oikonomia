@@ -11,6 +11,8 @@
 //!   register of one account.
 //! - `balance`: the sign of a balance, the active-entry rule, and checked
 //!   arithmetic on amounts.
+//! - `calendar`: arithmetic on calendar months, shared by the reports and the
+//!   recurring templates.
 //! - `reports`: trial balance, profit and loss, balance sheet, dashboard.
 //! - `cash_flow`: income and expenses over time.
 //! - `recurring`: entry templates with a schedule.
@@ -118,6 +120,7 @@
 
 mod accounts;
 mod balance;
+mod calendar;
 mod cash_flow;
 mod entities;
 mod journals;

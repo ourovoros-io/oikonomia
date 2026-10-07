@@ -33,6 +33,7 @@
 use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_id};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
+use crate::ledger::calendar::add_months;
 use crate::ledger::journals::{
     PostSimpleEntry, PostedEntryView, ensure_simple_entry_accounts, post_simple_entry_unchecked,
 };
@@ -335,7 +336,7 @@ pub fn get_recurring_template(
 /// # Errors
 ///
 /// Those of [`get_recurring_template`].
-pub(super) fn get_recurring_template_as_of(
+fn get_recurring_template_as_of(
     conn: &Connection,
     id: RecurringTemplateId,
     today: Date,
@@ -391,7 +392,10 @@ pub fn create_recurring_template(
             account_id_text(roles.to),
             fields.memo,
             format_date(fields.next_date),
-            fields.accounts.bill_status().map(bill_status_str),
+            fields
+                .accounts
+                .bill_status()
+                .map(SimpleBillStatus::identifier),
             now_utc_string(),
         ],
     )
@@ -446,7 +450,10 @@ pub fn update_recurring_template(
                 account_id_text(roles.to),
                 fields.memo,
                 format_date(fields.next_date),
-                fields.accounts.bill_status().map(bill_status_str),
+                fields
+                    .accounts
+                    .bill_status()
+                    .map(SimpleBillStatus::identifier),
                 input.id.to_string(),
             ],
         )
@@ -500,9 +507,10 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
 /// - [`Error::Database`] on database errors.
 ///
-/// On an error before the commit neither the entry nor the new date is
-/// stored. The template is read back after the commit to build the result;
-/// if that read fails, the error is returned although both are stored.
+/// Every error leaves neither the entry nor the new date stored: nothing is
+/// read or checked after the commit. The template in the result is the one
+/// read inside the transaction with the date just written, and its due flag
+/// is decided against the current date in UTC.
 pub fn post_recurring_template(
     conn: &Connection,
     id: RecurringTemplateId,
@@ -513,7 +521,7 @@ pub fn post_recurring_template(
         .unchecked_transaction()
         .database("begin recurring template post")?;
 
-    let stored = load_template(&tx, id)?;
+    let mut stored = load_template(&tx, id)?;
     let template = &stored.fields;
     let post_amount = match amount_minor {
         Some(minor) if minor <= 0 => {
@@ -543,8 +551,13 @@ pub fn post_recurring_template(
 
     tx.commit().database("commit recurring template post")?;
 
-    let template = get_recurring_template(conn, id)?;
-    Ok(RecurringPostResult { entry, template })
+    // Built from what was just written, not read back: a read that failed
+    // here would report an error for a post that is already stored.
+    stored.fields.next_date = advanced;
+    Ok(RecurringPostResult {
+        entry,
+        template: stored.into_view(utc_today()),
+    })
 }
 
 /// Returns the `next_date` that follows `from` under `schedule`. See
@@ -589,33 +602,9 @@ fn next_monthly(from: Date, day_of_month: DayOfMonth) -> Result<Date> {
         return Ok(this_month);
     }
 
-    let (year, month) = add_months(from.year(), from.month(), 1)?;
+    let (year, month) =
+        add_months(from.year(), from.month(), 1).ok_or(ValidationError::DateOutOfRange)?;
     place_day_or_next(year, month, day_of_month)
-}
-
-/// Returns the year and month that lie `delta` calendar months after
-/// `month` of `year`; a negative `delta` goes back.
-///
-/// # Errors
-///
-/// [`ValidationError::DateOutOfRange`] when the year does not fit in `i32`.
-fn add_months(year: i32, month: Month, delta: i32) -> Result<(i32, Month)> {
-    let out_of_range = || Error::from(ValidationError::DateOutOfRange);
-
-    // Months counted from January of year zero, so that adding `delta` and
-    // splitting again carries into the year in both directions.
-    let month_from_zero = i64::from(u8::from(month)) - 1;
-    let months = i64::from(year)
-        .checked_mul(12)
-        .and_then(|months| months.checked_add(month_from_zero))
-        .and_then(|months| months.checked_add(i64::from(delta)))
-        .ok_or_else(out_of_range)?;
-
-    let year = i32::try_from(months.div_euclid(12)).map_err(|_| out_of_range())?;
-    let month_number = u8::try_from(months.rem_euclid(12) + 1).map_err(|_| out_of_range())?;
-    let month = Month::try_from(month_number).map_err(|_| out_of_range())?;
-
-    Ok((year, month))
 }
 
 /// Returns the same month and day `years` calendar years after `from`.
@@ -951,20 +940,7 @@ fn parse_cadence(stored: &str) -> Result<RecurringCadence> {
     }
 }
 
-/// Returns the text `status` is stored as in
-/// `recurring_templates.bill_status`.
-///
-/// The strings are part of the vault format; [`parse_bill_status`] reads
-/// them back.
-fn bill_status_str(status: SimpleBillStatus) -> &'static str {
-    match status {
-        SimpleBillStatus::Paid => "paid",
-        SimpleBillStatus::Unpaid => "unpaid",
-        SimpleBillStatus::PayExisting => "pay_existing",
-    }
-}
-
-/// Parses the text [`bill_status_str`] writes.
+/// Parses the text [`SimpleBillStatus::identifier`] writes.
 ///
 /// # Errors
 ///
@@ -1133,6 +1109,21 @@ mod tests {
                     (cadence, day)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_bill_status_is_stored_as_the_text_serde_writes() {
+        for status in [
+            SimpleBillStatus::Paid,
+            SimpleBillStatus::Unpaid,
+            SimpleBillStatus::PayExisting,
+        ] {
+            assert_eq!(
+                serde_json::to_value(status).unwrap(),
+                serde_json::Value::from(status.identifier())
+            );
+            assert_eq!(parse_bill_status(status.identifier()), Ok(status));
         }
     }
 

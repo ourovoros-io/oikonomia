@@ -445,7 +445,7 @@ pub fn replace_simple_entry(
     }
 
     void_entry_in_tx(&tx, original_id, locale)?;
-    let replacement = post_simple_entry_unchecked_hidden(&tx, input, original.entry.hidden)?;
+    let replacement = post_simple_entry_in_tx(&tx, input, original.entry.hidden)?;
 
     tx.execute(
         "UPDATE documents SET entry_id = ?1 WHERE entry_id = ?2",
@@ -624,19 +624,21 @@ pub(crate) fn post_simple_entry_unchecked(
     conn: &Connection,
     input: &PostSimpleEntry,
 ) -> Result<PostedEntryView> {
-    post_simple_entry_unchecked_hidden(conn, input, false)
+    post_simple_entry_in_tx(conn, input, false)
 }
 
 /// Builds and inserts the simple-form entry with the given hidden flag,
 /// without transaction management.
 ///
-/// [`replace_simple_entry`] passes the flag of the entry it replaces, so that
-/// correcting a hidden entry does not bring it back into the exports.
+/// The caller owns the transaction. [`replace_simple_entry`] passes the flag
+/// of the entry it replaces, so that correcting a hidden entry does not
+/// bring it back into the exports; every other caller posts a visible entry
+/// through [`post_simple_entry_unchecked`].
 ///
 /// # Errors
 ///
 /// Those of [`post_simple_entry`].
-pub(crate) fn post_simple_entry_unchecked_hidden(
+fn post_simple_entry_in_tx(
     conn: &Connection,
     input: &PostSimpleEntry,
     hidden: bool,
