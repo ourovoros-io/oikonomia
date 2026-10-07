@@ -8,16 +8,20 @@ mod common;
 use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::ledger::SimpleEntryKind::{Bill, Expense, Income, Transfer};
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, PostSimpleEntryRequest, SimpleBillStatus,
-    SimpleEntryKind, create_entity, dashboard_summary, list_entries, post_simple_entry,
-    previous_window, void_entry,
+    CreateEntity, EntryFilter, PostSimpleEntryRequest, SimpleBillStatus, SimpleEntryKind,
+    create_entity, dashboard_summary, list_entries, previous_window, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::{format_date, parse_date};
 use rusqlite::Connection;
 
-fn base(entity_id: EntityId, kind: SimpleEntryKind, date: &str, minor: i64) -> PostSimpleEntry {
-    common::strict(PostSimpleEntryRequest {
+fn base(
+    entity_id: EntityId,
+    kind: SimpleEntryKind,
+    date: &str,
+    minor: i64,
+) -> PostSimpleEntryRequest {
+    PostSimpleEntryRequest {
         entity_id,
         kind,
         bill_status: None,
@@ -30,11 +34,11 @@ fn base(entity_id: EntityId, kind: SimpleEntryKind, date: &str, minor: i64) -> P
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
-    })
+    }
 }
 
-fn post(conn: &Connection, input: &PostSimpleEntry) -> JournalEntryId {
-    post_simple_entry(conn, input)
+fn post(conn: &Connection, input: &PostSimpleEntryRequest) -> JournalEntryId {
+    common::post_simple_request(conn, input)
         .expect("post simple")
         .entry
         .id

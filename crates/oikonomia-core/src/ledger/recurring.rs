@@ -1,7 +1,10 @@
 //! Recurring entry templates: a saved simple entry with a schedule.
 //!
 //! A template holds what a [`PostSimpleEntry`] holds except the date, plus a
-//! cadence and the date of its next occurrence. Nothing is posted in the
+//! cadence and the date of its next occurrence. All of that is one type,
+//! [`RecurringTemplateFields`], which the inputs, the stored row and the view
+//! share; its accounts are a [`SimpleEntryAccounts`], so a template cannot
+//! hold a kind without the accounts that kind posts to. Nothing is posted in the
 //! background. [`post_recurring_template`] is the only way a template becomes
 //! a journal entry, and it runs when the user asks; until then a template
 //! whose date has come is only reported as due.
@@ -31,8 +34,10 @@ use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_i
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::journals::{
-    PostSimpleEntry, PostedEntryView, SimpleBillStatus, SimpleEntryKind, ensure_simple_entry_roles,
-    post_simple_entry_unchecked,
+    PostSimpleEntry, PostedEntryView, ensure_simple_entry_accounts, post_simple_entry_unchecked,
+};
+use crate::ledger::simple_entry::{
+    MissingPart, SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
 };
 use crate::util::{format_date, now_utc_string, utc_today};
 use rusqlite::Connection;
@@ -56,7 +61,7 @@ use time::{Date, Duration, Month};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecurringCadence {
-    /// Every calendar month on [`CreateRecurringTemplate::day_of_month`].
+    /// Every calendar month on [`RecurringTemplateFields::day_of_month`].
     Monthly,
     /// Every 7 days from `next_date`.
     Weekly,
@@ -64,123 +69,79 @@ pub enum RecurringCadence {
     Yearly,
 }
 
+/// What a recurring template holds: the entry it posts and its schedule.
+///
+/// The inputs, the stored template and the view all carry this one type.
+/// [`create_recurring_template`] and [`update_recurring_template`] check it
+/// and store it with the name and the memo trimmed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecurringTemplateFields {
+    /// Name of the template, which is also the description of each entry it
+    /// posts. It must not be blank.
+    pub name: String,
+    /// Positive amount of each entry, in minor units.
+    pub amount_minor: i64,
+    /// How often the template recurs.
+    pub cadence: RecurringCadence,
+    /// Day of the month, 1 to 31. Required for [`RecurringCadence::Monthly`]
+    /// and forbidden for the other cadences.
+    pub day_of_month: Option<u8>,
+    /// The kind of entry the template posts and the accounts it debits and
+    /// credits.
+    pub accounts: SimpleEntryAccounts,
+    /// Optional note stored on the template; a blank one is stored as none.
+    /// Posting does not read it: a posted entry's description is `name`.
+    pub memo: Option<String>,
+    /// Date of the next occurrence. Only a successful post advances it.
+    pub next_date: Date,
+}
+
 /// Input for [`create_recurring_template`].
 ///
 /// The UI sends it as a
-/// [`CreateRecurringTemplateRequest`](crate::ledger::CreateRecurringTemplateRequest), which converts
-/// into this.
+/// [`CreateRecurringTemplateRequest`](crate::ledger::CreateRecurringTemplateRequest),
+/// which converts into this.
 #[derive(Debug, Clone)]
 pub struct CreateRecurringTemplate {
     /// Entity the template, and every entry it posts, belongs to.
     pub entity_id: EntityId,
-    /// Name of the template, which is also the description of each entry it
-    /// posts. Surrounding whitespace is trimmed; it must not be empty.
-    pub name: String,
-    /// Simple-entry kind (same mapping as [`PostSimpleEntry`]).
-    pub kind: SimpleEntryKind,
-    /// Required when `kind` is [`SimpleEntryKind::Bill`].
-    pub bill_status: Option<SimpleBillStatus>,
-    /// Positive amount in minor units.
-    pub amount_minor: i64,
-    /// How often the template recurs.
-    pub cadence: RecurringCadence,
-    /// Day of month 1–31. Required for [`RecurringCadence::Monthly`]; forbidden
-    /// for weekly and yearly.
-    pub day_of_month: Option<u8>,
-    /// Expense or income category account.
-    pub category_account_id: Option<AccountId>,
-    /// Bank / cash / card account.
-    pub wallet_account_id: Option<AccountId>,
-    /// Bills payable / AP liability account.
-    pub payable_account_id: Option<AccountId>,
-    /// Transfer source.
-    pub from_account_id: Option<AccountId>,
-    /// Transfer destination.
-    pub to_account_id: Option<AccountId>,
-    /// Optional note stored on the template. Posting does not read it: a
-    /// posted entry's description is the template's `name`.
-    pub memo: Option<String>,
-    /// Next occurrence. Advanced only after a successful post.
-    pub next_date: Date,
+    /// What the new template holds.
+    pub fields: RecurringTemplateFields,
 }
 
-/// Input for [`update_recurring_template`]. Every field but `id` replaces the
-/// stored value; the template's entity cannot be changed.
+/// Input for [`update_recurring_template`]. Every field of the template is
+/// replaced; its entity cannot be changed.
 ///
-/// The UI sends it as a
-/// [`UpdateRecurringTemplateRequest`](crate::ledger::UpdateRecurringTemplateRequest), which converts
-/// into this.
+/// The UI sends it as an
+/// [`UpdateRecurringTemplateRequest`](crate::ledger::UpdateRecurringTemplateRequest),
+/// which converts into this.
 #[derive(Debug, Clone)]
 pub struct UpdateRecurringTemplate {
     /// Template to change.
     pub id: RecurringTemplateId,
-    /// Name of the template, which is also the description of each entry it
-    /// posts. Surrounding whitespace is trimmed; it must not be empty.
-    pub name: String,
-    /// Simple-entry kind (same mapping as [`PostSimpleEntry`]).
-    pub kind: SimpleEntryKind,
-    /// Required when `kind` is [`SimpleEntryKind::Bill`].
-    pub bill_status: Option<SimpleBillStatus>,
-    /// Positive amount in minor units.
-    pub amount_minor: i64,
-    /// How often the template recurs.
-    pub cadence: RecurringCadence,
-    /// Day of month 1–31. Required for monthly; forbidden otherwise.
-    pub day_of_month: Option<u8>,
-    /// Expense or income category account.
-    pub category_account_id: Option<AccountId>,
-    /// Bank / cash / card account.
-    pub wallet_account_id: Option<AccountId>,
-    /// Bills payable / AP liability account.
-    pub payable_account_id: Option<AccountId>,
-    /// Transfer source.
-    pub from_account_id: Option<AccountId>,
-    /// Transfer destination.
-    pub to_account_id: Option<AccountId>,
-    /// Optional note stored on the template; a blank one is stored as none.
-    /// Posting does not read it.
-    pub memo: Option<String>,
-    /// Next occurrence.
-    pub next_date: Date,
+    /// What the template holds from now on.
+    pub fields: RecurringTemplateFields,
 }
 
 /// A stored template with its due flag, as the Recurring screen shows it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// It serializes in the flat shape the UI reads: the kind, the bill status
+/// and the five role accounts spelled out beside the other fields, and the
+/// date as `YYYY-MM-DD`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    into = "crate::ledger::wire::RecurringTemplateViewWire",
+    try_from = "crate::ledger::wire::RecurringTemplateViewWire"
+)]
 pub struct RecurringTemplateView {
     /// Id of the template.
     pub id: RecurringTemplateId,
     /// Entity the template belongs to.
     pub entity_id: EntityId,
-    /// Name of the template and description of the entries it posts.
-    pub name: String,
-    /// Simple-entry kind.
-    pub kind: SimpleEntryKind,
-    /// Bill payment state when `kind` is bill.
-    pub bill_status: Option<SimpleBillStatus>,
-    /// Template amount in minor units.
-    pub amount_minor: i64,
-    /// How often the template recurs.
-    pub cadence: RecurringCadence,
-    /// Day of the month for a monthly template; `None` for the other
-    /// cadences.
-    pub day_of_month: Option<u8>,
-    /// Expense or income category account.
-    pub category_account_id: Option<AccountId>,
-    /// Bank / cash / card account.
-    pub wallet_account_id: Option<AccountId>,
-    /// Bills payable / AP liability account.
-    pub payable_account_id: Option<AccountId>,
-    /// Transfer source.
-    pub from_account_id: Option<AccountId>,
-    /// Transfer destination.
-    pub to_account_id: Option<AccountId>,
-    /// Note stored on the template; `None` when there is none.
-    pub memo: Option<String>,
-    /// Next scheduled occurrence.
-    #[serde(with = "crate::util::serde_date")]
-    pub next_date: Date,
-    /// Whether `next_date` is on or before the day the view was built for:
-    /// today in UTC, unless the caller passed its own date.
+    /// What the template holds, as stored.
+    pub fields: RecurringTemplateFields,
+    /// Whether the next occurrence is on or before the day the view was
+    /// built for: today in UTC, unless the caller passed its own date.
     pub due: bool,
 }
 
@@ -284,15 +245,16 @@ pub(super) fn get_recurring_template_as_of(
 /// - [`ValidationError::DayOfMonthInvalid`] for a monthly template with no
 ///   day or one outside 1–31, and for a weekly or yearly template with a day.
 /// - The account errors of
-///   [`post_simple_entry`](crate::ledger::post_simple_entry): a role that is
-///   empty or holds an account of the wrong type, entity or state.
+///   [`post_simple_entry`](crate::ledger::post_simple_entry): an account
+///   that does not exist or has the wrong type, entity or state.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn create_recurring_template(
     conn: &Connection,
     input: &CreateRecurringTemplate,
 ) -> Result<RecurringTemplateView> {
-    let fields = validated_fields(conn, input.entity_id, &TemplateInput::from_create(input))?;
+    let fields = validated_fields(conn, input.entity_id, &input.fields)?;
+    let roles = fields.accounts.roles();
     let id = RecurringTemplateId::generate();
 
     conn.execute(
@@ -305,20 +267,20 @@ pub fn create_recurring_template(
         ",
         rusqlite::params![
             id.to_string(),
-            fields.entity_id.to_string(),
+            input.entity_id.to_string(),
             fields.name,
-            kind_str(fields.kind),
+            fields.accounts.kind().identifier(),
             fields.amount_minor,
             cadence_str(fields.cadence),
             fields.day_of_month.map(i64::from),
-            account_id_text(fields.category_account_id),
-            account_id_text(fields.wallet_account_id),
-            account_id_text(fields.payable_account_id),
-            account_id_text(fields.from_account_id),
-            account_id_text(fields.to_account_id),
+            account_id_text(roles.category),
+            account_id_text(roles.wallet),
+            account_id_text(roles.payable),
+            account_id_text(roles.from),
+            account_id_text(roles.to),
             fields.memo,
             format_date(fields.next_date),
-            fields.bill_status.map(bill_status_str),
+            fields.accounts.bill_status().map(bill_status_str),
             now_utc_string(),
         ],
     )
@@ -338,7 +300,8 @@ pub fn update_recurring_template(
     input: &UpdateRecurringTemplate,
 ) -> Result<RecurringTemplateView> {
     let existing = load_template(conn, input.id)?;
-    let fields = validated_fields(conn, existing.entity_id, &TemplateInput::from_update(input))?;
+    let fields = validated_fields(conn, existing.entity_id, &input.fields)?;
+    let roles = fields.accounts.roles();
 
     let updated = conn
         .execute(
@@ -361,18 +324,18 @@ pub fn update_recurring_template(
             ",
             rusqlite::params![
                 fields.name,
-                kind_str(fields.kind),
+                fields.accounts.kind().identifier(),
                 fields.amount_minor,
                 cadence_str(fields.cadence),
                 fields.day_of_month.map(i64::from),
-                account_id_text(fields.category_account_id),
-                account_id_text(fields.wallet_account_id),
-                account_id_text(fields.payable_account_id),
-                account_id_text(fields.from_account_id),
-                account_id_text(fields.to_account_id),
+                account_id_text(roles.category),
+                account_id_text(roles.wallet),
+                account_id_text(roles.payable),
+                account_id_text(roles.from),
+                account_id_text(roles.to),
                 fields.memo,
                 format_date(fields.next_date),
-                fields.bill_status.map(bill_status_str),
+                fields.accounts.bill_status().map(bill_status_str),
                 input.id.to_string(),
             ],
         )
@@ -440,32 +403,26 @@ pub fn post_recurring_template(
         .database("begin recurring template post")?;
 
     let stored = load_template(&tx, id)?;
+    let template = &stored.fields;
     let post_amount = match amount_minor {
         Some(minor) if minor <= 0 => {
             return Err(ValidationError::AmountNotPositive.into());
         }
         Some(minor) => minor,
-        None => stored.amount_minor,
+        None => template.amount_minor,
     };
-    let post_date = entry_date.unwrap_or(stored.next_date);
 
     let input = PostSimpleEntry {
         entity_id: stored.entity_id,
-        kind: stored.kind,
-        bill_status: stored.bill_status,
-        entry_date: post_date,
-        description: stored.name.clone(),
+        accounts: template.accounts,
+        entry_date: entry_date.unwrap_or(template.next_date),
+        description: template.name.clone(),
         reference: None,
         amount_minor: post_amount,
-        category_account_id: stored.category_account_id,
-        wallet_account_id: stored.wallet_account_id,
-        payable_account_id: stored.payable_account_id,
-        from_account_id: stored.from_account_id,
-        to_account_id: stored.to_account_id,
     };
 
     let entry = post_simple_entry_unchecked(&tx, &input)?;
-    let advanced = advance_next_date(stored.next_date, stored.cadence, stored.day_of_month)?;
+    let advanced = advance_next_date(template.next_date, template.cadence, template.day_of_month)?;
 
     tx.execute(
         "UPDATE recurring_templates SET next_date = ?1 WHERE id = ?2",
@@ -601,169 +558,66 @@ struct StoredTemplate {
     id: RecurringTemplateId,
     /// Entity the template belongs to.
     entity_id: EntityId,
-    /// Name of the template and description of the entries it posts.
-    name: String,
-    /// Kind of entry the template posts.
-    kind: SimpleEntryKind,
-    /// Bill payment state, which posting reads when `kind` is a bill.
-    bill_status: Option<SimpleBillStatus>,
-    /// Amount of each entry, in minor units; the schema keeps it positive.
-    amount_minor: i64,
-    /// How often the template recurs.
-    cadence: RecurringCadence,
-    /// Day of the month, 1–31, for a monthly template; `None` otherwise.
-    day_of_month: Option<u8>,
-    /// Account stored for the category role, if any.
-    category_account_id: Option<AccountId>,
-    /// Account stored for the wallet role, if any.
-    wallet_account_id: Option<AccountId>,
-    /// Account stored for the payable role, if any.
-    payable_account_id: Option<AccountId>,
-    /// Account stored as the source of a transfer, if any.
-    from_account_id: Option<AccountId>,
-    /// Account stored as the destination of a transfer, if any.
-    to_account_id: Option<AccountId>,
-    /// Note on the template; `None` when there is none.
-    memo: Option<String>,
-    /// Date of the next occurrence.
-    next_date: Date,
+    /// What the template holds.
+    fields: RecurringTemplateFields,
 }
 
 impl StoredTemplate {
     /// Adds the due flag, decided against `today`.
     fn into_view(self, today: Date) -> RecurringTemplateView {
-        let due = template_is_due(self.next_date, today);
         RecurringTemplateView {
             id: self.id,
             entity_id: self.entity_id,
-            name: self.name,
-            kind: self.kind,
-            bill_status: self.bill_status,
-            amount_minor: self.amount_minor,
-            cadence: self.cadence,
-            day_of_month: self.day_of_month,
-            category_account_id: self.category_account_id,
-            wallet_account_id: self.wallet_account_id,
-            payable_account_id: self.payable_account_id,
-            from_account_id: self.from_account_id,
-            to_account_id: self.to_account_id,
-            memo: self.memo,
-            next_date: self.next_date,
-            due,
+            due: template_is_due(self.fields.next_date, today),
+            fields: self.fields,
         }
     }
 }
 
-/// The fields that creating and updating a template have in common, borrowed
-/// from either input and not yet validated.
+/// Checks the parts of a template that need nothing but the values: its
+/// name, its amount, and its day of the month against its cadence.
 ///
-/// It lets [`validated_fields`] check both inputs with one body.
-struct TemplateInput<'a> {
-    /// Name as typed, untrimmed.
-    name: &'a str,
-    /// Kind of entry the template posts.
-    kind: SimpleEntryKind,
-    /// Bill payment state, if given.
-    bill_status: Option<SimpleBillStatus>,
-    /// Amount in minor units, not yet checked to be positive.
-    amount_minor: i64,
-    /// How often the template recurs.
-    cadence: RecurringCadence,
-    /// Day of the month as given, not yet checked against the cadence.
-    day_of_month: Option<u8>,
-    /// Account in the category role, if given.
-    category_account_id: Option<AccountId>,
-    /// Account in the wallet role, if given.
-    wallet_account_id: Option<AccountId>,
-    /// Account in the payable role, if given.
-    payable_account_id: Option<AccountId>,
-    /// Account a transfer takes from, if given.
-    from_account_id: Option<AccountId>,
-    /// Account a transfer pays into, if given.
-    to_account_id: Option<AccountId>,
-    /// Note as typed, untrimmed.
-    memo: Option<&'a str>,
-    /// Date of the next occurrence.
-    next_date: Date,
-}
-
-impl<'a> TemplateInput<'a> {
-    /// Borrows the fields of a create input.
-    fn from_create(input: &'a CreateRecurringTemplate) -> Self {
-        Self {
-            name: &input.name,
-            kind: input.kind,
-            bill_status: input.bill_status,
-            amount_minor: input.amount_minor,
-            cadence: input.cadence,
-            day_of_month: input.day_of_month,
-            category_account_id: input.category_account_id,
-            wallet_account_id: input.wallet_account_id,
-            payable_account_id: input.payable_account_id,
-            from_account_id: input.from_account_id,
-            to_account_id: input.to_account_id,
-            memo: input.memo.as_deref(),
-            next_date: input.next_date,
-        }
-    }
-
-    /// Borrows the fields of an update input.
-    fn from_update(input: &'a UpdateRecurringTemplate) -> Self {
-        Self {
-            name: &input.name,
-            kind: input.kind,
-            bill_status: input.bill_status,
-            amount_minor: input.amount_minor,
-            cadence: input.cadence,
-            day_of_month: input.day_of_month,
-            category_account_id: input.category_account_id,
-            wallet_account_id: input.wallet_account_id,
-            payable_account_id: input.payable_account_id,
-            from_account_id: input.from_account_id,
-            to_account_id: input.to_account_id,
-            memo: input.memo.as_deref(),
-            next_date: input.next_date,
-        }
-    }
-}
-
-/// The values to store for a template, after [`validated_fields`] accepted
-/// them.
-struct ValidatedFields {
-    /// Entity the template belongs to; it exists.
-    entity_id: EntityId,
-    /// Name, trimmed and not empty.
-    name: String,
-    /// Kind of entry the template posts.
-    kind: SimpleEntryKind,
-    /// Bill payment state; present when the kind is a bill.
-    bill_status: Option<SimpleBillStatus>,
-    /// Amount in minor units, positive.
-    amount_minor: i64,
-    /// How often the template recurs.
-    cadence: RecurringCadence,
-    /// Day of the month, 1–31, for a monthly cadence; `None` for the others.
-    day_of_month: Option<u8>,
-    /// Account in the category role, as given.
-    category_account_id: Option<AccountId>,
-    /// Account in the wallet role, as given.
-    wallet_account_id: Option<AccountId>,
-    /// Account in the payable role, as given.
-    payable_account_id: Option<AccountId>,
-    /// Account a transfer takes from, as given.
-    from_account_id: Option<AccountId>,
-    /// Account a transfer pays into, as given.
-    to_account_id: Option<AccountId>,
-    /// Note, trimmed; `None` when it was blank or absent.
-    memo: Option<String>,
-    /// Date of the next occurrence.
-    next_date: Date,
-}
-
-/// Validates the fields of a template for `entity_id`.
+/// The conversion of a request runs this before it reads the accounts, and
+/// [`validated_fields`] runs it on every template it is given, so the two
+/// refuse the same things in the same order.
 ///
-/// The roles the kind reads are checked as posting would check them; a role
-/// the kind does not read is stored as given, unchecked.
+/// # Errors
+///
+/// - [`ValidationError::NameRequired`] for a name that is blank.
+/// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
+/// - [`ValidationError::DayOfMonthInvalid`] for a monthly cadence with no
+///   day or one outside 1–31, and for a weekly or yearly cadence with a day.
+pub(crate) fn check_template_values(
+    name: &str,
+    amount_minor: i64,
+    cadence: RecurringCadence,
+    day_of_month: Option<u8>,
+) -> Result<()> {
+    if name.trim().is_empty() {
+        return Err(ValidationError::NameRequired {
+            field: NameField::TemplateName,
+        }
+        .into());
+    }
+    if amount_minor <= 0 {
+        return Err(ValidationError::AmountNotPositive.into());
+    }
+
+    match cadence {
+        RecurringCadence::Monthly => require_day_of_month(day_of_month).map(|_| ()),
+        RecurringCadence::Weekly | RecurringCadence::Yearly => {
+            if day_of_month.is_some() {
+                return Err(ValidationError::DayOfMonthInvalid.into());
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Validates the fields of a template for `entity_id` and returns them as
+/// they are stored: the name and the memo trimmed, a blank memo as none.
+///
+/// The accounts are checked as posting would check them.
 ///
 /// # Errors
 ///
@@ -771,74 +625,29 @@ struct ValidatedFields {
 fn validated_fields(
     conn: &Connection,
     entity_id: EntityId,
-    input: &TemplateInput<'_>,
-) -> Result<ValidatedFields> {
+    fields: &RecurringTemplateFields,
+) -> Result<RecurringTemplateFields> {
     ensure_entity_exists(conn, entity_id)?;
+    check_template_values(
+        &fields.name,
+        fields.amount_minor,
+        fields.cadence,
+        fields.day_of_month,
+    )?;
+    ensure_simple_entry_accounts(conn, entity_id, fields.accounts)?;
 
-    let name = input.name.trim();
-    if name.is_empty() {
-        return Err(ValidationError::NameRequired {
-            field: NameField::TemplateName,
-        }
-        .into());
-    }
-    if input.amount_minor <= 0 {
-        return Err(ValidationError::AmountNotPositive.into());
-    }
-
-    let day_of_month = match input.cadence {
-        RecurringCadence::Monthly => Some(require_day_of_month(input.day_of_month)?),
-        RecurringCadence::Weekly | RecurringCadence::Yearly => {
-            if input.day_of_month.is_some() {
-                return Err(ValidationError::DayOfMonthInvalid.into());
-            }
-            None
-        }
-    };
-
-    let next_date = input.next_date;
-    let memo = input
+    let memo = fields
         .memo
+        .as_deref()
         .map(str::trim)
         .filter(|memo| !memo.is_empty())
         .map(ToOwned::to_owned);
 
-    let fields = ValidatedFields {
-        entity_id,
-        name: name.to_owned(),
-        kind: input.kind,
-        bill_status: input.bill_status,
-        amount_minor: input.amount_minor,
-        cadence: input.cadence,
-        day_of_month,
-        category_account_id: input.category_account_id,
-        wallet_account_id: input.wallet_account_id,
-        payable_account_id: input.payable_account_id,
-        from_account_id: input.from_account_id,
-        to_account_id: input.to_account_id,
+    Ok(RecurringTemplateFields {
+        name: fields.name.trim().to_owned(),
         memo,
-        next_date,
-    };
-
-    // The entry the template would post on its next date, built only to run
-    // the account checks of posting on it; it is never posted.
-    let probe = PostSimpleEntry {
-        entity_id,
-        kind: fields.kind,
-        bill_status: fields.bill_status,
-        entry_date: fields.next_date,
-        description: fields.name.clone(),
-        reference: None,
-        amount_minor: fields.amount_minor,
-        category_account_id: fields.category_account_id,
-        wallet_account_id: fields.wallet_account_id,
-        payable_account_id: fields.payable_account_id,
-        from_account_id: fields.from_account_id,
-        to_account_id: fields.to_account_id,
-    };
-    ensure_simple_entry_roles(conn, &probe)?;
-
-    Ok(fields)
+        ..fields.clone()
+    })
 }
 
 /// Returns the day of the month a monthly cadence needs.
@@ -911,7 +720,8 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
 ///
 /// [`Error::VaultCorrupt`] naming the column when an id, the kind, the
 /// cadence, the day of the month, the date or the bill status does not
-/// parse, or a column has the wrong storage class.
+/// parse, when an account or the bill status the kind needs is missing, or
+/// when a column has the wrong storage class.
 fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
     let id = stored_id("recurring_templates.id", &read_column::<String>(row, 0)?)?;
     let entity_id = stored_id(
@@ -931,23 +741,50 @@ fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
         .map(|text| parse_bill_status(&text))
         .transpose()?;
 
+    let roles = SimpleEntryRoleAccounts {
+        category: stored_account(row, 7, "recurring_templates.category_account_id")?,
+        wallet: stored_account(row, 8, "recurring_templates.wallet_account_id")?,
+        payable: stored_account(row, 9, "recurring_templates.payable_account_id")?,
+        from: stored_account(row, 10, "recurring_templates.from_account_id")?,
+        to: stored_account(row, 11, "recurring_templates.to_account_id")?,
+    };
+    // A template is saved only with the accounts its kind posts to, so a row
+    // without one of them was not written by the application.
+    let accounts = SimpleEntryAccounts::try_from_roles(kind, bill_status, roles)
+        .map_err(|missing| missing_part_is_corrupt(kind, missing))?;
+
     Ok(StoredTemplate {
         id,
         entity_id,
-        name: read_column(row, 2)?,
-        kind,
-        bill_status,
-        amount_minor: read_column(row, 4)?,
-        cadence,
-        day_of_month,
-        category_account_id: stored_account(row, 7, "recurring_templates.category_account_id")?,
-        wallet_account_id: stored_account(row, 8, "recurring_templates.wallet_account_id")?,
-        payable_account_id: stored_account(row, 9, "recurring_templates.payable_account_id")?,
-        from_account_id: stored_account(row, 10, "recurring_templates.from_account_id")?,
-        to_account_id: stored_account(row, 11, "recurring_templates.to_account_id")?,
-        memo: read_column(row, 12)?,
-        next_date,
+        fields: RecurringTemplateFields {
+            name: read_column(row, 2)?,
+            amount_minor: read_column(row, 4)?,
+            cadence,
+            day_of_month,
+            accounts,
+            memo: read_column(row, 12)?,
+            next_date,
+        },
     })
+}
+
+/// Returns the error for a stored template of `kind` that lacks what the
+/// kind needs, naming the column that is empty.
+fn missing_part_is_corrupt(kind: SimpleEntryKind, missing: MissingPart) -> Error {
+    let kind = kind.identifier();
+    let (column, what) = match missing {
+        MissingPart::BillStatus => ("bill_status", "bill status"),
+        MissingPart::Category(_) => ("category_account_id", "category account"),
+        MissingPart::Wallet(_) => ("wallet_account_id", "wallet account"),
+        MissingPart::Payable(_) => ("payable_account_id", "payable account"),
+        MissingPart::From(_) => ("from_account_id", "source account"),
+        MissingPart::To(_) => ("to_account_id", "destination account"),
+    };
+
+    corrupt_column(
+        &format!("recurring_templates.{column}"),
+        format_args!("no {what} for a template of kind {kind}"),
+    )
 }
 
 /// Returns a template's day of the month as stored; the schema's `CHECK`
@@ -992,19 +829,7 @@ fn account_id_text(id: Option<AccountId>) -> Option<String> {
     id.map(|account| account.to_string())
 }
 
-/// Returns the text `kind` is stored as in `recurring_templates.kind`.
-///
-/// The strings are part of the vault format; [`parse_kind`] reads them back.
-fn kind_str(kind: SimpleEntryKind) -> &'static str {
-    match kind {
-        SimpleEntryKind::Expense => "expense",
-        SimpleEntryKind::Income => "income",
-        SimpleEntryKind::Bill => "bill",
-        SimpleEntryKind::Transfer => "transfer",
-    }
-}
-
-/// Parses the text [`kind_str`] writes.
+/// Parses the text [`SimpleEntryKind::identifier`] writes.
 ///
 /// # Errors
 ///

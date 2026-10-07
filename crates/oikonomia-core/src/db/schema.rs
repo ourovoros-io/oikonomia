@@ -318,8 +318,8 @@ fn migrate_v6(tx: &Transaction<'_>) -> Result<()> {
 ///
 /// A template is posted only when the user asks. Nothing but such a post
 /// advances `next_date`; the user can also set it by editing the template.
-/// The five role-account columns are those of
-/// [`crate::ledger::PostSimpleEntry`].
+/// The five role-account columns are the fields of
+/// [`crate::ledger::SimpleEntryRoleAccounts`], under their wire names.
 fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
     tx.execute_batch(
         "

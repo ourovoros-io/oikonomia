@@ -414,7 +414,7 @@ fn templates_due_the_same_day_are_listed_by_name_without_regard_to_case() {
     let listed: Vec<String> = list_recurring_templates(conn, entity_id)
         .expect("list")
         .into_iter()
-        .map(|template| template.name)
+        .map(|template| template.fields.name)
         .collect();
 
     assert_eq!(listed, NAMES_IN_ORDER);

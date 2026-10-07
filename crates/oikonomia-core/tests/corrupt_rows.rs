@@ -265,6 +265,61 @@ fn a_damaged_recurring_template_is_corrupt() {
 }
 
 #[test]
+fn a_recurring_template_without_what_its_kind_posts_to_is_corrupt() {
+    // Each row: how the stored expense template is damaged, and the column
+    // the damage is reported under.
+    let damaged = [
+        ("category_account_id = NULL", "category_account_id"),
+        ("wallet_account_id = NULL", "wallet_account_id"),
+        ("kind = 'bill'", "bill_status"),
+        (
+            "kind = 'bill', bill_status = 'unpaid'",
+            "payable_account_id",
+        ),
+        ("kind = 'transfer'", "to_account_id"),
+        (
+            "kind = 'transfer', to_account_id = wallet_account_id",
+            "from_account_id",
+        ),
+    ];
+
+    for (assignment, column) in damaged {
+        let (_dir, vault) = common::vault();
+        let conn = vault.connection().expect("conn");
+        let book = book(conn);
+        monthly_template(conn, &book);
+        damage(
+            conn,
+            &format!("UPDATE recurring_templates SET {assignment}"),
+        );
+
+        let listed = list_recurring_templates(conn, book.entity_id);
+        assert_corrupt(listed, &format!("recurring_templates.{column}"));
+    }
+}
+
+#[test]
+fn an_account_a_template_stores_for_a_part_its_kind_lacks_is_ignored() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    monthly_template(conn, &book);
+    // An expense template written before core dropped the parts a kind does
+    // not have could carry a payable account and a bill status.
+    damage(
+        conn,
+        "UPDATE recurring_templates
+         SET payable_account_id = wallet_account_id, bill_status = 'paid'",
+    );
+
+    let listed = list_recurring_templates(conn, book.entity_id).expect("list");
+    let json = serde_json::to_value(&listed).expect("json");
+    assert_eq!(json[0]["kind"], "expense");
+    assert_eq!(json[0]["payable_account_id"], serde_json::Value::Null);
+    assert_eq!(json[0]["bill_status"], serde_json::Value::Null);
+}
+
+#[test]
 fn a_sound_book_still_reads_back() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
@@ -276,7 +331,7 @@ fn a_sound_book_still_reads_back() {
 
     let templates = list_recurring_templates(conn, book.entity_id).expect("templates");
     let template = get_recurring_template(conn, templates[0].id).expect("template");
-    assert_eq!(template.name, "Rent");
+    assert_eq!(template.fields.name, "Rent");
 }
 
 #[test]

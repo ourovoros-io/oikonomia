@@ -14,7 +14,8 @@ use oikonomia_core::Error;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, PostJournalRequest, PostSimpleEntry,
-    PostedEntryView, SimpleEntryKind, create_entity, list_accounts, post_entry,
+    PostSimpleEntryRequest, PostedEntryView, SimpleEntryAccounts, create_entity, list_accounts,
+    post_entry, post_simple_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
@@ -35,7 +36,11 @@ const _: () = {
     let _ = PASSWORD;
     let _ = (vault, book, account);
     let _ = (two_line, post_two_line, simple_expense);
-    let _ = (date, strict::<PostJournalRequest, PostJournal>);
+    let _ = (
+        date,
+        strict::<PostJournalRequest, PostJournal>,
+        post_simple_request,
+    );
 };
 
 /// Parses a `YYYY-MM-DD` literal of a test.
@@ -143,6 +148,20 @@ pub(crate) fn post_two_line(
     post_entry(conn, &two_line(conn, entity_id, date, sides, minor)).expect("post")
 }
 
+/// Posts a simple entry from the request the UI sends, converting it first as
+/// the desktop shell does.
+///
+/// # Errors
+///
+/// Returns what the conversion or the post refuses the request for.
+pub(crate) fn post_simple_request(
+    conn: &Connection,
+    request: &PostSimpleEntryRequest,
+) -> Result<PostedEntryView, Error> {
+    let entry = PostSimpleEntry::try_from(request.clone())?;
+    post_simple_entry(conn, &entry)
+}
+
 /// Builds a paid expense of `minor` in `category`, paid from `wallet`.
 ///
 /// The description is "groceries" and there is no reference.
@@ -155,16 +174,10 @@ pub(crate) fn simple_expense(
 ) -> PostSimpleEntry {
     PostSimpleEntry {
         entity_id,
-        kind: SimpleEntryKind::Expense,
-        bill_status: None,
+        accounts: SimpleEntryAccounts::Expense { category, wallet },
         entry_date: self::date(date),
         description: "groceries".into(),
         reference: None,
         amount_minor: minor,
-        category_account_id: Some(category),
-        wallet_account_id: Some(wallet),
-        payable_account_id: None,
-        from_account_id: None,
-        to_account_id: None,
     }
 }

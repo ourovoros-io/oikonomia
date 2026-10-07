@@ -15,6 +15,7 @@
 //! - `cash_flow`: income and expenses over time.
 //! - `recurring`: entry templates with a schedule.
 //! - `settings`: settings kept in the vault.
+//! - `simple_entry`: the kinds of simple entry and the accounts each needs.
 //! - `wire`: the requests the UI sends, in their JSON shape, and their
 //!   conversion into the strict inputs the functions here take.
 //!
@@ -29,8 +30,8 @@
 //!   One function writes entries and checks this first; the schema repeats
 //!   the rule for a single line as a `CHECK`.
 //! - **Accounting rules are decided here, not in the UI.** The simple entry
-//!   form sends an amount and accounts named by role, and
-//!   [`post_simple_entry`] decides which is debited.
+//!   form sends an amount and accounts named by the part they play, and
+//!   [`SimpleEntryAccounts`] decides which is debited.
 //! - **A write of several rows is atomic.** See [Transactions](#transactions).
 //! - **A report filters entries inside its subquery**, never in the `ON`
 //!   clause of a `LEFT JOIN`, where the filter would have no effect.
@@ -118,6 +119,7 @@ mod journals;
 mod recurring;
 mod reports;
 mod settings;
+mod simple_entry;
 mod wire;
 
 pub use accounts::{
@@ -136,13 +138,12 @@ pub use entities::{
 pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{
     CreateJournalLine, EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, RegisterLine,
-    SimpleBillStatus, SimpleEntryKind, VoidResult, account_register, get_entry, list_entries,
-    post_entry, post_simple_entry, replace_simple_entry, set_account_opening_balance,
-    set_entry_hidden, void_entry,
+    VoidResult, account_register, get_entry, list_entries, post_entry, post_simple_entry,
+    replace_simple_entry, set_account_opening_balance, set_entry_hidden, void_entry,
 };
 pub use recurring::{
-    CreateRecurringTemplate, RecurringCadence, RecurringPostResult, RecurringTemplateView,
-    UpdateRecurringTemplate, advance_next_date, create_recurring_template,
+    CreateRecurringTemplate, RecurringCadence, RecurringPostResult, RecurringTemplateFields,
+    RecurringTemplateView, UpdateRecurringTemplate, advance_next_date, create_recurring_template,
     delete_recurring_template, get_recurring_template, list_recurring_templates,
     list_recurring_templates_as_of, post_recurring_template, template_is_due,
     update_recurring_template,
@@ -153,6 +154,9 @@ pub use reports::{
     profit_and_loss_export, trial_balance,
 };
 pub use settings::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs, set_lock_timeout_secs};
+pub use simple_entry::{
+    SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
+};
 pub use wire::{
     CreateRecurringTemplateRequest, PostJournalRequest, PostSimpleEntryRequest,
     UpdateRecurringTemplateRequest,

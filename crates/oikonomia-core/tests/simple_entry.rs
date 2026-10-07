@@ -6,9 +6,7 @@ mod common;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::{AccountRole, ValidationError};
-use oikonomia_core::ledger::{
-    PostSimpleEntry, PostSimpleEntryRequest, SimpleBillStatus, SimpleEntryKind, post_simple_entry,
-};
+use oikonomia_core::ledger::{PostSimpleEntryRequest, SimpleBillStatus, SimpleEntryKind};
 use rusqlite::Connection;
 
 fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
@@ -35,8 +33,8 @@ struct AccountsByCode {
     savings: AccountId,
 }
 
-fn base_input(entity_id: EntityId, kind: SimpleEntryKind) -> PostSimpleEntry {
-    common::strict(PostSimpleEntryRequest {
+fn base_input(entity_id: EntityId, kind: SimpleEntryKind) -> PostSimpleEntryRequest {
+    PostSimpleEntryRequest {
         entity_id,
         kind,
         bill_status: None,
@@ -49,7 +47,7 @@ fn base_input(entity_id: EntityId, kind: SimpleEntryKind) -> PostSimpleEntry {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
-    })
+    }
 }
 
 #[test]
@@ -62,7 +60,7 @@ fn expense_debits_category_credits_wallet() {
     input.category_account_id = Some(acc.food);
     input.wallet_account_id = Some(acc.checking);
 
-    let view = post_simple_entry(conn, &input).expect("post expense");
+    let view = common::post_simple_request(conn, &input).expect("post expense");
     let debit = view
         .lines
         .iter()
@@ -92,7 +90,8 @@ fn expense_allows_empty_or_whitespace_description() {
         input.wallet_account_id = Some(acc.checking);
         input.description = description.into();
 
-        let view = post_simple_entry(conn, &input).expect("post expense with empty description");
+        let view =
+            common::post_simple_request(conn, &input).expect("post expense with empty description");
         assert_eq!(
             view.entry.description, "",
             "whitespace-only description must store trimmed empty"
@@ -110,7 +109,7 @@ fn income_debits_wallet_credits_category() {
     input.category_account_id = Some(acc.salary);
     input.wallet_account_id = Some(acc.checking);
 
-    let view = post_simple_entry(conn, &input).expect("post income");
+    let view = common::post_simple_request(conn, &input).expect("post income");
     let debit = view
         .lines
         .iter()
@@ -129,7 +128,7 @@ fn bill_statuses_route_to_payable() {
     unpaid.bill_status = Some(SimpleBillStatus::Unpaid);
     unpaid.category_account_id = Some(acc.food);
     unpaid.payable_account_id = Some(acc.bills_payable);
-    let view = post_simple_entry(conn, &unpaid).expect("post unpaid bill");
+    let view = common::post_simple_request(conn, &unpaid).expect("post unpaid bill");
     let credit = view
         .lines
         .iter()
@@ -141,7 +140,7 @@ fn bill_statuses_route_to_payable() {
     pay.bill_status = Some(SimpleBillStatus::PayExisting);
     pay.payable_account_id = Some(acc.bills_payable);
     pay.wallet_account_id = Some(acc.checking);
-    let view = post_simple_entry(conn, &pay).expect("pay existing bill");
+    let view = common::post_simple_request(conn, &pay).expect("pay existing bill");
     let debit = view
         .lines
         .iter()
@@ -154,7 +153,7 @@ fn bill_statuses_route_to_payable() {
     missing.wallet_account_id = Some(acc.checking);
     assert!(
         matches!(
-            post_simple_entry(conn, &missing),
+            common::post_simple_request(conn, &missing),
             Err(Error::Validation(ValidationError::BillStatusRequired))
         ),
         "bill without bill_status must be rejected"
@@ -167,7 +166,7 @@ fn bill_statuses_route_to_payable() {
     circular.wallet_account_id = Some(acc.bills_payable);
     assert!(
         matches!(
-            post_simple_entry(conn, &circular),
+            common::post_simple_request(conn, &circular),
             Err(Error::Validation(ValidationError::SameAccount))
         ),
         "same account on both sides must be rejected"
@@ -184,7 +183,7 @@ fn transfer_debits_to_credits_from() {
     input.from_account_id = Some(acc.checking);
     input.to_account_id = Some(acc.savings);
 
-    let view = post_simple_entry(conn, &input).expect("post transfer");
+    let view = common::post_simple_request(conn, &input).expect("post transfer");
     let debit = view
         .lines
         .iter()
@@ -197,7 +196,7 @@ fn transfer_debits_to_credits_from() {
     same.to_account_id = Some(acc.checking);
     assert!(
         matches!(
-            post_simple_entry(conn, &same),
+            common::post_simple_request(conn, &same),
             Err(Error::Validation(ValidationError::SameAccount))
         ),
         "transfer between the same account must be rejected"
@@ -215,7 +214,7 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     wrong_type.category_account_id = Some(acc.salary);
     wrong_type.wallet_account_id = Some(acc.checking);
     assert!(matches!(
-        post_simple_entry(conn, &wrong_type),
+        common::post_simple_request(conn, &wrong_type),
         Err(Error::Validation(ValidationError::AccountWrongType {
             role: AccountRole::Category,
             ..
@@ -227,7 +226,7 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     liab_income.category_account_id = Some(acc.salary);
     liab_income.wallet_account_id = Some(acc.bills_payable);
     assert!(matches!(
-        post_simple_entry(conn, &liab_income),
+        common::post_simple_request(conn, &liab_income),
         Err(Error::Validation(ValidationError::AccountWrongType {
             role: AccountRole::Deposit,
             ..
@@ -240,14 +239,14 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
     zero.wallet_account_id = Some(acc.checking);
     zero.amount_minor = 0;
     assert!(matches!(
-        post_simple_entry(conn, &zero),
+        common::post_simple_request(conn, &zero),
         Err(Error::Validation(ValidationError::AmountNotPositive))
     ));
 
     // Missing role entirely.
     let missing = base_input(entity_id, SimpleEntryKind::Expense);
     assert!(matches!(
-        post_simple_entry(conn, &missing),
+        common::post_simple_request(conn, &missing),
         Err(Error::Validation(ValidationError::AccountRequired {
             role: AccountRole::Category
         }))

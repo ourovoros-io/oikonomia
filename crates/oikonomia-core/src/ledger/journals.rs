@@ -12,8 +12,12 @@
 //! rule for a single line as a `CHECK`.
 //!
 //! The simple entry form posts through [`post_simple_entry`]. Its input names
-//! accounts by role and the mapping from an entry kind to a debit and a
-//! credit is here, so the UI holds no accounting rule.
+//! accounts by the part they play, as a [`SimpleEntryAccounts`], and that
+//! type holds the mapping from a kind of entry to a debit and a credit, so
+//! the UI holds no accounting rule. What needs the database is checked here:
+//! that each account exists, has a type its part accepts, belongs to the
+//! entry's entity, is not archived, and is not the account on the other
+//! side.
 //!
 //! # Entries are not edited
 //!
@@ -44,11 +48,12 @@ use crate::domain::{
     Account, AccountId, AccountType, EntityId, EntryStatus, JournalEntry, JournalEntryId,
     JournalLine, JournalLineId, validate_lines_for_post,
 };
-use crate::error::{AccountRole, DatabaseContext, Error, Resource, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Resource, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
+use crate::ledger::simple_entry::{RoleAccount, SimpleEntryAccounts};
 use crate::money::Money;
 use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
@@ -131,47 +136,12 @@ pub struct RegisterLine {
     pub hidden: bool,
 }
 
-/// High-level kind for the simple entry form (no debit/credit knowledge in the UI).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SimpleEntryKind {
-    /// Money spent now.
-    Expense,
-    /// Money received.
-    Income,
-    /// A bill: paid, owed, or a payment against an owed bill.
-    Bill,
-    /// Move money between own accounts.
-    Transfer,
-}
-
-/// Payment state for [`SimpleEntryKind::Bill`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SimpleBillStatus {
-    /// Paid immediately from a wallet account.
-    Paid,
-    /// Recorded as owed against a payable account.
-    Unpaid,
-    /// Settle a previously recorded payable from a wallet account.
-    PayExisting,
-}
-
-/// Input for [`post_simple_entry`]: one amount plus role accounts per kind.
+/// Input for [`post_simple_entry`]: one amount and the two accounts it moves
+/// between.
 ///
-/// The kind decides which two roles are read, which account types each may
-/// hold, and which is debited:
-///
-/// | Kind | Debit | Credit |
-/// |------|-------|--------|
-/// | expense | category (expense) | wallet (asset or liability) |
-/// | income | wallet (asset) | category (income) |
-/// | bill, paid | category (expense) | wallet (asset or liability) |
-/// | bill, unpaid | category (expense) | payable (liability) |
-/// | bill, pay existing | payable (liability) | wallet (asset or liability) |
-/// | transfer | to (asset or liability) | from (asset or liability) |
-///
-/// A role the kind does not read is ignored, whatever it holds.
+/// [`SimpleEntryAccounts`] says which accounts those are and which is
+/// debited, so this cannot describe an entry with an account missing or with
+/// a bill that does not say whether it is paid.
 ///
 /// The UI sends it as a
 /// [`PostSimpleEntryRequest`](crate::ledger::PostSimpleEntryRequest), which
@@ -180,10 +150,8 @@ pub enum SimpleBillStatus {
 pub struct PostSimpleEntry {
     /// Entity whose books the entry goes into.
     pub entity_id: EntityId,
-    /// What kind of entry this is; it selects the row of the table above.
-    pub kind: SimpleEntryKind,
-    /// Required when `kind` is [`SimpleEntryKind::Bill`].
-    pub bill_status: Option<SimpleBillStatus>,
+    /// The kind of entry and the accounts it debits and credits.
+    pub accounts: SimpleEntryAccounts,
     /// Accounting date.
     pub entry_date: Date,
     /// What the entry is for. Surrounding whitespace is trimmed; it may be
@@ -194,16 +162,6 @@ pub struct PostSimpleEntry {
     pub reference: Option<String>,
     /// Positive amount in minor units.
     pub amount_minor: i64,
-    /// Expense or income category account.
-    pub category_account_id: Option<AccountId>,
-    /// Bank / cash / card account.
-    pub wallet_account_id: Option<AccountId>,
-    /// Bills payable / AP liability account.
-    pub payable_account_id: Option<AccountId>,
-    /// Transfer source.
-    pub from_account_id: Option<AccountId>,
-    /// Transfer destination.
-    pub to_account_id: Option<AccountId>,
 }
 
 /// Result of [`void_entry`]: the two entries the void linked.
@@ -357,16 +315,13 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 
 /// Builds and posts the journal entry for a simple-form input, atomically.
 ///
-/// The kind → debit/credit mapping lives here so the UI never carries
-/// accounting rules; each role account's type is checked before posting.
-/// [`PostSimpleEntry`] has the mapping.
+/// The kind → debit/credit mapping lives in [`SimpleEntryAccounts`] so the
+/// UI never carries accounting rules; each account's type is checked here
+/// before posting.
 ///
 /// # Errors
 ///
 /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
-/// - [`ValidationError::BillStatusRequired`] for a bill without a status.
-/// - [`ValidationError::AccountRequired`] when a role the kind reads is
-///   empty.
 /// - [`ValidationError::AccountWrongType`] when a role holds an account of a
 ///   type the kind does not allow there.
 /// - [`ValidationError::SameAccount`] when both sides are one account.
@@ -690,7 +645,8 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
         return Err(ValidationError::AmountNotPositive.into());
     }
 
-    let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
+    let (debit_account, credit_account) =
+        simple_entry_sides(conn, input.entity_id, input.accounts)?;
 
     let lines = vec![
         CreateJournalLine {
@@ -721,17 +677,22 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
     )
 }
 
-/// Checks the role accounts of `input` exactly as [`post_simple_entry`] does.
+/// Checks `accounts` for an entry in the book of `entity_id` exactly as
+/// [`post_simple_entry`] does.
 ///
 /// Posting resolves its accounts through the same [`simple_entry_sides`], so
-/// an input that passes here cannot be refused for its accounts at post time
-/// unless an account changes in between.
+/// accounts that pass here cannot be refused at post time unless one of them
+/// changes in between.
 ///
 /// # Errors
 ///
 /// Those [`simple_entry_sides`] returns.
-pub(crate) fn ensure_simple_entry_roles(conn: &Connection, input: &PostSimpleEntry) -> Result<()> {
-    simple_entry_sides(conn, input).map(|_| ())
+pub(crate) fn ensure_simple_entry_accounts(
+    conn: &Connection,
+    entity_id: EntityId,
+    accounts: SimpleEntryAccounts,
+) -> Result<()> {
+    simple_entry_sides(conn, entity_id, accounts).map(|_| ())
 }
 
 /// The entries [`list_entries`] returns, as a predicate on `journal_entries je`.
@@ -1048,33 +1009,64 @@ fn post_entry_in_tx(
     get_entry(conn, entry_id)
 }
 
-/// Resolves the (debit, credit) account pair for a simple entry.
+/// Resolves the (debit, credit) account pair for a simple entry, checking
+/// each account as posting does.
+///
+/// The debited account is looked up and checked for its type first, then the
+/// credited one; the remaining checks follow for both.
 ///
 /// # Errors
 ///
-/// - [`ValidationError::AccountRequired`], [`ValidationError::AccountWrongType`]
-///   or [`ValidationError::BillStatusRequired`] when a role the kind needs is
-///   empty or filled with an account of the wrong type.
+/// - [`Error::NotFound`] for an unknown account id.
+/// - [`ValidationError::AccountWrongType`] when an account has a type its
+///   part does not accept.
 /// - [`ValidationError::SameAccount`] when both sides are one account.
 /// - [`Error::AccountWrongEntity`] or [`ValidationError::AccountInactive`]
 ///   when an account belongs to another book or is archived.
-/// - [`Error::NotFound`] for an unknown account id.
 /// - [`Error::VaultCorrupt`] for a stored account that does not parse.
 /// - [`Error::Database`] on database errors.
 fn simple_entry_sides(
     conn: &Connection,
-    input: &PostSimpleEntry,
+    entity_id: EntityId,
+    accounts: SimpleEntryAccounts,
 ) -> Result<(AccountId, AccountId)> {
-    let (debit, credit) = simple_entry_role_accounts(conn, input)?;
+    let (debit, credit) = accounts.sides();
+    let debit = role_account(conn, debit)?;
+    let credit = role_account(conn, credit)?;
+
+    // Two parts that accept different types cannot hold one account, so this
+    // is reached only where both accept the same types, as in a transfer.
     if debit.id == credit.id {
         return Err(ValidationError::SameAccount.into());
     }
 
     for account in [&debit, &credit] {
-        ensure_in_book(account, input.entity_id)?;
+        ensure_in_book(account, entity_id)?;
         ensure_active(account)?;
     }
     Ok((debit.id, credit.id))
+}
+
+/// Loads the account on one side of a simple entry and checks that its type
+/// is one the part accepts.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown account id.
+/// - [`ValidationError::AccountWrongType`], naming the part and the
+///   account's code, for an account of a type the part does not accept.
+/// - [`Error::VaultCorrupt`] for a stored account that does not parse.
+/// - [`Error::Database`] on database errors.
+fn role_account(conn: &Connection, side: RoleAccount) -> Result<Account> {
+    let account = get_account(conn, side.id)?;
+    if !side.allowed.contains(&account.account_type) {
+        return Err(ValidationError::AccountWrongType {
+            role: side.role,
+            code: account.code,
+        }
+        .into());
+    }
+    Ok(account)
 }
 
 /// Checks that `account` belongs to the book of `entity_id`.
@@ -1103,105 +1095,6 @@ fn ensure_active(account: &Account) -> Result<()> {
         .into());
     }
     Ok(())
-}
-
-/// Loads the (debit, credit) accounts the kind of `input` maps its roles to,
-/// checking only that each role is filled with an account of an allowed type.
-///
-/// # Errors
-///
-/// - [`ValidationError::BillStatusRequired`] for a bill without a status.
-/// - [`ValidationError::AccountRequired`] for an empty role.
-/// - [`ValidationError::AccountWrongType`] for an account of a type the role
-///   does not allow.
-/// - [`Error::NotFound`] for an unknown account id.
-/// - [`Error::VaultCorrupt`] for a stored account that does not parse.
-/// - [`Error::Database`] on database errors.
-fn simple_entry_role_accounts(
-    conn: &Connection,
-    input: &PostSimpleEntry,
-) -> Result<(Account, Account)> {
-    use AccountType::{Asset, Expense, Income, Liability};
-
-    let account_in =
-        |id: Option<AccountId>, role: AccountRole, allowed: &[AccountType]| -> Result<Account> {
-            let id = id.ok_or(ValidationError::AccountRequired { role })?;
-            let account = get_account(conn, id)?;
-            if !allowed.contains(&account.account_type) {
-                return Err(ValidationError::AccountWrongType {
-                    role,
-                    code: account.code.clone(),
-                }
-                .into());
-            }
-            Ok(account)
-        };
-
-    match input.kind {
-        SimpleEntryKind::Expense => Ok((
-            account_in(input.category_account_id, AccountRole::Category, &[Expense])?,
-            account_in(
-                input.wallet_account_id,
-                AccountRole::Payment,
-                &[Asset, Liability],
-            )?,
-        )),
-        SimpleEntryKind::Income => Ok((
-            account_in(input.wallet_account_id, AccountRole::Deposit, &[Asset])?,
-            account_in(input.category_account_id, AccountRole::Income, &[Income])?,
-        )),
-        SimpleEntryKind::Bill => match input.bill_status {
-            Some(SimpleBillStatus::Paid) => Ok((
-                account_in(
-                    input.category_account_id,
-                    AccountRole::BillCategory,
-                    &[Expense],
-                )?,
-                account_in(
-                    input.wallet_account_id,
-                    AccountRole::Payment,
-                    &[Asset, Liability],
-                )?,
-            )),
-            Some(SimpleBillStatus::Unpaid) => Ok((
-                account_in(
-                    input.category_account_id,
-                    AccountRole::BillCategory,
-                    &[Expense],
-                )?,
-                account_in(
-                    input.payable_account_id,
-                    AccountRole::BillsPayable,
-                    &[Liability],
-                )?,
-            )),
-            Some(SimpleBillStatus::PayExisting) => Ok((
-                account_in(
-                    input.payable_account_id,
-                    AccountRole::BillsPayable,
-                    &[Liability],
-                )?,
-                account_in(
-                    input.wallet_account_id,
-                    AccountRole::Payment,
-                    &[Asset, Liability],
-                )?,
-            )),
-            None => Err(ValidationError::BillStatusRequired.into()),
-        },
-        SimpleEntryKind::Transfer => Ok((
-            account_in(
-                input.to_account_id,
-                AccountRole::TransferDestination,
-                &[Asset, Liability],
-            )?,
-            account_in(
-                input.from_account_id,
-                AccountRole::TransferSource,
-                &[Asset, Liability],
-            )?,
-        )),
-    }
 }
 
 /// Posts the reversing entry of `id` and links the two, without transaction

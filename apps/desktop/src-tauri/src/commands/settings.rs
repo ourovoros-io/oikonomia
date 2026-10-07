@@ -10,7 +10,8 @@
 use crate::commands::support::{run_blocking, with_connection, with_vault_blocking};
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
-use oikonomia_core::ledger::{get_lock_timeout_secs, set_lock_timeout_secs};
+use oikonomia_core::domain::EntityId;
+use oikonomia_core::ledger::{SimpleEntryKind, get_lock_timeout_secs, set_lock_timeout_secs};
 use oikonomia_core::prefs::{
     LastRoleAccounts, Locale, UiPrefs, last_accounts_key, load_ui_prefs, resolve_locale,
     save_ui_prefs, store_locale,
@@ -168,8 +169,8 @@ pub(crate) async fn settings_get_ui_prefs(app: tauri::AppHandle) -> CommandResul
 #[tauri::command]
 pub(crate) async fn settings_remember_quick_add(
     app: tauri::AppHandle,
-    entity_id: String,
-    kind: String,
+    entity_id: EntityId,
+    kind: SimpleEntryKind,
     accounts: LastRoleAccounts,
 ) -> CommandResult<()> {
     with_prefs_blocking(app, move |_app, state| {
@@ -178,8 +179,8 @@ pub(crate) async fn settings_remember_quick_add(
         let mut prefs = load_ui_prefs(state.data_dir());
         prefs
             .last_accounts_by_entity_kind
-            .insert(last_accounts_key(&entity_id, &kind), accounts);
-        prefs.last_entity_id = Some(entity_id);
+            .insert(last_accounts_key(entity_id, kind), accounts);
+        prefs.last_entity_id = Some(entity_id.to_string());
 
         save_ui_prefs(state.data_dir(), &prefs)?;
         Ok(())

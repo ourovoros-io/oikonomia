@@ -8,9 +8,10 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, UpdateAccount, account_balance, archive_account,
-    create_entity, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
-    set_account_opening_balance, trial_balance, update_account, void_entry,
+    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryAccounts, UpdateAccount,
+    account_balance, archive_account, create_entity, list_accounts, list_entries,
+    post_simple_entry, replace_simple_entry, set_account_opening_balance, trial_balance,
+    update_account, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -292,7 +293,10 @@ fn an_entry_on_an_archived_account_can_be_moved_to_an_active_one() {
     archive_account(conn, acc.food).expect("archive");
 
     let mut moved = expense(entity_id, &acc, 4_200);
-    moved.category_account_id = Some(other_expenses);
+    moved.accounts = SimpleEntryAccounts::Expense {
+        category: other_expenses,
+        wallet: acc.checking,
+    };
     replace_simple_entry(conn, posted.entry.id, &moved, Locale::En).expect("replace");
 
     assert_eq!(

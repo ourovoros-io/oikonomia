@@ -40,7 +40,9 @@
 //! dark-only, so a `"theme"` key written by an older build is one of the
 //! ignored keys.
 
+use crate::domain::EntityId;
 use crate::error::{Error, IoContext, Result, SerializationContext};
+use crate::ledger::SimpleEntryKind;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -160,6 +162,11 @@ const MAX_SYSTEM_LANGUAGE_TAG_CHARS: usize = 35;
 /// Each field is an account id as text, or `None` when that kind of entry
 /// does not use the field or nothing was remembered. The ids are not checked
 /// here; an account may have been archived or removed since.
+///
+/// The field names are the keys of the preferences file on users' machines,
+/// so they stay as they are. They are the wire names of the parts of a simple
+/// entry; [`SimpleEntryRoleAccounts`](crate::ledger::SimpleEntryRoleAccounts)
+/// has the table that maps them to the names the ledger and its errors use.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LastRoleAccounts {
@@ -228,21 +235,26 @@ where
 }
 
 /// Returns the key of [`UiPrefs::last_accounts_by_entity_kind`] for an entity
-/// and an entry kind: `"{entity_id}:{kind}"`.
-///
-/// Neither part is checked. The desktop shell passes the entity's id and the
-/// entry kind as the UI names it.
+/// and an entry kind: the entity's id, a colon, and the kind as
+/// [`SimpleEntryKind::identifier`] writes it.
 ///
 /// # Examples
 ///
 /// ```
+/// use oikonomia_core::domain::EntityId;
+/// use oikonomia_core::ledger::SimpleEntryKind;
 /// use oikonomia_core::prefs::last_accounts_key;
 ///
-/// assert_eq!(last_accounts_key("ent-1", "expense"), "ent-1:expense");
+/// let entity_id: EntityId = "11111111-1111-4111-8111-111111111111".parse()?;
+/// assert_eq!(
+///     last_accounts_key(entity_id, SimpleEntryKind::Expense),
+///     "11111111-1111-4111-8111-111111111111:expense"
+/// );
+/// # Ok::<(), oikonomia_core::Error>(())
 /// ```
 #[must_use]
-pub fn last_accounts_key(entity_id: &str, kind: &str) -> String {
-    format!("{entity_id}:{kind}")
+pub fn last_accounts_key(entity_id: EntityId, kind: SimpleEntryKind) -> String {
+    format!("{entity_id}:{}", kind.identifier())
 }
 
 /// Returns the path of the preferences file, `ui-prefs.json` in `data_dir`.
