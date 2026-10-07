@@ -1,7 +1,7 @@
 {
   "name": "oikonomia-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "React user interface for the Oikonomia desktop app. It holds no business logic; the Rust core does.",
   "license": "GPL-3.0-or-later",
   "repository": {
