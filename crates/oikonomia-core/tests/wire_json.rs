@@ -1,4 +1,4 @@
-//! The JSON form of the ledger, report, CSV and preference types that cross
+//! The JSON form of the ledger, report, CSV, document and preference types that cross
 //! IPC, pinned as literal text.
 //!
 //! The web UI mirrors these shapes by hand in `web/src/lib/api.ts`, so a
@@ -20,7 +20,7 @@
 use oikonomia_core::csv::{
     CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewRow, JournalCsvLine,
 };
-use oikonomia_core::documents::DocumentMeta;
+use oikonomia_core::documents::{AnalyzerStatus, DocumentMeta, DocumentSuggestion};
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplateRequest,
@@ -370,6 +370,46 @@ fn document_meta() {
         r#""application/pdf","size_bytes":1024,"created_at":"unix:1791244800","#,
         r#""entry_description":"Power"}"#,
     ));
+}
+
+#[test]
+fn document_suggestion() {
+    // A reading with every field found, and its coded notes.
+    assert_json_is_pinned::<DocumentSuggestion>(concat!(
+        r#"{"source":"heuristic","model":"invoice-parser-v1","kind":"bill","amount_minor":7253,"#,
+        r#""entry_date":"2026-08-13","description":"Volton — Gas bill","reference":"#,
+        r#""NGS000000001","merchant":"Volton","bill_unpaid":true,"category_account_id":"#,
+        r#""22222222-2222-4222-8222-222222222222","wallet_account_id":"#,
+        r#""66666666-6666-4666-8666-666666666666","payable_account_id":"#,
+        r#""77777777-7777-4777-8777-777777777777","confidence":0.75,"notes":[{"code":"#,
+        r#""parsed_from_document_text","params":{}},{"code":"dated_from_document","params":"#,
+        r#"{"date":"2026-08-13"}}]}"#,
+    ));
+    // A file nothing was read from.
+    assert_json_is_pinned::<DocumentSuggestion>(concat!(
+        r#"{"source":"none","model":null,"kind":"expense","amount_minor":null,"#,
+        r#""entry_date":null,"description":null,"reference":null,"merchant":null,"#,
+        r#""bill_unpaid":false,"category_account_id":null,"wallet_account_id":null,"#,
+        r#""payable_account_id":null,"confidence":0.0,"notes":[{"code":"no_text_extracted","#,
+        r#""params":{}}]}"#,
+    ));
+    // Text read by OCR, on an income document.
+    assert_json_is_pinned::<DocumentSuggestion>(concat!(
+        r#"{"source":"bundled_ocr","model":"ocrs-bundled","kind":"income","amount_minor":"#,
+        r#"186000,"entry_date":null,"description":null,"reference":null,"merchant":null,"#,
+        r#""bill_unpaid":false,"category_account_id":null,"wallet_account_id":null,"#,
+        r#""payable_account_id":null,"confidence":0.5,"notes":[]}"#,
+    ));
+}
+
+#[test]
+fn analyzer_status() {
+    assert_json_is_pinned::<AnalyzerStatus>(
+        r#"{"ocr_available":true,"offline":true,"hint":"ready"}"#,
+    );
+    assert_json_is_pinned::<AnalyzerStatus>(
+        r#"{"ocr_available":false,"offline":true,"hint":"models_missing"}"#,
+    );
 }
 
 #[test]
