@@ -38,6 +38,9 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 oikonomia-test-support = { workspace = true }
+# The mock runtime, to invoke a command through the real IPC path in a test.
+# The feature adds no crate, and only test builds of this package enable it.
+tauri = { version = "2.11.2", features = ["test"] }
 
 # Windows and Linux start a new process every time the app is launched. A
 # second launch must surface the first one's window (which may be hidden in

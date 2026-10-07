@@ -327,6 +327,225 @@ pub(crate) async fn entry_void(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oikonomia_core::domain::ChartTemplate;
+    use oikonomia_core::ledger::{CreateEntity, SimpleEntryKind, create_entity, list_accounts};
+    use oikonomia_core::prefs::Locale;
+    use tauri::ipc::{CallbackFn, InvokeBody};
+    use tauri::test::{
+        INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets,
+    };
+    use tauri::webview::InvokeRequest;
+
+    /// A running mock app whose vault holds one book with three entries.
+    struct MockBook {
+        /// The app; it owns the state the command reads.
+        _app: tauri::App<MockRuntime>,
+        /// The webview the IPC calls are made from.
+        webview: tauri::WebviewWindow<MockRuntime>,
+        /// The book's id as the frontend holds it.
+        entity_id: String,
+        /// The id of the book's food account, as the frontend holds it.
+        food_account_id: String,
+        /// The vault's directory, removed when the test ends.
+        data_dir: std::path::PathBuf,
+    }
+
+    impl Drop for MockBook {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.data_dir);
+        }
+    }
+
+    /// Starts the mock app with `entry_list` registered, over an unlocked
+    /// vault with groceries on 5 August, rent on 20 August and a salary on
+    /// 1 September 2026.
+    fn mock_book(label: &str) -> MockBook {
+        let data_dir = std::env::temp_dir().join(format!(
+            "oiko-ipc-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since_epoch| since_epoch.as_nanos())
+        ));
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let state = AppState::open_path(data_dir.clone(), data_dir.clone()).unwrap();
+
+        let (entity_id, food_account_id) = {
+            let vault = state.vault();
+            let mut guard = vault.acquire();
+            guard.init("correct horse battery staple").unwrap();
+            seed_book(guard.connection().unwrap())
+        };
+
+        let app = mock_builder()
+            .manage(state)
+            .invoke_handler(tauri::generate_handler![entry_list])
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .unwrap();
+
+        MockBook {
+            _app: app,
+            webview,
+            entity_id,
+            food_account_id,
+            data_dir,
+        }
+    }
+
+    /// Creates the book and its three entries; returns the ids of the book
+    /// and of its food account.
+    fn seed_book(conn: &oikonomia_core::vault::Connection) -> (String, String) {
+        let book = CreateEntity {
+            name: "Home".into(),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Personal,
+            fiscal_year_start_month: None,
+        };
+        let entity = create_entity(conn, &book, Locale::En).unwrap();
+        let accounts = list_accounts(conn, entity.id).unwrap();
+        let account = |code: &str| {
+            accounts
+                .iter()
+                .find(|account| account.code == code)
+                .map(|account| account.id)
+                .unwrap()
+        };
+        let (food, checking, salary) = (account("5100"), account("1010"), account("4000"));
+
+        for (kind, category, entry_date, description) in [
+            (SimpleEntryKind::Expense, food, "2026-08-05", "Groceries"),
+            (SimpleEntryKind::Expense, food, "2026-08-20", "Rent"),
+            (SimpleEntryKind::Income, salary, "2026-09-01", "Salary"),
+        ] {
+            let request = PostSimpleEntryRequest {
+                entity_id: entity.id,
+                kind,
+                bill_status: None,
+                entry_date: entry_date.into(),
+                description: description.into(),
+                reference: None,
+                amount_minor: 2_500,
+                category_account_id: Some(category),
+                wallet_account_id: Some(checking),
+                payable_account_id: None,
+                from_account_id: None,
+                to_account_id: None,
+            };
+            post_simple_entry(conn, &PostSimpleEntry::try_from(request).unwrap()).unwrap();
+        }
+
+        (entity.id.to_string(), food.to_string())
+    }
+
+    /// Invokes `entry_list` through the mock IPC with `arguments` as the
+    /// payload, the way `invoke('entry_list', arguments)` does in the
+    /// webview, and returns what the webview would receive.
+    fn invoke_entry_list(
+        book: &MockBook,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, serde_json::Value> {
+        let origin = if cfg!(any(windows, target_os = "android")) {
+            "http://tauri.localhost"
+        } else {
+            "tauri://localhost"
+        };
+        let request = InvokeRequest {
+            cmd: "entry_list".into(),
+            callback: CallbackFn(0),
+            error: CallbackFn(1),
+            url: origin.parse().unwrap(),
+            body: InvokeBody::Json(arguments),
+            headers: tauri::http::HeaderMap::default(),
+            invoke_key: INVOKE_KEY.to_owned(),
+        };
+
+        get_ipc_response(&book.webview, request).map(|body| body.deserialize().unwrap())
+    }
+
+    /// The descriptions of the entries in a response, in its order.
+    fn descriptions(entries: &serde_json::Value) -> Vec<&str> {
+        entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|view| view["entry"]["description"].as_str().unwrap())
+            .collect()
+    }
+
+    // The payloads below are the object `entryList` in `web/src/lib/api.ts`
+    // passes to `invoke`: camelCase keys, and `null` for a filter not set.
+
+    #[test]
+    fn the_ipc_call_the_frontend_makes_without_filters_lists_every_entry() {
+        let book = mock_book("no-filters");
+
+        let listed = invoke_entry_list(
+            &book,
+            serde_json::json!({
+                "entityId": book.entity_id,
+                "from": null,
+                "to": null,
+                "search": null,
+                "accountId": null,
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(descriptions(&listed), ["Salary", "Rent", "Groceries"]);
+    }
+
+    #[test]
+    fn the_ipc_call_the_frontend_makes_with_every_filter_applies_each_of_them() {
+        let book = mock_book("all-filters");
+        let august = |search: &str, account_id: &str| {
+            serde_json::json!({
+                "entityId": book.entity_id,
+                "from": "2026-08-01",
+                "to": "2026-08-31",
+                "search": search,
+                "accountId": account_id,
+            })
+        };
+
+        let rent = invoke_entry_list(&book, august("rent", &book.food_account_id)).unwrap();
+        assert_eq!(descriptions(&rent), ["Rent"]);
+
+        // The date range alone keeps both August entries, so the single
+        // result above is the search at work.
+        let both = invoke_entry_list(&book, august("", &book.food_account_id)).unwrap();
+        assert_eq!(descriptions(&both), ["Rent", "Groceries"]);
+
+        // The entity id stands in for an account no entry has a line on.
+        let none = invoke_entry_list(&book, august("rent", &book.entity_id)).unwrap();
+        assert_eq!(descriptions(&none), [] as [&str; 0]);
+    }
+
+    #[test]
+    fn a_malformed_date_sent_over_ipc_comes_back_with_the_invalid_date_code() {
+        let book = mock_book("bad-date");
+
+        let refused = invoke_entry_list(
+            &book,
+            serde_json::json!({ "entityId": book.entity_id, "from": "1/8/2026" }),
+        )
+        .unwrap_err();
+
+        assert_eq!(refused["code"], "invalid_date");
+    }
+
+    #[test]
+    fn an_ipc_call_without_the_entity_is_refused_by_the_argument_layer() {
+        let book = mock_book("no-entity");
+
+        let refused =
+            invoke_entry_list(&book, serde_json::json!({ "search": "rent" })).unwrap_err();
+
+        // Tauri's own refusal is text, not a coded error.
+        assert!(refused.is_string(), "{refused}");
+    }
 
     /// An entity id as the webview sends it.
     const ENTITY: &str = "11111111-1111-4111-8111-111111111111";
