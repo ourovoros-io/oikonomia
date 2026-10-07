@@ -737,10 +737,11 @@ fn has_activity(line: &ReportLine) -> bool {
 
 /// The earliest date an entry can have: the first day of year zero.
 ///
-/// This is the lower bound of what [`parse_date`] reads, and every stored
-/// entry date went through it. `Date::MIN` would be the wrong bound for the
-/// queries, which compare dates as text: it is written with a leading minus
-/// sign (`-9999-01-01`), and text with a minus sign does not sort by date.
+/// This is the lower bound of what [`parse_date`](crate::util::parse_date)
+/// reads, and every stored entry date went through it. `Date::MIN` would be
+/// the wrong bound for the queries, which compare dates as text: it is
+/// written with a leading minus sign (`-9999-01-01`), and text with a minus
+/// sign does not sort by date.
 const BOOKS_START: Date = time::macros::date!(0000 - 01 - 01);
 
 /// The profit and loss that no closing entry has moved into equity, split at
