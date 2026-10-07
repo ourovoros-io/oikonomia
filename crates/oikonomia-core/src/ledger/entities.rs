@@ -23,6 +23,7 @@
 //! | A read | answers as before |
 //! | A write that takes the entity | [`Error::NotFound`] |
 //! | [`update_entity`], [`archive_entity`] | [`Error::NotFound`] |
+//! | [`unarchive_entity`] | makes it active again, unless its name is taken |
 //! | [`delete_entity`] | deletes it |
 //!
 //! The reads are [`get_entity`], the reports, the cash flow series, the
@@ -40,7 +41,26 @@
 //!
 //! Two things follow from being archived without being a read or a write:
 //! [`list_entities`] leaves the entity out, which is how the app hides it,
-//! and its name no longer counts as taken. [`count_entities`] counts it.
+//! and its name no longer counts as taken. [`count_entities`] counts it, and
+//! [`list_archived_entities`] lists it.
+//!
+//! # Un-archiving
+//!
+//! [`unarchive_entity`] clears `archived_at`, and the entity is an active one
+//! again in every respect: writable, listed by [`list_entities`], its name
+//! taken. Nothing else about it was changed by being archived, so nothing
+//! else is restored.
+//!
+//! The name is the one thing that can stand in the way. While the entity was
+//! archived its name was free, and another entity may have taken it. Two
+//! active entities never share a name, so the un-archive is then refused
+//! with [`ValidationError::NameTaken`] and the entity stays archived; the
+//! other entity has to give the name up first. An archived entity cannot be
+//! renamed out of the way, because a rename is a write.
+//!
+//! The two operations mirror each other: [`archive_entity`] reports an
+//! entity that is already archived as [`Error::NotFound`], and
+//! [`unarchive_entity`] reports one that is not archived the same way.
 //!
 //! The writes that name a record and no entity do not make the check:
 //! updating or archiving an account, hiding an entry, deleting a template or
@@ -83,22 +103,39 @@ pub struct CreateEntity {
 /// - [`Error::VaultCorrupt`] for a stored entity that does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn list_entities(conn: &Connection) -> Result<Vec<Entity>> {
-    let mut stmt = conn
-        .prepare(
-            "
-            SELECT id, name, base_currency, fiscal_year_start_month, chart_template
-            FROM entities
-            WHERE archived_at IS NULL
-            ORDER BY fold(name), name
-            ",
-        )
-        .database("list entities")?;
+    query_entities(
+        conn,
+        "list entities",
+        "
+        SELECT id, name, base_currency, fiscal_year_start_month, chart_template
+        FROM entities
+        WHERE archived_at IS NULL
+        ORDER BY fold(name), name
+        ",
+    )
+}
 
-    let rows = stmt
-        .query_map([], |row| Ok(map_entity("list entities", row)))
-        .database("list entities")?;
-
-    collect_rows("list entities", rows)
+/// Lists the archived entities, ordered by name as [`list_entities`] orders
+/// the others.
+///
+/// Every entity is in exactly one of the two lists. An archived entity is
+/// read-only; [`unarchive_entity`] moves it back to the other list.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] for a stored entity that does not parse.
+/// - [`Error::Database`] on database errors.
+pub fn list_archived_entities(conn: &Connection) -> Result<Vec<Entity>> {
+    query_entities(
+        conn,
+        "list archived entities",
+        "
+        SELECT id, name, base_currency, fiscal_year_start_month, chart_template
+        FROM entities
+        WHERE archived_at IS NOT NULL
+        ORDER BY fold(name), name
+        ",
+    )
 }
 
 /// Returns one entity, archived or not.
@@ -206,7 +243,7 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
 /// Marks an entity as archived, deleting nothing.
 ///
 /// The module documentation lists what an archived entity can still be used
-/// for. There is no function that undoes it.
+/// for. [`unarchive_entity`] undoes it.
 ///
 /// # Errors
 ///
@@ -224,6 +261,28 @@ pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
     if archived == 0 {
         return Err(Error::NotFound(Resource::Entity));
     }
+    Ok(())
+}
+
+/// Makes an archived entity active again: writable, listed by
+/// [`list_entities`], and its name taken.
+///
+/// The name check and the change run in one transaction.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown entity, or one that is not archived.
+///   [`archive_entity`] treats an entity that is already archived the same
+///   way.
+/// - [`ValidationError::NameTaken`] when an entity that is not archived now
+///   has the same name, compared without case. The entity stays archived.
+/// - [`Error::Database`] on database errors.
+pub fn unarchive_entity(conn: &Connection, id: EntityId) -> Result<()> {
+    let tx = conn
+        .unchecked_transaction()
+        .database("begin entity un-archiving")?;
+    unarchive_entity_in_tx(&tx, id)?;
+    tx.commit().database("commit entity un-archiving")?;
     Ok(())
 }
 
@@ -268,6 +327,61 @@ pub(crate) fn ensure_writable_entity(conn: &Connection, id: EntityId) -> Result<
     if writable == 0 {
         return Err(Error::NotFound(Resource::Entity));
     }
+    Ok(())
+}
+
+/// Runs `sql`, which selects the columns [`map_entity`] reads and takes no
+/// parameters, and maps every row.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] for a stored entity that does not parse.
+/// - [`Error::Database`] on database errors, under `operation`.
+fn query_entities(conn: &Connection, operation: &'static str, sql: &str) -> Result<Vec<Entity>> {
+    let mut stmt = conn.prepare(sql).database(operation)?;
+
+    let rows = stmt
+        .query_map([], |row| Ok(map_entity(operation, row)))
+        .database(operation)?;
+
+    collect_rows(operation, rows)
+}
+
+/// Checks that the archived entity's name is still free and clears its
+/// `archived_at`.
+///
+/// The caller owns the transaction: the check and the change are separate
+/// statements.
+///
+/// # Errors
+///
+/// Those of [`unarchive_entity`].
+fn unarchive_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
+    let entity_id = id.to_string();
+
+    let name: String = conn
+        .query_row(
+            "SELECT name FROM entities WHERE id = ?1 AND archived_at IS NOT NULL",
+            [&entity_id],
+            |row| row.get(0),
+        )
+        .map_err(|err| match err {
+            rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Entity),
+            other => Error::database("read archived entity name", other),
+        })?;
+
+    // The entity itself is archived and so never counts against its own
+    // name; no entity needs excluding.
+    ensure_unique_name(conn, &name, None)?;
+
+    // The row is there and archived: it was read above, in the caller's
+    // transaction.
+    conn.execute(
+        "UPDATE entities SET archived_at = NULL WHERE id = ?1",
+        [&entity_id],
+    )
+    .database("un-archive entity")?;
+
     Ok(())
 }
 

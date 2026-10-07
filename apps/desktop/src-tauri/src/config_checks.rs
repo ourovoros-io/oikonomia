@@ -165,6 +165,20 @@ fn the_first_run_language_command_is_registered() {
     );
 }
 
+/// The Settings screen archives a book, lists the archived ones and
+/// restores one; a command missing from the list fails only when clicked.
+#[test]
+fn the_book_archive_commands_are_registered() {
+    let registrations = include_str!("lib.rs");
+
+    for command in ["entity_archive", "entity_unarchive", "entity_list_archived"] {
+        assert!(
+            registrations.contains(&format!("commands::{command},")),
+            "{command} is not in the command list"
+        );
+    }
+}
+
 #[test]
 fn the_preferences_reset_command_is_registered() {
     let registrations = include_str!("lib.rs");

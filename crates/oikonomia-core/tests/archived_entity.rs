@@ -1,4 +1,5 @@
-//! An archived entity: readable everywhere, never writable.
+//! An archived entity: readable everywhere, never writable, until it is
+//! un-archived.
 //!
 //! Each test archives a book that already holds an entry, a recurring
 //! template and a document, then tries one kind of operation. A write that
@@ -14,16 +15,16 @@ use oikonomia_core::documents::{
     NewDocument, attach_document, list_documents, post_simple_entry_with_document,
 };
 use oikonomia_core::domain::{AccountId, AccountType, ChartTemplate, EntityId};
-use oikonomia_core::error::{Error, Resource};
+use oikonomia_core::error::{Error, Resource, ValidationError};
 use oikonomia_core::ledger::{
     CreateAccount, CreateRecurringTemplate, CreateRecurringTemplateRequest, EntryFilter,
     PostSimpleEntryRequest, PostedEntryView, RecurringCadence, RecurringTemplateView,
     SimpleEntryKind, UpdateRecurringTemplate, UpdateRecurringTemplateRequest, account_register,
     archive_entity, balance_sheet, cash_flow_series, create_account, create_recurring_template,
-    delete_entity, get_entity, get_entry, list_accounts, list_entities, list_entries,
-    list_recurring_templates, post_entry, post_recurring_template, post_simple_entry,
+    delete_entity, get_entity, get_entry, list_accounts, list_archived_entities, list_entities,
+    list_entries, list_recurring_templates, post_entry, post_recurring_template, post_simple_entry,
     profit_and_loss, replace_simple_entry, set_account_opening_balance, trial_balance,
-    update_recurring_template, void_entry,
+    unarchive_entity, update_recurring_template, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -342,5 +343,161 @@ fn an_archived_entity_can_still_be_deleted() {
     assert_eq!(
         get_entity(conn, book.entity_id).err(),
         Some(ENTITY_NOT_FOUND)
+    );
+}
+
+/// Returns the names of `entities`, in the order given.
+fn names(entities: &[oikonomia_core::domain::Entity]) -> Vec<&str> {
+    entities.iter().map(|entity| entity.name.as_str()).collect()
+}
+
+#[test]
+fn unarchiving_an_entity_makes_it_writable_and_listed_again() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = archived_book(conn);
+    let expense =
+        common::simple_expense(book.entity_id, book.food, book.checking, "2026-03-02", 700);
+    assert_eq!(
+        post_simple_entry(conn, &expense).err(),
+        Some(ENTITY_NOT_FOUND)
+    );
+
+    assert_eq!(unarchive_entity(conn, book.entity_id), Ok(()));
+
+    // What the book held is as it was, and it takes every kind of write the
+    // archive refused: a new entry, a void, and a new account.
+    assert_untouched(conn, &book);
+    let posted = post_simple_entry(conn, &expense).expect("post after un-archiving");
+    void_entry(conn, posted.entry.id, Locale::En).expect("void after un-archiving");
+    create_account(
+        conn,
+        &CreateAccount {
+            entity_id: book.entity_id,
+            code: "5999".into(),
+            name: "Sundries".into(),
+            account_type: AccountType::Expense,
+            sort_order: None,
+        },
+    )
+    .expect("account after un-archiving");
+
+    assert_eq!(
+        names(&list_entities(conn).expect("entities")),
+        ["Closed shop"]
+    );
+    assert!(
+        list_archived_entities(conn).expect("archived").is_empty(),
+        "still listed as archived"
+    );
+}
+
+#[test]
+fn unarchiving_is_refused_while_an_active_entity_has_the_name() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = archived_book(conn);
+    // The name was free while the book was archived. It differs only in
+    // letter case, which the uniqueness check folds away.
+    let rival = common::book(conn, "CLOSED Shop", ChartTemplate::Blank);
+
+    assert_eq!(
+        unarchive_entity(conn, book.entity_id),
+        Err(Error::Validation(ValidationError::NameTaken {
+            name: "Closed shop".into(),
+        }))
+    );
+
+    // Refused means unchanged: still archived, still read-only, and the
+    // other book still the only active one.
+    assert_eq!(
+        names(&list_entities(conn).expect("entities")),
+        ["CLOSED Shop"]
+    );
+    assert_eq!(
+        names(&list_archived_entities(conn).expect("archived")),
+        ["Closed shop"]
+    );
+    let expense =
+        common::simple_expense(book.entity_id, book.food, book.checking, "2026-03-02", 700);
+    assert_eq!(
+        post_simple_entry(conn, &expense).err(),
+        Some(ENTITY_NOT_FOUND)
+    );
+
+    // Once the name is given up, the same call goes through.
+    archive_entity(conn, rival).expect("archive the rival");
+    assert_eq!(unarchive_entity(conn, book.entity_id), Ok(()));
+    assert_eq!(
+        names(&list_entities(conn).expect("entities")),
+        ["Closed shop"]
+    );
+}
+
+#[test]
+fn a_name_clash_is_found_for_letters_outside_ascii() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let archived = common::book(conn, "Ταμείο", ChartTemplate::Blank);
+    archive_entity(conn, archived).expect("archive");
+    common::book(conn, "ΤΑΜΕΊΟ", ChartTemplate::Blank);
+
+    assert_eq!(
+        unarchive_entity(conn, archived).map_err(|error| error.code()),
+        Err("name_taken")
+    );
+}
+
+#[test]
+fn unarchiving_an_unknown_or_an_active_entity_is_not_found() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let active = common::book(conn, "Open shop", ChartTemplate::Blank);
+
+    assert_eq!(
+        unarchive_entity(conn, EntityId::generate()),
+        Err(ENTITY_NOT_FOUND)
+    );
+    // The mirror of archiving twice, which is refused the same way.
+    assert_eq!(unarchive_entity(conn, active), Err(ENTITY_NOT_FOUND));
+    archive_entity(conn, active).expect("archive");
+    assert_eq!(archive_entity(conn, active), Err(ENTITY_NOT_FOUND));
+
+    assert_eq!(unarchive_entity(conn, active), Ok(()));
+    assert_eq!(unarchive_entity(conn, active), Err(ENTITY_NOT_FOUND));
+    assert_eq!(
+        names(&list_entities(conn).expect("entities")),
+        ["Open shop"]
+    );
+}
+
+#[test]
+fn every_entity_is_in_exactly_one_of_the_two_lists_in_name_order() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    assert_eq!(
+        names(&list_archived_entities(conn).expect("archived")),
+        Vec::<&str>::new()
+    );
+
+    let ids: Vec<EntityId> = ["delta", "Alpha", "charlie", "Bravo"]
+        .into_iter()
+        .map(|name| common::book(conn, name, ChartTemplate::Blank))
+        .collect();
+    for archived in [ids[0], ids[1], ids[3]] {
+        archive_entity(conn, archived).expect("archive");
+    }
+
+    // Ordered by the case fold, so capitals do not sort ahead.
+    assert_eq!(
+        names(&list_archived_entities(conn).expect("archived")),
+        ["Alpha", "Bravo", "delta"]
+    );
+    assert_eq!(names(&list_entities(conn).expect("entities")), ["charlie"]);
+
+    delete_entity(conn, ids[1]).expect("delete an archived entity");
+    assert_eq!(
+        names(&list_archived_entities(conn).expect("archived")),
+        ["Bravo", "delta"]
     );
 }
