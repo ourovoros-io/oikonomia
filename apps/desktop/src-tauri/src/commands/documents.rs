@@ -99,15 +99,21 @@ impl DecodedDocument {
 /// Returns whether the OCR models shipped with the app were found, or the
 /// engine is already loaded.
 ///
-/// Needs no vault. Runs on the main thread and takes the OCR engine's mutex,
-/// so a call made while an analysis is running waits for that analysis.
+/// Needs no vault. The answer looks at the model files, which is file I/O,
+/// so it is taken on the blocking pool and not on the main thread. It does
+/// not wait for an analysis in progress: core answers without the OCR
+/// engine's lock.
+///
+/// # Errors
+///
+/// Returns `task_failed` when the blocking task panics.
 #[tauri::command]
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "Tauri hands a command its arguments by value"
-)]
-pub(crate) fn document_analyzer_status(state: State<'_, AppState>) -> AnalyzerStatus {
-    analyzer_status(Some(state.ocr_model_dir().as_path()))
+pub(crate) async fn document_analyzer_status(
+    state: State<'_, AppState>,
+) -> CommandResult<AnalyzerStatus> {
+    let model_dir = state.ocr_model_dir().clone();
+
+    run_blocking(move || Ok(analyzer_status(Some(model_dir.as_path())))).await
 }
 
 /// Analyzes a document the webview picked and returns a draft entry
@@ -409,7 +415,9 @@ fn analyze_readonly(
 #[cfg(test)]
 #[cfg(not(windows))]
 mod ipc_tests {
-    use crate::commands::documents::{document_analyze, document_attach, document_list};
+    use crate::commands::documents::{
+        document_analyze, document_analyzer_status, document_attach, document_list,
+    };
     use crate::commands::support::ipc_test_support::MockApp;
     use base64::Engine;
     use oikonomia_core::domain::ChartTemplate;
@@ -435,7 +443,12 @@ mod ipc_tests {
     fn mock_books(label: &str) -> (MockApp, Ids) {
         MockApp::start(
             label,
-            tauri::generate_handler![document_analyze, document_attach, document_list],
+            tauri::generate_handler![
+                document_analyze,
+                document_analyzer_status,
+                document_attach,
+                document_list
+            ],
             seed_books,
         )
     }
@@ -629,5 +642,26 @@ mod ipc_tests {
             .unwrap_err();
 
         assert_eq!(refused["code"], "file_type_unsupported");
+    }
+
+    #[test]
+    fn the_analyzer_status_comes_back_with_its_three_fields() {
+        let (app, _ids) = mock_books("analyzer-status");
+
+        // `documentAnalyzerStatus` in `web/src/lib/api.ts` sends no arguments.
+        let status = app
+            .invoke("document_analyzer_status", serde_json::json!({}))
+            .unwrap();
+
+        // The mock app's model directory is its empty data directory, and no
+        // test of this crate loads an OCR engine.
+        assert_eq!(
+            status,
+            serde_json::json!({
+                "ocr_available": false,
+                "offline": true,
+                "hint": "models_missing",
+            })
+        );
     }
 }
