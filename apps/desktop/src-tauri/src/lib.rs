@@ -21,6 +21,8 @@
 //!   never over a copy the system package manager owns (`update_exec`).
 //! - An error crosses IPC as a code plus parameters; the UI never shows text
 //!   written here (`error`).
+//! - A release build logs warnings and errors only, never ledger data, to a
+//!   size-capped local file that the webview cannot write to (`error_log`).
 //! - One process per user: a second launch on Windows or Linux shows the
 //!   running app's window and exits (`with_single_instance`).
 
@@ -29,6 +31,7 @@ mod commands;
 mod config_checks;
 mod donations;
 mod error;
+mod error_log;
 mod nav_guard;
 mod startup;
 mod state;
@@ -94,7 +97,7 @@ fn start(app: &mut tauri::App) -> Result<(), StartupError> {
     macos_dock_icon::set_dock_icon(include_bytes!("../icons/icon.png"));
 
     // First, so that the log lines of the steps below reach it.
-    register_debug_logger(app)?;
+    register_logger(app)?;
 
     let resource_dir = app.path().resource_dir().ok();
     let ocr_dir = resolve_ocr_model_dir(resource_dir);
@@ -124,29 +127,48 @@ fn start(app: &mut tauri::App) -> Result<(), StartupError> {
     Ok(())
 }
 
-/// Registers the logger, in a debug build only.
+/// Registers the logger: the developer's in a debug build, the local error
+/// log in a release build.
 ///
-/// A release build registers none, so there every `log::` call in the shell
-/// and in the crates it links does nothing. That includes the warnings that
-/// say why an update install or a start failed: a release build keeps no
-/// record of them.
+/// A debug build registers `tauri-plugin-log` at the info level, with the
+/// plugin's default targets (standard output and a file in the app's log
+/// directory), and asks core to write errors in full
+/// (`oikonomia_core::error::enable_log_detail`).
 ///
-/// It stays that way here because turning it on is a privacy decision. The
-/// plugin's default targets are standard output and a file in the app's log
-/// directory, and the log lines carry file paths and operating-system error
-/// text, so a release build that logged would write those to the user's disk.
-fn register_debug_logger(app: &tauri::App) -> Result<(), StartupError> {
-    if !cfg!(debug_assertions) {
-        return Ok(());
+/// A release build does neither. It installs [`error_log`], which writes the
+/// warnings and errors of this workspace's crates to one size-capped,
+/// owner-only file in the app's log directory, so that a failed start or a
+/// failed update install leaves a record on the machine it happened on. What
+/// may be in that file is a privacy decision, and the `error_log` module
+/// states it: no ledger data, and nothing the webview sends. The plugin is
+/// not registered there, so its `log` command does not exist in a release
+/// build.
+///
+/// # Errors
+///
+/// Returns [`StartupError::Shell`] when the plugin cannot be registered in a
+/// debug build. A release build returns no error: without a log directory, or
+/// with one that cannot be written, the app starts without a log.
+fn register_logger(app: &tauri::App) -> Result<(), StartupError> {
+    if cfg!(debug_assertions) {
+        oikonomia_core::error::enable_log_detail();
+
+        return app
+            .handle()
+            .plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .build(),
+            )
+            .map_err(StartupError::Shell);
     }
 
-    app.handle()
-        .plugin(
-            tauri_plugin_log::Builder::default()
-                .level(log::LevelFilter::Info)
-                .build(),
-        )
-        .map_err(StartupError::Shell)
+    // No log is not a reason to refuse to start, and without a log there is
+    // nowhere to say why there is none.
+    if let Ok(directory) = app.path().app_log_dir() {
+        error_log::install(&directory).ok();
+    }
+    Ok(())
 }
 
 /// Handles an event of the app's run loop: on macOS, a click on the Dock

@@ -36,7 +36,17 @@
 //!   code, a minimum length, the kind of record that was not found.
 //!
 //! The `Display` text is English diagnostic text. The desktop shell passes
-//! it along beside the code, where it reaches a log and never the screen.
+//! it along beside the code, where it reaches the webview console and never
+//! the screen.
+//!
+//! # In a log
+//!
+//! A `log::` call must not interpolate an error's `Display` text. It
+//! interpolates [`Error::log_text`], a reduced form that holds nothing from
+//! the ledger: a release build of the desktop app writes warnings and errors
+//! to a local file. A debug build calls [`enable_log_detail`] and gets the
+//! `Display` text back. The `log_text` module says what the reduced form
+//! keeps.
 //!
 //! Both methods match every variant without a wildcard arm, here and in
 //! [`ValidationError`] and [`CsvError`]. A new variant therefore does not
@@ -56,9 +66,9 @@
 //! - `operation` is what core was doing, as a fixed lowercase phrase:
 //!   `insert journal entry`, `write backup archive`. It is written at the
 //!   call site, it never holds data, and it is sent as a parameter.
-//! - `detail` is the lower-level error's own text. It may hold a path or an
-//!   operating-system message, so it is for logs only and is never a
-//!   parameter.
+//! - `detail` is the lower-level error's own text. It may hold a path, an
+//!   operating-system message or a value the driver or decoder quotes, so it
+//!   is never a parameter, and a release build never writes it to a log.
 //!
 //! `Display` is `operation: detail`. The call site picks the variant through
 //! a helper. The database and file helpers exist for one foreign error type
@@ -100,6 +110,7 @@ use thiserror::Error;
 
 mod context;
 mod damage;
+mod log_text;
 mod resource;
 mod validation;
 
@@ -107,6 +118,8 @@ pub(crate) use context::{
     AnalysisContext, CryptoContext, DatabaseContext, IoContext, SerializationContext,
 };
 pub use damage::{BackupDefect, VaultCorruption};
+pub(crate) use log_text::PrivateDetail;
+pub use log_text::{LogText, enable_log_detail};
 pub use resource::Resource;
 pub use validation::{AccountRole, NameField, ValidationError};
 

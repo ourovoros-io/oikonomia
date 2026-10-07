@@ -66,7 +66,11 @@ pub(crate) fn create_private_file(path: &Path) -> Result<File> {
 #[cfg(unix)]
 pub(crate) fn restrict_to_owner(path: &Path) {
     if let Err(err) = set_owner_only_mode(path) {
-        log::warn!("could not restrict {} to its owner: {err}", path.display());
+        // The path may be a backup destination the user chose.
+        log::warn!(
+            "could not restrict {} to its owner: {err}",
+            crate::error::PrivateDetail(path.display())
+        );
     }
 }
 

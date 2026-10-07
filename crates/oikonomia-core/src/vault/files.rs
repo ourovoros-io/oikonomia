@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use time::OffsetDateTime;
 
-use crate::error::{Error, IoContext, Result};
+use crate::error::{Error, IoContext, PrivateDetail, Result};
 use crate::util::format_date;
 use crate::vault::paths::{STAGED_SUFFIX, db_sidecar_paths, with_appended};
 use crate::vault::permissions::create_private_file;
@@ -101,7 +101,10 @@ pub(crate) fn sync_parent_dir(path: &Path) {
     };
     match File::open(parent).and_then(|dir| dir.sync_all()) {
         Ok(()) => {}
-        Err(err) => log::debug!("could not flush directory {}: {err}", parent.display()),
+        Err(err) => log::debug!(
+            "could not flush directory {}: {err}",
+            PrivateDetail(parent.display())
+        ),
     }
 }
 
@@ -157,7 +160,8 @@ pub(crate) fn remove_files_if_present(paths: &[&Path]) -> Result<()> {
 /// truncates anyway.
 pub(crate) fn discard_file(path: &Path) {
     if let Err(err) = remove_file_if_present(path) {
-        log::warn!("could not remove {}: {err}", path.display());
+        // The path may be beside a backup destination the user chose.
+        log::warn!("could not remove {}: {err}", PrivateDetail(path.display()));
     }
 }
 

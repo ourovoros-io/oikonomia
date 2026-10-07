@@ -138,8 +138,7 @@ fn open_app_state_in(data_dir: PathBuf, ocr_model_dir: PathBuf) -> Result<AppSta
 /// Returns at once: the message is on screen while the event loop runs, and
 /// its callback asks the app to exit.
 pub(crate) fn report_and_exit(app: &tauri::App, failure: &StartupError) {
-    // Only reaches a log in a debug build; see the logger registration.
-    log::error!("startup failed: {failure}: {}", source_text(failure));
+    log::error!("startup failed: {}", log_text(failure));
 
     // The windows from the configuration already exist. Their UI would call
     // commands whose state was never set up, so they stay out of sight.
@@ -165,17 +164,30 @@ pub(crate) fn report_and_exit(app: &tauri::App, failure: &StartupError) {
         .show(move |_acknowledged| handle.exit(STARTUP_FAILURE_EXIT_CODE));
 }
 
-/// Returns the lower-level cause of `failure` as text, for the log.
-fn source_text(failure: &StartupError) -> String {
-    std::error::Error::source(failure)
-        .map_or_else(|| "no further detail".to_owned(), ToString::to_string)
+/// Returns `failure` and its cause as the log shows them.
+///
+/// The failure's own text names at most the data directory, which is the
+/// application's. A cause from core goes through
+/// [`CoreError::log_text`], so that a release build's log gets its code and
+/// operation and not its detail: the detail of a header that does not parse
+/// quotes the header. A cause from the operating system or from Tauri is
+/// written as it is; neither has seen the ledger.
+fn log_text(failure: &StartupError) -> String {
+    match failure {
+        StartupError::NoDataDir(source) | StartupError::Vault { source, .. } => {
+            format!("{failure}: {}", source.log_text())
+        }
+        StartupError::Watchdog(source) => format!("{failure}: {source}"),
+        StartupError::Shell(source) => format!("{failure}: {source}"),
+    }
 }
 
 /// Returns the text of the failure message: that the app cannot start, what
 /// is wrong when that is known, and the data directory on a line of its own.
 ///
 /// The cause is worded here per language. Core's error text is English and
-/// may hold operating-system text, so it goes to the log, never to the user.
+/// may hold operating-system text, so it never goes to the user; the log gets
+/// the reduced form [`log_text`] describes.
 fn failure_message(locale: Locale, problem: StartupProblem, data_dir: Option<&Path>) -> String {
     let mut message = cannot_start_label(locale).to_owned();
 
@@ -248,7 +260,10 @@ fn problem_label(locale: Locale, problem: StartupProblem) -> Option<&'static str
 
 #[cfg(test)]
 mod tests {
-    use super::{StartupError, StartupProblem, failure_message, open_app_state_in, problem_label};
+    use super::{
+        StartupError, StartupProblem, failure_message, log_text, open_app_state_in, problem_label,
+    };
+    use oikonomia_core::error::{Error as CoreError, VaultCorruption};
     use oikonomia_core::prefs::Locale;
     use oikonomia_core::vault::vault_header_path;
     use std::path::{Path, PathBuf};
@@ -294,6 +309,58 @@ mod tests {
         assert_eq!(failure.problem(), StartupProblem::DataFolderUnreadable);
         assert_eq!(failure.data_dir(), Some(blocked.as_path()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Text that stands for something the user wrote, placed where a core
+    /// error carries lower-level detail.
+    const SENTINEL: &str = "Acme-Payroll-7731";
+
+    /// No test of this crate enables core's log detail, so this is the line
+    /// a release build writes.
+    #[test]
+    fn the_log_line_of_a_failed_start_has_the_cause_without_its_detail() {
+        let unreadable_header = StartupError::Vault {
+            data_dir: PathBuf::from("/data/oikonomia"),
+            source: CoreError::VaultCorrupt(VaultCorruption::HeaderUnreadable {
+                detail: format!("invalid type: string \"{SENTINEL}\""),
+            }),
+        };
+        let unreadable_directory = StartupError::Vault {
+            data_dir: PathBuf::from("/data/oikonomia"),
+            source: CoreError::Io {
+                operation: "create private directory",
+                detail: format!("/Users/someone/{SENTINEL}: denied"),
+            },
+        };
+        let no_directory = StartupError::NoDataDir(CoreError::Io {
+            operation: "resolve application data directory",
+            detail: SENTINEL.to_owned(),
+        });
+
+        assert_eq!(
+            log_text(&unreadable_header),
+            "cannot open the vault in /data/oikonomia: \
+             vault_corrupt: vault header does not parse"
+        );
+        assert_eq!(
+            log_text(&unreadable_directory),
+            "cannot open the vault in /data/oikonomia: io: create private directory"
+        );
+        assert_eq!(
+            log_text(&no_directory),
+            "cannot find the application data directory: \
+             io: resolve application data directory"
+        );
+    }
+
+    #[test]
+    fn the_log_line_of_a_failed_start_has_an_operating_system_cause_in_full() {
+        let failure = StartupError::Watchdog(std::io::Error::other("no threads left"));
+
+        assert_eq!(
+            log_text(&failure),
+            "cannot start the auto-lock thread: no threads left"
+        );
     }
 
     #[test]

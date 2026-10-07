@@ -124,7 +124,7 @@ use crate::csv::{
     CsvColumnMapping, CsvError, CsvMappingProblem, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow,
 };
 use crate::domain::CurrencyCode;
-use crate::error::{Error, IoContext};
+use crate::error::{Error, IoContext, PrivateDetail};
 use crate::ledger::SimpleEntryKind;
 use crate::ui_text::{UiText, UiTextCode};
 
@@ -272,7 +272,10 @@ pub fn parse_bank_csv(
         match record {
             Ok(record) => rows.push(parse_record(source_row, &record, columns, currency)),
             Err(err) => {
-                log::warn!("CSV record {source_row} could not be read: {err}");
+                log::warn!(
+                    "CSV record {source_row} could not be read: {}",
+                    PrivateDetail(&err)
+                );
                 rows.push(CsvRowOutcome::Invalid {
                     source_row,
                     reason: UiText::new(UiTextCode::CsvUnreadableRow),
@@ -654,7 +657,12 @@ fn row_problem(source_row: u32, err: &CsvError) -> UiText {
         | CsvError::InvalidStatus(_)
         | CsvError::InvalidInteger(_)
         | CsvError::InvalidMapping(_) => {
-            log::warn!("CSV record {source_row} could not be read: {err}");
+            // The code as well, because the reason itself can quote a cell.
+            log::warn!(
+                "CSV record {source_row} could not be read: {}: {}",
+                err.code(),
+                PrivateDetail(err)
+            );
             UiText::new(UiTextCode::CsvUnreadableRow)
         }
     }

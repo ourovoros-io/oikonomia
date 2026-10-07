@@ -700,9 +700,10 @@ fn ocr_image(data: &[u8], model_dir: Option<&Path>) -> OcrOutcome {
         Ok(text) if !text.trim().is_empty() => OcrOutcome::Read(text),
         Ok(_) => OcrOutcome::LittleText,
         Err(err) => {
-            // The cause can carry file or model detail; it belongs in the log,
-            // not on the wire, and the user is told only that OCR failed.
-            log::warn!("OCR failed on an image: {err}");
+            // The cause can carry file or model detail; it belongs in a debug
+            // build's log, not on the wire, and the user is told only that
+            // OCR failed. A release build logs which step failed.
+            log::warn!("OCR failed on an image: {}", err.log_text());
             OcrOutcome::Failed
         }
     }
