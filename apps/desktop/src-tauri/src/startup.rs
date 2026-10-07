@@ -68,8 +68,9 @@ impl StartupError {
 ///
 /// Opening works on the files of the data directory and never opens the
 /// database, so only a corrupt vault, a header from a newer build and a file
-/// failure are expected here. Every other variant is listed, without a wildcard arm, so that a new core error has to
-/// be given a sentence here before this compiles.
+/// failure are expected here. Every other variant is listed, without a
+/// wildcard arm, so that a new core error has to be given a sentence here
+/// before this compiles.
 fn vault_problem(source: &CoreError) -> StartupProblem {
     match source {
         CoreError::VaultCorrupt(_) => StartupProblem::VaultDamaged,

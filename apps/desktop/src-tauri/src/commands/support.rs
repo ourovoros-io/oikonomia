@@ -662,7 +662,8 @@ mod tests {
 /// The module, and every test module that uses it, is gated `#[cfg(test)]`
 /// and `#[cfg(not(windows))]`, and the `tauri` `test` feature is a
 /// dev-dependency of the other targets only. The gate is two attributes
-/// because clippy allows `unwrap` in tests only under a plain `#[cfg(test)]`. A test executable carries no
+/// because clippy allows `unwrap` in tests only under a plain
+/// `#[cfg(test)]`. A test executable carries no
 /// application manifest, and with the mock runtime linked in it imports
 /// webview and common-controls entry points that do not resolve without
 /// one: the binary fails to start (`0xc0000139`,
