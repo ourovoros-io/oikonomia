@@ -317,7 +317,23 @@
         "title": "Buch löschen?",
         "body": "„{name}“ und alle Konten und Buchungen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen."
       },
-      "deleteError": "Das Buch konnte nicht gelöscht werden"
+      "deleteError": "Das Buch konnte nicht gelöscht werden",
+      "archiveAria": "{name} archivieren",
+      "archiveTitle": "Archivieren",
+      "archiveConfirm": {
+        "title": "Buch archivieren?",
+        "body": "„{name}“ wird schreibgeschützt und verschwindet aus der Liste der Bücher. Nichts wird gelöscht, und Sie können es hier jederzeit wiederherstellen."
+      },
+      "archiveError": "Das Buch konnte nicht archiviert werden",
+      "archived": {
+        "title": "Archiviert",
+        "hint": "Archivierte Bücher bleiben unverändert erhalten und lassen sich weder öffnen noch ändern. Stellen Sie eines wieder her, um es wieder zu nutzen.",
+        "loadError": "Die archivierten Bücher konnten nicht geladen werden"
+      },
+      "restore": "Wiederherstellen",
+      "restoreAria": "{name} wiederherstellen",
+      "restoreError": "Das Buch konnte nicht wiederhergestellt werden",
+      "restoreNameTaken": "Ein anderes Buch heißt inzwischen „{name}“. Archivieren oder löschen Sie jenes Buch, bevor Sie dieses wiederherstellen."
     },
     "entityCreate": {
       "title": "Neues Buch",

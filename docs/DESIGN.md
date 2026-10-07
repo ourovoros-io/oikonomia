@@ -280,9 +280,13 @@ with its reason so that it is not raised again without something new to say.
   correction changes them. The rule is `ensure_writable_entity` in
   `crates/oikonomia-core/src/ledger/entities.rs`, whose module documentation
   tabulates it; every entry is inserted through `post_entry_in_tx`
-  (`ledger/journals.rs`), which makes the check first. No un-archive
-  operation exists yet: until one does, an archived book can be read,
-  exported and deleted, and its entries cannot be corrected.
+  (`ledger/journals.rs`), which makes the check first. `unarchive_entity`
+  makes the book active again, and refuses with `name_taken` while another
+  active book has its name. In the app, Settings lists the books: each row
+  archives one after a confirmation, and archived books are listed below
+  with a Restore action. An archived book is not in the sidebar and cannot
+  be opened, so no screen offers a write that core would refuse; it is
+  restored to be read, corrected or exported.
 - **PDF load-time decompression is bounded only by the 8 MiB upload cap.**
   `lopdf` inflates object streams and cross-reference streams while it loads a
   file, before the page, decoded-size and nesting budgets can run on the

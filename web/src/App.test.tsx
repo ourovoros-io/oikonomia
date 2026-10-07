@@ -34,6 +34,8 @@ vi.mock('./lib/tauri', () => ({
 vi.mock('./lib/api', () => ({
   api: {
     entityList: vi.fn(),
+    entityListArchived: vi.fn(),
+    entityArchive: vi.fn(),
     entityCreate: vi.fn(),
     getLockTimeout: vi.fn(async () => 900),
     donationAddresses: vi.fn(async () => []),
@@ -110,6 +112,8 @@ beforeEach(() => {
   vi.mocked(vaultPickBackup).mockReset().mockResolvedValue(BACKUP_PATH)
   vi.mocked(vaultRestore).mockReset().mockResolvedValue(BACKUP_PATH)
   vi.mocked(api.entityList).mockReset().mockResolvedValue([entity])
+  vi.mocked(api.entityListArchived).mockReset().mockResolvedValue([])
+  vi.mocked(api.entityArchive).mockReset().mockResolvedValue(undefined)
   vi.mocked(listen).mockClear()
 })
 
@@ -368,5 +372,62 @@ describe('App top bar and Quick add', () => {
     render(<App />)
 
     expect(await screen.findByRole('button', { name: 'Quick add' })).toBeDisabled()
+  })
+})
+
+describe('App after archiving the current book', () => {
+  const household: Entity = { ...entity, id: 'e2', name: 'Household' }
+
+  /** Archives `name` from the Settings books list, through its confirmation. */
+  async function archiveFromSettings(name: string) {
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
+    await userEvent.click(screen.getByRole('button', { name: /^entities/i }))
+    await userEvent.click(screen.getByRole('button', { name: `Archive ${name}` }))
+    await userEvent.click(
+      within(screen.getByRole('dialog', { name: 'Archive entity?' })).getByRole('button', {
+        name: 'Archive',
+      }),
+    )
+  }
+
+  test('the next active book becomes the current one, as after deleting it', async () => {
+    vi.mocked(api.entityList)
+      .mockReset()
+      .mockResolvedValueOnce([entity, household])
+      .mockResolvedValue([household])
+    vi.mocked(api.entityListArchived).mockResolvedValueOnce([]).mockResolvedValue([entity])
+    render(<App />)
+    const personal = await screen.findByRole('button', { name: 'Personal, EUR' })
+    expect(personal).toHaveAttribute('aria-current', 'true')
+
+    await archiveFromSettings('Personal')
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Household, EUR' })).toHaveAttribute(
+        'aria-current',
+        'true',
+      )
+    })
+    expect(api.entityArchive).toHaveBeenCalledWith('e1')
+    // The archived book is gone from the switcher, so it cannot be opened;
+    // it is only offered for restoring.
+    expect(screen.queryByRole('button', { name: 'Personal, EUR' })).toBeNull()
+    expect(await screen.findByRole('button', { name: 'Restore Personal' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  test('with no active book left the app shows its no-book state', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValueOnce([entity]).mockResolvedValue([])
+    vi.mocked(api.entityListArchived).mockResolvedValueOnce([]).mockResolvedValue([entity])
+    render(<App />)
+    await screen.findByRole('button', { name: 'Personal, EUR' })
+
+    await archiveFromSettings('Personal')
+
+    expect(await screen.findByText('No entities yet')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Quick add' })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: 'Restore Personal' })).toBeEnabled()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })

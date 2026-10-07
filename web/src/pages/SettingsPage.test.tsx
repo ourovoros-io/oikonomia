@@ -20,6 +20,7 @@ vi.mock('../lib/api', () => ({
     setLockTimeout: vi.fn(),
     openSupportEmail: vi.fn(),
     entityCreate: vi.fn(),
+    entityListArchived: vi.fn(),
     getUiPrefs: vi.fn(),
   },
 }))
@@ -59,6 +60,7 @@ beforeEach(() => {
   ])
   vi.mocked(api.openSupportEmail).mockReset().mockResolvedValue(undefined)
   vi.mocked(api.entityCreate).mockReset()
+  vi.mocked(api.entityListArchived).mockReset().mockResolvedValue([])
   vi.mocked(api.setLockTimeout).mockReset()
   vi.mocked(api.getUiPrefs).mockReset().mockResolvedValue({
     locale: 'en',

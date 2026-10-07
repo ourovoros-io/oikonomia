@@ -19,6 +19,7 @@ vi.mock('../lib/api', () => ({
     getLocale: vi.fn(async () => 'en'),
     setLocale: vi.fn(async () => undefined),
     getUiPrefs: vi.fn(async () => ({ locale: 'en' })),
+    entityListArchived: vi.fn(async () => []),
   },
 }))
 

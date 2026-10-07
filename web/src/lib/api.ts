@@ -303,7 +303,10 @@ export type RecurringPostResult = {
 }
 
 export const api = {
+  /** The books that are not archived; an archived one is never the current book. */
   entityList: () => call<Entity[]>('entity_list'),
+  /** The archived books, which `entityList` leaves out. They are read-only until restored. */
+  entityListArchived: () => call<Entity[]>('entity_list_archived'),
   entityCreate: (input: {
     name: string
     base_currency: string
@@ -312,6 +315,8 @@ export const api = {
   }) => call<Entity>('entity_create', { input }),
   entityUpdate: (id: string, name: string) => call<Entity>('entity_update', { id, name }),
   entityArchive: (id: string) => call<void>('entity_archive', { id }),
+  /** Makes an archived book active again. Rejects with `name_taken` while an active book has its name. */
+  entityUnarchive: (id: string) => call<void>('entity_unarchive', { id }),
   entityDelete: (id: string) => call<void>('entity_delete', { id }),
 
   accountList: (entityId: string) => call<Account[]>('account_list', { entityId }),

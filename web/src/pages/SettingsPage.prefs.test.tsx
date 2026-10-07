@@ -17,6 +17,7 @@ vi.mock('../lib/api', () => ({
   api: {
     getLockTimeout: vi.fn(),
     donationAddresses: vi.fn(),
+    entityListArchived: vi.fn(),
     resolveLocale: vi.fn(),
     getLocale: vi.fn(),
     setLocale: vi.fn(),
@@ -57,6 +58,7 @@ afterEach(() => {
 beforeEach(() => {
   vi.mocked(api.getLockTimeout).mockReset().mockResolvedValue(900)
   vi.mocked(api.donationAddresses).mockReset().mockResolvedValue([])
+  vi.mocked(api.entityListArchived).mockReset().mockResolvedValue([])
   vi.mocked(api.resolveLocale).mockReset().mockResolvedValue('en')
   vi.mocked(api.getLocale).mockReset().mockResolvedValue('en')
   vi.mocked(api.setLocale).mockReset().mockResolvedValue(undefined)
