@@ -1072,3 +1072,22 @@ fn a_type_column_of_directions_signs_the_unsigned_amounts() {
         .collect();
     assert_eq!(amounts, [(None, Some(-80_000)), (None, Some(250_000))]);
 }
+
+#[test]
+fn a_file_with_one_debit_column_previews_the_same_detected_or_mapped() {
+    let csv = "Date,Memo,Debit\n2026-03-15,Rent,800.00\n";
+    let detected = preview_in_a_new_book(csv, None);
+    assert_eq!(detected.missing_columns, []);
+
+    // What the Map columns step sends back when nothing is edited.
+    let mapped = preview_in_a_new_book(csv, Some(&detected.detected_mapping));
+
+    assert_eq!(detected.rows.len(), 1);
+    assert_eq!(mapped.rows.len(), 1);
+    assert_eq!(mapped.rows[0].error, None);
+    assert_eq!(mapped.rows[0].signed_amount_minor, Some(-80_000));
+    assert_eq!(
+        mapped.rows[0].signed_amount_minor,
+        detected.rows[0].signed_amount_minor
+    );
+}

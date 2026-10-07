@@ -177,6 +177,7 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
                   target={t('tx.csv.field.debit')}
                   value={draft.debit}
                   headers={headers}
+                  optional
                   onChange={(debit) => patch({ debit })}
                 />
                 <HeaderSelect
@@ -184,6 +185,7 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
                   target={t('tx.csv.field.credit')}
                   value={draft.credit}
                   headers={headers}
+                  optional
                   onChange={(credit) => patch({ credit })}
                 />
               </>

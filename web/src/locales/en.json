@@ -637,7 +637,7 @@
   "error.csvInvalidMapping": "Those column choices could not be used. Check the columns and try again.",
   "error.csvMapping.missingDate": "Choose the column that holds the date.",
   "error.csvMapping.missingDescription": "Choose the column that holds the description.",
-  "error.csvMapping.missingAmount": "Choose an amount column, or both a debit and a credit column.",
+  "error.csvMapping.missingAmount": "Choose an amount column, or a debit or a credit column.",
   "error.csvMapping.amountAndDebitOrCredit": "Choose either an amount column or debit and credit columns, not both.",
   "error.csvMapping.unknownColumn": "The file has no column named “{column}”. Choose one of the file’s columns.",
   "error.unknown": "Something went wrong.",

@@ -22,7 +22,7 @@ pub enum CsvMappingProblem {
     MissingDate,
     /// The mapping names no description column.
     MissingDescription,
-    /// The mapping names no amount column, and not both a debit and a credit
+    /// The mapping names no amount column, no debit column and no credit
     /// column.
     MissingAmount,
     /// The mapping names an amount column and also a debit or a credit
@@ -62,7 +62,7 @@ impl fmt::Display for CsvMappingProblem {
                 formatter.write_str("the mapping has no description column")
             }
             Self::MissingAmount => {
-                formatter.write_str("the mapping has no amount column, nor both debit and credit")
+                formatter.write_str("the mapping has no amount, debit or credit column")
             }
             Self::AmountAndDebitOrCredit => {
                 formatter.write_str("the mapping sets both amount and debit or credit")

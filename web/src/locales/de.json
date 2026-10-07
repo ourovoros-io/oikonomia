@@ -995,7 +995,7 @@
     "csvMapping": {
       "missingDate": "Wählen Sie die Spalte mit dem Datum.",
       "missingDescription": "Wählen Sie die Spalte mit der Beschreibung.",
-      "missingAmount": "Wählen Sie eine Betragsspalte oder sowohl eine Soll- als auch eine Haben-Spalte.",
+      "missingAmount": "Wählen Sie eine Betragsspalte oder eine Soll- oder eine Haben-Spalte.",
       "amountAndDebitOrCredit": "Wählen Sie entweder eine Betragsspalte oder die Soll- und Haben-Spalten, nicht beides.",
       "unknownColumn": "Die Datei hat keine Spalte namens „{column}“. Wählen Sie eine der Spalten der Datei."
     },

@@ -995,7 +995,7 @@
     "csvMapping": {
       "missingDate": "Choisissez la colonne qui contient la date.",
       "missingDescription": "Choisissez la colonne qui contient la description.",
-      "missingAmount": "Choisissez une colonne de montant, ou à la fois une colonne débit et une colonne crédit.",
+      "missingAmount": "Choisissez une colonne de montant, ou une colonne débit ou crédit.",
       "amountAndDebitOrCredit": "Choisissez soit une colonne de montant, soit les colonnes débit et crédit, pas les deux.",
       "unknownColumn": "Le fichier n’a pas de colonne nommée « {column} ». Choisissez l’une des colonnes du fichier."
     },

@@ -131,14 +131,17 @@ export function draftsEqual(a: CsvMapDraft, b: CsvMapDraft): boolean {
   )
 }
 
-/** date + description required; amount XOR (debit AND credit). */
+/**
+ * Whether core accepts the mapping: date + description required; amount XOR
+ * (debit OR credit). `csvMappingVerdicts.json` pins this to core's rule.
+ */
 export function mappingReady(mapping: CsvColumnMapping): boolean {
   if (!mapping.date?.trim() || !mapping.description?.trim()) return false
   const amount = Boolean(mapping.amount?.trim())
   const debit = Boolean(mapping.debit?.trim())
   const credit = Boolean(mapping.credit?.trim())
   if (amount) return !debit && !credit
-  return debit && credit
+  return debit || credit
 }
 
 /** Rows that can be posted: no parse error and a suggested simple entry. */

@@ -85,7 +85,9 @@
 //!
 //! An explicit mapping replaces all of this: its header names are matched
 //! whole, without regard to ASCII case, and a column it leaves out is not
-//! read.
+//! read. It needs what detection needs: a date column, and an amount column
+//! or at least one of debit and credit, never an amount column beside one of
+//! those.
 //!
 //! # Debit and credit columns
 //!
@@ -571,8 +573,8 @@ fn header_index(headers: &StringRecord, name: &str) -> CsvResult<usize> {
 ///
 /// [`Error::Csv`] with [`CsvError::InvalidMapping`] when the mapping
 /// has no date or no description, sets both an amount and a debit or credit
-/// column, sets neither an amount nor both of debit and credit, or names a
-/// header the file does not have.
+/// column, sets none of amount, debit and credit, or names a header the
+/// file does not have.
 fn resolve_user_mapping(
     headers: &StringRecord,
     mapping: &CsvColumnMapping,
@@ -594,7 +596,9 @@ fn resolve_user_mapping(
     if has_amount && has_debit_or_credit {
         return Err(CsvError::InvalidMapping(CsvMappingProblem::AmountAndDebitOrCredit).into());
     }
-    if !has_amount && (debit.is_none() || credit.is_none()) {
+    // One of the two columns is enough, as it is for detection: a file may
+    // list only what left the account, or only what reached it.
+    if !has_amount && !has_debit_or_credit {
         return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingAmount).into());
     }
 
@@ -1844,6 +1848,81 @@ mod tests {
             serde_json::from_str(r#"{"date":"Date","description":"Payee","amount":"Amount"}"#)
                 .expect("payload from a UI that predates the field");
         assert_eq!(mapping.direction, None);
+    }
+
+    /// One case of `web/src/lib/csvMappingVerdicts.json`.
+    #[derive(Debug, serde::Deserialize)]
+    struct MappingVerdict {
+        /// The mapping, as the Map columns step sends it.
+        mapping: CsvColumnMapping,
+        /// `ready`, or the identifier of the problem the mapping is refused
+        /// for.
+        verdict: String,
+    }
+
+    /// The rule for a complete mapping is written twice: here, and in the
+    /// web's `mappingReady`, which enables Continue in the Map columns step.
+    /// Both read the same cases, so a mapping the step lets through is one
+    /// core accepts, and the other way round.
+    #[test]
+    fn the_verdicts_fixture_gives_what_core_says_of_each_mapping() {
+        let cases: Vec<MappingVerdict> = serde_json::from_str(include_str!(
+            "../../../../web/src/lib/csvMappingVerdicts.json"
+        ))
+        .expect("csvMappingVerdicts.json parses");
+        let headers = StringRecord::from(vec![
+            "Date", "Memo", "Amount", "Debit", "Credit", "Ref", "Type",
+        ]);
+
+        assert!(!cases.is_empty());
+        for case in cases {
+            let verdict = match resolve_user_mapping(&headers, &case.mapping) {
+                Ok(_) => "ready",
+                Err(Error::Csv(CsvError::InvalidMapping(problem))) => problem.identifier(),
+                Err(other) => panic!("{:?} gave {other:?}", case.mapping),
+            };
+
+            assert_eq!(verdict, case.verdict, "{:?}", case.mapping);
+        }
+    }
+
+    #[test]
+    fn a_mapping_with_only_a_debit_or_only_a_credit_column_reads_the_rows() {
+        let csv = "When,What,Out,In\n01/04/2026,Rent,800.00,\n02/04/2026,Pay,,2500.00\n";
+
+        let debit_only = column_mapping("When", "What", None, Some("Out"), None);
+        let parsed = parse_bank_csv(csv, eur(), Some(&debit_only)).expect("debit only");
+        assert_eq!(
+            parsed.rows[0],
+            parse_bank_csv(
+                csv,
+                eur(),
+                Some(&column_mapping(
+                    "When",
+                    "What",
+                    None,
+                    Some("Out"),
+                    Some("In")
+                ))
+            )
+            .expect("both")
+            .rows[0]
+        );
+        assert_eq!(
+            parsed.rows[1],
+            CsvRowOutcome::Invalid {
+                source_row: 3,
+                reason: UiText::new(UiTextCode::CsvMissingAmount),
+            },
+            "the credit column is not read"
+        );
+
+        let credit_only = column_mapping("When", "What", None, None, Some("In"));
+        let parsed = parse_bank_csv(csv, eur(), Some(&credit_only)).expect("credit only");
+        let CsvRowOutcome::Parsed(pay) = &parsed.rows[1] else {
+            panic!("pay");
+        };
+        assert_eq!(pay.signed_amount_minor, 250_000);
     }
 
     #[test]

@@ -247,10 +247,10 @@ pub enum CsvRowOutcome {
 /// case-insensitively (ASCII). 0-based indexes are not accepted.
 ///
 /// When this struct is provided (`Some`), `date` and `description` are
-/// required, and the amount side must be **either** `amount` **or** both
-/// `debit` and `credit` — not both forms, and not neither. `reference` and
-/// `direction` are optional. Auto-detect is not used for any field, so a
-/// column left out here is not read.
+/// required, and the amount side must be **either** `amount` **or** at
+/// least one of `debit` and `credit` — not both forms, and not neither.
+/// `reference` and `direction` are optional. Auto-detect is not used for any
+/// field, so a column left out here is not read.
 ///
 /// When omitted (`None` on [`CsvImportPreviewInput::mapping`]), the parser
 /// auto-detects columns from header aliases, and the direction column from
@@ -266,12 +266,12 @@ pub struct CsvColumnMapping {
     /// Signed amount column. Mutually exclusive with [`Self::debit`] / [`Self::credit`].
     #[serde(default)]
     pub amount: Option<String>,
-    /// Debit (money-out) column; requires [`Self::credit`] when mapping is
-    /// explicit. A negative cell is a debit taken back: money in.
+    /// Debit (money-out) column, with or without [`Self::credit`]. A
+    /// negative cell is a debit taken back: money in.
     #[serde(default)]
     pub debit: Option<String>,
-    /// Credit (money-in) column; requires [`Self::debit`] when mapping is
-    /// explicit. A negative cell is a credit taken back: money out.
+    /// Credit (money-in) column, with or without [`Self::debit`]. A
+    /// negative cell is a credit taken back: money out.
     #[serde(default)]
     pub credit: Option<String>,
     /// Optional reference / check-number column.
@@ -281,8 +281,8 @@ pub struct CsvColumnMapping {
     /// `Credit`, `D` / `C`, `In` / `Out`), for files whose [`Self::amount`]
     /// is unsigned. When set, a recognized cell decides the sign of its row,
     /// an empty cell leaves the amount's own sign, and any other cell makes
-    /// the row invalid. Ignored when [`Self::debit`] and [`Self::credit`]
-    /// are mapped.
+    /// the row invalid. Ignored when [`Self::debit`] or [`Self::credit`]
+    /// is mapped.
     #[serde(default)]
     pub direction: Option<String>,
 }
@@ -297,9 +297,6 @@ pub enum CsvRequiredColumn {
     /// The booking date.
     Date,
     /// The amount: one signed column, or a debit or a credit column.
-    ///
-    /// Detection is content with either a debit or a credit column. An
-    /// explicit [`CsvColumnMapping`] has to name both.
     Amount,
 }
 

@@ -600,7 +600,7 @@ export type PendingDocSource =
 export type CsvColumnMapping = {
   date?: string | null
   description?: string | null
-  /** XOR debit+credit. */
+  /** XOR debit, credit or both. */
   amount?: string | null
   debit?: string | null
   credit?: string | null
