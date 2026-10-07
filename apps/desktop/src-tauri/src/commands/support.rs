@@ -541,3 +541,154 @@ mod tests {
         assert_eq!(err.code, "file_too_large");
     }
 }
+
+/// Scaffolding for tests that invoke a command through Tauri's mock IPC, the
+/// way the webview invokes it.
+///
+/// Such a test covers what a unit test of the command's body cannot: how
+/// Tauri binds the payload the frontend sends to the command's parameters,
+/// and how the answer and the error are serialized back.
+///
+/// A test starts a [`MockApp`] with the commands under test registered and a
+/// closure that fills the vault, then calls [`MockApp::invoke`] with the
+/// object the frontend passes to `invoke`:
+///
+/// ```ignore
+/// let (app, ids) = MockApp::start("label", tauri::generate_handler![entry_list], seed);
+/// let listed = app.invoke("entry_list", serde_json::json!({ "entityId": ids.entity }));
+/// ```
+///
+/// # Not on Windows
+///
+/// The module, and every test module that uses it, is gated `#[cfg(test)]`
+/// and `#[cfg(not(windows))]`, and the `tauri` `test` feature is a
+/// dev-dependency of the other targets only. The gate is two attributes
+/// because clippy allows `unwrap` in tests only under a plain `#[cfg(test)]`. A test executable carries no
+/// application manifest, and with the mock runtime linked in it imports
+/// webview and common-controls entry points that do not resolve without
+/// one: the binary fails to start (`0xc0000139`,
+/// `STATUS_ENTRYPOINT_NOT_FOUND`) and takes every desktop test with it. The
+/// binding these tests cover is serde over the IPC payload, the same code on
+/// every platform, so the Linux and macOS runs cover it.
+#[cfg(test)]
+#[cfg(not(windows))]
+pub(crate) mod ipc_test_support {
+    use crate::state::AppState;
+    use oikonomia_core::vault::Connection;
+    use std::path::PathBuf;
+    use tauri::ipc::{CallbackFn, Invoke, InvokeBody};
+    use tauri::test::{
+        INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets,
+    };
+    use tauri::webview::InvokeRequest;
+
+    /// The master password of the vault a [`MockApp`] runs over.
+    pub(crate) const PASSWORD: &str = "correct horse battery staple";
+
+    /// A mock application over an unlocked vault in a temporary directory,
+    /// with one webview to make IPC calls from.
+    ///
+    /// The directory is removed when the value is dropped.
+    pub(crate) struct MockApp {
+        /// The app; it owns the [`AppState`] the commands read.
+        _app: tauri::App<MockRuntime>,
+        /// The webview the IPC calls are made from.
+        webview: tauri::WebviewWindow<MockRuntime>,
+        /// The vault's directory.
+        data_dir: PathBuf,
+    }
+
+    impl MockApp {
+        /// Starts a mock app whose invoke handler is `handler`, normally
+        /// `tauri::generate_handler![...]` naming the commands under test.
+        ///
+        /// A new vault is created and unlocked with [`PASSWORD`], and `seed`
+        /// is run on its connection before the app is built; what `seed`
+        /// returns, such as the ids it created, is returned beside the app.
+        /// `label` goes into the directory name, to tell tests apart.
+        ///
+        /// # Panics
+        ///
+        /// Panics when the directory, the vault or the mock app cannot be
+        /// set up.
+        pub(crate) fn start<S>(
+            label: &str,
+            handler: impl Fn(Invoke<MockRuntime>) -> bool + Send + Sync + 'static,
+            seed: impl FnOnce(&Connection) -> S,
+        ) -> (Self, S) {
+            let data_dir = std::env::temp_dir().join(format!(
+                "oiko-ipc-{label}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since_epoch| since_epoch.as_nanos())
+            ));
+            std::fs::create_dir_all(&data_dir).unwrap();
+            let state = AppState::open_path(data_dir.clone(), data_dir.clone()).unwrap();
+
+            let seeded = {
+                let vault = state.vault();
+                let mut guard = vault.acquire();
+                guard.init(PASSWORD).unwrap();
+                seed(guard.connection().unwrap())
+            };
+
+            let app = mock_builder()
+                .manage(state)
+                .invoke_handler(handler)
+                .build(mock_context(noop_assets()))
+                .unwrap();
+            let webview =
+                tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+                    .build()
+                    .unwrap();
+
+            let app = Self {
+                _app: app,
+                webview,
+                data_dir,
+            };
+            (app, seeded)
+        }
+
+        /// Invokes `command` with `arguments` as the JSON payload, as
+        /// `invoke(command, arguments)` does in the webview.
+        ///
+        /// # Errors
+        ///
+        /// Returns what the webview's promise would be rejected with: the
+        /// serialized command error, or the text of Tauri's own refusal.
+        ///
+        /// # Panics
+        ///
+        /// Panics when the answer is not JSON.
+        pub(crate) fn invoke(
+            &self,
+            command: &str,
+            arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, serde_json::Value> {
+            let origin = if cfg!(target_os = "android") {
+                "http://tauri.localhost"
+            } else {
+                "tauri://localhost"
+            };
+            let request = InvokeRequest {
+                cmd: command.into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: origin.parse().unwrap(),
+                body: InvokeBody::Json(arguments),
+                headers: tauri::http::HeaderMap::default(),
+                invoke_key: INVOKE_KEY.to_owned(),
+            };
+
+            get_ipc_response(&self.webview, request).map(|body| body.deserialize().unwrap())
+        }
+    }
+
+    impl Drop for MockApp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.data_dir);
+        }
+    }
+}
