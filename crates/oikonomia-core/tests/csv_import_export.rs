@@ -285,6 +285,238 @@ fn a_transfer_in_the_ledger_matches_a_statement_row_of_either_sign() {
     assert_eq!(again.skipped_duplicate_count, 1, "the transfer itself");
 }
 
+/// Stores each `(date, description, signed amount)` as an import posts it:
+/// an expense for a negative amount, an income for a positive one.
+fn store_imported(
+    conn: &Connection,
+    entity_id: EntityId,
+    acc: &Accounts,
+    entries: &[(&str, &str, i64)],
+) {
+    for &(entry_date, description, signed_amount_minor) in entries {
+        let (kind, category) = if signed_amount_minor < 0 {
+            (SimpleEntryKind::Expense, acc.food)
+        } else {
+            (SimpleEntryKind::Income, acc.salary)
+        };
+        let entry = common::strict(PostSimpleEntryRequest {
+            entity_id,
+            kind,
+            bill_status: None,
+            entry_date: entry_date.into(),
+            description: description.into(),
+            reference: None,
+            amount_minor: signed_amount_minor.abs(),
+            category_account_id: Some(category),
+            wallet_account_id: Some(acc.checking),
+            payable_account_id: None,
+            from_account_id: None,
+            to_account_id: None,
+        });
+        post_simple_entry(conn, &entry).expect("store");
+    }
+}
+
+/// The header of a statement with a debit and a credit column.
+const DEBIT_CREDIT_HEADER: &str = "Date,Description,Debit,Credit\n";
+
+#[test]
+fn a_negative_debit_imported_by_0_1_0_with_the_other_sign_is_flagged_but_still_offered() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    // 0.1.0 read the debit without its minus: an expense of 5.00.
+    store_imported(
+        conn,
+        entity_id,
+        &acc,
+        &[("2026-07-10", "Negative debit", -500)],
+    );
+    let csv = format!("{DEBIT_CREDIT_HEADER}2026-07-10,Negative debit,-5.00,\n");
+
+    let preview = preview_bank_csv(conn, entity_id, roles(&acc), &csv, None).expect("preview");
+    let row = &preview.rows[0];
+    assert!(row.duplicate, "a possible duplicate of the 0.1.0 entry");
+    assert_eq!(row.signed_amount_minor, Some(500), "read as money in");
+    let suggested = row.suggested.clone().expect("still offered");
+    assert_eq!(suggested.kind, SimpleEntryKind::Income);
+
+    // The flag is for the user. The post knows only the row as it is read
+    // now, which matches nothing, so it is not skipped.
+    let posted = post_import_rows(conn, &[suggested], false).expect("post");
+    assert_eq!(posted.posted.len(), 1);
+    assert_eq!(posted.skipped_duplicate_count, 0);
+}
+
+#[test]
+fn a_negative_credit_and_a_row_with_both_cells_negative_are_flagged_the_same_way() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    // 0.1.0 read each cell without its minus: an income of 6.00, and the
+    // credit 1.00 less the debit 3.00, an expense of 2.00.
+    store_imported(
+        conn,
+        entity_id,
+        &acc,
+        &[
+            ("2026-07-10", "Negative credit", 600),
+            ("2026-07-10", "Both negative", -200),
+        ],
+    );
+    let csv = format!(
+        "{DEBIT_CREDIT_HEADER}\
+         2026-07-10,Negative credit,,-6.00\n\
+         2026-07-10,Both negative,-3.00,-1.00\n"
+    );
+
+    let preview = preview_bank_csv(conn, entity_id, roles(&acc), &csv, None).expect("preview");
+    let rows: Vec<(bool, Option<i64>)> = preview
+        .rows
+        .iter()
+        .map(|row| (row.duplicate, row.signed_amount_minor))
+        .collect();
+    assert_eq!(rows, [(true, Some(-600)), (true, Some(200))]);
+}
+
+#[test]
+fn a_debit_or_credit_row_without_a_negative_cell_is_flagged_as_before() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    store_imported(
+        conn,
+        entity_id,
+        &acc,
+        &[
+            ("2026-07-10", "Debit only", -1_000),
+            ("2026-07-10", "Credit only", 2_000),
+            ("2026-07-10", "Both", -500),
+        ],
+    );
+    let csv = format!(
+        "{DEBIT_CREDIT_HEADER}\
+         2026-07-10,Debit only,10.00,\n\
+         2026-07-10,Credit only,,20.00\n\
+         2026-07-10,Both,7.00,2.00\n\
+         2026-07-10,Debit only,,10.00\n"
+    );
+
+    assert_eq!(
+        duplicate_flags(conn, entity_id, &acc, &csv),
+        [true, true, true, false],
+        "the last row is money in, and the stored entry is money out"
+    );
+}
+
+#[test]
+fn a_negative_cell_with_no_stored_match_is_not_flagged() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    // A stored entry of another size; nothing that 0.1.0 could have read.
+    store_imported(
+        conn,
+        entity_id,
+        &acc,
+        &[("2026-07-10", "Negative debit", -501)],
+    );
+    let csv = format!(
+        "{DEBIT_CREDIT_HEADER}\
+         2026-07-10,Negative debit,-5.00,\n\
+         2026-07-10,Negative credit,,-6.00\n\
+         2026-07-10,Both negative,-3.00,-1.00\n"
+    );
+    assert_eq!(
+        duplicate_flags(conn, entity_id, &acc, &csv),
+        [false, false, false]
+    );
+
+    // Within one file every row is read the same way, so the amount 0.1.0
+    // read is compared with the ledger only, not with earlier rows.
+    let purchase_and_reversal = format!(
+        "{DEBIT_CREDIT_HEADER}\
+         2026-07-11,Corner shop,25.00,\n\
+         2026-07-11,Corner shop,-25.00,\n"
+    );
+    assert_eq!(
+        duplicate_flags(conn, entity_id, &acc, &purchase_and_reversal),
+        [false, false]
+    );
+}
+
+#[test]
+fn a_same_day_refund_in_an_amount_column_is_not_flagged_after_its_purchase() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    store_imported(
+        conn,
+        entity_id,
+        &acc,
+        &[("2026-07-01", "Shop refund pair", -2_500)],
+    );
+    let pair = "Date,Description,Amount,Reference\n\
+                2026-07-01,Shop refund pair,-25.00,\n\
+                2026-07-01,Shop refund pair,25.00,\n";
+
+    let preview = preview_bank_csv(conn, entity_id, roles(&acc), pair, None).expect("preview");
+    let rows: Vec<(bool, Option<SimpleEntryKind>)> = preview
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                row.duplicate,
+                row.suggested.as_ref().map(|entry| entry.kind),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (true, Some(SimpleEntryKind::Expense)),
+            (false, Some(SimpleEntryKind::Income)),
+        ],
+        "the purchase is in the ledger; the refund is offered and not flagged"
+    );
+}
+
+#[test]
+fn a_refund_written_as_a_negative_debit_is_flagged_once_its_purchase_is_stored() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    store_imported(
+        conn,
+        entity_id,
+        &acc,
+        &[("2026-07-01", "Shop refund pair", -2_500)],
+    );
+
+    // 0.1.0 read both rows as the same expense, so the refund matches the
+    // stored purchase the way 0.1.0 read it.
+    let refund_as_negative_debit = format!(
+        "{DEBIT_CREDIT_HEADER}\
+         2026-07-01,Shop refund pair,25.00,\n\
+         2026-07-01,Shop refund pair,-25.00,\n"
+    );
+    assert_eq!(
+        duplicate_flags(conn, entity_id, &acc, &refund_as_negative_debit),
+        [true, true]
+    );
+
+    // A refund in the credit column has no negative cell.
+    let refund_as_credit = format!(
+        "{DEBIT_CREDIT_HEADER}\
+         2026-07-01,Shop refund pair,25.00,\n\
+         2026-07-01,Shop refund pair,,25.00\n"
+    );
+    assert_eq!(
+        duplicate_flags(conn, entity_id, &acc, &refund_as_credit),
+        [true, false]
+    );
+}
+
 #[test]
 fn a_row_is_checked_for_its_date_then_as_a_duplicate_then_for_the_rest() {
     let (_dir, vault) = common::vault();

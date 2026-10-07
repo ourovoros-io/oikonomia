@@ -353,7 +353,10 @@ fn preview_statement(
     check_role_account(conn, entity_id, accounts.income_account_id)?;
 
     let parsed = parse_bank_csv(statement.csv_text, entity.base_currency, statement.mapping)?;
-    let mut seen = load_active_movements(conn, entity_id)?;
+    let mut seen = PreviewSeen {
+        ledger: load_active_movements(conn, entity_id)?,
+        earlier_rows: SeenMovements::default(),
+    };
     let mut rows = Vec::with_capacity(parsed.rows.len());
 
     for outcome in parsed.rows {
@@ -368,14 +371,27 @@ fn preview_statement(
     })
 }
 
+/// What the rows of a preview are compared with, kept apart because the
+/// amount Oikonomia 0.1.0 read for a row is compared with the ledger only.
+#[derive(Debug)]
+struct PreviewSeen {
+    /// The active entries of the ledger.
+    ledger: SeenMovements,
+    /// The parsed rows of this file before the current one.
+    earlier_rows: SeenMovements,
+}
+
 /// Turns one parse outcome into a preview row, recording it in `seen`.
 ///
-/// A parsed row is a duplicate when `seen` already held its movement: from
-/// the ledger, or from an earlier row of this file.
+/// A parsed row is a duplicate when its movement is in the ledger or repeats
+/// an earlier row of this file. It is also flagged when the movement
+/// Oikonomia 0.1.0 read for it is in the ledger, because 0.1.0 imported a
+/// negative debit or credit cell the other way round. That second check is
+/// against the ledger only: within one file every row is read the same way.
 fn preview_row(
     entity_id: EntityId,
     accounts: CsvImportAccounts,
-    seen: &mut SeenMovements,
+    seen: &mut PreviewSeen,
     outcome: CsvRowOutcome,
 ) -> CsvImportPreviewRow {
     match outcome {
@@ -393,8 +409,19 @@ fn preview_row(
                 Flow::of_signed(row.signed_amount_minor),
                 &row.description,
             );
-            let duplicate = seen.contains(&movement);
-            seen.record(&movement);
+            let legacy_movement = row.legacy_signed_amount_minor.and_then(|legacy| {
+                let amount_minor = legacy.checked_abs()?;
+                Some(Movement::new(
+                    row.entry_date,
+                    amount_minor,
+                    Flow::of_signed(legacy),
+                    &row.description,
+                ))
+            });
+            let duplicate = seen.ledger.contains(&movement)
+                || seen.earlier_rows.contains(&movement)
+                || legacy_movement.is_some_and(|legacy| seen.ledger.contains(&legacy));
+            seen.earlier_rows.record(&movement);
             CsvImportPreviewRow {
                 source_row: row.source_row,
                 duplicate,

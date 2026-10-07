@@ -78,6 +78,12 @@
 //! conventions apart; the preview shows each row as an expense or an income
 //! before anything is posted.
 //!
+//! Oikonomia 0.1.0 dropped the sign of each cell instead: a debit was always
+//! money out and a credit always money in. A row with a negative cell
+//! therefore also carries the amount 0.1.0 read for it
+//! ([`ParsedBankRow::legacy_signed_amount_minor`]), so that the preview can
+//! flag it as a possible duplicate of the entry 0.1.0 imported from it.
+//!
 //! # Dates
 //!
 //! One rule reads every date. The cell is three numbers with one separator
@@ -684,7 +690,10 @@ fn parse_record_inner(
         }
     });
 
-    let signed = signed_amount(record, columns, currency)?;
+    let RecordAmount {
+        signed,
+        legacy_signed,
+    } = signed_amount(record, columns, currency)?;
     if signed == 0 {
         return Err(CsvError::ZeroAmount);
     }
@@ -701,9 +710,20 @@ fn parse_record_inner(
         description,
         reference,
         signed_amount_minor: signed,
+        legacy_signed_amount_minor: legacy_signed,
         amount_minor,
         kind,
     })
+}
+
+/// The signed amount of a record, and the one Oikonomia 0.1.0 read for it
+/// when that one was different.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RecordAmount {
+    /// Negative for money out.
+    signed: i64,
+    /// See [`ParsedBankRow::legacy_signed_amount_minor`].
+    legacy_signed: Option<i64>,
 }
 
 /// Returns the signed amount of a record: negative for money out.
@@ -725,13 +745,18 @@ fn signed_amount(
     record: &StringRecord,
     columns: ColumnMap,
     currency: CurrencyCode,
-) -> CsvResult<i64> {
+) -> CsvResult<RecordAmount> {
     if let Some(amount_index) = columns.amount {
         let signed = parse_book_amount(record_cell(record, amount_index), currency)?;
-        return match columns.direction {
-            Some(direction_index) => apply_direction(signed, record_cell(record, direction_index)),
-            None => Ok(signed),
+        let signed = match columns.direction {
+            Some(direction_index) => apply_direction(signed, record_cell(record, direction_index))?,
+            None => signed,
         };
+        // 0.1.0 read an amount column the same way.
+        return Ok(RecordAmount {
+            signed,
+            legacy_signed: None,
+        });
     }
 
     let debit = optional_signed(record, columns.debit, currency)?;
@@ -739,10 +764,26 @@ fn signed_amount(
     if debit.is_none() && credit.is_none() {
         return Err(CsvError::MissingAmount);
     }
-    credit
+    let signed = credit
         .unwrap_or(0)
         .checked_sub(debit.unwrap_or(0))
-        .ok_or(CsvError::AmountOverflow)
+        .ok_or(CsvError::AmountOverflow)?;
+    Ok(RecordAmount {
+        signed,
+        legacy_signed: amount_without_cell_signs(debit, credit).filter(|legacy| *legacy != signed),
+    })
+}
+
+/// Returns the signed amount Oikonomia 0.1.0 gave a row of debit and credit
+/// cells: each cell without its sign, the credit less the debit.
+///
+/// It differs from the signed amount only when a cell is written negative.
+/// `None` when it is zero, which 0.1.0 refused as a row, or when a cell is
+/// `i64::MIN`, which has no magnitude in `i64`.
+fn amount_without_cell_signs(debit: Option<i64>, credit: Option<i64>) -> Option<i64> {
+    let debit = debit.unwrap_or(0).checked_abs()?;
+    let credit = credit.unwrap_or(0).checked_abs()?;
+    credit.checked_sub(debit).filter(|minor| *minor != 0)
 }
 
 /// Parses the amount in column `index`, or returns `None` when there is no
@@ -952,6 +993,48 @@ mod tests {
             first_parsed_row("Date,Description,Debit,Credit\n2026-04-01,Refund,-12.00,\n");
         assert_eq!(reversal.kind, SimpleEntryKind::Income);
         assert_eq!(reversal.amount_minor, 1_200);
+    }
+
+    /// The amount 0.1.0 read for the only row of a file with a debit and a
+    /// credit column, whose two cells are `debit` and `credit`.
+    fn legacy_debit_credit_amount(debit: &str, credit: &str) -> Option<i64> {
+        let csv = format!("Date,Description,Debit,Credit\n2026-04-01,Row,{debit},{credit}\n");
+        first_parsed_row(&csv).legacy_signed_amount_minor
+    }
+
+    #[test]
+    fn only_a_negative_debit_or_credit_cell_carries_the_amount_0_1_0_read() {
+        assert_eq!(legacy_debit_credit_amount("-5.00", ""), Some(-500));
+        assert_eq!(legacy_debit_credit_amount("", "-6.00"), Some(600));
+        assert_eq!(legacy_debit_credit_amount("-3.00", "-1.00"), Some(-200));
+        assert_eq!(legacy_debit_credit_amount("-100.00", "30.00"), Some(-7_000));
+        assert_eq!(legacy_debit_credit_amount("(800.00)", ""), Some(-80_000));
+        assert_eq!(
+            legacy_debit_credit_amount("-25.00", "25.00"),
+            None,
+            "0.1.0 read a zero, which it refused"
+        );
+
+        for (debit, credit) in [
+            ("10.00", ""),
+            ("", "20.00"),
+            ("7.00", "2.00"),
+            ("0.00", "25.00"),
+        ] {
+            assert_eq!(
+                legacy_debit_credit_amount(debit, credit),
+                None,
+                "{debit},{credit}"
+            );
+        }
+        for amount in ["-25.00", "25.00", "25.00-", "(25.00)"] {
+            let csv = format!("Date,Description,Amount\n2026-04-01,Row,{amount}\n");
+            assert_eq!(
+                first_parsed_row(&csv).legacy_signed_amount_minor,
+                None,
+                "{amount}"
+            );
+        }
     }
 
     #[test]
