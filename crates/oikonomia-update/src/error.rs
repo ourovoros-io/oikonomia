@@ -5,17 +5,25 @@
 //! contract with `web/src/lib/errorCodes.json`: [`UpdateError::ALL_CODES`]
 //! lists them, and a desktop test compares that list with the fixture.
 //!
-//! A check does not hand these to its caller. [`perform_check`] logs the
-//! error and reports [`CheckOutcome::Failed`], and [`install_offer`] does the
-//! same with [`InstallOutcome::Failed`]. The variants that do reach a caller
-//! come from building a [`ClientConfig`], from
+//! A failed check or install hands its error to the caller inside the
+//! outcome: [`perform_check`] in [`CheckOutcome::Failed`] and
+//! [`install_offer`] in [`InstallOutcome::Failed`]. This crate does not log
+//! it. The desktop crate logs it and gives it to the [`UpdateMachine`], which
+//! keeps the code for the [`UpdateStatus`] the webview is shown. The other
+//! errors are returned as errors: from building a [`ClientConfig`], from
 //! [`UpdateMachine::begin_install`] and from the release-side functions.
+//!
+//! [`FeedRefusal`] is the release lane's: it says which entry of a feed
+//! installed copies would refuse, and wraps the [`UpdateError`] they would
+//! refuse it with. It never crosses IPC and has no code.
 //!
 //! [`perform_check`]: crate::perform_check
 //! [`install_offer`]: crate::install_offer
 //! [`CheckOutcome::Failed`]: crate::CheckOutcome::Failed
 //! [`InstallOutcome::Failed`]: crate::InstallOutcome::Failed
 //! [`ClientConfig`]: crate::ClientConfig
+//! [`UpdateMachine`]: crate::UpdateMachine
+//! [`UpdateStatus`]: crate::UpdateStatus
 //! [`UpdateMachine::begin_install`]: crate::UpdateMachine::begin_install
 
 use thiserror::Error;
@@ -159,6 +167,42 @@ impl UpdateError {
             Self::InvalidFeedInput { .. } => "update_invalid_feed_input",
         }
     }
+}
+
+/// Why installed copies would refuse a feed, as
+/// [`check_feed_as_client`](crate::check_feed_as_client) reports it to the
+/// release lane.
+///
+/// It names the platform and the URL, which [`UpdateError`] does not: the
+/// person promoting a release needs to know which entry to fix. The cause
+/// is the error a copy would end its check with.
+///
+/// Exhaustive on purpose, like [`UpdateError`].
+#[derive(Debug, Error)]
+pub enum FeedRefusal {
+    /// No copy can read the feed: it is not the JSON the client expects, or
+    /// its version is not `SemVer`.
+    #[error("installed copies cannot read the feed")]
+    Unreadable(#[source] UpdateError),
+
+    /// The feed has no entry for a platform that was to be checked.
+    #[error("{platform}: the feed has no entry for this platform")]
+    MissingPlatform {
+        /// The platform key that is missing.
+        platform: String,
+    },
+
+    /// Copies on one platform would refuse their entry.
+    #[error("{platform}: installed copies refuse {url}")]
+    Entry {
+        /// The platform key of the entry.
+        platform: String,
+        /// The artifact URL the entry gives, as written in the feed.
+        url: String,
+        /// What a copy would end its check with.
+        #[source]
+        source: UpdateError,
+    },
 }
 
 #[cfg(test)]

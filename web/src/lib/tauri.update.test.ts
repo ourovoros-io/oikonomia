@@ -66,4 +66,17 @@ describe('updateCheck / updateInstall wrappers', () => {
       kind: 'failed',
     })
   })
+
+  test('a failed check and a failed install keep the code Rust names', async () => {
+    Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true })
+
+    invoke.mockResolvedValue({ kind: 'failed', code: 'update_network' })
+    await expect(updateCheck()).resolves.toEqual({ kind: 'failed', code: 'update_network' })
+
+    invoke.mockResolvedValue({ kind: 'failed', code: 'update_artifact_integrity' })
+    await expect(updateInstall({ kind: 'available', version: '0.1.1' })).resolves.toEqual({
+      kind: 'failed',
+      code: 'update_artifact_integrity',
+    })
+  })
 })

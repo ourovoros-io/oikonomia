@@ -4,7 +4,8 @@
 //! with a `kind` tag in snake case, and `web/src/lib/updateCheck.ts` decodes
 //! exactly that shape, so a variant or field renamed here has to be renamed
 //! there. It is a projection of the machine's private state, which holds the
-//! artifact URL, signature and digest; none of those is in here.
+//! artifact URL, signature and digest; none of those is in here. Of a failure
+//! it carries the code of the error and none of its text.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,5 +48,50 @@ pub enum UpdateStatus {
     Installing,
     /// The last check or install failed. The rest of the application is
     /// unaffected, and a new check may be started.
-    Failed,
+    Failed {
+        /// The stable code of the error it failed with
+        /// ([`UpdateError::code`](crate::UpdateError::code)), which the
+        /// webview words. Absent, and then left out of the serialized form,
+        /// when the step ended without an error to name: its task died.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UpdateStatus;
+
+    #[test]
+    fn a_failure_serializes_with_its_code_and_without_one_as_the_kind_alone() {
+        let coded = UpdateStatus::Failed {
+            code: Some("update_network".to_owned()),
+        };
+        let bare = UpdateStatus::Failed { code: None };
+
+        assert_eq!(
+            serde_json::to_string(&coded).expect("json"),
+            r#"{"kind":"failed","code":"update_network"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&bare).expect("json"),
+            r#"{"kind":"failed"}"#
+        );
+    }
+
+    #[test]
+    fn a_failure_reads_back_with_and_without_its_code() {
+        for status in [
+            UpdateStatus::Failed {
+                code: Some("update_manifest_signature".to_owned()),
+            },
+            UpdateStatus::Failed { code: None },
+        ] {
+            let json = serde_json::to_string(&status).expect("json");
+
+            let read: UpdateStatus = serde_json::from_str(&json).expect("status");
+
+            assert_eq!(read, status);
+        }
+    }
 }

@@ -557,6 +557,49 @@ describe('UnlockScreen check for update', () => {
     expect(updateInstall).not.toHaveBeenCalled()
   })
 
+  test('a failed check with a known code shows the copy mapped to that code', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'failed', code: 'update_network' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+    })
+    expect(
+      screen.getByText('Could not check for or install the update. Try again later.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('update_network')).toBeNull()
+  })
+
+  test('a failed check with a code this build has no copy for shows the generic sentence', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'failed', code: 'update_from_the_future' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Couldn’t check' })).toBeTruthy()
+    })
+    expect(screen.getByText('Nothing was changed. You can try again later.')).toBeTruthy()
+    expect(screen.queryByText('update_from_the_future')).toBeNull()
+  })
+
+  test('a failed install shows the copy mapped to its code', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.1' })
+    vi.mocked(updateInstall).mockResolvedValue({
+      kind: 'failed',
+      code: 'update_artifact_integrity',
+    })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Install and restart' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Install and restart' }))
+    await waitFor(() => {
+      expect(
+        screen.getByText('Could not check for or install the update. Try again later.'),
+      ).toBeTruthy()
+    })
+  })
+
   test('honesty is the Writer string, not a feed field', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '1.2.3' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
