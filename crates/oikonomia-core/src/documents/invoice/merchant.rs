@@ -181,7 +181,7 @@ const MERCHANT_LINE_CHARS: RangeInclusive<usize> = 5..=80;
 const MIN_CUSTOMER_LINE_CHARS: usize = 5;
 
 /// Markers of a natural gas bill whose supplier is not a known brand.
-pub(super) const GAS_SUPPLY_MARKERS: &[Keyword] = &[
+const GAS_SUPPLY_MARKERS: &[Keyword] = &[
     Word("φυσικου αεριου"),
     Prefix("φυσικο αεριο"),
     Word("gas simple"),
@@ -193,24 +193,23 @@ pub(super) const ISSUER_NAME_LABEL: Keyword = Prefix("επωνυμια");
 
 /// What every inflection of [`ISSUER_NAME_LABEL`] starts with, to skip the
 /// label word itself.
-pub(super) const ISSUER_NAME_STEM: Keyword = Prefix("επων");
+const ISSUER_NAME_STEM: Keyword = Prefix("επων");
 
 /// The English label of a name line in a customer block, at the line's
 /// start.
-pub(super) const NAME_LABEL: Keyword = Word("name");
+const NAME_LABEL: Keyword = Word("name");
 
 /// Headings that open the customer block of a sales invoice.
-pub(super) const CUSTOMER_BLOCK_STARTS: &[Keyword] = &[CUSTOMER_BLOCK_LABEL, Word("customer")];
+const CUSTOMER_BLOCK_STARTS: &[Keyword] = &[CUSTOMER_BLOCK_LABEL, Word("customer")];
 
 /// Labels of the lines in a customer block that are not the customer's name.
-pub(super) const TAX_ID_OR_ADDRESS_LABELS: &[Keyword] =
-    &[Word("α.φ.μ"), Word("αφμ"), Prefix("διευθυν")];
+const TAX_ID_OR_ADDRESS_LABELS: &[Keyword] = &[Word("α.φ.μ"), Word("αφμ"), Prefix("διευθυν")];
 
 /// Column headings of the description column of a line-item table.
-pub(super) const DESCRIPTION_HEADERS: &[Keyword] = &[Prefix("περιγραφη"), Word("description")];
+const DESCRIPTION_HEADERS: &[Keyword] = &[Prefix("περιγραφη"), Word("description")];
 
 /// Column headings that follow the description heading in a table header.
-pub(super) const QUANTITY_HEADERS: &[Keyword] = &[Prefix("ποσοτητα"), Word("quantity")];
+const QUANTITY_HEADERS: &[Keyword] = &[Prefix("ποσοτητα"), Word("quantity")];
 
 /// The customer's name from the customer block of a sales invoice.
 ///
@@ -281,14 +280,15 @@ const MIN_DESCRIPTION_CHARS: usize = 4;
 /// 5. with the Greek word for "invoice" in the text: that word;
 /// 6. with a merchant: the merchant's name.
 ///
-/// `has_merchant` and `has_reference` say what the same reading found.
+/// `merchant` and `reference` are what the same reading found; only whether
+/// each was found matters here.
 pub(super) fn find_description(
     text: &str,
     folded_text: &str,
-    has_merchant: bool,
-    has_reference: bool,
+    merchant: Option<&Merchant>,
+    reference: Option<&str>,
 ) -> Option<Description> {
-    if is_sales_invoice(folded_text) && has_merchant {
+    if is_sales_invoice(folded_text) && merchant.is_some() {
         return Some(Description::CustomerInvoice);
     }
 
@@ -321,13 +321,13 @@ pub(super) fn find_description(
         }
     }
 
-    if has_reference {
+    if reference.is_some() {
         return Some(Description::InvoiceReference);
     }
     if INVOICE_WORD_GREEK.occurs_in(folded_text) {
         return Some(Description::InvoiceWord);
     }
-    has_merchant.then_some(Description::MerchantName)
+    merchant.map(|_| Description::MerchantName)
 }
 
 #[cfg(test)]
@@ -355,7 +355,7 @@ mod tests {
             merchant_of("Στοιχεία εκδότη Επωνυμία ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\nΠληρωτέο 200,00").as_deref(),
             Some("ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ")
         );
-        // The label at the start of the line, as before.
+        // The label at the start of the line.
         assert_eq!(
             merchant_of("Επωνυμία ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ\nΠληρωτέο 200,00").as_deref(),
             Some("ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ")
@@ -446,5 +446,31 @@ mod tests {
             crate::prefs::Locale::En,
         );
         assert_eq!(with_bank.merchant.as_deref(), Some("ACME CONSULTING LTD"));
+    }
+
+    /// Every label and marker constant of this file. A constant added to the
+    /// file has to be added here to be checked.
+    const LABELS: &[(&str, &[Keyword])] = &[
+        ("GAS_SUPPLY_MARKERS", GAS_SUPPLY_MARKERS),
+        ("ISSUER_NAME_LABEL", &[ISSUER_NAME_LABEL]),
+        ("ISSUER_NAME_STEM", &[ISSUER_NAME_STEM]),
+        ("NAME_LABEL", &[NAME_LABEL]),
+        ("CUSTOMER_BLOCK_STARTS", CUSTOMER_BLOCK_STARTS),
+        ("TAX_ID_OR_ADDRESS_LABELS", TAX_ID_OR_ADDRESS_LABELS),
+        ("DESCRIPTION_HEADERS", DESCRIPTION_HEADERS),
+        ("QUANTITY_HEADERS", QUANTITY_HEADERS),
+    ];
+
+    #[test]
+    fn every_label_and_marker_is_in_folded_form() {
+        for (name, keywords) in LABELS {
+            for keyword in *keywords {
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{name}: {keyword:?} can never match folded text"
+                );
+            }
+        }
     }
 }

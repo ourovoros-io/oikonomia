@@ -25,8 +25,8 @@
 
 use crate::coa::{DocumentTopic, document_topic_codes};
 use crate::default_accounts::{account_by_codes, first_of_type};
-use crate::documents::keyword::Keyword;
 use crate::documents::keyword::Keyword::{Prefix, Unit, Word};
+use crate::documents::keyword::{Keyword, contains_any};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate};
 
 /// Picks the expense account a document most likely belongs to.
@@ -296,7 +296,7 @@ fn match_account_of_type(
 
     // The first topic the text points at that the chart has an account for.
     for (topic, words) in table.keywords {
-        if !words.iter().any(|word| word.occurs_in(&hints)) {
+        if !contains_any(&hints, words) {
             continue;
         }
 
@@ -734,6 +734,11 @@ mod tests {
                 for keyword in *keywords {
                     let text = keyword.text();
 
+                    assert!(
+                        !matches!(keyword, Keyword::Fragment(_)),
+                        "{keyword:?}: a fragment would match inside any word"
+                    );
+
                     match keyword {
                         Keyword::Word(_) => {
                             for sentence in [
@@ -756,10 +761,8 @@ mod tests {
                             assert!(!keyword.occurs_in(&format!("xyz{text}")), "{keyword:?}");
                             assert!(!keyword.occurs_in(&format!("7{text}")), "{keyword:?}");
                         }
-                        Keyword::Fragment(_) => {
-                            // A fragment would match inside any word.
-                            assert_eq!(None, Some(keyword), "a topic keyword is never a fragment");
-                        }
+                        // Checked above: a topic keyword is never one.
+                        Keyword::Fragment(_) => {}
                         Keyword::Unit(_) => {
                             // A unit may follow a number, but not a letter.
                             assert!(keyword.occurs_in(&format!("150{text}")), "{keyword:?}");

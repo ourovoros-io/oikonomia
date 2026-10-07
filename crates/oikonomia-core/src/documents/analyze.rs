@@ -106,7 +106,7 @@ use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
 use crate::documents::account_match::{match_expense_account, match_income_account};
 use crate::documents::file::{DocumentKind, NewDocument};
-use crate::documents::invoice::{InvoiceReading, read_invoice_text};
+use crate::documents::invoice::{DocumentClass, InvoiceReading, read_invoice_text};
 use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use crate::documents::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
 use crate::documents::pdf_repair::repair_xref_offsets;
@@ -126,6 +126,17 @@ pub enum EntryKindSuggestion {
     Income,
     /// Bill (may be unpaid).
     Bill,
+}
+
+impl From<DocumentClass> for EntryKindSuggestion {
+    /// The entry kind a classified document suggests.
+    fn from(class: DocumentClass) -> Self {
+        match class {
+            DocumentClass::Expense => Self::Expense,
+            DocumentClass::Income { .. } => Self::Income,
+            DocumentClass::Bill { .. } => Self::Bill,
+        }
+    }
 }
 
 /// Where the suggestion came from.
@@ -149,7 +160,8 @@ pub struct DocumentSuggestion {
     pub model: Option<String>,
     /// Suggested kind.
     pub kind: EntryKindSuggestion,
-    /// Amount in minor units (entity currency assumed).
+    /// Amount in minor units of the book's currency. Withheld when that
+    /// currency does not have two decimals, since the reader reads cents.
     pub amount_minor: Option<i64>,
     /// The document's date, if one was found. Written as `YYYY-MM-DD`.
     #[serde(with = "optional_date")]
@@ -272,7 +284,7 @@ impl AnalyzerStatus {
 /// The JSON form of an [`AnalyzerStatus`].
 #[derive(Debug, Serialize, Deserialize)]
 struct AnalyzerStatusWire {
-    /// Bundled OCR model files are present.
+    /// An OCR engine is loaded or the bundled model files are present.
     ocr_available: bool,
     /// Always `true`: the analyzer never uses the network.
     offline: bool,
@@ -290,8 +302,13 @@ impl From<AnalyzerStatus> for AnalyzerStatusWire {
     }
 }
 
+/// The three fields of a status on the wire do not state the same fact.
+#[derive(Debug, thiserror::Error)]
+#[error("the analyzer status fields contradict each other")]
+struct ContradictoryStatus;
+
 impl TryFrom<AnalyzerStatusWire> for AnalyzerStatus {
-    type Error = &'static str;
+    type Error = ContradictoryStatus;
 
     /// Reads the status back from its wire form.
     ///
@@ -306,7 +323,7 @@ impl TryFrom<AnalyzerStatusWire> for AnalyzerStatus {
         if wire.offline && wire.hint == status.hint() {
             Ok(status)
         } else {
-            Err("the analyzer status fields contradict each other")
+            Err(ContradictoryStatus)
         }
     }
 }
@@ -317,8 +334,18 @@ impl TryFrom<AnalyzerStatusWire> for AnalyzerStatus {
 /// process has already loaded an engine. With no directory it is
 /// unavailable. The call does not load the models and does not wait for a
 /// running OCR.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::documents::{AnalyzerHint, analyzer_status};
+///
+/// let status = analyzer_status(None);
+/// assert!(!status.ocr_available());
+/// assert_eq!(status.hint(), AnalyzerHint::ModelsMissing);
+/// ```
 #[must_use]
-pub fn analyzer_status(model_dir: Option<&std::path::Path>) -> AnalyzerStatus {
+pub fn analyzer_status(model_dir: Option<&Path>) -> AnalyzerStatus {
     let paths = model_dir.map(OcrModelPaths::from_dir);
 
     AnalyzerStatus {
@@ -354,7 +381,7 @@ pub struct AnalyzeContext<'a> {
 pub fn analyze_document_bytes(
     document: &NewDocument<'_>,
     context: &AnalyzeContext<'_>,
-    model_dir: Option<&std::path::Path>,
+    model_dir: Option<&Path>,
 ) -> DocumentSuggestion {
     let AnalyzeContext {
         default_currency,
@@ -365,7 +392,7 @@ pub fn analyze_document_bytes(
     let mut suggestion = match read_document_text(document, model_dir) {
         ExtractedText::Read { text, origin } => {
             let reading = read_invoice_text(&text);
-            let kind = reading.class.kind();
+            let kind = EntryKindSuggestion::from(reading.class);
             let accounts = suggest_accounts(context, kind, &reading.category_hint());
             let fee_minor = reading.transfer_fee_minor;
 
@@ -524,7 +551,7 @@ fn suggestion_from_reading(
     DocumentSuggestion {
         source: origin.source(),
         model: Some(origin.model_label().to_owned()),
-        kind: reading.class.kind(),
+        kind: reading.class.into(),
         amount_minor: reading.amount_minor,
         entry_date: reading.entry_date,
         description,
@@ -591,7 +618,12 @@ impl TextOrigin {
 enum ExtractedText {
     /// Text, and where it came from. The text is not empty for OCR and for a
     /// PDF; a plain text file is passed on even when it is empty.
-    Read { text: String, origin: TextOrigin },
+    Read {
+        /// The text that was read.
+        text: String,
+        /// Where it came from.
+        origin: TextOrigin,
+    },
     /// No text. The code is the note that tells the user why.
     Unread(UiTextCode),
 }

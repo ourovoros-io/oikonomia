@@ -6,14 +6,13 @@
 //! what the total, the merchant and the description branch on, so the three
 //! always agree about what the document is.
 
-use crate::documents::analyze::EntryKindSuggestion;
 use crate::documents::brands::known_brand;
 use crate::documents::keyword::Keyword::{Prefix, Unit, Word};
 use crate::documents::keyword::{Keyword, contains_any};
 
 /// Strong utility markers only. Loose ones such as `ηλεκτρ` also match a
 /// software company's line of business (`ΗΛΕΚΤΡΟΝΙΚΩΝ ΣΥΣΤΗΜΑΤΩΝ`).
-pub(super) const UTILITY_MARKERS: &[Keyword] = &[
+const UTILITY_MARKERS: &[Keyword] = &[
     Unit("kwh"),
     Prefix("ρευμα"),
     Prefix("εκκαθαριστικ"),
@@ -38,10 +37,10 @@ pub(super) const POWER_BUSINESS_TARIFF: Keyword = Word("power business");
 pub(super) const CUSTOMER_BLOCK_LABEL: Keyword = Prefix("στοιχεια πελατη");
 
 /// The English heading of an invoice the book's owner issued.
-pub(super) const SALES_INVOICE_WORDS: Keyword = Word("sales invoice");
+const SALES_INVOICE_WORDS: Keyword = Word("sales invoice");
 
 /// The word "invoice", in Greek and in English.
-pub(super) const INVOICE_WORDS: &[Keyword] = &[INVOICE_WORD_GREEK, Prefix("invoice")];
+const INVOICE_WORDS: &[Keyword] = &[INVOICE_WORD_GREEK, Prefix("invoice")];
 
 /// Wording that marks a utility bill as unpaid: overdue (`ληξιπρόθεσμ-`),
 /// unpaid (`ανεξόφλητ-`), amount due.
@@ -49,7 +48,7 @@ pub(super) const INVOICE_WORDS: &[Keyword] = &[INVOICE_WORD_GREEK, Prefix("invoi
 /// Wording that every settlement bill prints, such as "pay by" and "pay
 /// through", is not here; `settlement_bill_is_not_automatically_unpaid` pins
 /// that such a bill is not marked unpaid.
-pub(super) const UTILITY_UNPAID_MARKERS: &[Keyword] = &[
+const UTILITY_UNPAID_MARKERS: &[Keyword] = &[
     Prefix("ληξιπροθεσμ"),
     Prefix("ανεξοφλητ"),
     Word("amount due"),
@@ -57,7 +56,7 @@ pub(super) const UTILITY_UNPAID_MARKERS: &[Keyword] = &[
 
 /// Wording of an invoice the book's owner received, which overrides the
 /// signs of a sales invoice.
-pub(super) const PURCHASE_MARKERS: &[Keyword] = &[
+const PURCHASE_MARKERS: &[Keyword] = &[
     Prefix("τιμολογιο αγορ"),
     Word("purchase invoice"),
     Prefix("supplier"),
@@ -67,7 +66,7 @@ pub(super) const PURCHASE_MARKERS: &[Keyword] = &[
 /// πιστωσει` is "on credit", the payment method of an invoice not yet paid;
 /// it is a stem because extraction glues it to the series code that follows
 /// (`Επί πιστώσειB 51`).
-pub(super) const UNPAID_MARKERS: &[Keyword] = &[
+const UNPAID_MARKERS: &[Keyword] = &[
     Prefix("επι πιστωσει"),
     Word("amount due"),
     Word("unpaid"),
@@ -109,15 +108,6 @@ pub(crate) enum DocumentClass {
 }
 
 impl DocumentClass {
-    /// The entry kind the suggestion carries.
-    pub(crate) const fn kind(self) -> EntryKindSuggestion {
-        match self {
-            Self::Expense => EntryKindSuggestion::Expense,
-            Self::Income { .. } => EntryKindSuggestion::Income,
-            Self::Bill { .. } => EntryKindSuggestion::Bill,
-        }
-    }
-
     /// Whether the document is still to be paid.
     pub(crate) const fn is_unpaid(self) -> bool {
         match self {
@@ -172,7 +162,8 @@ pub(super) const INVOICE_WORD_GREEK: Keyword = Prefix("τιμολογιο");
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::analyze::parse_invoice_text;
+    use crate::documents::analyze::{EntryKindSuggestion, parse_invoice_text};
+    use crate::documents::keyword::folded;
 
     /// Loads a corpus fixture, so the unit tests read the same documents as
     /// the golden test in `tests/document_corpus.rs`.
@@ -223,5 +214,32 @@ mod tests {
             !suggestion.bill_unpaid,
             "known-brand εξόφληση μέσω must not force unpaid: {suggestion:?}"
         );
+    }
+
+    /// Every label and marker constant of this file. A constant added to the
+    /// file has to be added here to be checked.
+    const LABELS: &[(&str, &[Keyword])] = &[
+        ("UTILITY_MARKERS", UTILITY_MARKERS),
+        ("POWER_BUSINESS_TARIFF", &[POWER_BUSINESS_TARIFF]),
+        ("CUSTOMER_BLOCK_LABEL", &[CUSTOMER_BLOCK_LABEL]),
+        ("SALES_INVOICE_WORDS", &[SALES_INVOICE_WORDS]),
+        ("INVOICE_WORDS", INVOICE_WORDS),
+        ("UTILITY_UNPAID_MARKERS", UTILITY_UNPAID_MARKERS),
+        ("PURCHASE_MARKERS", PURCHASE_MARKERS),
+        ("UNPAID_MARKERS", UNPAID_MARKERS),
+        ("INVOICE_WORD_GREEK", &[INVOICE_WORD_GREEK]),
+    ];
+
+    #[test]
+    fn every_label_and_marker_is_in_folded_form() {
+        for (name, keywords) in LABELS {
+            for keyword in *keywords {
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{name}: {keyword:?} can never match folded text"
+                );
+            }
+        }
     }
 }

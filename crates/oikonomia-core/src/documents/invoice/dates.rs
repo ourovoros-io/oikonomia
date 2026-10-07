@@ -35,7 +35,7 @@ pub(super) fn first_date_on_line(line: &str) -> Option<Date> {
 }
 
 /// Labels of the value date of a bank transaction.
-pub(super) const VALUE_DATE_LABELS: &[Keyword] = &[Word("ημερομηνια αξιας"), Word("value date")];
+const VALUE_DATE_LABELS: &[Keyword] = &[Word("ημερομηνια αξιας"), Word("value date")];
 
 /// Whether a folded line is the value-date line of a bank transaction.
 pub(super) fn is_value_date_line(folded_line: &str) -> bool {
@@ -247,7 +247,7 @@ pub(super) fn find_best_date(text: &str) -> Option<Date> {
 
 /// Labels of a date line: "date", "issued", "expires", "due". Stems, so they
 /// match every inflection.
-pub(super) const DATE_LABELS: &[Keyword] = &[
+const DATE_LABELS: &[Keyword] = &[
     Prefix("ημερομην"),
     Word("date"),
     Prefix("εκδοσ"),
@@ -359,7 +359,7 @@ fn parse_eu_date(token: &str) -> Option<Date> {
 mod tests {
     use super::*;
     use crate::documents::analyze::{DocumentSuggestion, parse_invoice_text};
-    use crate::documents::invoice::money::{money_amounts_on_line, parse_money_token};
+    use crate::documents::invoice::money::money_amounts_on_line;
     use time::macros::date;
 
     fn time_len(text: &str, at: usize) -> Option<usize> {
@@ -369,8 +369,6 @@ mod tests {
 
     #[test]
     fn a_date_is_read_only_within_the_document_years() {
-        use time::macros::date;
-
         assert_eq!(first_date_on_line("31/12/1989"), None);
         assert_eq!(
             first_date_on_line("01/01/1990"),
@@ -441,8 +439,8 @@ mod tests {
         assert!(!money_amounts_on_line("27/8/2026 310,00").contains(&2_700));
         assert!(!money_amounts_on_line("27/8/2026 310,00").contains(&800));
         assert!(money_amounts_on_line("27/8/2026 310,00").contains(&31_000));
-        assert_eq!(parse_money_token("08"), None);
-        assert_eq!(parse_money_token("2026"), None);
+        assert_eq!(money_amounts_on_line("08"), [] as [i64; 0]);
+        assert_eq!(money_amounts_on_line("2026"), [] as [i64; 0]);
     }
 
     #[test]
@@ -485,5 +483,25 @@ mod tests {
         );
         // Month first, with a day over 12: not a date.
         assert_eq!(read("Date 04/13/2026").entry_date, None);
+    }
+
+    /// Every label and marker constant of this file. A constant added to the
+    /// file has to be added here to be checked.
+    const LABELS: &[(&str, &[Keyword])] = &[
+        ("VALUE_DATE_LABELS", VALUE_DATE_LABELS),
+        ("DATE_LABELS", DATE_LABELS),
+    ];
+
+    #[test]
+    fn every_label_and_marker_is_in_folded_form() {
+        for (name, keywords) in LABELS {
+            for keyword in *keywords {
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{name}: {keyword:?} can never match folded text"
+                );
+            }
+        }
     }
 }

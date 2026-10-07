@@ -30,8 +30,7 @@ pub(super) fn find_invoice_reference(text: &str) -> Option<String> {
 /// gas delivery point code. It is matched as a unit, so a digit may stand
 /// right before it: extraction glues the label to the code of the column
 /// before (`SYN000000001ΗΚΑΣΠ:` in `tests/fixtures/ngs_gas_jumbled_extract.txt`).
-pub(super) const SUPPLY_CODE_LABELS: &[Keyword] =
-    &[Word("κωδικος παροχης"), Word("supply"), Unit("ηκασπ")];
+const SUPPLY_CODE_LABELS: &[Keyword] = &[Word("κωδικος παροχης"), Word("supply"), Unit("ηκασπ")];
 
 /// Lengths of an alphanumeric supply code.
 ///
@@ -107,7 +106,7 @@ pub(super) fn is_rf_then_digits(upper: &str) -> bool {
 /// Labels of the line that carries a MARK number, the registration number
 /// the Greek tax authority gives an invoice. `α.α` (serial number) heads the
 /// same table row as the MARK.
-pub(super) const MARK_LABELS: &[Keyword] = &[Word("μαρκ"), Word("mark"), Word("α.α"), Word("αα")];
+const MARK_LABELS: &[Keyword] = &[Word("μαρκ"), Word("mark"), Word("α.α"), Word("αα")];
 
 /// The MARK number of a Greek invoice: a run of digits on the first MARK or
 /// `Α.Α.` line that has one on it or on the line below.
@@ -126,7 +125,7 @@ fn mark_number(lines: &[&str]) -> Option<String> {
 }
 
 /// Labels of an invoice or reference number.
-pub(super) const REFERENCE_LABELS: &[Keyword] = &[
+const REFERENCE_LABELS: &[Keyword] = &[
     Word("invoice"),
     Prefix("αρ. παραστατ"),
     Word("αριθμος"),
@@ -379,5 +378,26 @@ mod tests {
         // Runs over twenty digits are not tokens at all.
         assert_eq!(reference("a 123456789012345678901"), None);
         assert_eq!(reference(""), None);
+    }
+
+    /// Every label and marker constant of this file. A constant added to the
+    /// file has to be added here to be checked.
+    const LABELS: &[(&str, &[Keyword])] = &[
+        ("SUPPLY_CODE_LABELS", SUPPLY_CODE_LABELS),
+        ("MARK_LABELS", MARK_LABELS),
+        ("REFERENCE_LABELS", REFERENCE_LABELS),
+    ];
+
+    #[test]
+    fn every_label_and_marker_is_in_folded_form() {
+        for (name, keywords) in LABELS {
+            for keyword in *keywords {
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{name}: {keyword:?} can never match folded text"
+                );
+            }
+        }
     }
 }

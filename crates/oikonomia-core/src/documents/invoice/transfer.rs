@@ -32,14 +32,14 @@ use crate::ui_text::{UiText, UiTextCode};
 
 /// Wording that makes a document a bank transfer receipt: "έμβασμα"
 /// (remittance), "transfer to another bank", or a transaction-code label.
-pub(super) const TRANSFER_MARKERS: &[Keyword] = &[
+const TRANSFER_MARKERS: &[Keyword] = &[
     Prefix("εμβασμα"),
     Word("μεταφορα σε αλλη τραπεζα"),
     TRANSFER_REFERENCE_LABEL,
 ];
 
 /// The label of the transaction code on a transfer receipt.
-pub(super) const TRANSFER_REFERENCE_LABEL: Keyword = Word("κωδικος συναλλαγης");
+const TRANSFER_REFERENCE_LABEL: Keyword = Word("κωδικος συναλλαγης");
 
 /// Whether folded text carries one of [`TRANSFER_MARKERS`].
 pub(super) fn is_bank_transfer_receipt(folded_text: &str) -> bool {
@@ -112,34 +112,32 @@ fn amount_on_line_or_next(lines: &[&str], index: usize) -> Option<i64> {
 }
 
 /// The label of the capital debit on a transfer receipt.
-pub(super) const TRANSFER_PRINCIPAL_LABEL: Keyword = Word("ποσο χρεωσης κεφαλαιου");
+const TRANSFER_PRINCIPAL_LABEL: Keyword = Word("ποσο χρεωσης κεφαλαιου");
 
 /// The plain "amount" label a receipt uses when it has no capital line.
-pub(super) const TRANSFER_AMOUNT_LABEL: Keyword = Word("ποσο");
+const TRANSFER_AMOUNT_LABEL: Keyword = Word("ποσο");
 
 /// Labels of the fee and charges lines of a transfer receipt.
-pub(super) const TRANSFER_FEE_LABELS: &[Keyword] =
-    &[Prefix("προμηθεια"), Word("εξοδων"), Word("εξοδα")];
+const TRANSFER_FEE_LABELS: &[Keyword] = &[Prefix("προμηθεια"), Word("εξοδων"), Word("εξοδα")];
 
 /// "Of the beneficiary", as in "name of the beneficiary".
-pub(super) const BENEFICIARY_LABEL: Keyword = Word("δικαιουχου");
+const BENEFICIARY_LABEL: Keyword = Word("δικαιουχου");
 
 /// The two halves of the `Ονοματεπώνυμο / Επωνυμία` beneficiary label.
-pub(super) const BENEFICIARY_NAME_LABELS: [Keyword; 2] = [Word("ονοματεπωνυμο"), ISSUER_NAME_LABEL];
+const BENEFICIARY_NAME_LABELS: [Keyword; 2] = [Word("ονοματεπωνυμο"), ISSUER_NAME_LABEL];
 
 /// Words that make a name a bank's, not the payee's.
 ///
 /// `bank` is a fragment because banks write it into their names: Eurobank,
 /// Optima bank, Piraeusbank.
-pub(super) const BANK_WORDS: &[Keyword] = &[Prefix("τραπεζα"), Fragment("bank")];
+const BANK_WORDS: &[Keyword] = &[Prefix("τραπεζα"), Fragment("bank")];
 
 /// Labels of the date a transfer was executed, which is the date to post.
-pub(super) const EXECUTION_DATE_LABELS: &[Keyword] = &[Prefix("εκτελεσ"), Word("execution")];
+const EXECUTION_DATE_LABELS: &[Keyword] = &[Prefix("εκτελεσ"), Word("execution")];
 
 /// Labels of a date line on a transfer receipt, used when no execution date
 /// is labelled.
-pub(super) const TRANSFER_DATE_LABELS: &[Keyword] =
-    &[Prefix("ημερομην"), Word("date"), Prefix("συναλλαγ")];
+const TRANSFER_DATE_LABELS: &[Keyword] = &[Prefix("ημερομην"), Word("date"), Prefix("συναλλαγ")];
 
 /// Lengths of a transfer transaction code.
 ///
@@ -511,5 +509,33 @@ mod tests {
 
         assert_eq!(reading.amount_minor, Some(31_000));
         assert_eq!(reading.transfer_fee_minor, None);
+    }
+
+    /// Every label and marker constant of this file. A constant added to the
+    /// file has to be added here to be checked.
+    const LABELS: &[(&str, &[Keyword])] = &[
+        ("TRANSFER_MARKERS", TRANSFER_MARKERS),
+        ("TRANSFER_REFERENCE_LABEL", &[TRANSFER_REFERENCE_LABEL]),
+        ("TRANSFER_PRINCIPAL_LABEL", &[TRANSFER_PRINCIPAL_LABEL]),
+        ("TRANSFER_AMOUNT_LABEL", &[TRANSFER_AMOUNT_LABEL]),
+        ("TRANSFER_FEE_LABELS", TRANSFER_FEE_LABELS),
+        ("BENEFICIARY_LABEL", &[BENEFICIARY_LABEL]),
+        ("BENEFICIARY_NAME_LABELS", &BENEFICIARY_NAME_LABELS),
+        ("BANK_WORDS", BANK_WORDS),
+        ("EXECUTION_DATE_LABELS", EXECUTION_DATE_LABELS),
+        ("TRANSFER_DATE_LABELS", TRANSFER_DATE_LABELS),
+    ];
+
+    #[test]
+    fn every_label_and_marker_is_in_folded_form() {
+        for (name, keywords) in LABELS {
+            for keyword in *keywords {
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{name}: {keyword:?} can never match folded text"
+                );
+            }
+        }
     }
 }

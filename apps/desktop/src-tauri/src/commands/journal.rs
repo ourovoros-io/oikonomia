@@ -195,7 +195,7 @@ pub(crate) async fn entry_post_simple_with_document(
 /// `analysisJson`.
 ///
 /// `analysisJson` may be left out or sent as `null`.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PostWithDocumentArguments {
     /// The entry to post.

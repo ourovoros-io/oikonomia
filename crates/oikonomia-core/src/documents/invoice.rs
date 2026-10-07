@@ -210,7 +210,7 @@
 use time::Date;
 
 use crate::documents::invoice::dates::find_best_date;
-use crate::documents::invoice::kind::{DocumentClass, classify_kind, is_utility_bill};
+use crate::documents::invoice::kind::{classify_kind, is_utility_bill};
 use crate::documents::invoice::merchant::{Description, Merchant, find_description, find_merchant};
 use crate::documents::invoice::normalization::normalize;
 use crate::documents::invoice::reference::find_invoice_reference;
@@ -228,6 +228,8 @@ mod normalization;
 mod reference;
 mod total;
 mod transfer;
+
+pub(crate) use crate::documents::invoice::kind::DocumentClass;
 
 /// What the invoice reader found in a document.
 ///
@@ -308,8 +310,11 @@ impl InvoiceReading {
         if self.reference.is_some() {
             score += confidence::REFERENCE;
         }
-        if !matches!(self.class, DocumentClass::Expense) {
-            score += confidence::CLASSIFIED_KIND;
+        match self.class {
+            DocumentClass::Expense => {}
+            DocumentClass::Income { .. } | DocumentClass::Bill { .. } => {
+                score += confidence::CLASSIFIED_KIND;
+            }
         }
         score
     }
@@ -335,8 +340,8 @@ pub(crate) fn read_invoice_text(text: &str) -> InvoiceReading {
     let description = find_description(
         &normalized,
         &folded_full,
-        merchant.is_some(),
-        reference.is_some(),
+        merchant.as_ref(),
+        reference.as_deref(),
     );
     let class = classify_kind(&folded_full);
 
@@ -437,88 +442,7 @@ fn states_a_zero_rate(text: &str) -> bool {
 mod tests {
     use super::*;
     use crate::documents::analyze::{DocumentSuggestion, EntryKindSuggestion, parse_invoice_text};
-    use crate::documents::invoice::dates::{DATE_LABELS, VALUE_DATE_LABELS};
-    use crate::documents::invoice::kind::{
-        CUSTOMER_BLOCK_LABEL, INVOICE_WORD_GREEK, INVOICE_WORDS, POWER_BUSINESS_TARIFF,
-        PURCHASE_MARKERS, SALES_INVOICE_WORDS, UNPAID_MARKERS, UTILITY_MARKERS,
-        UTILITY_UNPAID_MARKERS,
-    };
-    use crate::documents::invoice::merchant::{
-        CUSTOMER_BLOCK_STARTS, DESCRIPTION_HEADERS, GAS_SUPPLY_MARKERS, ISSUER_NAME_LABEL,
-        ISSUER_NAME_STEM, NAME_LABEL, QUANTITY_HEADERS, TAX_ID_OR_ADDRESS_LABELS,
-    };
-    use crate::documents::invoice::reference::{MARK_LABELS, REFERENCE_LABELS, SUPPLY_CODE_LABELS};
-    use crate::documents::invoice::total::{
-        CONSUMPTION_LABEL, DEPOSIT_LABELS, IBAN_WORD, IDENTIFIER_LINE_MARKERS, PAYMENT_LABELS,
-        RATE_LINE_MARKERS, TOTAL_LABELS, TOTAL_WORD, TOTALS_ROW_LABELS, VALUE_WORDS,
-    };
-    use crate::documents::invoice::transfer::{
-        BANK_WORDS, BENEFICIARY_LABEL, BENEFICIARY_NAME_LABELS, EXECUTION_DATE_LABELS,
-        TRANSFER_AMOUNT_LABEL, TRANSFER_DATE_LABELS, TRANSFER_FEE_LABELS, TRANSFER_MARKERS,
-        TRANSFER_PRINCIPAL_LABEL, TRANSFER_REFERENCE_LABEL,
-    };
     use time::macros::date;
-
-    /// Every label and marker constant of the reader. A constant added to
-    /// the module has to be added here to be checked.
-    const LABEL_SETS: &[(&str, &[Keyword])] = &[
-        ("UTILITY_MARKERS", UTILITY_MARKERS),
-        ("POWER_BUSINESS_TARIFF", &[POWER_BUSINESS_TARIFF]),
-        ("CUSTOMER_BLOCK_LABEL", &[CUSTOMER_BLOCK_LABEL]),
-        ("SALES_INVOICE_WORDS", &[SALES_INVOICE_WORDS]),
-        ("IBAN_WORD", &[IBAN_WORD]),
-        ("NAME_LABEL", &[NAME_LABEL]),
-        ("INVOICE_WORDS", INVOICE_WORDS),
-        ("UTILITY_UNPAID_MARKERS", UTILITY_UNPAID_MARKERS),
-        ("PURCHASE_MARKERS", PURCHASE_MARKERS),
-        ("UNPAID_MARKERS", UNPAID_MARKERS),
-        ("TRANSFER_MARKERS", TRANSFER_MARKERS),
-        ("TRANSFER_REFERENCE_LABEL", &[TRANSFER_REFERENCE_LABEL]),
-        ("TRANSFER_PRINCIPAL_LABEL", &[TRANSFER_PRINCIPAL_LABEL]),
-        ("TRANSFER_AMOUNT_LABEL", &[TRANSFER_AMOUNT_LABEL]),
-        ("TRANSFER_FEE_LABELS", TRANSFER_FEE_LABELS),
-        ("BENEFICIARY_LABEL", &[BENEFICIARY_LABEL]),
-        ("BENEFICIARY_NAME_LABELS", &BENEFICIARY_NAME_LABELS),
-        ("BANK_WORDS", BANK_WORDS),
-        ("EXECUTION_DATE_LABELS", EXECUTION_DATE_LABELS),
-        ("TRANSFER_DATE_LABELS", TRANSFER_DATE_LABELS),
-        ("TOTALS_ROW_LABELS", TOTALS_ROW_LABELS),
-        ("VALUE_WORDS", VALUE_WORDS),
-        ("TOTAL_WORD", &[TOTAL_WORD]),
-        ("IDENTIFIER_LINE_MARKERS", IDENTIFIER_LINE_MARKERS),
-        ("TOTAL_LABELS", TOTAL_LABELS),
-        ("PAYMENT_LABELS", PAYMENT_LABELS),
-        ("DEPOSIT_LABELS", DEPOSIT_LABELS),
-        ("RATE_LINE_MARKERS", RATE_LINE_MARKERS),
-        ("CONSUMPTION_LABEL", &[CONSUMPTION_LABEL]),
-        ("VALUE_DATE_LABELS", VALUE_DATE_LABELS),
-        ("DATE_LABELS", DATE_LABELS),
-        ("SUPPLY_CODE_LABELS", SUPPLY_CODE_LABELS),
-        ("MARK_LABELS", MARK_LABELS),
-        ("REFERENCE_LABELS", REFERENCE_LABELS),
-        ("GAS_SUPPLY_MARKERS", GAS_SUPPLY_MARKERS),
-        ("ISSUER_NAME_LABEL", &[ISSUER_NAME_LABEL]),
-        ("ISSUER_NAME_STEM", &[ISSUER_NAME_STEM]),
-        ("INVOICE_WORD_GREEK", &[INVOICE_WORD_GREEK]),
-        ("CUSTOMER_BLOCK_STARTS", CUSTOMER_BLOCK_STARTS),
-        ("TAX_ID_OR_ADDRESS_LABELS", TAX_ID_OR_ADDRESS_LABELS),
-        ("DESCRIPTION_HEADERS", DESCRIPTION_HEADERS),
-        ("QUANTITY_HEADERS", QUANTITY_HEADERS),
-        ("VAT_EXEMPT_MARKERS", VAT_EXEMPT_MARKERS),
-    ];
-
-    #[test]
-    fn every_label_and_marker_is_in_folded_form() {
-        for (name, needles) in LABEL_SETS {
-            for needle in *needles {
-                assert_eq!(
-                    folded(needle.text()),
-                    needle.text(),
-                    "{name}: {needle:?} can never match folded text"
-                );
-            }
-        }
-    }
 
     /// Loads a corpus fixture, so the unit tests read the same documents as
     /// the golden test in `tests/document_corpus.rs`.
@@ -773,6 +697,23 @@ mod tests {
         let overdue = read("ΛΟΓΑΡΙΑΣΜΟΣ ΡΕΥΜΑΤΟΣ\nΛΗΞΙΠΡΟΘΕΣΜΟ ΥΠΟΛΟΙΠΟ\nΠΛΗΡΩΤΕΟ 80,00");
         assert!(overdue.bill_unpaid);
     }
+
+    /// Every label and marker constant of this file. A constant added to the
+    /// file has to be added here to be checked.
+    const LABELS: &[(&str, &[Keyword])] = &[("VAT_EXEMPT_MARKERS", VAT_EXEMPT_MARKERS)];
+
+    #[test]
+    fn every_label_and_marker_is_in_folded_form() {
+        for (name, keywords) in LABELS {
+            for keyword in *keywords {
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{name}: {keyword:?} can never match folded text"
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -831,6 +772,22 @@ mod properties {
         fn reading_any_text_returns_instead_of_panicking(text in any::<String>()) {
             for locale in LOCALES {
                 let _ = parse_invoice_text(&text, locale);
+            }
+        }
+
+        #[test]
+        fn a_reading_always_has_what_its_description_and_fee_need(text in invoice_like_text()) {
+            let reading = read_invoice_text(&text);
+
+            for locale in LOCALES {
+                prop_assert_eq!(
+                    reading.description.is_some(),
+                    reading.description_in(locale).is_some(),
+                    "{:?}", reading
+                );
+            }
+            if reading.transfer_fee_minor.is_some() {
+                prop_assert_eq!(reading.description.as_ref(), Some(&Description::BankTransfer));
             }
         }
 

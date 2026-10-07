@@ -57,6 +57,17 @@ pub(crate) struct PickedDocument {
     data_base64: String,
 }
 
+impl std::fmt::Debug for PickedDocument {
+    /// Shows the name and type; the payload can be megabytes of base64.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PickedDocument")
+            .field("filename", &self.filename)
+            .field("mime_type", &self.mime_type)
+            .finish_non_exhaustive()
+    }
+}
+
 impl PickedDocument {
     /// Decodes the bytes, up to the size core stores.
     ///
@@ -83,6 +94,18 @@ pub(super) struct DecodedDocument {
     mime_type: String,
     /// The file's bytes.
     data: Vec<u8>,
+}
+
+impl std::fmt::Debug for DecodedDocument {
+    /// Shows the name, the type and the size, not the bytes.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DecodedDocument")
+            .field("filename", &self.filename)
+            .field("mime_type", &self.mime_type)
+            .field("len", &self.data.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl DecodedDocument {
@@ -156,7 +179,7 @@ pub(crate) async fn document_analyze(
 
 /// The arguments of [`document_analyze`], as the webview names them:
 /// `entityId`, `filename`, `mimeType` and `dataBase64`.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AnalyzeArguments {
     /// Entity whose accounts and currency the suggestion is made for.
@@ -320,7 +343,7 @@ pub(crate) async fn document_attach(
 
 /// The arguments of [`document_attach`], as the webview names them:
 /// `entityId`, `entryId`, `filename`, `mimeType` and `dataBase64`.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AttachArguments {
     /// Entity the entry belongs to.

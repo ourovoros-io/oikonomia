@@ -36,6 +36,7 @@
 //! metadata and name alone, before it reads a byte, so a stray drop of
 //! gigabytes is never loaded into memory.
 
+use std::io::Read;
 use std::path::Path;
 
 use crate::error::{Error, NameField, Result, ValidationError};
@@ -95,8 +96,19 @@ impl DocumentKind {
         }
     }
 
+    /// The MIME type the kind is stored under.
+    pub(crate) const fn mime(self) -> &'static str {
+        match self {
+            Self::Pdf => "application/pdf",
+            Self::Png => "image/png",
+            Self::Jpeg => "image/jpeg",
+            Self::Webp => "image/webp",
+            Self::PlainText => "text/plain",
+        }
+    }
+
     /// The kind the extension of `filename` names, in any letter case.
-    pub(crate) fn from_filename(filename: &str) -> Option<Self> {
+    fn from_filename(filename: &str) -> Option<Self> {
         let extension = Path::new(filename).extension()?.to_str()?;
 
         match extension.to_ascii_lowercase().as_str() {
@@ -106,17 +118,6 @@ impl DocumentKind {
             "webp" => Some(Self::Webp),
             "txt" => Some(Self::PlainText),
             _ => None,
-        }
-    }
-
-    /// The MIME type the kind is stored under.
-    pub(crate) const fn mime(self) -> &'static str {
-        match self {
-            Self::Pdf => "application/pdf",
-            Self::Png => "image/png",
-            Self::Jpeg => "image/jpeg",
-            Self::Webp => "image/webp",
-            Self::PlainText => "text/plain",
         }
     }
 
@@ -187,6 +188,23 @@ impl<'a> NewDocument<'a> {
     /// [`ValidationError::NameRequired`] for a blank name, and
     /// [`ValidationError::FileTypeUnsupported`] for a file that is not a PDF,
     /// a PNG, JPEG or WebP image, or plain text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::documents::NewDocument;
+    ///
+    /// let receipt = NewDocument {
+    ///     filename: "receipt.txt",
+    ///     mime_type: "",
+    ///     data: b"TOTAL 12,50",
+    /// };
+    /// assert!(receipt.validate().is_ok());
+    ///
+    /// let program = NewDocument { filename: "tool.exe", ..receipt };
+    /// let refused = program.validate().unwrap_err();
+    /// assert_eq!(refused.code(), "file_type_unsupported");
+    /// ```
     pub fn validate(&self) -> Result<()> {
         self.checked().map(|_| ())
     }
@@ -251,8 +269,9 @@ impl ReadDocument {
 /// The name is given apart from the path because a dropped link keeps its
 /// own name and extension while the file it resolves to may be named
 /// anything. The size and the type are checked from the file's metadata and
-/// from `filename` alone; only a file that passes is read into memory. No
-/// type is declared for a file on disk, so its extension decides its kind.
+/// from `filename` alone; only a file that passes is read, and never more
+/// of it than the cap and one byte, in case it grew since. No type is
+/// declared for a file on disk, so its extension decides its kind.
 ///
 /// # Errors
 ///
@@ -267,7 +286,16 @@ pub fn read_validated_file(path: &Path, filename: &str) -> Result<ReadDocument> 
     let name = filename.trim();
     let kind = check_file(name, DocumentKind::from_filename(name), metadata.len())?;
 
-    let data = std::fs::read(path).map_err(|err| Error::io("read document", err))?;
+    // The file can grow between the two calls, so the read has the cap of its
+    // own: one byte past it is enough to know the file is too large.
+    let mut data = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| {
+            file.take(MAX_DOCUMENT_BYTES as u64 + 1)
+                .read_to_end(&mut data)
+        })
+        .map_err(|err| Error::io("read document", err))?;
+    check_file(name, Some(kind), data.len() as u64)?;
 
     Ok(ReadDocument {
         filename: name.to_owned(),
@@ -312,6 +340,7 @@ mod tests {
     }
 
     /// The validation error a file is refused with, if it is refused.
+    #[expect(clippy::panic, reason = "test fails loudly by design")]
     fn refusal(filename: &str, mime_type: &str, data: &[u8]) -> Option<ValidationError> {
         let document = NewDocument {
             filename,
@@ -320,8 +349,9 @@ mod tests {
         };
 
         match document.validate() {
+            Ok(()) => None,
             Err(Error::Validation(reason)) => Some(reason),
-            _ => None,
+            Err(other) => panic!("validation fails only with a validation error: {other}"),
         }
     }
 

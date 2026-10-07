@@ -10,11 +10,13 @@
 //!
 //! # The folded form
 //!
-//! [`folded`] lowercases text and removes Greek accents, so one spelling of
-//! a keyword matches every way a document prints the word. The reader and
-//! the brand table fold the text and write their keywords folded; a test
-//! beside each table checks that. The account matcher only lowercases, and
-//! writes its Greek keywords with their accents.
+//! [`folded`] lowercases text and removes the accents of precomposed Greek
+//! letters, so one spelling of a keyword matches the word in capitals, with
+//! its accent and without. A letter followed by a combining accent is left
+//! as it is. The reader and the brand table fold the text and write their
+//! keywords folded; a test in each file that defines such keywords checks
+//! that. The account matcher only lowercases, and writes its Greek keywords
+//! with their accents.
 //!
 //! # Where a keyword may sit
 //!

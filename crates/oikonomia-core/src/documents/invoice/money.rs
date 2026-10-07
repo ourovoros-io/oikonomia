@@ -162,7 +162,7 @@ const MAX_CENT_DIGITS: usize = 2;
 ///
 /// Trailing separators are dropped first. `None` when the token is empty,
 /// longer than [`MAX_MONEY_TOKEN_CHARS`], or not money by the table.
-pub(super) fn parse_money_token(token: &str) -> Option<i64> {
+fn parse_money_token(token: &str) -> Option<i64> {
     // The tokenizer keeps `.` and `,`, so an amount that ends a sentence or a
     // list item arrives with that punctuation attached.
     let token = token.trim().trim_end_matches(['.', ',']);

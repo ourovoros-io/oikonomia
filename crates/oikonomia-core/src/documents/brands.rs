@@ -68,25 +68,34 @@ impl Brand {
 /// Suppliers come before ΔΕΔΔΗΕ: the grid operator is printed on every
 /// electricity bill regardless of who issues it, so it may only win when no
 /// supplier brand is present.
-const BRANDS: &[(&str, Brand)] = &[
-    ("zenith", Brand::new("ZeniΘ", None)),
-    ("zeniθ", Brand::new("ZeniΘ", None)),
+const BRANDS: &[(Keyword, Brand)] = &[
+    (Word("zenith"), Brand::new("ZeniΘ", None)),
+    (Word("zeniθ"), Brand::new("ZeniΘ", None)),
     // "MyON" is the customer portal printed on Volton gas bills; the
     // company name itself never survives text extraction.
-    ("volton", Brand::new("Volton", None)),
-    ("myon", Brand::new("Volton", None)),
-    ("nova", Brand::new("Nova", Some(Service::Telecom))),
-    ("cosmote", Brand::new("Cosmote", Some(Service::Telecom))),
-    ("vodafone", Brand::new("Vodafone", Some(Service::Telecom))),
-    ("elpedison", Brand::new("Elpedison", None)),
-    ("protergia", Brand::new("Protergia", None)),
-    ("ηρων", Brand::new("ΗΡΩΝ", None)),
-    ("heron", Brand::new("ΗΡΩΝ", None)),
-    ("nrg", Brand::new("nrg", None)),
-    ("δεη", Brand::new("ΔΕΗ", Some(Service::Electricity))),
-    ("ευδαπ", Brand::new("ΕΥΔΑΠ", Some(Service::Water))),
-    ("ευαθ", Brand::new("ΕΥΑΘ", Some(Service::Water))),
-    ("δεδδηε", Brand::new("ΔΕΔΔΗΕ", Some(Service::Electricity))),
+    (Word("volton"), Brand::new("Volton", None)),
+    (Word("myon"), Brand::new("Volton", None)),
+    (Word("nova"), Brand::new("Nova", Some(Service::Telecom))),
+    (
+        Word("cosmote"),
+        Brand::new("Cosmote", Some(Service::Telecom)),
+    ),
+    (
+        Word("vodafone"),
+        Brand::new("Vodafone", Some(Service::Telecom)),
+    ),
+    (Word("elpedison"), Brand::new("Elpedison", None)),
+    (Word("protergia"), Brand::new("Protergia", None)),
+    (Word("ηρων"), Brand::new("ΗΡΩΝ", None)),
+    (Word("heron"), Brand::new("ΗΡΩΝ", None)),
+    (Word("nrg"), Brand::new("nrg", None)),
+    (Word("δεη"), Brand::new("ΔΕΗ", Some(Service::Electricity))),
+    (Word("ευδαπ"), Brand::new("ΕΥΔΑΠ", Some(Service::Water))),
+    (Word("ευαθ"), Brand::new("ΕΥΑΘ", Some(Service::Water))),
+    (
+        Word("δεδδηε"),
+        Brand::new("ΔΕΔΔΗΕ", Some(Service::Electricity)),
+    ),
 ];
 
 /// How strongly a keyword points at a service: the scale of
@@ -169,7 +178,7 @@ const SERVICE_KEYWORDS: &[(Service, &[(Keyword, u32)])] = &[
 pub(crate) fn known_brand(folded_text: &str) -> Option<Brand> {
     BRANDS
         .iter()
-        .find(|(token, _)| Word(token).occurs_in(folded_text))
+        .find(|(token, _)| token.occurs_in(folded_text))
         .map(|(_, brand)| *brand)
 }
 
@@ -287,7 +296,7 @@ mod tests {
     #[test]
     fn every_brand_token_and_service_keyword_is_in_folded_form() {
         for (token, _) in BRANDS {
-            assert_eq!(folded(token), *token, "brand token {token:?}");
+            assert_eq!(folded(token.text()), token.text(), "brand token {token:?}");
         }
         for (service, keywords) in SERVICE_KEYWORDS {
             for (keyword, _) in *keywords {

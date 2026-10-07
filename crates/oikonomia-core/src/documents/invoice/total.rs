@@ -23,18 +23,17 @@ use crate::documents::keyword::{Keyword, contains_any, folded};
 pub(super) const IBAN_WORD: Keyword = Word("iban");
 
 /// The label of a totals row: the largest amount on it is the total.
-pub(super) const TOTALS_ROW_LABELS: &[Keyword] = &[Word("συνολα"), Word("totals")];
+const TOTALS_ROW_LABELS: &[Keyword] = &[Word("συνολα"), Word("totals")];
 
 /// Words that mark a line as holding a value, for the weighted fallback.
-pub(super) const VALUE_WORDS: &[Keyword] = &[Prefix("αξια"), Word("value"), TOTAL_WORD];
+const VALUE_WORDS: &[Keyword] = &[Prefix("αξια"), Word("value"), TOTAL_WORD];
 
 /// The bare word the fallback favours and the percent rule exempts.
-pub(super) const TOTAL_WORD: Keyword = Word("total");
+const TOTAL_WORD: Keyword = Word("total");
 
 /// Markers of lines that hold identifiers, never an amount: the fallback
 /// skips a line with one.
-pub(super) const IDENTIFIER_LINE_MARKERS: &[Keyword] =
-    &[IBAN_WORD, Word("α.φ.μ"), Word("αφμ"), Word("mark")];
+const IDENTIFIER_LINE_MARKERS: &[Keyword] = &[IBAN_WORD, Word("α.φ.μ"), Word("αφμ"), Word("mark")];
 
 /// Weights of the fallback, stage 4 of [`find_total_amount`].
 ///
@@ -155,7 +154,7 @@ pub(super) const TOTAL_LABELS: &[Keyword] = &[
 ];
 
 /// Labels of the payment line on a utility bill, for the vote among amounts.
-pub(super) const PAYMENT_LABELS: &[Keyword] = &[
+const PAYMENT_LABELS: &[Keyword] = &[
     Prefix("πληρωμ"),
     Word("τρεχοντος"),
     Word("payable"),
@@ -163,14 +162,14 @@ pub(super) const PAYMENT_LABELS: &[Keyword] = &[
 ];
 
 /// Deposits and guarantees are not the bill total.
-pub(super) const DEPOSIT_LABELS: &[Keyword] = &[Prefix("εγγυηση"), Prefix("deposit")];
+const DEPOSIT_LABELS: &[Keyword] = &[Prefix("εγγυηση"), Prefix("deposit")];
 
 /// Markers of rate, volume, area and energy-mix lines, which hold numbers
 /// that are not the payment total.
 ///
 /// The last four are fragments because they are not words: a multiplication
 /// sign, and an `x` written against a factor under one (`x0,085`).
-pub(super) const RATE_LINE_MARKERS: &[Keyword] = &[
+const RATE_LINE_MARKERS: &[Keyword] = &[
     Unit("kwh"),
     Unit("gwh"),
     Unit("kva"),
@@ -189,7 +188,7 @@ pub(super) const RATE_LINE_MARKERS: &[Keyword] = &[
 ];
 
 /// The heading of a gas volume or calorific table when an `x` follows it.
-pub(super) const CONSUMPTION_LABEL: Keyword = Prefix("καταναλωση");
+const CONSUMPTION_LABEL: Keyword = Prefix("καταναλωση");
 
 /// Stage 1: the amount beside the first label that has one.
 ///
@@ -403,7 +402,7 @@ pub(super) fn is_noise_amount_line(folded_line: &str) -> bool {
 /// the bare word `total`, which the weighted fallback also favours.
 ///
 /// `subtotal` is another word and names no total.
-pub(super) fn names_a_total(folded_line: &str) -> bool {
+fn names_a_total(folded_line: &str) -> bool {
     TOTAL_WORD.occurs_in(folded_line) || contains_any(folded_line, TOTAL_LABELS)
 }
 
@@ -651,5 +650,33 @@ mod tests {
         assert!(is_noise_amount_line(&folded("150kWh 12,40")));
         assert!(is_noise_amount_line(&folded("Εγγύησης 60,00")));
         assert!(is_noise_amount_line(&folded("3 x0,085 = 0,26")));
+    }
+
+    /// Every label and marker constant of this file. A constant added to the
+    /// file has to be added here to be checked.
+    const LABELS: &[(&str, &[Keyword])] = &[
+        ("IBAN_WORD", &[IBAN_WORD]),
+        ("TOTALS_ROW_LABELS", TOTALS_ROW_LABELS),
+        ("VALUE_WORDS", VALUE_WORDS),
+        ("TOTAL_WORD", &[TOTAL_WORD]),
+        ("IDENTIFIER_LINE_MARKERS", IDENTIFIER_LINE_MARKERS),
+        ("TOTAL_LABELS", TOTAL_LABELS),
+        ("PAYMENT_LABELS", PAYMENT_LABELS),
+        ("DEPOSIT_LABELS", DEPOSIT_LABELS),
+        ("RATE_LINE_MARKERS", RATE_LINE_MARKERS),
+        ("CONSUMPTION_LABEL", &[CONSUMPTION_LABEL]),
+    ];
+
+    #[test]
+    fn every_label_and_marker_is_in_folded_form() {
+        for (name, keywords) in LABELS {
+            for keyword in *keywords {
+                assert_eq!(
+                    folded(keyword.text()),
+                    keyword.text(),
+                    "{name}: {keyword:?} can never match folded text"
+                );
+            }
+        }
     }
 }

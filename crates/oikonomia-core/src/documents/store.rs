@@ -54,6 +54,79 @@ pub struct DocumentMeta {
     pub entry_description: String,
 }
 
+/// Validates and stores a document linked to an existing entry of the book
+/// `entity_id`.
+///
+/// The file's name is trimmed and its kind resolved before either is checked
+/// or stored. No analysis runs here: reading a document belongs to the
+/// drop-zone flow.
+///
+/// # Errors
+///
+/// The entry is looked up first, so a missing entry or one in another book
+/// is reported before the file is checked.
+///
+/// - [`Error::NotFound`]: no entry has `entry_id`.
+/// - [`Error::Validation`]: the entry belongs to another book
+///   ([`ValidationError::WrongBook`]); the file is empty, larger than
+///   [`MAX_DOCUMENT_BYTES`](crate::documents::MAX_DOCUMENT_BYTES), has a
+///   blank name or an unsupported type ([`NewDocument::validate`]); or the
+///   book already has a document of that name
+///   ([`ValidationError::NameTaken`]).
+/// - [`Error::VaultCorrupt`]: the entry's stored row cannot be read back.
+/// - [`Error::Database`]: any other database failure.
+pub fn attach_document(
+    conn: &Connection,
+    entity_id: EntityId,
+    entry_id: JournalEntryId,
+    document: &NewDocument<'_>,
+) -> Result<DocumentMeta> {
+    let entry = get_entry(conn, entry_id)?.entry;
+    if entry.entity_id != entity_id {
+        return Err(ValidationError::WrongBook.into());
+    }
+
+    insert_document(conn, &entry, &document.checked()?)
+}
+
+/// Posts a simple entry and stores its document in one transaction.
+///
+/// Any failure rolls the entry back with the document, a duplicate filename
+/// included, so this path never leaves a document without its entry or an
+/// entry without its document.
+///
+/// # Errors
+///
+/// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry).
+/// - [`Error::Validation`] for a file that may not be stored
+///   ([`NewDocument::validate`]) or whose name the book already uses
+///   ([`ValidationError::NameTaken`]).
+/// - [`Error::NotFound`] from [`save_analysis_json`], if the row written a
+///   moment earlier in the same transaction cannot be found.
+/// - [`Error::Database`] when the transaction cannot be opened or committed,
+///   or the document cannot be written.
+pub fn post_simple_entry_with_document(
+    conn: &Connection,
+    input: &PostSimpleEntry,
+    document: &NewDocument<'_>,
+    analysis_json: Option<&str>,
+) -> Result<(PostedEntryView, DocumentMeta)> {
+    let transaction = conn
+        .unchecked_transaction()
+        .database("begin entry post with document")?;
+
+    let view = post_simple_entry_unchecked(&transaction, input)?;
+    let meta = insert_document(&transaction, &view.entry, &document.checked()?)?;
+    if let Some(json) = analysis_json {
+        save_analysis_json(&transaction, meta.id, json)?;
+    }
+
+    transaction
+        .commit()
+        .database("commit entry post with document")?;
+    Ok((view, meta))
+}
+
 /// Stores `document` linked to `entry`, which the caller has read from the
 /// same connection.
 ///
@@ -143,79 +216,6 @@ fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
     } else {
         Error::database("insert document", err)
     }
-}
-
-/// Validates and stores a document linked to an existing entry of the book
-/// `entity_id`.
-///
-/// The file's name is trimmed and its kind resolved before either is checked
-/// or stored. No analysis runs here: reading a document belongs to the
-/// drop-zone flow.
-///
-/// # Errors
-///
-/// The entry is looked up first, so a missing entry or one in another book
-/// is reported before the file is checked.
-///
-/// - [`Error::NotFound`]: no entry has `entry_id`.
-/// - [`Error::Validation`]: the entry belongs to another book
-///   ([`ValidationError::WrongBook`]); the file is empty, larger than
-///   [`MAX_DOCUMENT_BYTES`](crate::documents::MAX_DOCUMENT_BYTES), has a
-///   blank name or an unsupported type ([`NewDocument::validate`]); or the
-///   book already has a document of that name
-///   ([`ValidationError::NameTaken`]).
-/// - [`Error::VaultCorrupt`]: the entry's stored row cannot be read back.
-/// - [`Error::Database`]: any other database failure.
-pub fn attach_document(
-    conn: &Connection,
-    entity_id: EntityId,
-    entry_id: JournalEntryId,
-    document: &NewDocument<'_>,
-) -> Result<DocumentMeta> {
-    let entry = get_entry(conn, entry_id)?.entry;
-    if entry.entity_id != entity_id {
-        return Err(ValidationError::WrongBook.into());
-    }
-
-    insert_document(conn, &entry, &document.checked()?)
-}
-
-/// Posts a simple entry and stores its document in one transaction.
-///
-/// Any failure rolls the entry back with the document, a duplicate filename
-/// included, so this path never leaves a document without its entry or an
-/// entry without its document.
-///
-/// # Errors
-///
-/// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry).
-/// - [`Error::Validation`] for a file that may not be stored
-///   ([`NewDocument::validate`]) or whose name the book already uses
-///   ([`ValidationError::NameTaken`]).
-/// - [`Error::NotFound`] from [`save_analysis_json`], if the row written a
-///   moment earlier in the same transaction cannot be found.
-/// - [`Error::Database`] when the transaction cannot be opened or committed,
-///   or the document cannot be written.
-pub fn post_simple_entry_with_document(
-    conn: &Connection,
-    input: &PostSimpleEntry,
-    document: &NewDocument<'_>,
-    analysis_json: Option<&str>,
-) -> Result<(PostedEntryView, DocumentMeta)> {
-    let transaction = conn
-        .unchecked_transaction()
-        .database("begin entry post with document")?;
-
-    let view = post_simple_entry_unchecked(&transaction, input)?;
-    let meta = insert_document(&transaction, &view.entry, &document.checked()?)?;
-    if let Some(json) = analysis_json {
-        save_analysis_json(&transaction, meta.id, json)?;
-    }
-
-    transaction
-        .commit()
-        .database("commit entry post with document")?;
-    Ok((view, meta))
 }
 
 /// The columns every metadata query selects, in the order
