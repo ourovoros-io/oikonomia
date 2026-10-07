@@ -178,7 +178,9 @@
 //!   code (a unit) and `επι πιστωσει` before one (a stem)
 //!   (`reference_reads_a_supply_label_glued_to_the_code_before_it`,
 //!   `reference.rs`; `sales_invoice_titles_carry_the_customer`,
-//!   `merchant.rs`).
+//!   `merchant.rs`). A MARK label glued to its number is not a label
+//!   either: the number is read only by the later reference steps
+//!   (`a_mark_label_glued_to_its_number_is_not_a_label`, `reference.rs`).
 //! - **Leading zeros in a whole part are accepted beside a decimal mark.**
 //!   `01,50` reads as 1,50, although a bare `08` is not money and `01.234`
 //!   is not a thousands amount

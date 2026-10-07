@@ -354,6 +354,43 @@ mod tests {
     }
 
     #[test]
+    fn reference_reads_a_mark_label_in_either_script_and_any_case() {
+        for label in ["MARK", "Mark", "ΜΑΡΚ", "Μαρκ"] {
+            assert_eq!(
+                reference(&format!("{label} 400001234567890\nInvoice 123456")),
+                Some("400001234567890".into()),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn reference_does_not_take_a_shop_name_for_a_mark_label() {
+        assert_eq!(
+            reference("ΣΟΥΠΕΡ ΜΑΡΚΕΤ ΚΡΗΤΙΚΟΣ\nΤΗΛ 2101234567\nΑρ. παραστατικού 123456"),
+            Some("123456".into())
+        );
+        assert_eq!(
+            reference("Supermarket Athens\nTel 2101234567\nInvoice 123456"),
+            Some("123456".into())
+        );
+    }
+
+    #[test]
+    fn a_mark_label_glued_to_its_number_is_not_a_label() {
+        // The number is still the longest run when nothing is labelled...
+        assert_eq!(
+            reference("MARK400001234567890"),
+            Some("400001234567890".into())
+        );
+        // ...but a labelled invoice number now comes first.
+        assert_eq!(
+            reference("MARK400001234567890\nInvoice 123456"),
+            Some("123456".into())
+        );
+    }
+
+    #[test]
     fn reference_reads_a_number_next_to_an_invoice_label() {
         for label in ["Invoice", "Αρ. παραστατικού", "Αριθμός", "Number", "Ref"]
         {
