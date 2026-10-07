@@ -633,6 +633,18 @@ mod tests {
     }
 
     #[test]
+    fn a_shop_name_that_contains_mark_keeps_its_amount() {
+        assert_eq!(read("Marks & Spencer 8,40 €").amount_minor, Some(840));
+        assert_eq!(read("Supermarkt 12,50 €").amount_minor, Some(1_250));
+        assert_eq!(read("ΣΟΥΠΕΡ ΜΑΡΚΕΤ 12,50 €").amount_minor, Some(1_250));
+        // Hiding the shop's line left the change as the only amount.
+        assert_eq!(
+            read("Supermarket purchase 12,50 €\nChange 7,50").amount_minor,
+            Some(1_250)
+        );
+    }
+
+    #[test]
     fn an_identifier_line_is_still_skipped_by_the_fallback() {
         assert_eq!(read("MARK 12,50 €").amount_minor, None);
         assert_eq!(read("ΜΑΡΚ 12,50 €").amount_minor, None);
@@ -643,6 +655,13 @@ mod tests {
         );
         assert_eq!(read("Α.Φ.Μ.: 12,50 €").amount_minor, None);
         assert_eq!(read("ΑΦΜ 12,50 €").amount_minor, None);
+        for label in ["MARK", "ΜΑΡΚ"] {
+            assert_eq!(
+                read(&format!("Coffee 3,20 €\n{label} 400001234567890 45,00 €")).amount_minor,
+                Some(320),
+                "{label}"
+            );
+        }
     }
 
     #[test]
