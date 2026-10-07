@@ -452,7 +452,7 @@ fn failed_export_leaves_no_temporary_file() {
 
     let err = write_journal_csv_file(conn, entity_id, &dest).expect_err("rename must fail");
 
-    assert!(matches!(err, Error::Io(_)), "got {err:?}");
+    assert!(matches!(err, Error::Io { .. }), "got {err:?}");
     assert!(
         !dir.path().join("journal.csv.tmp").exists(),
         "a failed export must not leave the plaintext journal behind"

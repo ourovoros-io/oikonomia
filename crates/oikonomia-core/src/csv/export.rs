@@ -30,8 +30,9 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::csv::CsvError;
+use crate::db::read_column;
 use crate::domain::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{DatabaseContext, Error, Result, SerializationContext};
 use crate::ledger::get_entity;
 use crate::vault::files::{local_iso_date, replace_private_file};
 
@@ -104,8 +105,9 @@ pub fn default_journal_export_file_name(entity_name: &str) -> String {
 /// # Errors
 ///
 /// - [`Error::NotFound`] when the entity does not exist.
-/// - [`Error::Io`] on database errors.
-/// - [`Error::CsvParse`] when the CSV writer reports an error.
+/// - [`Error::Database`] on database errors.
+/// - [`Error::VaultCorrupt`] for a stored value of the wrong kind.
+/// - [`Error::Serialization`] when the CSV writer reports an error.
 pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<String> {
     let _entity = get_entity(conn, entity_id)?;
     let mut statement = conn
@@ -132,11 +134,11 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read journal for export")?;
 
     let mut rows = statement
         .query([entity_id.0.to_string()])
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read journal for export")?;
 
     let mut csv_bytes = Vec::new();
     {
@@ -152,17 +154,17 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
                 CREDIT_MINOR_COLUMN,
                 "status",
             ])
-            .map_err(|err| Error::CsvParse(err.to_string()))?;
+            .serialization("encode journal CSV")?;
 
-        while let Some(row) = rows.next().map_err(|err| Error::Io(err.to_string()))? {
-            let date: String = row.get(0).map_err(|err| Error::Io(err.to_string()))?;
-            let description: String = row.get(1).map_err(|err| Error::Io(err.to_string()))?;
-            let reference: Option<String> = row.get(2).map_err(|err| Error::Io(err.to_string()))?;
-            let code: String = row.get(3).map_err(|err| Error::Io(err.to_string()))?;
-            let name: String = row.get(4).map_err(|err| Error::Io(err.to_string()))?;
-            let debit: i64 = row.get(5).map_err(|err| Error::Io(err.to_string()))?;
-            let credit: i64 = row.get(6).map_err(|err| Error::Io(err.to_string()))?;
-            let status: String = row.get(7).map_err(|err| Error::Io(err.to_string()))?;
+        while let Some(row) = rows.next().database("read journal for export")? {
+            let date: String = read_column(row, 0)?;
+            let description: String = read_column(row, 1)?;
+            let reference: Option<String> = read_column(row, 2)?;
+            let code: String = read_column(row, 3)?;
+            let name: String = read_column(row, 4)?;
+            let debit: i64 = read_column(row, 5)?;
+            let credit: i64 = read_column(row, 6)?;
+            let status: String = read_column(row, 7)?;
 
             let description = neutralize_formula(&description);
             let reference = neutralize_formula(reference.as_deref().unwrap_or(""));
@@ -179,11 +181,11 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
                     &credit.to_string(),
                     status.as_str(),
                 ])
-                .map_err(|err| Error::CsvParse(err.to_string()))?;
+                .serialization("encode journal CSV")?;
         }
         writer
             .flush()
-            .map_err(|err| Error::CsvParse(err.to_string()))?;
+            .map_err(|err| Error::serialization("encode journal CSV", err))?;
     }
 
     // Every cell came from a `String`, so this cannot fail; the conversion
@@ -244,10 +246,10 @@ pub fn ensure_csv_path(path: PathBuf) -> PathBuf {
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] in every case: the text is empty, the header row or
-/// a record cannot be read, one of the eight columns is missing, a `status`
-/// cell is neither `posted` nor `voided`, or a `debit_minor` or
-/// `credit_minor` cell is not an integer.
+/// [`Error::Csv`] in every case, with the [`CsvError`] that says which: the
+/// text is empty, the header row or a record cannot be read, one of the
+/// eight columns is missing, a `status` cell is neither `posted` nor
+/// `voided`, or a `debit_minor` or `credit_minor` cell is not an integer.
 pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -261,7 +263,9 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
 
     let headers = reader
         .headers()
-        .map_err(|err| Error::CsvParse(err.to_string()))?
+        .map_err(|err| CsvError::Malformed {
+            detail: err.to_string(),
+        })?
         .clone();
     let date_column = require_column(&headers, "date")?;
     let description_column = require_column(&headers, "description")?;
@@ -274,7 +278,9 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
 
     let mut lines = Vec::new();
     for record in reader.records() {
-        let record = record.map_err(|err| Error::CsvParse(err.to_string()))?;
+        let record = record.map_err(|err| CsvError::Malformed {
+            detail: err.to_string(),
+        })?;
         let cell = |column: usize| record.get(column).unwrap_or("");
 
         let reference = restore_formula(cell(reference_column).trim());
@@ -282,7 +288,7 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
             "posted" => JournalCsvStatus::Posted,
             "voided" => JournalCsvStatus::Voided,
             other => {
-                return Err(Error::CsvParse(format!("unknown journal status: {other}")));
+                return Err(CsvError::InvalidStatus(other.to_owned()).into());
             }
         };
         lines.push(JournalCsvLine {
@@ -360,24 +366,25 @@ fn sanitize_file_stem(name: &str) -> String {
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] naming the column when the export has none.
-fn require_column(headers: &StringRecord, name: &str) -> Result<usize> {
+/// [`Error::Csv`] with [`CsvError::MissingColumn`] naming the column when the
+/// export has none.
+fn require_column(headers: &StringRecord, name: &'static str) -> Result<usize> {
     headers
         .iter()
         .position(|header| header.eq_ignore_ascii_case(name))
-        .ok_or_else(|| Error::CsvParse(format!("journal CSV is missing column {name}")))
+        .ok_or(Error::Csv(CsvError::MissingColumn { column: name }))
 }
 
 /// Parses a `debit_minor` or `credit_minor` cell.
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] carrying the cell when it is not an integer that
-/// fits an `i64`.
+/// [`Error::Csv`] with [`CsvError::InvalidInteger`] carrying the cell when it
+/// is not an integer that fits an `i64`.
 fn parse_minor_units(raw: &str) -> Result<i64> {
     raw.trim()
         .parse()
-        .map_err(|_| Error::CsvParse(format!("invalid integer: {raw}")))
+        .map_err(|_| CsvError::InvalidInteger(raw.to_owned()).into())
 }
 
 #[cfg(test)]

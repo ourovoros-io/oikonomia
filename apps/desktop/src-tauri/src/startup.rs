@@ -58,13 +58,42 @@ impl StartupError {
     /// Returns what the user is told went wrong.
     fn problem(&self) -> StartupProblem {
         match self {
-            Self::Vault {
-                source: CoreError::VaultCorrupt(_),
-                ..
-            } => StartupProblem::VaultDamaged,
-            Self::Vault { .. } => StartupProblem::DataFolderUnreadable,
+            Self::Vault { source, .. } => vault_problem(source),
             Self::NoDataDir(_) | Self::Watchdog(_) | Self::Shell(_) => StartupProblem::Other,
         }
+    }
+}
+
+/// Returns what the user is told when opening the vault failed with `source`.
+///
+/// Opening works on the files of the data directory and never opens the
+/// database, so only a corrupt vault and a file failure are expected here.
+/// Every other
+/// variant is listed, without a wildcard arm, so that a new core error has to
+/// be given a sentence here before this compiles.
+fn vault_problem(source: &CoreError) -> StartupProblem {
+    match source {
+        CoreError::VaultCorrupt(_) => StartupProblem::VaultDamaged,
+        CoreError::VaultUninitialized
+        | CoreError::VaultLocked
+        | CoreError::InvalidPassword
+        | CoreError::UnbalancedEntry { .. }
+        | CoreError::TooFewLines
+        | CoreError::InvalidLineAmounts
+        | CoreError::AccountWrongEntity
+        | CoreError::MoneyOverflow
+        | CoreError::NegativeMoney
+        | CoreError::Validation(_)
+        | CoreError::Database { .. }
+        | CoreError::Io { .. }
+        | CoreError::Serialization { .. }
+        | CoreError::Crypto { .. }
+        | CoreError::VaultTooNew { .. }
+        | CoreError::BackupInvalid(_)
+        | CoreError::RestoreWouldOverwrite
+        | CoreError::NotFound(_)
+        | CoreError::Analysis { .. }
+        | CoreError::Csv(_) => StartupProblem::DataFolderUnreadable,
     }
 }
 

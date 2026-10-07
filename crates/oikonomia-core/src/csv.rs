@@ -79,6 +79,7 @@
 //! in-app).
 
 mod amount;
+mod error;
 mod export;
 mod parse;
 mod post;
@@ -86,11 +87,11 @@ mod post;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{AccountId, EntityId};
-use crate::error::Error;
 use crate::ledger::{PostSimpleEntry, PostedEntryView, SimpleEntryKind};
 use crate::ui_text::UiText;
 
 pub use amount::{currency_minor_exponent, parse_signed_minor};
+pub use error::{CsvError, CsvMappingProblem};
 pub use export::{
     JournalCsvLine, JournalCsvStatus, default_journal_export_file_name, ensure_csv_path,
     export_journal_csv, parse_journal_export, write_journal_csv_file,
@@ -101,75 +102,6 @@ pub use post::{post_import_rows, preview_bank_csv, preview_bank_csv_file};
 /// Upper bound on a CSV file read into memory: 8 MiB, the same as
 /// [`crate::documents::MAX_DOCUMENT_BYTES`].
 pub const MAX_CSV_BYTES: u64 = 8 * 1024 * 1024;
-
-/// Parse-shape failures for bank and journal CSV.
-///
-/// The enum is `#[non_exhaustive]`: a variant can be added without breaking
-/// another crate, and in exchange a `match` in another crate needs a
-/// wildcard arm. Inside this crate the attribute has no effect, and the one
-/// `match` over it lists every variant on purpose, so that a new one has to
-/// be given its wording for the UI.
-#[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CsvError {
-    /// File is empty or whitespace only.
-    #[error("CSV is empty")]
-    Empty,
-    /// Bytes were not valid UTF-8.
-    #[error("CSV is not valid UTF-8")]
-    NotUtf8,
-    /// File exceeds [`MAX_CSV_BYTES`].
-    #[error("CSV is larger than 8 MB")]
-    TooLarge,
-    /// First row could not be used as headers.
-    #[error("CSV is missing a header row")]
-    MissingHeader,
-    /// No date-like column.
-    #[error("CSV is missing a date column")]
-    MissingDateColumn,
-    /// No amount, debit, or credit column.
-    #[error("CSV is missing an amount column")]
-    MissingAmountColumn,
-    /// A cell is not a supported date.
-    #[error("invalid date: {0}")]
-    InvalidDate(String),
-    /// A cell is not a supported amount.
-    #[error("invalid amount: {0}")]
-    InvalidAmount(String),
-    /// A type or direction cell is not one the import recognizes.
-    #[error("invalid type: {0}")]
-    InvalidType(String),
-    /// The date cell is empty or only whitespace.
-    #[error("date is missing")]
-    MissingDate,
-    /// The amount cell is empty or only whitespace.
-    #[error("amount is missing")]
-    MissingAmount,
-    /// Magnitude does not fit in `i64`.
-    #[error("amount overflow")]
-    AmountOverflow,
-    /// Parsed amount is zero (simple entries require a positive amount).
-    #[error("amount is zero")]
-    ZeroAmount,
-    /// Caller-supplied column mapping is incomplete or contradictory.
-    #[error("{0}")]
-    InvalidMapping(String),
-}
-
-/// Flattens a CSV failure into the crate error.
-///
-/// [`CsvError::AmountOverflow`] becomes [`Error::MoneyOverflow`], the error
-/// every other amount that does not fit the ledger is reported with. All
-/// other variants become [`Error::CsvParse`] carrying the message; which
-/// variant it was is not recoverable from that.
-impl From<CsvError> for Error {
-    fn from(err: CsvError) -> Self {
-        if matches!(err, CsvError::AmountOverflow) {
-            return Error::MoneyOverflow;
-        }
-        Error::CsvParse(err.to_string())
-    }
-}
 
 /// Role accounts filled into each suggested [`PostSimpleEntry`].
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]

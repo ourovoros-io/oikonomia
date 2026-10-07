@@ -8,7 +8,7 @@
 //! The functions here read and write a single row, so none of them opens a
 //! transaction.
 
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Result, ValidationError, VaultCorruption};
 use rusqlite::{Connection, OptionalExtension};
 
 /// The idle lock timeout, in seconds, of a vault that has stored none: 15
@@ -37,7 +37,7 @@ const KEY_LOCK_TIMEOUT: &str = "lock_timeout_secs";
 ///
 /// - [`Error::VaultCorrupt`] when the stored value is not a whole,
 ///   non-negative number of seconds.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
     let stored: Option<String> = conn
         .query_row(
@@ -46,14 +46,16 @@ pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
             |row| row.get(0),
         )
         .optional()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read lock timeout")?;
 
     let Some(stored) = stored else {
         return Ok(DEFAULT_LOCK_TIMEOUT_SECS);
     };
-    let seconds: u64 = stored
-        .parse()
-        .map_err(|_| Error::VaultCorrupt("invalid lock_timeout_secs".into()))?;
+    let seconds: u64 = stored.parse().map_err(|_| {
+        Error::VaultCorrupt(VaultCorruption::Setting {
+            key: KEY_LOCK_TIMEOUT,
+        })
+    })?;
 
     Ok(seconds.max(MIN_LOCK_TIMEOUT_SECS))
 }
@@ -64,12 +66,13 @@ pub fn get_lock_timeout_secs(conn: &Connection) -> Result<u64> {
 ///
 /// - [`ValidationError::LockTimeoutTooShort`] when `secs` is below the
 ///   minimum (60, `MIN_LOCK_TIMEOUT_SECS`).
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
     if secs < MIN_LOCK_TIMEOUT_SECS {
-        return Err(Error::Validation(ValidationError::LockTimeoutTooShort {
+        return Err(ValidationError::LockTimeoutTooShort {
             min_secs: MIN_LOCK_TIMEOUT_SECS,
-        }));
+        }
+        .into());
     }
 
     conn.execute(
@@ -79,7 +82,7 @@ pub fn set_lock_timeout_secs(conn: &Connection, secs: u64) -> Result<()> {
         ",
         rusqlite::params![KEY_LOCK_TIMEOUT, secs.to_string()],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("write lock timeout")?;
     Ok(())
 }
 

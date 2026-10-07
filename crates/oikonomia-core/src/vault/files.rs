@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 
 use time::OffsetDateTime;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, IoContext, Result};
 use crate::util::format_date;
 use crate::vault::paths::{STAGED_SUFFIX, db_sidecar_paths, with_appended};
 use crate::vault::permissions::create_private_file;
@@ -36,10 +36,10 @@ use crate::vault::permissions::create_private_file;
 /// [`Error::Io`] when `path` has no file name to append to (`..`, `/`).
 pub(crate) fn sibling_path(path: &Path, suffix: &str) -> Result<PathBuf> {
     if path.file_name().is_none() {
-        return Err(Error::Io(format!(
-            "destination has no file name: {}",
-            path.display()
-        )));
+        return Err(Error::io(
+            "name staged file",
+            format_args!("destination has no file name: {}", path.display()),
+        ));
     }
     Ok(with_appended(path, suffix))
 }
@@ -52,9 +52,8 @@ pub(crate) fn sibling_path(path: &Path, suffix: &str) -> Result<PathBuf> {
 /// [`Error::Io`] when the file cannot be created, written or flushed.
 pub(crate) fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = create_private_file(path)?;
-    file.write_all(bytes)
-        .map_err(|err| Error::Io(err.to_string()))?;
-    file.sync_all().map_err(|err| Error::Io(err.to_string()))?;
+    file.write_all(bytes).io("write private file")?;
+    file.sync_all().io("sync private file")?;
     sync_parent_dir(path);
     Ok(())
 }
@@ -85,7 +84,7 @@ pub(crate) fn replace_private_file(dest: &Path, bytes: &[u8]) -> Result<()> {
 ///
 /// [`Error::Io`] when the rename fails, including when `from` does not exist.
 pub(crate) fn rename_synced(from: &Path, to: &Path) -> Result<()> {
-    fs::rename(from, to).map_err(|err| Error::Io(err.to_string()))?;
+    fs::rename(from, to).io("rename file into place")?;
     sync_parent_dir(to);
     Ok(())
 }
@@ -126,11 +125,10 @@ pub(crate) fn remove_file_if_present(path: &Path) -> io::Result<()> {
 /// [`Error::Io`] when `from` exists and cannot be renamed.
 pub(crate) fn rename_if_present(from: &Path, to: &Path) -> Result<()> {
     match fs::rename(from, to) {
-        Err(err) if err.kind() != io::ErrorKind::NotFound => Err(Error::Io(format!(
-            "cannot rename {} to {}: {err}",
-            from.display(),
-            to.display()
-        ))),
+        Err(err) if err.kind() != io::ErrorKind::NotFound => Err(Error::io(
+            "rename vault file",
+            format_args!("{} to {}: {err}", from.display(), to.display()),
+        )),
         Ok(()) | Err(_) => Ok(()),
     }
 }
@@ -142,8 +140,12 @@ pub(crate) fn rename_if_present(from: &Path, to: &Path) -> Result<()> {
 /// [`Error::Io`] naming the first file that exists and cannot be removed.
 pub(crate) fn remove_files_if_present(paths: &[&Path]) -> Result<()> {
     for path in paths {
-        remove_file_if_present(path)
-            .map_err(|err| Error::Io(format!("cannot remove {}: {err}", path.display())))?;
+        remove_file_if_present(path).map_err(|err| {
+            Error::io(
+                "remove vault file",
+                format_args!("{}: {err}", path.display()),
+            )
+        })?;
     }
     Ok(())
 }
@@ -200,7 +202,7 @@ mod tests {
     fn sibling_path_needs_a_file_name() {
         for path in ["..", "/", ""] {
             let err = sibling_path(Path::new(path), ".tmp").expect_err(path);
-            assert!(matches!(err, Error::Io(_)), "{path:?} gave {err:?}");
+            assert!(matches!(err, Error::Io { .. }), "{path:?} gave {err:?}");
         }
     }
 

@@ -18,7 +18,7 @@
 
 use crate::db::{collect_rows, read_column, stored_uuid};
 use crate::domain::{Account, AccountId, AccountType, EntityId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::balance::{account_type_str, parse_account_type};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ pub struct UpdateAccount {
 /// - [`Error::VaultCorrupt`] for a stored account whose id, entity, type or
 ///   parent does not parse. The whole list fails: an account left out would
 ///   be missing from every report built on it.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Account>> {
     let mut stmt = conn
         .prepare(
@@ -81,11 +81,11 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
             ORDER BY sort_order, code
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list accounts")?;
 
     let rows = stmt
         .query_map([entity_id.0.to_string()], |row| Ok(map_account(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list accounts")?;
 
     collect_rows(rows)
 }
@@ -97,7 +97,7 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`Error::VaultCorrupt`] for a stored account whose id, entity, type or
 ///   parent does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
     conn.query_row(
         "
@@ -109,8 +109,8 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
         |row| Ok(map_account(row)),
     )
     .map_err(|err| match err {
-        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("account".into()),
-        other => Error::Io(other.to_string()),
+        rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::Account),
+        other => Error::database("read account", other),
     })?
 }
 
@@ -126,14 +126,15 @@ pub fn get_account(conn: &Connection, id: AccountId) -> Result<Account> {
 ///   account with this code.
 /// - [`Error::VaultCorrupt`] when the account does not parse on being read
 ///   back.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Account> {
     let code = input.code.trim();
     let name = input.name.trim();
     if code.is_empty() || name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
-            field: "code and name",
-        }));
+        return Err(ValidationError::NameRequired {
+            field: NameField::AccountCodeAndName,
+        }
+        .into());
     }
 
     // An archived entity counts as missing here, as it does when an entity
@@ -145,9 +146,9 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
             [input.entity_id.0.to_string()],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("check entity exists")?;
     if exists == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
 
     let id = AccountId::new();
@@ -188,19 +189,20 @@ pub fn create_account(conn: &Connection, input: &CreateAccount) -> Result<Accoun
 /// - [`ValidationError::AccountCodeTaken`] when the entity already has
 ///   another account with this code.
 /// - [`Error::VaultCorrupt`] when the stored account does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Account> {
     let code = input.code.trim();
     let name = input.name.trim();
     if code.is_empty() || name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
-            field: "code and name",
-        }));
+        return Err(ValidationError::NameRequired {
+            field: NameField::AccountCodeAndName,
+        }
+        .into());
     }
 
     let account = get_account(conn, input.id)?;
     if account.is_system && !input.is_active {
-        return Err(Error::Validation(ValidationError::SystemAccountProtected));
+        return Err(ValidationError::SystemAccountProtected.into());
     }
 
     let updated = conn
@@ -221,7 +223,7 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
         .map_err(|err| account_write_error(&err))?;
 
     if updated == 0 {
-        return Err(Error::NotFound("account".into()));
+        return Err(Error::NotFound(Resource::Account));
     }
 
     get_account(conn, input.id)
@@ -238,18 +240,18 @@ pub fn update_account(conn: &Connection, input: &UpdateAccount) -> Result<Accoun
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`ValidationError::SystemAccountProtected`] for a system account.
 /// - [`Error::VaultCorrupt`] when the stored account does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn archive_account(conn: &Connection, id: AccountId) -> Result<()> {
     let account = get_account(conn, id)?;
     if account.is_system {
-        return Err(Error::Validation(ValidationError::SystemAccountProtected));
+        return Err(ValidationError::SystemAccountProtected.into());
     }
 
     conn.execute(
         "UPDATE accounts SET is_active = 0 WHERE id = ?1",
         [id.0.to_string()],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("archive account")?;
     Ok(())
 }
 
@@ -270,9 +272,9 @@ fn account_write_error(err: &rusqlite::Error) -> Error {
         rusqlite::Error::SqliteFailure(failure, _)
             if failure.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
         {
-            Error::Validation(ValidationError::AccountCodeTaken)
+            ValidationError::AccountCodeTaken.into()
         }
-        other => Error::Io(other.to_string()),
+        other => Error::database("write account", other),
     }
 }
 
@@ -312,6 +314,7 @@ fn map_account(row: &rusqlite::Row<'_>) -> Result<Account> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::VaultCorruption;
     use crate::util::parse_uuid;
 
     const ENTITY: &str = "11111111-1111-4111-8111-111111111111";
@@ -433,10 +436,16 @@ mod tests {
         .expect("create triggers");
 
         let created = create_account(&conn, &new_account("2000"));
-        assert!(matches!(created, Err(Error::Io(_))), "{created:?}");
+        assert!(
+            matches!(created, Err(Error::Database { .. })),
+            "{created:?}"
+        );
 
         let updated = update_account(&conn, &renumbered(&existing, "3000"));
-        assert!(matches!(updated, Err(Error::Io(_))), "{updated:?}");
+        assert!(
+            matches!(updated, Err(Error::Database { .. })),
+            "{updated:?}"
+        );
     }
 
     #[test]
@@ -491,7 +500,11 @@ mod tests {
             let err = list_accounts(&conn, entity()).expect_err("a corrupt row is refused");
 
             assert!(
-                matches!(&err, Error::VaultCorrupt(detail) if detail.starts_with(column)),
+                matches!(
+                    &err,
+                    Error::VaultCorrupt(VaultCorruption::Column { column: named, .. })
+                        if named == column
+                ),
                 "row ({id}, {account_type}, {parent:?}): {err:?}"
             );
         }

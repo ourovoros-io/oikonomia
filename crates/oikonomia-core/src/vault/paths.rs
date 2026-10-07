@@ -42,13 +42,21 @@ pub(crate) const STAGED_SUFFIX: &str = ".tmp";
 pub fn default_data_dir() -> Result<PathBuf> {
     directories::ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .map(|dirs| dirs.data_local_dir().to_path_buf())
-        .ok_or_else(|| Error::Io("could not resolve application data directory".into()))
+        .ok_or_else(|| {
+            Error::io(
+                "resolve application data directory",
+                "the operating system names no home directory",
+            )
+        })
 }
+
+/// The file name of the encrypted `SQLCipher` database in the data directory.
+pub(crate) const DB_FILE_NAME: &str = "vault.db";
 
 /// Returns the path of the encrypted `SQLCipher` database, `vault.db`.
 #[must_use]
 pub fn vault_db_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("vault.db")
+    data_dir.join(DB_FILE_NAME)
 }
 
 /// Returns the path of the public vault header, `vault.header.json`.

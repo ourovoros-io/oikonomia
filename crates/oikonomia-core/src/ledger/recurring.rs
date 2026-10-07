@@ -29,7 +29,7 @@
 
 use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_uuid};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::journals::{
     PostSimpleEntry, PostedEntryView, SimpleBillStatus, SimpleEntryKind, ensure_simple_entry_roles,
     post_simple_entry_unchecked,
@@ -192,7 +192,7 @@ pub struct RecurringPostResult {
 /// # Errors
 ///
 /// [`Error::NotFound`] for an unknown entity; [`Error::VaultCorrupt`] for a
-/// stored template that does not parse; database errors as [`Error::Io`].
+/// stored template that does not parse; database errors as [`Error::Database`].
 pub fn list_recurring_templates(
     conn: &Connection,
     entity_id: EntityId,
@@ -224,11 +224,11 @@ pub fn list_recurring_templates_as_of(
             ORDER BY next_date ASC, fold(name), name
             ",
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list recurring templates")?;
 
     let rows = stmt
         .query_map([entity_id.0.to_string()], |row| Ok(map_template_row(row)))
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("list recurring templates")?;
 
     Ok(collect_rows(rows)?
         .into_iter()
@@ -243,7 +243,7 @@ pub fn list_recurring_templates_as_of(
 ///
 /// - [`Error::NotFound`] for an unknown template.
 /// - [`Error::VaultCorrupt`] for a stored template that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn get_recurring_template(
     conn: &Connection,
     id: RecurringTemplateId,
@@ -280,7 +280,7 @@ pub(super) fn get_recurring_template_as_of(
 ///   [`post_simple_entry`](crate::ledger::post_simple_entry): a role that is
 ///   empty or holds an account of the wrong type, entity or state.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn create_recurring_template(
     conn: &Connection,
     input: &CreateRecurringTemplate,
@@ -315,7 +315,7 @@ pub fn create_recurring_template(
             now_utc_string(),
         ],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("insert recurring template")?;
 
     get_recurring_template(conn, id)
 }
@@ -369,10 +369,10 @@ pub fn update_recurring_template(
                 input.id.0.to_string(),
             ],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("update recurring template")?;
 
     if updated == 0 {
-        return Err(Error::NotFound("recurring template".into()));
+        return Err(Error::NotFound(Resource::RecurringTemplate));
     }
 
     get_recurring_template(conn, input.id)
@@ -383,16 +383,16 @@ pub fn update_recurring_template(
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown template.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> Result<()> {
     let deleted = conn
         .execute(
             "DELETE FROM recurring_templates WHERE id = ?1",
             [id.0.to_string()],
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("delete recurring template")?;
     if deleted == 0 {
-        return Err(Error::NotFound("recurring template".into()));
+        return Err(Error::NotFound(Resource::RecurringTemplate));
     }
     Ok(())
 }
@@ -418,7 +418,7 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 ///   since the template was saved.
 /// - The errors of [`advance_next_date`].
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 ///
 /// On an error before the commit neither the entry nor the new date is
 /// stored. The template is read back after the commit to build the result;
@@ -431,12 +431,12 @@ pub fn post_recurring_template(
 ) -> Result<RecurringPostResult> {
     let tx = conn
         .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("begin recurring template post")?;
 
     let stored = load_template(&tx, id)?;
     let post_amount = match amount_minor {
         Some(minor) if minor <= 0 => {
-            return Err(Error::Validation(ValidationError::AmountNotPositive));
+            return Err(ValidationError::AmountNotPositive.into());
         }
         Some(minor) => minor,
         None => stored.amount_minor,
@@ -468,9 +468,9 @@ pub fn post_recurring_template(
         "UPDATE recurring_templates SET next_date = ?1 WHERE id = ?2",
         rusqlite::params![format_date(advanced), id.0.to_string()],
     )
-    .map_err(|err| Error::Io(err.to_string()))?;
+    .database("advance recurring template")?;
 
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
+    tx.commit().database("commit recurring template post")?;
 
     let template = get_recurring_template(conn, id)?;
     Ok(RecurringPostResult { entry, template })
@@ -493,7 +493,7 @@ pub fn advance_next_date(
     match cadence {
         RecurringCadence::Weekly => from
             .checked_add(Duration::days(7))
-            .ok_or(Error::Validation(ValidationError::DateOutOfRange)),
+            .ok_or(ValidationError::DateOutOfRange.into()),
         RecurringCadence::Yearly => add_calendar_years(from, 1),
         RecurringCadence::Monthly => {
             let day = require_day_of_month(day_of_month)?;
@@ -537,7 +537,7 @@ fn next_monthly(from: Date, day_of_month: u8) -> Result<Date> {
 ///
 /// [`ValidationError::DateOutOfRange`] when the year does not fit in `i32`.
 fn add_months(year: i32, month: Month, delta: i32) -> Result<(i32, Month)> {
-    let out_of_range = || Error::Validation(ValidationError::DateOutOfRange);
+    let out_of_range = || Error::from(ValidationError::DateOutOfRange);
 
     // Months counted from January of year zero, so that adding `delta` and
     // splitting again carries into the year in both directions.
@@ -567,7 +567,7 @@ fn add_calendar_years(from: Date, years: i32) -> Result<Date> {
     let year = from
         .year()
         .checked_add(years)
-        .ok_or(Error::Validation(ValidationError::DateOutOfRange))?;
+        .ok_or(ValidationError::DateOutOfRange)?;
     place_day_or_next(year, from.month(), from.day())
 }
 
@@ -581,11 +581,11 @@ fn place_day_or_next(year: i32, month: Month, day: u8) -> Result<Date> {
     if let Ok(date) = Date::from_calendar_date(year, month, day) {
         return Ok(date);
     }
-    let first = Date::from_calendar_date(year, month, 1)
-        .map_err(|_| Error::Validation(ValidationError::DateOutOfRange))?;
+    let first =
+        Date::from_calendar_date(year, month, 1).map_err(|_| ValidationError::DateOutOfRange)?;
     first
         .checked_add(Duration::days(i64::from(day) - 1))
-        .ok_or(Error::Validation(ValidationError::DateOutOfRange))
+        .ok_or(ValidationError::DateOutOfRange.into())
 }
 
 /// A template as stored: every column of `recurring_templates` but
@@ -774,19 +774,20 @@ fn validated_fields(
 
     let name = input.name.trim();
     if name.is_empty() {
-        return Err(Error::Validation(ValidationError::NameRequired {
-            field: "template name",
-        }));
+        return Err(ValidationError::NameRequired {
+            field: NameField::TemplateName,
+        }
+        .into());
     }
     if input.amount_minor <= 0 {
-        return Err(Error::Validation(ValidationError::AmountNotPositive));
+        return Err(ValidationError::AmountNotPositive.into());
     }
 
     let day_of_month = match input.cadence {
         RecurringCadence::Monthly => Some(require_day_of_month(input.day_of_month)?),
         RecurringCadence::Weekly | RecurringCadence::Yearly => {
             if input.day_of_month.is_some() {
-                return Err(Error::Validation(ValidationError::DayOfMonthInvalid));
+                return Err(ValidationError::DayOfMonthInvalid.into());
             }
             None
         }
@@ -844,9 +845,9 @@ fn validated_fields(
 /// [`ValidationError::DayOfMonthInvalid`] when `day` is `None` or outside
 /// 1–31.
 fn require_day_of_month(day: Option<u8>) -> Result<u8> {
-    let day = day.ok_or(Error::Validation(ValidationError::DayOfMonthInvalid))?;
+    let day = day.ok_or(ValidationError::DayOfMonthInvalid)?;
     if !(1..=31).contains(&day) {
-        return Err(Error::Validation(ValidationError::DayOfMonthInvalid));
+        return Err(ValidationError::DayOfMonthInvalid.into());
     }
     Ok(day)
 }
@@ -860,7 +861,7 @@ fn require_day_of_month(day: Option<u8>) -> Result<u8> {
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entity.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn ensure_entity_exists(conn: &Connection, entity_id: EntityId) -> Result<()> {
     let exists: i64 = conn
         .query_row(
@@ -868,9 +869,9 @@ fn ensure_entity_exists(conn: &Connection, entity_id: EntityId) -> Result<()> {
             [entity_id.0.to_string()],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("check entity exists")?;
     if exists == 0 {
-        return Err(Error::NotFound("entity".into()));
+        return Err(Error::NotFound(Resource::Entity));
     }
     Ok(())
 }
@@ -881,7 +882,7 @@ fn ensure_entity_exists(conn: &Connection, entity_id: EntityId) -> Result<()> {
 ///
 /// - [`Error::NotFound`] for an unknown template.
 /// - [`Error::VaultCorrupt`] for a stored template that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTemplate> {
     conn.query_row(
         "
@@ -895,8 +896,8 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
         |row| Ok(map_template_row(row)),
     )
     .map_err(|err| match err {
-        rusqlite::Error::QueryReturnedNoRows => Error::NotFound("recurring template".into()),
-        other => Error::Io(other.to_string()),
+        rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::RecurringTemplate),
+        other => Error::database("read recurring template", other),
     })?
 }
 

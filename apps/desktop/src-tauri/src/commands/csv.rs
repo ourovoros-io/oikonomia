@@ -33,8 +33,9 @@ use tauri::State;
 ///
 /// Returns `path_not_granted` for a path the user never handed over;
 /// `save_location_invalid` when the dialog's answer is not a path; `io` when
-/// the file cannot be read; `csv_parse` when it is over the size limit, not
-/// UTF-8, empty, or has no usable date and amount columns; `not_found` when
+/// the file cannot be read; one of the `csv_` codes when it is over the size
+/// limit, not UTF-8, empty, malformed, or has no usable date and amount
+/// columns, or when the column mapping is refused; `not_found` when
 /// the entity or a role's account does not exist; `account_wrong_entity`
 /// when an account belongs to another entity; and the
 /// [common vault errors](crate::commands#common-vault-errors).
@@ -101,8 +102,8 @@ pub(crate) async fn csv_import_post(
 ///
 /// # Errors
 ///
-/// Returns `not_found` when the entity does not exist, `csv_parse` when the
-/// CSV cannot be produced, `save_location_invalid` when the dialog's answer
+/// Returns `not_found` when the entity does not exist, `serialization` when
+/// the CSV cannot be produced, `save_location_invalid` when the dialog's answer
 /// is not a path, `save_failed` when the file cannot be written, and the
 /// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]

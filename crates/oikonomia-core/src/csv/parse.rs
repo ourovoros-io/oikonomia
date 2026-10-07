@@ -74,8 +74,10 @@ use csv::{ReaderBuilder, StringRecord, Trim};
 use time::{Date, Month};
 
 use crate::csv::amount::parse_signed_minor;
-use crate::csv::{CsvColumnMapping, CsvError, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow};
-use crate::error::Error;
+use crate::csv::{
+    CsvColumnMapping, CsvError, CsvMappingProblem, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow,
+};
+use crate::error::{Error, IoContext};
 use crate::ledger::SimpleEntryKind;
 use crate::ui_text::{UiText, UiTextCode};
 use crate::util::format_date;
@@ -102,17 +104,21 @@ pub struct ParsedBankCsv {
 ///
 /// - [`Error::Io`] when `path` cannot be inspected or read, or is not a
 ///   regular file.
-/// - [`Error::CsvParse`] when the file is larger than [`MAX_CSV_BYTES`] or is
-///   not valid UTF-8.
+/// - [`Error::Csv`] with [`CsvError::TooLarge`] when the file is larger than
+///   [`MAX_CSV_BYTES`], or with [`CsvError::NotUtf8`] when it is not valid
+///   UTF-8.
 pub fn read_csv_text(path: &Path) -> crate::error::Result<String> {
-    let metadata = fs::metadata(path).map_err(|err| Error::Io(err.to_string()))?;
+    let metadata = fs::metadata(path).io("inspect CSV file")?;
     if !metadata.is_file() {
-        return Err(Error::Io(format!("not a file: {}", path.display())));
+        return Err(Error::io(
+            "read CSV file",
+            format_args!("not a regular file: {}", path.display()),
+        ));
     }
     if metadata.len() > MAX_CSV_BYTES {
         return Err(CsvError::TooLarge.into());
     }
-    let bytes = fs::read(path).map_err(|err| Error::Io(err.to_string()))?;
+    let bytes = fs::read(path).io("read CSV file")?;
     let text = String::from_utf8(bytes).map_err(|_| CsvError::NotUtf8)?;
     Ok(text.trim_start_matches('\u{feff}').to_owned())
 }
@@ -160,7 +166,7 @@ pub fn parse_csv_date(raw: &str) -> CsvResult<String> {
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] for a problem with the file as a whole: the text is
+/// [`Error::Csv`] for a problem with the file as a whole: the text is
 /// empty, the header row cannot be read or has no name in it, no date
 /// column or no amount, debit or credit column is detected, or `mapping`
 /// is incomplete, contradictory or names a header the file does not have.
@@ -186,7 +192,9 @@ pub fn parse_bank_csv(
 
     let headers = reader
         .headers()
-        .map_err(|err| Error::CsvParse(err.to_string()))?
+        .map_err(|err| CsvError::Malformed {
+            detail: err.to_string(),
+        })?
         .clone();
     if headers.is_empty() || headers.iter().all(str::is_empty) {
         return Err(CsvError::MissingHeader.into());
@@ -355,7 +363,7 @@ fn auto_map_headers(headers: &StringRecord) -> ColumnMap {
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] from [`CsvError::MissingDateColumn`] or, when none
+/// [`Error::Csv`] with [`CsvError::MissingDateColumn`] or, when none
 /// of amount, debit and credit was found, [`CsvError::MissingAmountColumn`].
 fn require_auto_map(map: ColumnMap) -> crate::error::Result<ColumnMap> {
     if map.date.is_none() {
@@ -401,14 +409,18 @@ fn header_index(headers: &StringRecord, name: &str) -> CsvResult<usize> {
     headers
         .iter()
         .position(|header| header.eq_ignore_ascii_case(needle))
-        .ok_or_else(|| CsvError::InvalidMapping(format!("CSV has no column named '{name}'")))
+        .ok_or_else(|| {
+            CsvError::InvalidMapping(CsvMappingProblem::UnknownColumn {
+                name: name.to_owned(),
+            })
+        })
 }
 
 /// Resolves an explicit mapping to cell indexes.
 ///
 /// # Errors
 ///
-/// [`Error::CsvParse`] from [`CsvError::InvalidMapping`] when the mapping
+/// [`Error::Csv`] with [`CsvError::InvalidMapping`] when the mapping
 /// has no date or no description, sets both an amount and a debit or credit
 /// column, sets neither an amount nor both of debit and credit, or names a
 /// header the file does not have.
@@ -417,12 +429,10 @@ fn resolve_user_mapping(
     mapping: &CsvColumnMapping,
 ) -> crate::error::Result<ColumnMap> {
     let Some(date) = trimmed_nonempty(mapping.date.as_deref()) else {
-        return Err(CsvError::InvalidMapping("CSV mapping is missing a date column".into()).into());
+        return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingDate).into());
     };
     let Some(description) = trimmed_nonempty(mapping.description.as_deref()) else {
-        return Err(
-            CsvError::InvalidMapping("CSV mapping is missing a description column".into()).into(),
-        );
+        return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingDescription).into());
     };
     let amount = trimmed_nonempty(mapping.amount.as_deref());
     let debit = trimmed_nonempty(mapping.debit.as_deref());
@@ -433,16 +443,10 @@ fn resolve_user_mapping(
     let has_amount = amount.is_some();
     let has_debit_or_credit = debit.is_some() || credit.is_some();
     if has_amount && has_debit_or_credit {
-        return Err(CsvError::InvalidMapping(
-            "CSV mapping cannot set both amount and debit/credit".into(),
-        )
-        .into());
+        return Err(CsvError::InvalidMapping(CsvMappingProblem::AmountAndDebitOrCredit).into());
     }
     if !has_amount && (debit.is_none() || credit.is_none()) {
-        return Err(CsvError::InvalidMapping(
-            "CSV mapping is missing an amount column (provide amount, or debit and credit)".into(),
-        )
-        .into());
+        return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingAmount).into());
     }
 
     let optional_index =
@@ -566,9 +570,13 @@ fn row_problem(source_row: u32, err: &CsvError) -> UiText {
         CsvError::Empty
         | CsvError::NotUtf8
         | CsvError::TooLarge
+        | CsvError::Malformed { .. }
         | CsvError::MissingHeader
         | CsvError::MissingDateColumn
         | CsvError::MissingAmountColumn
+        | CsvError::MissingColumn { .. }
+        | CsvError::InvalidStatus(_)
+        | CsvError::InvalidInteger(_)
         | CsvError::InvalidMapping(_) => {
             log::warn!("CSV record {source_row} could not be read: {err}");
             UiText::new(UiTextCode::CsvUnreadableRow)
@@ -720,6 +728,18 @@ fn record_cell(record: &StringRecord, index: usize) -> &str {
 #[expect(clippy::panic, reason = "tests fail loudly by design")]
 mod tests {
     use super::*;
+
+    /// The error a mapping with `problem` is refused with.
+    fn invalid_mapping(problem: CsvMappingProblem) -> Error {
+        Error::Csv(CsvError::InvalidMapping(problem))
+    }
+
+    /// The problem of a mapping that names a header the file does not have.
+    fn unknown_column(name: &str) -> CsvMappingProblem {
+        CsvMappingProblem::UnknownColumn {
+            name: name.to_owned(),
+        }
+    }
 
     fn parse_rows(text: &str) -> Vec<CsvRowOutcome> {
         parse_bank_csv(text, 2, None).expect("parse csv").rows
@@ -896,9 +916,9 @@ mod tests {
     #[test]
     fn missing_columns_are_file_errors() {
         let err = parse_bank_csv("Name,Memo\nfoo,bar\n", 2, None).expect_err("headers");
-        assert!(matches!(err, Error::CsvParse(_)));
+        assert_eq!(err, Error::Csv(CsvError::MissingDateColumn));
         let err = parse_bank_csv("", 2, None).expect_err("empty");
-        assert!(matches!(err, Error::CsvParse(_)));
+        assert_eq!(err, Error::Csv(CsvError::Empty));
     }
 
     #[test]
@@ -1103,10 +1123,7 @@ mod tests {
             ..column_mapping("Date", "Payee", Some("Amount"), None, None)
         };
         let err = parse_bank_csv(UNSIGNED_WITH_TYPE, 2, Some(&mapping)).expect_err("unknown");
-        assert!(
-            matches!(err, Error::CsvParse(ref message) if message.contains("Nope")),
-            "{err}"
-        );
+        assert_eq!(err, invalid_mapping(unknown_column("Nope")));
     }
 
     #[test]
@@ -1127,10 +1144,7 @@ mod tests {
             ..CsvColumnMapping::default()
         };
         let err = parse_bank_csv(csv, 2, Some(&missing_date)).expect_err("date");
-        assert!(
-            matches!(err, Error::CsvParse(ref m) if m.contains("date")),
-            "{err}"
-        );
+        assert_eq!(err, invalid_mapping(CsvMappingProblem::MissingDate));
 
         let missing_desc = CsvColumnMapping {
             date: Some("Date".into()),
@@ -1138,17 +1152,11 @@ mod tests {
             ..CsvColumnMapping::default()
         };
         let err = parse_bank_csv(csv, 2, Some(&missing_desc)).expect_err("desc");
-        assert!(
-            matches!(err, Error::CsvParse(ref m) if m.contains("description")),
-            "{err}"
-        );
+        assert_eq!(err, invalid_mapping(CsvMappingProblem::MissingDescription));
 
         let missing_amount = column_mapping("Date", "Description", None, None, None);
         let err = parse_bank_csv(csv, 2, Some(&missing_amount)).expect_err("amount");
-        assert!(
-            matches!(err, Error::CsvParse(ref m) if m.contains("amount")),
-            "{err}"
-        );
+        assert_eq!(err, invalid_mapping(CsvMappingProblem::MissingAmount));
 
         let both = column_mapping(
             "Date",
@@ -1158,16 +1166,13 @@ mod tests {
             Some("Credit"),
         );
         let err = parse_bank_csv(csv, 2, Some(&both)).expect_err("both");
-        assert!(
-            matches!(err, Error::CsvParse(ref m) if m.contains("both")),
-            "{err}"
+        assert_eq!(
+            err,
+            invalid_mapping(CsvMappingProblem::AmountAndDebitOrCredit)
         );
 
         let unknown = column_mapping("Date", "Nope", Some("Amount"), None, None);
         let err = parse_bank_csv(csv, 2, Some(&unknown)).expect_err("unknown");
-        assert!(
-            matches!(err, Error::CsvParse(ref m) if m.contains("Nope")),
-            "{err}"
-        );
+        assert_eq!(err, invalid_mapping(unknown_column("Nope")));
     }
 }

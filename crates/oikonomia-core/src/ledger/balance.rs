@@ -29,7 +29,7 @@
 
 use crate::db::corrupt_column;
 use crate::domain::{AccountId, AccountType, EntityId};
-use crate::error::{Error, Result};
+use crate::error::{DatabaseContext, Error, Result};
 use crate::ledger::accounts::get_account;
 use crate::util::{format_date, parse_date};
 use rusqlite::Connection;
@@ -132,7 +132,7 @@ pub fn account_balance(conn: &Connection, account_id: AccountId, as_of: &str) ->
 ///
 /// # Errors
 ///
-/// [`Error::Io`] when the query fails, which includes a debit or credit total
+/// [`Error::Database`] when the query fails, which includes a debit or credit total
 /// that overflows `i64` inside `SQLite`'s `SUM`.
 pub fn account_balance_as_of(
     conn: &Connection,
@@ -158,7 +158,7 @@ pub fn account_balance_as_of(
             rusqlite::params![account_id.0.to_string(), format_date(as_of)],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("sum account balance")?;
 
     normal_balance(account_type, debits, credits)
 }
@@ -174,7 +174,7 @@ pub fn account_balance_as_of(
 ///
 /// - [`Error::MoneyOverflow`] when the total over the types does not fit in
 ///   `i64`.
-/// - [`Error::Io`] when a query fails, which includes a total of one type that
+/// - [`Error::Database`] when a query fails, which includes a total of one type that
 ///   overflows `i64` inside `SQLite`'s `SUM`.
 pub(crate) fn sum_types_as_of(
     conn: &Connection,
@@ -209,7 +209,7 @@ pub(crate) fn sum_types_as_of(
                 ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .database("sum balances by account type")?;
 
         total = add_minor(total, normal_balance(*account_type, debits, credits)?)?;
     }
@@ -227,7 +227,7 @@ pub(crate) fn sum_types_as_of(
 ///
 /// - [`Error::MoneyOverflow`] when the total over the types does not fit in
 ///   `i64`.
-/// - [`Error::Io`] when a query fails, which includes a total of one type that
+/// - [`Error::Database`] when a query fails, which includes a total of one type that
 ///   overflows `i64` inside `SQLite`'s `SUM`.
 pub(crate) fn sum_types_in_range(
     conn: &Connection,
@@ -265,7 +265,7 @@ pub(crate) fn sum_types_in_range(
                 ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
-            .map_err(|err| Error::Io(err.to_string()))?;
+            .database("sum activity by account type")?;
 
         total = add_minor(total, normal_balance(*account_type, debits, credits)?)?;
     }

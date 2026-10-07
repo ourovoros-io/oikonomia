@@ -4,7 +4,7 @@ mod common;
 
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
-use oikonomia_core::error::Error;
+use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
     CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
 };
@@ -167,7 +167,10 @@ fn v5_migrate_aborts_on_xor_violating_v4_rows() {
 
     let err = migrate(conn).expect_err("xor rows must abort");
     assert!(
-        matches!(err, Error::VaultCorrupt(ref msg) if msg.contains("1 journal line")),
+        matches!(
+            err,
+            Error::VaultCorrupt(VaultCorruption::InvalidJournalLines { count: 1 })
+        ),
         "{err:?}"
     );
 }

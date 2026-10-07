@@ -47,7 +47,7 @@
 
 use crate::db::{collect_rows, corrupt_column, read_column};
 use crate::domain::{AccountType, Entity, EntityId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_type_str, add_minor, normal_balance, parse_account_type,
     subtract_minor, sum_minor, sum_types_as_of, sum_types_in_range,
@@ -232,7 +232,7 @@ pub struct TopExpense {
 /// [`Error::Validation`] for a malformed date;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
-/// that does not parse; database errors as [`Error::Io`].
+/// that does not parse; database errors as [`Error::Database`].
 pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<TrialBalance> {
     let as_of = parse_date(as_of)?;
     // An archived entity is found too; its reports stay readable.
@@ -285,7 +285,7 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
 /// [`Error::Validation`] for a malformed date or an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
-/// that does not parse; database errors as [`Error::Io`].
+/// that does not parse; database errors as [`Error::Database`].
 pub fn profit_and_loss(
     conn: &Connection,
     entity_id: EntityId,
@@ -306,7 +306,7 @@ pub fn profit_and_loss(
 /// [`Error::Validation`] for a malformed date or an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
-/// that does not parse; database errors as [`Error::Io`].
+/// that does not parse; database errors as [`Error::Database`].
 pub fn profit_and_loss_export(
     conn: &Connection,
     entity_id: EntityId,
@@ -327,7 +327,7 @@ pub fn profit_and_loss_export(
 /// [`Error::Validation`] for a malformed date;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
-/// that does not parse; database errors as [`Error::Io`].
+/// that does not parse; database errors as [`Error::Database`].
 pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<BalanceSheet> {
     let as_of = parse_date(as_of)?;
     // An archived entity is found too; its reports stay readable.
@@ -385,7 +385,7 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
 /// [`Error::Validation`] for a malformed date or an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
-/// that does not parse; database errors as [`Error::Io`].
+/// that does not parse; database errors as [`Error::Database`].
 pub fn dashboard_summary(
     conn: &Connection,
     entity_id: EntityId,
@@ -399,7 +399,7 @@ pub fn dashboard_summary(
     let to = parse_date(to)?;
     let assets_as_of = parse_date(assets_as_of)?;
     if from > to {
-        return Err(Error::Validation(ValidationError::DateRangeInverted));
+        return Err(ValidationError::DateRangeInverted.into());
     }
 
     let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], assets_as_of)?;
@@ -418,7 +418,7 @@ pub fn dashboard_summary(
             rusqlite::params![entity_id.0.to_string(), format_date(from), format_date(to)],
             |row| row.get(0),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("count entries in period")?;
 
     let net_income = subtract_minor(income, expenses)?;
     let net_vs_previous_bps = match previous_window(from, to) {
@@ -495,7 +495,7 @@ fn profit_and_loss_filtered(
     let from = parse_date(from)?;
     let to = parse_date(to)?;
     if from > to {
-        return Err(Error::Validation(ValidationError::DateRangeInverted));
+        return Err(ValidationError::DateRangeInverted.into());
     }
     // Only checks that the entity exists; an archived one passes.
     get_entity(conn, entity_id)?;
@@ -611,7 +611,7 @@ fn ratio_bps(numerator: i64, denominator: i64) -> Option<i64> {
 /// - [`Error::VaultCorrupt`] for a stored account type that does not parse,
 ///   or a column of the wrong storage class.
 /// - [`Error::MoneyOverflow`] when a balance does not fit in `i64`.
-/// - [`Error::Io`] on database errors, which include a total that overflows
+/// - [`Error::Database`] on database errors, which include a total that overflows
 ///   `i64` inside `SQLite`'s `SUM`.
 #[expect(
     clippy::too_many_arguments,
@@ -654,9 +654,7 @@ fn account_activity_lines(
         "
     );
 
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|err| Error::Io(err.to_string()))?;
+    let mut stmt = conn.prepare(&sql).database("read account activity")?;
 
     let rows = stmt
         .query_map(
@@ -668,7 +666,7 @@ fn account_activity_lines(
             ],
             |row| Ok(map_report_line(row)),
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read account activity")?;
 
     collect_rows(rows)
 }
@@ -758,7 +756,7 @@ struct UnclosedPnl {
 /// # Errors
 ///
 /// - [`Error::MoneyOverflow`] when a net does not fit in `i64`.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn unclosed_pnl(
     conn: &Connection,
     entity_id: EntityId,
@@ -790,7 +788,7 @@ fn unclosed_pnl(
 /// # Errors
 ///
 /// - [`Error::MoneyOverflow`] when the difference does not fit in `i64`.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn net_in_range(conn: &Connection, entity_id: EntityId, from: Date, to: Date) -> Result<i64> {
     let income = sum_types_in_range(conn, entity_id, &[AccountType::Income], from, to)?;
     let expenses = sum_types_in_range(conn, entity_id, &[AccountType::Expense], from, to)?;

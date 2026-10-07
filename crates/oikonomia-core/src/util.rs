@@ -47,9 +47,10 @@ use uuid::Uuid;
 /// application, never typed by the user, so a bad one is a caller bug.
 pub fn parse_uuid(text: &str) -> Result<Uuid> {
     Uuid::parse_str(text).map_err(|_| {
-        Error::Validation(ValidationError::Internal {
+        ValidationError::Internal {
             detail: format!("invalid id: {text}"),
-        })
+        }
+        .into()
     })
 }
 
@@ -141,9 +142,10 @@ fn decimal_value(digits: &[u8]) -> Option<u16> {
 
 /// Returns the error for `text` that is not a `YYYY-MM-DD` calendar date.
 fn invalid_date(text: &str) -> Error {
-    Error::Validation(ValidationError::InvalidDate {
+    ValidationError::InvalidDate {
         value: text.to_owned(),
-    })
+    }
+    .into()
 }
 
 /// Serializes a [`time::Date`] field as a `YYYY-MM-DD` string, for use with

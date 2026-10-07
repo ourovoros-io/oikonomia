@@ -8,8 +8,9 @@ mod common;
 
 use std::fmt::Debug;
 
+use oikonomia_core::csv::export_journal_csv;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
-use oikonomia_core::error::Error;
+use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
     CreateRecurringTemplate, EntryFilter, RecurringCadence, SimpleEntryKind, account_register,
     activity_window, balance_sheet, cash_flow_series, create_recurring_template, get_entity,
@@ -80,7 +81,10 @@ fn damage(conn: &Connection, sql: &str) {
 fn assert_corrupt<T: Debug>(result: Result<T, Error>, column: &str) {
     let err = result.expect_err("a damaged row must be refused");
     assert!(
-        matches!(&err, Error::VaultCorrupt(detail) if detail.starts_with(column)),
+        matches!(
+            &err,
+            Error::VaultCorrupt(VaultCorruption::Column { column: named, .. }) if named == column
+        ),
         "expected a corrupt-vault error naming {column}, got: {err:?}"
     );
 }
@@ -241,4 +245,15 @@ fn a_sound_book_still_reads_back() {
     let templates = list_recurring_templates(conn, book.entity_id).expect("templates");
     let template = get_recurring_template(conn, templates[0].id).expect("template");
     assert_eq!(template.name, "Rent");
+}
+
+#[test]
+fn a_value_of_the_wrong_kind_is_corrupt_in_the_journal_export() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    // A blob where the application only ever writes text.
+    damage(conn, "UPDATE journal_entries SET description = x'00ff'");
+
+    assert_corrupt(export_journal_csv(conn, book.entity_id), "description");
 }

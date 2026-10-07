@@ -5,7 +5,7 @@
 //! return the crate's [`Result`] and report such a value with
 //! [`corrupt_column`], so it reaches the UI as `vault_corrupt`. Passing the
 //! error through `rusqlite::Error` instead would flatten it to text that the
-//! query's caller can only report as [`Error::Io`].
+//! query's caller can only report as [`Error::Database`].
 //!
 //! A mapper is used from a rusqlite row closure as `|row| Ok(map_thing(row))`:
 //! the outer `rusqlite::Result` carries driver failures and the inner one
@@ -20,7 +20,7 @@
 //! - the value reads, but does not parse (text that is not a date). The
 //!   mapper reports it with [`corrupt_column`] under `table.column`.
 
-use crate::error::{Error, Result};
+use crate::error::{DatabaseContext, Error, Result, VaultCorruption};
 use crate::util::{parse_date, parse_uuid};
 use rusqlite::Row;
 use rusqlite::types::FromSql;
@@ -34,7 +34,10 @@ use uuid::Uuid;
 /// calls this, the column's name in the query when [`read_column`] does.
 /// `detail` says what is wrong with the value.
 pub(crate) fn corrupt_column(column: &str, detail: impl Display) -> Error {
-    Error::VaultCorrupt(format!("{column}: {detail}"))
+    Error::VaultCorrupt(VaultCorruption::Column {
+        column: column.to_owned(),
+        detail: detail.to_string(),
+    })
 }
 
 /// Reads column `index` of `row` as `T`.
@@ -43,7 +46,7 @@ pub(crate) fn corrupt_column(column: &str, detail: impl Display) -> Error {
 ///
 /// - [`Error::VaultCorrupt`] when the stored value cannot be a `T`: it has
 ///   another storage class, or is out of `T`'s range.
-/// - [`Error::Io`] for any other driver failure, such as an `index` the query
+/// - [`Error::Database`] for any other driver failure, such as an `index` the query
 ///   does not select.
 pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> {
     row.get(index).map_err(|err| match err {
@@ -59,7 +62,7 @@ pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> 
                 .map_or_else(|_| format!("column {index}"), str::to_owned);
             corrupt_column(&column, &err)
         }
-        other => Error::Io(other.to_string()),
+        other => Error::database("read stored column", other),
     })
 }
 
@@ -70,13 +73,12 @@ pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> 
 ///
 /// # Errors
 ///
-/// - [`Error::Io`] when the driver fails to step to a row.
+/// - [`Error::Database`] when the driver fails to step to a row.
 /// - The mapper's own error for the first row it refuses.
 pub(crate) fn collect_rows<T>(
     rows: impl Iterator<Item = rusqlite::Result<Result<T>>>,
 ) -> Result<Vec<T>> {
-    rows.map(|row| row.map_err(|err| Error::Io(err.to_string()))?)
-        .collect()
+    rows.map(|row| row.database("read query rows")?).collect()
 }
 
 /// Parses an id stored as text in `column`.
@@ -105,13 +107,21 @@ mod tests {
     fn a_damaged_value_is_reported_as_a_corrupt_vault_naming_the_column() {
         assert_eq!(
             stored_uuid("accounts.id", "nope"),
-            Err(Error::VaultCorrupt("accounts.id: not an id: nope".into()))
+            Err(corrupt_column("accounts.id", "not an id: nope"))
         );
         assert_eq!(
             stored_date("journal_entries.entry_date", "2026-13-01"),
-            Err(Error::VaultCorrupt(
-                "journal_entries.entry_date: not a date: 2026-13-01".into()
+            Err(corrupt_column(
+                "journal_entries.entry_date",
+                "not a date: 2026-13-01"
             ))
+        );
+        assert_eq!(
+            corrupt_column("a.b", "bad"),
+            Error::VaultCorrupt(VaultCorruption::Column {
+                column: "a.b".into(),
+                detail: "bad".into(),
+            })
         );
         assert_eq!(corrupt_column("a.b", "bad").code(), "vault_corrupt");
     }

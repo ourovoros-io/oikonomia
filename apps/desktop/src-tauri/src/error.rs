@@ -10,9 +10,10 @@
 //! # Where the codes come from
 //!
 //! - **Core.** `oikonomia_core::Error` names its own code. A broken rule is
-//!   its `Validation` variant, whose `ValidationError` names a code of its
-//!   own and the parameters that go with it. Converted with `From`, so a
-//!   command propagates a core error with `?`.
+//!   its `Validation` variant and an unreadable CSV its `Csv` variant; the
+//!   `ValidationError` or `CsvError` inside names a code of its own and the
+//!   parameters that go with it. Converted with `From`, so a command
+//!   propagates a core error with `?`.
 //! - **The update crate.** `oikonomia_update::UpdateError` names its own
 //!   code and has no parameters. Converted with `From` as well.
 //! - **The shell.** [`DesktopError`] is the failures only the shell can
@@ -21,20 +22,17 @@
 //!
 //! # Parameters
 //!
-//! Only a validation error sends parameters. Core's other variants send none,
-//! and for two of them that is a gap, because they carry values the copy
-//! could use: `UnbalancedEntry { debits, credits }` and `NotFound(String)`.
+//! Core decides them. `oikonomia_core::Error::params` sits beside `code` and
+//! matches every variant without a wildcard arm, so the conversion here
+//! copies what it returns and chooses nothing. A new core variant that
+//! carries data does not compile in core until its parameters are decided
+//! there.
 //!
-//! The choice is made behind a wildcard arm, which core's `#[non_exhaustive]`
-//! error forces on a match in this crate. A new core variant that carries
-//! data would therefore compile and send nothing. The test
-//! `every_core_variant_has_a_decided_parameter_set` notices instead: it fails
-//! until the variant is listed with what it sends. The lasting fix is in
-//! core: a `params()` beside `code()`, with an exhaustive match.
-//!
-//! The text that `io`, `crypto`, `vault_corrupt`, `backup_invalid`, `analysis`
-//! and `csv_parse` carry is diagnostic, may hold operating-system error text,
-//! and is deliberately never a parameter.
+//! The lower-level text of a failure (the `detail` of `database`, `io`,
+//! `serialization`, `crypto`, `analysis`, `csv_parse` and
+//! `validation_internal`, and the reason of `vault_corrupt` and
+//! `backup_invalid`) is diagnostic, may hold operating-system error text,
+//! and is never a parameter. It reaches the webview only in `message`.
 //!
 //! # Codes used more broadly than their name
 //!
@@ -109,22 +107,14 @@ impl CommandError {
 
 impl From<CoreError> for CommandError {
     fn from(value: CoreError) -> Self {
-        // A validation error also names the values its copy fills in.
-        let params = match &value {
-            CoreError::Validation(reason) => reason
+        Self {
+            code: value.code().to_owned(),
+            message: value.to_string(),
+            params: value
                 .params()
                 .into_iter()
                 .map(|(name, text)| (name.to_owned(), text))
                 .collect(),
-            // The wildcard is forced by `#[non_exhaustive]`; the module doc says
-            // what it costs and which test stands in for the compiler.
-            _ => BTreeMap::new(),
-        };
-
-        Self {
-            code: value.code().to_owned(),
-            message: value.to_string(),
-            params,
         }
     }
 }
@@ -200,7 +190,10 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use oikonomia_core::Error as CoreError;
-    use oikonomia_core::error::{AccountRole, ValidationError};
+    use oikonomia_core::csv::CsvError;
+    use oikonomia_core::error::{
+        AccountRole, BackupDefect, Resource, ValidationError, VaultCorruption,
+    };
     use oikonomia_update::UpdateError;
 
     use super::{CommandError, DesktopError};
@@ -277,6 +270,7 @@ mod tests {
                 .iter()
                 .map(|code| (*code).to_owned()),
         );
+        codes.extend(CsvError::ALL_CODES.iter().map(|code| (*code).to_owned()));
         codes.extend(DesktopError::ALL.iter().map(|kind| kind.code().to_owned()));
         codes.extend(UpdateError::ALL_CODES.iter().map(|code| (*code).to_owned()));
 
@@ -388,116 +382,151 @@ mod tests {
         }
     }
 
-    /// What the conversion from a core error is expected to send as
-    /// parameters, for a variant other than `Validation`.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum CoreParams {
-        /// The variant carries no data, so there is nothing to send.
-        NoData,
-        /// The variant carries English diagnostic text, which may hold
-        /// operating-system error text and must stay out of the parameters.
-        DiagnosticText,
-        /// The variant carries values the UI copy could use, and none is
-        /// sent today.
-        ///
-        /// These are gaps, each expected to send nothing only until core has
-        /// a `params()` beside `code()` with an exhaustive match and the
-        /// conversion here uses it. A variant leaves this class when it gets
-        /// its parameters; none may join it unnoticed.
-        KnownGap,
-    }
-
-    /// The text every diagnostic-text variant in `core_errors` carries.
+    /// The text every diagnostic field in `core_errors` carries.
     const DIAGNOSTIC_TEXT: &str = "disk on fire";
 
-    /// One value of every core variant other than `Validation`, with what
-    /// its conversion sends.
+    /// One value of every core variant other than `Validation` and `Csv`,
+    /// with the names of the parameters it sends.
     ///
-    /// Core's error type is `#[non_exhaustive]`, so the compiler cannot check
-    /// this list from here. `every_core_variant_has_a_decided_parameter_set`
-    /// checks it against `CoreError::ALL_CODES` instead, which core's own
-    /// tests tie to the variants.
-    fn core_errors() -> Vec<(CoreError, CoreParams)> {
+    /// `every_core_variant_is_listed_with_its_parameters` checks the list
+    /// against `CoreError::ALL_CODES`, which core's own tests tie to the
+    /// variants.
+    fn core_errors() -> Vec<(CoreError, &'static [&'static str])> {
         let text = || DIAGNOSTIC_TEXT.to_owned();
+        let failure = |build: fn(&'static str, String) -> CoreError| build("write", text());
 
         vec![
-            (CoreError::VaultUninitialized, CoreParams::NoData),
-            (CoreError::VaultLocked, CoreParams::NoData),
-            (CoreError::InvalidPassword, CoreParams::NoData),
+            (CoreError::VaultUninitialized, &[]),
+            (CoreError::VaultLocked, &[]),
+            (CoreError::InvalidPassword, &[]),
             (
                 CoreError::UnbalancedEntry {
                     debits: 100,
                     credits: 50,
                 },
-                CoreParams::KnownGap,
+                &["credits", "debits"],
             ),
-            (CoreError::TooFewLines, CoreParams::NoData),
-            (CoreError::InvalidLineAmounts, CoreParams::NoData),
-            (CoreError::AccountWrongEntity, CoreParams::NoData),
-            (CoreError::MoneyOverflow, CoreParams::NoData),
-            (CoreError::NegativeMoney, CoreParams::NoData),
-            (CoreError::Io(text()), CoreParams::DiagnosticText),
-            (CoreError::Crypto(text()), CoreParams::DiagnosticText),
-            (CoreError::VaultCorrupt(text()), CoreParams::DiagnosticText),
-            (CoreError::BackupInvalid(text()), CoreParams::DiagnosticText),
-            (CoreError::RestoreWouldOverwrite, CoreParams::NoData),
+            (CoreError::TooFewLines, &[]),
+            (CoreError::InvalidLineAmounts, &[]),
+            (CoreError::AccountWrongEntity, &[]),
+            (CoreError::MoneyOverflow, &[]),
+            (CoreError::NegativeMoney, &[]),
             (
-                CoreError::NotFound("account".to_owned()),
-                CoreParams::KnownGap,
+                failure(|operation, detail| CoreError::Database { operation, detail }),
+                &["operation"],
             ),
-            (CoreError::Analysis(text()), CoreParams::DiagnosticText),
-            (CoreError::CsvParse(text()), CoreParams::DiagnosticText),
+            (
+                failure(|operation, detail| CoreError::Io { operation, detail }),
+                &["operation"],
+            ),
+            (
+                failure(|operation, detail| CoreError::Serialization { operation, detail }),
+                &["operation"],
+            ),
+            (
+                failure(|operation, detail| CoreError::Crypto { operation, detail }),
+                &["operation"],
+            ),
+            (
+                CoreError::VaultCorrupt(VaultCorruption::HeaderUnreadable { detail: text() }),
+                &[],
+            ),
+            (
+                CoreError::VaultTooNew {
+                    found: 8,
+                    supported: 7,
+                },
+                &["found", "supported"],
+            ),
+            (
+                CoreError::BackupInvalid(BackupDefect::EmptyMember { name: text() }),
+                &[],
+            ),
+            (CoreError::RestoreWouldOverwrite, &[]),
+            (CoreError::NotFound(Resource::Account), &["resource"]),
+            (
+                failure(|operation, detail| CoreError::Analysis { operation, detail }),
+                &["operation"],
+            ),
         ]
     }
 
-    /// Fails when core gains a variant that this crate has not decided the
-    /// parameters of.
-    ///
-    /// The conversion picks parameters behind a wildcard arm, so a new core
-    /// variant that carries data compiles and silently sends none. This test
-    /// is what notices: the variant's code appears in `ALL_CODES`, and until
-    /// it is added to `core_errors` with a class, the two differ.
+    /// Fails when core gains a variant this list does not have, and when a
+    /// variant stops sending a parameter the list names or starts sending one
+    /// it does not. There are no known gaps: every variant that carries a
+    /// value the copy could use sends it.
     #[test]
-    fn every_core_variant_has_a_decided_parameter_set() {
-        let decided: Vec<&str> = core_errors()
+    fn every_core_variant_is_listed_with_its_parameters() {
+        let listed: Vec<&str> = core_errors()
             .iter()
             .map(|(error, _)| error.code())
             .collect();
 
         assert_eq!(
-            decided,
+            listed,
             CoreError::ALL_CODES,
-            "core_errors() and CoreError::ALL_CODES differ: classify the new variant"
+            "core_errors() and CoreError::ALL_CODES differ: list the new variant"
+        );
+
+        for (error, expected) in core_errors() {
+            let sent = CommandError::from(error.clone()).params;
+            let names: Vec<&str> = sent.keys().map(String::as_str).collect();
+
+            assert_eq!(names, expected, "{error:?}");
+        }
+    }
+
+    /// Checked on the serialized error, as the webview receives it: the
+    /// lower-level text is in `message` and nowhere in `params`.
+    #[test]
+    fn a_core_error_keeps_its_diagnostic_text_out_of_the_parameters() {
+        for (error, _) in core_errors() {
+            let sent = serde_json::to_value(CommandError::from(error.clone())).expect("serialize");
+
+            assert!(
+                !sent["params"].to_string().contains(DIAGNOSTIC_TEXT),
+                "{error:?} leaks its text into the parameters"
+            );
+            if format!("{error:?}").contains(DIAGNOSTIC_TEXT) {
+                let message = sent["message"].as_str().expect("message");
+                assert!(message.contains(DIAGNOSTIC_TEXT), "{error:?}: {message}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_unbalanced_entry_sends_both_totals() {
+        let error = CommandError::from(CoreError::UnbalancedEntry {
+            debits: 100,
+            credits: 50,
+        });
+
+        assert_eq!(
+            serde_json::to_value(&error).expect("serialize")["params"],
+            serde_json::json!({ "credits": "50", "debits": "100" })
         );
     }
 
-    /// No core variant other than `Validation` sends parameters today.
-    ///
-    /// For a known gap that is expected only for now: when the gap is closed
-    /// this fails, and the variant moves to a class that names what it
-    /// sends. For diagnostic text it is the rule, checked on the serialized
-    /// error as the webview receives it: the text is in `message` and nowhere
-    /// in `params`.
     #[test]
-    fn a_core_error_sends_no_parameters_and_keeps_its_text_in_the_message() {
-        for (error, class) in core_errors() {
-            let sent = serde_json::to_value(CommandError::from(error.clone())).expect("serialize");
+    fn a_missing_record_sends_what_was_not_found() {
+        let error = CommandError::from(CoreError::NotFound(Resource::JournalEntry));
 
-            assert_eq!(
-                sent["params"],
-                serde_json::json!({}),
-                "{error:?} ({class:?})"
-            );
+        assert_eq!(error.code, "not_found");
+        assert_eq!(
+            error.params,
+            BTreeMap::from([("resource".to_owned(), "journal_entry".to_owned())])
+        );
+    }
 
-            if class == CoreParams::DiagnosticText {
-                let message = sent["message"].as_str().expect("message");
-                assert!(message.contains(DIAGNOSTIC_TEXT), "{error:?}: {message}");
-                assert!(
-                    !sent["params"].to_string().contains(DIAGNOSTIC_TEXT),
-                    "{error:?} leaks its text into the parameters"
-                );
-            }
-        }
+    #[test]
+    fn a_csv_error_carries_its_own_code_and_params() {
+        let error = CommandError::from(CoreError::from(CsvError::InvalidDate("31/31".into())));
+
+        assert_eq!(error.code, "csv_invalid_date");
+        assert_eq!(
+            error.params,
+            BTreeMap::from([("value".to_owned(), "31/31".to_owned())])
+        );
     }
 
     #[test]

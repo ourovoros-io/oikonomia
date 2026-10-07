@@ -285,8 +285,8 @@ pub(crate) async fn document_export(
 /// # Errors
 ///
 /// Returns the validation errors of a refused document, `not_found` when the
-/// entity does not exist, and `vault_locked`, `io` or `vault_corrupt` from
-/// the vault.
+/// entity does not exist, and `vault_locked`, `database` or `vault_corrupt`
+/// from the vault.
 #[expect(
     clippy::too_many_arguments,
     reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"

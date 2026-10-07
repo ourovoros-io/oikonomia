@@ -19,7 +19,10 @@
 
 use crate::db::{collect_rows, stored_date};
 use crate::domain::{AccountType, EntityId};
-use crate::error::{Error, Result, ValidationError};
+use crate::error::{DatabaseContext, Result, ValidationError};
+// Named only by the documentation below.
+#[cfg(doc)]
+use crate::error::Error;
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, add_minor, normal_balance, parse_account_type, subtract_minor,
 };
@@ -98,7 +101,7 @@ pub struct CashFlowSeries {
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// bucket, a running total or the net does not fit in `i64`;
 /// [`Error::VaultCorrupt`] for a stored date or account type that does not
-/// parse; database errors as [`Error::Io`].
+/// parse; database errors as [`Error::Database`].
 pub fn cash_flow_series(
     conn: &Connection,
     entity_id: EntityId,
@@ -108,7 +111,7 @@ pub fn cash_flow_series(
     let from = parse_date(from)?;
     let to = parse_date(to)?;
     if from > to {
-        return Err(Error::Validation(ValidationError::DateRangeInverted));
+        return Err(ValidationError::DateRangeInverted.into());
     }
     // Only checks that the entity exists. An archived entity passes, so its
     // series can still be read.
@@ -175,7 +178,7 @@ pub fn cash_flow_series(
 ///
 /// [`Error::Validation`] for a malformed date or an explicit `from > to`;
 /// [`Error::NotFound`] for an unknown entity; [`Error::VaultCorrupt`] for a
-/// stored entry date that does not parse; database errors as [`Error::Io`].
+/// stored entry date that does not parse; database errors as [`Error::Database`].
 pub fn activity_window(
     conn: &Connection,
     entity_id: EntityId,
@@ -189,7 +192,7 @@ pub fn activity_window(
     let to = to.map(parse_date).transpose()?;
     if let (Some(start), Some(end)) = (from, to) {
         if start > end {
-            return Err(Error::Validation(ValidationError::DateRangeInverted));
+            return Err(ValidationError::DateRangeInverted.into());
         }
         return Ok((start, end));
     }
@@ -265,7 +268,7 @@ struct DayActivity {
 ///   does not parse.
 /// - [`Error::MoneyOverflow`] when a day's income or expenses do not fit in
 ///   `i64`.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn daily_activity(
     conn: &Connection,
     entity_id: EntityId,
@@ -289,9 +292,7 @@ fn daily_activity(
         ORDER BY je.entry_date
         "
     );
-    let mut stmt = conn
-        .prepare(&sql)
-        .map_err(|err| Error::Io(err.to_string()))?;
+    let mut stmt = conn.prepare(&sql).database("read daily activity")?;
     let rows = stmt
         .query_map(
             rusqlite::params![entity_id.0.to_string(), format_date(from), format_date(to)],
@@ -304,7 +305,7 @@ fn daily_activity(
                 ))
             },
         )
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read daily activity")?;
 
     let mut days: Vec<DayActivity> = Vec::new();
     for (date, account_type, debits, credits) in collect_rows(rows.map(|row| row.map(Ok)))? {
@@ -340,7 +341,7 @@ fn daily_activity(
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`] for a stored entry date that does not parse.
-/// - [`Error::Io`] on database errors.
+/// - [`Error::Database`] on database errors.
 fn active_entry_bounds(
     conn: &Connection,
     entity_id: EntityId,
@@ -357,7 +358,7 @@ fn active_entry_bounds(
         .query_row(&sql, rusqlite::params![entity_id.0.to_string()], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
-        .map_err(|err| Error::Io(err.to_string()))?;
+        .database("read entry date bounds")?;
 
     let stored_bound = |text: Option<String>| {
         text.map(|text| stored_date("journal_entries.entry_date", &text))
