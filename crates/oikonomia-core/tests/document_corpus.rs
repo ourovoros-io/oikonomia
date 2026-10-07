@@ -212,7 +212,7 @@ fn suggest_for(entry: &ManifestEntry, bytes: &[u8]) -> DocumentSuggestion {
                 &AnalyzeContext {
                     template: ChartTemplate::Blank,
                     accounts: &[],
-                    default_currency: "EUR",
+                    default_currency: "EUR".parse().expect("EUR is a currency code"),
                     locale: Locale::En,
                 },
                 None,
@@ -413,7 +413,7 @@ fn text_mime_analyze_path_matches_invoice_reader() {
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
-            default_currency: "EUR",
+            default_currency: "EUR".parse().expect("EUR is a currency code"),
             locale: Locale::En,
         },
         None,
@@ -435,7 +435,7 @@ fn text_mime_analyze_path_matches_invoice_reader() {
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
-            default_currency: "EUR",
+            default_currency: "EUR".parse().expect("EUR is a currency code"),
             locale: Locale::En,
         },
         None,
@@ -496,7 +496,7 @@ fn a_jpeg_is_read_through_ocr() {
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
-            default_currency: "EUR",
+            default_currency: "EUR".parse().expect("EUR is a currency code"),
             locale: Locale::En,
         },
         Some(model_dir.as_path()),
@@ -554,7 +554,7 @@ fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
-            default_currency: "EUR",
+            default_currency: "EUR".parse().expect("EUR is a currency code"),
             locale: Locale::En,
         },
         Some(model_dir),
@@ -690,7 +690,7 @@ fn suggested_codes(
         &AnalyzeContext {
             template,
             accounts,
-            default_currency: "EUR",
+            default_currency: "EUR".parse().expect("EUR is a currency code"),
             locale,
         },
         None,

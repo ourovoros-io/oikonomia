@@ -105,6 +105,7 @@ use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use crate::documents::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
 use crate::documents::pdf_repair::repair_xref_offsets;
 use crate::documents::store::{has_extension, match_expense_account, match_income_account};
+use crate::domain::CurrencyCode;
 use crate::domain::{Account, AccountId, ChartTemplate};
 use crate::error::{AccountRole, Result};
 use crate::prefs::Locale;
@@ -225,7 +226,7 @@ pub struct AnalyzeContext<'a> {
     /// The book's accounts the suggestion may point at.
     pub accounts: &'a [Account],
     /// The book's base currency code.
-    pub default_currency: &'a str,
+    pub default_currency: CurrencyCode,
     /// Language of the suggested description and merchant.
     pub locale: Locale,
 }
@@ -303,7 +304,7 @@ pub fn analyze_document_bytes(
         suggestion.amount_minor = None;
         suggestion.notes.push(
             UiText::new(UiTextCode::AmountAssumesTwoDecimals)
-                .with_param("currency", default_currency.to_ascii_uppercase()),
+                .with_param("currency", default_currency.as_str()),
         );
     }
 
@@ -322,11 +323,11 @@ pub fn analyze_document_bytes(
 /// The reader reads the fee as cents. In a 2-decimal book it is sent as a
 /// figure with the book's currency, which the UI formats. In any other book
 /// the figure would be wrong, so the note states the fee exists without one.
-fn transfer_fee_note(fee_minor: i64, currency: &str) -> UiText {
+fn transfer_fee_note(fee_minor: i64, currency: CurrencyCode) -> UiText {
     if currency_minor_exponent(currency) == 2 {
         UiText::new(UiTextCode::TransferFee)
             .with_param("fee_minor", fee_minor.to_string())
-            .with_param("currency", currency.to_ascii_uppercase())
+            .with_param("currency", currency.as_str())
     } else {
         UiText::new(UiTextCode::TransferFeeUnstated)
     }
@@ -1227,7 +1228,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1239,7 +1240,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "JPY",
+                default_currency: "JPY".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1278,7 +1279,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: currency,
+                default_currency: currency.parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1291,9 +1292,9 @@ mod tests {
     fn the_shared_exponent_table_knows_the_currencies_the_analyzer_dropped() {
         use crate::csv::currency_minor_exponent;
 
-        assert_eq!(currency_minor_exponent("ISK"), 0);
-        assert_eq!(currency_minor_exponent("IQD"), 0);
-        assert_eq!(currency_minor_exponent("LYD"), 3);
+        assert_eq!(currency_minor_exponent("ISK".parse().unwrap()), 0);
+        assert_eq!(currency_minor_exponent("IQD".parse().unwrap()), 0);
+        assert_eq!(currency_minor_exponent("LYD".parse().unwrap()), 3);
     }
 
     #[test]
@@ -1305,7 +1306,7 @@ mod tests {
             .flat_map(|a| letters().flat_map(move |b| letters().map(move |c| [a, b, c])))
             .map(String::from_iter)
         {
-            let two_decimals = crate::csv::currency_minor_exponent(&code) == 2;
+            let two_decimals = crate::csv::currency_minor_exponent(code.parse().unwrap()) == 2;
 
             assert_eq!(keeps_the_amount_in(&code), two_decimals, "{code}");
             if !two_decimals {
@@ -1329,7 +1330,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1358,7 +1359,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1376,7 +1377,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1397,7 +1398,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             path.as_deref().ok(),
@@ -1463,7 +1464,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1519,7 +1520,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             model_dir,
@@ -1609,7 +1610,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1633,7 +1634,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Personal,
                 accounts: &accounts,
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1670,7 +1671,7 @@ mod tests {
             &AnalyzeContext {
                 template,
                 accounts,
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1765,7 +1766,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: currency,
+                default_currency: currency.parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,
@@ -1830,7 +1831,7 @@ mod tests {
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "JPY",
+                default_currency: "JPY".parse().unwrap(),
                 locale: crate::prefs::Locale::En,
             },
             None,

@@ -193,7 +193,7 @@ fn preview_bank_csv_named(
     check_role_account(conn, entity_id, accounts.expense_account_id)?;
     check_role_account(conn, entity_id, accounts.income_account_id)?;
 
-    let exponent = currency_minor_exponent(&entity.base_currency);
+    let exponent = currency_minor_exponent(entity.base_currency);
     let parsed = parse_bank_csv(csv_text, exponent, mapping)?;
     let mut seen = load_active_keys(conn, entity_id)?;
     let mut rows = Vec::with_capacity(parsed.rows.len());

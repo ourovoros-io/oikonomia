@@ -45,8 +45,8 @@
 //! [`Error::VaultCorrupt`] for it, and posting loads each account through
 //! `get_account`, so nothing new can be posted to it either.
 
-use crate::db::{collect_rows, corrupt_column, read_column};
-use crate::domain::{AccountType, Entity, EntityId};
+use crate::db::{collect_rows, read_column};
+use crate::domain::{AccountType, CurrencyCode, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_type_str, add_minor, normal_balance, parse_account_type,
@@ -180,7 +180,7 @@ pub struct DashboardSummary {
     /// Entity the summary is for.
     pub entity_id: EntityId,
     /// ISO 4217 code of the entity's currency, which every amount here is in.
-    pub base_currency: String,
+    pub base_currency: CurrencyCode,
     /// Sum of asset accounts as of the `assets_as_of` date given to
     /// [`dashboard_summary`], which need not be the window's `to`.
     pub cash_like_assets: i64,
@@ -237,7 +237,7 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     let as_of = parse_date(as_of)?;
     // An archived entity is found too; its reports stay readable.
     let entity = get_entity(conn, entity_id)?;
-    let unclosed = unclosed_pnl(conn, entity_id, as_of, fiscal_start_month(&entity)?)?;
+    let unclosed = unclosed_pnl(conn, entity_id, as_of, entity.fiscal_year_start_month)?;
 
     let mut lines = Vec::new();
 
@@ -336,7 +336,7 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     let asset_lines = as_of_lines(conn, entity_id, AccountType::Asset, as_of)?;
     let liability_lines = as_of_lines(conn, entity_id, AccountType::Liability, as_of)?;
     let mut equity_lines = as_of_lines(conn, entity_id, AccountType::Equity, as_of)?;
-    let unclosed = unclosed_pnl(conn, entity_id, as_of, fiscal_start_month(&entity)?)?;
+    let unclosed = unclosed_pnl(conn, entity_id, as_of, entity.fiscal_year_start_month)?;
 
     if unclosed.prior_net != 0 {
         equity_lines.push(retained_earnings_line(unclosed.prior_net)?);
@@ -854,22 +854,6 @@ fn net_income_line(net: i64) -> Result<ReportLine> {
         net,
         SyntheticLine::NetIncome,
     )
-}
-
-/// Returns the month an entity's fiscal year starts in.
-///
-/// # Errors
-///
-/// [`Error::VaultCorrupt`] when the stored number is not a calendar month.
-/// [`get_entity`] already refuses such a row; this covers an [`Entity`] built
-/// any other way, since the field is a plain `u8`.
-fn fiscal_start_month(entity: &Entity) -> Result<Month> {
-    Month::try_from(entity.fiscal_year_start_month).map_err(|_| {
-        corrupt_column(
-            "entities.fiscal_year_start_month",
-            format_args!("not a month: {}", entity.fiscal_year_start_month),
-        )
-    })
 }
 
 /// Returns the first day of the fiscal year that contains `as_of`.

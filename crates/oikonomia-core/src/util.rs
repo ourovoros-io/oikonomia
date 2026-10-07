@@ -8,7 +8,9 @@
 //!
 //! An accounting date is a [`time::Date`] in memory and `YYYY-MM-DD` in the
 //! database and over IPC. [`format_date`] writes that form and [`parse_date`]
-//! reads it; [`serde_date`] applies the pair to a struct field.
+//! reads it; [`serde_date`] applies the pair to a struct field. A month on
+//! its own, such as the one a fiscal year starts in, is a [`time::Month`] in
+//! memory and its number from 1 to 12 as JSON ([`serde_month`]).
 //!
 //! The form is fixed-width on purpose. Queries compare and sort date columns
 //! as text, and text order equals date order only when every date has the
@@ -200,6 +202,59 @@ pub mod serde_date {
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Date, D::Error> {
         let text = String::deserialize(deserializer)?;
         parse_date(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Serializes a [`time::Month`] field as its number, 1 for January to 12 for
+/// December, for use with `#[serde(with = "crate::util::serde_month")]`.
+///
+/// The number is what the web UI exchanges. It is written out here so that
+/// the wire form does not depend on which features the `time` crate is built
+/// with.
+///
+/// # Examples
+///
+/// ```
+/// use oikonomia_core::util::serde_month;
+/// use serde::{Deserialize, Serialize};
+/// use time::Month;
+///
+/// #[derive(Debug, PartialEq, Serialize, Deserialize)]
+/// struct FiscalYear {
+///     #[serde(with = "serde_month")]
+///     starts_in: Month,
+/// }
+///
+/// let year = FiscalYear { starts_in: Month::April };
+/// let json = serde_json::to_string(&year)?;
+/// assert_eq!(json, r#"{"starts_in":4}"#);
+/// assert_eq!(serde_json::from_str::<FiscalYear>(&json)?, year);
+/// assert!(serde_json::from_str::<FiscalYear>(r#"{"starts_in":13}"#).is_err());
+/// # Ok::<(), serde_json::Error>(())
+/// ```
+pub mod serde_month {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use time::Month;
+
+    /// Serializes `month` as its number from 1 to 12.
+    ///
+    /// # Errors
+    ///
+    /// Returns the serializer's own error when it cannot write a number.
+    pub fn serialize<S: Serializer>(month: &Month, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(u8::from(*month))
+    }
+
+    /// Deserializes a number from 1 to 12 as its month.
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserializer's error when the value is not a number that
+    /// fits `u8`, and a custom error when the number is outside 1 to 12.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Month, D::Error> {
+        let number = u8::deserialize(deserializer)?;
+        Month::try_from(number)
+            .map_err(|_| serde::de::Error::custom(format_args!("not a month: {number}")))
     }
 }
 

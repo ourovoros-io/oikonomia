@@ -319,7 +319,7 @@ fn analyze_readonly(
         &AnalyzeContext {
             template: entity.chart_template,
             accounts: &accounts,
-            default_currency: &entity.base_currency,
+            default_currency: entity.base_currency,
             locale,
         },
         Some(model_dir),

@@ -74,11 +74,10 @@
 //! result here; the row parser is what refuses a zero amount.
 
 use crate::csv::CsvError;
+use crate::domain::CurrencyCode;
 
 /// Returns the number of decimal digits (the minor-unit exponent) of a
 /// currency code, 2 for a code the table does not list.
-///
-/// The code is trimmed and compared without regard to ASCII case.
 ///
 /// This is the one exponent table of the crate: CSV import and the document
 /// analyzer both read it. It has to agree with the webview, which turns
@@ -101,8 +100,7 @@ use crate::csv::CsvError;
 /// decimals for `COP`, `HUF`, `IDR` and `PKR`, which this table reads with
 /// two, and two decimals for `RSD`, which this table reads with none.
 #[must_use]
-pub fn currency_minor_exponent(code: &str) -> u8 {
-    let code = code.trim().to_ascii_uppercase();
+pub fn currency_minor_exponent(code: CurrencyCode) -> u8 {
     match code.as_str() {
         "ADP" | "AFN" | "ALL" | "BIF" | "BYR" | "CLP" | "DJF" | "ESP" | "GNF" | "IQD" | "IRR"
         | "ISK" | "ITL" | "JPY" | "KMF" | "KPW" | "KRW" | "LAK" | "LBP" | "LUF" | "MGA" | "MGF"
@@ -575,10 +573,10 @@ mod tests {
 
     #[test]
     fn exponent_lookup() {
-        assert_eq!(currency_minor_exponent("eur"), 2);
-        assert_eq!(currency_minor_exponent("JPY"), 0);
-        assert_eq!(currency_minor_exponent("KWD"), 3);
-        assert_eq!(currency_minor_exponent("XXX"), 2);
+        assert_eq!(currency_minor_exponent("eur".parse().unwrap()), 2);
+        assert_eq!(currency_minor_exponent("JPY".parse().unwrap()), 0);
+        assert_eq!(currency_minor_exponent("KWD".parse().unwrap()), 3);
+        assert_eq!(currency_minor_exponent("XXX".parse().unwrap()), 2);
     }
 
     /// The codes where ISO 4217 and CLDR disagree, or where the table used to
@@ -598,7 +596,11 @@ mod tests {
             ("LYD", 3),
             ("CLF", 4),
         ] {
-            assert_eq!(currency_minor_exponent(code), digits, "{code}");
+            assert_eq!(
+                currency_minor_exponent(code.parse().unwrap()),
+                digits,
+                "{code}"
+            );
         }
     }
 
@@ -615,7 +617,7 @@ mod tests {
             })
             .map(String::from_iter)
         {
-            let digits = currency_minor_exponent(&code);
+            let digits = currency_minor_exponent(code.parse().unwrap());
             if digits != 2 {
                 by_digits[usize::from(digits)].push(code);
             }

@@ -30,13 +30,14 @@
 
 use crate::coa::template_accounts;
 use crate::db::{collect_rows, corrupt_column, read_column, stored_id};
-use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
+use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode, Entity, EntityId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
 use crate::util::now_utc_string;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use time::Month;
 
 /// Input for [`create_entity`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,21 +245,14 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
         .into());
     }
 
-    // An ISO 4217 code is three ASCII letters. Checking the letters makes the
-    // byte length a character count too, so "12$" and "€" are both refused.
-    let currency = input.base_currency.trim();
-    if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_alphabetic()) {
-        return Err(ValidationError::CurrencyInvalid.into());
-    }
-    let currency = currency.to_ascii_uppercase();
+    let currency: CurrencyCode = input.base_currency.parse()?;
 
-    let month = input.fiscal_year_start_month.unwrap_or(1);
-    if !(1..=12).contains(&month) {
-        return Err(ValidationError::Internal {
+    let month = match input.fiscal_year_start_month {
+        None => Month::January,
+        Some(number) => Month::try_from(number).map_err(|_| ValidationError::Internal {
             detail: "fiscal_year_start_month must be 1-12".into(),
-        }
-        .into());
-    }
+        })?,
+    };
 
     ensure_unique_name(conn, name, None)?;
 
@@ -273,8 +267,8 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
         rusqlite::params![
             id.to_string(),
             name,
-            currency,
-            month,
+            currency.as_str(),
+            u8::from(month),
             chart_template_str(input.chart_template),
             now_utc_string(),
         ],
@@ -460,9 +454,9 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] naming the column when the id, the chart template
-/// or the fiscal year start month does not parse, or a column has the wrong
-/// storage class.
+/// [`Error::VaultCorrupt`] naming the column when the id, the base currency,
+/// the chart template or the fiscal year start month does not parse, or a
+/// column has the wrong storage class.
 fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
     let id = stored_id("entities.id", &read_column::<String>(row, 0)?)?;
     let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
@@ -472,7 +466,7 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
     let stored_month: i64 = read_column(row, 3)?;
     let fiscal_year_start_month = u8::try_from(stored_month)
         .ok()
-        .filter(|month| (1..=12).contains(month))
+        .and_then(|number| Month::try_from(number).ok())
         .ok_or_else(|| {
             corrupt_column(
                 "entities.fiscal_year_start_month",
@@ -480,10 +474,21 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
             )
         })?;
 
+    // The code is a key into the table of decimal digits and is handed to
+    // the UI's number formatter, so text that is not a code is refused here
+    // instead of being formatted with a guessed number of decimals.
+    let stored_currency: String = read_column(row, 2)?;
+    let base_currency = stored_currency.parse().map_err(|_| {
+        corrupt_column(
+            "entities.base_currency",
+            format_args!("not a currency code: {stored_currency}"),
+        )
+    })?;
+
     Ok(Entity {
         id,
         name: read_column(row, 1)?,
-        base_currency: read_column(row, 2)?,
+        base_currency,
         fiscal_year_start_month,
         chart_template,
     })

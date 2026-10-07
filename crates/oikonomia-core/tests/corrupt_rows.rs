@@ -203,6 +203,34 @@ fn a_fiscal_year_start_month_off_the_calendar_is_corrupt() {
 }
 
 #[test]
+fn a_base_currency_that_is_not_three_letters_is_corrupt() {
+    for currency in ["", "EURO", "12$", "€"] {
+        let (_dir, vault) = common::vault();
+        let conn = vault.connection().expect("conn");
+        let book = book(conn);
+        damage(
+            conn,
+            &format!("UPDATE entities SET base_currency = '{currency}'"),
+        );
+        let column = "entities.base_currency";
+
+        assert_corrupt(get_entity(conn, book.entity_id), column);
+        assert_corrupt(list_entities(conn), column);
+    }
+}
+
+#[test]
+fn a_base_currency_stored_in_lowercase_reads_as_capitals() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    damage(conn, "UPDATE entities SET base_currency = 'eur'");
+
+    let entity = get_entity(conn, book.entity_id).expect("entity");
+    assert_eq!(entity.base_currency.as_str(), "EUR");
+}
+
+#[test]
 fn a_damaged_recurring_template_is_corrupt() {
     let damaged_columns = [
         ("kind", "'gift'"),

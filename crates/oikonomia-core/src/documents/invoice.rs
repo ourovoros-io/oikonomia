@@ -3089,7 +3089,7 @@ mod tests {
             &crate::documents::AnalyzeContext {
                 template: crate::domain::ChartTemplate::Blank,
                 accounts: &[],
-                default_currency: "EUR",
+                default_currency: "EUR".parse().unwrap(),
                 locale: crate::prefs::Locale::El,
             },
             None,

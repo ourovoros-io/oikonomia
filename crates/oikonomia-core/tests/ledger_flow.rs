@@ -104,7 +104,7 @@ fn a_base_currency_is_three_ascii_letters_stored_in_capitals() {
             },
             Locale::En,
         )
-        .map(|entity| entity.base_currency)
+        .map(|entity| entity.base_currency.to_string())
     };
 
     // "€" and "12$" are three bytes long; "ευρ" is three letters, not ASCII.

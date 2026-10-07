@@ -7,7 +7,7 @@
 //! # How the pieces relate
 //!
 //! - An [`Entity`] is one set of books (a household, a company) in one base
-//!   currency.
+//!   currency, named by a [`CurrencyCode`].
 //! - An [`Account`] belongs to one entity and has an [`AccountType`], which
 //!   decides whether a debit raises or lowers its balance.
 //! - A [`JournalEntry`] belongs to one entity and is dated. Its
@@ -31,16 +31,19 @@
 //!
 //! The types derive `Serialize` and `Deserialize` because the desktop shell
 //! sends them to the web UI as JSON. Enums go out in `snake_case`, dates as
-//! `YYYY-MM-DD` ([`crate::util::serde_date`]) and amounts as
-//! [`Money`](crate::Money).
+//! `YYYY-MM-DD` ([`crate::util::serde_date`]), a month as its number from 1
+//! to 12 ([`crate::util::serde_month`]), a currency as its three letters and
+//! amounts as [`Money`](crate::Money).
 
 mod account;
+mod currency;
 mod entity;
 mod id;
 mod journal;
 mod recurring;
 
 pub use account::{Account, AccountId, AccountType};
+pub use currency::CurrencyCode;
 pub use entity::{ChartTemplate, Entity, EntityId};
 pub(crate) use id::define_id;
 pub use journal::{
