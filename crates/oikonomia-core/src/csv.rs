@@ -30,6 +30,7 @@
 //! | Three-digit tail | A thousands group             | `1.234` → 123400         |
 //! | Currency sign    | `€ $ £ ¥ ₹ ₺ ₩`, anywhere     | `€1.234,56` → 123456     |
 //! | Currency code    | The book's code, at an end    | `12.00 EUR` → 1200       |
+//! | Three-letter word| Dropped, unless all capitals  | `25,00 lei` → 2500       |
 //! | Other whitespace | Ignored                       | `- 25 EUR` → −2500       |
 //! | Exponent         | None                          | `1e3` is rejected        |
 //!
@@ -44,8 +45,11 @@
 //! fraction longer than the currency has (`0.125` in EUR), irregular
 //! grouping (`1,2,3.45`, `12'34`, `1 2 3,45`), a currency sign outside the
 //! list, the code of another currency than the book's (`25 USD` in a book in
-//! euros), and a separator with no digit. The exact rules and their order
-//! are in the `csv/amount.rs` module doc. [`parse_signed_minor`] is the same
+//! euros), and a separator with no digit. A code is three capital letters;
+//! the parser has no list of currencies, so a code in lower case (`25 usd`)
+//! is dropped as a word and read in the book's currency, and a capitalised
+//! word that is no currency is rejected as a code. The exact rules and their
+//! order are in the `csv/amount.rs` module doc. [`parse_signed_minor`] is the same
 //! grammar for a caller that has a number of decimals and no book: it drops
 //! any three-letter code.
 //!

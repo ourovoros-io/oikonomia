@@ -214,7 +214,7 @@ const YEAR_DIGITS: usize = 4;
 /// and RFC 4180 quoted fields.
 /// `currency` is the base currency of the book the statement is for: its
 /// number of decimals decides how an amount is read, and an amount cell
-/// marked with the code of another currency is an invalid row.
+/// marked with the code of another currency, in capitals, is an invalid row.
 /// `mapping` replaces header auto-detection when `Some`.
 ///
 /// # Errors

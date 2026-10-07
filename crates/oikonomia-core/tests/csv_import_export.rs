@@ -353,7 +353,8 @@ fn an_amount_marked_with_another_currency_than_the_books_is_an_invalid_row() {
                2026-03-15,Taxi,USD -12.00\n\
                2026-03-16,Lunch,-9.50 EUR\n\
                2026-03-16,Coffee,eur -3.50\n\
-               2026-03-17,Bread,-2.00\n";
+               2026-03-17,Bread,-2.00\n\
+               2026-03-18,Covrigi,\"-25,00 lei\"\n";
 
     let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
 
@@ -374,6 +375,8 @@ fn an_amount_marked_with_another_currency_than_the_books_is_an_invalid_row() {
             (None, Some(-950)),
             (None, Some(-350)),
             (None, Some(-200)),
+            // A word, not a code: dropped, and read in the book's currency.
+            (None, Some(-2_500)),
         ]
     );
 }

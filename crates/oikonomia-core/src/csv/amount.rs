@@ -22,7 +22,7 @@
 //! | 1    | Whitespace not between digits | `- 25`, `25 EUR`   | An empty cell     |
 //! | 2    | Parentheses around the cell   | `(25,00)`          |                   |
 //! | 3    | The signs `€ $ £ ¥ ₹ ₺ ₩`     | `€25`, `25 $`      | `₽25`             |
-//! | 4    | The book's code, each end     | `EUR 25`, `25 eur` | `25 USD`, `25 kr` |
+//! | 4    | Three ASCII letters, each end | `EUR 25`, `25 lei` | `25 USD`, `25 kr` |
 //! | 5    | One sign                      | `-25`, `+25`, `25-`| `-25-`, `25+`     |
 //! | 6    | Step 4 again                  | `-EUR 25`          |                   |
 //! | 7    | Nothing: digits and           | `25`, `.5`, `5.`   | `1e3`, `25%`, `.` |
@@ -37,14 +37,24 @@
 //! 2. Parentheses mean negative. They do not cancel a minus: `(-25)` is
 //!    negative.
 //! 3. The signs are removed wherever they stand.
-//! 4. Three ASCII letters at an end of the number are a currency code. For a
-//!    statement they have to be the code of the book's currency, in either
-//!    case: a cell marked `USD` in a book in euros is rejected, because its
-//!    digits read as euros would be a wrong amount that looks right. The
-//!    letters are not checked against ISO 4217, so a currency written as a
-//!    three-letter word (`lei`) is rejected as another currency too.
+//! 4. Three ASCII letters at an end of the number are dropped, with one
+//!    exception for a statement: three capitals are a currency code, written
+//!    the way ISO 4217 writes one, and a code that is not the book's makes
+//!    the cell invalid. `25 USD` in a book in euros is rejected, because its
+//!    digits read as euros would be a wrong amount that looks right. Three
+//!    letters with a lowercase one among them are a word and are dropped
+//!    whatever the book, so `25,00 lei` reads in a book in `RON` and in any
+//!    other.
+//!
+//!    The capitals are all the parser has to go on, since the letters are
+//!    not checked against a list of currencies, and that sets two limits. A
+//!    code written in lower case is taken for a word: `25 usd` in a book in
+//!    euros is read as 25 euros. A capitalised three-letter word that is no
+//!    currency is taken for a code: `25 PCS`, and `25 LEI` in a book in
+//!    `RON`, are rejected.
+//!
 //!    [`parse_signed_minor`], which is given no book, drops any three
-//!    letters. A code of another length, non-ASCII letters, and letters in
+//!    letters. Letters of another count, non-ASCII letters, and letters in
 //!    the middle of the number are left in place and fail step 7.
 //! 5. The sign is a leading `-`, U+2212 or `+`, or else a trailing `-` or
 //!    U+2212. A second sign (`-25-`, `+25-`, `--25`) is left in place and
@@ -201,15 +211,18 @@ pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
 /// signed minor units of that currency.
 ///
 /// This is [`parse_signed_minor`] with the decimals of `currency`
-/// ([`currency_minor_exponent`]) and one more rule: a three-letter code in
-/// the cell has to be `currency`, in either case. A cell marked with any
-/// other three letters is not an amount of this book, and reading its
-/// digits as one would post `25 USD` as 25 euros.
+/// ([`currency_minor_exponent`]) and one more rule: three capital letters in
+/// the cell are a currency code and have to be `currency`. A cell marked
+/// with another code is not an amount of this book, and reading its digits
+/// as one would post `25 USD` as 25 euros. Three letters that are not all
+/// capitals are a word, such as `lei`, and are dropped; note 4 of the module
+/// doc has the two limits of telling a code by its capitals.
 ///
 /// # Errors
 ///
 /// Those of [`parse_signed_minor`], and [`CsvError::InvalidAmount`],
-/// carrying the cell as written, for a cell whose code is not `currency`.
+/// carrying the cell as written, for a cell with three capital letters that
+/// are not `currency`.
 pub(crate) fn parse_book_amount(raw: &str, currency: CurrencyCode) -> Result<i64, CsvError> {
     parse_amount(raw, currency_minor_exponent(currency), Some(currency))
 }
@@ -377,27 +390,33 @@ fn strip_sign(text: &str) -> (bool, &str) {
     }
 }
 
-/// Drops a three-letter code from the front, and one from the back of what
-/// is left, or returns `None` when a code it would drop is not the currency
-/// of `book`.
+/// Drops three letters from the front, and three from the back of what is
+/// left, or returns `None` when letters it would drop are the code of
+/// another currency than `book`'s.
 ///
-/// Without a `book` any code is dropped. The comparison ignores case, so
-/// `eur` is the code of a book in `EUR`.
+/// Three letters are taken for a currency code only when all three are
+/// capitals, the way ISO 4217 codes are written; a [`CurrencyCode`] holds
+/// its letters in capitals, so such a code is the book's exactly when the
+/// two texts are equal. Letters with a lowercase one among them are a word
+/// (`lei`) and are dropped whatever the book. Without a `book` every three
+/// letters are dropped.
 ///
 /// A cell that is nothing but three letters is returned as it is. It has no
 /// digits, so the caller rejects it as an invalid amount either way.
 fn strip_letter_code(text: &str, book: Option<CurrencyCode>) -> Option<&str> {
-    let is_the_books =
-        |code: &str| book.is_none_or(|book| code.eq_ignore_ascii_case(book.as_str()));
+    let is_another_currency = |letters: &str| {
+        let written_as_a_code = letters.bytes().all(|byte| byte.is_ascii_uppercase());
+        book.is_some_and(|book| written_as_a_code && letters != book.as_str())
+    };
 
     let rest = match split_leading_letter_code(text) {
         Some((_, "")) => return Some(text),
-        Some((code, rest)) if is_the_books(code) => rest,
-        Some(_) => return None,
+        Some((letters, _)) if is_another_currency(letters) => return None,
+        Some((_, rest)) => rest,
         None => text,
     };
     match split_trailing_letter_code(rest) {
-        Some((head, code)) => is_the_books(code).then_some(head),
+        Some((head, letters)) => (!is_another_currency(letters)).then_some(head),
         None => Some(rest),
     }
 }
@@ -658,7 +677,6 @@ mod tests {
         for raw in [
             "25 USD",
             "USD 25",
-            "usd 25",
             "USD -12.00",
             "-USD 12",
             "12- USD",
@@ -667,7 +685,7 @@ mod tests {
             "EUR 25 USD",
             "USD 25 EUR",
             "EUR -USD 25",
-            "25,00 lei",
+            "lei 25 USD",
         ] {
             assert_eq!(
                 parse_book_amount(raw, eur),
@@ -676,6 +694,36 @@ mod tests {
             );
         }
         assert_eq!(parse_book_amount("25 USD", currency("usd")), Ok(2_500));
+        assert_eq!(parse_book_amount("25 EUR", eur), Ok(2_500));
+    }
+
+    #[test]
+    fn three_letters_that_are_not_all_capitals_are_dropped_as_a_word() {
+        // A currency written as a word, such as the Romanian `lei`, is not a
+        // code: it is dropped and the amount is read in the book's currency.
+        for book in [currency("RON"), currency("EUR")] {
+            for raw in ["25,00 lei", "lei 25,00", "25,00 Lei", "25,00 leI"] {
+                assert_eq!(parse_book_amount(raw, book), Ok(2_500), "{raw} in {book}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_limits_of_telling_a_code_by_its_capitals() {
+        let eur = currency("EUR");
+
+        // A code in lower case is taken for a word and read as euros.
+        assert_eq!(parse_book_amount("25 usd", eur), Ok(2_500));
+        assert_eq!(parse_book_amount("25 Usd", eur), Ok(2_500));
+        // A capitalised word that is no currency is refused like a code.
+        assert_eq!(
+            parse_book_amount("25 LEI", eur),
+            Err(CsvError::InvalidAmount("25 LEI".to_owned()))
+        );
+        assert_eq!(
+            parse_book_amount("25 PCS", eur),
+            Err(CsvError::InvalidAmount("25 PCS".to_owned()))
+        );
     }
 
     #[test]
@@ -1053,11 +1101,12 @@ mod properties {
             }
         }
 
-        // A code is the book's or the cell is refused, wherever it stands.
+        // Three capitals are a code: the book's, or the cell is refused,
+        // wherever the code stands.
         #[test]
-        fn only_the_code_of_the_books_currency_is_accepted(
+        fn a_code_in_capitals_is_the_books_or_the_cell_is_refused(
             minor in 1_i64..=99_999_999,
-            code in "[A-Za-z]{3}",
+            code in "[A-Z]{3}",
             code_first in any::<bool>(),
         ) {
             let book: CurrencyCode = "EUR".parse().unwrap();
@@ -1068,12 +1117,58 @@ mod properties {
                 format!("{amount} {code}")
             };
 
-            let expected = if code.eq_ignore_ascii_case("EUR") {
+            let expected = if code == "EUR" {
                 Ok(minor)
             } else {
                 Err(CsvError::InvalidAmount(cell.clone()))
             };
             prop_assert_eq!(parse_book_amount(&cell, book), expected, "{}", cell);
+        }
+
+        // Three letters with a lowercase one among them are a word, and a
+        // word never changes the amount: the cell reads as it does without
+        // it, in the book's currency, whatever the book.
+        #[test]
+        fn three_letters_not_all_in_capitals_never_change_the_amount(
+            minor in (i64::MIN + 1)..=i64::MAX,
+            word in "[A-Za-z]{3}".prop_filter(
+                "a lowercase letter",
+                |word| word.bytes().any(|byte| byte.is_ascii_lowercase()),
+            ),
+            book in "[A-Z]{3}",
+            (group, decimal) in proptest::sample::select(CONVENTIONS.to_vec()),
+            word_first in any::<bool>(),
+        ) {
+            let book: CurrencyCode = book.parse().unwrap();
+            let unsigned = written(minor, group, decimal);
+            let amount = if minor < 0 { format!("-{unsigned}") } else { unsigned };
+            let cell = if word_first {
+                format!("{word} {amount}")
+            } else {
+                format!("{amount} {word}")
+            };
+
+            let without_the_word = parse_book_amount(&amount, book);
+            // Refused cells carry the cell as written, so only what parses
+            // is compared.
+            if let Ok(parsed) = without_the_word {
+                prop_assert_eq!(parse_book_amount(&cell, book), Ok(parsed), "{}", cell);
+            } else {
+                prop_assert!(parse_book_amount(&cell, book).is_err(), "{}", cell);
+            }
+        }
+
+        #[test]
+        fn a_lowercase_suffix_never_changes_a_two_decimal_amount(
+            minor in (i64::MIN + 1)..=i64::MAX,
+            word in "[a-z]{3}",
+        ) {
+            let book: CurrencyCode = "EUR".parse().unwrap();
+            let unsigned = written(minor, "", '.');
+            let amount = if minor < 0 { format!("-{unsigned}") } else { unsigned };
+
+            let cell = format!("{amount} {word}");
+            prop_assert_eq!(parse_book_amount(&cell, book), Ok(minor), "{}", cell);
         }
 
         #[test]
