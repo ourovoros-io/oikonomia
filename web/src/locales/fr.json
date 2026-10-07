@@ -970,6 +970,7 @@
     "io": "Une opération sur un fichier a échoué.",
     "crypto": "Une opération de sécurité a échoué.",
     "vaultCorrupt": "Le fichier du coffre est corrompu.",
+    "vaultTooNew": "Ce coffre a été créé par une version plus récente d’Oikonomia. Mettez l’application à jour pour l’ouvrir.",
     "backupInvalid": "Ce fichier de sauvegarde n’est pas valide.",
     "restoreWouldOverwrite": "Un coffre existe déjà ; la restauration l’écraserait.",
     "notFound": "Cet élément est introuvable.",

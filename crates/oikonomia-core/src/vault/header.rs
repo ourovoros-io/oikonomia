@@ -11,9 +11,14 @@
 //! rekeyed with.
 //!
 //! `version` covers the header and the meaning of its fields. It is checked
-//! on load, before anything is derived from the header. The database has a
-//! schema version of its own in `vault_meta`.
+//! on load, before anything is derived from the header. A version above
+//! [`VAULT_FORMAT_VERSION`] is a header from a later build and is reported
+//! as [`Error::VaultTooNew`], the same error a newer database schema gets: in
+//! both cases the vault is sound and this build is too old for it. Version
+//! 0, which no build has written, is damage. The database has a schema
+//! version of its own in `vault_meta`.
 
+use std::cmp::Ordering;
 use std::fs;
 use std::path::Path;
 
@@ -62,7 +67,8 @@ pub(super) const SALT_LEN: usize = 16;
 /// are these field names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultHeader {
-    /// On-disk format version. Only version 1 is read.
+    /// On-disk format version. Only version 1 is read; a higher one is a
+    /// header from a later build.
     pub version: u32,
     /// Name of the key-derivation function. Only `argon2id` is accepted.
     pub kdf: String,
@@ -104,22 +110,51 @@ impl VaultHeader {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`] when the file cannot be read; [`Error::VaultCorrupt`]
-    /// when it is not a header or its `version` is not
-    /// [`VAULT_FORMAT_VERSION`].
+    /// Everything [`VaultHeader::read`] and [`VaultHeader::check_format`]
+    /// return.
     pub(crate) fn load(path: &Path) -> Result<Self> {
+        let header = Self::read(path)?;
+        header.check_format()?;
+        Ok(header)
+    }
+
+    /// Reads the header file at `path` without judging its format version.
+    ///
+    /// For the restore, which reports a version it cannot use as a defect of
+    /// the archive and so has to see the header first. Everything else goes
+    /// through [`VaultHeader::load`].
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Io`] when the file cannot be read; [`Error::VaultCorrupt`]
+    /// with [`VaultCorruption::HeaderUnreadable`] when it is not a header.
+    pub(super) fn read(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path).io("read vault header")?;
-        let header: Self = serde_json::from_str(&raw).map_err(|err| {
+        serde_json::from_str(&raw).map_err(|err| {
             Error::VaultCorrupt(VaultCorruption::HeaderUnreadable {
                 detail: err.to_string(),
             })
-        })?;
+        })
+    }
 
-        if header.version != VAULT_FORMAT_VERSION {
-            return Err(Error::VaultCorrupt(VaultCorruption::UnsupportedFormat {
-                version: header.version,
-            }));
+    /// Checks that this build reads the header's format version.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::VaultTooNew`] when `version` is above
+    /// [`VAULT_FORMAT_VERSION`]: a later build wrote the header.
+    /// [`Error::VaultCorrupt`] with [`VaultCorruption::UnsupportedFormat`]
+    /// when it is below, which no build writes.
+    pub(super) fn check_format(&self) -> Result<()> {
+        match self.version.cmp(&VAULT_FORMAT_VERSION) {
+            Ordering::Equal => Ok(()),
+            Ordering::Greater => Err(Error::VaultTooNew {
+                found: i64::from(self.version),
+                supported: i64::from(VAULT_FORMAT_VERSION),
+            }),
+            Ordering::Less => Err(Error::VaultCorrupt(VaultCorruption::UnsupportedFormat {
+                version: self.version,
+            })),
         }
-        Ok(header)
     }
 }
