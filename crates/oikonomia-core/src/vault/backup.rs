@@ -5,22 +5,35 @@
 //! `vault.header.json.tmp`, the header staged by a password change, is never
 //! packed.
 //!
-//! That leaves one gap. If a password change crashed after the rekey and
-//! before the staged header was published, the staged header is the one
-//! whose key fits the database, and a backup of the locked vault taken
-//! before the next unlock packs the published header instead. No password
-//! opens such an archive. Unlocking once publishes the staged header and
-//! closes the gap; nothing here checks for it.
-//!
 //! An unlocked vault is snapshotted with `VACUUM INTO` so WAL is folded
-//! without closing the session. A locked vault is copied file by file, which
-//! is only complete when `vault.db-wal` is absent or empty: the database
-//! runs in WAL mode, and after a crash committed transactions can still sit
-//! in that log. Such a vault is refused until a session has been opened and
-//! closed once: unlocking reads the log, and `SQLite` folds it into
-//! `vault.db` when the last connection closes
-//! (<https://www.sqlite.org/wal.html>, "Avoiding Excessively Large WAL
-//! Files").
+//! without closing the session. A locked vault is copied file by file, and
+//! that copy is a usable backup only when the two files are the whole vault
+//! and belong together. Two things a crash leaves break that, and a locked
+//! backup refuses the vault while either is there:
+//!
+//! | Leftover                  | Crash during       | Why a file copy is wrong          |
+//! |---------------------------|--------------------|-----------------------------------|
+//! | `vault.db-wal`, not empty | A session.         | Commits in the log are left out.  |
+//! | `vault.header.json.tmp`   | A password change. | The published header may not fit. |
+//!
+//! - **Write-ahead log.** The database runs in WAL mode, and after a crash
+//!   committed transactions can still sit in the log. Unlocking reads it,
+//!   and `SQLite` folds it into `vault.db` when the last connection closes
+//!   (<https://www.sqlite.org/wal.html>, "Avoiding Excessively Large WAL
+//!   Files").
+//! - **Staged header.** A password change writes it before the rekey and
+//!   renames it over the published header after. If the process died
+//!   between the two, the staged header is the one whose key fits the
+//!   database, and an archive with the published one opens with no
+//!   password. If it died before the rekey, the published header still
+//!   fits. Telling the two cases apart takes the key, which a locked backup
+//!   does not have, so both are refused. A successful unlock settles
+//!   either: it publishes the staged header when that is the one that fits
+//!   and removes it otherwise.
+//!
+//! Both refusals end the same way: unlock the vault once, then back up. The
+//! backup of an unlocked vault checks neither. Its snapshot includes the
+//! log, and the unlock it follows has already settled the header.
 //!
 //! # Format
 //!
@@ -169,17 +182,24 @@ pub fn default_backup_file_name() -> String {
 /// # Errors
 ///
 /// - [`Error::VaultUninitialized`] when neither vault file exists.
-/// - [`Error::VaultCorrupt`] when only one of the two files exists, when
-///   either is empty, or when `vault.db-wal` holds pages a file copy would
-///   leave out.
-/// - [`Error::Io`] when `dest` has no file name, or a file cannot be read,
-///   created, written or renamed.
+/// - [`Error::VaultCorrupt`] when only one of the two files exists
+///   ([`VaultCorruption::HeaderWithoutDatabase`],
+///   [`VaultCorruption::DatabaseWithoutHeader`]), when either is empty
+///   ([`VaultCorruption::EmptyFile`]), when `vault.db-wal` holds pages a
+///   file copy would leave out ([`VaultCorruption::UnmergedWriteAheadLog`]),
+///   or when a password change left its staged header behind
+///   ([`VaultCorruption::UnfinishedPasswordChange`]). The last two are
+///   settled by unlocking the vault once; see the module doc.
+/// - [`Error::Io`] when `dest` has no file name, or a file cannot be
+///   inspected, read, created, written or renamed.
 /// - [`Error::BackupInvalid`] when a vault file becomes shorter while it is
 ///   being copied.
 pub fn backup_to_path(data_dir: &Path, dest: &Path) -> Result<()> {
     let header_path = vault_header_path(data_dir);
     let db_path = vault_db_path(data_dir);
     ensure_vault_files(&header_path, &db_path)?;
+    ensure_no_unmerged_wal(&db_path)?;
+    ensure_no_staged_header(data_dir)?;
     write_archive_from_paths(&header_path, &db_path, dest)
 }
 
@@ -416,21 +436,45 @@ fn undo_swap(paths: &RestorePaths) -> Result<()> {
     Ok(())
 }
 
-/// Checks that the header and the database both exist as files and that a
-/// file copy of them is a complete backup.
+/// Checks that the header and the database both exist as files.
 ///
 /// # Errors
 ///
 /// [`Error::VaultUninitialized`] when neither exists; [`Error::VaultCorrupt`]
-/// when one does, or when [`ensure_no_unmerged_wal`] refuses the database;
-/// [`Error::Io`] when the write-ahead log cannot be inspected.
+/// when only one does.
 fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
     match (header_path.is_file(), db_path.is_file()) {
-        (true, true) => ensure_no_unmerged_wal(db_path),
+        (true, true) => Ok(()),
         (false, false) => Err(Error::VaultUninitialized),
         (true, false) => Err(Error::VaultCorrupt(VaultCorruption::HeaderWithoutDatabase)),
         (false, true) => Err(Error::VaultCorrupt(VaultCorruption::DatabaseWithoutHeader)),
     }
+}
+
+/// Refuses a vault beside which a password change left its staged header.
+///
+/// The staged header is there either because the change died before the
+/// rekey, and the published header still fits the database, or because it
+/// died after, and only the staged one does. Deciding takes the key, so the
+/// file's presence alone is the refusal. Packing the staged header instead
+/// would get the first case wrong the same way.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] with [`VaultCorruption::UnfinishedPasswordChange`]
+/// when the staged header exists; [`Error::Io`] when that cannot be
+/// determined.
+fn ensure_no_staged_header(data_dir: &Path) -> Result<()> {
+    let staged = vault_staged_header_path(data_dir)
+        .try_exists()
+        .io("look for a staged vault header")?;
+
+    if staged {
+        return Err(Error::VaultCorrupt(
+            VaultCorruption::UnfinishedPasswordChange,
+        ));
+    }
+    Ok(())
 }
 
 /// Refuses a database whose write-ahead log still holds pages.
@@ -438,6 +482,11 @@ fn ensure_vault_files(header_path: &Path, db_path: &Path) -> Result<()> {
 /// `SQLite` removes the log when the last connection closes cleanly, so a
 /// non-empty one next to a locked vault is left from a crash and can hold
 /// committed transactions that are not in `vault.db` yet.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] with [`VaultCorruption::UnmergedWriteAheadLog`]
+/// when the log is not empty; [`Error::Io`] when it cannot be inspected.
 fn ensure_no_unmerged_wal(db_path: &Path) -> Result<()> {
     let [wal_path, _shm_path] = db_sidecar_paths(db_path);
     let wal_len = match fs::metadata(&wal_path) {

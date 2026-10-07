@@ -82,6 +82,13 @@ pub enum VaultCorruption {
     )]
     UnmergedWriteAheadLog,
 
+    /// The header a password change staged is still beside a locked vault.
+    /// Either it or the published header fits the database, and only the
+    /// password tells which, so a copy of the two vault files may be a
+    /// backup that no password opens.
+    #[error("a password change did not finish; unlock the vault once before backing up")]
+    UnfinishedPasswordChange,
+
     /// A stored application setting is not a value the application writes.
     #[error("stored setting {key} is not valid")]
     Setting {
@@ -188,6 +195,7 @@ mod tests {
             VaultCorruption::DatabaseWithoutHeader,
             VaultCorruption::EmptyFile { .. },
             VaultCorruption::UnmergedWriteAheadLog,
+            VaultCorruption::UnfinishedPasswordChange,
             VaultCorruption::Setting { .. },
             VaultCorruption::InvalidJournalLines { .. },
         }
@@ -214,6 +222,7 @@ mod tests {
             VaultCorruption::DatabaseWithoutHeader,
             VaultCorruption::EmptyFile { file: "vault.db" },
             VaultCorruption::UnmergedWriteAheadLog,
+            VaultCorruption::UnfinishedPasswordChange,
             VaultCorruption::Setting {
                 key: "lock_timeout_secs",
             },
