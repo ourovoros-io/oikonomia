@@ -432,6 +432,18 @@ fn unarchiving_is_refused_while_an_active_entity_has_the_name() {
         names(&list_entities(conn).expect("entities")),
         ["Closed shop"]
     );
+
+    // Two archived books may share a name; only one of them comes back.
+    assert_eq!(
+        unarchive_entity(conn, rival),
+        Err(Error::Validation(ValidationError::NameTaken {
+            name: "CLOSED Shop".into(),
+        }))
+    );
+    assert_eq!(
+        names(&list_archived_entities(conn).expect("archived")),
+        ["CLOSED Shop"]
+    );
 }
 
 #[test]

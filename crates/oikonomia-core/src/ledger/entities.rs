@@ -44,6 +44,10 @@
 //! and its name no longer counts as taken. [`count_entities`] counts it, and
 //! [`list_archived_entities`] lists it.
 //!
+//! The writes that name a record and no entity do not make the check:
+//! updating or archiving an account, hiding an entry, deleting a template or
+//! a document, and storing the analysis of a document.
+//!
 //! # Un-archiving
 //!
 //! [`unarchive_entity`] clears `archived_at`, and the entity is an active one
@@ -61,10 +65,6 @@
 //! The two operations mirror each other: [`archive_entity`] reports an
 //! entity that is already archived as [`Error::NotFound`], and
 //! [`unarchive_entity`] reports one that is not archived the same way.
-//!
-//! The writes that name a record and no entity do not make the check:
-//! updating or archiving an account, hiding an entry, deleting a template or
-//! a document, and storing the analysis of a document.
 
 use crate::coa::template_accounts;
 use crate::db::{collect_rows, corrupt_column, read_column, stored_id};
@@ -374,14 +374,19 @@ fn unarchive_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
     // name; no entity needs excluding.
     ensure_unique_name(conn, &name, None)?;
 
-    // The row is there and archived: it was read above, in the caller's
-    // transaction.
-    conn.execute(
-        "UPDATE entities SET archived_at = NULL WHERE id = ?1",
-        [&entity_id],
-    )
-    .database("un-archive entity")?;
+    // The row was read as archived above, in the caller's transaction. The
+    // statement makes the test again all the same, as `archive_entity` does,
+    // so that it cannot touch an active entity whoever calls it.
+    let unarchived = conn
+        .execute(
+            "UPDATE entities SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL",
+            [&entity_id],
+        )
+        .database("un-archive entity")?;
 
+    if unarchived == 0 {
+        return Err(Error::NotFound(Resource::Entity));
+    }
     Ok(())
 }
 
