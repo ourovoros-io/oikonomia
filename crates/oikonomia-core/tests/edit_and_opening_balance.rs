@@ -3,7 +3,7 @@
 
 mod common;
 
-use oikonomia_core::documents::{attach_document, list_documents};
+use oikonomia_core::documents::{NewDocument, attach_document, list_documents};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
@@ -88,9 +88,11 @@ fn replace_moves_documents_to_replacement() {
         conn,
         entity_id,
         original.entry.id,
-        "receipt.txt",
-        "text/plain",
-        b"total 25,00",
+        &NewDocument {
+            filename: "receipt.txt",
+            mime_type: "text/plain",
+            data: b"total 25,00",
+        },
     )
     .expect("attach");
 

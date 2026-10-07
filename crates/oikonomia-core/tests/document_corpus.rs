@@ -11,12 +11,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oikonomia_core::documents::{
-    AnalyzeContext, DocumentSuggestion, EntryKindSuggestion, OcrModelPaths, analyze_document_bytes,
-    analyzer_status, parse_invoice_text,
+    AnalyzeContext, DocumentSuggestion, EntryKindSuggestion, NewDocument, OcrModelPaths,
+    analyze_document_bytes, analyzer_status, parse_invoice_text,
 };
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::ui_text::UiTextCode;
+use oikonomia_core::util::format_date;
 use serde::{Deserialize, Serialize};
 
 const CORPUS_REL: &str = "testdata/documents";
@@ -206,9 +207,11 @@ fn suggest_for(entry: &ManifestEntry, bytes: &[u8]) -> DocumentSuggestion {
                 .and_then(|n| n.to_str())
                 .unwrap_or("document");
             analyze_document_bytes(
-                name,
-                mime,
-                bytes,
+                &NewDocument {
+                    filename: name,
+                    mime_type: mime,
+                    data: bytes,
+                },
                 &AnalyzeContext {
                     template: ChartTemplate::Blank,
                     accounts: &[],
@@ -217,7 +220,6 @@ fn suggest_for(entry: &ManifestEntry, bytes: &[u8]) -> DocumentSuggestion {
                 },
                 None,
             )
-            .expect("analyze")
         }
         other => unreachable!("id {}: unknown parser {other}", entry.id),
     }
@@ -251,7 +253,11 @@ fn assert_against_golden(id: &str, got: &DocumentSuggestion, golden: &Golden) {
         );
     }
     if let Some(date) = golden.entry_date.as_deref() {
-        assert_eq!(got.entry_date.as_deref(), Some(date), "{id}: entry_date");
+        assert_eq!(
+            got.entry_date.map(format_date).as_deref(),
+            Some(date),
+            "{id}: entry_date"
+        );
     }
     if let Some(kind) = golden.kind {
         assert_eq!(got.kind, kind, "{id}: kind");
@@ -295,7 +301,7 @@ fn write_golden(path: &Path, suggestion: &DocumentSuggestion) {
     }
     let golden = Golden {
         amount_minor: suggestion.amount_minor,
-        entry_date: suggestion.entry_date.clone(),
+        entry_date: suggestion.entry_date.map(format_date),
         kind: Some(suggestion.kind),
         merchant: suggestion.merchant.clone(),
         merchant_aliases: Vec::new(),
@@ -407,9 +413,11 @@ fn text_mime_analyze_path_matches_invoice_reader() {
     let text = fs::read(root.join("synthetic/text/dei_electricity_current.txt")).expect("text");
     let via_parse = parse_invoice_text(&String::from_utf8_lossy(&text), Locale::En);
     let via_analyze = analyze_document_bytes(
-        "dei_electricity_current.txt",
-        "text/plain",
-        &text,
+        &NewDocument {
+            filename: "dei_electricity_current.txt",
+            mime_type: "text/plain",
+            data: &text,
+        },
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
@@ -417,8 +425,7 @@ fn text_mime_analyze_path_matches_invoice_reader() {
             locale: Locale::En,
         },
         None,
-    )
-    .expect("analyze text/plain");
+    );
 
     assert_eq!(via_analyze.amount_minor, via_parse.amount_minor);
     assert_eq!(via_analyze.entry_date, via_parse.entry_date);
@@ -429,9 +436,11 @@ fn text_mime_analyze_path_matches_invoice_reader() {
     let transfer = fs::read(root.join("synthetic/text/greek_bank_embasma.txt")).expect("transfer");
     let transfer_parse = parse_invoice_text(&String::from_utf8_lossy(&transfer), Locale::En);
     let transfer_analyze = analyze_document_bytes(
-        "greek_bank_embasma.txt",
-        "text/plain",
-        &transfer,
+        &NewDocument {
+            filename: "greek_bank_embasma.txt",
+            mime_type: "text/plain",
+            data: &transfer,
+        },
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
@@ -439,8 +448,7 @@ fn text_mime_analyze_path_matches_invoice_reader() {
             locale: Locale::En,
         },
         None,
-    )
-    .expect("analyze transfer text/plain");
+    );
     assert_eq!(transfer_analyze.amount_minor, transfer_parse.amount_minor);
     assert_eq!(transfer_analyze.entry_date, transfer_parse.entry_date);
     assert_eq!(transfer_analyze.kind, transfer_parse.kind);
@@ -490,9 +498,11 @@ fn a_jpeg_is_read_through_ocr() {
     let model_dir = bundled_ocr_dir();
 
     let suggestion = analyze_document_bytes(
-        "english_total.jpg",
-        "image/jpeg",
-        &bytes,
+        &NewDocument {
+            filename: "english_total.jpg",
+            mime_type: "image/jpeg",
+            data: &bytes,
+        },
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
@@ -500,16 +510,58 @@ fn a_jpeg_is_read_through_ocr() {
             locale: Locale::En,
         },
         Some(model_dir.as_path()),
-    )
-    .expect("analysis reports a failure in the notes, never as an error");
+    );
 
     let golden = load_golden(&root.join("golden/english_total_jpeg.json"));
     assert_against_golden("english-total-jpeg", &suggestion, &golden);
 
     assert!(
-        analyzer_status(Some(Path::new("no-such-model-directory"))).ocr_available,
+        analyzer_status(Some(Path::new("no-such-model-directory"))).ocr_available(),
         "a loaded engine answers for any directory"
     );
+}
+
+/// A white PNG of the given size: an image the engine finds no text on.
+fn blank_png(width: u32, height: u32) -> Vec<u8> {
+    let picture = image::GrayImage::from_pixel(width, height, image::Luma([255]));
+    let mut bytes = std::io::Cursor::new(Vec::new());
+
+    image::DynamicImage::ImageLuma8(picture)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .expect("a grey image encodes as PNG");
+    bytes.into_inner()
+}
+
+/// Runs in this file because it loads the real models; see
+/// `a_scanned_pdf_is_read_through_its_image_or_says_why_not`.
+#[test]
+fn an_image_without_text_says_ocr_found_little() {
+    let model_dir = bundled_ocr_dir();
+
+    let suggestion = analyze_document_bytes(
+        &NewDocument {
+            filename: "blank.png",
+            mime_type: "image/png",
+            data: &blank_png(400, 200),
+        },
+        &AnalyzeContext {
+            template: ChartTemplate::Blank,
+            accounts: &[],
+            default_currency: "EUR".parse().expect("EUR is a currency code"),
+            locale: Locale::En,
+        },
+        Some(model_dir.as_path()),
+    );
+
+    assert_eq!(
+        suggestion
+            .notes
+            .iter()
+            .map(|note| note.code)
+            .collect::<Vec<_>>(),
+        [UiTextCode::OcrLittleText]
+    );
+    assert_eq!(suggestion.amount_minor, None);
 }
 
 /// A one-page PDF whose only content is an image stream marked as a JPEG
@@ -548,9 +600,11 @@ fn scanned_pdf(image_bytes: &[u8]) -> Vec<u8> {
 
 fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
     analyze_document_bytes(
-        "scan.pdf",
-        "application/pdf",
-        pdf,
+        &NewDocument {
+            filename: "scan.pdf",
+            mime_type: "application/pdf",
+            data: pdf,
+        },
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
@@ -559,7 +613,6 @@ fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
         },
         Some(model_dir),
     )
-    .expect("analysis reports a failure in the notes, never as an error")
 }
 
 /// Runs in this file because it loads the real models: the engine is one
@@ -684,9 +737,11 @@ fn suggested_codes(
     bytes: &[u8],
 ) -> SuggestedCodes {
     let suggestion = analyze_document_bytes(
-        "document",
-        mime,
-        bytes,
+        &NewDocument {
+            filename: "document",
+            mime_type: mime,
+            data: bytes,
+        },
         &AnalyzeContext {
             template,
             accounts,
@@ -694,8 +749,7 @@ fn suggested_codes(
             locale,
         },
         None,
-    )
-    .expect("analyze");
+    );
 
     let code_of = |id: Option<oikonomia_core::domain::AccountId>| -> Option<String> {
         let id = id?;
