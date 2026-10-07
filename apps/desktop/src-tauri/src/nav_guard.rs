@@ -7,7 +7,8 @@
 use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{Runtime, Url};
 
-/// Deny navigation to anything but the app's own origins in every webview.
+/// Returns the plugin that denies navigation to anything but the app's own
+/// origins, in every webview.
 #[must_use]
 pub(crate) fn plugin<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("nav-guard")
@@ -15,7 +16,7 @@ pub(crate) fn plugin<R: Runtime>() -> TauriPlugin<R> {
         .build()
 }
 
-/// Whether `url` is one of the app's own origins.
+/// Returns whether `url` is one of the app's own origins.
 ///
 /// `blob:` is the document viewer's iframe (wry reports subframe navigations
 /// through the same hook); `about:blank` is the empty document every webview
@@ -28,6 +29,8 @@ fn is_app_url(url: &Url) -> bool {
     }
 }
 
+/// Returns whether `host` is one the app is served from.
+///
 /// `tauri.localhost` serves the bundle on Windows; `localhost` is the Vite
 /// dev server, reachable only from `cargo tauri dev` builds.
 fn is_app_host(host: &str) -> bool {
@@ -40,6 +43,7 @@ mod tests {
 
     use super::is_app_url;
 
+    /// Parses a URL a test wrote out.
     fn url(text: &str) -> Url {
         Url::parse(text).expect("test URL parses")
     }
