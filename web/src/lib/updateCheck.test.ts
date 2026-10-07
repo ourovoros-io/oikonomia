@@ -22,6 +22,26 @@ describe('parseUpdateCheckResult', () => {
     })
   })
 
+  test('a failure keeps the code of its cause', () => {
+    expect(parseUpdateCheckResult({ kind: 'failed', code: 'update_network' })).toEqual({
+      kind: 'failed',
+      code: 'update_network',
+    })
+    expect(
+      parseUpdateCheckResult({ kind: 'failed', code: 'update_manifest_signature' }),
+    ).toEqual({ kind: 'failed', code: 'update_manifest_signature' })
+  })
+
+  test('a failure without a usable code is still a failure', () => {
+    const bare = parseUpdateCheckResult({ kind: 'failed' })
+
+    expect(bare).toEqual({ kind: 'failed' })
+    expect(bare).not.toHaveProperty('code')
+    expect(parseUpdateCheckResult({ kind: 'failed', code: null })).toEqual({ kind: 'failed' })
+    expect(parseUpdateCheckResult({ kind: 'failed', code: '' })).toEqual({ kind: 'failed' })
+    expect(parseUpdateCheckResult({ kind: 'failed', code: 7 })).toEqual({ kind: 'failed' })
+  })
+
   test('a package-managed copy gets the version but is not installable', () => {
     const parsed = parseUpdateCheckResult({
       kind: 'available_manually',

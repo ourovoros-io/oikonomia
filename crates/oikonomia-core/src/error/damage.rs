@@ -44,7 +44,13 @@ pub enum VaultCorruption {
         detail: String,
     },
 
-    /// The header was written in a format this build does not read.
+    /// The header names a format version this build does not read.
+    ///
+    /// For the header of the vault in place this is only version 0, which
+    /// no build writes: a version above the supported one is
+    /// [`Error::VaultTooNew`](crate::Error::VaultTooNew). The header inside
+    /// a backup is reported with this reason for either, wrapped in
+    /// [`BackupDefect::UnusableHeader`].
     #[error("unsupported vault format {version}")]
     UnsupportedFormat {
         /// The format version the header names.
@@ -81,6 +87,13 @@ pub enum VaultCorruption {
          unlock the vault once before backing up"
     )]
     UnmergedWriteAheadLog,
+
+    /// The header a password change staged is still beside a locked vault.
+    /// Either it or the published header fits the database, and only the
+    /// password tells which, so a copy of the two vault files may be a
+    /// backup that no password opens.
+    #[error("a password change did not finish; unlock the vault once before backing up")]
+    UnfinishedPasswordChange,
 
     /// A stored application setting is not a value the application writes.
     #[error("stored setting {key} is not valid")]
@@ -188,6 +201,7 @@ mod tests {
             VaultCorruption::DatabaseWithoutHeader,
             VaultCorruption::EmptyFile { .. },
             VaultCorruption::UnmergedWriteAheadLog,
+            VaultCorruption::UnfinishedPasswordChange,
             VaultCorruption::Setting { .. },
             VaultCorruption::InvalidJournalLines { .. },
         }
@@ -214,6 +228,7 @@ mod tests {
             VaultCorruption::DatabaseWithoutHeader,
             VaultCorruption::EmptyFile { file: "vault.db" },
             VaultCorruption::UnmergedWriteAheadLog,
+            VaultCorruption::UnfinishedPasswordChange,
             VaultCorruption::Setting {
                 key: "lock_timeout_secs",
             },

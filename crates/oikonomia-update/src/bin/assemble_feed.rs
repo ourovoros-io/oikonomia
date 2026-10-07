@@ -8,8 +8,8 @@
 //!
 //! - `assemble` writes `latest.json` from the artifacts in a directory;
 //! - `verify` checks a file against a detached minisign signature;
-//! - `verify-feed` checks every artifact a feed names against its hash and
-//!   its minisign signature;
+//! - `verify-feed` checks that installed copies would accept a feed, and
+//!   every artifact it names against its hash and its minisign signature;
 //! - `unpublished` lists the draft assets that must not be published;
 //! - `fixed-copies` writes the version-free copies the website links to;
 //! - `fixed-names` prints the version-free names a release must carry;
@@ -23,10 +23,10 @@
 //! error and exits with status 1.
 
 use oikonomia_update::{
-    ArtifactSizeError, FeedArtifact, ReleaseSetError, UpdateError, WindowsBuild, assemble_manifest,
-    check_artifact_file, checksum_line, checksummed_assets, feed_entries, feed_platform_keys,
-    fixed_name_copies, fixed_names, is_published_asset, sha256_hex, updater_artifact_kinds,
-    verify_signature,
+    ArtifactSizeError, FeedArtifact, FeedRefusal, ReleaseSetError, UpdateError, WindowsBuild,
+    assemble_manifest, check_artifact_file, check_feed_as_client, checksum_line,
+    checksummed_assets, feed_entries, feed_platform_keys, fixed_name_copies, fixed_names,
+    is_published_asset, sha256_hex, updater_artifact_kinds, verify_signature,
 };
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -155,6 +155,19 @@ enum CliError {
         directory: PathBuf,
     },
 
+    /// Installed copies would refuse the feed.
+    #[error(transparent)]
+    Refused(#[from] FeedRefusal),
+
+    /// A feed entry lacks a field `verify-feed` checks the artifact against.
+    #[error("{platform}: the feed entry has no {field}")]
+    IncompleteEntry {
+        /// The platform key of the entry.
+        platform: String,
+        /// The field that is missing: `signature` or `sha256`.
+        field: &'static str,
+    },
+
     /// A bundle directory holds no file a feed could name.
     #[error("{}: no updater artifact matching {suffixes}", directory.display())]
     NoUpdaterArtifact {
@@ -208,7 +221,9 @@ impl CliError {
 /// The result of a subcommand.
 type CliResult<T> = Result<T, CliError>;
 
-/// The part of `latest.json` that `verify-feed` reads.
+/// The part of `latest.json` this tool reads to find and check the files a
+/// feed names. `verify-feed` and `check-sizes` both read a feed through
+/// [`read_feed`], so they agree on which file an entry means.
 #[derive(Debug, Deserialize)]
 struct Feed {
     /// The artifact of each platform, by platform key.
@@ -216,29 +231,73 @@ struct Feed {
 }
 
 /// One platform's artifact as the feed describes it.
+///
+/// Only the URL is needed to find the file, which is all `check-sizes` does
+/// with an entry, so the other two fields may be absent here. `verify-feed`
+/// requires them: before it reads an entry it asks the client's own parser,
+/// which refuses a feed without them.
 #[derive(Debug, Deserialize)]
 struct FeedEntry {
     /// Where the app downloads the artifact from.
     url: String,
     /// The minisign signature over the artifact.
-    signature: String,
+    #[serde(default)]
+    signature: Option<String>,
     /// The hex SHA-256 of the artifact.
-    sha256: String,
+    #[serde(default)]
+    sha256: Option<String>,
 }
 
-/// The part of `latest.json` that `check-sizes` reads: where each platform's
-/// artifact is. The other fields of an entry are not needed to find a file.
-#[derive(Debug, Deserialize)]
-struct FeedUrls {
-    /// The artifact URL of each platform, by platform key.
-    platforms: BTreeMap<String, FeedUrl>,
+impl FeedEntry {
+    /// Returns the name of the file this entry's URL ends in.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CliError::NoFileName`], naming `platform`, when the URL does
+    /// not end in a name that stays inside a directory it is joined to.
+    fn file_name(&self, platform: &str) -> CliResult<&str> {
+        artifact_file_name(&self.url).ok_or_else(|| CliError::NoFileName {
+            platform: platform.to_owned(),
+            url: self.url.clone(),
+        })
+    }
 }
 
-/// One platform's artifact URL.
-#[derive(Debug, Deserialize)]
-struct FeedUrl {
-    /// Where the app downloads the artifact from.
-    url: String,
+/// Returns the value of the entry field `field`.
+///
+/// # Errors
+///
+/// Returns [`CliError::IncompleteEntry`], naming `platform`, when the entry
+/// does not have the field.
+fn required_field<'a>(
+    value: Option<&'a String>,
+    field: &'static str,
+    platform: &str,
+) -> CliResult<&'a str> {
+    value
+        .map(String::as_str)
+        .ok_or_else(|| CliError::IncompleteEntry {
+            platform: platform.to_owned(),
+            field,
+        })
+}
+
+/// Reads the feed at `manifest` and returns its bytes with what this tool
+/// reads of them.
+///
+/// # Errors
+///
+/// Returns [`CliError::Io`] when the file cannot be read and
+/// [`CliError::Feed`] when it is not JSON with a `platforms` table whose
+/// entries each have a `url`.
+fn read_feed(manifest: &Path) -> CliResult<(Vec<u8>, Feed)> {
+    let body = std::fs::read(manifest).map_err(CliError::io("read", manifest))?;
+    let feed = serde_json::from_slice(&body).map_err(|source| CliError::Feed {
+        path: manifest.to_path_buf(),
+        source,
+    })?;
+
+    Ok((body, feed))
 }
 
 /// What one entry of a bundle directory is to the size check.
@@ -411,32 +470,30 @@ fn run_verify(args: &[String]) -> CliResult<()> {
 
 /// Checks the artifacts a feed names against the files in `--dir`.
 ///
-/// The feed must hold exactly the platforms this release publishes, and
-/// every file it names must hash to its `sha256` and carry a minisign
-/// signature that verifies with `--pubkey`, the key baked into the app. Both
-/// are checked with the functions the app uses. Run before anything is
-/// public, so a release whose artifact fails either check never ships.
-///
-/// It does not repeat the client's other checks: the version and the URL
-/// allow-list are not looked at here.
+/// The feed must hold exactly the platforms this release publishes. It must
+/// pass the checks an installed copy makes before it offers an update: a
+/// version it can read, and for each platform an artifact URL on the app's
+/// allow-list. A feed assembled with a wrong `--base-url` fails here and not
+/// in every installed copy. And every file the feed names must hash to its
+/// `sha256` and carry a minisign signature that verifies with `--pubkey`,
+/// the key baked into the app. All of it is checked with the functions the
+/// app uses. Run before anything is public, so a release the app would
+/// refuse never ships.
 ///
 /// # Errors
 ///
 /// Returns [`CliError::Usage`] for a missing flag, [`CliError::Io`] or
 /// [`CliError::Feed`] for a feed that cannot be read or parsed,
 /// [`CliError::FeedPlatforms`] when its platforms are not the published
-/// ones, whatever [`verify_feed_entry`] returns for the first entry that
-/// fails, and [`CliError::Output`] when a result line cannot be printed.
+/// ones, [`CliError::Refused`] when installed copies would refuse it,
+/// whatever [`verify_feed_entry`] returns for the first entry that fails,
+/// and [`CliError::Output`] when a result line cannot be printed.
 fn run_verify_feed(args: &[String]) -> CliResult<()> {
     let manifest = Path::new(required_flag(args, "--manifest")?);
     let directory = Path::new(required_flag(args, "--dir")?);
     let public_key = required_flag(args, "--pubkey")?;
 
-    let body = std::fs::read(manifest).map_err(CliError::io("read", manifest))?;
-    let feed: Feed = serde_json::from_slice(&body).map_err(|source| CliError::Feed {
-        path: manifest.to_path_buf(),
-        source,
-    })?;
+    let (body, feed) = read_feed(manifest)?;
 
     let wanted = {
         let mut wanted = feed_platform_keys(windows_build(args));
@@ -450,6 +507,8 @@ fn run_verify_feed(args: &[String]) -> CliResult<()> {
             wanted,
         });
     }
+
+    check_feed_as_client(&body, &wanted)?;
 
     for (platform, entry) in &feed.platforms {
         let file_name = verify_feed_entry(platform, entry, directory, public_key)?;
@@ -467,7 +526,8 @@ fn run_verify_feed(args: &[String]) -> CliResult<()> {
 /// # Errors
 ///
 /// Returns [`CliError::NoFileName`] when the entry's URL names no file,
-/// [`CliError::Io`] when the file cannot be read,
+/// [`CliError::IncompleteEntry`] when the entry has no digest or no
+/// signature, [`CliError::Io`] when the file cannot be read,
 /// [`CliError::DigestMismatch`] or [`CliError::SignatureMismatch`] when the
 /// file is not the one the entry describes, and [`CliError::Update`] when
 /// `public_key` is not a minisign key.
@@ -477,21 +537,20 @@ fn verify_feed_entry<'a>(
     directory: &Path,
     public_key: &str,
 ) -> CliResult<&'a str> {
-    let file_name = artifact_file_name(&entry.url).ok_or_else(|| CliError::NoFileName {
-        platform: platform.to_owned(),
-        url: entry.url.clone(),
-    })?;
+    let file_name = entry.file_name(platform)?;
+    let sha256 = required_field(entry.sha256.as_ref(), "sha256", platform)?;
+    let signature = required_field(entry.signature.as_ref(), "signature", platform)?;
     let artifact_path = directory.join(file_name);
     let bytes = std::fs::read(&artifact_path).map_err(CliError::io("read", &artifact_path))?;
 
-    if !sha256_hex(&bytes).eq_ignore_ascii_case(&entry.sha256) {
+    if !sha256_hex(&bytes).eq_ignore_ascii_case(sha256) {
         return Err(CliError::DigestMismatch {
             platform: platform.to_owned(),
             file_name: file_name.to_owned(),
         });
     }
 
-    match verify_signature(public_key, &bytes, &entry.signature) {
+    match verify_signature(public_key, &bytes, signature) {
         Ok(()) => Ok(file_name),
         // A key that is not a key is the caller's mistake, not this artifact's.
         Err(error @ UpdateError::MissingPublicKey) => Err(error.into()),
@@ -655,11 +714,7 @@ fn check_bundle_sizes(directory: &Path) -> CliResult<()> {
 /// [`CliError::NoFileName`] when an entry's URL names no file, and what
 /// [`report_sizes`] returns for the files named.
 fn check_manifest_sizes(manifest: &Path, directory: &Path) -> CliResult<()> {
-    let body = std::fs::read(manifest).map_err(CliError::io("read", manifest))?;
-    let feed: FeedUrls = serde_json::from_slice(&body).map_err(|source| CliError::Feed {
-        path: manifest.to_path_buf(),
-        source,
-    })?;
+    let (_body, feed) = read_feed(manifest)?;
     if feed.platforms.is_empty() {
         return Err(CliError::EmptyFeed {
             path: manifest.to_path_buf(),
@@ -671,10 +726,7 @@ fn check_manifest_sizes(manifest: &Path, directory: &Path) -> CliResult<()> {
         .platforms
         .iter()
         .map(|(platform, entry)| {
-            let file_name = artifact_file_name(&entry.url).ok_or_else(|| CliError::NoFileName {
-                platform: platform.clone(),
-                url: entry.url.clone(),
-            })?;
+            let file_name = entry.file_name(platform)?;
             Ok((platform.clone(), directory.join(file_name)))
         })
         .collect::<CliResult<Vec<_>>>()?;
@@ -905,13 +957,20 @@ mod tests {
         dir
     }
 
+    /// A release download URL on a host the app may fetch from.
+    const BASE_URL: &str = "https://github.com/o/r/releases/download/v0.2.0/";
+
     fn assemble(dir: &Path, out: &Path, extra: &[&str]) -> Result<(), String> {
+        assemble_from(BASE_URL, dir, out, extra)
+    }
+
+    fn assemble_from(base_url: &str, dir: &Path, out: &Path, extra: &[&str]) -> Result<(), String> {
         let mut list = vec![
             "assemble",
             "--version",
             "v0.2.0",
             "--base-url",
-            "https://github.com/o/r/releases/download/v0.2.0/",
+            base_url,
             "--dir",
             text(dir),
             "--out",
@@ -1400,6 +1459,89 @@ mod tests {
         let err = verify_feed(draft.path(), &feed, "not a key", &["--with-windows"])
             .expect_err("bad key");
         assert_eq!(err, "updater public key is missing or invalid");
+    }
+
+    #[test]
+    fn verify_feed_refuses_a_feed_whose_urls_the_app_would_not_fetch() {
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
+        let feed = draft.path().join("latest.json");
+
+        // Digests and signatures are right; only the host is not one the
+        // installed app will contact.
+        let base_url = "https://downloads.example.com/v0.2.0";
+        assemble_from(base_url, draft.path(), &feed, &[]).expect("assemble");
+
+        let err = verify_feed(draft.path(), &feed, &public_key_text, &[]).expect_err("wrong host");
+        assert_eq!(
+            err,
+            format!(
+                "darwin-aarch64: installed copies refuse {base_url}/{MAC}: \
+                 update url is not allow-listed"
+            )
+        );
+    }
+
+    #[test]
+    fn verify_feed_refuses_a_version_the_app_could_not_read() {
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
+        let feed = draft.path().join("latest.json");
+
+        assemble(draft.path(), &feed, &[]).expect("assemble");
+        let written = std::fs::read_to_string(&feed).expect("feed");
+        let edited = written.replace(r#""version": "0.2.0""#, r#""version": "0.2""#);
+        assert_ne!(edited, written, "the feed must hold the version to edit");
+        std::fs::write(&feed, edited).expect("edit");
+
+        let err = verify_feed(draft.path(), &feed, &public_key_text, &[]).expect_err("version");
+        assert_eq!(
+            err,
+            "installed copies cannot read the feed: version \"0.2\" is not semver"
+        );
+    }
+
+    #[test]
+    fn verify_feed_refuses_an_entry_that_only_says_where_the_file_is() {
+        let KeyPair {
+            pk: public_key,
+            sk: secret_key,
+        } = KeyPair::generate_unencrypted_keypair().expect("keypair");
+        let draft = signed_draft(&secret_key);
+        let public_key_text = public_text(&public_key);
+        // Enough of a feed for `check-sizes`, which only finds the files.
+        let feed = draft.path().join("latest.json");
+        let body = format!(
+            r#"{{"version":"0.2.0","platforms":{{
+                "darwin-aarch64":{{"url":"{BASE_URL}{MAC}"}},
+                "linux-x86_64":{{"url":"{BASE_URL}{APPIMAGE}"}}
+            }}}}"#
+        );
+        std::fs::write(&feed, body).expect("feed");
+
+        assert_eq!(
+            run_text(&[
+                "check-sizes",
+                "--manifest",
+                text(&feed),
+                "--dir",
+                text(draft.path())
+            ]),
+            Ok(())
+        );
+        let err = verify_feed(draft.path(), &feed, &public_key_text, &[]).expect_err("no digests");
+        assert_eq!(
+            err,
+            "installed copies cannot read the feed: update manifest is not valid json"
+        );
     }
 
     #[test]

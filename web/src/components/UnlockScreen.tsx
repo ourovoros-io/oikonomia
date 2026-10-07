@@ -19,7 +19,7 @@ import {
   vaultStatus,
   vaultUnlock,
 } from '../lib/tauri'
-import { asCommandError, commandErrorMessage } from '../lib/commandError'
+import { asCommandError, commandErrorMessage, ERROR_CODE_KEYS } from '../lib/commandError'
 import { restoreCommandError, restoreConfirm } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
 import { LanguagePill } from './LanguagePill'
@@ -172,7 +172,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
     try {
       const result = await updateInstall(available)
       if (result?.kind === 'failed') {
-        setUpdate({ kind: 'failed' })
+        setUpdate(result)
       }
     } catch {
       setUpdate({ kind: 'failed' })
@@ -411,9 +411,29 @@ function UnlockUpdateDialog({
 
 type DialogAction = { kind: 'secondary'; label: string } | { kind: 'primary'; label: string }
 
+type Translate = (key: string, vars?: Record<string, string | number>) => string
+
+/**
+ * The sentence under "Couldn't check": the copy `commandError.ts` maps the
+ * failure's code to, or the dialog's own sentence when the status names no
+ * code, names one this build does not know, or the code has no copy.
+ *
+ * Read from the map here, not through `commandErrorMessage`: that logs, and
+ * this runs on every render of the dialog.
+ */
+function updateFailureBody(code: string | undefined, t: Translate): string {
+  const fallback = t('unlock.update.failed.body')
+  if (code === undefined || !Object.hasOwn(ERROR_CODE_KEYS, code)) return fallback
+
+  const key = ERROR_CODE_KEYS[code]
+  const copy = t(key)
+
+  return copy === key ? fallback : copy
+}
+
 function dialogCopy(
   state: Exclude<UpdateUiState, { kind: 'idle' }>,
-  t: (key: string, vars?: Record<string, string | number>) => string,
+  t: Translate,
 ): { title: string; body: string; actions: DialogAction[] } {
   switch (state.kind) {
     case 'checking':
@@ -446,7 +466,7 @@ function dialogCopy(
     case 'failed':
       return {
         title: t('unlock.update.failed.title'),
-        body: t('unlock.update.failed.body'),
+        body: updateFailureBody(state.code, t),
         actions: [{ kind: 'secondary', label: t('unlock.update.close') }],
       }
     case 'installing':

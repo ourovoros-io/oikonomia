@@ -216,14 +216,18 @@ pub enum Error {
     #[error("vault is corrupt: {0}")]
     VaultCorrupt(VaultCorruption),
 
-    /// The vault was written by a later build: its schema version is above
-    /// the one this build migrates to. The vault is sound and is left
-    /// untouched; a newer build opens it.
-    #[error("vault schema version {found} is newer than this build supports ({supported})")]
+    /// The vault was written by a later build. The vault is sound and is
+    /// left untouched; a newer build opens it.
+    ///
+    /// Two versions are covered and are not told apart: the format version
+    /// of the header, checked when the vault is opened, and the schema
+    /// version of the database, checked when it is unlocked. `found` and
+    /// `supported` are of the same kind in one error.
+    #[error("vault version {found} is newer than this build supports ({supported})")]
     VaultTooNew {
-        /// The schema version the vault records.
+        /// The header format version or the schema version the vault records.
         found: i64,
-        /// The highest schema version this build knows.
+        /// The highest version of that kind this build knows.
         supported: i64,
     },
 
