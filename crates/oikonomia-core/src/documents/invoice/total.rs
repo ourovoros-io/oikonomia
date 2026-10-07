@@ -12,7 +12,7 @@
 //! and the plausibility band are the same in all four.
 
 use crate::documents::invoice::dates::{is_value_date_line, line_has_date, mask_date_tokens};
-use crate::documents::invoice::is_utility_bill;
+use crate::documents::invoice::kind::is_utility_bill;
 use crate::documents::invoice::money::{
     has_cents, is_plausible_money, largest_plausible_amount, money_amounts_on_line,
 };

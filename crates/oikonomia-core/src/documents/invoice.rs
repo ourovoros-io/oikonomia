@@ -182,6 +182,10 @@ use std::ops::RangeInclusive;
 use crate::documents::analyze::{AnalyzeSource, DocumentSuggestion, EntryKindSuggestion};
 use crate::documents::brands::{Service, classify_service, known_brand};
 use crate::documents::invoice::dates::find_best_date;
+use crate::documents::invoice::kind::{
+    CUSTOMER_BLOCK_LABEL, INVOICE_WORD_GREEK, POWER_BUSINESS_TARIFF, classify_kind,
+    is_sales_invoice, is_utility_bill,
+};
 use crate::documents::invoice::normalization::{contains_any, normalize};
 use crate::documents::invoice::reference::find_invoice_reference;
 use crate::documents::invoice::total::find_total_amount;
@@ -194,6 +198,7 @@ use crate::text::{
 use crate::ui_text::{UiText, UiTextCode};
 
 mod dates;
+mod kind;
 mod money;
 mod normalization;
 mod reference;
@@ -317,112 +322,6 @@ fn read_fields(text: &str, locale: Locale) -> InvoiceReading {
     }
 }
 
-/// Strong utility markers only. Loose ones such as `ηλεκτρ` also match a
-/// software company's line of business (`ΗΛΕΚΤΡΟΝΙΚΩΝ ΣΥΣΤΗΜΑΤΩΝ`).
-const UTILITY_MARKERS: &[&str] = &[
-    "kwh",
-    "ρευμα",
-    "εκκαθαριστικ",
-    "δεδδηε",
-    "ηκασπ",
-    "φυσικου αεριου",
-    "φυσικο αεριο",
-    "προμηθεια φ.α",
-    "χρεωση προμηθειας φ.α",
-    "gas simple",
-    "myon",
-    "κωδικος παροχης",
-    "υδρευσ",
-    POWER_BUSINESS_TARIFF,
-];
-
-/// A business electricity tariff, printed on bills whose supplier is not
-/// named in the text.
-const POWER_BUSINESS_TARIFF: &str = "power business";
-
-/// The heading of the counterparty block on a sales invoice.
-const CUSTOMER_BLOCK_LABEL: &str = "στοιχεια πελατη";
-
-/// The English heading of an invoice the book's owner issued.
-const SALES_INVOICE_WORDS: &str = "sales invoice";
-
-/// The word "invoice", in Greek and in English.
-const INVOICE_WORDS: &[&str] = &[INVOICE_WORD_GREEK, "invoice"];
-
-/// Wording that marks a utility bill as unpaid: overdue (`ληξιπρόθεσμ-`),
-/// unpaid (`ανεξόφλητ-`), amount due.
-///
-/// Wording that every settlement bill prints, such as "pay by" and "pay
-/// through", is not here; `settlement_bill_is_not_automatically_unpaid` pins
-/// that such a bill is not marked unpaid.
-const UTILITY_UNPAID_MARKERS: &[&str] = &["ληξιπροθεσμ", "ανεξοφλητ", "amount due"];
-
-/// Wording of an invoice the book's owner received, which overrides the
-/// signs of a sales invoice.
-const PURCHASE_MARKERS: &[&str] = &["τιμολογιο αγορ", "purchase invoice", "supplier"];
-
-/// Wording that marks a document other than a utility bill as unpaid. `επι
-/// πιστωσει` is "on credit", the payment method of an invoice not yet paid.
-const UNPAID_MARKERS: &[&str] = &[
-    "επι πιστωσει",
-    "amount due",
-    "unpaid",
-    "outstanding",
-    "please pay",
-];
-
-/// Whether folded text carries one of [`UTILITY_MARKERS`].
-fn is_utility_bill(folded_text: &str) -> bool {
-    contains_any(folded_text, UTILITY_MARKERS)
-}
-
-/// Whether folded text is a sales invoice issued by the book's owner: it has
-/// the customer block heading "Στοιχεία Πελάτη" and the word "invoice".
-fn is_sales_invoice(folded_text: &str) -> bool {
-    folded_text.contains(CUSTOMER_BLOCK_LABEL) && contains_any(folded_text, INVOICE_WORDS)
-}
-
-/// Decides the entry kind and whether the document is unpaid, from folded
-/// text. The first rule that applies wins:
-///
-/// 1. A utility bill is a `Bill`, unpaid when it carries one of
-///    [`UTILITY_UNPAID_MARKERS`].
-/// 2. A sales invoice (see [`is_sales_invoice`], or the words "sales
-///    invoice") without a purchase marker is `Income`.
-/// 3. A known biller whose brand implies a service is a `Bill`.
-/// 4. Anything else with an unpaid marker is an unpaid `Bill`.
-/// 5. The rest is an `Expense`.
-///
-/// In rules 2 and 3 the document is unpaid when it carries one of
-/// [`UNPAID_MARKERS`].
-fn classify_kind(folded_text: &str) -> (EntryKindSuggestion, bool) {
-    if is_utility_bill(folded_text) {
-        let unpaid = contains_any(folded_text, UTILITY_UNPAID_MARKERS);
-        return (EntryKindSuggestion::Bill, unpaid);
-    }
-
-    // "Σταθερό Τιμολόγιο" is a tariff name, not a sales invoice.
-    let sales = is_sales_invoice(folded_text) || folded_text.contains(SALES_INVOICE_WORDS);
-    let purchase = contains_any(folded_text, PURCHASE_MARKERS);
-    let unpaid = contains_any(folded_text, UNPAID_MARKERS);
-
-    if sales && !purchase {
-        return (EntryKindSuggestion::Income, unpaid);
-    }
-
-    // A recognized biller with a known service (telecom etc.) is a bill to
-    // pay even without the utility markers above.
-    if let Some((_, Some(_))) = known_brand(folded_text) {
-        return (EntryKindSuggestion::Bill, unpaid);
-    }
-
-    if unpaid {
-        (EntryKindSuggestion::Bill, true)
-    } else {
-        (EntryKindSuggestion::Expense, false)
-    }
-}
-
 /// Fewest characters of a payee, issuer or customer name.
 ///
 /// The reason for 3 is not recorded, and no test pins it.
@@ -517,10 +416,6 @@ const ISSUER_NAME_LABEL: &str = "επωνυμια";
 /// What every inflection of [`ISSUER_NAME_LABEL`] starts with, to skip the
 /// label word itself.
 const ISSUER_NAME_STEM: &str = "επων";
-
-/// "Invoice" in Greek. Also part of tariff names ("Σταθερό Τιμολόγιο"), so
-/// on its own it does not make a document an invoice.
-const INVOICE_WORD_GREEK: &str = "τιμολογιο";
 
 /// The English label of a name line in a customer block, at the line's
 /// start.
@@ -778,6 +673,10 @@ fn states_a_zero_rate(text: &str) -> bool {
 mod tests {
     use super::*;
     use crate::documents::invoice::dates::{DATE_LABELS, VALUE_DATE_LABELS};
+    use crate::documents::invoice::kind::{
+        INVOICE_WORDS, PURCHASE_MARKERS, SALES_INVOICE_WORDS, UNPAID_MARKERS, UTILITY_MARKERS,
+        UTILITY_UNPAID_MARKERS,
+    };
     use crate::documents::invoice::reference::{MARK_LABELS, REFERENCE_LABELS, SUPPLY_CODE_LABELS};
     use crate::documents::invoice::total::{
         CONSUMPTION_LABEL, DEPOSIT_LABELS, IBAN_WORD, IDENTIFIER_LINE_MARKERS, PAYMENT_LABELS,
@@ -884,51 +783,9 @@ mod tests {
     }
 
     #[test]
-    fn received_service_invoice_is_not_income() {
-        let text = "\
-Τιμολόγιο Παροχής Υπηρεσιών
-Επωνυμία: ACME ΛΟΓΙΣΤΙΚΗ ΙΚΕ
-Α.Φ.Μ.: 000000000
-Πληρωτέο (€): 200,00
-";
-        let suggestion = parse_invoice_text(text, crate::prefs::Locale::En);
-        assert_ne!(
-            suggestion.kind,
-            EntryKindSuggestion::Income,
-            "kind={:?}",
-            suggestion.kind
-        );
-    }
-
-    #[test]
     fn value_after_fullwidth_colon_does_not_panic() {
         assert_eq!(value_after_colon("Name：ACME LTD"), Some("ACME LTD".into()));
         assert_eq!(value_after_colon("Name: ACME LTD"), Some("ACME LTD".into()));
-    }
-
-    #[test]
-    fn settlement_bill_is_not_automatically_unpaid() {
-        let suggestion = parse_invoice_text(
-            &corpus_text("synthetic/text/dei_settlement.txt"),
-            crate::prefs::Locale::En,
-        );
-        assert!(
-            !suggestion.bill_unpaid,
-            "εμπρόθεσμο/εκκαθαριστικό/εξόφληση μέσω must not force unpaid"
-        );
-    }
-
-    #[test]
-    fn cosmote_pay_via_is_not_unpaid() {
-        let suggestion = parse_invoice_text(
-            &corpus_text("synthetic/text/cosmote_pay_via.txt"),
-            crate::prefs::Locale::En,
-        );
-        assert_eq!(suggestion.kind, EntryKindSuggestion::Bill);
-        assert!(
-            !suggestion.bill_unpaid,
-            "known-brand εξόφληση μέσω must not force unpaid: {suggestion:?}"
-        );
     }
 
     #[test]
