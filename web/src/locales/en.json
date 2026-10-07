@@ -615,7 +615,7 @@
   "error.io": "A file operation failed.",
   "error.crypto": "A security operation failed.",
   "error.vaultCorrupt": "The vault file is corrupt.",
-  "error.vaultTooNew": "This vault was created by a newer version of Oikonomia. Update the app to open it.",
+  "error.vaultTooNew": "This vault was saved by a newer version of Oikonomia. Update the app to open it; nothing has been lost.",
   "error.backupInvalid": "That backup file is not valid.",
   "error.restoreWouldOverwrite": "A vault already exists; restoring would overwrite it.",
   "error.notFound": "That item could not be found.",
