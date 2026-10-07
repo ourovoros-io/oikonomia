@@ -1,18 +1,34 @@
-//! Known biller brands and utility-service classification.
+//! Known biller brands and the service a utility bill is for.
 //!
-//! Greek bills rarely spell out the issuer in extractable text — branding
-//! lives in logos and images — so recognition leans on portal names, product
-//! lines, and brand tokens that do survive extraction. Matches are
-//! token-bounded to avoid substrings inside unrelated words.
+//! Greek bills rarely spell out the issuer in text that can be extracted: the
+//! branding is in logos and images. Recognition therefore leans on what does
+//! survive extraction, such as portal names, product lines and brand tokens.
+//!
+//! Two questions are answered here, both on folded text
+//! ([`folded`](crate::documents::invoice::folded)):
+//!
+//! - [`known_brand`]: who issued this? The first entry of [`BRANDS`] whose
+//!   token stands in the text as a whole token wins, so the order of the
+//!   table is a priority order.
+//! - [`classify_service`]: is this electricity, gas, telecom or water? Each
+//!   keyword of [`SERVICE_KEYWORDS`] found in the text adds its weight to its
+//!   service, and the highest total wins.
+//!
+//! The invoice reader asks the brand first and falls back to the keyword
+//! score only when the brand does not imply a service.
 
 use crate::text::BillKind;
 
 /// What kind of service a recognized bill covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Service {
+    /// Electric power.
     Electricity,
+    /// Natural gas.
     Gas,
+    /// Fixed or mobile phone, and internet.
     Telecom,
+    /// Water supply.
     Water,
 }
 
@@ -55,45 +71,83 @@ const BRANDS: &[(&str, &str, Option<Service>)] = &[
     ("δεδδηε", "ΔΕΔΔΗΕ", Some(Service::Electricity)),
 ];
 
+/// How strongly a keyword points at a service: the scale of
+/// [`SERVICE_KEYWORDS`].
+///
+/// A service's score is the sum of the weights of its keywords that the text
+/// holds, and the highest sum wins. A bill names other services in passing:
+/// an electricity bill carries the national energy-mix table, which lists
+/// natural gas. Such a word is a [`MENTION`](weight::MENTION), the lowest
+/// level, so one mention loses to any one stronger keyword of the bill's own
+/// service. Sums can still tie or overtake: two mentions equal one
+/// [`TERM`](weight::TERM), and [`SERVICE_KEYWORDS`] says how a tie ends.
+///
+/// The four values are 1 to 4, the smallest whole numbers in that order.
+/// Which keyword got which level is not recorded. One test needs `MENTION`
+/// to be above zero (`one_keyword_decides_when_it_is_the_only_one`); no test
+/// fails when any other level is lowered to 1.
+mod weight {
+    /// A word that bills of other services also print.
+    pub(super) const MENTION: u32 = 1;
+    /// A unit or term typical of the service.
+    pub(super) const TERM: u32 = 2;
+    /// A term that only a bill of this service prints.
+    pub(super) const OWN_TERM: u32 = 3;
+    /// The line that names the supply being billed ("supply of ...").
+    pub(super) const SUPPLY_LINE: u32 = 4;
+}
+
 /// Keywords of each service in folded form, with their weights, in the order
 /// [`classify_service`] compares them.
+///
+/// A keyword is matched as a substring, not as a token. So a supply line
+/// also contains the shorter keyword of its service: `προμηθεια ρευματος`
+/// contains `ρευμα`, and scores a `SUPPLY_LINE` and a `MENTION` together.
+///
+/// The order of the services breaks ties: the later one wins.
 const SERVICE_KEYWORDS: &[(Service, &[(&str, u32)])] = &[
     (
         Service::Electricity,
         &[
-            ("προμηθεια ρευματος", 4),
-            ("kwh", 2),
-            ("δεδδηε", 2),
-            ("ρευμα", 1),
+            ("προμηθεια ρευματος", weight::SUPPLY_LINE),
+            ("kwh", weight::TERM),
+            ("δεδδηε", weight::TERM),
+            ("ρευμα", weight::MENTION),
         ],
     ),
     (
         Service::Gas,
         &[
-            ("προμηθεια φυσικου αεριου", 4),
-            ("ηκασπ", 3),
-            ("χρεωση προμηθειας φ.α", 3),
-            ("φυσικου αεριου", 1),
-            ("φυσικο αεριο", 1),
+            ("προμηθεια φυσικου αεριου", weight::SUPPLY_LINE),
+            ("ηκασπ", weight::OWN_TERM),
+            ("χρεωση προμηθειας φ.α", weight::OWN_TERM),
+            ("φυσικου αεριου", weight::MENTION),
+            ("φυσικο αεριο", weight::MENTION),
         ],
     ),
     (
         Service::Telecom,
         &[
-            ("κινητο", 2),
-            ("σταθερο", 1),
-            ("τηλεφων", 2),
-            ("internet", 1),
+            ("κινητο", weight::TERM),
+            ("σταθερο", weight::MENTION),
+            ("τηλεφων", weight::TERM),
+            ("internet", weight::MENTION),
         ],
     ),
-    (Service::Water, &[("υδρευσ", 3), ("καταναλωση νερου", 3)]),
+    (
+        Service::Water,
+        &[
+            ("υδρευσ", weight::OWN_TERM),
+            ("καταναλωση νερου", weight::OWN_TERM),
+        ],
+    ),
 ];
 
-/// Recognizes a known biller in folded document text
-/// ([`folded`](super::invoice::folded)).
+/// Recognizes a known biller in folded document text.
 ///
 /// Returns the display name and, when the brand implies it, the service.
-/// The first entry of [`BRANDS`] whose token appears wins.
+/// The first entry of [`BRANDS`] whose token appears wins, wherever in the
+/// text each token is. Returns `None` when no token appears.
 pub(crate) fn known_brand(folded_text: &str) -> Option<(&'static str, Option<Service>)> {
     BRANDS
         .iter()
@@ -131,8 +185,11 @@ pub(crate) fn classify_service(folded_text: &str) -> Option<Service> {
     (best_score > 0).then_some(service)
 }
 
-/// Substring match with token boundaries: the neighbors of the match must
-/// not be alphanumeric, so "nova" never fires inside "innovation".
+/// Whether `token` occurs in `folded_text` with no letter or digit directly
+/// before or after it, so `nova` does not match inside `innovation`.
+///
+/// Punctuation and whitespace are boundaries; so are the start and the end
+/// of the text.
 #[expect(
     clippy::string_slice,
     reason = "`match_indices` yields the offset of a match of `token`, \

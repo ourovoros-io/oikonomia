@@ -1,49 +1,76 @@
 //! Which account plays which role by default, chosen by identity, never by name.
 //!
-//! A seeded account is recognised by its template code and its type. Names are
-//! free text: the user can rename them and a translated chart gives them in
-//! another language, so no choice here may read one. The mapping from role to
+//! This module picks, for a real book, the account to propose for each part
+//! of a simple entry: the wallet an expense is paid from, the category it is
+//! for, and so on.
+//!
+//! # How an account is chosen
+//!
+//! For one [`AccountRole`], in order:
+//!
+//! 1. The template's codes for the role ([`default_role_codes`]), best first.
+//!    A code counts only if the book has an active account with that code
+//!    and the role's type ([`role_account_type`]).
+//! 2. Otherwise the first active account of the role's type, by sort order
+//!    and then code. This covers a blank book, a seeded account the user
+//!    archived, and one whose code the user changed.
+//! 3. Otherwise nothing: the role has no default.
+//!
+//! [`default_accounts`] does this for every role and then keeps the two sides
+//! of a transfer apart.
+//!
+//! # Why not by name
+//!
+//! A seeded account is recognised by its template code and its type. Names
+//! are free text: the user can rename them and a translated chart gives them
+//! in another language, so no choice here reads one. The mapping from role to
 //! code lives next to the chart templates in [`crate::coa`].
-
-use rusqlite::Connection;
-use serde::Serialize;
 
 use crate::coa::{default_role_codes, role_account_type};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId};
 use crate::error::{AccountRole, Result};
 use crate::ledger::{get_entity, list_accounts};
+use rusqlite::Connection;
+use serde::Serialize;
 
 /// The default account for each role the entry flows need.
 ///
-/// A role is `None` only when the book has no active account of the type the
-/// role needs. The field names are the role identifiers the UI already uses.
+/// A role is `None` when the book has no active account of the type
+/// [`role_account_type`] gives for it. `transfer_destination` is also `None`
+/// when the only such account is the one chosen as `transfer_source`.
+///
+/// The field names are the role identifiers
+/// ([`AccountRole::identifier`]), and they are the keys of the serialized
+/// object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct DefaultAccounts {
-    /// Expense an expense is for.
+    /// The expense account proposed as the category of an expense.
     pub category: Option<AccountId>,
-    /// Asset an expense or bill is paid from.
+    /// The asset account proposed for paying an expense or a bill.
     pub payment: Option<AccountId>,
-    /// Asset an income is received into.
+    /// The asset account proposed for receiving an income.
     pub deposit: Option<AccountId>,
-    /// Income account an income is booked to.
+    /// The income account proposed for booking an income.
     pub income: Option<AccountId>,
-    /// Expense a bill is for.
+    /// The expense account proposed as the category of a bill.
     pub bill_category: Option<AccountId>,
-    /// Liability that holds an unpaid bill.
+    /// The liability account proposed for holding an unpaid bill.
     pub bills_payable: Option<AccountId>,
-    /// Asset a transfer takes money from.
+    /// The asset account proposed as the source of a transfer.
     pub transfer_source: Option<AccountId>,
-    /// Asset a transfer puts money into.
+    /// The asset account proposed as the destination of a transfer; never
+    /// the same account as `transfer_source`.
     pub transfer_destination: Option<AccountId>,
 }
 
-/// Default account for one role, or `None` if the book has no usable account.
+/// Returns the default account for `role`, or `None` if the book has no
+/// usable account.
 ///
 /// The seeded accounts the template names for the role are tried in order,
 /// each only if it is active and of the role's type. Otherwise the first
-/// active account of the role's type, by sort order, is used. That covers a
-/// blank book, a seeded account the user deactivated, and one whose code the
-/// user changed.
+/// active account of the role's type, by sort order and then code, is used.
+/// That covers a blank book, a seeded account the user archived, and one
+/// whose code the user changed.
 ///
 /// # Known limitation
 ///
@@ -62,7 +89,7 @@ pub fn default_account_for_role(
         .or_else(|| first_of_type(accounts, role_account_type(role)).map(|account| account.id))
 }
 
-/// The seeded account for a role, by identity only.
+/// Returns the seeded account for `role`, by identity only.
 ///
 /// This is the first account, in the template's order, that carries one of the
 /// role's template codes, is active and has the role's type. Unlike
@@ -81,11 +108,13 @@ pub fn seeded_account_for_role(
         .map(|account| account.id)
 }
 
-/// Default account for every role.
+/// Returns the default account for every role, given a book's template and
+/// its accounts.
 ///
-/// A transfer never defaults to the same account on both sides: when the
-/// destination would equal the source, it is the first other active asset by
-/// sort order, or `None` if there is none.
+/// Each role is chosen as [`default_account_for_role`] describes. A transfer
+/// never defaults to the same account on both sides: when the destination
+/// would equal the source, it is instead the first other active asset by sort
+/// order and then code, or `None` if there is none.
 #[must_use]
 pub fn default_accounts(template: ChartTemplate, accounts: &[Account]) -> DefaultAccounts {
     let pick = |role| default_account_for_role(template, accounts, role);
@@ -109,11 +138,17 @@ pub fn default_accounts(template: ChartTemplate, accounts: &[Account]) -> Defaul
     }
 }
 
-/// Default account for every role in an entity's book.
+/// Returns the default account for every role in the book of `entity_id`.
+///
+/// This loads the entity and its accounts and applies [`default_accounts`].
 ///
 /// # Errors
 ///
-/// The entity is missing or the database cannot be read.
+/// - [`Error::NotFound`](crate::Error::NotFound) when no entity has
+///   `entity_id`.
+/// - [`Error::VaultCorrupt`](crate::Error::VaultCorrupt) when the entity or
+///   one of its accounts is stored with a value that cannot be read.
+/// - [`Error::Io`](crate::Error::Io) when the database query fails.
 pub fn default_accounts_for_entity(
     conn: &Connection,
     entity_id: EntityId,
@@ -124,8 +159,8 @@ pub fn default_accounts_for_entity(
     Ok(default_accounts(entity.chart_template, &accounts))
 }
 
-/// First active account of `account_type` whose code is in `codes`, in the
-/// order of `codes`.
+/// Returns the first active account of `account_type` whose code is in
+/// `codes`, trying the codes in the order given.
 pub(crate) fn account_by_codes<'a>(
     accounts: &'a [Account],
     account_type: AccountType,
@@ -138,13 +173,14 @@ pub(crate) fn account_by_codes<'a>(
     })
 }
 
-/// First active account of `account_type` by sort order, then code.
+/// Returns the first active account of `account_type` by sort order, then
+/// code.
 pub(crate) fn first_of_type(accounts: &[Account], account_type: AccountType) -> Option<&Account> {
     first_of_type_except(accounts, account_type, None)
 }
 
-/// First active account of `account_type` by sort order, then code, leaving
-/// out the account with the `excluded` id.
+/// Returns the first active account of `account_type` by sort order, then
+/// code, leaving out the account with the `excluded` id.
 fn first_of_type_except(
     accounts: &[Account],
     account_type: AccountType,
@@ -164,7 +200,7 @@ fn first_of_type_except(
         })
 }
 
-/// A seeded chart as in-memory `Account` rows.
+/// Returns a seeded chart as in-memory `Account` rows, all active.
 ///
 /// With `rename`, every name is replaced by a Greek placeholder that shares no
 /// word with the English one, so a selection that still reads names fails.
@@ -192,7 +228,8 @@ pub(crate) fn seeded_chart_for_tests(template: ChartTemplate, rename: bool) -> V
         .collect()
 }
 
-/// The code of the account with `id`, if both are present.
+/// Returns the code of the account with `id`, or `None` when `id` is `None`
+/// or no account has it.
 #[cfg(test)]
 pub(crate) fn code_of_for_tests(accounts: &[Account], id: Option<AccountId>) -> Option<String> {
     let id = id?;
@@ -218,6 +255,7 @@ mod tests {
             .collect()
     }
 
+    /// The expected codes in the shape [`role_codes`] returns.
     fn codes(expected: [&str; 8]) -> Vec<Option<String>> {
         expected
             .iter()
@@ -225,6 +263,7 @@ mod tests {
             .collect()
     }
 
+    /// Archives every account with `code`.
     fn deactivate(accounts: &mut [Account], code: &str) {
         for account in accounts {
             if account.code == code {
@@ -234,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn english_personal_chart_gets_todays_defaults() {
+    fn english_personal_chart_gets_the_template_defaults() {
         let accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
 
         // category, payment, deposit, income, bill category, payable, from, to
@@ -247,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn english_company_chart_gets_todays_defaults() {
+    fn english_company_chart_gets_the_template_defaults() {
         let accounts = seeded_chart_for_tests(ChartTemplate::Company, false);
 
         assert_eq!(
@@ -386,6 +425,7 @@ mod tests {
         }
     }
 
+    /// The codes of the default transfer source and destination.
     fn transfer_codes(
         template: ChartTemplate,
         accounts: &[Account],

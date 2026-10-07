@@ -5,10 +5,19 @@
 //! named string parameters, and the UI turns it into the user's language. A
 //! parameter is a plain value (a currency code, an ISO date, an integer count
 //! of minor units), never a formatted number or a piece of a sentence.
-
-use std::collections::BTreeMap;
+//!
+//! This is the channel for text that is not a failure: a note on a document
+//! suggestion, or the reason one row of a CSV import cannot be used. A failed
+//! operation reports through [`crate::error`], which uses the same idea of a
+//! code with parameters. Wording that is stored in the book is the one case
+//! where core writes the words itself, in [`crate::text`].
+//!
+//! The codes are shared with the web sources by hand, so the tests below
+//! check [`UiTextCode::ALL`] against the enum and against the fixture the UI
+//! reads its code list from.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Every coded text Rust sends: the notes the document analyzer attaches to a
 /// suggestion, and the reasons a CSV import row cannot be used.
@@ -84,7 +93,8 @@ pub enum UiTextCode {
 }
 
 impl UiTextCode {
-    /// Every code, in the order the analyzer can meet them.
+    /// Every code, in declaration order: the notes of the document analyzer,
+    /// then the reasons a CSV import row cannot be used.
     ///
     /// A test checks this list against `web/src/lib/uiTextCodes.json`.
     pub const ALL: &'static [Self] = &[
@@ -132,7 +142,7 @@ pub struct UiText {
 }
 
 impl UiText {
-    /// Text with no values.
+    /// Returns the text `code` with no values.
     #[must_use]
     pub fn new(code: UiTextCode) -> Self {
         Self {
@@ -141,7 +151,8 @@ impl UiText {
         }
     }
 
-    /// Add one named value, replacing an earlier value of the same name.
+    /// Returns the text with one more named value, which replaces an earlier
+    /// value of the same name.
     #[must_use]
     pub fn with_param(mut self, name: &str, value: impl Into<String>) -> Self {
         self.params.insert(name.to_owned(), value.into());
@@ -158,7 +169,7 @@ mod tests {
     use crate::ledger::SyntheticLine;
     use oikonomia_test_support::listed_variants;
 
-    /// The wire spelling of a value that serializes as one string.
+    /// Returns the wire spelling of a value that serializes as one string.
     fn wire_spelling<T: Serialize>(value: &T) -> String {
         match serde_json::to_value(value) {
             Ok(serde_json::Value::String(spelling)) => spelling,
@@ -169,17 +180,23 @@ mod tests {
     /// The shared fixture the web side reads. Rust and the UI map must agree.
     #[derive(Deserialize)]
     struct Fixture {
+        /// The codes of [`UiTextCode`].
         notes: Vec<String>,
+        /// The codes of [`AnalyzerHint`].
         hints: Vec<String>,
+        /// The codes of [`SyntheticLine`].
         #[serde(rename = "syntheticLines")]
         synthetic_lines: Vec<String>,
     }
 
+    /// Returns the fixture, read from the web sources at compile time.
     fn fixture() -> Fixture {
         serde_json::from_str(include_str!("../../../web/src/lib/uiTextCodes.json"))
             .expect("uiTextCodes.json parses")
     }
 
+    /// Fails unless `fixture` has no duplicate and holds the same codes as
+    /// `listed`; `label` names the list in the failure message.
     fn assert_same_set(label: &str, fixture: &[String], listed: &[String]) {
         let from_fixture: BTreeSet<&String> = fixture.iter().collect();
         let from_rust: BTreeSet<&String> = listed.iter().collect();
@@ -263,12 +280,21 @@ mod tests {
     /// Fails unless `UiTextCode::ALL` is exactly the set of variants in the
     /// `listed_codes` list above, each once. The compiler checks that list
     /// against the enum with an exhaustive `match`, so a variant added to the
-    /// enum but left out of the list does not compile. It does not check the
-    /// order of `ALL`, nor that the UI has copy for a code;
+    /// enum but left out of the list does not compile. The discriminants pin
+    /// the order of `ALL` to the order of declaration. It does not check that
+    /// the UI has copy for a code;
     /// `the_shared_fixture_lists_exactly_the_codes_rust_can_emit` does that.
     #[test]
     fn all_lists_exactly_the_variants_of_the_enum() {
         let listed = listed_codes::variants();
+
+        assert!(
+            UiTextCode::ALL
+                .iter()
+                .map(|code| *code as usize)
+                .eq(0..UiTextCode::ALL.len()),
+            "UiTextCode::ALL is not in declaration order"
+        );
 
         assert_eq!(
             UiTextCode::ALL.len(),

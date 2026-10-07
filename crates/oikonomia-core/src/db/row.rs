@@ -9,7 +9,8 @@
 //!
 //! A mapper is used from a rusqlite row closure as `|row| Ok(map_thing(row))`:
 //! the outer `rusqlite::Result` carries driver failures and the inner one
-//! carries the mapper's verdict on the row.
+//! carries the mapper's verdict on the row. [`collect_rows`] unwraps both for
+//! a query that returns many rows.
 //!
 //! Damage shows up at two levels, and both are `vault_corrupt`:
 //!
@@ -19,15 +20,13 @@
 //! - the value reads, but does not parse (text that is not a date). The
 //!   mapper reports it with [`corrupt_column`] under `table.column`.
 
-use std::fmt::Display;
-
-use rusqlite::Row;
-use rusqlite::types::FromSql;
-use time::Date;
-use uuid::Uuid;
-
 use crate::error::{Error, Result};
 use crate::util::{parse_date, parse_uuid};
+use rusqlite::Row;
+use rusqlite::types::FromSql;
+use std::fmt::Display;
+use time::Date;
+use uuid::Uuid;
 
 /// The error for a stored value that is not what the application writes there.
 ///
@@ -62,6 +61,22 @@ pub(crate) fn read_column<T: FromSql>(row: &Row<'_>, index: usize) -> Result<T> 
         }
         other => Error::Io(other.to_string()),
     })
+}
+
+/// Collects the rows of a query whose row closure is `|row| Ok(mapper(row))`.
+///
+/// Stops at the first row that fails, so a damaged row fails the whole query
+/// instead of being left out of the result.
+///
+/// # Errors
+///
+/// - [`Error::Io`] when the driver fails to step to a row.
+/// - The mapper's own error for the first row it refuses.
+pub(crate) fn collect_rows<T>(
+    rows: impl Iterator<Item = rusqlite::Result<Result<T>>>,
+) -> Result<Vec<T>> {
+    rows.map(|row| row.map_err(|err| Error::Io(err.to_string()))?)
+        .collect()
 }
 
 /// Parses an id stored as text in `column`.

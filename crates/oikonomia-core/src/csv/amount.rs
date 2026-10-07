@@ -1,8 +1,84 @@
 //! Integer amount parsing for bank CSV. Never uses `f64`.
+//!
+//! A bank writes `1.234,56`, another `1,234.56`, a third `1 234,56 EUR` or
+//! `(25.00)`. The parser reads all of them into signed minor units by
+//! working on the digits as text: the fraction is padded to the currency's
+//! number of decimals and the digits are parsed as one integer, so no value
+//! passes through a float and none is rounded.
+//!
+//! The one thing a cell cannot say is whether `1.234` means one thousand or
+//! one and a bit. The parser does not guess from the rest of the file. It
+//! applies fixed rules, and where a cell fits no rule it is rejected, on the
+//! view that a row the user has to fix is cheaper than an amount silently
+//! off by a factor of a thousand.
+//!
+//! # Grammar
+//!
+//! The cell is reduced in this order, for a currency with `exponent`
+//! decimals:
+//!
+//! | Step | Taken from the cell           | Accepted           | Rejected          |
+//! |------|-------------------------------|--------------------|-------------------|
+//! | 1    | Whitespace, everywhere        | `1 234,56`         | An empty cell     |
+//! | 2    | Parentheses around the cell   | `(25,00)`          |                   |
+//! | 3    | The signs `€ $ £ ¥ ₹ ₺ ₩`     | `€25`, `25 $`      | `₽25`             |
+//! | 4    | Three ASCII letters, each end | `EUR 25`, `25 lei` | `25 kr`, `25 zł`  |
+//! | 5    | One sign                      | `-25`, `+25`, `25-`| `-25-`, `25+`     |
+//! | 6    | Step 4 again                  | `-EUR 25`          |                   |
+//! | 7    | Nothing: digits, `.`, `,` left| `25`, `.5`, `5.`   | `1e3`, `25%`, `.` |
+//!
+//! Notes on the steps:
+//!
+//! 1. Whitespace inside the number goes too. A cell that is empty or only
+//!    whitespace is a missing amount, not an invalid one.
+//! 2. Parentheses mean negative. They do not cancel a minus: `(-25)` is
+//!    negative.
+//! 3. The signs are removed wherever they stand.
+//! 4. The letters are not checked against ISO 4217. A code of another
+//!    length, non-ASCII letters, and letters in the middle of the number are
+//!    left in place and fail step 7.
+//! 5. The sign is a leading `-`, U+2212 or `+`, or else a trailing `-` or
+//!    U+2212. A second sign (`-25-`, `+25-`, `--25`) is left in place and
+//!    fails step 7, as does a trailing `+`.
+//! 6. The second pass lets a code stand on either side of the sign
+//!    (`25 EUR-`).
+//! 7. At least one digit is required. `1'234.56` fails here.
+//!
+//! Then the separators are read. With `exponent` 2:
+//!
+//! | Shape                               | Reading           | Example             |
+//! |-------------------------------------|-------------------|---------------------|
+//! | No separator                        | Whole major units | `25` → 2500         |
+//! | Three digits after the last one     | Thousands groups  | `1.234` → 123400    |
+//! | Up to `exponent` digits after it    | Decimal mark      | `1.234,56` → 123456 |
+//! | Anything else                       | Rejected          | `1.2345`, `0.125`   |
+//!
+//! In the second row the whole number has to be one grouping on that one
+//! separator (`1,234,567` is 123456700; `1,234.567` is rejected), and the
+//! row does not apply when `exponent` is 3. In the third row the part before
+//! the mark is plain digits (`1234.5` is 123450) or a grouping on the other
+//! separator.
+//!
+//! A thousands grouping is strict: a first group of one to three digits that
+//! does not start with `0`, then groups of exactly three. `1,2,3`, `12,34.56`
+//! and `012,345` are rejected.
+//!
+//! With `exponent` 3 a three-digit tail is always the fraction, so `12,345`
+//! is 12.345 and never twelve thousand. With `exponent` 0 no digit may
+//! follow a decimal mark, so `1234.56` is rejected. With `exponent` 4 (`CLF`,
+//! `UYW`) a three-digit tail is a grouping like anywhere else: `1.234` is
+//! one thousand two hundred and thirty-four units, `0.125` is rejected, and
+//! a fraction of three digits has to be written with its fourth, `0.1250`.
+//!
+//! There is no exponent notation and no percent sign. Zero is a valid
+//! result here; the row parser is what refuses a zero amount.
 
-use super::CsvError;
+use crate::csv::CsvError;
 
-/// Decimal digits (minor-unit exponent) for a currency code.
+/// Returns the number of decimal digits (the minor-unit exponent) of a
+/// currency code, 2 for a code the table does not list.
+///
+/// The code is trimmed and compared without regard to ASCII case.
 ///
 /// This is the one exponent table of the crate: CSV import and the document
 /// analyzer both read it. It has to agree with the webview, which turns
@@ -11,10 +87,19 @@ use super::CsvError;
 /// digits come from CLDR, not ISO 4217, and the two differ: CLDR gives `IQD`,
 /// `IRR`, `RSD` and a dozen more no decimals where ISO gives two or three. If
 /// this table followed ISO, an imported IQD amount would show 1000 times too
-/// large. So the table is CLDR's (version 46, as shipped in ICU 76): every
-/// code whose digits are not 2 is listed below, and every other code, known
-/// or not, gets 2 (EUR, USD). Withdrawn codes CLDR still knows are kept so an
-/// old export lines up with what the webview shows.
+/// large.
+///
+/// So the table is CLDR's, version 46 as shipped in ICU 76. It lists every
+/// code whose digits there are not 2: 43 codes with none, 6 with three
+/// (`BHD`, `JOD`, `KWD`, `LYD`, `OMR`, `TND`) and 2 with four (`CLF`, `UYW`).
+/// The test `the_non_two_digit_codes_are_exactly_cldrs` pins the three
+/// lists. Withdrawn codes CLDR still knows are kept so an old export lines
+/// up with what the webview shows.
+///
+/// The agreement holds for a webview on that CLDR version, and CLDR changes
+/// these digits between versions. Node 22.22 (ICU 78, CLDR 48) reports no
+/// decimals for `COP`, `HUF`, `IDR` and `PKR`, which this table reads with
+/// two, and two decimals for `RSD`, which this table reads with none.
 #[must_use]
 pub fn currency_minor_exponent(code: &str) -> u8 {
     let code = code.trim().to_ascii_uppercase();
@@ -29,7 +114,10 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
     }
 }
 
-/// Parse a bank-CSV amount into signed minor units.
+/// Parses a bank-CSV amount into signed minor units of a currency with
+/// `exponent` decimals.
+///
+/// The table in the [`crate::csv`] module doc lists the accepted forms.
 ///
 /// The last `.` or `,` followed by at most `exponent` digits is the decimal
 /// mark, and the digits before it are either unseparated or grouped in
@@ -51,11 +139,12 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// - `1.234` / `1,234` → `123400`
 /// - `-25` → `-2500`
 ///
-/// Whitespace and the currency symbols `€$£¥₹₩` are ignored. So are three
+/// Whitespace and the currency signs `€$£¥₹₺₩` are ignored. So are three
 /// ASCII letters directly before or after the number; they are not checked
 /// against the ISO 4217 list, so `1.00 abc` parses like `1.00 EUR`.
-/// Parentheses mean negative (`(25,00)`), as do a leading `-` and a leading
-/// U+2212 MINUS SIGN.
+/// Parentheses mean negative (`(25,00)`), as does one minus, written as `-`
+/// or U+2212 MINUS SIGN, before the number or after it (`25-`). A second
+/// sign makes the cell invalid.
 ///
 /// # Errors
 ///
@@ -65,21 +154,21 @@ pub fn currency_minor_exponent(code: &str) -> u8 {
 /// [`CsvError::AmountOverflow`] when the magnitude does not fit in `i64`.
 pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
     let (negative, digits) = prepare_amount(raw)?;
-    let (int_digits, frac_digits) =
+    let (integer_digits, fraction_digits) =
         split_decimal(&digits, exponent).ok_or_else(|| CsvError::InvalidAmount(raw.to_owned()))?;
 
     // Checked before the fraction is padded: the padding zeros would turn a
     // bare `.` or `,` into a zero amount.
-    if int_digits.is_empty() && frac_digits.is_empty() {
+    if integer_digits.is_empty() && fraction_digits.is_empty() {
         return Err(CsvError::InvalidAmount(raw.to_owned()));
     }
 
-    let mut frac = frac_digits.to_owned();
-    while frac.len() < usize::from(exponent) {
-        frac.push('0');
+    let mut fraction = fraction_digits.to_owned();
+    while fraction.len() < usize::from(exponent) {
+        fraction.push('0');
     }
 
-    let combined = format!("{int_digits}{frac}");
+    let combined = format!("{integer_digits}{fraction}");
     let magnitude: i64 = match combined.parse() {
         Ok(value) => value,
         Err(_) => return Err(CsvError::AmountOverflow),
@@ -91,60 +180,100 @@ pub fn parse_signed_minor(raw: &str, exponent: u8) -> Result<i64, CsvError> {
     }
 }
 
+/// Runs steps 1 to 7 of the grammar in the module doc: returns whether the
+/// amount is negative and the bare digits and separators of its magnitude.
+///
+/// # Errors
+///
+/// [`CsvError::MissingAmount`] when nothing but whitespace is in the cell;
+/// [`CsvError::InvalidAmount`], carrying the cell as written, when anything
+/// other than digits and separators is left over.
 fn prepare_amount(raw: &str) -> Result<(bool, String), CsvError> {
-    let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact: String = raw
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
     if compact.is_empty() {
         return Err(CsvError::MissingAmount);
     }
 
     let (parenthesized, unwrapped) = strip_parentheses(&compact);
     let without_symbols = strip_currency_symbols(unwrapped);
+    // A code is dropped on both sides of the sign, so `EUR -12`, `-EUR 12`,
+    // `12- EUR` and `12 EUR-` all leave the bare digits.
     let (signed_negative, unsigned) = strip_sign(strip_letter_code(&without_symbols));
     let body = strip_letter_code(unsigned);
 
-    if body.is_empty()
-        || !body
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
-    {
+    let is_digit_or_separator =
+        |character: char| character.is_ascii_digit() || character == '.' || character == ',';
+    if body.is_empty() || !body.chars().all(is_digit_or_separator) {
         return Err(CsvError::InvalidAmount(raw.to_owned()));
     }
     Ok((parenthesized || signed_negative, body.to_owned()))
 }
 
-/// Accounting notation: an amount wrapped in parentheses is negative.
-fn strip_parentheses(s: &str) -> (bool, &str) {
-    match s.strip_prefix('(').and_then(|rest| rest.strip_suffix(')')) {
+/// Removes one pair of parentheses around `text` and returns whether there
+/// was one. In accounting notation a wrapped amount is negative.
+fn strip_parentheses(text: &str) -> (bool, &str) {
+    let inner = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'));
+    match inner {
         Some(inner) => (true, inner),
-        None => (false, s),
+        None => (false, text),
     }
 }
 
-fn strip_currency_symbols(s: &str) -> String {
-    const SYMBOLS: [char; 6] = ['€', '$', '£', '¥', '₹', '₩'];
-    s.chars().filter(|c| !SYMBOLS.contains(c)).collect()
+/// Currency signs dropped from an amount cell, wherever they stand.
+///
+/// The rule: every currency of the book picker (`web/src/lib/currencies.ts`)
+/// that has a sign of its own is here: `€` EUR, `$` USD, CAD and AUD, `£`
+/// GBP, `¥` JPY and CNY, `₹` INR, `₺` TRY. `₩` is the one sign beyond the
+/// picker; core accepts any three-letter code for a book, and KRW is in
+/// [`currency_minor_exponent`]'s table.
+///
+/// The picker's other currencies are written with letters (`kr`, `zł`, `Kč`,
+/// `Ft`, `lei`, `R$`, `CHF`). Letters are never treated as a sign; they pass
+/// only as a three-letter code (see [`strip_letter_code`]).
+const CURRENCY_SIGNS: [char; 7] = ['€', '$', '£', '¥', '₹', '₺', '₩'];
+
+/// Returns `text` without the [`CURRENCY_SIGNS`].
+fn strip_currency_symbols(text: &str) -> String {
+    text.chars()
+        .filter(|character| !CURRENCY_SIGNS.contains(character))
+        .collect()
 }
 
-/// Splits off a leading sign. Bank exports write the minus as either the
-/// ASCII hyphen or U+2212 MINUS SIGN.
-fn strip_sign(s: &str) -> (bool, &str) {
-    if let Some(rest) = s.strip_prefix(['-', '\u{2212}']) {
+/// The two characters bank exports write a minus with: the ASCII hyphen and
+/// U+2212 MINUS SIGN.
+const MINUS_SIGNS: [char; 2] = ['-', '\u{2212}'];
+
+/// Splits off one sign and returns whether it was a minus: a leading `-` or
+/// `+`, or else a trailing `-`.
+///
+/// Only one sign is taken. A second one stays in the text, where the caller's
+/// digits-and-separators check rejects it, so `-25-` and `+25-` are not
+/// amounts.
+fn strip_sign(text: &str) -> (bool, &str) {
+    if let Some(rest) = text.strip_prefix(MINUS_SIGNS) {
         (true, rest)
-    } else if let Some(rest) = s.strip_prefix('+') {
+    } else if let Some(rest) = text.strip_prefix('+') {
         (false, rest)
+    } else if let Some(rest) = text.strip_suffix(MINUS_SIGNS) {
+        (true, rest)
     } else {
-        (false, s)
+        (false, text)
     }
 }
 
 /// Drops a three-letter code from the front, and one from the back of what
 /// is left.
 ///
-/// A cell that is nothing but three letters is kept, so it is reported as an
-/// invalid amount instead of an empty one.
-fn strip_letter_code(s: &str) -> &str {
-    let Some((code, rest)) = split_leading_letter_code(s) else {
-        return strip_trailing_letter_code(s);
+/// A cell that is nothing but three letters is returned as it is. It has no
+/// digits, so the caller rejects it as an invalid amount either way.
+fn strip_letter_code(text: &str) -> &str {
+    let Some((code, rest)) = split_leading_letter_code(text) else {
+        return strip_trailing_letter_code(text);
     };
     if rest.is_empty() {
         return code;
@@ -152,28 +281,42 @@ fn strip_letter_code(s: &str) -> &str {
     strip_trailing_letter_code(rest)
 }
 
-fn split_leading_letter_code(s: &str) -> Option<(&str, &str)> {
-    let (code, rest) = s.split_at_checked(3)?;
+/// Splits `text` into a three-letter code at its start and the rest, or
+/// returns `None` when it does not start with one.
+///
+/// `split_at_checked` is `None` for a text shorter than three bytes and when
+/// byte 3 falls inside a multi-byte character; in both cases the start is
+/// not three ASCII letters.
+fn split_leading_letter_code(text: &str) -> Option<(&str, &str)> {
+    let (code, rest) = text.split_at_checked(3)?;
     is_letter_code(code).then_some((code, rest))
 }
 
-fn strip_trailing_letter_code(s: &str) -> &str {
+/// Returns `text` without a three-letter code at its end.
+fn strip_trailing_letter_code(text: &str) -> &str {
     // `split_at_checked` is `None` when three bytes from the end falls inside
     // a multi-byte character, which also means the tail is not three letters.
-    let split = s.len().checked_sub(3).and_then(|at| s.split_at_checked(at));
+    let split = text
+        .len()
+        .checked_sub(3)
+        .and_then(|code_start| text.split_at_checked(code_start));
     match split {
         Some((head, code)) if is_letter_code(code) => head,
-        _ => s,
+        _ => text,
     }
 }
 
-fn is_letter_code(s: &str) -> bool {
-    s.len() == 3 && s.bytes().all(|byte| byte.is_ascii_alphabetic())
+/// Whether `text` is exactly three ASCII letters, in either case.
+///
+/// The shape of an ISO 4217 code. The letters are not looked up or compared
+/// with anything: the book's currency, not the cell, decides how the digits
+/// are read, so a cell marked `USD` in a EUR book is read as euros.
+fn is_letter_code(text: &str) -> bool {
+    text.len() == 3 && text.bytes().all(|byte| byte.is_ascii_alphabetic())
 }
 
-/// Splits an all-ASCII body of digits, `.` and `,` into integer digits and
-/// fraction digits, or returns `None` when the separators do not form an
-/// amount.
+/// Splits a body of digits, `.` and `,` into integer and fraction digits,
+/// or returns `None` when the separators do not form an amount.
 ///
 /// The last separator is the decimal mark unless it is followed by exactly
 /// three digits in a currency without three decimals; then the whole body
@@ -203,8 +346,11 @@ fn split_decimal(body: &str, exponent: u8) -> Option<(String, &str)> {
 }
 
 /// Returns the digits of `grouped` when it is a thousands grouping on
-/// `separator`: a first group of one to three digits with no leading zero,
-/// then groups of exactly three digits. Any other separator makes it `None`.
+/// `separator`, and `None` otherwise.
+///
+/// A grouping is a first group of one to three digits with no leading zero,
+/// then groups of exactly three digits. The other separator anywhere in it
+/// makes it `None`.
 fn grouped_digits(grouped: &str, separator: &str) -> Option<String> {
     let all_digits = |group: &str| group.bytes().all(|byte| byte.is_ascii_digit());
 
@@ -300,6 +446,71 @@ mod tests {
         assert_eq!(parse_eur_minor("\u{2212}1.234,56"), -123_456);
         assert_eq!(parse_eur_minor("EUR \u{2212}12.00"), -1_200);
         assert_eq!(parse_eur_minor("€\u{2212}3,50"), -350);
+    }
+
+    #[test]
+    fn the_sign_of_every_currency_in_the_picker_is_ignored() {
+        // EUR, USD/CAD/AUD, GBP, JPY/CNY, INR and TRY: the currencies of
+        // `web/src/lib/currencies.ts` that have a sign of their own.
+        for sign in ['€', '$', '£', '¥', '₹', '₺'] {
+            assert_eq!(parse_eur_minor(&format!("{sign}25,00")), 2_500, "{sign}");
+            assert_eq!(parse_eur_minor(&format!("25,00 {sign}")), 2_500, "{sign}");
+            assert_eq!(parse_eur_minor(&format!("-{sign}25,00")), -2_500, "{sign}");
+        }
+    }
+
+    #[test]
+    fn a_currency_written_with_letters_is_read_only_as_a_three_letter_code() {
+        assert_eq!(parse_eur_minor("25,00 lei"), 2_500);
+        assert_eq!(parse_eur_minor("CHF 25.00"), 2_500);
+
+        assert_invalid_amount("25,00 zł", 2);
+        assert_invalid_amount("25 kr", 2);
+        assert_invalid_amount("25 Ft", 2);
+        assert_invalid_amount("R$ 25,00", 2);
+    }
+
+    #[test]
+    fn the_examples_of_the_grammar_table_hold() {
+        assert_eq!(parse_eur_minor("25 $"), 2_500);
+        assert_eq!(parse_eur_minor("-EUR 25"), -2_500);
+        assert_eq!(parse_eur_minor("(-25)"), -2_500);
+        assert_eq!(parse_eur_minor("1234.5"), 123_450);
+        assert_eq!(parse_eur_minor("1,234,567"), 123_456_700);
+
+        assert_invalid_amount("1e3", 2);
+        assert_invalid_amount("1'234.56", 2);
+        assert_invalid_amount("25%", 2);
+        assert_invalid_amount("1,2,3", 2);
+    }
+
+    #[test]
+    fn a_trailing_minus_is_negative() {
+        assert_eq!(parse_eur_minor("25-"), -2_500);
+        assert_eq!(parse_eur_minor("1.234,56-"), -123_456);
+        assert_eq!(parse_eur_minor("25\u{2212}"), -2_500);
+        assert_eq!(parse_eur_minor("25 -"), -2_500);
+        assert_eq!(parse_eur_minor("€25-"), -2_500);
+    }
+
+    #[test]
+    fn a_trailing_minus_is_read_on_either_side_of_a_currency_code() {
+        assert_eq!(parse_eur_minor("25- EUR"), -2_500);
+        assert_eq!(parse_eur_minor("25 EUR-"), -2_500);
+        assert_eq!(parse_eur_minor("EUR 25-"), -2_500);
+        assert_eq!(parse_eur_minor("12,00-EUR"), -1_200);
+    }
+
+    #[test]
+    fn a_second_sign_is_rejected() {
+        assert_invalid_amount("-25-", 2);
+        assert_invalid_amount("+25-", 2);
+        assert_invalid_amount("25--", 2);
+        assert_invalid_amount("--25", 2);
+        assert_invalid_amount("\u{2212}25-", 2);
+        assert_invalid_amount("-25- EUR", 2);
+        assert_invalid_amount("25+", 2);
+        assert_invalid_amount("-", 2);
     }
 
     #[test]
@@ -399,7 +610,9 @@ mod tests {
         let letters = || 'A'..='Z';
         let mut by_digits: [Vec<String>; 5] = Default::default();
         for code in letters()
-            .flat_map(|a| letters().flat_map(move |b| letters().map(move |c| [a, b, c])))
+            .flat_map(|first| {
+                letters().flat_map(move |second| letters().map(move |third| [first, second, third]))
+            })
             .map(String::from_iter)
         {
             let digits = currency_minor_exponent(&code);
@@ -420,6 +633,13 @@ mod tests {
         assert_eq!(by_digits[3], ["BHD", "JOD", "KWD", "LYD", "OMR", "TND"]);
         assert_eq!(by_digits[4], ["CLF", "UYW"]);
         assert!(by_digits[1].is_empty() && by_digits[2].is_empty());
+    }
+
+    #[test]
+    fn a_three_digit_tail_is_a_grouping_in_a_four_decimal_currency() {
+        assert_eq!(parse_signed_minor("1.234", 4).unwrap(), 12_340_000);
+        assert_invalid_amount("0.125", 4);
+        assert_eq!(parse_signed_minor("0.1250", 4).unwrap(), 1_250);
     }
 
     #[test]
@@ -485,6 +705,9 @@ mod properties {
                 if minor < 0 {
                     let bracketed = format!("({unsigned})");
                     prop_assert_eq!(parse_signed_minor(&bracketed, 2), Ok(minor), "{}", bracketed);
+
+                    let trailing = format!("{unsigned}-");
+                    prop_assert_eq!(parse_signed_minor(&trailing, 2), Ok(minor), "{}", trailing);
                 }
             }
         }

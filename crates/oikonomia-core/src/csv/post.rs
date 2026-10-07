@@ -1,12 +1,23 @@
 //! Preview (read-only) and explicit post of selected import rows.
+//!
+//! The two halves share one rule, the duplicate key ([`DedupeKey`]), and
+//! apply it at different times on purpose. The preview flags a row that
+//! matches the ledger or an earlier row of the file, so the user can see
+//! it. The post checks again against the ledger as it is then, inside its
+//! transaction, because the rows it is given are whatever the caller kept,
+//! possibly edited, and other entries may have been posted since the
+//! preview.
+//!
+//! A post is all or nothing: one row the ledger refuses rolls back every
+//! row of the batch. A skipped duplicate is not a refusal.
 
 use std::collections::HashSet;
 use std::path::Path;
 
 use rusqlite::Connection;
 
-use super::parse::{parse_bank_csv, read_csv_text};
-use super::{
+use crate::csv::parse::{parse_bank_csv, read_csv_text};
+use crate::csv::{
     CsvColumnMapping, CsvImportAccounts, CsvImportPostResult, CsvImportPreview,
     CsvImportPreviewRow, CsvRowOutcome, currency_minor_exponent, normalize_description,
     suggested_entry,
@@ -17,30 +28,23 @@ use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_account, get_entity, post_simple_entry_unchecked,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct DedupeKey {
-    date: String,
-    amount_minor: i64,
-    description: String,
-}
-
-impl DedupeKey {
-    fn new(date: &str, amount_minor: i64, description: &str) -> Self {
-        Self {
-            date: date.to_owned(),
-            amount_minor,
-            description: normalize_description(description),
-        }
-    }
-}
-
-/// Parse a bank CSV and flag duplicates. **Does not post.**
+/// Parses a bank CSV into suggested entries and flags duplicates. **Does
+/// not post.**
 ///
-/// `mapping` overrides header auto-detect when `Some`; see [`CsvColumnMapping`].
+/// `mapping` replaces header auto-detection when `Some`; see
+/// [`CsvColumnMapping`]. The amounts are read with the exponent of the
+/// entity's base currency.
 ///
 /// # Errors
 ///
-/// Unknown entity, file-level CSV shape errors, invalid mapping, or database errors.
+/// - [`Error::NotFound`] when the entity or one of the role accounts in
+///   `accounts` does not exist.
+/// - [`Error::AccountWrongEntity`] when a role account belongs to another
+///   entity.
+/// - [`Error::CsvParse`] for a problem with the file as a whole, as
+///   [`parse_bank_csv`] lists them. A bad row is not an error; it is a row
+///   of the preview with `error` set.
+/// - [`Error::Io`] on database errors.
 pub fn preview_bank_csv(
     conn: &Connection,
     entity_id: EntityId,
@@ -51,11 +55,17 @@ pub fn preview_bank_csv(
     preview_bank_csv_named(conn, entity_id, accounts, csv_text, mapping, String::new())
 }
 
-/// [`preview_bank_csv`] reading `path` from disk. **Does not post.**
+/// Reads the CSV file at `path` and previews it as [`preview_bank_csv`]
+/// does. **Does not post.**
+///
+/// The preview's `source` is `path` as displayed.
 ///
 /// # Errors
 ///
-/// Filesystem errors plus [`preview_bank_csv`].
+/// - [`Error::Io`] when `path` cannot be read or is not a regular file.
+/// - [`Error::CsvParse`] when the file is larger than
+///   [`MAX_CSV_BYTES`](crate::csv::MAX_CSV_BYTES) or is not UTF-8.
+/// - Every error of [`preview_bank_csv`].
 pub fn preview_bank_csv_file(
     conn: &Connection,
     entity_id: EntityId,
@@ -74,9 +84,104 @@ pub fn preview_bank_csv_file(
     )
 }
 
+/// Posts the selected suggested rows as simple entries, in one transaction.
+///
+/// Rows that match the duplicate rule in the [`crate::csv`] module doc are
+/// skipped and counted unless `include_duplicates` is true. A row that
+/// repeats an earlier row of the same batch is skipped the same way. An
+/// empty `rows` succeeds and posts nothing.
+///
+/// # Errors
+///
+/// Any error rolls back the whole batch.
+///
+/// - [`Error::Validation`] with [`ValidationError::Internal`] when the rows
+///   do not all carry the same `entity_id`.
+/// - [`Error::NotFound`] when that entity does not exist.
+/// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry)
+///   for a row the ledger refuses: a non-positive amount, a missing or
+///   mistyped role account.
+/// - [`Error::Io`] on database errors.
+pub fn post_import_rows(
+    conn: &Connection,
+    rows: &[PostSimpleEntry],
+    include_duplicates: bool,
+) -> Result<CsvImportPostResult> {
+    let Some(first) = rows.first() else {
+        return Ok(CsvImportPostResult {
+            posted: Vec::new(),
+            skipped_duplicate_count: 0,
+        });
+    };
+    let entity_id = first.entity_id;
+    for row in rows {
+        if row.entity_id != entity_id {
+            return Err(Error::Validation(ValidationError::Internal {
+                detail: "import rows must belong to a single entity".into(),
+            }));
+        }
+    }
+    let _entity = get_entity(conn, entity_id)?;
+
+    let transaction = conn
+        .unchecked_transaction()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    let mut seen = load_active_keys(&transaction, entity_id)?;
+    let mut posted: Vec<PostedEntryView> = Vec::new();
+    let mut skipped_duplicate_count = 0u32;
+
+    for row in rows {
+        let key = DedupeKey::new(&row.entry_date, row.amount_minor, &row.description);
+        if !include_duplicates && seen.contains(&key) {
+            skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
+            continue;
+        }
+        let view = post_simple_entry_unchecked(&transaction, row)?;
+        seen.insert(key);
+        posted.push(view);
+    }
+
+    transaction
+        .commit()
+        .map_err(|err| Error::Io(err.to_string()))?;
+    Ok(CsvImportPostResult {
+        posted,
+        skipped_duplicate_count,
+    })
+}
+
+/// What makes two entries the same for duplicate detection: the three
+/// values the [`crate::csv`] module doc names.
+///
+/// Built only through [`DedupeKey::new`], so the description is always in
+/// its normalized form and two keys compare the way the rule says.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DedupeKey {
+    /// Booking date, `YYYY-MM-DD`.
+    date: String,
+    /// Unsigned amount in minor units: an expense and an income of the same
+    /// size on the same day with the same text are one key.
+    amount_minor: i64,
+    /// Description after [`normalize_description`].
+    description: String,
+}
+
+impl DedupeKey {
+    /// Returns the key of an entry, normalizing `description`.
+    fn new(date: &str, amount_minor: i64, description: &str) -> Self {
+        Self {
+            date: date.to_owned(),
+            amount_minor,
+            description: normalize_description(description),
+        }
+    }
+}
+
+/// The shared body of the two previews; `source` is what the preview
+/// reports the text came from, empty for in-memory text.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the import source is passed beside the parsed inputs; tracked for the API pass"
+    reason = "the import source is passed beside the five inputs of the public preview"
 )]
 fn preview_bank_csv_named(
     conn: &Connection,
@@ -108,6 +213,10 @@ fn preview_bank_csv_named(
     })
 }
 
+/// Turns one parse outcome into a preview row, recording its key in `seen`.
+///
+/// A parsed row is a duplicate when its key was already in `seen`: from the
+/// ledger, or from an earlier row of this file.
 fn preview_row(
     entity_id: EntityId,
     accounts: CsvImportAccounts,
@@ -136,63 +245,11 @@ fn preview_row(
     }
 }
 
-/// Post selected simple-entry rows via `post_simple_entry_unchecked`.
+/// Checks that a role account, when one is given, exists and belongs to
+/// `entity_id`.
 ///
-/// Rows that match the duplicate rule are skipped unless `include_duplicates`
-/// is true. Intra-batch duplicates are skipped the same way. Junk (non-positive
-/// amount, missing/wrong role accounts, unbalanced lines) fails the whole
-/// batch and rolls back.
-///
-/// # Errors
-///
-/// Empty `rows` succeeds with no posts. Mixed `entity_id` values, posting
-/// failures, or database errors.
-pub fn post_import_rows(
-    conn: &Connection,
-    rows: &[PostSimpleEntry],
-    include_duplicates: bool,
-) -> Result<CsvImportPostResult> {
-    let Some(first) = rows.first() else {
-        return Ok(CsvImportPostResult {
-            posted: Vec::new(),
-            skipped_duplicate_count: 0,
-        });
-    };
-    let entity_id = first.entity_id;
-    for row in rows {
-        if row.entity_id != entity_id {
-            return Err(Error::Validation(ValidationError::Internal {
-                detail: "import rows must belong to a single entity".into(),
-            }));
-        }
-    }
-    let _entity = get_entity(conn, entity_id)?;
-
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|err| Error::Io(err.to_string()))?;
-    let mut seen = load_active_keys(&tx, entity_id)?;
-    let mut posted: Vec<PostedEntryView> = Vec::new();
-    let mut skipped_duplicate_count = 0u32;
-
-    for row in rows {
-        let key = DedupeKey::new(&row.entry_date, row.amount_minor, &row.description);
-        if !include_duplicates && seen.contains(&key) {
-            skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
-            continue;
-        }
-        let view = post_simple_entry_unchecked(&tx, row)?;
-        seen.insert(key);
-        posted.push(view);
-    }
-
-    tx.commit().map_err(|err| Error::Io(err.to_string()))?;
-    Ok(CsvImportPostResult {
-        posted,
-        skipped_duplicate_count,
-    })
-}
-
+/// Its type is not checked here; the post does that for the kind of each
+/// row.
 fn check_role_account(conn: &Connection, entity_id: EntityId, id: Option<AccountId>) -> Result<()> {
     let Some(id) = id else {
         return Ok(());
@@ -204,8 +261,14 @@ fn check_role_account(conn: &Connection, entity_id: EntityId, id: Option<Account
     Ok(())
 }
 
+/// Loads the key of every active entry of `entity_id`: posted, not voided,
+/// and not itself the reversal of a voided entry.
+///
+/// An entry's amount is the sum of its debit lines, which for a balanced
+/// entry is its total. Every entry of the book is read on each call; there
+/// is no index on the key.
 fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<DedupeKey>> {
-    let mut stmt = conn
+    let mut statement = conn
         .prepare(
             "
             SELECT je.entry_date, je.description, COALESCE(SUM(jl.debit_minor), 0)
@@ -223,7 +286,7 @@ fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<De
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mapped = stmt
+    let mapped = statement
         .query_map([entity_id.0.to_string()], |row| {
             Ok((
                 row.get::<_, String>(0)?,

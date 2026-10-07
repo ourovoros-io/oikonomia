@@ -1,10 +1,51 @@
-//! Financial reports: trial balance, P&L, balance sheet, dashboard.
+//! Financial reports: trial balance, profit and loss, balance sheet and the
+//! dashboard summary.
+//!
+//! A report is computed from the journal each time it is asked for; nothing
+//! here is stored. All four count active entries only (posted, not voided,
+//! not the reversal of a void). The hidden flag changes one of them:
+//! [`profit_and_loss_export`] leaves hidden entries out, and every other
+//! report counts them.
+//!
+//! # No year-end close
+//!
+//! The books never post a closing entry that moves a year's result into
+//! equity. The reports as of a date do the equivalent while they run. They
+//! split income and expenses at the first day of the fiscal year that holds
+//! the date:
+//!
+//! - the result since that day is the current year's. The balance sheet shows
+//!   it as the equity row `NI`; the trial balance lists the income and expense
+//!   accounts themselves for that span;
+//! - the result of everything before it is shown as the equity row `RE`,
+//!   retained earnings, on both.
+//!
+//! Neither row has an account behind it; [`SyntheticLine`] marks them. With
+//! them the balance sheet balances and the trial balance agrees with it on
+//! any date.
+//!
+//! # Query shape
+//!
+//! The account lines of every report come from one query, in
+//! `account_activity_lines`. It joins the accounts to a subquery that sums
+//! the journal per account, and every predicate on entries (active, hidden,
+//! the date window) is inside that subquery. Written on a `LEFT JOIN ... ON`
+//! instead, such a predicate does not filter: a line whose entry fails it
+//! stays in the join with the entry's columns null, and its amounts are
+//! summed all the same.
+//!
+//! # Damaged accounts
+//!
+//! Every query here selects accounts by their stored type, so an account
+//! whose `account_type` is none of the five known strings matches none of
+//! them and is missing from every report, with no error. The reports do not
+//! look for such a row. They rely on the account reads to report it:
+//! [`list_accounts`](crate::ledger::list_accounts) and
+//! [`get_account`](crate::ledger::get_account) fail with
+//! [`Error::VaultCorrupt`] for it, and posting loads each account through
+//! `get_account`, so nothing new can be posted to it either.
 
-use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
-use time::{Date, Month};
-
-use crate::db::{corrupt_column, read_column};
+use crate::db::{collect_rows, corrupt_column, read_column};
 use crate::domain::{AccountType, Entity, EntityId};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::balance::{
@@ -13,6 +54,9 @@ use crate::ledger::balance::{
 };
 use crate::ledger::entities::get_entity;
 use crate::util::{format_date, parse_date};
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use time::{Date, Month};
 
 /// A report row the reports compute instead of reading from an account.
 ///
@@ -33,140 +77,150 @@ impl SyntheticLine {
     pub const ALL: &'static [Self] = &[Self::RetainedEarnings, Self::NetIncome];
 }
 
-/// One line on a trial balance or section report.
+/// One account, or one computed row, on a report.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReportLine {
-    /// Account code.
+    /// Code of the account; `RE` or `NI` on a computed row.
     pub code: String,
-    /// Account name.
+    /// Name of the account as stored; a fixed English name on a computed row.
     pub name: String,
-    /// Account type.
+    /// Type of the account. A computed row is equity.
     pub account_type: AccountType,
-    /// Debit total (minor) where applicable.
+    /// Debits posted to the account within the report's span, in minor units.
+    /// Never negative. On a computed row, the size of a net loss.
     pub debit_minor: i64,
-    /// Credit total (minor) where applicable.
+    /// Credits posted to the account within the report's span, in minor units.
+    /// Never negative. On a computed row, the size of a net profit.
     pub credit_minor: i64,
-    /// Signed normal balance.
+    /// The two totals netted towards the normal side of `account_type`, in
+    /// minor units: negative when the account sits on its other side.
     pub balance_minor: i64,
     /// Set on a computed row, which has no account behind it; `None` on a real account.
     #[serde(default)]
     pub synthetic: Option<SyntheticLine>,
 }
 
-/// Trial balance as of a date.
+/// Result of [`trial_balance`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrialBalance {
-    /// Entity id.
+    /// Entity the report is for.
     pub entity_id: EntityId,
-    /// As-of date.
+    /// Last day counted (inclusive).
     #[serde(with = "crate::util::serde_date")]
     pub as_of: Date,
-    /// Lines with activity or non-zero balance.
+    /// Every line with a debit or a credit: assets, liabilities and equity in
+    /// chart order, then the retained-earnings row if there is one, then
+    /// income and expenses.
     pub lines: Vec<ReportLine>,
-    /// Total debits.
+    /// Sum of `debit_minor` over `lines`, in minor units.
     pub total_debits: i64,
-    /// Total credits.
+    /// Sum of `credit_minor` over `lines`, in minor units. Equal to
+    /// `total_debits` whenever every entry balances.
     pub total_credits: i64,
 }
 
-/// Profit and loss for a period.
+/// Result of [`profit_and_loss`] and [`profit_and_loss_export`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PnL {
-    /// Entity id.
+    /// Entity the report is for.
     pub entity_id: EntityId,
-    /// From date.
+    /// First day counted (inclusive).
     #[serde(with = "crate::util::serde_date")]
     pub from: Date,
-    /// To date.
+    /// Last day counted (inclusive).
     #[serde(with = "crate::util::serde_date")]
     pub to: Date,
-    /// Income lines.
+    /// Income accounts with a debit or a credit in the window, in chart order.
     pub income: Vec<ReportLine>,
-    /// Expense lines.
+    /// Expense accounts with a debit or a credit in the window, in chart order.
     pub expenses: Vec<ReportLine>,
-    /// Total income (normal).
+    /// Sum of the income lines' balances (credits minus debits), in minor units.
     pub total_income: i64,
-    /// Total expenses (normal).
+    /// Sum of the expense lines' balances (debits minus credits), in minor units.
     pub total_expenses: i64,
-    /// Net income = income − expenses.
+    /// `total_income - total_expenses`; negative for a loss.
     pub net_income: i64,
 }
 
-/// Balance sheet section.
+/// One of the three sections of a [`BalanceSheet`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceSheetSection {
-    /// Lines.
+    /// Accounts of the section with a debit or a credit through the as-of
+    /// date, in chart order. The equity section ends with the computed rows.
     pub lines: Vec<ReportLine>,
-    /// Section total.
+    /// Sum of the lines' balances, in minor units.
     pub total: i64,
 }
 
-/// Balance sheet as of date.
+/// Result of [`balance_sheet`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceSheet {
-    /// Entity id.
+    /// Entity the report is for.
     pub entity_id: EntityId,
-    /// As-of date.
+    /// Last day counted (inclusive).
     #[serde(with = "crate::util::serde_date")]
     pub as_of: Date,
-    /// Assets.
+    /// Asset accounts.
     pub assets: BalanceSheetSection,
-    /// Liabilities.
+    /// Liability accounts.
     pub liabilities: BalanceSheetSection,
-    /// Equity including current-FY net income and prior-period unclosed P&L.
+    /// Equity accounts, then the result of earlier fiscal years (`RE`) and of
+    /// the current one (`NI`), each only when it is not zero.
     pub equity: BalanceSheetSection,
-    /// Assets total.
+    /// The total of `assets`, in minor units.
     pub total_assets: i64,
-    /// Liabilities + equity total.
+    /// The totals of `liabilities` and `equity` added, in minor units. Equal
+    /// to `total_assets` whenever every entry balances.
     pub total_liabilities_equity: i64,
 }
 
-/// Dashboard summary cards.
+/// Result of [`dashboard_summary`]. Amounts are in minor units.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardSummary {
-    /// Entity id.
+    /// Entity the summary is for.
     pub entity_id: EntityId,
-    /// Currency code.
+    /// ISO 4217 code of the entity's currency, which every amount here is in.
     pub base_currency: String,
     /// Sum of asset accounts as of the `assets_as_of` date given to
     /// [`dashboard_summary`], which need not be the window's `to`.
     pub cash_like_assets: i64,
-    /// Income in period.
+    /// Income in the window: credits minus debits on income accounts.
     pub income: i64,
-    /// Expenses in period.
+    /// Expenses in the window: debits minus credits on expense accounts.
     pub expenses: i64,
-    /// Net income in period.
+    /// `income - expenses`; negative for a loss.
     pub net_income: i64,
-    /// Posted, non-voided entries in the period.
+    /// Number of active entries dated in the window.
     pub recent_entry_count: usize,
     /// Net income as a share of income, in basis points; `None` when income is
-    /// zero or less.
+    /// zero or less, or the share does not fit in `i64`.
     pub savings_rate_bps: Option<i64>,
     /// Expenses as a share of income, in basis points; `None` when income is
-    /// zero or less.
+    /// zero or less, or the share does not fit in `i64`.
     pub spend_ratio_bps: Option<i64>,
     /// The Expense account with the most spending in the window; `None` when
-    /// there are no expenses.
+    /// `expenses` is zero or less, or no account has a positive spend.
     pub top_expense: Option<TopExpense>,
     /// Change in net income against [`previous_window`], in basis points of the
-    /// previous net's size; `None` when the previous net is zero.
+    /// previous net's size; `None` when the previous net is zero, when there
+    /// is no previous window, or when the change does not fit in `i64`.
     pub net_vs_previous_bps: Option<i64>,
 }
 
 /// The Expense account with the most spending in a dashboard window.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TopExpense {
-    /// Account code.
+    /// Code of the expense account.
     pub code: String,
-    /// Account name.
+    /// Name of the expense account as stored.
     pub name: String,
-    /// Spending on the account in the window.
+    /// Spending on the account in the window, in minor units; always positive.
     pub amount_minor: i64,
     /// `amount_minor` as a share of the window's expenses, in basis points.
     pub share_bps: i64,
 }
 
-/// Trial balance as of `as_of` (`YYYY-MM-DD`).
+/// Computes the trial balance as of `as_of` (`YYYY-MM-DD`).
 ///
 /// Permanent accounts are cumulative. Income and expense show only the
 /// current fiscal year through `as_of`; earlier unclosed P&L is folded into a
@@ -180,9 +234,10 @@ pub struct TopExpense {
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Io`].
 pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<TrialBalance> {
-    let as_of_d = parse_date(as_of)?;
+    let as_of = parse_date(as_of)?;
+    // An archived entity is found too; its reports stay readable.
     let entity = get_entity(conn, entity_id)?;
-    let close = unclosed_pnl(conn, entity_id, as_of_d, fiscal_start_month(&entity)?)?;
+    let unclosed = unclosed_pnl(conn, entity_id, as_of, fiscal_start_month(&entity)?)?;
 
     let mut lines = Vec::new();
 
@@ -191,11 +246,11 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
         AccountType::Liability,
         AccountType::Equity,
     ] {
-        lines.extend(as_of_lines(conn, entity_id, account_type, as_of_d)?);
+        lines.extend(as_of_lines(conn, entity_id, account_type, as_of)?);
     }
 
-    if close.prior_net != 0 {
-        lines.push(retained_earnings_line(close.prior_net)?);
+    if unclosed.prior_net != 0 {
+        lines.push(retained_earnings_line(unclosed.prior_net)?);
     }
 
     for account_type in [AccountType::Income, AccountType::Expense] {
@@ -203,26 +258,27 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
             conn,
             entity_id,
             account_type,
-            close.fy_start,
-            as_of_d,
+            unclosed.year_start,
+            as_of,
             false,
         )?);
     }
 
-    lines.retain(|line| line.debit_minor != 0 || line.credit_minor != 0);
+    lines.retain(has_activity);
     let total_debits = sum_minor(lines.iter().map(|line| line.debit_minor))?;
     let total_credits = sum_minor(lines.iter().map(|line| line.credit_minor))?;
 
     Ok(TrialBalance {
         entity_id,
-        as_of: as_of_d,
+        as_of,
         lines,
         total_debits,
         total_credits,
     })
 }
 
-/// Profit and loss between `from` and `to` inclusive.
+/// Computes profit and loss between `from` and `to` inclusive
+/// (`YYYY-MM-DD`), hidden entries included.
 ///
 /// # Errors
 ///
@@ -239,9 +295,11 @@ pub fn profit_and_loss(
     profit_and_loss_filtered(conn, entity_id, from, to, false)
 }
 
-/// Accountant / PDF export P&L: same window as [`profit_and_loss`], Hidden omitted.
+/// Computes the profit and loss that leaves the app: the window of
+/// [`profit_and_loss`], with hidden entries left out.
 ///
-/// In-app Reports keep using [`profit_and_loss`] so the owner still sees Hidden.
+/// The exported report is built from this. The in-app report uses
+/// [`profit_and_loss`], so the owner still sees hidden entries there.
 ///
 /// # Errors
 ///
@@ -258,55 +316,11 @@ pub fn profit_and_loss_export(
     profit_and_loss_filtered(conn, entity_id, from, to, true)
 }
 
-fn profit_and_loss_filtered(
-    conn: &Connection,
-    entity_id: EntityId,
-    from: &str,
-    to: &str,
-    omit_hidden: bool,
-) -> Result<PnL> {
-    let from_d = parse_date(from)?;
-    let to_d = parse_date(to)?;
-    if from_d > to_d {
-        return Err(Error::Validation(ValidationError::DateRangeInverted));
-    }
-    let _ = get_entity(conn, entity_id)?;
-
-    let income = period_lines(
-        conn,
-        entity_id,
-        AccountType::Income,
-        from_d,
-        to_d,
-        omit_hidden,
-    )?;
-    let expenses = period_lines(
-        conn,
-        entity_id,
-        AccountType::Expense,
-        from_d,
-        to_d,
-        omit_hidden,
-    )?;
-
-    let total_income = sum_minor(income.iter().map(|line| line.balance_minor))?;
-    let total_expenses = sum_minor(expenses.iter().map(|line| line.balance_minor))?;
-    let net_income = subtract_minor(total_income, total_expenses)?;
-
-    Ok(PnL {
-        entity_id,
-        from: from_d,
-        to: to_d,
-        income,
-        expenses,
-        total_income,
-        total_expenses,
-        net_income,
-    })
-}
-
-/// Balance sheet as of date (equity includes current-FY net income and
-/// unclosed prior-period P&L — there is no permanent year-end close).
+/// Computes the balance sheet as of `as_of` (`YYYY-MM-DD`).
+///
+/// Equity includes the current fiscal year's result and the unclosed result
+/// of earlier years as computed rows, because there is no permanent year-end
+/// close.
 ///
 /// # Errors
 ///
@@ -315,37 +329,38 @@ fn profit_and_loss_filtered(
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Io`].
 pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Result<BalanceSheet> {
-    let as_of_d = parse_date(as_of)?;
+    let as_of = parse_date(as_of)?;
+    // An archived entity is found too; its reports stay readable.
     let entity = get_entity(conn, entity_id)?;
 
-    let assets_lines = as_of_lines(conn, entity_id, AccountType::Asset, as_of_d)?;
-    let liab_lines = as_of_lines(conn, entity_id, AccountType::Liability, as_of_d)?;
-    let mut equity_lines = as_of_lines(conn, entity_id, AccountType::Equity, as_of_d)?;
-    let close = unclosed_pnl(conn, entity_id, as_of_d, fiscal_start_month(&entity)?)?;
+    let asset_lines = as_of_lines(conn, entity_id, AccountType::Asset, as_of)?;
+    let liability_lines = as_of_lines(conn, entity_id, AccountType::Liability, as_of)?;
+    let mut equity_lines = as_of_lines(conn, entity_id, AccountType::Equity, as_of)?;
+    let unclosed = unclosed_pnl(conn, entity_id, as_of, fiscal_start_month(&entity)?)?;
 
-    if close.prior_net != 0 {
-        equity_lines.push(retained_earnings_line(close.prior_net)?);
+    if unclosed.prior_net != 0 {
+        equity_lines.push(retained_earnings_line(unclosed.prior_net)?);
     }
 
-    if close.current_net != 0 {
-        equity_lines.push(net_income_line(close.current_net)?);
+    if unclosed.current_net != 0 {
+        equity_lines.push(net_income_line(unclosed.current_net)?);
     }
 
-    let total_assets = sum_minor(assets_lines.iter().map(|line| line.balance_minor))?;
-    let total_liab = sum_minor(liab_lines.iter().map(|line| line.balance_minor))?;
+    let total_assets = sum_minor(asset_lines.iter().map(|line| line.balance_minor))?;
+    let total_liabilities = sum_minor(liability_lines.iter().map(|line| line.balance_minor))?;
     let total_equity = sum_minor(equity_lines.iter().map(|line| line.balance_minor))?;
-    let total_liabilities_equity = add_minor(total_liab, total_equity)?;
+    let total_liabilities_equity = add_minor(total_liabilities, total_equity)?;
 
     Ok(BalanceSheet {
         entity_id,
-        as_of: as_of_d,
+        as_of,
         assets: BalanceSheetSection {
             total: total_assets,
-            lines: assets_lines,
+            lines: asset_lines,
         },
         liabilities: BalanceSheetSection {
-            total: total_liab,
-            lines: liab_lines,
+            total: total_liabilities,
+            lines: liability_lines,
         },
         equity: BalanceSheetSection {
             total: total_equity,
@@ -356,11 +371,14 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: &str) -> Res
     })
 }
 
-/// Dashboard summary: income/expenses/count over `[from, to]` (typically the
-/// full calendar month, so future-dated bills inside the month are counted),
-/// with assets reported as of `assets_as_of` (typically today). It also
-/// carries the arc metrics (savings rate, spend ratio, top expense, and net
-/// against [`previous_window`]) in basis points, so the UI never divides.
+/// Computes the dashboard figures for the window `[from, to]`, with assets
+/// as of `assets_as_of` (all `YYYY-MM-DD`).
+///
+/// The window is typically the full calendar month, so that a bill dated
+/// later in the month is counted, while `assets_as_of` is typically today.
+/// The summary also carries the arc metrics (savings rate, spend ratio, top
+/// expense, and net against [`previous_window`]) in basis points, so the UI
+/// never divides.
 ///
 /// # Errors
 ///
@@ -375,17 +393,18 @@ pub fn dashboard_summary(
     to: &str,
     assets_as_of: &str,
 ) -> Result<DashboardSummary> {
+    // An archived entity is found too; its reports stay readable.
     let entity = get_entity(conn, entity_id)?;
-    let from_d = parse_date(from)?;
-    let to_d = parse_date(to)?;
-    let assets_as_of_d = parse_date(assets_as_of)?;
-    if from_d > to_d {
+    let from = parse_date(from)?;
+    let to = parse_date(to)?;
+    let assets_as_of = parse_date(assets_as_of)?;
+    if from > to {
         return Err(Error::Validation(ValidationError::DateRangeInverted));
     }
 
-    let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], assets_as_of_d)?;
-    let income = sum_types_in_range(conn, entity_id, &[AccountType::Income], from_d, to_d)?;
-    let expenses = sum_types_in_range(conn, entity_id, &[AccountType::Expense], from_d, to_d)?;
+    let cash_like_assets = sum_types_as_of(conn, entity_id, &[AccountType::Asset], assets_as_of)?;
+    let income = sum_types_in_range(conn, entity_id, &[AccountType::Income], from, to)?;
+    let expenses = sum_types_in_range(conn, entity_id, &[AccountType::Expense], from, to)?;
     let count_sql = format!(
         "
         SELECT COUNT(1) FROM journal_entries je
@@ -396,17 +415,13 @@ pub fn dashboard_summary(
     let count: i64 = conn
         .query_row(
             &count_sql,
-            rusqlite::params![
-                entity_id.0.to_string(),
-                format_date(from_d),
-                format_date(to_d)
-            ],
+            rusqlite::params![entity_id.0.to_string(), format_date(from), format_date(to)],
             |row| row.get(0),
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
     let net_income = subtract_minor(income, expenses)?;
-    let net_vs_previous_bps = match previous_window(from_d, to_d) {
+    let net_vs_previous_bps = match previous_window(from, to) {
         Some((previous_from, previous_to)) => {
             let previous_net = net_in_range(conn, entity_id, previous_from, previous_to)?;
             ratio_bps(
@@ -432,18 +447,22 @@ pub fn dashboard_summary(
         recent_entry_count: usize::try_from(count).unwrap_or(0),
         savings_rate_bps,
         spend_ratio_bps,
-        top_expense: top_expense(conn, entity_id, from_d, to_d, expenses)?,
+        top_expense: top_expense(conn, entity_id, from, to, expenses)?,
         net_vs_previous_bps,
     })
 }
 
-/// The window a dashboard compares `[from, to]` against: the one just before it.
+/// Returns the window a dashboard compares `[from, to]` against: the one just
+/// before it.
 ///
 /// A window of whole calendar months (from the first of a month to the last
 /// day of a month) steps back by the same number of calendar months, so a
 /// month compares with the month before, a quarter with the quarter before and
 /// a year with the year before. Any other window steps back by the same number
 /// of days. `None` only at the edge of the calendar.
+///
+/// The caller passes `from <= to`; the result for an inverted pair is not a
+/// window before `from`.
 #[must_use]
 pub fn previous_window(from: Date, to: Date) -> Option<(Date, Date)> {
     let previous_to = from.previous_day()?;
@@ -460,18 +479,72 @@ pub fn previous_window(from: Date, to: Date) -> Option<(Date, Date)> {
     Some((previous_from, previous_to))
 }
 
+/// Computes [`profit_and_loss`] or, with `omit_hidden`,
+/// [`profit_and_loss_export`].
+///
+/// # Errors
+///
+/// Those of [`profit_and_loss`].
+fn profit_and_loss_filtered(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: &str,
+    to: &str,
+    omit_hidden: bool,
+) -> Result<PnL> {
+    let from = parse_date(from)?;
+    let to = parse_date(to)?;
+    if from > to {
+        return Err(Error::Validation(ValidationError::DateRangeInverted));
+    }
+    // Only checks that the entity exists; an archived one passes.
+    get_entity(conn, entity_id)?;
+
+    let income = period_lines(conn, entity_id, AccountType::Income, from, to, omit_hidden)?;
+    let expenses = period_lines(conn, entity_id, AccountType::Expense, from, to, omit_hidden)?;
+
+    let total_income = sum_minor(income.iter().map(|line| line.balance_minor))?;
+    let total_expenses = sum_minor(expenses.iter().map(|line| line.balance_minor))?;
+    let net_income = subtract_minor(total_income, total_expenses)?;
+
+    Ok(PnL {
+        entity_id,
+        from,
+        to,
+        income,
+        expenses,
+        total_income,
+        total_expenses,
+        net_income,
+    })
+}
+
+/// Numbers the calendar months from year zero: January of year 0 is 0,
+/// February is 1, and January of year 1 is 12.
+///
+/// The difference of two indexes is the number of calendar months between
+/// two dates, whatever the years.
 fn month_index(date: Date) -> i64 {
     i64::from(date.year()) * 12 + i64::from(u8::from(date.month())) - 1
 }
 
+/// Returns the first day of the month [`month_index`] numbers `index`, or
+/// `None` when that month is outside the calendar.
 fn date_from_month_index(index: i64) -> Option<Date> {
     let year = i32::try_from(index.div_euclid(12)).ok()?;
     let month = u8::try_from(index.rem_euclid(12) + 1).ok()?;
     Date::from_calendar_date(year, Month::try_from(month).ok()?, 1).ok()
 }
 
-/// The Expense account with the largest positive spend in the window; on a tie
-/// the first in chart order wins.
+/// Returns the Expense account with the largest positive spend in the
+/// window; on a tie the first in chart order wins.
+///
+/// `expenses` is the window's total, which the share is taken of. `None`
+/// when it is zero or less, or when no account has a positive spend.
+///
+/// # Errors
+///
+/// Those of [`period_lines`].
 fn top_expense(
     conn: &Connection,
     entity_id: EntityId,
@@ -500,12 +573,16 @@ fn top_expense(
     }))
 }
 
-/// `numerator / denominator` in basis points, rounded half away from zero;
+/// Returns `numerator / denominator` in basis points, rounded half away from
+/// zero.
+///
 /// `None` when the denominator is zero or the result does not fit in `i64`.
 fn ratio_bps(numerator: i64, denominator: i64) -> Option<i64> {
     if denominator == 0 {
         return None;
     }
+    // In `i128` neither the scaling nor the rounding term can overflow:
+    // both operands come from `i64`.
     let scaled = i128::from(numerator) * 10_000;
     let divisor = i128::from(denominator);
     let magnitude = (scaled.abs() + divisor.abs() / 2) / divisor.abs();
@@ -517,11 +594,25 @@ fn ratio_bps(numerator: i64, denominator: i64) -> Option<i64> {
     i64::try_from(signed).ok()
 }
 
-/// Per-account debit/credit sums over posted, non-voided entries in a window.
+/// Reads one line per account of an entity, in chart order, with the debits
+/// and credits of the active entries dated in the window.
+///
+/// `account_type` limits the accounts to one type and `from` is the first
+/// day counted; `None` lifts either limit. `to` is the last day counted and
+/// `omit_hidden` leaves hidden entries out. An account with no entry in the
+/// window still gets a line, with both totals zero.
 ///
 /// Entry-level predicates (status, void, optional Hidden) live in the inner
 /// subquery WHERE — never on the outer LEFT JOIN ON — so a filtered-out entry
 /// contributes nothing and accounts with no matching activity stay at zero.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] for a stored account type that does not parse,
+///   or a column of the wrong storage class.
+/// - [`Error::MoneyOverflow`] when a balance does not fit in `i64`.
+/// - [`Error::Io`] on database errors, which include a total that overflows
+///   `i64` inside `SQLite`'s `SUM`.
 #[expect(
     clippy::too_many_arguments,
     reason = "the report window and its filters are separate arguments; tracked for the API pass"
@@ -579,13 +670,17 @@ fn account_activity_lines(
         )
         .map_err(|err| Error::Io(err.to_string()))?;
 
-    let mut lines = Vec::new();
-    for row in rows {
-        lines.push(row.map_err(|err| Error::Io(err.to_string()))??);
-    }
-    Ok(lines)
+    collect_rows(rows)
 }
 
+/// Reads the accounts of one type that have a debit or a credit between
+/// `from` and `to` inclusive.
+///
+/// Income and expense lines are read this way.
+///
+/// # Errors
+///
+/// Those of [`account_activity_lines`].
 #[expect(
     clippy::too_many_arguments,
     reason = "the report window and its filters are separate arguments; tracked for the API pass"
@@ -606,12 +701,17 @@ fn period_lines(
         to,
         omit_hidden,
     )?;
-    Ok(lines
-        .into_iter()
-        .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)
-        .collect())
+    Ok(lines.into_iter().filter(has_activity).collect())
 }
 
+/// Reads the accounts of one type that have a debit or a credit on any day
+/// through `as_of`, hidden entries included.
+///
+/// Asset, liability and equity lines are read this way.
+///
+/// # Errors
+///
+/// Those of [`account_activity_lines`].
 fn as_of_lines(
     conn: &Connection,
     entity_id: EntityId,
@@ -619,49 +719,94 @@ fn as_of_lines(
     as_of: Date,
 ) -> Result<Vec<ReportLine>> {
     let lines = account_activity_lines(conn, entity_id, Some(account_type), None, as_of, false)?;
-    Ok(lines
-        .into_iter()
-        .filter(|l| l.balance_minor != 0 || l.debit_minor != 0 || l.credit_minor != 0)
-        .collect())
+    Ok(lines.into_iter().filter(has_activity).collect())
 }
 
-/// Current-FY net income and unclosed P&L from before `fy_start`.
+/// Returns whether any debit or credit was posted to the line's account in
+/// the window.
+///
+/// The balance needs no test of its own: it is the difference of the two
+/// totals, so it is zero whenever both are.
+fn has_activity(line: &ReportLine) -> bool {
+    line.debit_minor != 0 || line.credit_minor != 0
+}
+
+/// The earliest date an entry can have: the first day of year zero.
+///
+/// This is the lower bound of what [`parse_date`] reads, and every stored
+/// entry date went through it. `Date::MIN` would be the wrong bound for the
+/// queries, which compare dates as text: it is written with a leading minus
+/// sign (`-9999-01-01`), and text with a minus sign does not sort by date.
+const BOOKS_START: Date = time::macros::date!(0000 - 01 - 01);
+
+/// The profit and loss that no closing entry has moved into equity, split at
+/// the start of the fiscal year that holds the as-of date.
 struct UnclosedPnl {
-    fy_start: Date,
+    /// First day of the fiscal year that holds the as-of date.
+    year_start: Date,
+    /// Income minus expenses from `year_start` through the as-of date, in
+    /// minor units; negative for a loss.
     current_net: i64,
+    /// Income minus expenses on every day before `year_start`, in minor
+    /// units; negative for a loss.
     prior_net: i64,
 }
 
+/// Computes the unclosed profit and loss of an entity as of `as_of`, for a
+/// fiscal year that starts in `fiscal_start`.
+///
+/// # Errors
+///
+/// - [`Error::MoneyOverflow`] when a net does not fit in `i64`.
+/// - [`Error::Io`] on database errors.
 fn unclosed_pnl(
     conn: &Connection,
     entity_id: EntityId,
     as_of: Date,
     fiscal_start: Month,
 ) -> Result<UnclosedPnl> {
-    let fy_start = fiscal_year_start(as_of, fiscal_start);
-    let current_net = net_in_range(conn, entity_id, fy_start, as_of)?;
+    let year_start = fiscal_year_start(as_of, fiscal_start);
+    let current_net = net_in_range(conn, entity_id, year_start, as_of)?;
 
-    let prior_net = if let Some(prior_end) = fy_start.previous_day() {
-        let books_start = Date::from_calendar_date(1, Month::January, 1).unwrap_or(prior_end);
-        net_in_range(conn, entity_id, books_start, prior_end)?
-    } else {
-        0
+    let prior_net = match year_start.previous_day() {
+        Some(prior_end) if prior_end >= BOOKS_START => {
+            net_in_range(conn, entity_id, BOOKS_START, prior_end)?
+        }
+        // The fiscal year holds the first day of the books, so nothing is
+        // before it.
+        _ => 0,
     };
 
     Ok(UnclosedPnl {
-        fy_start,
+        year_start,
         current_net,
         prior_net,
     })
 }
 
-/// Income minus expenses between `from` and `to` inclusive.
+/// Returns income minus expenses between `from` and `to` inclusive, in minor
+/// units, counting active entries only.
+///
+/// # Errors
+///
+/// - [`Error::MoneyOverflow`] when the difference does not fit in `i64`.
+/// - [`Error::Io`] on database errors.
 fn net_in_range(conn: &Connection, entity_id: EntityId, from: Date, to: Date) -> Result<i64> {
     let income = sum_types_in_range(conn, entity_id, &[AccountType::Income], from, to)?;
     let expenses = sum_types_in_range(conn, entity_id, &[AccountType::Expense], from, to)?;
     subtract_minor(income, expenses)
 }
 
+/// Builds a computed equity row that carries `net` as its balance.
+///
+/// Equity is credit-normal, so a profit is put on the credit side and a loss,
+/// as a positive amount, on the debit side. That keeps the row's debit and
+/// credit non-negative like those of a real account.
+///
+/// # Errors
+///
+/// [`Error::MoneyOverflow`] when `net` is `i64::MIN`, whose size does not fit
+/// in `i64`.
 fn equity_plug_line(
     code: &str,
     name: &str,
@@ -684,6 +829,12 @@ fn equity_plug_line(
     })
 }
 
+/// Builds the `RE` row: the result of the fiscal years before the current
+/// one.
+///
+/// # Errors
+///
+/// Those of [`equity_plug_line`].
 fn retained_earnings_line(prior_net: i64) -> Result<ReportLine> {
     equity_plug_line(
         "RE",
@@ -693,6 +844,11 @@ fn retained_earnings_line(prior_net: i64) -> Result<ReportLine> {
     )
 }
 
+/// Builds the `NI` row: the result of the current fiscal year so far.
+///
+/// # Errors
+///
+/// Those of [`equity_plug_line`].
 fn net_income_line(net: i64) -> Result<ReportLine> {
     equity_plug_line(
         "NI",
@@ -702,7 +858,7 @@ fn net_income_line(net: i64) -> Result<ReportLine> {
     )
 }
 
-/// The month an entity's fiscal year starts in.
+/// Returns the month an entity's fiscal year starts in.
 ///
 /// # Errors
 ///
@@ -718,7 +874,7 @@ fn fiscal_start_month(entity: &Entity) -> Result<Month> {
     })
 }
 
-/// First day of the fiscal year that contains `as_of`.
+/// Returns the first day of the fiscal year that contains `as_of`.
 fn fiscal_year_start(as_of: Date, start_month: Month) -> Date {
     let year = if u8::from(as_of.month()) >= u8::from(start_month) {
         as_of.year()
@@ -733,6 +889,12 @@ fn fiscal_year_start(as_of: Date, start_month: Month) -> Date {
 }
 
 /// Maps a row selected as `code, name, account_type, debits, credits`.
+///
+/// # Errors
+///
+/// - [`Error::VaultCorrupt`] for an account type that does not parse or a
+///   column of the wrong storage class.
+/// - [`Error::MoneyOverflow`] when the balance does not fit in `i64`.
 fn map_report_line(row: &rusqlite::Row<'_>) -> Result<ReportLine> {
     let account_type = parse_account_type(&read_column::<String>(row, 2)?)?;
     let debits: i64 = read_column(row, 3)?;
