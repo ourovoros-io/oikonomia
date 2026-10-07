@@ -112,7 +112,7 @@ fn start(app: &mut tauri::App) -> Result<(), StartupError> {
     // The tray menu is worded in the stored language; the webview applies
     // its own copy of the preference later.
     let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
-    tray::init(app, prefs.locale).map_err(StartupError::Shell)?;
+    tray::init(app, prefs.locale()).map_err(StartupError::Shell)?;
 
     // Rust-side idle lock: guarantees the vault locks even if the
     // webview throttles timers or stalls entirely. Started before the state
