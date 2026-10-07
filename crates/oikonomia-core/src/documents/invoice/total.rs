@@ -32,8 +32,14 @@ const VALUE_WORDS: &[Keyword] = &[Prefix("αξια"), Word("value"), TOTAL_WORD]
 const TOTAL_WORD: Keyword = Word("total");
 
 /// Markers of lines that hold identifiers, never an amount: the fallback
-/// skips a line with one.
-const IDENTIFIER_LINE_MARKERS: &[Keyword] = &[IBAN_WORD, Word("α.φ.μ"), Word("αφμ"), Word("mark")];
+/// skips a line with one. The MARK label is written in either script.
+const IDENTIFIER_LINE_MARKERS: &[Keyword] = &[
+    IBAN_WORD,
+    Word("α.φ.μ"),
+    Word("αφμ"),
+    Word("mark"),
+    Word("μαρκ"),
+];
 
 /// Weights of the fallback, stage 4 of [`find_total_amount`].
 ///
@@ -629,6 +635,7 @@ mod tests {
     #[test]
     fn an_identifier_line_is_still_skipped_by_the_fallback() {
         assert_eq!(read("MARK 12,50 €").amount_minor, None);
+        assert_eq!(read("ΜΑΡΚ 12,50 €").amount_minor, None);
         assert_eq!(read("M.AR.K. (mark): 400,50 €").amount_minor, None);
         assert_eq!(
             read("IBAN: GR16 0110 1250 0000 0001 2300 695").amount_minor,
