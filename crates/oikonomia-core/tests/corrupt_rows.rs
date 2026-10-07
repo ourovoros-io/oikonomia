@@ -12,10 +12,11 @@ use oikonomia_core::csv::export_journal_csv;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, VaultCorruption};
 use oikonomia_core::ledger::{
-    CreateRecurringTemplateRequest, EntryFilter, RecurringCadence, SimpleEntryKind,
-    account_register, activity_window, balance_sheet, cash_flow_series, create_recurring_template,
-    get_entity, get_entry, get_recurring_template, list_accounts, list_entities, list_entries,
-    list_recurring_templates, post_simple_entry, trial_balance,
+    CreateRecurringTemplateRequest, EntryFilter, RecurringCadence, RecurringSchedule,
+    SimpleEntryKind, account_register, activity_window, balance_sheet, cash_flow_series,
+    create_recurring_template, get_entity, get_entry, get_recurring_template, list_accounts,
+    list_entities, list_entries, list_recurring_templates, post_recurring_template,
+    post_simple_entry, trial_balance,
 };
 use rusqlite::Connection;
 
@@ -285,6 +286,43 @@ fn a_damaged_recurring_template_is_corrupt() {
         let listed = list_recurring_templates(conn, book.entity_id);
         assert_corrupt(listed, &format!("recurring_templates.{column}"));
     }
+}
+
+#[test]
+fn a_monthly_template_without_its_day_is_corrupt_and_not_the_callers_mistake() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    monthly_template(conn, &book);
+    let template_id = list_recurring_templates(conn, book.entity_id).expect("list")[0].id;
+    // The column is nullable, for the weekly and yearly templates.
+    damage(conn, "UPDATE recurring_templates SET day_of_month = NULL");
+    let column = "recurring_templates.day_of_month";
+
+    assert_corrupt(list_recurring_templates(conn, book.entity_id), column);
+    assert_corrupt(get_recurring_template(conn, template_id), column);
+    assert_corrupt(
+        post_recurring_template(conn, template_id, None, None),
+        column,
+    );
+    let entries = list_entries(conn, book.entity_id, &EntryFilter::default()).expect("entries");
+    assert_eq!(entries.len(), 1, "the refused post stored no entry");
+}
+
+#[test]
+fn a_day_stored_on_a_template_that_is_not_monthly_is_ignored() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    monthly_template(conn, &book);
+    damage(conn, "UPDATE recurring_templates SET cadence = 'weekly'");
+
+    let listed = list_recurring_templates(conn, book.entity_id).expect("list");
+
+    assert_eq!(listed[0].fields.schedule, RecurringSchedule::Weekly);
+    let json = serde_json::to_value(&listed[0]).expect("serialize");
+    assert_eq!(json["cadence"], "weekly");
+    assert_eq!(json["day_of_month"], serde_json::Value::Null);
 }
 
 #[test]

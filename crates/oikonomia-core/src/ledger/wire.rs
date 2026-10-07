@@ -27,9 +27,11 @@
 //! by side.
 //!
 //! The strict types are strict about what this module converts: dates, the
-//! accounts of a simple entry, and the side of a line. An amount is still an
-//! `i64` that must be positive and a template's day of the month still goes
-//! with its cadence by a check, so the ledger functions check those again.
+//! accounts of a simple entry, the side of a line, and the schedule of a
+//! template, whose cadence and day of the month become one
+//! [`RecurringSchedule`]. An amount is still an `i64` that must be positive
+//! and a template's name still text that must not be blank, so the ledger
+//! functions check those again.
 //!
 //! The test `tests/wire_json.rs` pins the JSON of every type here.
 //!
@@ -60,8 +62,8 @@ use crate::domain::{AccountId, EntityId, RecurringTemplateId, Side};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::journals::{PostJournal, PostJournalLine, PostSimpleEntry};
 use crate::ledger::recurring::{
-    CreateRecurringTemplate, RecurringCadence, RecurringTemplateFields, RecurringTemplateView,
-    UpdateRecurringTemplate, check_template_values,
+    CreateRecurringTemplate, RecurringCadence, RecurringSchedule, RecurringTemplateFields,
+    RecurringTemplateView, UpdateRecurringTemplate, check_template_values,
 };
 use crate::ledger::simple_entry::{
     SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
@@ -319,12 +321,8 @@ impl TryFrom<CreateRecurringTemplateRequest> for CreateRecurringTemplate {
     /// - [`ValidationError::AccountRequired`], naming the part, when an
     ///   account the kind needs is missing.
     fn try_from(request: CreateRecurringTemplateRequest) -> Result<Self> {
-        check_template_values(
-            &request.name,
-            request.amount_minor,
-            request.cadence,
-            request.day_of_month,
-        )?;
+        check_template_values(&request.name, request.amount_minor)?;
+        let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
         let next_date = parse_date(&request.next_date)?;
         let accounts = SimpleEntryAccounts::from_roles(
             request.kind,
@@ -343,8 +341,7 @@ impl TryFrom<CreateRecurringTemplateRequest> for CreateRecurringTemplate {
             fields: RecurringTemplateFields {
                 name: request.name,
                 amount_minor: request.amount_minor,
-                cadence: request.cadence,
-                day_of_month: request.day_of_month,
+                schedule,
                 accounts,
                 memo: request.memo,
                 next_date,
@@ -397,12 +394,8 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
     /// Those of the conversion of a [`CreateRecurringTemplateRequest`], in
     /// the same order.
     fn try_from(request: UpdateRecurringTemplateRequest) -> Result<Self> {
-        check_template_values(
-            &request.name,
-            request.amount_minor,
-            request.cadence,
-            request.day_of_month,
-        )?;
+        check_template_values(&request.name, request.amount_minor)?;
+        let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
         let next_date = parse_date(&request.next_date)?;
         let accounts = SimpleEntryAccounts::from_roles(
             request.kind,
@@ -421,8 +414,7 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
             fields: RecurringTemplateFields {
                 name: request.name,
                 amount_minor: request.amount_minor,
-                cadence: request.cadence,
-                day_of_month: request.day_of_month,
+                schedule,
                 accounts,
                 memo: request.memo,
                 next_date,
@@ -487,8 +479,8 @@ impl From<RecurringTemplateView> for RecurringTemplateViewWire {
             kind: fields.accounts.kind(),
             bill_status: fields.accounts.bill_status(),
             amount_minor: fields.amount_minor,
-            cadence: fields.cadence,
-            day_of_month: fields.day_of_month,
+            cadence: fields.schedule.cadence(),
+            day_of_month: fields.schedule.day_of_month(),
             category_account_id: roles.category,
             wallet_account_id: roles.wallet,
             payable_account_id: roles.payable,
@@ -508,10 +500,13 @@ impl TryFrom<RecurringTemplateViewWire> for RecurringTemplateView {
     ///
     /// # Errors
     ///
-    /// [`ValidationError::BillStatusRequired`] or
-    /// [`ValidationError::AccountRequired`] when `wire` does not hold what
-    /// its kind needs, which a view this crate serialized always does.
+    /// [`ValidationError::DayOfMonthInvalid`] when the day of the month does
+    /// not go with the cadence, and [`ValidationError::BillStatusRequired`]
+    /// or [`ValidationError::AccountRequired`] when `wire` does not hold
+    /// what its kind needs. A view this crate serialized has none of these
+    /// faults.
     fn try_from(wire: RecurringTemplateViewWire) -> Result<Self> {
+        let schedule = RecurringSchedule::from_cadence(wire.cadence, wire.day_of_month)?;
         let accounts = SimpleEntryAccounts::from_roles(
             wire.kind,
             wire.bill_status,
@@ -530,8 +525,7 @@ impl TryFrom<RecurringTemplateViewWire> for RecurringTemplateView {
             fields: RecurringTemplateFields {
                 name: wire.name,
                 amount_minor: wire.amount_minor,
-                cadence: wire.cadence,
-                day_of_month: wire.day_of_month,
+                schedule,
                 accounts,
                 memo: wire.memo,
                 next_date: wire.next_date,

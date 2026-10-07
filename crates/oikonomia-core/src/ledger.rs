@@ -147,11 +147,11 @@ pub use journals::{
     replace_simple_entry, set_account_opening_balance, set_entry_hidden, void_entry,
 };
 pub use recurring::{
-    CreateRecurringTemplate, RecurringCadence, RecurringPostResult, RecurringTemplateFields,
-    RecurringTemplateView, UpdateRecurringTemplate, advance_next_date, create_recurring_template,
-    delete_recurring_template, get_recurring_template, list_recurring_templates,
-    list_recurring_templates_as_of, post_recurring_template, template_is_due,
-    update_recurring_template,
+    CreateRecurringTemplate, DayOfMonth, RecurringCadence, RecurringPostResult, RecurringSchedule,
+    RecurringTemplateFields, RecurringTemplateView, UpdateRecurringTemplate, advance_next_date,
+    create_recurring_template, delete_recurring_template, get_recurring_template,
+    list_recurring_templates, list_recurring_templates_as_of, post_recurring_template,
+    template_is_due, update_recurring_template,
 };
 pub use reports::{
     BalanceSheet, BalanceSheetSection, DashboardSummary, PnL, ReportLine, SyntheticLine,

@@ -7,7 +7,7 @@ use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, CreateRecurringTemplate, CreateRecurringTemplateRequest, EntryFilter,
-    RecurringCadence, RecurringTemplateView, SimpleBillStatus, SimpleEntryKind,
+    RecurringCadence, RecurringSchedule, RecurringTemplateView, SimpleBillStatus, SimpleEntryKind,
     UpdateRecurringTemplate, UpdateRecurringTemplateRequest, archive_account, create_entity,
     create_recurring_template, delete_entity, delete_recurring_template, list_accounts,
     list_entries, list_recurring_templates, list_recurring_templates_as_of,
@@ -88,8 +88,8 @@ fn create_and_list_by_entity() {
     assert_eq!(created.fields.name, "Rent");
     assert_eq!(created.fields.accounts.kind(), SimpleEntryKind::Expense);
     assert_eq!(created.fields.amount_minor, 85_000);
-    assert_eq!(created.fields.cadence, RecurringCadence::Monthly);
-    assert_eq!(created.fields.day_of_month, Some(1));
+    assert_eq!(created.fields.schedule.cadence(), RecurringCadence::Monthly);
+    assert_eq!(created.fields.schedule.day_of_month(), Some(1));
     assert_eq!(
         created.fields.accounts.roles().category,
         Some(accounts.food)
@@ -269,8 +269,7 @@ fn update_rewrites_fields() {
     .expect("update");
     assert_eq!(updated.fields.name, "Groceries");
     assert_eq!(updated.fields.amount_minor, 12_000);
-    assert_eq!(updated.fields.cadence, RecurringCadence::Weekly);
-    assert_eq!(updated.fields.day_of_month, None);
+    assert_eq!(updated.fields.schedule, RecurringSchedule::Weekly);
 }
 
 #[test]
