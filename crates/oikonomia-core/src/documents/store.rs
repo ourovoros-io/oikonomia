@@ -6,20 +6,21 @@
 //! (`entity_id`), is linked to one journal entry (`entry_id`), and has a
 //! filename that is unique within its book.
 //!
-//! [`validate_document_file`] decides what may be stored from the name, type
-//! and size alone, before any byte is read. [`save_document`],
-//! [`attach_document`] and [`post_simple_entry_with_document`] write,
-//! [`list_documents`] and [`get_document`] read, and [`delete_document`]
-//! removes. Both readers go through [`map_document_meta`]: a row the
-//! application wrote and cannot read back is reported as a corrupt vault, not
-//! as a mistake of the caller.
+//! What may be stored is decided before anything is written, by
+//! [`NewDocument::checked`]. [`attach_document`] and
+//! [`post_simple_entry_with_document`] write, both through
+//! [`insert_document`]; [`list_documents`] and [`get_document`] read, and
+//! [`delete_document`] removes. Both readers go through
+//! [`map_document_meta`]: a row the application wrote and cannot read back is
+//! reported as a corrupt vault, not as a mistake of the caller.
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::db::{read_column, stored_id};
-use crate::domain::{Account, EntityId, JournalEntryId, define_id};
-use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
+use crate::documents::file::{CheckedDocument, NewDocument};
+use crate::domain::{Account, EntityId, JournalEntry, JournalEntryId, define_id};
+use crate::error::{DatabaseContext, Error, Resource, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,
 };
@@ -41,7 +42,7 @@ pub struct DocumentMeta {
     pub entry_id: JournalEntryId,
     /// The filename as given at upload, trimmed. Unique within the book.
     pub filename: String,
-    /// The MIME type as [`resolve_mime`] resolved it at upload.
+    /// The MIME type of the kind the file was resolved to at upload.
     pub mime_type: String,
     /// Length of the stored bytes.
     pub size_bytes: i64,
@@ -53,85 +54,21 @@ pub struct DocumentMeta {
     pub entry_description: String,
 }
 
-/// Largest file that is stored or analyzed: 8 MiB.
-///
-/// The cap bounds what one document adds to the vault and what the analyzer
-/// has to parse or run OCR on. The PDF budget and the PDF repair are sized
-/// from it.
-pub const MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
-
-/// [`MAX_DOCUMENT_BYTES`] in whole megabytes, as shown to the user.
-const MAX_DOCUMENT_MEGABYTES: u64 = 8;
-
-// The two limits must never drift apart.
-const _: () = assert!(MAX_DOCUMENT_BYTES as u64 == MAX_DOCUMENT_MEGABYTES * 1024 * 1024);
-
-/// Validates a candidate document before its bytes are loaded or stored.
-///
-/// Shared by [`save_document`] and the drop-path command so oversized or
-/// unsupported files are rejected from a `stat` alone, before any read.
+/// Stores `document` linked to `entry`, which the caller has read from the
+/// same connection.
 ///
 /// # Errors
 ///
-/// Returns [`Error::Validation`] for empty/oversized files, blank filenames,
-/// or unsupported MIME types.
-pub fn validate_document_file(filename: &str, mime: &str, size_bytes: u64) -> Result<()> {
-    if size_bytes == 0 {
-        return Err(ValidationError::FileEmpty.into());
-    }
-    if size_bytes > MAX_DOCUMENT_BYTES as u64 {
-        return Err(ValidationError::FileTooLarge {
-            max_mb: MAX_DOCUMENT_MEGABYTES,
-        }
-        .into());
-    }
-    if filename.trim().is_empty() {
-        return Err(ValidationError::NameRequired {
-            field: NameField::Filename,
-        }
-        .into());
-    }
-    if !is_allowed_mime(mime) {
-        return Err(ValidationError::FileTypeUnsupported.into());
-    }
-    Ok(())
-}
-
-/// Stores a document linked to `entry_id`.
-///
-/// The filename is trimmed and the MIME type resolved with [`resolve_mime`]
-/// before either is checked or stored.
-///
-/// # Errors
-///
-/// - [`Error::Validation`]: the file is empty, larger than
-///   [`MAX_DOCUMENT_BYTES`], has a blank name or an unsupported type
-///   ([`validate_document_file`]); the entry belongs to another book
-///   ([`ValidationError::WrongBook`]); or the book already has a document of
-///   that name ([`ValidationError::NameTaken`]).
-/// - [`Error::NotFound`]: no entry has `entry_id`.
-/// - [`Error::VaultCorrupt`]: the entry's stored row cannot be read back.
+/// - [`Error::Validation`] with [`ValidationError::NameTaken`]: the entry's
+///   book already has a document of that name.
 /// - [`Error::Database`]: any other database failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
-)]
-pub fn save_document(
+fn insert_document(
     conn: &Connection,
-    entity_id: EntityId,
-    entry_id: JournalEntryId,
-    filename: &str,
-    mime_type: &str,
-    data: &[u8],
+    entry: &JournalEntry,
+    document: &CheckedDocument<'_>,
 ) -> Result<DocumentMeta> {
-    let name = filename.trim();
-    let mime = resolve_mime(mime_type, name);
-    validate_document_file(name, &mime, data.len() as u64)?;
-
-    let entry = get_entry(conn, entry_id)?;
-    if entry.entry.entity_id != entity_id {
-        return Err(ValidationError::WrongBook.into());
-    }
+    let CheckedDocument { name, kind, data } = *document;
+    let entity_id = entry.entity_id;
 
     let clash: i64 = conn
         .query_row(
@@ -147,8 +84,8 @@ pub fn save_document(
         .into());
     }
 
-    // Validation caps the size at `MAX_DOCUMENT_BYTES`, so the length always
-    // fits an i64.
+    // A checked document is at most `MAX_DOCUMENT_BYTES` long, so the length
+    // always fits an i64.
     let size_bytes = i64::try_from(data.len()).unwrap_or(i64::MAX);
 
     let id = DocumentId::generate();
@@ -164,9 +101,9 @@ pub fn save_document(
         rusqlite::params![
             id.to_string(),
             entity_id.to_string(),
-            entry_id.to_string(),
+            entry.id.to_string(),
             name,
-            mime,
+            kind.mime(),
             size_bytes,
             data,
             created,
@@ -174,17 +111,15 @@ pub fn save_document(
     )
     .map_err(|err| document_insert_error(&err, name))?;
 
-    let entry_description = entry.entry.description;
-
     Ok(DocumentMeta {
         id,
         entity_id,
-        entry_id,
+        entry_id: entry.id,
         filename: name.to_owned(),
-        mime_type: mime,
+        mime_type: kind.mime().to_owned(),
         size_bytes,
         created_at: created,
-        entry_description,
+        entry_description: entry.description.clone(),
     })
 }
 
@@ -210,33 +145,39 @@ fn document_insert_error(err: &rusqlite::Error, name: &str) -> Error {
     }
 }
 
-/// Validates and stores a document linked to an existing entry.
+/// Validates and stores a document linked to an existing entry of the book
+/// `entity_id`.
 ///
-/// No analysis runs here: reading a document belongs to the drop-zone flow.
+/// The file's name is trimmed and its kind resolved before either is checked
+/// or stored. No analysis runs here: reading a document belongs to the
+/// drop-zone flow.
 ///
 /// # Errors
 ///
-/// The errors of [`save_document`]. The entry is looked up first, so a
-/// missing entry ([`Error::NotFound`]) or one in another book
-/// ([`ValidationError::WrongBook`]) is reported before the file is checked.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
-)]
+/// The entry is looked up first, so a missing entry or one in another book
+/// is reported before the file is checked.
+///
+/// - [`Error::NotFound`]: no entry has `entry_id`.
+/// - [`Error::Validation`]: the entry belongs to another book
+///   ([`ValidationError::WrongBook`]); the file is empty, larger than
+///   [`MAX_DOCUMENT_BYTES`](crate::documents::MAX_DOCUMENT_BYTES), has a
+///   blank name or an unsupported type ([`NewDocument::validate`]); or the
+///   book already has a document of that name
+///   ([`ValidationError::NameTaken`]).
+/// - [`Error::VaultCorrupt`]: the entry's stored row cannot be read back.
+/// - [`Error::Database`]: any other database failure.
 pub fn attach_document(
     conn: &Connection,
     entity_id: EntityId,
     entry_id: JournalEntryId,
-    filename: &str,
-    mime_type: &str,
-    data: &[u8],
+    document: &NewDocument<'_>,
 ) -> Result<DocumentMeta> {
-    let entry = get_entry(conn, entry_id)?;
-    if entry.entry.entity_id != entity_id {
+    let entry = get_entry(conn, entry_id)?.entry;
+    if entry.entity_id != entity_id {
         return Err(ValidationError::WrongBook.into());
     }
 
-    save_document(conn, entity_id, entry_id, filename, mime_type, data)
+    insert_document(conn, &entry, &document.checked()?)
 }
 
 /// Posts a simple entry and stores its document in one transaction.
@@ -248,20 +189,17 @@ pub fn attach_document(
 /// # Errors
 ///
 /// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry).
-/// - Every error of [`save_document`].
+/// - [`Error::Validation`] for a file that may not be stored
+///   ([`NewDocument::validate`]) or whose name the book already uses
+///   ([`ValidationError::NameTaken`]).
 /// - [`Error::NotFound`] from [`save_analysis_json`], if the row written a
 ///   moment earlier in the same transaction cannot be found.
-/// - [`Error::Database`] when the transaction cannot be opened or committed.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
-)]
+/// - [`Error::Database`] when the transaction cannot be opened or committed,
+///   or the document cannot be written.
 pub fn post_simple_entry_with_document(
     conn: &Connection,
     input: &PostSimpleEntry,
-    filename: &str,
-    mime_type: &str,
-    data: &[u8],
+    document: &NewDocument<'_>,
     analysis_json: Option<&str>,
 ) -> Result<(PostedEntryView, DocumentMeta)> {
     let transaction = conn
@@ -269,14 +207,7 @@ pub fn post_simple_entry_with_document(
         .database("begin entry post with document")?;
 
     let view = post_simple_entry_unchecked(&transaction, input)?;
-    let meta = save_document(
-        &transaction,
-        input.entity_id,
-        view.entry.id,
-        filename,
-        mime_type,
-        data,
-    )?;
+    let meta = insert_document(&transaction, &view.entry, &document.checked()?)?;
     if let Some(json) = analysis_json {
         save_analysis_json(&transaction, meta.id, json)?;
     }
@@ -438,80 +369,10 @@ pub fn suggest_accounts_for_entity(conn: &Connection, entity_id: EntityId) -> Re
     Ok(accounts)
 }
 
-/// Whether `mime` is a type the vault stores: PDF, PNG, JPEG (also spelled
-/// `image/jpg`), WebP or plain text.
-///
-/// The comparison is exact, so the caller passes a lowercased type without
-/// parameters such as `; charset=utf-8`.
-fn is_allowed_mime(mime: &str) -> bool {
-    matches!(
-        mime,
-        "application/pdf" | "image/png" | "image/jpeg" | "image/jpg" | "image/webp" | "text/plain"
-    )
-}
-
-/// The MIME type to store for a file, from the type the webview reports and
-/// the filename.
-///
-/// A reported type the vault stores is kept, with `image/jpg` rewritten to
-/// `image/jpeg`. Otherwise the extension decides: a file dropped into a
-/// desktop webview often arrives with an empty type. When neither is
-/// recognised the reported type is returned trimmed and lowercased, and
-/// [`validate_document_file`] then rejects it.
-#[must_use]
-pub fn resolve_mime(mime_type: &str, filename: &str) -> String {
-    let mime = mime_type.trim().to_ascii_lowercase();
-    if is_allowed_mime(&mime) {
-        return if mime == "image/jpg" {
-            "image/jpeg".into()
-        } else {
-            mime
-        };
-    }
-
-    if has_extension(filename, "pdf") {
-        return "application/pdf".into();
-    }
-    if has_extension(filename, "png") {
-        return "image/png".into();
-    }
-    if has_extension(filename, "jpg") || has_extension(filename, "jpeg") {
-        return "image/jpeg".into();
-    }
-    if has_extension(filename, "webp") {
-        return "image/webp".into();
-    }
-    if has_extension(filename, "txt") {
-        return "text/plain".into();
-    }
-
-    mime
-}
-
-/// Whether `filename` ends in `extension` (given without the dot), in any
-/// letter case.
-pub(super) fn has_extension(filename: &str, extension: &str) -> bool {
-    std::path::Path::new(filename)
-        .extension()
-        .is_some_and(|found| found.eq_ignore_ascii_case(extension))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::VaultCorruption;
-
-    #[test]
-    fn validate_document_file_gates_size_name_and_mime() {
-        assert!(validate_document_file("a.pdf", "application/pdf", 1_000).is_ok());
-        assert!(validate_document_file("a.pdf", "application/pdf", 0).is_err());
-        assert!(
-            validate_document_file("a.pdf", "application/pdf", 20 * 1024 * 1024 * 1024).is_err(),
-            "oversize must fail from metadata alone"
-        );
-        assert!(validate_document_file("  ", "application/pdf", 1_000).is_err());
-        assert!(validate_document_file("a.exe", "application/x-msdownload", 1_000).is_err());
-    }
 
     /// The error of inserting `(id, filename)` twice into a table with the
     /// constraints of `documents`, differing only where `second` differs.

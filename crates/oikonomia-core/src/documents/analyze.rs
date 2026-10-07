@@ -7,17 +7,17 @@
 //!
 //! # Getting the text
 //!
-//! [`read_document_text`] sorts the file by three tests, in this order:
+//! [`read_document_text`] resolves the kind of the file once
+//! ([`DocumentKind::resolve`]) and reads it by that kind:
 //!
-//! 1. an `image/*` type goes to OCR ([`ocr_image`]);
-//! 2. a `text/plain` type or a `.txt` name is taken as it is, decoded as
-//!    UTF-8 with invalid bytes replaced;
-//! 3. a type containing `pdf` or a `.pdf` name goes through
-//!    [`read_pdf_text`], described below.
+//! 1. an image goes to OCR ([`ocr_image`]);
+//! 2. plain text is taken as it is, decoded as UTF-8 with invalid bytes
+//!    replaced;
+//! 3. a PDF goes through [`read_pdf_text`], described below.
 //!
-//! Anything else has no text. The order means a name can decide before a
-//! type does: a file sent as `application/pdf` and named `notes.txt` is
-//! read as plain text.
+//! A file of no kind has no text. The declared type and the name are not
+//! looked at again after the kind is resolved; `file.rs` states the rule,
+//! including what happens when the two disagree.
 //!
 //! # Reading a PDF
 //!
@@ -105,11 +105,11 @@ use time::Date;
 use crate::csv::currency_minor_exponent;
 use crate::default_accounts::{default_account_for_role, seeded_account_for_role};
 use crate::documents::account_match::{match_expense_account, match_income_account};
+use crate::documents::file::{DocumentKind, NewDocument};
 use crate::documents::invoice::{InvoiceReading, read_invoice_text};
 use crate::documents::ocr::{OcrModelPaths, ocr_available, ocr_image_bytes};
 use crate::documents::pdf_load::{BudgetedPdf, PdfLoad, contain_panics, load_pdf};
 use crate::documents::pdf_repair::repair_xref_offsets;
-use crate::documents::store::has_extension;
 use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode};
 use crate::error::{AccountRole, Result};
 use crate::prefs::Locale;
@@ -341,9 +341,9 @@ pub struct AnalyzeContext<'a> {
 
 /// Analyzes the bytes of one file into a draft suggestion, fully offline.
 ///
-/// `mime_type` is compared in lowercase and decides how the file is read;
-/// `filename` is used for its extension only. `model_dir` is where the OCR
-/// models are, and without it images and scanned PDFs are not read.
+/// The kind of `document` decides how it is read; a file of no kind the
+/// vault stores is not read. `model_dir` is where the OCR models are, and
+/// without it images and scanned PDFs are not read.
 ///
 /// The suggested description and merchant are written in `context.locale`;
 /// text taken from the document itself stays as the document has it.
@@ -356,9 +356,7 @@ pub struct AnalyzeContext<'a> {
 /// `apps/desktop/src-tauri/src/commands/documents.rs`) applies `?` to it; returning the
 /// suggestion directly means changing that caller too.
 pub fn analyze_document_bytes(
-    filename: &str,
-    mime_type: &str,
-    data: &[u8],
+    document: &NewDocument<'_>,
     context: &AnalyzeContext<'_>,
     model_dir: Option<&std::path::Path>,
 ) -> Result<DocumentSuggestion> {
@@ -367,9 +365,8 @@ pub fn analyze_document_bytes(
         locale,
         ..
     } = *context;
-    let mime = mime_type.to_ascii_lowercase();
 
-    let mut suggestion = match read_document_text(filename, &mime, data, model_dir) {
+    let mut suggestion = match read_document_text(document, model_dir) {
         ExtractedText::Read { text, origin } => {
             let reading = read_invoice_text(&text);
             let kind = reading.class.kind();
@@ -605,31 +602,27 @@ enum ExtractedText {
 
 /// Extracts the text of a file, choosing how by its kind.
 ///
-/// `mime` is already lowercased. Three tests run in order: an `image/*` type
-/// is read with OCR; `text/plain` or a `.txt` name is decoded as UTF-8,
-/// invalid bytes replaced; a type containing `pdf` or a `.pdf` name is read
-/// as a PDF. So an image named `scan.pdf` is an image, and a file sent as
-/// `application/pdf` and named `notes.txt` is plain text. Anything else is
-/// unread, with the note that no text was found.
-fn read_document_text(
-    filename: &str,
-    mime: &str,
-    data: &[u8],
-    model_dir: Option<&Path>,
-) -> ExtractedText {
-    if mime.starts_with("image/") {
-        return ocr_image(data, model_dir).into_extracted(TextOrigin::ImageOcr);
-    }
-    if mime == "text/plain" || has_extension(filename, "txt") {
-        return ExtractedText::Read {
+/// An image is read with OCR, plain text is decoded as UTF-8 with invalid
+/// bytes replaced, and a PDF is read as one. A file of no kind is unread,
+/// with the note that no text was found.
+fn read_document_text(document: &NewDocument<'_>, model_dir: Option<&Path>) -> ExtractedText {
+    let NewDocument {
+        filename,
+        mime_type,
+        data,
+    } = *document;
+
+    match DocumentKind::resolve(mime_type, filename, data) {
+        Some(DocumentKind::Png | DocumentKind::Jpeg | DocumentKind::Webp) => {
+            ocr_image(data, model_dir).into_extracted(TextOrigin::ImageOcr)
+        }
+        Some(DocumentKind::PlainText) => ExtractedText::Read {
             text: String::from_utf8_lossy(data).into_owned(),
             origin: TextOrigin::DocumentText,
-        };
+        },
+        Some(DocumentKind::Pdf) => read_pdf_text(data, model_dir),
+        None => ExtractedText::Unread(UiTextCode::NoTextExtracted),
     }
-    if mime.contains("pdf") || has_extension(filename, "pdf") {
-        return read_pdf_text(data, model_dir);
-    }
-    ExtractedText::Unread(UiTextCode::NoTextExtracted)
 }
 
 /// How reading one image with the bundled OCR went.
@@ -1386,9 +1379,11 @@ mod tests {
     fn non_two_exponent_currency_drops_amount() {
         let text = b"Invoice\nTOTAL 45,90\nThank you";
         let eur = analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text,
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1398,9 +1393,11 @@ mod tests {
             None,
         );
         let jpy = analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text,
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1437,9 +1434,11 @@ mod tests {
     /// Whether a 45,90 total survives analysis in a book of `currency`.
     fn keeps_the_amount_in(currency: &str) -> bool {
         let suggestion = analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            b"Invoice\nTOTAL 45,90\nThank you",
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: b"Invoice\nTOTAL 45,90\nThank you",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1488,9 +1487,11 @@ mod tests {
     fn a_text_file_gets_the_source_note_then_the_reader_notes_then_the_date_note() {
         let text = b"Invoice\nDate 15/03/2026\nTOTAL 45,90 EUR\nThank you";
         let notes = notes_of(analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text,
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1517,9 +1518,11 @@ mod tests {
     #[test]
     fn an_unreadable_file_says_no_text_was_found() {
         let notes = notes_of(analyze_document_bytes(
-            "scan.bin",
-            "application/octet-stream",
-            b"\x00\x01",
+            &NewDocument {
+                filename: "scan.bin",
+                mime_type: "application/octet-stream",
+                data: b"\x00\x01",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1532,12 +1535,99 @@ mod tests {
         assert_eq!(notes, [UiText::new(UiTextCode::NoTextExtracted)]);
     }
 
+    /// Where the text of a file with these three properties comes from, or
+    /// the note that says why it has none.
+    fn text_origin(
+        mime_type: &str,
+        filename: &str,
+        data: &[u8],
+    ) -> std::result::Result<TextOrigin, UiTextCode> {
+        let document = NewDocument {
+            filename,
+            mime_type,
+            data,
+        };
+
+        match read_document_text(&document, None) {
+            ExtractedText::Read { origin, .. } => Ok(origin),
+            ExtractedText::Unread(reason) => Err(reason),
+        }
+    }
+
+    #[test]
+    fn a_pdf_sent_under_the_x_pdf_type_is_read_as_a_pdf() {
+        let pdf = pdf_with_text_pages(&[("Paid in full", true)]);
+
+        assert_eq!(
+            text_origin("application/x-pdf", "document", &pdf),
+            Ok(TextOrigin::DocumentText)
+        );
+        // Not a PDF inside: read as one all the same, and found unreadable.
+        assert_eq!(
+            text_origin("application/x-pdf", "document", b"TOTAL 45,90"),
+            Err(UiTextCode::NoTextExtracted)
+        );
+    }
+
+    #[test]
+    fn a_pdf_named_as_a_text_file_is_read_as_a_pdf_and_not_as_its_raw_bytes() {
+        let pdf = pdf_with_text_pages(&[("Paid in full", true)]);
+        let document = NewDocument {
+            filename: "x.txt",
+            mime_type: "application/pdf",
+            data: &pdf,
+        };
+
+        let read = read_document_text(&document, None);
+
+        assert!(
+            matches!(&read, ExtractedText::Read { text, .. } if text.contains("Paid in full")),
+            "{read:?}"
+        );
+        assert!(
+            matches!(&read, ExtractedText::Read { text, .. } if !text.contains("%PDF")),
+            "the PDF source must not be read as text: {read:?}"
+        );
+    }
+
+    #[test]
+    fn text_sent_under_the_pdf_type_and_named_as_text_is_read_as_text() {
+        let document = NewDocument {
+            filename: "x.txt",
+            mime_type: "application/pdf",
+            data: b"TOTAL 45,90",
+        };
+
+        assert_eq!(
+            read_document_text(&document, None),
+            ExtractedText::Read {
+                text: "TOTAL 45,90".into(),
+                origin: TextOrigin::DocumentText
+            }
+        );
+    }
+
+    #[test]
+    fn an_image_type_the_vault_does_not_store_is_not_read() {
+        assert_eq!(
+            text_origin("image/gif", "anim.gif", b"GIF89a"),
+            Err(UiTextCode::NoTextExtracted)
+        );
+        assert_eq!(
+            text_origin("image/jpeg", "scan.pdf", b"\xff\xd8"),
+            Err(UiTextCode::OcrPathMissing),
+            "an image named like a PDF goes to OCR"
+        );
+    }
+
     #[test]
     fn an_image_without_a_model_directory_says_the_path_is_missing() {
         let notes = notes_of(analyze_document_bytes(
-            "scan.jpg",
-            "image/jpeg",
-            b"\xff\xd8",
+            &NewDocument {
+                filename: "scan.jpg",
+                mime_type: "image/jpeg",
+                data: b"\xff\xd8",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1556,9 +1646,11 @@ mod tests {
         let path = dir.as_ref().map(|dir| dir.path().to_path_buf());
 
         let notes = notes_of(analyze_document_bytes(
-            "scan.jpg",
-            "image/jpeg",
-            b"\xff\xd8",
+            &NewDocument {
+                filename: "scan.jpg",
+                mime_type: "image/jpeg",
+                data: b"\xff\xd8",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1622,9 +1714,11 @@ mod tests {
         // Larger than any stored document: refused before it is parsed.
         let data = vec![0_u8; MAX_DOCUMENT_BYTES + 1];
         let notes = notes_of(analyze_document_bytes(
-            "big.pdf",
-            "application/pdf",
-            &data,
+            &NewDocument {
+                filename: "big.pdf",
+                mime_type: "application/pdf",
+                data: &data,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1678,9 +1772,11 @@ mod tests {
     /// The notes of analyzing `pdf` in a blank EUR book, in English.
     fn analyze_pdf_notes_with_models(pdf: &[u8], model_dir: Option<&Path>) -> Vec<UiText> {
         notes_of(analyze_document_bytes(
-            "document.pdf",
-            "application/pdf",
-            pdf,
+            &NewDocument {
+                filename: "document.pdf",
+                mime_type: "application/pdf",
+                data: pdf,
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1768,9 +1864,11 @@ mod tests {
     fn an_unpaid_bill_without_a_payable_account_asks_for_one() {
         let text = "Invoice\nTOTAL 45,90 EUR\nAmount due\nThank you";
         let notes = notes_of(analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text.as_bytes(),
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text.as_bytes(),
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1792,9 +1890,11 @@ mod tests {
         let accounts = seeded_chart_for_tests(ChartTemplate::Personal, true);
 
         let suggestion = analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            text.as_bytes(),
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: text.as_bytes(),
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Personal,
                 accounts: &accounts,
@@ -1829,9 +1929,11 @@ mod tests {
         accounts: &[Account],
     ) -> Option<DocumentSuggestion> {
         analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            UNPAID_BILL.as_bytes(),
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: UNPAID_BILL.as_bytes(),
+            },
             &AnalyzeContext {
                 template,
                 accounts,
@@ -1924,9 +2026,11 @@ mod tests {
     /// The notes for [`TRANSFER_RECEIPT`] in a book of `currency`.
     fn analyze_receipt_in(currency: &str) -> Vec<UiText> {
         notes_of(analyze_document_bytes(
-            "embasma.txt",
-            "text/plain",
-            TRANSFER_RECEIPT.as_bytes(),
+            &NewDocument {
+                filename: "embasma.txt",
+                mime_type: "text/plain",
+                data: TRANSFER_RECEIPT.as_bytes(),
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],
@@ -1989,9 +2093,11 @@ mod tests {
     #[test]
     fn a_receipt_without_a_fee_gets_no_fee_note() {
         let notes = notes_of(analyze_document_bytes(
-            "bill.txt",
-            "text/plain",
-            b"Invoice\nTOTAL 45,90\nThank you",
+            &NewDocument {
+                filename: "bill.txt",
+                mime_type: "text/plain",
+                data: b"Invoice\nTOTAL 45,90\nThank you",
+            },
             &AnalyzeContext {
                 template: ChartTemplate::Blank,
                 accounts: &[],

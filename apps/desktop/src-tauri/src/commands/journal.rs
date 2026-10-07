@@ -22,13 +22,14 @@
 //! - `invalid_date` when the entry date is not a date;
 //! - `not_found` when an account does not exist.
 
+use crate::commands::documents::read_dropped_document;
 use crate::commands::support::{
     Arguments, decode_document_base64, dropped_file_name, require_granted_path, run_blocking,
     with_connection, with_localized_connection,
 };
-use crate::error::{CommandError, CommandResult, DesktopError};
+use crate::error::CommandResult;
 use crate::state::AppState;
-use oikonomia_core::documents::post_simple_entry_with_document;
+use oikonomia_core::documents::{NewDocument, post_simple_entry_with_document};
 use oikonomia_core::domain::{AccountId, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
     EntryFilter, PostJournal, PostJournalRequest, PostSimpleEntry, PostSimpleEntryRequest,
@@ -182,14 +183,13 @@ pub(crate) async fn entry_post_simple_with_document(
 
     with_connection(&state, move |conn| {
         let input = PostSimpleEntry::try_from(input)?;
-        let (view, _document) = post_simple_entry_with_document(
-            conn,
-            &input,
-            &filename,
-            &mime_type,
-            &data,
-            analysis_json.as_deref(),
-        )?;
+        let document = NewDocument {
+            filename: &filename,
+            mime_type: &mime_type,
+            data: &data,
+        };
+        let (view, _document) =
+            post_simple_entry_with_document(conn, &input, &document, analysis_json.as_deref())?;
         Ok(view)
     })
     .await
@@ -227,22 +227,7 @@ pub(crate) async fn entry_post_simple_with_document_path(
     state.touch();
 
     run_blocking(move || {
-        // Reject oversized/unsupported files from metadata alone before reading.
-        let metadata = std::fs::metadata(&path).map_err(|err| {
-            CommandError::desktop(
-                DesktopError::FileUnreadable,
-                format!("could not read the dropped file: {err}"),
-            )
-        })?;
-        let mime_type = oikonomia_core::documents::resolve_mime("", &filename);
-        oikonomia_core::documents::validate_document_file(&filename, &mime_type, metadata.len())?;
-
-        let data = std::fs::read(&path).map_err(|err| {
-            CommandError::desktop(
-                DesktopError::FileUnreadable,
-                format!("could not read the dropped file: {err}"),
-            )
-        })?;
+        let document = read_dropped_document(&path, &filename)?;
 
         let guard = vault.acquire();
         let conn = guard.connection()?;
@@ -250,9 +235,7 @@ pub(crate) async fn entry_post_simple_with_document_path(
         let (view, _document) = post_simple_entry_with_document(
             conn,
             &input,
-            &filename,
-            &mime_type,
-            &data,
+            &document.as_new(),
             analysis_json.as_deref(),
         )?;
         Ok(view)

@@ -19,11 +19,12 @@ use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::{AppState, GatedVault};
 use base64::Engine;
 use oikonomia_core::documents::{
-    AnalyzeContext, AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion,
-    analyze_document_bytes, analyzer_status, attach_document, delete_document, get_document,
-    list_documents, suggest_accounts_for_entity,
+    AnalyzeContext, AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, NewDocument,
+    ReadDocument, analyze_document_bytes, analyzer_status, attach_document, delete_document,
+    get_document, list_documents, read_validated_file, suggest_accounts_for_entity,
 };
 use oikonomia_core::domain::{EntityId, JournalEntryId};
+use oikonomia_core::error::Error as CoreError;
 use oikonomia_core::ledger::get_entity;
 use oikonomia_core::prefs::Locale;
 use serde::Serialize;
@@ -86,9 +87,13 @@ pub(crate) async fn document_analyze(
     run_blocking(move || {
         let locale = stored_text_locale(&data_dir);
 
-        analyze_readonly(
-            &vault, &model_dir, entity_id, &filename, &mime_type, &data, locale,
-        )
+        let document = NewDocument {
+            filename: &filename,
+            mime_type: &mime_type,
+            data: &data,
+        };
+
+        analyze_readonly(&vault, &model_dir, entity_id, &document, locale)
     })
     .await
 }
@@ -126,28 +131,32 @@ pub(crate) async fn document_analyze_path(
     run_blocking(move || {
         let locale = stored_text_locale(&data_dir);
 
-        // Reject oversized/unsupported drops from metadata alone — a stray
-        // 10 GB drop must not be read into memory before failing the size cap.
-        let metadata = std::fs::metadata(&path).map_err(|err| {
-            CommandError::desktop(
-                DesktopError::FileUnreadable,
-                format!("could not read dropped file: {err}"),
-            )
-        })?;
-        let mime_type = oikonomia_core::documents::resolve_mime("", &filename);
-        oikonomia_core::documents::validate_document_file(&filename, &mime_type, metadata.len())?;
+        let document = read_dropped_document(&path, &filename)?;
 
-        let data = std::fs::read(&path).map_err(|err| {
-            CommandError::desktop(
-                DesktopError::FileUnreadable,
-                format!("could not read dropped file: {err}"),
-            )
-        })?;
-        analyze_readonly(
-            &vault, &model_dir, entity_id, &filename, &mime_type, &data, locale,
-        )
+        analyze_readonly(&vault, &model_dir, entity_id, &document.as_new(), locale)
     })
     .await
+}
+
+/// Reads a dropped file as a document named `filename`.
+///
+/// Core checks the size and the type from the file's metadata and name
+/// before it reads the file, so an oversized drop is never loaded into
+/// memory.
+///
+/// # Errors
+///
+/// Returns `file_unreadable` when the file's metadata or bytes cannot be
+/// read, and `file_too_large` (with the cap as `max_mb`), `file_empty`,
+/// `file_type_unsupported` and `name_required` when the document is refused.
+pub(super) fn read_dropped_document(path: &Path, filename: &str) -> CommandResult<ReadDocument> {
+    read_validated_file(path, filename).map_err(|err| match err {
+        CoreError::Io { .. } => CommandError::desktop(
+            DesktopError::FileUnreadable,
+            format!("could not read the dropped file: {err}"),
+        ),
+        refused => CommandError::from(refused),
+    })
 }
 
 /// Lists the documents stored for an entity, metadata only.
@@ -239,7 +248,13 @@ pub(crate) async fn document_attach(
     let data = decode_document_base64(&data_base64)?;
 
     with_connection(&state, move |conn| {
-        attach_document(conn, entity_id, entry_id, &filename, &mime_type, &data)
+        let document = NewDocument {
+            filename: &filename,
+            mime_type: &mime_type,
+            data: &data,
+        };
+
+        attach_document(conn, entity_id, entry_id, &document)
     })
     .await
 }
@@ -287,21 +302,14 @@ pub(crate) async fn document_export(
 /// Returns the validation errors of a refused document, `not_found` when the
 /// entity does not exist, and `vault_locked`, `database` or `vault_corrupt`
 /// from the vault.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the document's name, type and bytes are separate arguments; tracked for the API pass"
-)]
 fn analyze_readonly(
     vault: &GatedVault,
     model_dir: &Path,
     entity_id: EntityId,
-    filename: &str,
-    mime_type: &str,
-    data: &[u8],
+    document: &NewDocument<'_>,
     locale: Locale,
 ) -> CommandResult<DocumentSuggestion> {
-    let mime_type = oikonomia_core::documents::resolve_mime(mime_type, filename);
-    oikonomia_core::documents::validate_document_file(filename, &mime_type, data.len() as u64)?;
+    document.validate()?;
 
     let (accounts, entity) = {
         let guard = vault.acquire();
@@ -313,9 +321,7 @@ fn analyze_readonly(
     };
 
     let suggestion = analyze_document_bytes(
-        filename,
-        &mime_type,
-        data,
+        document,
         &AnalyzeContext {
             template: entity.chart_template,
             accounts: &accounts,

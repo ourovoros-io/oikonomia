@@ -12,8 +12,9 @@
 //! cannot read: the suggestion then holds a note that says why. The stages,
 //! in order, and the file under `documents/` that owns each:
 //!
-//! 1. **Kind** (`analyze.rs`). The MIME type and the file extension sort the
-//!    file: image, plain text, PDF, or nothing readable.
+//! 1. **Kind** (`file.rs`). The declared MIME type, the file extension and,
+//!    when those two disagree about a PDF, the first bytes sort the file:
+//!    image, plain text, PDF, or nothing readable.
 //! 2. **PDF budget** (`pdf_load.rs`, `pdf_budget.rs`, `pdf_nesting.rs`). A
 //!    PDF is parsed once. A file over 8 MiB, over 50 pages, or whose streams
 //!    decode to over 32 MiB is not read at all. Nor, checked last, is one
@@ -53,6 +54,7 @@
 mod account_match;
 mod analyze;
 mod brands;
+mod file;
 mod invoice;
 mod ocr;
 mod pdf_budget;
@@ -65,9 +67,9 @@ pub use analyze::{
     AnalyzeContext, AnalyzeSource, AnalyzerHint, AnalyzerStatus, DocumentSuggestion,
     EntryKindSuggestion, analyze_document_bytes, analyzer_status, parse_invoice_text,
 };
+pub use file::{MAX_DOCUMENT_BYTES, NewDocument, ReadDocument, read_validated_file};
 pub use ocr::OcrModelPaths;
 pub use store::{
-    DocumentId, DocumentMeta, MAX_DOCUMENT_BYTES, attach_document, delete_document, get_document,
-    list_documents, post_simple_entry_with_document, resolve_mime, save_analysis_json,
-    save_document, suggest_accounts_for_entity, validate_document_file,
+    DocumentId, DocumentMeta, attach_document, delete_document, get_document, list_documents,
+    post_simple_entry_with_document, save_analysis_json, suggest_accounts_for_entity,
 };

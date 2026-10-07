@@ -403,9 +403,11 @@ mod tests {
         assert_ne!(suggestion.amount_minor, Some(700));
 
         let via_analyze = crate::documents::analyze_document_bytes(
-            "greek_bank_embasma.txt",
-            "text/plain",
-            text.as_bytes(),
+            &crate::documents::NewDocument {
+                filename: "greek_bank_embasma.txt",
+                mime_type: "text/plain",
+                data: text.as_bytes(),
+            },
             &crate::documents::AnalyzeContext {
                 template: crate::domain::ChartTemplate::Blank,
                 accounts: &[],

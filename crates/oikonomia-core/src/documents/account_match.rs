@@ -40,14 +40,7 @@ pub(super) fn match_expense_account(
     accounts: &[Account],
     hints: &str,
 ) -> Option<AccountId> {
-    match_account_of_type(
-        template,
-        accounts,
-        AccountType::Expense,
-        hints,
-        EXPENSE_KEYWORDS,
-        DocumentTopic::OtherExpense,
-    )
+    match_account_of_type(template, accounts, hints, &EXPENSE_TOPICS)
 }
 
 /// Picks the income account a document most likely belongs to (sales, freelance,
@@ -58,14 +51,7 @@ pub(super) fn match_income_account(
     accounts: &[Account],
     hints: &str,
 ) -> Option<AccountId> {
-    match_account_of_type(
-        template,
-        accounts,
-        AccountType::Income,
-        hints,
-        INCOME_KEYWORDS,
-        DocumentTopic::OtherIncome,
-    )
+    match_account_of_type(template, accounts, hints, &INCOME_TOPICS)
 }
 
 /// How a keyword must sit in the text to count as a match.
@@ -328,27 +314,47 @@ const INCOME_KEYWORDS: &TopicKeywords = &[
     ),
 ];
 
-/// Picks the account of `account_type` that `hints` point at, by the four
+/// One side of the matcher: the accounts it suggests among, the keywords
+/// that choose a topic, and the topic for a hint that names none.
+struct TopicTable {
+    /// The type of account the table suggests.
+    account_type: AccountType,
+    /// The topics in the order they are tried, with their keywords.
+    keywords: &'static TopicKeywords,
+    /// The topic of a document no keyword places.
+    catch_all: DocumentTopic,
+}
+
+/// The matcher for money spent.
+const EXPENSE_TOPICS: TopicTable = TopicTable {
+    account_type: AccountType::Expense,
+    keywords: EXPENSE_KEYWORDS,
+    catch_all: DocumentTopic::OtherExpense,
+};
+
+/// The matcher for money received.
+const INCOME_TOPICS: TopicTable = TopicTable {
+    account_type: AccountType::Income,
+    keywords: INCOME_KEYWORDS,
+    catch_all: DocumentTopic::OtherIncome,
+};
+
+/// Picks the account of the table's type that `hints` point at, by the four
 /// steps in the module documentation.
 ///
 /// `hints` may be in any letter case. Returns `None` only when the book has
 /// no active account of the type.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the keyword table and its catch-all are passed separately; tracked for the API pass"
-)]
 fn match_account_of_type(
     template: ChartTemplate,
     accounts: &[Account],
-    account_type: AccountType,
     hints: &str,
-    keywords: &TopicKeywords,
-    catch_all: DocumentTopic,
+    table: &TopicTable,
 ) -> Option<AccountId> {
     let hints = hints.to_lowercase();
+    let account_type = table.account_type;
 
     // The first topic the text points at that the chart has an account for.
-    for (topic, words) in keywords {
+    for (topic, words) in table.keywords {
         if !words.iter().any(|word| word.occurs_in(&hints)) {
             continue;
         }
@@ -359,7 +365,7 @@ fn match_account_of_type(
         }
     }
 
-    let codes = document_topic_codes(template, catch_all);
+    let codes = document_topic_codes(template, table.catch_all);
 
     account_by_codes(accounts, account_type, codes)
         .or_else(|| first_of_type(accounts, account_type))

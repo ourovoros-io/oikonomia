@@ -11,8 +11,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use oikonomia_core::documents::{
-    AnalyzeContext, DocumentSuggestion, EntryKindSuggestion, OcrModelPaths, analyze_document_bytes,
-    analyzer_status, parse_invoice_text,
+    AnalyzeContext, DocumentSuggestion, EntryKindSuggestion, NewDocument, OcrModelPaths,
+    analyze_document_bytes, analyzer_status, parse_invoice_text,
 };
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::prefs::Locale;
@@ -207,9 +207,11 @@ fn suggest_for(entry: &ManifestEntry, bytes: &[u8]) -> DocumentSuggestion {
                 .and_then(|n| n.to_str())
                 .unwrap_or("document");
             analyze_document_bytes(
-                name,
-                mime,
-                bytes,
+                &NewDocument {
+                    filename: name,
+                    mime_type: mime,
+                    data: bytes,
+                },
                 &AnalyzeContext {
                     template: ChartTemplate::Blank,
                     accounts: &[],
@@ -412,9 +414,11 @@ fn text_mime_analyze_path_matches_invoice_reader() {
     let text = fs::read(root.join("synthetic/text/dei_electricity_current.txt")).expect("text");
     let via_parse = parse_invoice_text(&String::from_utf8_lossy(&text), Locale::En);
     let via_analyze = analyze_document_bytes(
-        "dei_electricity_current.txt",
-        "text/plain",
-        &text,
+        &NewDocument {
+            filename: "dei_electricity_current.txt",
+            mime_type: "text/plain",
+            data: &text,
+        },
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
@@ -434,9 +438,11 @@ fn text_mime_analyze_path_matches_invoice_reader() {
     let transfer = fs::read(root.join("synthetic/text/greek_bank_embasma.txt")).expect("transfer");
     let transfer_parse = parse_invoice_text(&String::from_utf8_lossy(&transfer), Locale::En);
     let transfer_analyze = analyze_document_bytes(
-        "greek_bank_embasma.txt",
-        "text/plain",
-        &transfer,
+        &NewDocument {
+            filename: "greek_bank_embasma.txt",
+            mime_type: "text/plain",
+            data: &transfer,
+        },
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
@@ -495,9 +501,11 @@ fn a_jpeg_is_read_through_ocr() {
     let model_dir = bundled_ocr_dir();
 
     let suggestion = analyze_document_bytes(
-        "english_total.jpg",
-        "image/jpeg",
-        &bytes,
+        &NewDocument {
+            filename: "english_total.jpg",
+            mime_type: "image/jpeg",
+            data: &bytes,
+        },
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
@@ -553,9 +561,11 @@ fn scanned_pdf(image_bytes: &[u8]) -> Vec<u8> {
 
 fn analyze_pdf(pdf: &[u8], model_dir: &Path) -> DocumentSuggestion {
     analyze_document_bytes(
-        "scan.pdf",
-        "application/pdf",
-        pdf,
+        &NewDocument {
+            filename: "scan.pdf",
+            mime_type: "application/pdf",
+            data: pdf,
+        },
         &AnalyzeContext {
             template: ChartTemplate::Blank,
             accounts: &[],
@@ -689,9 +699,11 @@ fn suggested_codes(
     bytes: &[u8],
 ) -> SuggestedCodes {
     let suggestion = analyze_document_bytes(
-        "document",
-        mime,
-        bytes,
+        &NewDocument {
+            filename: "document",
+            mime_type: mime,
+            data: bytes,
+        },
         &AnalyzeContext {
             template,
             accounts,
