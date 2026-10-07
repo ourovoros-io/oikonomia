@@ -12,14 +12,14 @@
 //! A command that saves the preferences file returns what core's save
 //! returns ([`oikonomia_core::prefs::save_ui_prefs`]):
 //!
-//! - `io` when the file cannot be written, and when a file is there and
-//!   cannot be read;
+//! - `io` when the file cannot be written;
+//! - `io` when a file is there and cannot be read;
 //! - `serialization` when a file is there and does not decode.
 //!
-//! In the last two cases core has refused to replace the file, which is left
-//! as it was: the command changed nothing. The commands that only read the
-//! preferences answer with the defaults for such a file and never fail on
-//! it.
+//! When a file is there and cannot be read or decoded, core has refused to
+//! replace it and it is left as it was: the command changed nothing. The
+//! commands that only read the preferences answer with the defaults for such
+//! a file and never fail on it.
 
 use crate::commands::support::{run_blocking, with_connection, with_vault_blocking};
 use crate::error::{CommandError, CommandResult, DesktopError};
@@ -130,9 +130,9 @@ pub(crate) async fn settings_set_locale(
 /// # Errors
 ///
 /// Returns the [preferences save errors](self#preferences-save-errors) when
-/// a language is chosen and cannot be stored, which is every call made while
-/// the preferences file is there and cannot be read or decoded,
-/// `app_state_unavailable` when the application state was never set up, and
+/// a language is chosen and cannot be stored, which includes every call made
+/// while the preferences file is there and cannot be read or is not a JSON
+/// object, `app_state_unavailable` when the application state was never set up, and
 /// `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn settings_resolve_locale(
