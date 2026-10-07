@@ -636,6 +636,311 @@ describe('TransactionsPage CSV mapping and preview', () => {
   })
 })
 
+describe('TransactionsPage CSV import of a file whose columns were not detected', () => {
+  /** What Rust returns for `When,Memo,Paid`: the headers, no date, no amount, no rows. */
+  const undetected: CsvImportPreview = {
+    source: '/tmp/bank.csv',
+    headers: ['When', 'Memo', 'Paid'],
+    detected_mapping: {
+      date: null,
+      description: 'Memo',
+      amount: null,
+      debit: null,
+      credit: null,
+      reference: null,
+      direction: null,
+    },
+    missing_columns: ['date', 'amount'],
+    rows: [],
+  }
+
+  async function openMapping(first: CsvImportPreview) {
+    vi.mocked(api.csvImportPreview).mockResolvedValueOnce(first)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Map CSV columns' })).toBeTruthy()
+    })
+  }
+
+  test('mapping opens with the reason, the detected column chosen and the missing ones empty', async () => {
+    await openMapping(undetected)
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'The date and amount columns could not be found automatically, so choose them below.',
+    )
+    expect(screen.getByRole('combobox', { name: 'Date source column' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Amount source column' })).toHaveValue('')
+    expect(screen.getByRole('combobox', { name: 'Description source column' })).toHaveValue('Memo')
+    expect(screen.getByRole('button', { name: 'Continue to preview' })).toBeDisabled()
+    expect(screen.queryByText(/No date column was found/)).toBeNull()
+  })
+
+  test.each([
+    [['date'], 'The date column could not be found automatically, so choose it below.'],
+    [['amount'], 'The amount column could not be found automatically, so choose it below.'],
+  ] as const)('the reason names the one missing column: %j', async (missing, sentence) => {
+    await openMapping({ ...undetected, missing_columns: [...missing] })
+
+    expect(screen.getByRole('status')).toHaveTextContent(sentence)
+  })
+
+  test('a file that was detected in full gives no reason', async () => {
+    await openMapping({ ...preview, missing_columns: [] })
+
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  test('continuing with a complete mapping previews the file again with the chosen columns', async () => {
+    vi.mocked(api.csvImportPreview)
+      .mockResolvedValueOnce(undetected)
+      .mockResolvedValueOnce({ ...preview, headers: undetected.headers ?? [] })
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Date source column' })).toBeTruthy()
+    })
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Date source column' }), 'When')
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Amount source column' }),
+      'Paid',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
+    })
+    expect(api.csvImportPreview).toHaveBeenNthCalledWith(2, {
+      entity_id: 'e1',
+      path: '/tmp/bank.csv',
+      wallet_account_id: 'w1',
+      expense_account_id: 'exp1',
+      income_account_id: 'inc1',
+      mapping: {
+        date: 'When',
+        description: 'Memo',
+        amount: 'Paid',
+        debit: null,
+        credit: null,
+        reference: null,
+        direction: null,
+      },
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Preview import' })).toBeTruthy()
+    })
+    expect(screen.getByRole('button', { name: 'Post 1 selected' })).toBeEnabled()
+    expect(api.csvImportPost).not.toHaveBeenCalled()
+  })
+
+  test('cancelling returns to the list with nothing previewed again and nothing posted', async () => {
+    await openMapping(undetected)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Map CSV columns' })).toBeNull()
+    })
+    expect(screen.queryByRole('dialog', { name: 'Preview import' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Import CSV' })).toBeEnabled()
+    expect(api.csvImportPreview).toHaveBeenCalledTimes(1)
+    expect(api.csvImportPost).not.toHaveBeenCalled()
+  })
+})
+
+describe('TransactionsPage CSV import of a file with one debit column', () => {
+  /** What Rust detects for `Date,Memo,Notes,Debit`: money out only, no credit column. */
+  const debitOnly: CsvImportPreview = {
+    ...preview,
+    headers: ['Date', 'Memo', 'Notes', 'Debit'],
+    detected_mapping: {
+      date: 'Date',
+      description: 'Memo',
+      amount: null,
+      debit: 'Debit',
+      credit: null,
+      reference: null,
+      direction: null,
+    },
+    missing_columns: [],
+  }
+
+  test('an edited mapping continues with the debit column alone', async () => {
+    vi.mocked(api.csvImportPreview).mockResolvedValue(debitOnly)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Debit source column' })).toHaveValue('Debit')
+    })
+    expect(screen.getByRole('combobox', { name: 'Credit source column' })).toHaveValue('')
+
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Description source column' }),
+      'Notes',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
+    })
+    expect(vi.mocked(api.csvImportPreview).mock.calls[1]?.[0].mapping).toEqual({
+      date: 'Date',
+      description: 'Notes',
+      amount: null,
+      debit: 'Debit',
+      credit: null,
+      reference: null,
+      direction: null,
+    })
+  })
+
+  test('a chosen credit column can be set back to not mapped', async () => {
+    vi.mocked(api.csvImportPreview).mockResolvedValue(debitOnly)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Credit source column' })).toBeTruthy()
+    })
+    const credit = screen.getByRole('combobox', { name: 'Credit source column' })
+
+    await userEvent.selectOptions(credit, 'Notes')
+    await userEvent.selectOptions(credit, 'Not mapped')
+
+    expect(credit).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Continue to preview' })).toBeEnabled()
+  })
+})
+
+describe('TransactionsPage CSV import of a file without a description column', () => {
+  /** What Rust returns for `Date,Amount`: read in full, with no description detected. */
+  const noDescription: CsvImportPreview = {
+    ...preview,
+    headers: ['Date', 'Amount'],
+    detected_mapping: {
+      date: 'Date',
+      description: null,
+      amount: 'Amount',
+      debit: null,
+      credit: null,
+      reference: null,
+      direction: null,
+    },
+    missing_columns: [],
+  }
+
+  test('the description is optional, and Continue shows the rows Rust already read', async () => {
+    vi.mocked(api.csvImportPreview).mockResolvedValue(noDescription)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Description source column' })).toHaveValue('')
+    })
+    expect(screen.getByText('Description (optional)')).toBeTruthy()
+    expect(screen.queryByRole('status')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Preview import' })).toBeTruthy()
+    })
+    expect(api.csvImportPreview).toHaveBeenCalledTimes(1)
+  })
+
+  test('a detected description can be set to not mapped, which sends none', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Description source column' })).toHaveValue(
+        'Payee',
+      )
+    })
+
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Description source column' }),
+      'Not mapped',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
+    })
+    expect(vi.mocked(api.csvImportPreview).mock.calls[1]?.[0].mapping).toEqual({
+      date: 'Date',
+      description: null,
+      amount: 'Amount',
+      debit: null,
+      credit: null,
+      reference: null,
+      direction: null,
+    })
+  })
+})
+
+describe('TransactionsPage CSV direction column', () => {
+  /** A statement with unsigned amounts and a column that says which way each went. */
+  const withDirection: CsvImportPreview = {
+    ...preview,
+    headers: ['Date', 'Payee', 'Amount', 'Type', 'Way'],
+    detected_mapping: { ...preview.detected_mapping, direction: 'Type' },
+    missing_columns: [],
+  }
+
+  async function openMapping() {
+    vi.mocked(api.csvImportPreview).mockResolvedValue(withDirection)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Direction source column' })).toBeTruthy()
+    })
+  }
+
+  test('the detected direction column is preselected and another one is sent when chosen', async () => {
+    await openMapping()
+    const direction = screen.getByRole('combobox', { name: 'Direction source column' })
+    expect(direction).toHaveValue('Type')
+
+    await userEvent.selectOptions(direction, 'Way')
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
+    })
+    expect(vi.mocked(api.csvImportPreview).mock.calls[1]?.[0].mapping).toEqual({
+      date: 'Date',
+      description: 'Payee',
+      amount: 'Amount',
+      debit: null,
+      credit: null,
+      reference: null,
+      direction: 'Way',
+    })
+  })
+
+  test('the direction can be set to not mapped, which sends none', async () => {
+    await openMapping()
+
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Direction source column' }),
+      'Not mapped',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
+    })
+    expect(vi.mocked(api.csvImportPreview).mock.calls[1]?.[0].mapping?.direction).toBeNull()
+  })
+
+  test('debit and credit columns have no direction control', async () => {
+    await openMapping()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Use debit and credit columns' }))
+
+    expect(screen.queryByRole('combobox', { name: 'Direction source column' })).toBeNull()
+  })
+})
+
 async function fillLeftoverDraft() {
   await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
   await waitFor(() => {

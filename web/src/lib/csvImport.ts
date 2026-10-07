@@ -3,15 +3,32 @@ import type {
   AccountDefaults,
   CsvColumnMapping,
   CsvImportPreviewRow,
+  CsvRequiredColumn,
   LastRoleAccounts,
   SimpleEntryInput,
 } from './api'
-import { t } from './i18n'
+import { t, type MessageKey } from './i18n'
 import type { UiText } from './uiText'
 
 /** True when preview includes a header row to drive mapping selects. */
 export function previewHasColumnMap(preview: { headers?: string[] | null }): boolean {
   return (preview.headers?.length ?? 0) > 0
+}
+
+/**
+ * The sentence that says why the Map columns step has to be filled in: Rust
+ * could not detect these required columns, so the preview has no rows yet.
+ * `null` when nothing is missing.
+ */
+export function mapNeededKey(
+  missing: readonly CsvRequiredColumn[] | null | undefined,
+): MessageKey | null {
+  const date = missing?.includes('date') ?? false
+  const amount = missing?.includes('amount') ?? false
+  if (date && amount) return 'tx.csv.mapNeeded.dateAndAmount'
+  if (date) return 'tx.csv.mapNeeded.date'
+  if (amount) return 'tx.csv.mapNeeded.amount'
+  return null
 }
 
 export type CsvMapDraft = {
@@ -21,7 +38,7 @@ export type CsvMapDraft = {
   debit: string
   credit: string
   reference: string
-  /** Detected by Rust and sent back as is; the Map columns step has no control for it. */
+  /** Optional, and read only beside a single amount column. */
   direction: string
   amountMode: 'amount' | 'debit_credit'
 }
@@ -114,14 +131,17 @@ export function draftsEqual(a: CsvMapDraft, b: CsvMapDraft): boolean {
   )
 }
 
-/** date + description required; amount XOR (debit AND credit). */
+/**
+ * Whether core accepts the mapping: date required; amount XOR (debit OR
+ * credit). `csvMappingVerdicts.json` pins this to core's rule.
+ */
 export function mappingReady(mapping: CsvColumnMapping): boolean {
-  if (!mapping.date?.trim() || !mapping.description?.trim()) return false
+  if (!mapping.date?.trim()) return false
   const amount = Boolean(mapping.amount?.trim())
   const debit = Boolean(mapping.debit?.trim())
   const credit = Boolean(mapping.credit?.trim())
   if (amount) return !debit && !credit
-  return debit && credit
+  return debit || credit
 }
 
 /** Rows that can be posted: no parse error and a suggested simple entry. */

@@ -600,7 +600,7 @@ export type PendingDocSource =
 export type CsvColumnMapping = {
   date?: string | null
   description?: string | null
-  /** XOR debit+credit. */
+  /** XOR debit, credit or both. */
   amount?: string | null
   debit?: string | null
   credit?: string | null
@@ -617,6 +617,9 @@ export type DonationAddress = {
   address: string
 }
 
+/** A column no statement can be read without (Rust `CsvRequiredColumn`). */
+export type CsvRequiredColumn = 'date' | 'amount'
+
 /** Preview of a bank CSV. Does not write to the ledger. */
 export type CsvImportPreview = {
   source: string
@@ -624,6 +627,12 @@ export type CsvImportPreview = {
   headers?: string[]
   /** Auto-detect pre-fill; present even when the caller passed `mapping`. */
   detected_mapping?: CsvColumnMapping
+  /**
+   * The required columns Rust could not detect, date before amount. Not empty
+   * only for a preview without `mapping`; `rows` is then empty, and the
+   * columns have to be mapped before the file can be previewed.
+   */
+  missing_columns?: CsvRequiredColumn[]
   rows: CsvImportPreviewRow[]
 }
 

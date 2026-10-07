@@ -319,6 +319,9 @@ export function TransactionsPage({
 
   async function onMappingContinue(mapping: CsvColumnMapping, unchanged: boolean) {
     if (!entity || !csvPreview) return
+    // A preview that names missing columns never takes this shortcut: its
+    // detected mapping is incomplete, and the dialog only continues with a
+    // complete one, which therefore differs from it.
     if (
       unchanged ||
       !csvPreview.source ||

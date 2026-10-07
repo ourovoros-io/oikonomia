@@ -33,7 +33,7 @@
 //! | 3     | Debit       | `debit`, `withdrawal`, `outflow`, `addebito`         |
 //! | 4     | Credit      | `credit`, `deposit`, `inflow`, `accredito`           |
 //! | 5     | Direction   | `type`, `dc`, `d/c`, `debitcredit`, `drcr`,          |
-//! |       |             | `transactiontype`                                    |
+//! |       |             | `transactiontype`, and values that are directions    |
 //! | 6     | Reference   | `reference`, `ref`, `check`, `cheque`, `checkno`,    |
 //! |       |             | `chequeno`, `fitid`                                  |
 //! | 7     | Description | `description`, `memo`, `narration`, `details`,       |
@@ -45,13 +45,50 @@
 //! headers name the same column, the leftmost wins and the others are not
 //! read.
 //!
+//! The direction column is the one role its header does not settle, because
+//! banks also use `Type` for the kind of transaction (`POS`, `TRANSFER`),
+//! and a column read as the direction makes every row with another word
+//! invalid. A header of row 5 is the direction column only when every
+//! non-empty cell under it in the first rows of the file, 50 of them
+//! (`DIRECTION_SAMPLE_ROWS`), is a direction word (the list is in the next
+//! section). A column with no value in those rows qualifies: it then changes
+//! no sign. A header that fails the test has no role, and the next header of
+//! row 5 to the right is tested in its place. Only the first rows are looked
+//! at so that one odd cell far down a long statement costs that row and not
+//! the column.
+//!
+//! The test has a cost. A column that mixes directions with other words
+//! (`Debit`, `Credit`, `Fee`) fails it, so it is not read, and each amount
+//! beside it keeps the sign it was written with: an unsigned debit is then
+//! read as money in. The preview shows each row as an expense or an income
+//! before anything is posted, and the Map columns step can name the column
+//! as the direction; the rows with another word are then the invalid ones.
+//!
 //! A file needs a date column and at least one of amount, debit and credit.
 //! When an amount column is present the debit and credit columns are not
 //! read, and a direction column is read only beside an amount column.
 //!
+//! A file whose headers name no date column, or none of amount, debit and
+//! credit, is not refused: the user can tell which column is which. Its rows
+//! are not read, and the result names the missing columns
+//! ([`ParsedBankCsv::missing_columns`]) beside the headers and what was
+//! detected, for the caller to ask again with an explicit mapping.
+//!
+//! # Direction words
+//!
+//! Matched whole, without regard to case:
+//!
+//! | Reading   | Words                                                  |
+//! |-----------|--------------------------------------------------------|
+//! | Money out | `d`, `dr`, `debit`, `withdrawal`, `expense`, `out`     |
+//! | Money in  | `c`, `cr`, `credit`, `deposit`, `income`, `in`         |
+//!
 //! An explicit mapping replaces all of this: its header names are matched
 //! whole, without regard to ASCII case, and a column it leaves out is not
-//! read.
+//! read. It needs what detection needs: a date column, and an amount column
+//! or at least one of debit and credit, never an amount column beside one of
+//! those. The description column is optional either way: a row of a file
+//! without one gets an empty description, which the ledger accepts.
 //!
 //! # Debit and credit columns
 //!
@@ -121,7 +158,8 @@ use time::{Date, Month};
 
 use crate::csv::amount::parse_book_amount;
 use crate::csv::{
-    CsvColumnMapping, CsvError, CsvMappingProblem, CsvRowOutcome, MAX_CSV_BYTES, ParsedBankRow,
+    CsvColumnMapping, CsvError, CsvMappingProblem, CsvRequiredColumn, CsvRowOutcome, MAX_CSV_BYTES,
+    ParsedBankRow,
 };
 use crate::domain::CurrencyCode;
 use crate::error::{Error, IoContext, PrivateDetail};
@@ -136,8 +174,14 @@ type CsvResult<T> = std::result::Result<T, CsvError>;
 pub struct ParsedBankCsv {
     /// Trimmed header names, file order.
     pub headers: Vec<String>,
-    /// Auto-detected mapping (aliases), even when the caller overrode columns.
+    /// Auto-detected mapping, from the header aliases and for the direction
+    /// column from its values, even when the caller overrode columns.
     pub detected_mapping: CsvColumnMapping,
+    /// The required columns detection did not find, date before amount.
+    ///
+    /// Not empty only when the caller gave no mapping and the headers do not
+    /// name them; `rows` is then empty, because no row was read.
+    pub missing_columns: Vec<CsvRequiredColumn>,
     /// Data rows in file order.
     pub rows: Vec<CsvRowOutcome>,
 }
@@ -223,12 +267,18 @@ const YEAR_DIGITS: usize = 4;
 /// marked with the code of another currency, in capitals, is an invalid row.
 /// `mapping` replaces header auto-detection when `Some`.
 ///
+/// Without a `mapping`, a file in which no date column, or no amount, debit
+/// or credit column, is detected is returned with those columns in
+/// [`ParsedBankCsv::missing_columns`] and no rows. That is not an error,
+/// because a mapping can still read the file.
+///
 /// # Errors
 ///
-/// [`Error::Csv`] for a problem with the file as a whole: the text is
-/// empty, the header row cannot be read or has no name in it, no date
-/// column or no amount, debit or credit column is detected, or `mapping`
-/// is incomplete, contradictory or names a header the file does not have.
+/// [`Error::Csv`] for a problem with the file as a whole:
+/// [`CsvError::Empty`] when the text is empty, [`CsvError::Malformed`] when
+/// the header row cannot be read, [`CsvError::MissingHeader`] when it has no
+/// name in it, and [`CsvError::InvalidMapping`] when `mapping` is
+/// incomplete, contradictory or names a header the file does not have.
 ///
 /// A malformed **row** is not an error. It is returned as
 /// [`CsvRowOutcome::Invalid`] in its place among the rows.
@@ -259,33 +309,27 @@ pub fn parse_bank_csv(
         return Err(CsvError::MissingHeader.into());
     }
 
-    let detected = auto_map_headers(&headers);
-    let detected_mapping = mapping_from_headers(&headers, detected);
-    let columns = match mapping {
-        Some(user) => resolve_user_mapping(&headers, user)?,
-        None => require_auto_map(detected)?,
+    // Read whole before any column is chosen: the direction column is
+    // detected from its values. The text is already in memory, and a file is
+    // at most `MAX_CSV_BYTES`.
+    let records: Vec<csv::Result<StringRecord>> = reader.records().collect();
+
+    let detected = auto_map_headers(&headers, &records);
+    let (missing_columns, rows) = match mapping {
+        Some(user) => {
+            let columns = resolve_user_mapping(&headers, user)?;
+            (Vec::new(), parse_records(records, columns, currency))
+        }
+        None => match missing_required_columns(detected) {
+            missing if missing.is_empty() => (missing, parse_records(records, detected, currency)),
+            missing => (missing, Vec::new()),
+        },
     };
 
-    let mut rows = Vec::new();
-    for (index, record) in reader.records().enumerate() {
-        let source_row = u32::try_from(index + 2).unwrap_or(u32::MAX);
-        match record {
-            Ok(record) => rows.push(parse_record(source_row, &record, columns, currency)),
-            Err(err) => {
-                log::warn!(
-                    "CSV record {source_row} could not be read: {}",
-                    PrivateDetail(&err)
-                );
-                rows.push(CsvRowOutcome::Invalid {
-                    source_row,
-                    reason: UiText::new(UiTextCode::CsvUnreadableRow),
-                });
-            }
-        }
-    }
     Ok(ParsedBankCsv {
         headers: headers.iter().map(str::to_owned).collect(),
-        detected_mapping,
+        detected_mapping: mapping_from_headers(&headers, detected),
+        missing_columns,
         rows,
     })
 }
@@ -314,8 +358,9 @@ enum Column {
 /// `None` means the role has no column and is not read.
 #[derive(Debug, Clone, Copy, Default)]
 struct ColumnMap {
-    /// Booking date. Always `Some` once a map has passed
-    /// [`require_auto_map`] or [`resolve_user_mapping`].
+    /// Booking date. Always `Some` in a map rows are read with: one for
+    /// which [`missing_required_columns`] is empty, or one from
+    /// [`resolve_user_mapping`].
     date: Option<usize>,
     /// Description; a row of a file without one gets an empty description.
     description: Option<usize>,
@@ -408,16 +453,22 @@ fn detect_delimiter(text: &str) -> u8 {
     chosen.0
 }
 
-/// Detects the column of each role from the header names.
+/// Detects the column of each role from the header names, and for the
+/// direction column from the values of `records` as well.
 ///
 /// The leftmost header of a role wins; a later one of the same role is left
-/// unread.
-fn auto_map_headers(headers: &StringRecord) -> ColumnMap {
+/// unread. A header named like a direction column whose values are not
+/// directions ([`holds_only_directions`]) has no role, and a later one may
+/// take it.
+fn auto_map_headers(headers: &StringRecord, records: &[csv::Result<StringRecord>]) -> ColumnMap {
     let mut map = ColumnMap::default();
     for (index, name) in headers.iter().enumerate() {
         let Some(kind) = classify_header(name) else {
             continue;
         };
+        if matches!(kind, Column::Direction) && !holds_only_directions(records, index) {
+            continue;
+        }
         match kind {
             Column::Date if map.date.is_none() => map.date = Some(index),
             Column::Description if map.description.is_none() => map.description = Some(index),
@@ -438,20 +489,42 @@ fn auto_map_headers(headers: &StringRecord) -> ColumnMap {
     map
 }
 
-/// Checks that a detected map has the columns a row cannot do without.
+/// The number of data rows the direction column is detected from.
 ///
-/// # Errors
+/// Enough to see both directions and any other word a bank writes in such a
+/// column, and few enough that one odd cell far down a long statement makes
+/// that row invalid instead of taking the column away from every row.
+const DIRECTION_SAMPLE_ROWS: usize = 50;
+
+/// Returns whether column `index` can be read as the direction column: every
+/// non-empty cell of it in the first [`DIRECTION_SAMPLE_ROWS`] records is a
+/// direction word.
 ///
-/// [`Error::Csv`] with [`CsvError::MissingDateColumn`] or, when none
-/// of amount, debit and credit was found, [`CsvError::MissingAmountColumn`].
-fn require_auto_map(map: ColumnMap) -> crate::error::Result<ColumnMap> {
-    if map.date.is_none() {
-        return Err(CsvError::MissingDateColumn.into());
-    }
-    if map.amount.is_none() && map.debit.is_none() && map.credit.is_none() {
-        return Err(CsvError::MissingAmountColumn.into());
-    }
-    Ok(map)
+/// A record among them that could not be read, or that is too short to have
+/// the cell, has no word to test. A column with no value in those records
+/// passes, since an empty direction cell leaves the amount's own sign.
+fn holds_only_directions(records: &[csv::Result<StringRecord>], index: usize) -> bool {
+    records
+        .iter()
+        .take(DIRECTION_SAMPLE_ROWS)
+        .filter_map(|record| record.as_ref().ok())
+        .map(|record| record_cell(record, index).trim())
+        .filter(|cell| !cell.is_empty())
+        .all(|cell| Direction::of_word(cell).is_some())
+}
+
+/// Returns the columns a row cannot do without that `map` lacks, date before
+/// amount: the date, and the amount when none of amount, debit and credit
+/// was found.
+fn missing_required_columns(map: ColumnMap) -> Vec<CsvRequiredColumn> {
+    let has_amount = map.amount.is_some() || map.debit.is_some() || map.credit.is_some();
+    [
+        (map.date.is_none(), CsvRequiredColumn::Date),
+        (!has_amount, CsvRequiredColumn::Amount),
+    ]
+    .into_iter()
+    .filter_map(|(missing, column)| missing.then_some(column))
+    .collect()
 }
 
 /// Turns a map of cell indexes back into header names, for the UI to show
@@ -500,9 +573,8 @@ fn header_index(headers: &StringRecord, name: &str) -> CsvResult<usize> {
 /// # Errors
 ///
 /// [`Error::Csv`] with [`CsvError::InvalidMapping`] when the mapping
-/// has no date or no description, sets both an amount and a debit or credit
-/// column, sets neither an amount nor both of debit and credit, or names a
-/// header the file does not have.
+/// has no date, sets both an amount and a debit or credit column, sets none
+/// of amount, debit and credit, or names a header the file does not have.
 fn resolve_user_mapping(
     headers: &StringRecord,
     mapping: &CsvColumnMapping,
@@ -510,9 +582,9 @@ fn resolve_user_mapping(
     let Some(date) = trimmed_nonempty(mapping.date.as_deref()) else {
         return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingDate).into());
     };
-    let Some(description) = trimmed_nonempty(mapping.description.as_deref()) else {
-        return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingDescription).into());
-    };
+    // Optional, as it is for detection: a row without one gets an empty
+    // description, which the ledger accepts.
+    let description = trimmed_nonempty(mapping.description.as_deref());
     let amount = trimmed_nonempty(mapping.amount.as_deref());
     let debit = trimmed_nonempty(mapping.debit.as_deref());
     let credit = trimmed_nonempty(mapping.credit.as_deref());
@@ -524,7 +596,9 @@ fn resolve_user_mapping(
     if has_amount && has_debit_or_credit {
         return Err(CsvError::InvalidMapping(CsvMappingProblem::AmountAndDebitOrCredit).into());
     }
-    if !has_amount && (debit.is_none() || credit.is_none()) {
+    // One of the two columns is enough, as it is for detection: a file may
+    // list only what left the account, or only what reached it.
+    if !has_amount && !has_debit_or_credit {
         return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingAmount).into());
     }
 
@@ -533,7 +607,7 @@ fn resolve_user_mapping(
 
     Ok(ColumnMap {
         date: Some(header_index(headers, date)?),
-        description: Some(header_index(headers, description)?),
+        description: optional_index(description)?,
         amount: optional_index(amount)?,
         debit: optional_index(debit)?,
         credit: optional_index(credit)?,
@@ -609,6 +683,36 @@ fn classify_header(raw: &str) -> Option<Column> {
     None
 }
 
+/// Reads every record into its outcome, in file order.
+///
+/// A record the reader could not split becomes an unreadable row, and its
+/// cause is logged.
+fn parse_records(
+    records: Vec<csv::Result<StringRecord>>,
+    columns: ColumnMap,
+    currency: CurrencyCode,
+) -> Vec<CsvRowOutcome> {
+    let mut rows = Vec::with_capacity(records.len());
+    for (index, record) in records.into_iter().enumerate() {
+        // The header is record 1.
+        let source_row = u32::try_from(index + 2).unwrap_or(u32::MAX);
+        match record {
+            Ok(record) => rows.push(parse_record(source_row, &record, columns, currency)),
+            Err(err) => {
+                log::warn!(
+                    "CSV record {source_row} could not be read: {}",
+                    PrivateDetail(&err)
+                );
+                rows.push(CsvRowOutcome::Invalid {
+                    source_row,
+                    reason: UiText::new(UiTextCode::CsvUnreadableRow),
+                });
+            }
+        }
+    }
+    rows
+}
+
 /// Reads one record into its outcome; a row that cannot be used becomes
 /// [`CsvRowOutcome::Invalid`] with the reason worded for the UI.
 fn parse_record(
@@ -651,8 +755,6 @@ fn row_problem(source_row: u32, err: &CsvError) -> UiText {
         | CsvError::TooLarge
         | CsvError::Malformed { .. }
         | CsvError::MissingHeader
-        | CsvError::MissingDateColumn
-        | CsvError::MissingAmountColumn
         | CsvError::MissingColumn { .. }
         | CsvError::InvalidStatus(_)
         | CsvError::InvalidInteger(_)
@@ -811,37 +913,55 @@ fn optional_signed(
     parse_book_amount(raw, currency).map(Some)
 }
 
+/// Which way a direction cell says the money moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    /// Money leaving the account.
+    Out,
+    /// Money reaching the account.
+    In,
+}
+
+impl Direction {
+    /// Returns the direction `word` names, or `None` for any other text,
+    /// the empty one included.
+    ///
+    /// The words are those of the table in the module doc, matched whole
+    /// after trimming and without regard to case. Detection of the direction
+    /// column and the reading of its cells both go through here, so within
+    /// the rows detection looked at, a detected column holds no word a row
+    /// is then refused for.
+    fn of_word(word: &str) -> Option<Self> {
+        match word.trim().to_lowercase().as_str() {
+            "d" | "dr" | "debit" | "withdrawal" | "expense" | "out" => Some(Self::Out),
+            "c" | "cr" | "credit" | "deposit" | "income" | "in" => Some(Self::In),
+            _ => None,
+        }
+    }
+}
+
 /// Gives `signed` the sign its direction cell names, whatever sign it had.
 ///
-/// A blank cell leaves the amount as it is. The words are matched whole and
-/// without regard to case: `d`, `dr`, `debit`, `withdrawal`, `expense` and
-/// `out` mean money out; `c`, `cr`, `credit`, `deposit`, `income` and `in`
-/// mean money in.
+/// A blank cell leaves the amount as it is.
 ///
 /// # Errors
 ///
-/// [`CsvError::InvalidType`] carrying the trimmed cell for any other word.
+/// [`CsvError::InvalidType`] carrying the trimmed cell for a word that is
+/// not a direction ([`Direction::of_word`]), and
+/// [`CsvError::AmountOverflow`] for `i64::MIN`, which has no magnitude.
 fn apply_direction(signed: i64, raw: &str) -> CsvResult<i64> {
-    let direction = raw.trim().to_lowercase();
-    if direction.is_empty() {
+    let word = raw.trim();
+    if word.is_empty() {
         return Ok(signed);
     }
-    if matches!(
-        direction.as_str(),
-        "d" | "dr" | "debit" | "withdrawal" | "expense" | "out"
-    ) {
-        return signed
-            .checked_abs()
-            .map(|magnitude| -magnitude)
-            .ok_or(CsvError::AmountOverflow);
-    }
-    if matches!(
-        direction.as_str(),
-        "c" | "cr" | "credit" | "deposit" | "income" | "in"
-    ) {
-        return signed.checked_abs().ok_or(CsvError::AmountOverflow);
-    }
-    Err(CsvError::InvalidType(raw.trim().to_owned()))
+    let direction =
+        Direction::of_word(word).ok_or_else(|| CsvError::InvalidType(word.to_owned()))?;
+    let magnitude = signed.checked_abs().ok_or(CsvError::AmountOverflow)?;
+
+    Ok(match direction {
+        Direction::Out => -magnitude,
+        Direction::In => magnitude,
+    })
 }
 
 /// Returns the cell at `index`, or an empty string for a record that is
@@ -1147,14 +1267,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_type_is_reported_with_the_cell() {
-        assert_eq!(
-            reason_of_only_row("Date,Description,Amount,Type\n2026-03-15,Y,5.00,sideways\n"),
-            UiText::new(UiTextCode::CsvInvalidType).with_param("value", "sideways")
-        );
-    }
-
-    #[test]
     fn an_empty_date_cell_is_reported_as_missing() {
         assert_eq!(
             reason_of_only_row("Date,Description,Amount\n,X,1.00\n"),
@@ -1219,11 +1331,65 @@ mod tests {
     }
 
     #[test]
-    fn missing_columns_are_file_errors() {
-        let err = parse_bank_csv("Name,Memo\nfoo,bar\n", eur(), None).expect_err("headers");
-        assert_eq!(err, Error::Csv(CsvError::MissingDateColumn));
+    fn an_empty_file_and_a_file_without_a_header_are_file_errors() {
         let err = parse_bank_csv("", eur(), None).expect_err("empty");
         assert_eq!(err, Error::Csv(CsvError::Empty));
+        let err = parse_bank_csv(" \n\t\n", eur(), None).expect_err("blank");
+        assert_eq!(err, Error::Csv(CsvError::Empty));
+        let err = parse_bank_csv(",,\n1,2,3\n", eur(), None).expect_err("no header name");
+        assert_eq!(err, Error::Csv(CsvError::MissingHeader));
+    }
+
+    #[test]
+    fn a_file_without_a_required_column_names_it_and_reads_no_row() {
+        use CsvRequiredColumn::{Amount, Date};
+
+        for (csv, missing) in [
+            ("When,Memo,Amount\n2026-03-15,Rent,-8.00\n", vec![Date]),
+            ("Date,Memo,Paid\n2026-03-15,Rent,-8.00\n", vec![Amount]),
+            (
+                "When,Memo,Paid\n2026-03-15,Rent,-8.00\n",
+                vec![Date, Amount],
+            ),
+        ] {
+            let parsed = parse_bank_csv(csv, eur(), None).expect("not a file error");
+
+            assert_eq!(parsed.missing_columns, missing, "{csv}");
+            assert_eq!(parsed.rows, [], "{csv}");
+            assert_eq!(parsed.headers.len(), 3, "{csv}");
+            assert_eq!(
+                parsed.detected_mapping.description.as_deref(),
+                Some("Memo"),
+                "{csv}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_debit_or_a_credit_column_alone_is_an_amount_column() {
+        for csv in [
+            "Date,Memo,Debit\n2026-03-15,Rent,8.00\n",
+            "Date,Memo,Credit\n2026-03-15,Pay,8.00\n",
+        ] {
+            let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+            assert_eq!(parsed.missing_columns, [], "{csv}");
+            assert_eq!(parsed.rows.len(), 1, "{csv}");
+        }
+    }
+
+    #[test]
+    fn an_explicit_mapping_reads_a_file_detection_could_not() {
+        let csv = "When,Memo,Paid\n2026-03-15,Rent,-8.00\n";
+        let mapping = column_mapping("When", "Memo", Some("Paid"), None, None);
+        let mapped = parse_bank_csv(csv, eur(), Some(&mapping)).expect("mapped");
+
+        assert_eq!(mapped.missing_columns, []);
+        assert_eq!(kinds_of(&mapped), [SimpleEntryKind::Expense]);
+        assert_eq!(
+            mapped.detected_mapping.date, None,
+            "still what was detected"
+        );
     }
 
     #[test]
@@ -1474,6 +1640,188 @@ mod tests {
     }
 
     #[test]
+    fn a_type_column_of_transaction_kinds_is_not_the_direction_column() {
+        let csv = "Date,Payee,Amount,Type\n\
+            2026-03-15,Shop,-8.00,POS\n\
+            2026-03-16,Salary,2500.00,TRANSFER\n";
+        let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+        assert_eq!(parsed.detected_mapping.direction, None);
+        assert_eq!(
+            kinds_of(&parsed),
+            [SimpleEntryKind::Expense, SimpleEntryKind::Income],
+            "the amounts keep their own signs"
+        );
+    }
+
+    #[test]
+    fn one_word_that_is_no_direction_keeps_a_column_from_being_the_direction() {
+        let csv = "Date,Payee,Amount,Type\n\
+            2026-03-15,Rent,800.00,Debit\n\
+            2026-03-16,Shop,8.00,POS\n";
+        let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+        assert_eq!(parsed.detected_mapping.direction, None);
+        assert_eq!(
+            kinds_of(&parsed),
+            [SimpleEntryKind::Income, SimpleEntryKind::Income],
+            "the documented cost: the unsigned debit keeps the sign it was written with"
+        );
+    }
+
+    #[test]
+    fn every_documented_direction_word_is_read_in_any_case_and_with_padding() {
+        for word in ["d", "dr", "debit", "withdrawal", "expense", "out"] {
+            assert_eq!(Direction::of_word(word), Some(Direction::Out), "{word}");
+            let padded = format!("  {}\t", word.to_uppercase());
+            assert_eq!(
+                Direction::of_word(&padded),
+                Some(Direction::Out),
+                "{padded}"
+            );
+        }
+        for word in ["c", "cr", "credit", "deposit", "income", "in"] {
+            assert_eq!(Direction::of_word(word), Some(Direction::In), "{word}");
+            let padded = format!(" {} ", word.to_uppercase());
+            assert_eq!(Direction::of_word(&padded), Some(Direction::In), "{padded}");
+        }
+        for other in ["", "  ", "pos", "transfer", "debits", "in out", "+"] {
+            assert_eq!(Direction::of_word(other), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_direction_gives_its_sign_to_an_amount_of_either_sign() {
+        assert_eq!(apply_direction(500, "out"), Ok(-500));
+        assert_eq!(apply_direction(-500, "Withdrawal"), Ok(-500));
+        assert_eq!(apply_direction(-500, "deposit"), Ok(500));
+        assert_eq!(apply_direction(500, "IN"), Ok(500));
+        assert_eq!(apply_direction(-500, " "), Ok(-500), "a blank cell");
+        assert_eq!(
+            apply_direction(500, " sideways "),
+            Err(CsvError::InvalidType("sideways".into()))
+        );
+    }
+
+    #[test]
+    fn an_amount_without_a_magnitude_overflows_under_either_direction() {
+        for word in ["d", "c"] {
+            assert_eq!(
+                apply_direction(i64::MIN, word),
+                Err(CsvError::AmountOverflow),
+                "{word}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_row_too_short_to_have_a_direction_cell_does_not_cost_the_column() {
+        let csv = "Date,Payee,Amount,Type\n\
+            2026-03-15,Rent,800.00,Debit\n\
+            2026-03-16,Fee,-2.00\n";
+        let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+        assert_eq!(parsed.detected_mapping.direction.as_deref(), Some("Type"));
+        assert_eq!(
+            kinds_of(&parsed),
+            [SimpleEntryKind::Expense, SimpleEntryKind::Expense]
+        );
+    }
+
+    #[test]
+    fn a_direction_column_with_empty_cells_or_none_at_all_is_still_detected() {
+        let with_gaps = "Date,Payee,Amount,D/C\n\
+            2026-03-15,Rent,800.00,dr\n\
+            2026-03-16,Fee,-2.00,\n\
+            2026-03-17,Salary,2500.00,CR\n";
+        let parsed = parse_bank_csv(with_gaps, eur(), None).expect("parse");
+        assert_eq!(parsed.detected_mapping.direction.as_deref(), Some("D/C"));
+        assert_eq!(
+            kinds_of(&parsed),
+            [
+                SimpleEntryKind::Expense,
+                SimpleEntryKind::Expense,
+                SimpleEntryKind::Income
+            ]
+        );
+
+        let header_only = parse_bank_csv("Date,Payee,Amount,Type\n", eur(), None).expect("parse");
+        assert_eq!(
+            header_only.detected_mapping.direction.as_deref(),
+            Some("Type")
+        );
+    }
+
+    #[test]
+    fn the_next_direction_header_is_taken_when_the_first_holds_other_words() {
+        let csv = "Date,Payee,Amount,Type,D/C\n\
+            2026-03-15,Rent,800.00,POS,D\n\
+            2026-03-16,Salary,2500.00,TRANSFER,C\n";
+        let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+        assert_eq!(parsed.detected_mapping.direction.as_deref(), Some("D/C"));
+        assert_eq!(
+            kinds_of(&parsed),
+            [SimpleEntryKind::Expense, SimpleEntryKind::Income]
+        );
+    }
+
+    /// A statement of `rows` debit rows whose `Type` cell is `odd_word` in
+    /// the 1-based data row `odd_row`.
+    fn statement_with_one_odd_type(rows: usize, odd_row: usize, odd_word: &str) -> String {
+        let mut csv = String::from("Date,Payee,Amount,Type\n");
+        for row in 1..=rows {
+            let word = if row == odd_row { odd_word } else { "Debit" };
+            csv.push_str("2026-03-15,Rent,8.00,");
+            csv.push_str(word);
+            csv.push('\n');
+        }
+        csv
+    }
+
+    #[test]
+    fn the_direction_column_is_detected_from_the_sampled_rows_only() {
+        let rows = DIRECTION_SAMPLE_ROWS + 1;
+
+        let inside = statement_with_one_odd_type(rows, DIRECTION_SAMPLE_ROWS, "POS");
+        let parsed = parse_bank_csv(&inside, eur(), None).expect("parse");
+        assert_eq!(
+            parsed.detected_mapping.direction, None,
+            "the last sampled row"
+        );
+
+        let outside = statement_with_one_odd_type(rows, rows, "POS");
+        let parsed = parse_bank_csv(&outside, eur(), None).expect("parse");
+        assert_eq!(parsed.detected_mapping.direction.as_deref(), Some("Type"));
+        assert_eq!(
+            parsed.rows.last(),
+            Some(&CsvRowOutcome::Invalid {
+                source_row: u32::try_from(rows + 1).unwrap(),
+                reason: UiText::new(UiTextCode::CsvInvalidType).with_param("value", "POS"),
+            }),
+            "a word past the sample costs its own row only"
+        );
+    }
+
+    #[test]
+    fn an_explicit_direction_column_is_read_whatever_it_holds() {
+        let csv = "Date,Payee,Amount,Type\n2026-03-15,Shop,8.00,POS\n";
+        let mapping = CsvColumnMapping {
+            direction: Some("Type".into()),
+            ..column_mapping("Date", "Payee", Some("Amount"), None, None)
+        };
+        let mapped = parse_bank_csv(csv, eur(), Some(&mapping)).expect("mapped");
+
+        assert_eq!(
+            mapped.rows,
+            [CsvRowOutcome::Invalid {
+                source_row: 2,
+                reason: UiText::new(UiTextCode::CsvInvalidType).with_param("value", "POS"),
+            }]
+        );
+    }
+
+    #[test]
     fn a_mapping_without_a_direction_reads_the_amount_sign() {
         let mapping = column_mapping("Date", "Payee", Some("Amount"), None, None);
         let mapped = parse_bank_csv(UNSIGNED_WITH_TYPE, eur(), Some(&mapping)).expect("mapped");
@@ -1502,6 +1850,115 @@ mod tests {
         assert_eq!(mapping.direction, None);
     }
 
+    /// One case of `web/src/lib/csvMappingVerdicts.json`.
+    #[derive(Debug, serde::Deserialize)]
+    struct MappingVerdict {
+        /// The mapping, as the Map columns step sends it.
+        mapping: CsvColumnMapping,
+        /// `ready`, or the identifier of the problem the mapping is refused
+        /// for.
+        verdict: String,
+    }
+
+    /// The rule for a complete mapping is written twice: here, and in the
+    /// web's `mappingReady`, which enables Continue in the Map columns step.
+    /// Both read the same cases, so a mapping the step lets through is one
+    /// core accepts, and the other way round.
+    #[test]
+    fn the_verdicts_fixture_gives_what_core_says_of_each_mapping() {
+        let cases: Vec<MappingVerdict> = serde_json::from_str(include_str!(
+            "../../../../web/src/lib/csvMappingVerdicts.json"
+        ))
+        .expect("csvMappingVerdicts.json parses");
+        let headers = StringRecord::from(vec![
+            "Date", "Memo", "Amount", "Debit", "Credit", "Ref", "Type",
+        ]);
+
+        assert!(!cases.is_empty());
+        for case in cases {
+            let verdict = match resolve_user_mapping(&headers, &case.mapping) {
+                Ok(_) => "ready",
+                Err(Error::Csv(CsvError::InvalidMapping(problem))) => problem.identifier(),
+                Err(other) => panic!("{:?} gave {other:?}", case.mapping),
+            };
+
+            assert_eq!(verdict, case.verdict, "{:?}", case.mapping);
+        }
+    }
+
+    #[test]
+    fn a_mapping_with_only_a_debit_or_only_a_credit_column_reads_the_rows() {
+        let csv = "When,What,Out,In\n01/04/2026,Rent,800.00,\n02/04/2026,Pay,,2500.00\n";
+
+        let debit_only = column_mapping("When", "What", None, Some("Out"), None);
+        let parsed = parse_bank_csv(csv, eur(), Some(&debit_only)).expect("debit only");
+        assert_eq!(
+            parsed.rows[0],
+            parse_bank_csv(
+                csv,
+                eur(),
+                Some(&column_mapping(
+                    "When",
+                    "What",
+                    None,
+                    Some("Out"),
+                    Some("In")
+                ))
+            )
+            .expect("both")
+            .rows[0]
+        );
+        assert_eq!(
+            parsed.rows[1],
+            CsvRowOutcome::Invalid {
+                source_row: 3,
+                reason: UiText::new(UiTextCode::CsvMissingAmount),
+            },
+            "the credit column is not read"
+        );
+
+        let credit_only = column_mapping("When", "What", None, None, Some("In"));
+        let parsed = parse_bank_csv(csv, eur(), Some(&credit_only)).expect("credit only");
+        let CsvRowOutcome::Parsed(pay) = &parsed.rows[1] else {
+            panic!("pay");
+        };
+        assert_eq!(pay.signed_amount_minor, 250_000);
+    }
+
+    #[test]
+    fn a_mapping_without_a_description_reads_rows_with_an_empty_one() {
+        let csv = "Date,Payee,Amount\n2026-03-15,Coffee,-3.50\n";
+
+        for description in [None, Some(String::new()), Some("  ".to_owned())] {
+            let mapping = CsvColumnMapping {
+                date: Some("Date".into()),
+                description: description.clone(),
+                amount: Some("Amount".into()),
+                ..CsvColumnMapping::default()
+            };
+            let parsed = parse_bank_csv(csv, eur(), Some(&mapping)).expect("no description");
+
+            let CsvRowOutcome::Parsed(row) = &parsed.rows[0] else {
+                panic!("{description:?}: {:?}", parsed.rows);
+            };
+            assert_eq!(row.description, "", "{description:?}");
+            assert_eq!(row.signed_amount_minor, -350, "{description:?}");
+        }
+    }
+
+    #[test]
+    fn a_file_without_a_description_column_reads_the_same_detected_or_mapped() {
+        let csv = "Date,Amount\n2026-03-15,-3.50\n";
+        let detected = parse_bank_csv(csv, eur(), None).expect("detected");
+        assert_eq!(detected.missing_columns, []);
+        assert_eq!(detected.detected_mapping.description, None);
+
+        let mapped = parse_bank_csv(csv, eur(), Some(&detected.detected_mapping)).expect("mapped");
+
+        assert_eq!(mapped.rows, detected.rows);
+        assert_eq!(mapped.rows.len(), 1);
+    }
+
     #[test]
     fn invalid_mapping_is_rejected() {
         let csv = "Date,Description,Amount,Debit,Credit\n2026-03-15,X,-1.00,,\n";
@@ -1513,14 +1970,6 @@ mod tests {
         };
         let err = parse_bank_csv(csv, eur(), Some(&missing_date)).expect_err("date");
         assert_eq!(err, invalid_mapping(CsvMappingProblem::MissingDate));
-
-        let missing_desc = CsvColumnMapping {
-            date: Some("Date".into()),
-            amount: Some("Amount".into()),
-            ..CsvColumnMapping::default()
-        };
-        let err = parse_bank_csv(csv, eur(), Some(&missing_desc)).expect_err("desc");
-        assert_eq!(err, invalid_mapping(CsvMappingProblem::MissingDescription));
 
         let missing_amount = column_mapping("Date", "Description", None, None, None);
         let err = parse_bank_csv(csv, eur(), Some(&missing_amount)).expect_err("amount");
@@ -1582,8 +2031,58 @@ mod properties {
             .collect()
     }
 
+    /// A cell of a direction column: one of the twelve words in lower or
+    /// upper case, or nothing.
+    fn direction_cells() -> impl Strategy<Value = String> {
+        let words = prop::sample::select(vec![
+            "",
+            "d",
+            "dr",
+            "debit",
+            "withdrawal",
+            "expense",
+            "out",
+            "c",
+            "cr",
+            "credit",
+            "deposit",
+            "income",
+            "in",
+        ]);
+        (words, any::<bool>()).prop_map(|(word, upper)| {
+            if upper {
+                word.to_uppercase()
+            } else {
+                word.to_owned()
+            }
+        })
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(PROPERTY_CASES))]
+
+        // Detection and the reading of a cell share one list of words, so a
+        // column of them is always detected and refuses no row, at any
+        // length on either side of the sample.
+        #[test]
+        fn a_column_of_direction_words_and_blanks_is_detected_and_refuses_no_row(
+            cells in prop::collection::vec(direction_cells(), 0..120),
+        ) {
+            let mut csv = String::from("Date,Payee,Amount,Type\n");
+            for cell in &cells {
+                csv.push_str("2026-03-15,Rent,8.00,");
+                csv.push_str(cell);
+                csv.push('\n');
+            }
+            let currency: CurrencyCode = "EUR".parse().expect("a currency code");
+            let parsed = parse_bank_csv(&csv, currency, None).expect("a readable file");
+
+            prop_assert_eq!(parsed.detected_mapping.direction.as_deref(), Some("Type"));
+            prop_assert_eq!(parsed.rows.len(), cells.len());
+            for row in &parsed.rows {
+                prop_assert!(matches!(row, CsvRowOutcome::Parsed(_)), "{:?}", row);
+            }
+        }
 
         #[test]
         fn a_date_written_in_any_accepted_form_parses_back_to_itself(date in dates()) {

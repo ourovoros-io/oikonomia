@@ -5,6 +5,11 @@
 //! nothing, and [`csv_import_post`] posts the rows the user kept. The file
 //! comes from a native open dialog, or from a path that dialog returned
 //! earlier and the webview passes back with a column mapping.
+//!
+//! A file whose date or amount column cannot be detected is not an error of
+//! the first preview. It comes back with its headers and no rows
+//! (`CsvImportPreview::missing_columns`), and the webview opens its Map
+//! columns step on it, then asks again with the mapping the user chose.
 
 use crate::commands::support::{
     FileDialog, SaveTarget, dialog_path, require_granted_path, run_blocking, save_with_dialog,
@@ -37,8 +42,10 @@ const STATEMENT_EXTENSIONS: &[&str] = &["csv", "tsv", "txt"];
 /// earlier ([`GrantPurpose::Csv`]), so a file the user dropped on a window or
 /// picked as a backup is refused. `input.mapping`, when set, replaces the
 /// detection of columns from the header. A row that cannot be read is
-/// reported in the preview, not as an error. Returns `None` if the user
-/// cancelled the dialog.
+/// reported in the preview, not as an error, and so is a file whose date or
+/// amount column was not detected: its preview has no rows and names the
+/// columns in `missing_columns`. Returns `None` if the user cancelled the
+/// dialog.
 ///
 /// # Errors
 ///
@@ -46,8 +53,8 @@ const STATEMENT_EXTENSIONS: &[&str] = &["csv", "tsv", "txt"];
 /// dialog;
 /// `open_location_invalid` when the dialog's answer is not a path; `io` when
 /// the file cannot be read; one of the `csv_` codes when it is over the size
-/// limit, not UTF-8, empty, malformed, or has no usable date and amount
-/// columns, or when the column mapping is refused; `not_found` when
+/// limit, not UTF-8, empty, malformed or without a header row, or when the
+/// column mapping is refused; `not_found` when
 /// the entity or a role's account does not exist; `account_wrong_entity`
 /// when an account belongs to another entity; and the
 /// [common vault errors](crate::commands#common-vault-errors).
@@ -178,5 +185,199 @@ mod tests {
     #[test]
     fn the_open_dialog_offers_the_extensions_of_every_delimiter_the_importer_reads() {
         assert_eq!(STATEMENT_EXTENSIONS, ["csv", "tsv", "txt"]);
+    }
+}
+
+/// `csv_import_preview` invoked through the mock IPC with the payloads the
+/// webview sends: the first preview of a file, then the one that carries the
+/// mapping from the Map columns step.
+///
+/// The path is granted by hand, where the app has the native dialog grant
+/// it.
+///
+/// Not built on Windows, where the mock runtime keeps a test executable from
+/// starting; `commands::support::ipc_test_support` says why.
+#[cfg(test)]
+#[cfg(not(windows))]
+mod ipc_tests {
+    use crate::commands::csv::csv_import_preview;
+    use crate::commands::support::ipc_test_support::MockApp;
+    use crate::state::GrantPurpose;
+    use oikonomia_core::domain::ChartTemplate;
+    use oikonomia_core::ledger::{CreateEntity, create_entity};
+    use oikonomia_core::prefs::Locale;
+
+    /// A statement whose date and amount headers detection does not know.
+    const UNDETECTED_CSV: &[u8] = b"When,Memo,Paid\n2026-03-15,Rent,-800.00\n";
+
+    /// Starts the mock app over a vault with one book in euros, with the
+    /// preview command registered. Returns the book's id as the webview
+    /// holds it.
+    fn mock_book(label: &str) -> (MockApp, String) {
+        MockApp::start(
+            label,
+            tauri::generate_handler![csv_import_preview],
+            |conn| {
+                let book = CreateEntity {
+                    name: "Home".into(),
+                    base_currency: "EUR".into(),
+                    chart_template: ChartTemplate::Personal,
+                    fiscal_year_start_month: None,
+                };
+                create_entity(conn, &book, Locale::En)
+                    .unwrap()
+                    .id
+                    .to_string()
+            },
+        )
+    }
+
+    /// Writes `bytes` as a statement the CSV dialog returned, and gives its
+    /// path.
+    fn picked_statement(app: &MockApp, bytes: &[u8]) -> String {
+        let path = app.write_file("bank.csv", bytes);
+        app.grant(GrantPurpose::Csv, &path);
+        path
+    }
+
+    /// The payload `csvImportPreview` in `web/src/lib/api.ts` builds: the
+    /// three accounts always, the mapping only when there is one.
+    fn payload(entity: &str, path: &str, mapping: Option<serde_json::Value>) -> serde_json::Value {
+        let mut input = serde_json::json!({
+            "entity_id": entity,
+            "path": path,
+            "wallet_account_id": null,
+            "expense_account_id": null,
+            "income_account_id": null,
+        });
+        if let Some(mapping) = mapping {
+            input["mapping"] = mapping;
+        }
+        serde_json::json!({ "input": input })
+    }
+
+    #[test]
+    fn a_file_whose_columns_are_not_detected_comes_back_for_mapping_not_as_an_error() {
+        let (app, entity) = mock_book("csv-needs-mapping");
+        let path = picked_statement(&app, UNDETECTED_CSV);
+
+        let mut preview = app
+            .invoke("csv_import_preview", payload(&entity, &path, None))
+            .unwrap();
+
+        // The source is the granted path with its links resolved, which a
+        // temporary directory may have; the next test passes it back.
+        let source = preview["source"].take();
+        assert!(
+            source
+                .as_str()
+                .is_some_and(|source| source.ends_with("bank.csv"))
+        );
+        assert_eq!(
+            preview,
+            serde_json::json!({
+                "source": null,
+                "headers": ["When", "Memo", "Paid"],
+                "detected_mapping": {
+                    "date": null,
+                    "description": "Memo",
+                    "amount": null,
+                    "debit": null,
+                    "credit": null,
+                    "reference": null,
+                    "direction": null,
+                },
+                "missing_columns": ["date", "amount"],
+                "rows": [],
+            })
+        );
+    }
+
+    #[test]
+    fn the_mapping_the_map_columns_step_sends_previews_that_file() {
+        let (app, entity) = mock_book("csv-mapped");
+        let path = picked_statement(&app, UNDETECTED_CSV);
+        // The webview passes back the source of the first preview, not the
+        // path it has never seen.
+        let first = app
+            .invoke("csv_import_preview", payload(&entity, &path, None))
+            .unwrap();
+        let path = first["source"].as_str().unwrap();
+        // What `draftToMapping` in `web/src/lib/csvImport.ts` writes: every
+        // key, `null` for a column that is not mapped.
+        let mapping = serde_json::json!({
+            "date": "When",
+            "description": "Memo",
+            "amount": "Paid",
+            "debit": null,
+            "credit": null,
+            "reference": null,
+            "direction": null,
+        });
+
+        let preview = app
+            .invoke("csv_import_preview", payload(&entity, path, Some(mapping)))
+            .unwrap();
+
+        assert_eq!(preview["missing_columns"], serde_json::json!([]));
+        assert_eq!(preview["rows"].as_array().map(Vec::len), Some(1));
+        assert_eq!(preview["rows"][0]["error"], serde_json::Value::Null);
+        assert_eq!(preview["rows"][0]["signed_amount_minor"], -80_000);
+        assert_eq!(preview["rows"][0]["suggested"]["description"], "Rent");
+    }
+
+    #[test]
+    fn a_mapping_with_no_description_column_previews_rows_without_one() {
+        let (app, entity) = mock_book("csv-no-description");
+        let path = picked_statement(&app, UNDETECTED_CSV);
+        // The Map columns step with Description set to "Not mapped".
+        let mapping = serde_json::json!({
+            "date": "When",
+            "description": null,
+            "amount": "Paid",
+            "debit": null,
+            "credit": null,
+            "reference": null,
+            "direction": null,
+        });
+
+        let preview = app
+            .invoke("csv_import_preview", payload(&entity, &path, Some(mapping)))
+            .unwrap();
+
+        assert_eq!(preview["rows"][0]["error"], serde_json::Value::Null);
+        assert_eq!(preview["rows"][0]["suggested"]["description"], "");
+        assert_eq!(preview["rows"][0]["signed_amount_minor"], -80_000);
+    }
+
+    #[test]
+    fn an_incomplete_mapping_is_still_refused_with_its_problem() {
+        let (app, entity) = mock_book("csv-incomplete-mapping");
+        let path = picked_statement(&app, UNDETECTED_CSV);
+        let mapping = serde_json::json!({ "date": "When", "description": "Memo" });
+
+        let refusal = app
+            .invoke("csv_import_preview", payload(&entity, &path, Some(mapping)))
+            .unwrap_err();
+
+        assert_eq!(refusal["code"], "csv_invalid_mapping");
+        assert_eq!(refusal["params"]["problem"], "missing_amount");
+    }
+
+    #[test]
+    fn a_type_column_of_transaction_kinds_is_not_sent_as_the_direction() {
+        let (app, entity) = mock_book("csv-type-kinds");
+        let path = picked_statement(&app, b"Date,Payee,Amount,Type\n2026-03-15,Shop,-8.00,POS\n");
+
+        let preview = app
+            .invoke("csv_import_preview", payload(&entity, &path, None))
+            .unwrap();
+
+        assert_eq!(
+            preview["detected_mapping"]["direction"],
+            serde_json::Value::Null
+        );
+        assert_eq!(preview["rows"][0]["error"], serde_json::Value::Null);
+        assert_eq!(preview["rows"][0]["signed_amount_minor"], -800);
     }
 }

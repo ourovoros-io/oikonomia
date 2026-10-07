@@ -7,6 +7,7 @@ import {
   draftFromDetected,
   draftToMapping,
   draftsEqual,
+  mapNeededKey,
   mappingReady,
   matchHeader,
   previewHasColumnMap,
@@ -25,7 +26,7 @@ type Props = {
 const PLACEHOLDER_FIELDS = [
   { labelKey: 'tx.csv.field.date', targetKey: 'tx.csv.field.date' },
   { labelKey: 'tx.csv.field.amount', targetKey: 'tx.csv.field.amount' },
-  { labelKey: 'tx.csv.field.description', targetKey: 'tx.csv.field.description' },
+  { labelKey: 'tx.csv.field.description', targetKey: 'tx.csv.field.descriptionOptional' },
   { labelKey: 'tx.csv.field.reference', targetKey: 'tx.csv.field.referenceOptional' },
 ] as const
 
@@ -109,6 +110,7 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
 
   const mapping = draftToMapping(draft)
   const canContinue = !live || mappingReady(mapping)
+  const neededKey = live ? mapNeededKey(preview?.missing_columns) : null
 
   function patch(partial: Partial<CsvMapDraft>) {
     setDraft((prev) => ({ ...prev, ...partial }))
@@ -153,6 +155,11 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
       maxWidth="max-w-xl"
       onClose={onClose}
     >
+      {neededKey ? (
+        <p role="status" className="mb-4 text-sm text-[var(--color-fg)]">
+          {t(neededKey)}
+        </p>
+      ) : null}
       <div className="space-y-3">
         {live ? (
           <>
@@ -170,6 +177,7 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
                   target={t('tx.csv.field.debit')}
                   value={draft.debit}
                   headers={headers}
+                  optional
                   onChange={(debit) => patch({ debit })}
                 />
                 <HeaderSelect
@@ -177,23 +185,35 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
                   target={t('tx.csv.field.credit')}
                   value={draft.credit}
                   headers={headers}
+                  optional
                   onChange={(credit) => patch({ credit })}
                 />
               </>
             ) : (
-              <HeaderSelect
-                label={t('tx.csv.field.amount')}
-                target={t('tx.csv.field.amount')}
-                value={draft.amount}
-                headers={headers}
-                onChange={(amount) => patch({ amount })}
-              />
+              <>
+                <HeaderSelect
+                  label={t('tx.csv.field.amount')}
+                  target={t('tx.csv.field.amount')}
+                  value={draft.amount}
+                  headers={headers}
+                  onChange={(amount) => patch({ amount })}
+                />
+                <HeaderSelect
+                  label={t('tx.csv.field.direction')}
+                  target={t('tx.csv.field.directionOptional')}
+                  value={draft.direction}
+                  headers={headers}
+                  optional
+                  onChange={(direction) => patch({ direction })}
+                />
+              </>
             )}
             <HeaderSelect
               label={t('tx.csv.field.description')}
-              target={t('tx.csv.field.description')}
+              target={t('tx.csv.field.descriptionOptional')}
               value={draft.description}
               headers={headers}
+              optional
               onChange={(description) => patch({ description })}
             />
             <HeaderSelect

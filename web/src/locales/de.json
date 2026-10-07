@@ -843,15 +843,18 @@
       "export": "CSV exportieren",
       "exportTitle": "Unverschlüsseltes Buchhaltungs-CSV",
       "mapTitle": "CSV-Spalten zuordnen",
-      "mapDescription": "Ordnen Sie Ihrer Bankdatei Datum, Betrag (oder Soll/Haben) und Beschreibung zu. Die Referenz ist freiwillig.",
+      "mapDescription": "Ordnen Sie Ihrer Bankdatei Datum und Betrag (oder Soll/Haben) zu. Beschreibung und Referenz sind freiwillig.",
       "field": {
         "date": "Datum",
         "amount": "Betrag",
         "description": "Beschreibung",
+        "descriptionOptional": "Beschreibung (optional)",
         "reference": "Referenz",
         "referenceOptional": "Referenz (optional)",
         "debit": "Soll",
-        "credit": "Haben"
+        "credit": "Haben",
+        "direction": "Richtung",
+        "directionOptional": "Richtung (optional)"
       },
       "sourceAria": "Quellspalte {label}",
       "targetAria": "Zielfeld {label}",
@@ -860,6 +863,11 @@
       "useAmount": "Eine Betragsspalte verwenden",
       "autoDetected": "Automatisch erkannt",
       "mapFooter": "Nicht zugeordnete Spalten werden ignoriert. Soll/Haben können den Betrag ersetzen.",
+      "mapNeeded": {
+        "date": "Die Datumsspalte konnte nicht automatisch gefunden werden; wählen Sie sie unten aus.",
+        "amount": "Die Betragsspalte konnte nicht automatisch gefunden werden; wählen Sie sie unten aus.",
+        "dateAndAmount": "Die Datums- und die Betragsspalte konnten nicht automatisch gefunden werden; wählen Sie sie unten aus."
+      },
       "continuePreview": "Weiter zur Vorschau",
       "previewTitle": "Importvorschau",
       "previewSubtitle": "{rows} · {dupes} · es wird nichts gebucht, bevor Sie bestätigen",
@@ -981,16 +989,13 @@
     "csvNotUtf8": "Diese CSV-Datei ist kein UTF-8-Text. Speichern oder exportieren Sie sie erneut als CSV mit UTF-8-Kodierung.",
     "csvTooLarge": "Diese CSV-Datei ist größer als 8 MB. Exportieren Sie einen kürzeren Zeitraum oder teilen Sie die Datei auf.",
     "csvMissingHeader": "Diese CSV-Datei hat keine Kopfzeile. Die erste Zeile muss die Spalten benennen.",
-    "csvMissingDateColumn": "In dieser CSV-Datei wurde keine Datumsspalte gefunden. Prüfen Sie, ob die erste Zeile die Spalten benennt und eine davon das Datum ist.",
-    "csvMissingAmountColumn": "In dieser CSV-Datei wurde keine Betragsspalte gefunden. Prüfen Sie, ob die erste Zeile die Spalten benennt und es eine Betragsspalte oder Soll- und Haben-Spalten gibt.",
     "csvMissingColumn": "Diese Journal-CSV hat keine Spalte „{column}“. Verwenden Sie eine aus Oikonomia exportierte Datei mit allen ihren Spalten.",
     "csvInvalidStatus": "„{value}“ ist kein Journalstatus. Der Status muss posted oder voided sein.",
     "csvInvalidInteger": "„{value}“ ist keine ganze Zahl. Eine Journal-CSV enthält Beträge als ganze Untereinheiten, zum Beispiel 1250 für 12,50.",
     "csvInvalidMapping": "Diese Spaltenauswahl konnte nicht verwendet werden. Prüfen Sie die Spalten und versuchen Sie es erneut.",
     "csvMapping": {
       "missingDate": "Wählen Sie die Spalte mit dem Datum.",
-      "missingDescription": "Wählen Sie die Spalte mit der Beschreibung.",
-      "missingAmount": "Wählen Sie eine Betragsspalte oder sowohl eine Soll- als auch eine Haben-Spalte.",
+      "missingAmount": "Wählen Sie eine Betragsspalte oder eine Soll- oder eine Haben-Spalte.",
       "amountAndDebitOrCredit": "Wählen Sie entweder eine Betragsspalte oder die Soll- und Haben-Spalten, nicht beides.",
       "unknownColumn": "Die Datei hat keine Spalte namens „{column}“. Wählen Sie eine der Spalten der Datei."
     },

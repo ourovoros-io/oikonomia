@@ -1,11 +1,13 @@
 import { describe, expect, test } from 'vitest'
 import type { AccountDefaults, CsvColumnMapping, CsvImportPreviewRow, SimpleEntryInput } from './api'
+import mappingVerdicts from './csvMappingVerdicts.json'
 import {
   applyBulkAccounts,
   csvImportAccountDefaults,
   defaultChecked,
   draftFromDetected,
   draftToMapping,
+  mapNeededKey,
   mappingsEqual,
   mappingReady,
   matchHeader,
@@ -184,12 +186,16 @@ describe('column mapping helpers', () => {
     expect(draft.amountMode).toBe('amount')
   })
 
-  test('mappingReady requires date, description, and amount XOR debit+credit', () => {
-    expect(mappingReady(detected)).toBe(true)
-    expect(mappingReady({ ...detected, date: null })).toBe(false)
-    expect(mappingReady({ ...detected, amount: null, debit: 'Out', credit: 'In' })).toBe(true)
-    expect(mappingReady({ ...detected, amount: 'Amount', debit: 'Out', credit: 'In' })).toBe(false)
-    expect(mappingReady({ ...detected, amount: null, debit: 'Out', credit: null })).toBe(false)
+  // Core's rule (`resolve_user_mapping`) reads the same fixture in a Rust test,
+  // so Continue is enabled exactly for the mappings core accepts.
+  test.each(mappingVerdicts)('mappingReady agrees with core: $verdict for $mapping', (item) => {
+    expect(mappingReady(item.mapping)).toBe(item.verdict === 'ready')
+  })
+
+  test('the verdicts fixture has both ready and refused mappings', () => {
+    const verdicts = new Set(mappingVerdicts.map((item) => item.verdict))
+    expect(verdicts.has('ready')).toBe(true)
+    expect(verdicts.size).toBeGreaterThan(1)
   })
 
   test('draftToMapping keeps chosen headers', () => {
@@ -244,5 +250,20 @@ describe('column mapping helpers', () => {
     expect(previewHasColumnMap({ headers: ['Date'] })).toBe(true)
     expect(previewHasColumnMap({ headers: [] })).toBe(false)
     expect(previewHasColumnMap({})).toBe(false)
+  })
+})
+
+describe('mapNeededKey', () => {
+  test('names the missing column, or both, whatever order they come in', () => {
+    expect(mapNeededKey(['date'])).toBe('tx.csv.mapNeeded.date')
+    expect(mapNeededKey(['amount'])).toBe('tx.csv.mapNeeded.amount')
+    expect(mapNeededKey(['date', 'amount'])).toBe('tx.csv.mapNeeded.dateAndAmount')
+    expect(mapNeededKey(['amount', 'date'])).toBe('tx.csv.mapNeeded.dateAndAmount')
+  })
+
+  test('is null when nothing is missing or the preview does not say', () => {
+    expect(mapNeededKey([])).toBeNull()
+    expect(mapNeededKey(undefined)).toBeNull()
+    expect(mapNeededKey(null)).toBeNull()
   })
 })
