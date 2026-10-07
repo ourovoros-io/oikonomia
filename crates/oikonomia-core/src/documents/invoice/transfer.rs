@@ -24,9 +24,10 @@ use crate::documents::invoice::merchant::{
 use crate::documents::invoice::money::{
     is_plausible_money, largest_plausible_amount, money_amounts_on_line,
 };
-use crate::documents::invoice::normalization::{contains_any, folded};
+use crate::documents::invoice::normalization::contains_any;
 use crate::documents::invoice::reference::is_rf_then_digits;
 use crate::documents::invoice::total::IBAN_WORD;
+use crate::documents::keyword::folded;
 use crate::ui_text::{UiText, UiTextCode};
 
 /// Wording that makes a document a bank transfer receipt: "έμβασμα"

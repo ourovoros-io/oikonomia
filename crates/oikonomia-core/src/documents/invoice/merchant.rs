@@ -17,7 +17,8 @@ use crate::documents::invoice::kind::{
     CUSTOMER_BLOCK_LABEL, INVOICE_WORD_GREEK, POWER_BUSINESS_TARIFF, is_sales_invoice,
     is_utility_bill,
 };
-use crate::documents::invoice::normalization::{contains_any, folded};
+use crate::documents::invoice::normalization::contains_any;
+use crate::documents::keyword::folded;
 use crate::prefs::Locale;
 use crate::text::{
     BillKind, bank_transfer_description, bill_description, customer_invoice_description,

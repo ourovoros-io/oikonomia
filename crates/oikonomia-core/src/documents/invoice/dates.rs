@@ -15,7 +15,8 @@ use std::ops::RangeInclusive;
 
 use time::Date;
 
-use crate::documents::invoice::normalization::{contains_any, folded};
+use crate::documents::invoice::normalization::contains_any;
+use crate::documents::keyword::folded;
 
 /// The first date written on `line`.
 ///

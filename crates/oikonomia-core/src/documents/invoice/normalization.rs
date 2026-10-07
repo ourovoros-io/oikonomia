@@ -1,15 +1,11 @@
 //! Text normalization for the invoice reader: the cleaned text every later
-//! step reads, and the folded form labels are matched against.
+//! step reads.
 //!
 //! [`normalize`] runs once per document, before anything else. Its four
 //! steps, and why they run in that order, are in the
 //! [module above](crate::documents::invoice#normalizing). After it a number
 //! is one unbroken run of digits, `,` and `.`, which is what the money
 //! tokenizer relies on.
-//!
-//! [`folded`] gives the second form of the text: lowercase, Greek accents
-//! removed. Every label and marker constant of the reader is written in that
-//! form.
 
 use crate::documents::invoice::dates::{mask_date_tokens, mask_time_tokens};
 
@@ -191,27 +187,6 @@ fn is_thousands_group(numbers: &[char], index: usize) -> bool {
         && !is_digit(index + THOUSANDS_GROUP_DIGITS + 1)
 }
 
-/// Lowercases `text` and folds its Greek accents.
-///
-/// Every label and marker in this module and in `brands` is matched against
-/// text in this form, and is itself written in it, so `Τελική`, `ΤΕΛΙΚΗ` and
-/// `τελικη` all match the one needle `τελικη`.
-pub(in crate::documents) fn folded(text: &str) -> String {
-    text.to_lowercase()
-        .chars()
-        .map(|c| match c {
-            'ά' | 'ὰ' | 'ᾶ' | 'ἀ' | 'ἁ' | 'ᾳ' => 'α',
-            'έ' | 'ὲ' | 'ἐ' | 'ἑ' => 'ε',
-            'ή' | 'ὴ' | 'ῆ' | 'ἠ' | 'ἡ' | 'ῃ' => 'η',
-            'ί' | 'ὶ' | 'ῖ' | 'ϊ' | 'ΐ' | 'ἰ' | 'ἱ' => 'ι',
-            'ό' | 'ὸ' | 'ὀ' | 'ὁ' => 'ο',
-            'ύ' | 'ὺ' | 'ῦ' | 'ϋ' | 'ΰ' | 'ὐ' | 'ὑ' => 'υ',
-            'ώ' | 'ὼ' | 'ῶ' | 'ὠ' | 'ὡ' | 'ῳ' => 'ω',
-            other => other,
-        })
-        .collect()
-}
-
 /// Whether folded text contains any of `needles`.
 pub(super) fn contains_any(folded_text: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| folded_text.contains(needle))
@@ -220,14 +195,6 @@ pub(super) fn contains_any(folded_text: &str, needles: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn folding_lowercases_and_drops_greek_accents() {
-        assert_eq!(folded("Τελική Αξία"), "τελικη αξια");
-        assert_eq!(folded("ΤΕΛΙΚΗ ΑΞΙΑ"), "τελικη αξια");
-        assert_eq!(folded("Ϊ ΰ Ώ"), "ι υ ω");
-        assert_eq!(folded("Total 24%"), "total 24%");
-    }
 
     #[test]
     fn eur_token_replacement_keeps_words() {

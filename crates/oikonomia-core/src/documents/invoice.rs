@@ -188,6 +188,7 @@ use crate::documents::invoice::normalization::{contains_any, normalize};
 use crate::documents::invoice::reference::find_invoice_reference;
 use crate::documents::invoice::total::find_total_amount;
 use crate::documents::invoice::transfer::{is_bank_transfer_receipt, parse_bank_transfer};
+use crate::documents::keyword::folded;
 use crate::prefs::Locale;
 use crate::ui_text::{UiText, UiTextCode};
 
@@ -199,8 +200,6 @@ mod normalization;
 mod reference;
 mod total;
 mod transfer;
-
-pub(super) use crate::documents::invoice::normalization::folded;
 
 /// What the invoice reader found in a document.
 ///

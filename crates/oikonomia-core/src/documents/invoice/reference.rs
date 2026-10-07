@@ -9,7 +9,8 @@
 
 use std::ops::RangeInclusive;
 
-use crate::documents::invoice::normalization::{contains_any, folded};
+use crate::documents::invoice::normalization::contains_any;
+use crate::documents::keyword::folded;
 
 /// The document's reference, by the first of these that yields one: a
 /// labelled supply code, a bare NGS supply code, an RF payment code, a MARK

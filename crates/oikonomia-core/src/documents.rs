@@ -56,6 +56,7 @@ mod analyze;
 mod brands;
 mod file;
 mod invoice;
+mod keyword;
 mod ocr;
 mod pdf_budget;
 mod pdf_load;

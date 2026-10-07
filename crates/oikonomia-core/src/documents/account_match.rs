@@ -25,7 +25,8 @@
 
 use crate::coa::{DocumentTopic, document_topic_codes};
 use crate::default_accounts::{account_by_codes, first_of_type};
-use crate::documents::account_match::Keyword::{Prefix, Unit, Word};
+use crate::documents::keyword::Keyword;
+use crate::documents::keyword::Keyword::{Prefix, Unit, Word};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate};
 
 /// Picks the expense account a document most likely belongs to.
@@ -52,66 +53,6 @@ pub(super) fn match_income_account(
     hints: &str,
 ) -> Option<AccountId> {
     match_account_of_type(template, accounts, hints, &INCOME_TOPICS)
-}
-
-/// How a keyword must sit in the text to count as a match.
-///
-/// Matching is on word boundaries, never on bare substrings: a letter or digit
-/// (Unicode-aware, so Greek and accented letters count) directly next to the
-/// keyword on a checked side stops it matching. That is what keeps "tax" out
-/// of "taxi" and "syntax". Inflected forms that a whole-word keyword would
-/// miss are either listed as their own keywords or marked [`Keyword::Prefix`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Keyword {
-    /// The keyword is a whole word: no letter or digit on either side.
-    Word(&'static str),
-    /// The keyword is the stem of a word (`consult` for "consulting"): it must
-    /// start a word, and any letters may follow.
-    Prefix(&'static str),
-    /// A unit that is written glued to a number (`kwh` in "150kwh"): no letter
-    /// before it, so digits are fine, and no letter or digit after it.
-    Unit(&'static str),
-}
-
-impl Keyword {
-    /// The text the keyword looks for.
-    pub(crate) const fn text(self) -> &'static str {
-        match self {
-            Self::Word(text) | Self::Prefix(text) | Self::Unit(text) => text,
-        }
-    }
-
-    /// Whether this keyword occurs in `lowercased_text` under its rule.
-    ///
-    /// The caller lowercases the text; keywords are written in lowercase.
-    #[expect(
-        clippy::string_slice,
-        reason = "`match_indices` yields the offset of a match of `needle`, \
-                  so both ends of the match are character boundaries"
-    )]
-    pub(crate) fn occurs_in(self, lowercased_text: &str) -> bool {
-        let needle = self.text();
-
-        for (start, _) in lowercased_text.match_indices(needle) {
-            let before = lowercased_text[..start].chars().next_back();
-            let after = lowercased_text[start + needle.len()..].chars().next();
-
-            let starts_a_word = match self {
-                Self::Word(_) | Self::Prefix(_) => !before.is_some_and(char::is_alphanumeric),
-                Self::Unit(_) => !before.is_some_and(char::is_alphabetic),
-            };
-            let ends_a_word = match self {
-                Self::Prefix(_) => true,
-                Self::Word(_) | Self::Unit(_) => !after.is_some_and(char::is_alphanumeric),
-            };
-
-            if starts_a_word && ends_a_word {
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 /// A keyword table: topics in the order they are tried, each with the words

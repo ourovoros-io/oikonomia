@@ -5,7 +5,7 @@
 //! survive extraction, such as portal names, product lines and brand tokens.
 //!
 //! Two questions are answered here, both on folded text
-//! ([`folded`](crate::documents::invoice::folded)):
+//! ([`folded`](crate::documents::keyword::folded)):
 //!
 //! - [`known_brand`]: who issued this? The first entry of [`BRANDS`] whose
 //!   token stands in the text as a whole token wins, so the order of the
@@ -233,7 +233,7 @@ fn contains_token(folded_text: &str, token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::invoice::folded;
+    use crate::documents::keyword::folded;
 
     #[test]
     fn brand_tokens_respect_word_boundaries() {

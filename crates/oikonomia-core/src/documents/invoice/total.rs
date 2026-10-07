@@ -16,7 +16,8 @@ use crate::documents::invoice::kind::is_utility_bill;
 use crate::documents::invoice::money::{
     has_cents, is_plausible_money, largest_plausible_amount, money_amounts_on_line,
 };
-use crate::documents::invoice::normalization::{contains_any, folded};
+use crate::documents::invoice::normalization::contains_any;
+use crate::documents::keyword::folded;
 
 /// The word that marks a line or a name as holding a bank account number.
 pub(super) const IBAN_WORD: &str = "iban";
