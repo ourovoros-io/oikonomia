@@ -36,6 +36,26 @@
 //! here report that as [`PostedEntryView::is_voided`], for the original and
 //! for its reversal alike. Nothing is deleted.
 //!
+//! # Order
+//!
+//! Entries are ordered by their date, then by when they were created, then
+//! by `rowid`. Creation time is stored to the second, and an import posts
+//! many entries of one date within a second, so the first two do not settle
+//! the order on their own. `journal_entries` has a text primary key and so
+//! keeps `SQLite`'s own `rowid`, which for a new row is one more than the
+//! largest in the table (<https://www.sqlite.org/autoinc.html>): among the
+//! entries of a book it rises in the order they were posted.
+//!
+//! One thing can renumber such rowids: `VACUUM`
+//! (<https://www.sqlite.org/lang_vacuum.html>), and a backup is written with
+//! `VACUUM INTO`, so a restored vault may hold other numbers. The order here
+//! needs only that they still rise in the same order. `SQLite` does not
+//! document that; the test `tests/entry_order.rs` restores a backup and
+//! checks it.
+//!
+//! [`list_entries`] reads that order backwards, the register and the journal
+//! export forwards.
+//!
 //! # Transactions
 //!
 //! A public function that writes more than one row opens a transaction and
@@ -218,8 +238,8 @@ pub struct EntryFilter {
 ///
 /// Voided entries and their reversals are listed too, marked by
 /// [`PostedEntryView::is_voided`]. Entries of one date are ordered by when
-/// they were created, latest first; creation time is kept to the second, so
-/// entries created within one second have no fixed order among themselves.
+/// they were created, latest first, and entries created within one second by
+/// the order they were posted in, last first.
 /// An entity that does not exist has no entries and gives an empty list.
 ///
 /// # Errors
@@ -432,7 +452,7 @@ pub fn replace_simple_entry(
     }
 
     void_entry_in_tx(&tx, original_id, locale)?;
-    let replacement = post_simple_entry_unchecked_hidden(&tx, input, original.entry.hidden)?;
+    let replacement = post_simple_entry_in_tx(&tx, input, original.entry.hidden)?;
 
     tx.execute(
         "UPDATE documents SET entry_id = ?1 WHERE entry_id = ?2",
@@ -532,8 +552,9 @@ pub fn set_account_opening_balance(
 /// inclusive, oldest first, each with the running balance.
 ///
 /// `None` leaves that end of the range open. Lines of one date are ordered by
-/// when their entries were created, to the second, and lines of one entry by
-/// their order in it. The running balance starts from
+/// when their entries were created, entries created within one second by the
+/// order they were posted in, and lines of one entry by their order in it.
+/// The running balance starts from
 /// the account's balance on the day before `from`, so the first line's
 /// balance is the account's true balance and not just the sum of the lines
 /// shown.
@@ -577,52 +598,21 @@ pub fn account_register(
         0
     };
 
-    let list_sql = format!(
-        "
-        SELECT je.id, je.entry_date, je.description,
-               jl.debit_minor, jl.credit_minor, je.hidden
-        FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
-        WHERE jl.account_id = ?1
-          AND {ACTIVE_ENTRY_PREDICATE}
-          AND (?2 IS NULL OR je.entry_date >= ?2)
-          AND (?3 IS NULL OR je.entry_date <= ?3)
-        ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
-        "
-    );
-    let mut stmt = conn.prepare(&list_sql).database("read account register")?;
+    let mut stmt = conn
+        .prepare(&register_sql())
+        .database("read account register")?;
 
     let rows = stmt
         .query_map(rusqlite::params![account_id.to_string(), from, to], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-            ))
+            Ok(map_register_row(row))
         })
         .database("read account register")?;
 
-    let mut register = Vec::new();
-    for (entry_id, entry_date, description, debit_minor, credit_minor, hidden) in
-        collect_rows(rows.map(|row| row.map(Ok)))?
-    {
-        let entry_id: JournalEntryId = stored_id("journal_entries.id", &entry_id)?;
-        let entry_date = stored_date("journal_entries.entry_date", &entry_date)?;
-        let change = normal_balance(account.account_type, debit_minor, credit_minor)?;
+    let mut register = collect_rows("read account register", rows)?;
+    for line in &mut register {
+        let change = normal_balance(account.account_type, line.debit_minor, line.credit_minor)?;
         running = add_minor(running, change)?;
-
-        register.push(RegisterLine {
-            entry_id,
-            entry_date,
-            description,
-            debit_minor,
-            credit_minor,
-            balance_minor: running,
-            hidden: hidden != 0,
-        });
+        line.balance_minor = running;
     }
 
     Ok(register)
@@ -641,19 +631,21 @@ pub(crate) fn post_simple_entry_unchecked(
     conn: &Connection,
     input: &PostSimpleEntry,
 ) -> Result<PostedEntryView> {
-    post_simple_entry_unchecked_hidden(conn, input, false)
+    post_simple_entry_in_tx(conn, input, false)
 }
 
 /// Builds and inserts the simple-form entry with the given hidden flag,
 /// without transaction management.
 ///
-/// [`replace_simple_entry`] passes the flag of the entry it replaces, so that
-/// correcting a hidden entry does not bring it back into the exports.
+/// The caller owns the transaction. [`replace_simple_entry`] passes the flag
+/// of the entry it replaces, so that correcting a hidden entry does not
+/// bring it back into the exports; every other caller posts a visible entry
+/// through [`post_simple_entry_unchecked`].
 ///
 /// # Errors
 ///
 /// Those of [`post_simple_entry`].
-pub(crate) fn post_simple_entry_unchecked_hidden(
+fn post_simple_entry_in_tx(
     conn: &Connection,
     input: &PostSimpleEntry,
     hidden: bool,
@@ -799,7 +791,29 @@ fn load_listed_headers(
     conn: &Connection,
     listed: &ListedEntries,
 ) -> Result<Vec<(JournalEntry, bool)>> {
-    let sql = format!(
+    let mut stmt = conn
+        .prepare(&listed_headers_sql())
+        .database("list journal entries")?;
+
+    let rows = stmt
+        .query_map(listed.bound(), |row| {
+            let is_voided: i64 = row.get(8)?;
+            Ok(map_entry_row(row).map(|entry| (entry, is_voided != 0)))
+        })
+        .database("list journal entries")?;
+
+    collect_rows("list journal entries", rows)
+}
+
+/// The query of [`load_listed_headers`]: the entries
+/// [`LISTED_ENTRIES_PREDICATE`] selects, each with whether it is voided.
+///
+/// The voided test looks, once per listed entry, for an entry that names it
+/// in `voided_by_entry_id`. The index `idx_entries_voided_by` answers that
+/// lookup; without it each one reads the whole table, and the listing takes
+/// time with the square of the number of entries.
+fn listed_headers_sql() -> String {
+    format!(
         "
         SELECT je.id, je.entity_id, je.entry_date, je.description, je.reference,
                je.status, je.hidden, je.voided_by_entry_id,
@@ -810,19 +824,27 @@ fn load_listed_headers(
                    ) AS is_voided
         FROM journal_entries je
         WHERE {LISTED_ENTRIES_PREDICATE}
-        ORDER BY je.entry_date DESC, je.created_at DESC
+        ORDER BY je.entry_date DESC, je.created_at DESC, je.rowid DESC
         "
-    );
-    let mut stmt = conn.prepare(&sql).database("list journal entries")?;
+    )
+}
 
-    let rows = stmt
-        .query_map(listed.bound(), |row| {
-            let is_voided: i64 = row.get(8)?;
-            Ok(map_entry_row(row).map(|entry| (entry, is_voided != 0)))
-        })
-        .database("list journal entries")?;
-
-    collect_rows(rows)
+/// The query of [`account_register`]: the lines of active entries on account
+/// `?1` dated from `?2` through `?3`, where a `NULL` bound is open.
+fn register_sql() -> String {
+    format!(
+        "
+        SELECT je.id, je.entry_date, je.description,
+               jl.debit_minor, jl.credit_minor, je.hidden
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE jl.account_id = ?1
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND (?2 IS NULL OR je.entry_date >= ?2)
+          AND (?3 IS NULL OR je.entry_date <= ?3)
+        ORDER BY je.entry_date ASC, je.created_at ASC, je.rowid ASC, jl.line_order ASC
+        "
+    )
 }
 
 /// Loads the lines of every entry [`list_entries`] returns, grouped by entry
@@ -858,7 +880,7 @@ fn load_listed_lines(
         .database("list journal lines")?;
 
     let mut grouped: HashMap<JournalEntryId, Vec<JournalLine>> = HashMap::new();
-    for line in collect_rows(rows)? {
+    for line in collect_rows("list journal lines", rows)? {
         grouped.entry(line.entry_id).or_default().push(line);
     }
     Ok(grouped)
@@ -886,7 +908,7 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
         .query_map([entry_id.to_string()], |row| Ok(map_line_row(row)))
         .database("read journal lines")?;
 
-    collect_rows(rows)
+    collect_rows("read journal lines", rows)
 }
 
 /// Returns whether another entry names `id` in its `voided_by_entry_id`.
@@ -1207,6 +1229,32 @@ fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
     })
 }
 
+/// Maps a row of [`register_sql`], selected as `id, entry_date, description,
+/// debit_minor, credit_minor, hidden`, with a balance of 0 for
+/// [`account_register`] to fill in.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when the id or the date does
+/// not parse, or a column has the wrong storage class.
+fn map_register_row(row: &rusqlite::Row<'_>) -> Result<RegisterLine> {
+    let entry_id = stored_id("journal_entries.id", &read_column::<String>(row, 0)?)?;
+    let entry_date = stored_date(
+        "journal_entries.entry_date",
+        &read_column::<String>(row, 1)?,
+    )?;
+
+    Ok(RegisterLine {
+        entry_id,
+        entry_date,
+        description: read_column(row, 2)?,
+        debit_minor: read_column(row, 3)?,
+        credit_minor: read_column(row, 4)?,
+        balance_minor: 0,
+        hidden: read_column::<i64>(row, 5)? != 0,
+    })
+}
+
 /// Returns a line amount as stored; the schema's `CHECK` keeps it
 /// non-negative.
 ///
@@ -1252,4 +1300,48 @@ fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
         status,
         hidden: read_column::<i64>(row, 6)? != 0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{migrated_connection, query_plan};
+
+    /// The index a lookup by `voided_by_entry_id` must go through.
+    const VOID_LINK_INDEX: &str = "idx_entries_voided_by";
+
+    #[test]
+    fn listing_entries_finds_the_void_link_through_its_index() {
+        let conn = migrated_connection();
+        let listed = ListedEntries::new(EntityId::generate(), &EntryFilter::default());
+
+        let plan = query_plan(&conn, &listed_headers_sql(), &listed.bound());
+
+        assert!(plan.contains(VOID_LINK_INDEX), "{plan}");
+    }
+
+    #[test]
+    fn the_account_filter_of_a_listing_reads_only_the_lines_of_each_entry() {
+        let conn = migrated_connection();
+        let filter = EntryFilter {
+            account_id: Some(AccountId::generate()),
+            ..EntryFilter::default()
+        };
+        let listed = ListedEntries::new(EntityId::generate(), &filter);
+
+        let plan = query_plan(&conn, &listed_headers_sql(), &listed.bound());
+
+        assert!(plan.contains("idx_lines_entry_account"), "{plan}");
+    }
+
+    #[test]
+    fn the_register_tests_for_a_void_through_the_index() {
+        let conn = migrated_connection();
+        let account = AccountId::generate().to_string();
+        let open: Option<String> = None;
+
+        let plan = query_plan(&conn, &register_sql(), &[&account, &open, &open]);
+
+        assert!(plan.contains(VOID_LINK_INDEX), "{plan}");
+    }
 }

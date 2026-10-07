@@ -1,7 +1,7 @@
 //! Recurring entry templates: a saved simple entry with a schedule.
 //!
 //! A template holds what a [`PostSimpleEntry`] holds except the date, plus a
-//! cadence and the date of its next occurrence. All of that is one type,
+//! schedule and the date of its next occurrence. All of that is one type,
 //! [`RecurringTemplateFields`], which the inputs, the stored row and the view
 //! share; its accounts are a [`SimpleEntryAccounts`], so a template cannot
 //! hold a kind without the accounts that kind posts to. Nothing is posted in the
@@ -16,7 +16,7 @@
 //! date moves one step of the cadence from the stored `next_date`, not from
 //! the date the entry was posted with. Posting late or with another date
 //! therefore does not shift the schedule, and an overdue template is caught
-//! up one occurrence per post. [`RecurringCadence`] defines the steps.
+//! up one occurrence per post. [`RecurringSchedule`] defines the steps.
 //!
 //! # Validation
 //!
@@ -33,6 +33,7 @@
 use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_id};
 use crate::domain::{AccountId, EntityId, RecurringTemplateId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
+use crate::ledger::calendar::add_months;
 use crate::ledger::journals::{
     PostSimpleEntry, PostedEntryView, ensure_simple_entry_accounts, post_simple_entry_unchecked,
 };
@@ -44,29 +45,141 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::{Date, Duration, Month};
 
-/// How often a template produces the next occurrence.
+/// How often a template recurs, as the UI and the vault name it.
 ///
-/// After a successful post, [`advance_next_date`] moves `next_date`:
-///
-/// - **Weekly:** add 7 days. The weekday is implied by `next_date`; there is
-///   no separate weekday column.
-/// - **Monthly:** the first occurrence of `day_of_month` (1–31) strictly after
-///   `next_date`, so the date never moves backwards whatever day `next_date`
-///   is on. When the day does not exist in a month (31 in February), the
-///   occurrence overflows to the 1st of that month plus (`day_of_month` − 1)
-///   days: January 31 → March 3 in a non-leap year (February 1 + 30 days).
-///   The following post then lands on the next real 31st (March 3 → March 31).
-/// - **Yearly:** add one calendar year. February 29 on a non-leap year
-///   overflows the same way (March 1).
+/// This is the flat half of a schedule: on the wire and in the
+/// `recurring_templates` table a schedule is this name beside an optional
+/// day of the month. Inside the crate the pair is one [`RecurringSchedule`],
+/// which says what each cadence does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecurringCadence {
-    /// Every calendar month on [`RecurringTemplateFields::day_of_month`].
+    /// Every calendar month, on a day of the month.
     Monthly,
     /// Every 7 days from `next_date`.
     Weekly,
     /// Every calendar year from `next_date`.
     Yearly,
+}
+
+impl RecurringCadence {
+    /// Returns the cadence as the UI and the vault write it: `monthly`,
+    /// `weekly` or `yearly`.
+    ///
+    /// This is the text serde writes and the text stored in
+    /// `recurring_templates.cadence`, so it is part of the vault format.
+    #[must_use]
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::Monthly => "monthly",
+            Self::Weekly => "weekly",
+            Self::Yearly => "yearly",
+        }
+    }
+}
+
+/// A day of the month a monthly template recurs on: 1 to 31.
+///
+/// A month that is shorter than the day does not clamp it; see
+/// [`RecurringSchedule::Monthly`] for where the occurrence lands then.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DayOfMonth(u8);
+
+impl DayOfMonth {
+    /// Returns `day` as a day of the month.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::DayOfMonthInvalid`] when `day` is outside 1 to 31.
+    pub fn new(day: u8) -> Result<Self> {
+        if (1..=31).contains(&day) {
+            Ok(Self(day))
+        } else {
+            Err(ValidationError::DayOfMonthInvalid.into())
+        }
+    }
+
+    /// Returns the day as a number, 1 to 31.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// When a template produces its next occurrence.
+///
+/// A monthly schedule always has its day and no other schedule has one, so
+/// the pair the wire and the vault hold ([`RecurringCadence`] and an optional
+/// day) cannot be read into a schedule that means nothing.
+/// [`RecurringSchedule::from_cadence`] is the conversion out of that pair,
+/// and [`RecurringSchedule::cadence`] and [`RecurringSchedule::day_of_month`]
+/// the one back.
+///
+/// After a successful post, [`advance_next_date`] moves `next_date` by one
+/// step of the schedule, as each variant says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurringSchedule {
+    /// Every 7 days. The weekday is implied by `next_date`; there is no
+    /// separate weekday.
+    Weekly,
+    /// Every calendar month: the first occurrence of `day_of_month` strictly
+    /// after `next_date`, so the date never moves backwards whatever day
+    /// `next_date` is on.
+    ///
+    /// When the day does not exist in a month (31 in February), the
+    /// occurrence overflows to the 1st of that month plus (`day_of_month`
+    /// − 1) days: January 31 → March 3 in a non-leap year (February 1 + 30
+    /// days). The following post then lands on the next real 31st (March 3 →
+    /// March 31).
+    Monthly {
+        /// The day of the month the template recurs on.
+        day_of_month: DayOfMonth,
+    },
+    /// Every calendar year. February 29 on a non-leap year overflows as a
+    /// monthly day does, to March 1.
+    Yearly,
+}
+
+impl RecurringSchedule {
+    /// Builds a schedule from the flat pair the wire and the vault hold.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::DayOfMonthInvalid`] for a monthly cadence with no
+    /// day or one outside 1 to 31, and for a weekly or yearly cadence with a
+    /// day.
+    pub fn from_cadence(cadence: RecurringCadence, day_of_month: Option<u8>) -> Result<Self> {
+        match (cadence, day_of_month) {
+            (RecurringCadence::Monthly, Some(day)) => Ok(Self::Monthly {
+                day_of_month: DayOfMonth::new(day)?,
+            }),
+            (RecurringCadence::Weekly, None) => Ok(Self::Weekly),
+            (RecurringCadence::Yearly, None) => Ok(Self::Yearly),
+            (RecurringCadence::Monthly, None)
+            | (RecurringCadence::Weekly | RecurringCadence::Yearly, Some(_)) => {
+                Err(ValidationError::DayOfMonthInvalid.into())
+            }
+        }
+    }
+
+    /// Returns how often the schedule recurs, without its day.
+    #[must_use]
+    pub const fn cadence(self) -> RecurringCadence {
+        match self {
+            Self::Weekly => RecurringCadence::Weekly,
+            Self::Monthly { .. } => RecurringCadence::Monthly,
+            Self::Yearly => RecurringCadence::Yearly,
+        }
+    }
+
+    /// Returns the day of a monthly schedule, and `None` for any other.
+    #[must_use]
+    pub const fn day_of_month(self) -> Option<u8> {
+        match self {
+            Self::Monthly { day_of_month } => Some(day_of_month.get()),
+            Self::Weekly | Self::Yearly => None,
+        }
+    }
 }
 
 /// What a recurring template holds: the entry it posts and its schedule.
@@ -81,11 +194,8 @@ pub struct RecurringTemplateFields {
     pub name: String,
     /// Positive amount of each entry, in minor units.
     pub amount_minor: i64,
-    /// How often the template recurs.
-    pub cadence: RecurringCadence,
-    /// Day of the month, 1 to 31. Required for [`RecurringCadence::Monthly`]
-    /// and forbidden for the other cadences.
-    pub day_of_month: Option<u8>,
+    /// How often the template recurs, with the day of a monthly one.
+    pub schedule: RecurringSchedule,
     /// The kind of entry the template posts and the accounts it debits and
     /// credits.
     pub accounts: SimpleEntryAccounts,
@@ -199,7 +309,7 @@ pub fn list_recurring_templates_as_of(
         .query_map([entity_id.to_string()], |row| Ok(map_template_row(row)))
         .database("list recurring templates")?;
 
-    Ok(collect_rows(rows)?
+    Ok(collect_rows("list recurring templates", rows)?
         .into_iter()
         .map(|stored| stored.into_view(today))
         .collect())
@@ -226,7 +336,7 @@ pub fn get_recurring_template(
 /// # Errors
 ///
 /// Those of [`get_recurring_template`].
-pub(super) fn get_recurring_template_as_of(
+fn get_recurring_template_as_of(
     conn: &Connection,
     id: RecurringTemplateId,
     today: Date,
@@ -234,16 +344,18 @@ pub(super) fn get_recurring_template_as_of(
     Ok(load_template(conn, id)?.into_view(today))
 }
 
-/// Creates a template after validating its name, amount, cadence and role
-/// accounts.
+/// Creates a template after validating its name, amount and role accounts.
+///
+/// The schedule needs no check here: a [`RecurringSchedule`] cannot hold a
+/// monthly cadence without its day. A request with such a pair is refused
+/// when it is converted, with
+/// [`ValidationError::DayOfMonthInvalid`].
 ///
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entity or an unknown account.
 /// - [`ValidationError::NameRequired`] for an empty name.
 /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
-/// - [`ValidationError::DayOfMonthInvalid`] for a monthly template with no
-///   day or one outside 1–31, and for a weekly or yearly template with a day.
 /// - The account errors of
 ///   [`post_simple_entry`](crate::ledger::post_simple_entry): an account
 ///   that does not exist or has the wrong type, entity or state.
@@ -271,8 +383,8 @@ pub fn create_recurring_template(
             fields.name,
             fields.accounts.kind().identifier(),
             fields.amount_minor,
-            cadence_str(fields.cadence),
-            fields.day_of_month.map(i64::from),
+            fields.schedule.cadence().identifier(),
+            fields.schedule.day_of_month().map(i64::from),
             account_id_text(roles.category),
             account_id_text(roles.wallet),
             account_id_text(roles.payable),
@@ -280,7 +392,10 @@ pub fn create_recurring_template(
             account_id_text(roles.to),
             fields.memo,
             format_date(fields.next_date),
-            fields.accounts.bill_status().map(bill_status_str),
+            fields
+                .accounts
+                .bill_status()
+                .map(SimpleBillStatus::identifier),
             now_utc_string(),
         ],
     )
@@ -326,8 +441,8 @@ pub fn update_recurring_template(
                 fields.name,
                 fields.accounts.kind().identifier(),
                 fields.amount_minor,
-                cadence_str(fields.cadence),
-                fields.day_of_month.map(i64::from),
+                fields.schedule.cadence().identifier(),
+                fields.schedule.day_of_month().map(i64::from),
                 account_id_text(roles.category),
                 account_id_text(roles.wallet),
                 account_id_text(roles.payable),
@@ -335,7 +450,10 @@ pub fn update_recurring_template(
                 account_id_text(roles.to),
                 fields.memo,
                 format_date(fields.next_date),
-                fields.accounts.bill_status().map(bill_status_str),
+                fields
+                    .accounts
+                    .bill_status()
+                    .map(SimpleBillStatus::identifier),
                 input.id.to_string(),
             ],
         )
@@ -389,9 +507,10 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
 /// - [`Error::Database`] on database errors.
 ///
-/// On an error before the commit neither the entry nor the new date is
-/// stored. The template is read back after the commit to build the result;
-/// if that read fails, the error is returned although both are stored.
+/// Every error leaves neither the entry nor the new date stored: nothing is
+/// read or checked after the commit. The template in the result is the one
+/// read inside the transaction with the date just written, and its due flag
+/// is decided against the current date in UTC.
 pub fn post_recurring_template(
     conn: &Connection,
     id: RecurringTemplateId,
@@ -402,7 +521,7 @@ pub fn post_recurring_template(
         .unchecked_transaction()
         .database("begin recurring template post")?;
 
-    let stored = load_template(&tx, id)?;
+    let mut stored = load_template(&tx, id)?;
     let template = &stored.fields;
     let post_amount = match amount_minor {
         Some(minor) if minor <= 0 => {
@@ -422,7 +541,7 @@ pub fn post_recurring_template(
     };
 
     let entry = post_simple_entry_unchecked(&tx, &input)?;
-    let advanced = advance_next_date(template.next_date, template.cadence, template.day_of_month)?;
+    let advanced = advance_next_date(template.next_date, template.schedule)?;
 
     tx.execute(
         "UPDATE recurring_templates SET next_date = ?1 WHERE id = ?2",
@@ -432,33 +551,29 @@ pub fn post_recurring_template(
 
     tx.commit().database("commit recurring template post")?;
 
-    let template = get_recurring_template(conn, id)?;
-    Ok(RecurringPostResult { entry, template })
+    // Built from what was just written, not read back: a read that failed
+    // here would report an error for a post that is already stored.
+    stored.fields.next_date = advanced;
+    Ok(RecurringPostResult {
+        entry,
+        template: stored.into_view(utc_today()),
+    })
 }
 
-/// Returns the `next_date` that follows `from` under `cadence`. See
-/// [`RecurringCadence`] for each step.
+/// Returns the `next_date` that follows `from` under `schedule`. See
+/// [`RecurringSchedule`] for each step.
 ///
 /// # Errors
 ///
-/// - [`ValidationError::DayOfMonthInvalid`] for a monthly cadence with no
-///   `day_of_month` or one outside 1–31.
-/// - [`ValidationError::DateOutOfRange`] when the next date is past the last
-///   date the calendar holds.
-pub fn advance_next_date(
-    from: Date,
-    cadence: RecurringCadence,
-    day_of_month: Option<u8>,
-) -> Result<Date> {
-    match cadence {
-        RecurringCadence::Weekly => from
+/// [`ValidationError::DateOutOfRange`] when the next date is past the last
+/// date the calendar holds.
+pub fn advance_next_date(from: Date, schedule: RecurringSchedule) -> Result<Date> {
+    match schedule {
+        RecurringSchedule::Weekly => from
             .checked_add(Duration::days(7))
             .ok_or(ValidationError::DateOutOfRange.into()),
-        RecurringCadence::Yearly => add_calendar_years(from, 1),
-        RecurringCadence::Monthly => {
-            let day = require_day_of_month(day_of_month)?;
-            next_monthly(from, day)
-        }
+        RecurringSchedule::Yearly => add_calendar_years(from, 1),
+        RecurringSchedule::Monthly { day_of_month } => next_monthly(from, day_of_month),
     }
 }
 
@@ -480,39 +595,16 @@ pub fn template_is_due(next_date: Date, today: Date) -> bool {
 ///
 /// [`ValidationError::DateOutOfRange`] when the occurrence is past the last
 /// date the calendar holds.
-fn next_monthly(from: Date, day_of_month: u8) -> Result<Date> {
+fn next_monthly(from: Date, day_of_month: DayOfMonth) -> Result<Date> {
+    let day_of_month = day_of_month.get();
     let this_month = place_day_or_next(from.year(), from.month(), day_of_month)?;
     if this_month > from {
         return Ok(this_month);
     }
 
-    let (year, month) = add_months(from.year(), from.month(), 1)?;
+    let (year, month) =
+        add_months(from.year(), from.month(), 1).ok_or(ValidationError::DateOutOfRange)?;
     place_day_or_next(year, month, day_of_month)
-}
-
-/// Returns the year and month that lie `delta` calendar months after
-/// `month` of `year`; a negative `delta` goes back.
-///
-/// # Errors
-///
-/// [`ValidationError::DateOutOfRange`] when the year does not fit in `i32`.
-fn add_months(year: i32, month: Month, delta: i32) -> Result<(i32, Month)> {
-    let out_of_range = || Error::from(ValidationError::DateOutOfRange);
-
-    // Months counted from January of year zero, so that adding `delta` and
-    // splitting again carries into the year in both directions.
-    let month_from_zero = i64::from(u8::from(month)) - 1;
-    let months = i64::from(year)
-        .checked_mul(12)
-        .and_then(|months| months.checked_add(month_from_zero))
-        .and_then(|months| months.checked_add(i64::from(delta)))
-        .ok_or_else(out_of_range)?;
-
-    let year = i32::try_from(months.div_euclid(12)).map_err(|_| out_of_range())?;
-    let month_number = u8::try_from(months.rem_euclid(12) + 1).map_err(|_| out_of_range())?;
-    let month = Month::try_from(month_number).map_err(|_| out_of_range())?;
-
-    Ok((year, month))
 }
 
 /// Returns the same month and day `years` calendar years after `from`.
@@ -574,25 +666,18 @@ impl StoredTemplate {
     }
 }
 
-/// Checks the parts of a template that need nothing but the values: its
-/// name, its amount, and its day of the month against its cadence.
+/// Checks the parts of a template that need nothing but the values and that
+/// its types do not rule out: its name and its amount.
 ///
-/// The conversion of a request runs this before it reads the accounts, and
-/// [`validated_fields`] runs it on every template it is given, so the two
-/// refuse the same things in the same order.
+/// The conversion of a request runs this before it reads the schedule and
+/// the accounts, and [`validated_fields`] runs it on every template it is
+/// given, so the two refuse the same things in the same order.
 ///
 /// # Errors
 ///
 /// - [`ValidationError::NameRequired`] for a name that is blank.
 /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
-/// - [`ValidationError::DayOfMonthInvalid`] for a monthly cadence with no
-///   day or one outside 1–31, and for a weekly or yearly cadence with a day.
-pub(crate) fn check_template_values(
-    name: &str,
-    amount_minor: i64,
-    cadence: RecurringCadence,
-    day_of_month: Option<u8>,
-) -> Result<()> {
+pub(crate) fn check_template_values(name: &str, amount_minor: i64) -> Result<()> {
     if name.trim().is_empty() {
         return Err(ValidationError::NameRequired {
             field: NameField::TemplateName,
@@ -602,16 +687,7 @@ pub(crate) fn check_template_values(
     if amount_minor <= 0 {
         return Err(ValidationError::AmountNotPositive.into());
     }
-
-    match cadence {
-        RecurringCadence::Monthly => require_day_of_month(day_of_month).map(|_| ()),
-        RecurringCadence::Weekly | RecurringCadence::Yearly => {
-            if day_of_month.is_some() {
-                return Err(ValidationError::DayOfMonthInvalid.into());
-            }
-            Ok(())
-        }
-    }
+    Ok(())
 }
 
 /// Validates the fields of a template for `entity_id` and returns them as
@@ -628,12 +704,7 @@ fn validated_fields(
     fields: &RecurringTemplateFields,
 ) -> Result<RecurringTemplateFields> {
     ensure_entity_exists(conn, entity_id)?;
-    check_template_values(
-        &fields.name,
-        fields.amount_minor,
-        fields.cadence,
-        fields.day_of_month,
-    )?;
+    check_template_values(&fields.name, fields.amount_minor)?;
     ensure_simple_entry_accounts(conn, entity_id, fields.accounts)?;
 
     let memo = fields
@@ -648,20 +719,6 @@ fn validated_fields(
         memo,
         ..fields.clone()
     })
-}
-
-/// Returns the day of the month a monthly cadence needs.
-///
-/// # Errors
-///
-/// [`ValidationError::DayOfMonthInvalid`] when `day` is `None` or outside
-/// 1–31.
-fn require_day_of_month(day: Option<u8>) -> Result<u8> {
-    let day = day.ok_or(ValidationError::DayOfMonthInvalid)?;
-    if !(1..=31).contains(&day) {
-        return Err(ValidationError::DayOfMonthInvalid.into());
-    }
-    Ok(day)
 }
 
 /// Checks that the entity has a row, archived or not.
@@ -720,8 +777,9 @@ fn load_template(conn: &Connection, id: RecurringTemplateId) -> Result<StoredTem
 ///
 /// [`Error::VaultCorrupt`] naming the column when an id, the kind, the
 /// cadence, the day of the month, the date or the bill status does not
-/// parse, when an account or the bill status the kind needs is missing, or
-/// when a column has the wrong storage class.
+/// parse, when the day of a monthly template or an account or the bill
+/// status the kind needs is missing, or when a column has the wrong storage
+/// class.
 fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
     let id = stored_id("recurring_templates.id", &read_column::<String>(row, 0)?)?;
     let entity_id = stored_id(
@@ -730,9 +788,7 @@ fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
     )?;
     let kind = parse_kind(&read_column::<String>(row, 3)?)?;
     let cadence = parse_cadence(&read_column::<String>(row, 5)?)?;
-    let day_of_month = read_column::<Option<i64>>(row, 6)?
-        .map(stored_day_of_month)
-        .transpose()?;
+    let schedule = stored_schedule(cadence, read_column(row, 6)?)?;
     let next_date = stored_date(
         "recurring_templates.next_date",
         &read_column::<String>(row, 13)?,
@@ -759,8 +815,7 @@ fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
         fields: RecurringTemplateFields {
             name: read_column(row, 2)?,
             amount_minor: read_column(row, 4)?,
-            cadence,
-            day_of_month,
+            schedule,
             accounts,
             memo: read_column(row, 12)?,
             next_date,
@@ -787,23 +842,43 @@ fn missing_part_corruption(kind: SimpleEntryKind, missing: MissingPart) -> Error
     )
 }
 
-/// Returns a template's day of the month as stored; the schema's `CHECK`
-/// keeps it in 1..=31.
+/// Builds the schedule of a stored template from its cadence and its
+/// `day_of_month` column.
+///
+/// The day is used for a monthly template only. A day stored beside another
+/// cadence is ignored, as an account stored for a part the kind lacks is:
+/// nothing is computed from it. The caller has read the column either way,
+/// so a value of the wrong storage class is corrupt for every cadence.
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] naming `recurring_templates.day_of_month` when
-/// `stored` is outside that range.
-fn stored_day_of_month(stored: i64) -> Result<u8> {
-    u8::try_from(stored)
-        .ok()
-        .filter(|day| (1..=31).contains(day))
-        .ok_or_else(|| {
-            corrupt_column(
-                "recurring_templates.day_of_month",
-                format_args!("not a day of the month: {stored}"),
-            )
-        })
+/// [`Error::VaultCorrupt`] naming `recurring_templates.day_of_month` when a
+/// monthly template has no day, which the nullable column allows and the
+/// application never writes, or a day outside 1..=31, which the schema's
+/// `CHECK` refuses.
+fn stored_schedule(
+    cadence: RecurringCadence,
+    stored_day: Option<i64>,
+) -> Result<RecurringSchedule> {
+    let corrupt = |detail: std::fmt::Arguments<'_>| {
+        corrupt_column("recurring_templates.day_of_month", detail)
+    };
+
+    match cadence {
+        RecurringCadence::Weekly => Ok(RecurringSchedule::Weekly),
+        RecurringCadence::Yearly => Ok(RecurringSchedule::Yearly),
+        RecurringCadence::Monthly => {
+            let stored = stored_day.ok_or_else(|| {
+                corrupt(format_args!("no day of the month for a monthly template"))
+            })?;
+            let day_of_month = u8::try_from(stored)
+                .ok()
+                .and_then(|day| DayOfMonth::new(day).ok())
+                .ok_or_else(|| corrupt(format_args!("not a day of the month: {stored}")))?;
+
+            Ok(RecurringSchedule::Monthly { day_of_month })
+        }
+    }
 }
 
 /// Reads the role account id in column `index` of `row`; `None` when the
@@ -848,19 +923,7 @@ fn parse_kind(stored: &str) -> Result<SimpleEntryKind> {
     }
 }
 
-/// Returns the text `cadence` is stored as in `recurring_templates.cadence`.
-///
-/// The strings are part of the vault format; [`parse_cadence`] reads them
-/// back.
-fn cadence_str(cadence: RecurringCadence) -> &'static str {
-    match cadence {
-        RecurringCadence::Monthly => "monthly",
-        RecurringCadence::Weekly => "weekly",
-        RecurringCadence::Yearly => "yearly",
-    }
-}
-
-/// Parses the text [`cadence_str`] writes.
+/// Parses the text [`RecurringCadence::identifier`] writes.
 ///
 /// # Errors
 ///
@@ -878,20 +941,7 @@ fn parse_cadence(stored: &str) -> Result<RecurringCadence> {
     }
 }
 
-/// Returns the text `status` is stored as in
-/// `recurring_templates.bill_status`.
-///
-/// The strings are part of the vault format; [`parse_bill_status`] reads
-/// them back.
-fn bill_status_str(status: SimpleBillStatus) -> &'static str {
-    match status {
-        SimpleBillStatus::Paid => "paid",
-        SimpleBillStatus::Unpaid => "unpaid",
-        SimpleBillStatus::PayExisting => "pay_existing",
-    }
-}
-
-/// Parses the text [`bill_status_str`] writes.
+/// Parses the text [`SimpleBillStatus::identifier`] writes.
 ///
 /// # Errors
 ///
@@ -919,31 +969,36 @@ mod tests {
         parse_date(iso).expect("date")
     }
 
+    /// The schedule of a template that recurs on `day` of every month.
+    fn monthly(day: u8) -> RecurringSchedule {
+        RecurringSchedule::Monthly {
+            day_of_month: DayOfMonth::new(day).expect("a test names a day from 1 to 31"),
+        }
+    }
+
     #[test]
     fn weekly_adds_seven_days() {
         let next =
-            advance_next_date(date("2026-03-10"), RecurringCadence::Weekly, None).expect("weekly");
+            advance_next_date(date("2026-03-10"), RecurringSchedule::Weekly).expect("weekly");
         assert_eq!(next, date("2026-03-17"));
     }
 
     #[test]
     fn yearly_adds_one_year() {
         let next =
-            advance_next_date(date("2026-03-15"), RecurringCadence::Yearly, None).expect("yearly");
+            advance_next_date(date("2026-03-15"), RecurringSchedule::Yearly).expect("yearly");
         assert_eq!(next, date("2027-03-15"));
     }
 
     #[test]
     fn yearly_feb_29_advances_to_next_valid_day() {
-        let next =
-            advance_next_date(date("2024-02-29"), RecurringCadence::Yearly, None).expect("leap");
+        let next = advance_next_date(date("2024-02-29"), RecurringSchedule::Yearly).expect("leap");
         assert_eq!(next, date("2025-03-01"));
     }
 
     #[test]
     fn monthly_day_31_january_overflows_february() {
-        let next = advance_next_date(date("2026-01-31"), RecurringCadence::Monthly, Some(31))
-            .expect("jan");
+        let next = advance_next_date(date("2026-01-31"), monthly(31)).expect("jan");
         assert_eq!(
             next,
             date("2026-03-03"),
@@ -953,51 +1008,45 @@ mod tests {
 
     #[test]
     fn monthly_overflow_date_returns_to_day_of_month() {
-        let next = advance_next_date(date("2026-03-03"), RecurringCadence::Monthly, Some(31))
+        let next = advance_next_date(date("2026-03-03"), monthly(31))
             .expect("overflow belongs to February");
         assert_eq!(next, date("2026-03-31"));
     }
 
     #[test]
     fn monthly_day_31_from_march_overflows_april() {
-        let next = advance_next_date(date("2026-03-31"), RecurringCadence::Monthly, Some(31))
-            .expect("mar");
+        let next = advance_next_date(date("2026-03-31"), monthly(31)).expect("mar");
         assert_eq!(next, date("2026-05-01"), "Apr 1 + 30 days");
     }
 
     #[test]
     fn monthly_day_15_is_next_month() {
-        let next = advance_next_date(date("2026-01-15"), RecurringCadence::Monthly, Some(15))
-            .expect("mid");
+        let next = advance_next_date(date("2026-01-15"), monthly(15)).expect("mid");
         assert_eq!(next, date("2026-02-15"));
     }
 
     #[test]
     fn monthly_leap_year_jan_31_overflows_to_march_2() {
-        let next = advance_next_date(date("2024-01-31"), RecurringCadence::Monthly, Some(31))
-            .expect("leap jan");
+        let next = advance_next_date(date("2024-01-31"), monthly(31)).expect("leap jan");
         assert_eq!(next, date("2024-03-02"), "Feb 1 + 30 days in a leap year");
     }
 
     #[test]
     fn monthly_from_a_later_day_than_day_of_month_moves_forward() {
-        let next = advance_next_date(date("2026-01-20"), RecurringCadence::Monthly, Some(15))
-            .expect("mismatch");
+        let next = advance_next_date(date("2026-01-20"), monthly(15)).expect("mismatch");
         assert_eq!(next, date("2026-02-15"));
     }
 
     #[test]
     fn monthly_from_an_earlier_day_than_day_of_month_lands_in_the_same_month() {
-        let next = advance_next_date(date("2026-01-10"), RecurringCadence::Monthly, Some(15))
-            .expect("mismatch");
+        let next = advance_next_date(date("2026-01-10"), monthly(15)).expect("mismatch");
         assert_eq!(next, date("2026-01-15"));
     }
 
     #[test]
     fn monthly_december_advances_into_january() {
-        let advance = |from: &str, day: u8| {
-            advance_next_date(date(from), RecurringCadence::Monthly, Some(day)).expect("december")
-        };
+        let advance =
+            |from: &str, day: u8| advance_next_date(date(from), monthly(day)).expect("december");
         assert_eq!(advance("2026-12-15", 15), date("2027-01-15"));
         assert_eq!(advance("2026-12-20", 15), date("2027-01-15"));
         assert_eq!(advance("2026-12-31", 31), date("2027-01-31"));
@@ -1009,8 +1058,7 @@ mod tests {
         let end = date("2025-03-01");
         while from < end {
             for day in 1..=31 {
-                let next = advance_next_date(from, RecurringCadence::Monthly, Some(day))
-                    .expect("in range");
+                let next = advance_next_date(from, monthly(day)).expect("in range");
                 assert!(next > from, "from {from} day {day} gave {next}");
             }
             from = from.next_day().expect("in range");
@@ -1025,9 +1073,73 @@ mod tests {
     }
 
     #[test]
-    fn monthly_requires_day_of_month() {
-        let err = advance_next_date(date("2026-01-15"), RecurringCadence::Monthly, None)
-            .expect_err("monthly needs day");
-        assert_eq!(err, Error::Validation(ValidationError::DayOfMonthInvalid));
+    fn a_schedule_is_monthly_exactly_when_it_has_a_day() {
+        use RecurringCadence::{Monthly, Weekly, Yearly};
+        let invalid = Err(Error::Validation(ValidationError::DayOfMonthInvalid));
+
+        assert_eq!(
+            RecurringSchedule::from_cadence(Monthly, Some(31)),
+            Ok(monthly(31))
+        );
+        assert_eq!(RecurringSchedule::from_cadence(Monthly, None), invalid);
+        assert_eq!(RecurringSchedule::from_cadence(Monthly, Some(0)), invalid);
+        assert_eq!(RecurringSchedule::from_cadence(Monthly, Some(32)), invalid);
+
+        for (cadence, schedule) in [
+            (Weekly, RecurringSchedule::Weekly),
+            (Yearly, RecurringSchedule::Yearly),
+        ] {
+            assert_eq!(RecurringSchedule::from_cadence(cadence, None), Ok(schedule));
+            assert_eq!(RecurringSchedule::from_cadence(cadence, Some(10)), invalid);
+        }
+    }
+
+    #[test]
+    fn a_schedule_gives_back_the_pair_it_was_built_from() {
+        for cadence in [
+            RecurringCadence::Weekly,
+            RecurringCadence::Monthly,
+            RecurringCadence::Yearly,
+        ] {
+            for day in (1..=31).map(Some).chain([None]) {
+                let Ok(schedule) = RecurringSchedule::from_cadence(cadence, day) else {
+                    continue;
+                };
+                assert_eq!(
+                    (schedule.cadence(), schedule.day_of_month()),
+                    (cadence, day)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_bill_status_is_stored_as_the_text_serde_writes() {
+        for status in [
+            SimpleBillStatus::Paid,
+            SimpleBillStatus::Unpaid,
+            SimpleBillStatus::PayExisting,
+        ] {
+            assert_eq!(
+                serde_json::to_value(status).unwrap(),
+                serde_json::Value::from(status.identifier())
+            );
+            assert_eq!(parse_bill_status(status.identifier()), Ok(status));
+        }
+    }
+
+    #[test]
+    fn a_cadence_is_stored_as_the_text_serde_writes() {
+        for cadence in [
+            RecurringCadence::Weekly,
+            RecurringCadence::Monthly,
+            RecurringCadence::Yearly,
+        ] {
+            assert_eq!(
+                serde_json::to_value(cadence).unwrap(),
+                serde_json::Value::from(cadence.identifier())
+            );
+            assert_eq!(parse_cadence(cadence.identifier()), Ok(cadence));
+        }
     }
 }

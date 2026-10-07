@@ -5,6 +5,7 @@
 mod common;
 
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
+use oikonomia_core::error::{Error, VaultCorruption};
 use rusqlite::Connection;
 
 /// Rebuild the v3 documents shape (nullable `entry_id`, no unique index) and
@@ -25,11 +26,19 @@ fn downgrade_to_v3_with_bad_data(conn: &Connection) {
             created_at TEXT NOT NULL,
             analysis_json TEXT
         );
-        INSERT INTO entities (id, name, base_currency, fiscal_year_start_month, chart_template, created_at)
+        INSERT INTO entities (
+            id, name, base_currency, fiscal_year_start_month, chart_template, created_at
+        )
         VALUES ('e1', 'Book', 'EUR', 1, 'blank', 'unix:1');
-        INSERT INTO journal_entries (id, entity_id, entry_date, description, reference, status, created_at, posted_at, voided_by_entry_id)
+        INSERT INTO journal_entries (
+            id, entity_id, entry_date, description, reference, status, created_at, posted_at,
+            voided_by_entry_id
+        )
         VALUES ('j1', 'e1', '2026-01-01', 'Entry', NULL, 'posted', 'unix:1', 'unix:1', NULL);
-        INSERT INTO documents (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json)
+        INSERT INTO documents (
+            id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+            analysis_json
+        )
         VALUES ('d1', 'e1', NULL, 'orphan.pdf', 'application/pdf', 1, x'00', 'unix:1', NULL),
                ('d2', 'e1', 'j1', 'invoice.pdf', 'application/pdf', 1, x'00', 'unix:2', NULL),
                ('d3', 'e1', 'j1', 'invoice.pdf', 'application/pdf', 1, x'00', 'unix:3', NULL),
@@ -92,7 +101,10 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
 
     // The constraints now actively reject violations.
     let orphan_insert = conn.execute(
-        "INSERT INTO documents (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json)
+        "INSERT INTO documents (
+             id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+             analysis_json
+         )
          VALUES ('dx', 'e1', NULL, 'x.pdf', 'application/pdf', 1, x'00', 'unix:9', NULL)",
         [],
     );
@@ -102,7 +114,10 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
     );
 
     let dup_insert = conn.execute(
-        "INSERT INTO documents (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json)
+        "INSERT INTO documents (
+             id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+             analysis_json
+         )
          VALUES ('dy', 'e1', 'j1', 'invoice.pdf', 'application/pdf', 1, x'00', 'unix:9', NULL)",
         [],
     );
@@ -110,6 +125,34 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
         is_constraint_violation(&dup_insert),
         "UNIQUE rejects duplicate names: {dup_insert:?}"
     );
+}
+
+#[test]
+fn a_document_name_that_is_not_text_is_a_corrupt_vault_and_the_step_is_undone() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    downgrade_to_v3_with_bad_data(conn);
+    conn.execute(
+        "UPDATE documents SET filename = x'00ff' WHERE id = 'd4'",
+        [],
+    )
+    .expect("damage the name");
+
+    let refused = migrate(conn);
+
+    assert!(
+        matches!(
+            &refused,
+            Err(Error::VaultCorrupt(VaultCorruption::Column { column, .. })) if column == "filename"
+        ),
+        "{refused:?}"
+    );
+    let orphans: i64 = conn
+        .query_row("SELECT COUNT(1) FROM documents WHERE id = 'd1'", [], |r| {
+            r.get(0)
+        })
+        .expect("orphans");
+    assert_eq!(orphans, 1, "the orphan the step deleted first is back");
 }
 
 #[test]

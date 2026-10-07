@@ -77,5 +77,5 @@ See [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Schema
 
-- `vault_meta.schema_version` starts at 1 on init; `db::migrate` upgrades to current (v7 = recurring templates).
+- `vault_meta.schema_version` starts at 1 on init; `db::migrate` upgrades to current (v8 = indexes on void links and entry lines; v7 = recurring templates).
 - Migrations run on vault init and unlock.

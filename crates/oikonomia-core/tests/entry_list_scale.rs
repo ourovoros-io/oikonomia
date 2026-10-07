@@ -1,10 +1,9 @@
 //! Listing entries binds the same few variables however many entries match,
 //! so a book with more entries than `SQLite` accepts bound variables lists.
 //!
-//! The real limit is 32766. Listing that many entries takes minutes today for
-//! an unrelated reason (the voided flag scans `journal_entries` once per
-//! entry), so the test lowers the limit on its own connection instead and
-//! lists a handful of entries.
+//! The real limit is 32766. Posting that many entries one by one would make
+//! the test slow for no gain, so it lowers the limit on its own connection
+//! instead and lists a handful of entries.
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 

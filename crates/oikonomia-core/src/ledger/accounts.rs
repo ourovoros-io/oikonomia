@@ -87,7 +87,7 @@ pub fn list_accounts(conn: &Connection, entity_id: EntityId) -> Result<Vec<Accou
         .query_map([entity_id.to_string()], |row| Ok(map_account(row)))
         .database("list accounts")?;
 
-    collect_rows(rows)
+    collect_rows("list accounts", rows)
 }
 
 /// Returns one account, archived or not.

@@ -83,8 +83,10 @@ pub struct JournalCsvLine {
 /// Returns the file name to suggest when saving an export,
 /// `oikonomia-journal-<entity>-YYYY-MM-DD.csv`.
 ///
-/// `<entity>` is `entity_name` reduced to lowercase ASCII letters, digits
-/// and single hyphens, or `entity` when nothing is left of it.
+/// `<entity>` is `entity_name` in lowercase with its letters and digits, of
+/// any script, kept and each run of anything else as one hyphen, or `entity`
+/// when it has no letter or digit. The name is not shortened, so a very long
+/// entity name gives a very long file name.
 #[must_use]
 pub fn default_journal_export_file_name(entity_name: &str) -> String {
     let slug = sanitize_file_stem(entity_name);
@@ -97,7 +99,9 @@ pub fn default_journal_export_file_name(entity_name: &str) -> String {
 /// Columns: `date`, `description`, `reference`, `account_code`, `account_name`,
 /// `debit_minor`, `credit_minor`, `status`. Amounts are **integer minor units**,
 /// never floating point. `status` is `posted` or `voided`. One row is written
-/// per journal line, ordered by entry date, then creation time, then line.
+/// per journal line, ordered by entry date, then creation time, then the
+/// order the entries were posted in, then line, so the lines of an entry are
+/// always together.
 ///
 /// Text cells that a spreadsheet would run as a formula are prefixed with an
 /// apostrophe; [`parse_journal_export`] removes it again.
@@ -133,8 +137,8 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
             JOIN accounts a ON a.id = jl.account_id
             WHERE je.entity_id = ?1
               AND je.status = 'posted'
-              AND (je.hidden = 0 OR je.hidden IS NULL)
-            ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
+              AND je.hidden = 0
+            ORDER BY je.entry_date ASC, je.created_at ASC, je.rowid ASC, jl.line_order ASC
             ",
         )
         .database("read journal for export")?;
@@ -345,18 +349,26 @@ fn restore_formula(cell: &str) -> &str {
         .unwrap_or(cell)
 }
 
-/// Reduces an entity name to a file-name stem that is safe on every
-/// platform: lowercase ASCII letters and digits, with each run of spaces,
-/// hyphens and underscores as one hyphen.
+/// Reduces an entity name to a file-name stem: its letters and digits, of
+/// any script, in lowercase, with each run of anything else as one hyphen.
 ///
-/// Every other character is dropped, so a name in a non-Latin script comes
-/// out empty and the stem falls back to `entity`.
+/// Letters and digits are what `char::is_alphanumeric` says they are, so a
+/// name in Greek or Japanese keeps its words. Everything else becomes a
+/// hyphen, which takes out the characters a file name cannot hold on some
+/// platform (`/ \ : * ? " < > |`, control characters) along with spaces and
+/// punctuation; a mark that combines with a letter but is not one itself is
+/// among them. The name is lowered as a whole, not letter by letter, so a
+/// Greek capital sigma that ends a word gets its final form. A name with no
+/// letter or digit gives `entity`.
+///
+/// The stem is not shortened and is not checked against the device names
+/// Windows reserves: the caller puts it in the middle of a longer name.
 fn sanitize_file_stem(name: &str) -> String {
     let mut stem = String::new();
-    for character in name.chars() {
-        if character.is_ascii_alphanumeric() {
-            stem.push(character.to_ascii_lowercase());
-        } else if matches!(character, ' ' | '-' | '_') && !stem.ends_with('-') {
+    for character in name.to_lowercase().chars() {
+        if character.is_alphanumeric() {
+            stem.push(character);
+        } else if !stem.ends_with('-') {
             stem.push('-');
         }
     }
@@ -502,6 +514,47 @@ mod tests {
                 .and_then(|extension| extension.to_str()),
             Some("csv")
         );
+    }
+
+    #[test]
+    fn a_name_in_another_script_keeps_its_letters_in_the_file_name() {
+        assert_eq!(sanitize_file_stem("Οικονομία ΑΕ"), "οικονομία-αε");
+        assert_eq!(
+            sanitize_file_stem("ΛΟΓΑΡΙΑΣΜΟΣ"),
+            "λογαριασμος",
+            "a capital sigma at the end of a word is lowered to the final form"
+        );
+        assert_eq!(
+            sanitize_file_stem("Müller & Söhne GmbH"),
+            "müller-söhne-gmbh"
+        );
+        assert_eq!(sanitize_file_stem("家計簿 2026"), "家計簿-2026");
+        assert_eq!(sanitize_file_stem("Книга №1"), "книга-1");
+
+        let greek = default_journal_export_file_name("Σπίτι");
+        assert!(greek.starts_with("oikonomia-journal-σπίτι-"), "{greek}");
+    }
+
+    #[test]
+    fn everything_that_is_not_a_letter_or_a_digit_becomes_one_hyphen() {
+        assert_eq!(sanitize_file_stem("Smith & Sons, Ltd."), "smith-sons-ltd");
+        assert_eq!(sanitize_file_stem("  a__b--c  "), "a-b-c");
+        assert_eq!(
+            sanitize_file_stem("a/b\\c:d*e?f\"g<h>i|j"),
+            "a-b-c-d-e-f-g-h-i-j"
+        );
+        assert_eq!(sanitize_file_stem("../../etc/passwd"), "etc-passwd");
+        assert_eq!(
+            sanitize_file_stem("tab\there\nnewline\0nul"),
+            "tab-here-newline-nul"
+        );
+    }
+
+    #[test]
+    fn a_name_with_no_letter_or_digit_falls_back_to_entity() {
+        for name in ["", "   ", "!!!", "—…—", "€$£", "- _ -", "🙂🙂"] {
+            assert_eq!(sanitize_file_stem(name), "entity", "{name:?}");
+        }
     }
 }
 

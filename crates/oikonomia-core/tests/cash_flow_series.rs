@@ -9,8 +9,8 @@ use oikonomia_core::domain::{ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::error::{Error, Resource};
 use oikonomia_core::ledger::{
-    CashFlowGranularity, CashFlowSeries, activity_window, cash_flow_series, dashboard_summary,
-    set_entry_hidden, void_entry,
+    CashFlowGranularity, CashFlowSeries, activity_window, cash_flow_series,
+    cash_flow_series_for_window, dashboard_summary, set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::{DateText, parse_date};
@@ -453,5 +453,99 @@ fn an_explicit_inverted_window_is_a_validation_error() {
     assert_eq!(
         activity_window(conn, EntityId::generate(), None, None, today).expect_err("unknown"),
         Error::NotFound(Resource::Entity)
+    );
+}
+
+#[test]
+fn a_series_for_an_open_filter_covers_the_window_the_entries_span() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let e = common::book(conn, "Open", ChartTemplate::Personal);
+    let today = date("2026-09-15");
+    expense(conn, e, "2026-03-05", 1_200);
+    income(conn, e, "2026-08-20", 5_000);
+    let for_window = |from: Option<&str>, to: Option<&str>| {
+        cash_flow_series_for_window(conn, e, from.map(date), to.map(date), today).expect("series")
+    };
+
+    // No bound: from the first active entry to the last, which is longer
+    // than a quarter and so bucketed per month.
+    let open = for_window(None, None);
+    assert_eq!(
+        (open.from, open.to),
+        (date("2026-03-05"), date("2026-08-20"))
+    );
+    assert_eq!(open.granularity, CashFlowGranularity::Month);
+    assert_eq!(
+        (open.total_income_minor, open.total_expenses_minor),
+        (5_000, 1_200)
+    );
+    assert_contiguous(&open);
+    assert_eq!(open, series(conn, e, "2026-03-05", "2026-08-20"));
+
+    // One bound: the other comes from the entries, never from today.
+    assert_eq!(
+        for_window(Some("2026-08-01"), None),
+        series(conn, e, "2026-08-01", "2026-08-20")
+    );
+    assert_eq!(
+        for_window(None, Some("2026-03-31")),
+        series(conn, e, "2026-03-05", "2026-03-31")
+    );
+
+    // Both bounds: the window as given, entries or not.
+    assert_eq!(
+        for_window(Some("2026-01-01"), Some("2026-01-31")),
+        series(conn, e, "2026-01-01", "2026-01-31")
+    );
+}
+
+#[test]
+fn a_series_for_an_open_filter_on_an_empty_book_is_the_one_day_passed_as_today() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let e = common::book(conn, "Empty", ChartTemplate::Personal);
+    let today = date("2026-09-15");
+
+    let empty = cash_flow_series_for_window(conn, e, None, None, today).expect("series");
+
+    assert_eq!((empty.from, empty.to), (today, today));
+    assert_eq!(empty.granularity, CashFlowGranularity::Day);
+    assert_eq!(empty.buckets.len(), 1);
+    assert_eq!(empty.net_minor, 0);
+
+    let from_only = cash_flow_series_for_window(conn, e, Some(date("2026-09-01")), None, today)
+        .expect("series");
+    assert_eq!((from_only.from, from_only.to), (date("2026-09-01"), today));
+
+    // Only the end given: the window is that one day, and today plays no part.
+    let to_only = cash_flow_series_for_window(conn, e, None, Some(date("2026-02-01")), today)
+        .expect("series");
+    assert_eq!(
+        (to_only.from, to_only.to),
+        (date("2026-02-01"), date("2026-02-01"))
+    );
+}
+
+#[test]
+fn a_series_for_a_filter_refuses_what_its_two_halves_refuse() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let e = common::book(conn, "Refused", ChartTemplate::Personal);
+    let today = date("2026-09-15");
+
+    assert_eq!(
+        cash_flow_series_for_window(
+            conn,
+            e,
+            Some(date("2026-05-01")),
+            Some(date("2026-04-01")),
+            today
+        ),
+        Err(Error::Validation(ValidationError::DateRangeInverted))
+    );
+    assert_eq!(
+        cash_flow_series_for_window(conn, EntityId::generate(), None, None, today),
+        Err(Error::NotFound(Resource::Entity))
     );
 }

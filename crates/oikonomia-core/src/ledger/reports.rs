@@ -52,6 +52,7 @@ use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_type_str, add_minor, normal_balance, parse_account_type,
     subtract_minor, sum_minor, sum_type_as_of, sum_type_in_range,
 };
+use crate::ledger::calendar::{add_months, months_between};
 use crate::ledger::entities::get_entity;
 use crate::util::format_date;
 use rusqlite::Connection;
@@ -261,7 +262,8 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: Date) -> Res
         )?);
     }
 
-    lines.retain(has_activity);
+    // Every line has a debit or a credit: `active_lines` returns no other,
+    // and the retained-earnings row is added only when it is not zero.
     let total_debits = sum_minor(lines.iter().map(|line| line.debit_minor))?;
     let total_credits = sum_minor(lines.iter().map(|line| line.credit_minor))?;
 
@@ -466,11 +468,11 @@ pub fn previous_window(from: Date, to: Date) -> Option<(Date, Date)> {
     let previous_to = from.previous_day()?;
     let whole_months = from.day() == 1 && to.next_day().is_none_or(|next| next.day() == 1);
     if whole_months {
-        let months = month_index(to) - month_index(from) + 1;
-        return Some((
-            date_from_month_index(month_index(from) - months)?,
-            previous_to,
-        ));
+        let months = months_between(from, to) + 1;
+        let (year, month) = add_months(from.year(), from.month(), -months)?;
+        let previous_from = Date::from_calendar_date(year, month, 1).ok()?;
+
+        return Some((previous_from, previous_to));
     }
     let length = to.to_julian_day() - from.to_julian_day();
     let previous_from = Date::from_julian_day(previous_to.to_julian_day() - length).ok()?;
@@ -516,23 +518,6 @@ fn profit_and_loss_filtered(
         total_expenses,
         net_income,
     })
-}
-
-/// Numbers the calendar months from year zero: January of year 0 is 0,
-/// February is 1, and January of year 1 is 12.
-///
-/// The difference of two indexes is the number of calendar months between
-/// two dates, whatever the years.
-fn month_index(date: Date) -> i64 {
-    i64::from(date.year()) * 12 + i64::from(u8::from(date.month())) - 1
-}
-
-/// Returns the first day of the month [`month_index`] numbers `index`, or
-/// `None` when that month is outside the calendar.
-fn date_from_month_index(index: i64) -> Option<Date> {
-    let year = i32::try_from(index.div_euclid(12)).ok()?;
-    let month = u8::try_from(index.rem_euclid(12) + 1).ok()?;
-    Date::from_calendar_date(year, Month::try_from(month).ok()?, 1).ok()
 }
 
 /// Returns the Expense account with the largest positive spend in the
@@ -672,12 +657,32 @@ impl LineQuery {
 /// - [`Error::Database`] on database errors, which include a total that overflows
 ///   `i64` inside `SQLite`'s `SUM`.
 fn active_lines(conn: &Connection, query: LineQuery) -> Result<Vec<ReportLine>> {
-    let hidden_predicate = if query.omit_hidden {
-        "AND (je.hidden = 0 OR je.hidden IS NULL)"
-    } else {
-        ""
-    };
-    let sql = format!(
+    let mut stmt = conn
+        .prepare(&active_lines_sql(query.omit_hidden))
+        .database("read account activity")?;
+
+    let rows = stmt
+        .query_map(
+            rusqlite::params![
+                query.entity_id.to_string(),
+                query.from.map(format_date),
+                format_date(query.to),
+                account_type_str(query.account_type),
+            ],
+            |row| Ok(map_report_line(row)),
+        )
+        .database("read account activity")?;
+
+    let lines = collect_rows("read account activity", rows)?;
+    Ok(lines.into_iter().filter(has_activity).collect())
+}
+
+/// The query of [`active_lines`]: the accounts of entity `?1` and type `?4`,
+/// each with its debits and credits on active entries dated from `?2` (open
+/// when `NULL`) through `?3`, hidden entries left out with `omit_hidden`.
+fn active_lines_sql(omit_hidden: bool) -> String {
+    let hidden_predicate = if omit_hidden { "AND je.hidden = 0" } else { "" };
+    format!(
         "
         SELECT a.code, a.name, a.account_type,
                COALESCE(t.debits, 0),
@@ -699,24 +704,7 @@ fn active_lines(conn: &Connection, query: LineQuery) -> Result<Vec<ReportLine>> 
           AND a.account_type = ?4
         ORDER BY a.sort_order, a.code
         "
-    );
-
-    let mut stmt = conn.prepare(&sql).database("read account activity")?;
-
-    let rows = stmt
-        .query_map(
-            rusqlite::params![
-                query.entity_id.to_string(),
-                query.from.map(format_date),
-                format_date(query.to),
-                account_type_str(query.account_type),
-            ],
-            |row| Ok(map_report_line(row)),
-        )
-        .database("read account activity")?;
-
-    let lines = collect_rows(rows)?;
-    Ok(lines.into_iter().filter(has_activity).collect())
+    )
 }
 
 /// Returns whether any debit or credit was posted to the line's account in
@@ -730,10 +718,11 @@ fn has_activity(line: &ReportLine) -> bool {
 
 /// The earliest date an entry can have: the first day of year zero.
 ///
-/// This is the lower bound of what [`parse_date`] reads, and every stored
-/// entry date went through it. `Date::MIN` would be the wrong bound for the
-/// queries, which compare dates as text: it is written with a leading minus
-/// sign (`-9999-01-01`), and text with a minus sign does not sort by date.
+/// This is the lower bound of what [`parse_date`](crate::util::parse_date)
+/// reads, and every stored entry date went through it. `Date::MIN` would be
+/// the wrong bound for the queries, which compare dates as text: it is
+/// written with a leading minus sign (`-9999-01-01`), and text with a minus
+/// sign does not sort by date.
 const BOOKS_START: Date = time::macros::date!(0000 - 01 - 01);
 
 /// The profit and loss that no closing entry has moved into equity, split at
@@ -931,6 +920,23 @@ mod tests {
                 .map(listed_lines::position)
                 .collect(),
         );
+    }
+
+    #[test]
+    fn a_report_tests_for_a_void_through_the_index() {
+        let conn = crate::db::migrated_connection();
+        let entity = EntityId::generate().to_string();
+        let from: Option<String> = None;
+
+        for omit_hidden in [false, true] {
+            let plan = crate::db::query_plan(
+                &conn,
+                &active_lines_sql(omit_hidden),
+                &[&entity, &from, &"2026-12-31", &"expense"],
+            );
+
+            assert!(plan.contains("idx_entries_voided_by"), "{plan}");
+        }
     }
 
     #[test]

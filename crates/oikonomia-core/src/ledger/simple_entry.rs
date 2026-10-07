@@ -78,6 +78,22 @@ pub enum SimpleBillStatus {
     PayExisting,
 }
 
+impl SimpleBillStatus {
+    /// Returns the status as the UI and the vault write it: `paid`, `unpaid`
+    /// or `pay_existing`.
+    ///
+    /// This is the text serde writes and the text stored in
+    /// `recurring_templates.bill_status`, so it is part of the vault format.
+    #[must_use]
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::Paid => "paid",
+            Self::Unpaid => "unpaid",
+            Self::PayExisting => "pay_existing",
+        }
+    }
+}
+
 /// The two accounts of a simple entry, named for the part each plays.
 ///
 /// Each variant is one valid combination of a kind, a bill status and the

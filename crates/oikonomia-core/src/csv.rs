@@ -11,9 +11,10 @@
 //! # Amounts
 //!
 //! An amount cell becomes signed integer minor units; no floating point is
-//! involved. [`parse_signed_minor`] does it, for a currency with `exponent`
-//! decimals ([`currency_minor_exponent`]). What it accepts, with the result
-//! for a two-decimal currency:
+//! involved. A statement is read for the book's base currency, which gives
+//! the number of decimals ([`currency_minor_exponent`]) and the one currency
+//! code a cell may carry. What is accepted, with the result for a book in
+//! euros:
 //!
 //! | Part             | Accepted                      | Example                  |
 //! |------------------|-------------------------------|--------------------------|
@@ -24,23 +25,33 @@
 //! | Decimal mark     | `.` or `,`                    | `1234,5` → 123450        |
 //! | Grouping         | The other separator           | `1.234,56` → 123456      |
 //! |                  |                               | `1,234.56` → 123456      |
+//! |                  | An apostrophe, `'` or U+2019  | `1'234.56` → 123456      |
+//! |                  | Whitespace between digits     | `1 234,56` → 123456      |
 //! | Three-digit tail | A thousands group             | `1.234` → 123400         |
 //! | Currency sign    | `€ $ £ ¥ ₹ ₺ ₩`, anywhere     | `€1.234,56` → 123456     |
-//! | Currency code    | Three ASCII letters at an end | `12.00 EUR` → 1200       |
-//! | Whitespace       | Ignored anywhere              | `1 234,56` → 123456      |
+//! | Currency code    | The book's code, at an end    | `12.00 EUR` → 1200       |
+//! | Three-letter word| Dropped, unless all capitals  | `25,00 lei` → 2500       |
+//! | Other whitespace | Ignored                       | `- 25 EUR` → −2500       |
 //! | Exponent         | None                          | `1e3` is rejected        |
 //!
-//! The decimal mark is the last separator in the cell and is followed by at
+//! The decimal mark is the last `.` or `,` in the cell and is followed by at
 //! most `exponent` digits. Groups are of three digits after a first group of
-//! one to three with no leading zero. A three-digit tail is a group and not
-//! a fraction unless the currency has three decimals.
+//! one to three with no leading zero, whichever separator groups them. A
+//! three-digit tail after a `.` or `,` is a group and not a fraction unless
+//! the currency has three decimals. An apostrophe and whitespace between
+//! digits (a space, U+00A0 or the narrow U+202F) are never the decimal mark.
 //!
 //! Anything else is rejected, not guessed at: a second sign (`-25-`), a
 //! fraction longer than the currency has (`0.125` in EUR), irregular
-//! grouping (`1,2,3.45`), an apostrophe as the grouping character
-//! (`1'234.56`), a currency sign outside the list, and a separator with no
-//! digit. The exact rules and their order are in the `csv/amount.rs` module
-//! doc.
+//! grouping (`1,2,3.45`, `12'34`, `1 2 3,45`), a currency sign outside the
+//! list, the code of another currency than the book's (`25 USD` in a book in
+//! euros), and a separator with no digit. A code is three capital letters;
+//! the parser has no list of currencies, so a code in lower case (`25 usd`)
+//! is dropped as a word and read in the book's currency, and a capitalised
+//! word that is no currency is rejected as a code. The exact rules and their
+//! order are in the `csv/amount.rs` module doc. [`parse_signed_minor`] is the same
+//! grammar for a caller that has a number of decimals and no book: it drops
+//! any three-letter code.
 //!
 //! # Amount sign → kind
 //!
@@ -51,23 +62,36 @@
 //! the row invalid.
 //!
 //! A file that does not follow the convention is handled by its columns,
-//! never by a setting that flips every sign: separate debit and credit
-//! columns are read as money out and money in whatever sign they carry, and
-//! a direction column ([`CsvColumnMapping::direction`]) decides the sign of
-//! the amount beside it, whatever sign that amount was written with.
+//! never by a setting that flips every sign. Separate debit and credit
+//! columns are read as money out and money in, and a minus written in one
+//! of them reverses it: a negative debit is money in (a debit taken back)
+//! and a negative credit is money out. A direction column
+//! ([`CsvColumnMapping::direction`]) decides the sign of the amount beside
+//! it, whatever sign that amount was written with. The `csv/parse.rs` module
+//! doc has the table of the debit and credit cases.
 //!
 //! # Duplicate detection
 //!
 //! A row matches an existing **active** journal entry (posted, not voided,
 //! not a void-reversal) when all three are equal:
 //! - booking date (`YYYY-MM-DD`)
-//! - amount in minor units (absolute value of the signed CSV amount; for
-//!   ledger entries, `Σ debit_minor`)
+//! - signed amount in minor units, negative for money out
 //! - description after [`normalize_description`]
+//!
+//! The sign is part of the rule, so a purchase and its refund (the same
+//! size, day and text, in opposite directions) are two entries. A row's
+//! signed amount is the one the CSV gave it. A ledger entry's size is
+//! `Σ debit_minor`, and its sign follows what it adds to the result, the
+//! credits minus the debits of its lines on income and expense accounts:
+//! positive is money in, negative is money out. An entry that adds nothing
+//! to the result (a transfer between the book's own accounts, the payment of
+//! a bill recorded earlier) matches a row of either sign, because the
+//! statement of the account the money left shows it negative and the
+//! statement of the account it reached shows it positive.
 //!
 //! Preview sets `duplicate: true` on matches, including later rows in the
 //! same file that repeat an earlier parsed row. [`post_import_rows`] **skips**
-//! those keys unless `include_duplicates` is true. Skipped duplicates are
+//! those rows unless `include_duplicates` is true. Skipped duplicates are
 //! not an error.
 //!
 //! # Export amounts
@@ -223,10 +247,12 @@ pub struct CsvColumnMapping {
     /// Signed amount column. Mutually exclusive with [`Self::debit`] / [`Self::credit`].
     #[serde(default)]
     pub amount: Option<String>,
-    /// Debit (money-out) column; requires [`Self::credit`] when mapping is explicit.
+    /// Debit (money-out) column; requires [`Self::credit`] when mapping is
+    /// explicit. A negative cell is a debit taken back: money in.
     #[serde(default)]
     pub debit: Option<String>,
-    /// Credit (money-in) column; requires [`Self::debit`] when mapping is explicit.
+    /// Credit (money-in) column; requires [`Self::debit`] when mapping is
+    /// explicit. A negative cell is a credit taken back: money out.
     #[serde(default)]
     pub credit: Option<String>,
     /// Optional reference / check-number column.
@@ -263,8 +289,8 @@ pub struct CsvImportPreview {
 pub struct CsvImportPreviewRow {
     /// 1-based CSV record number (the header is record 1).
     pub source_row: u32,
-    /// True when date + amount + normalized description matches an active
-    /// entry or an earlier parsed row in this file.
+    /// True when date + signed amount + normalized description matches an
+    /// active entry or an earlier parsed row in this file.
     pub duplicate: bool,
     /// Set when this row cannot be posted as-is: a code the UI words, never
     /// a sentence.
