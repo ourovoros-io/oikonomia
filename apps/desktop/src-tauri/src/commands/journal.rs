@@ -22,14 +22,14 @@
 //! - `invalid_date` when the entry date is not a date;
 //! - `not_found` when an account does not exist.
 
-use crate::commands::documents::read_dropped_document;
+use crate::commands::documents::{PickedDocument, read_dropped_document};
 use crate::commands::support::{
-    Arguments, decode_document_base64, dropped_file_name, require_granted_path, run_blocking,
-    with_connection, with_localized_connection,
+    Arguments, dropped_file_name, require_granted_path, run_blocking, with_connection,
+    with_localized_connection,
 };
 use crate::error::CommandResult;
 use crate::state::AppState;
-use oikonomia_core::documents::{NewDocument, post_simple_entry_with_document};
+use oikonomia_core::documents::post_simple_entry_with_document;
 use oikonomia_core::domain::{AccountId, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
     EntryFilter, PostJournal, PostJournalRequest, PostSimpleEntry, PostSimpleEntryRequest,
@@ -154,45 +154,57 @@ pub(crate) async fn entry_post_simple(
 /// Posts a simple entry and stores the document it was drafted from, in one
 /// transaction.
 ///
-/// Requires the unlocked vault. `data_base64` is the document the webview
-/// picked; if either the entry or the document is refused, neither is
-/// written.
+/// Requires the unlocked vault. The document is the one the webview picked;
+/// if either the entry or the document is refused, neither is written.
 ///
 /// # Errors
 ///
-/// Returns `file_data_invalid` when `data_base64` is not base64;
+/// Returns `file_data_invalid` when `dataBase64` is not base64;
 /// `file_too_large` (with the cap as `max_mb`), `file_empty`,
 /// `file_type_unsupported` and `name_required` when the document is refused;
 /// `name_taken` when the entity already stores a document under the file
 /// name; the [simple-entry errors](self#simple-entry-errors); and the
 /// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "each argument is one field of the IPC payload; tracked for the API pass"
-)]
 pub(crate) async fn entry_post_simple_with_document(
     state: State<'_, AppState>,
-    input: PostSimpleEntryRequest,
-    filename: String,
-    mime_type: String,
-    data_base64: String,
-    analysis_json: Option<String>,
+    arguments: Arguments<PostWithDocumentArguments>,
 ) -> CommandResult<PostedEntryView> {
-    let data = decode_document_base64(&data_base64)?;
+    let Arguments(PostWithDocumentArguments {
+        input,
+        document,
+        analysis_json,
+    }) = arguments;
+    let document = document.decode()?;
 
     with_connection(&state, move |conn| {
         let input = PostSimpleEntry::try_from(input)?;
-        let document = NewDocument {
-            filename: &filename,
-            mime_type: &mime_type,
-            data: &data,
-        };
-        let (view, _document) =
-            post_simple_entry_with_document(conn, &input, &document, analysis_json.as_deref())?;
+        let (view, _document) = post_simple_entry_with_document(
+            conn,
+            &input,
+            &document.as_new(),
+            analysis_json.as_deref(),
+        )?;
         Ok(view)
     })
     .await
+}
+
+/// The arguments of [`entry_post_simple_with_document`], as the webview
+/// names them: `input`, `filename`, `mimeType`, `dataBase64` and
+/// `analysisJson`.
+///
+/// `analysisJson` may be left out or sent as `null`.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PostWithDocumentArguments {
+    /// The entry to post.
+    input: PostSimpleEntryRequest,
+    /// The document the entry was drafted from.
+    #[serde(flatten)]
+    document: PickedDocument,
+    /// The analysis the draft came from, stored with the document as given.
+    analysis_json: Option<String>,
 }
 
 /// Posts a simple entry and stores the document at `path`, in one
@@ -377,15 +389,17 @@ mod tests {
     }
 }
 
-/// `entry_list` invoked through the mock IPC, the way the webview invokes it.
+/// `entry_list` and `entry_post_simple_with_document` invoked through the
+/// mock IPC, the way the webview invokes them.
 ///
 /// Not built on Windows, where the mock runtime keeps a test executable from
 /// starting; `commands::support::ipc_test_support` says why.
 #[cfg(test)]
 #[cfg(not(windows))]
 mod ipc_tests {
-    use crate::commands::journal::entry_list;
+    use crate::commands::journal::{entry_list, entry_post_simple_with_document};
     use crate::commands::support::ipc_test_support::MockApp;
+    use base64::Engine;
     use oikonomia_core::domain::ChartTemplate;
     use oikonomia_core::ledger::{
         CreateEntity, PostSimpleEntry, PostSimpleEntryRequest, SimpleEntryKind, create_entity,
@@ -394,20 +408,30 @@ mod ipc_tests {
     use oikonomia_core::prefs::Locale;
     use oikonomia_core::vault::Connection;
 
-    /// The ids of the seeded book and of its food account, as the frontend
-    /// holds them.
+    /// The ids of the seeded book and of two of its accounts, as the
+    /// frontend holds them.
     struct BookIds {
         /// The book's id.
         entity: String,
         /// The id of the book's food account.
         food_account: String,
+        /// The id of the book's checking account.
+        checking_account: String,
     }
 
-    /// Starts the mock app with `entry_list` registered, over a vault that
-    /// holds groceries on 5 August, rent on 20 August and a salary on
-    /// 1 September 2026.
+    /// Starts the mock app with the commands under test registered, over a
+    /// vault that holds groceries on 5 August, rent on 20 August and a
+    /// salary on 1 September 2026.
     fn mock_book(label: &str) -> (MockApp, BookIds) {
-        MockApp::start(label, tauri::generate_handler![entry_list], seed_book)
+        MockApp::start(
+            label,
+            tauri::generate_handler![
+                entry_list,
+                entry_post_simple_with_document,
+                crate::commands::documents::document_list
+            ],
+            seed_book,
+        )
     }
 
     /// Creates the book and its three entries.
@@ -454,6 +478,7 @@ mod ipc_tests {
         BookIds {
             entity: entity.id.to_string(),
             food_account: food.to_string(),
+            checking_account: checking.to_string(),
         }
     }
 
@@ -546,5 +571,166 @@ mod ipc_tests {
 
         // Tauri's own refusal is text, not a coded error.
         assert!(refused.is_string(), "{refused}");
+    }
+
+    /// `bytes` as the base64 the webview sends.
+    fn base64_of(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    /// The `input` object the simple entry form sends for an expense of
+    /// 12,50 on 25 August 2026: every key of `SimpleEntryInput` in
+    /// `web/src/lib/api.ts`, in snake case, with `null` for a role not used.
+    fn expense_input(book: &BookIds, description: &str) -> serde_json::Value {
+        serde_json::json!({
+            "entity_id": book.entity,
+            "kind": "expense",
+            "bill_status": null,
+            "entry_date": "2026-08-25",
+            "description": description,
+            "reference": null,
+            "amount_minor": 1250,
+            "category_account_id": book.food_account,
+            "wallet_account_id": book.checking_account,
+            "payable_account_id": null,
+            "from_account_id": null,
+            "to_account_id": null,
+        })
+    }
+
+    /// The documents of the book, as `document_list` returns them.
+    fn stored_documents(app: &MockApp, book: &BookIds) -> Vec<serde_json::Value> {
+        app.invoke(
+            "document_list",
+            serde_json::json!({ "entityId": book.entity }),
+        )
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .clone()
+    }
+
+    /// The descriptions of every entry of the book, newest first.
+    fn all_descriptions(app: &MockApp, book: &BookIds) -> Vec<String> {
+        let listed = app
+            .invoke("entry_list", serde_json::json!({ "entityId": book.entity }))
+            .unwrap();
+
+        descriptions(&listed)
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    // The payloads below are the object `entryPostSimpleWithDocument` in
+    // `web/src/lib/api.ts` passes to `invoke`: `input` beside the camelCase
+    // keys of the document, and `analysisJson` as a string or `null`.
+
+    #[test]
+    fn the_ipc_call_the_frontend_makes_posts_the_entry_and_stores_its_document() {
+        let (app, book) = mock_book("post-with-document");
+
+        let posted = app
+            .invoke(
+                "entry_post_simple_with_document",
+                serde_json::json!({
+                    "input": expense_input(&book, "Paper"),
+                    "filename": "receipt.txt",
+                    "mimeType": "text/plain",
+                    "dataBase64": base64_of(b"TOTAL 12,50"),
+                    "analysisJson": "{\"notes\":[]}",
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(posted["entry"]["description"], "Paper");
+
+        let documents = stored_documents(&app, &book);
+        assert_eq!(documents.len(), 1, "{documents:?}");
+        assert_eq!(documents[0]["filename"], "receipt.txt");
+        assert_eq!(documents[0]["mime_type"], "text/plain");
+        assert_eq!(documents[0]["entry_id"], posted["entry"]["id"]);
+        assert_eq!(documents[0]["size_bytes"], 11);
+    }
+
+    #[test]
+    fn the_analysis_may_be_null_or_left_out_and_an_empty_type_is_resolved_by_the_name() {
+        let (app, book) = mock_book("post-without-analysis");
+
+        let with_null = serde_json::json!({
+            "input": expense_input(&book, "Null analysis"),
+            "filename": "a.txt",
+            "mimeType": "",
+            "dataBase64": base64_of(b"a"),
+            "analysisJson": null,
+        });
+        let left_out = serde_json::json!({
+            "input": expense_input(&book, "No analysis"),
+            "filename": "b.txt",
+            "mimeType": "",
+            "dataBase64": base64_of(b"b"),
+        });
+
+        for payload in [with_null, left_out] {
+            app.invoke("entry_post_simple_with_document", payload)
+                .unwrap();
+        }
+
+        let documents = stored_documents(&app, &book);
+        assert_eq!(documents.len(), 2, "{documents:?}");
+        for document in &documents {
+            assert_eq!(document["mime_type"], "text/plain");
+        }
+    }
+
+    #[test]
+    fn a_refused_document_comes_back_with_its_code_and_no_entry_is_posted() {
+        let (app, book) = mock_book("post-refused-document");
+        let post = |filename: &str, data_base64: &str| {
+            app.invoke(
+                "entry_post_simple_with_document",
+                serde_json::json!({
+                    "input": expense_input(&book, "Never posted"),
+                    "filename": filename,
+                    "mimeType": "",
+                    "dataBase64": data_base64,
+                    "analysisJson": null,
+                }),
+            )
+            .unwrap_err()
+        };
+
+        assert_eq!(
+            post("receipt.txt", "not base64!")["code"],
+            "file_data_invalid"
+        );
+        assert_eq!(
+            post("tool.exe", &base64_of(b"MZ"))["code"],
+            "file_type_unsupported"
+        );
+        assert_eq!(post("receipt.txt", "")["code"], "file_empty");
+
+        assert_eq!(
+            all_descriptions(&app, &book),
+            ["Salary", "Rent", "Groceries"],
+            "the entry must roll back with its document"
+        );
+        assert_eq!(stored_documents(&app, &book).len(), 0);
+    }
+
+    #[test]
+    fn a_post_without_the_document_keys_is_refused_by_the_argument_layer() {
+        let (app, book) = mock_book("post-no-document");
+
+        let refused = app
+            .invoke(
+                "entry_post_simple_with_document",
+                serde_json::json!({ "input": expense_input(&book, "No document") }),
+            )
+            .unwrap_err();
+
+        // Tauri's own refusal is text, not a coded error.
+        assert!(refused.is_string(), "{refused}");
+        assert_eq!(all_descriptions(&app, &book).len(), 3);
     }
 }
