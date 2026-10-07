@@ -119,6 +119,46 @@ fn balance_sheet_balances_for_past_as_of() {
     );
 }
 
+/// Year zero is the earliest year an entry date can be in, so an entry there
+/// is a prior-period result like any other.
+#[test]
+fn an_entry_dated_in_year_zero_reaches_retained_earnings() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "0000-01-01", 1_000);
+
+    let sheet = balance_sheet(conn, entity_id, "0002-01-31").expect("sheet");
+
+    assert_eq!(line(&sheet.equity.lines, "RE").balance_minor, -1_000);
+    assert_eq!(sheet.total_assets, sheet.total_liabilities_equity);
+
+    let trial = trial_balance(conn, entity_id, "0002-01-31").expect("trial");
+
+    assert_eq!(line(&trial.lines, "RE").debit_minor, 1_000);
+    assert_eq!(trial.total_debits, trial.total_credits);
+}
+
+/// Before year zero there are no books: the fiscal year that holds the first
+/// day of year zero has no prior period.
+///
+/// This pins the edge and does not depend on where the prior-period sum
+/// starts: the day before year zero is written with a leading minus sign and
+/// sorts, as text, below every stored date, so no entry is on or before it.
+#[test]
+fn the_first_fiscal_year_has_no_retained_earnings() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = setup_entity(conn);
+    post_expense(conn, entity_id, "0000-01-01", 1_000);
+
+    let sheet = balance_sheet(conn, entity_id, "0000-12-31").expect("sheet");
+
+    assert!(sheet.equity.lines.iter().all(|line| line.code != "RE"));
+    assert_eq!(line(&sheet.equity.lines, "NI").balance_minor, -1_000);
+    assert_eq!(sheet.total_assets, sheet.total_liabilities_equity);
+}
+
 #[test]
 fn balance_sheet_balances_after_fiscal_year_boundary() {
     let (_dir, vault) = common::vault();
