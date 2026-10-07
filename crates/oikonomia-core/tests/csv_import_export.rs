@@ -191,6 +191,100 @@ fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
     assert_eq!(count_entries(conn, entity_id), 3);
 }
 
+/// Which rows of `csv` the preview flags as duplicates, in file order.
+fn duplicate_flags(conn: &Connection, entity_id: EntityId, acc: &Accounts, csv: &str) -> Vec<bool> {
+    let preview = preview_bank_csv(conn, entity_id, roles(acc), csv, None).expect("preview");
+
+    preview.rows.iter().map(|row| row.duplicate).collect()
+}
+
+#[test]
+fn an_expense_and_an_income_of_one_size_date_and_text_are_not_duplicates() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let money_out = "Date,Description,Amount\n2026-03-15,Corner shop,-25.00\n";
+    let money_in = "Date,Description,Amount\n2026-03-15,Corner shop,25.00\n";
+
+    // The purchase is in the ledger; its refund is a row of the next file.
+    let purchase = preview_bank_csv(conn, entity_id, roles(&acc), money_out, None)
+        .expect("preview")
+        .rows[0]
+        .suggested
+        .clone()
+        .expect("suggested");
+    post_import_rows(conn, &[purchase], false).expect("post the purchase");
+    assert_eq!(
+        duplicate_flags(conn, entity_id, &acc, money_in),
+        [false],
+        "an income is not the duplicate of an expense in the ledger"
+    );
+    assert_eq!(duplicate_flags(conn, entity_id, &acc, money_out), [true]);
+
+    // The other direction, and both in one file.
+    let both = "Date,Description,Amount\n\
+                2026-04-02,Deposit,40.00\n\
+                2026-04-02,Deposit,-40.00\n\
+                2026-04-02,Deposit,40.00\n";
+    assert_eq!(
+        duplicate_flags(conn, entity_id, &acc, both),
+        [false, false, true],
+        "an expense is not the duplicate of an income earlier in the file"
+    );
+
+    let rows: Vec<PostSimpleEntryRequest> =
+        preview_bank_csv(conn, entity_id, roles(&acc), both, None)
+            .expect("preview")
+            .rows
+            .into_iter()
+            .filter_map(|row| row.suggested)
+            .collect();
+    let posted = post_import_rows(conn, &rows, false).expect("post");
+    assert_eq!(posted.posted.len(), 2, "the deposit and its reversal");
+    assert_eq!(posted.skipped_duplicate_count, 1);
+
+    let after = "Date,Description,Amount\n\
+                 2026-04-02,Deposit,40.00\n\
+                 2026-04-02,Deposit,-40.00\n";
+    assert_eq!(duplicate_flags(conn, entity_id, &acc, after), [true, true]);
+}
+
+#[test]
+fn a_transfer_in_the_ledger_matches_a_statement_row_of_either_sign() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let savings = common::account(conn, entity_id, "1020");
+    let transfer = PostSimpleEntryRequest {
+        entity_id,
+        kind: SimpleEntryKind::Transfer,
+        bill_status: None,
+        entry_date: "2026-03-20".into(),
+        description: "To savings".into(),
+        reference: None,
+        amount_minor: 50_000,
+        category_account_id: None,
+        wallet_account_id: None,
+        payable_account_id: None,
+        from_account_id: Some(acc.checking),
+        to_account_id: Some(savings),
+    };
+    post_simple_entry(conn, &common::strict(transfer.clone())).expect("transfer");
+
+    // The same movement is money out on one account's statement and money in
+    // on the other's.
+    let both_statements = "Date,Description,Amount\n\
+                           2026-03-20,To savings,-500.00\n\
+                           2026-03-20,To savings,500.00\n";
+    assert_eq!(
+        duplicate_flags(conn, entity_id, &acc, both_statements),
+        [true, true]
+    );
+
+    let again = post_import_rows(conn, &[transfer], false).expect("post");
+    assert_eq!(again.skipped_duplicate_count, 1, "the transfer itself");
+}
+
 #[test]
 fn export_round_trips_posted_lines_and_marks_voided() {
     let (_dir, vault) = common::vault();

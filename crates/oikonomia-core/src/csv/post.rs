@@ -27,8 +27,8 @@ use crate::db::{collect_rows, read_column, stored_date};
 use crate::domain::{AccountId, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
-    PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView, get_account, get_entity,
-    post_simple_entry_unchecked,
+    ACTIVE_ENTRY_PREDICATE, PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView,
+    SimpleBillStatus, SimpleEntryKind, get_account, get_entity, post_simple_entry_unchecked,
 };
 use crate::util::parse_date;
 
@@ -140,7 +140,7 @@ pub fn post_import_rows(
     let _entity = get_entity(conn, entity_id)?;
 
     let transaction = conn.unchecked_transaction().database("begin CSV import")?;
-    let mut seen = load_active_keys(&transaction, entity_id)?;
+    let mut seen = load_active_movements(&transaction, entity_id)?;
     let mut posted: Vec<PostedEntryView> = Vec::new();
     let mut skipped_duplicate_count = 0u32;
 
@@ -149,14 +149,19 @@ pub fn post_import_rows(
         // rest of the row is checked only once it is known to be posted, so
         // a skipped duplicate is never refused for what else it holds.
         let entry_date = parse_date(&row.entry_date)?;
-        let key = DedupeKey::new(entry_date, row.amount_minor, &row.description);
-        if !include_duplicates && seen.contains(&key) {
+        let movement = Movement::new(
+            entry_date,
+            row.amount_minor,
+            Flow::of_request(row),
+            &row.description,
+        );
+        if !include_duplicates && seen.contains(&movement) {
             skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
             continue;
         }
         let entry = PostSimpleEntry::try_from(row.clone())?;
         let view = post_simple_entry_unchecked(&transaction, &entry)?;
-        seen.insert(key);
+        seen.record(&movement);
         posted.push(view);
     }
 
@@ -167,30 +172,152 @@ pub fn post_import_rows(
     })
 }
 
-/// What makes two entries the same for duplicate detection: the three
-/// values the [`crate::csv`] module doc names.
+/// Which way an entry moves money, as a bank statement signs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    /// Money received: a positive amount on a statement.
+    In,
+    /// Money spent or owed: a negative amount on a statement.
+    Out,
+    /// Money moved between the book's own accounts, which changes no income
+    /// and no expense: a transfer, or the payment of a bill recorded before.
+    /// The statement of the account it left shows it negative and the
+    /// statement of the account it reached shows it positive, so it counts
+    /// as both.
+    Internal,
+}
+
+impl Flow {
+    /// Returns the flow of a parsed statement row from its signed amount.
+    const fn of_signed(signed_amount_minor: i64) -> Self {
+        if signed_amount_minor < 0 {
+            Self::Out
+        } else {
+            Self::In
+        }
+    }
+
+    /// Returns the flow of a row to post, from its kind and bill status
+    /// alone.
+    ///
+    /// A bill that does not say whether it is paid counts as money out. Such
+    /// a row cannot be posted, so the answer only decides whether it is
+    /// skipped as a duplicate before it is refused.
+    const fn of_request(row: &PostSimpleEntryRequest) -> Self {
+        match (row.kind, row.bill_status) {
+            (SimpleEntryKind::Income, _) => Self::In,
+            (SimpleEntryKind::Expense, _)
+            | (
+                SimpleEntryKind::Bill,
+                Some(SimpleBillStatus::Paid | SimpleBillStatus::Unpaid) | None,
+            ) => Self::Out,
+            (SimpleEntryKind::Bill, Some(SimpleBillStatus::PayExisting))
+            | (SimpleEntryKind::Transfer, _) => Self::Internal,
+        }
+    }
+
+    /// Returns the flow of a ledger entry from what it adds to the result:
+    /// the credits minus the debits of its lines on income and expense
+    /// accounts.
+    const fn of_result(result_minor: i64) -> Self {
+        match result_minor {
+            0 => Self::Internal,
+            minor if minor > 0 => Self::In,
+            _ => Self::Out,
+        }
+    }
+}
+
+/// One entry as the duplicate rule sees it: the values the [`crate::csv`]
+/// module doc names.
 ///
-/// Built only through [`DedupeKey::new`], so the description is always in
-/// its normalized form and two keys compare the way the rule says.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct DedupeKey {
+/// Built only through [`Movement::new`], so the description is always in its
+/// normalized form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Movement {
     /// Booking date.
     date: Date,
-    /// Unsigned amount in minor units: an expense and an income of the same
-    /// size on the same day with the same text are one key.
+    /// Size of the entry in minor units, without a sign.
     amount_minor: i64,
+    /// Which way the money moved.
+    flow: Flow,
     /// Description after [`normalize_description`].
     description: String,
 }
 
-impl DedupeKey {
-    /// Returns the key of an entry, normalizing `description`.
-    fn new(date: Date, amount_minor: i64, description: &str) -> Self {
+impl Movement {
+    /// Returns the movement of an entry, normalizing `description`.
+    fn new(date: Date, amount_minor: i64, flow: Flow, description: &str) -> Self {
         Self {
             date,
             amount_minor,
+            flow,
             description: normalize_description(description),
         }
+    }
+
+    /// Returns the keys two movements have in common exactly when they are
+    /// duplicates: one for money in or out, and both signs for an internal
+    /// movement.
+    ///
+    /// A movement whose amount is not positive has no key. No entry in the
+    /// ledger has such an amount, and a row with one is refused when it is
+    /// posted; without a key it is never skipped as a duplicate first.
+    fn keys(&self) -> impl Iterator<Item = DedupeKey> + '_ {
+        let amount = Some(self.amount_minor).filter(|minor| *minor > 0);
+        // A positive `i64` always has a negation that fits.
+        let negated = amount.and_then(i64::checked_neg);
+        let signed = match self.flow {
+            Flow::In => [amount, None],
+            Flow::Out => [negated, None],
+            Flow::Internal => [amount, negated],
+        };
+
+        signed
+            .into_iter()
+            .flatten()
+            .map(|signed_amount_minor| DedupeKey {
+                date: self.date,
+                signed_amount_minor,
+                description: self.description.clone(),
+            })
+    }
+}
+
+/// What two duplicate entries share: the date, the amount signed as a bank
+/// statement signs it (negative for money out), and the normalized
+/// description.
+///
+/// The sign is part of the key so that an expense and an income of one size
+/// on one day with one text, such as a purchase and its refund, are two
+/// entries and not one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct DedupeKey {
+    /// Booking date.
+    date: Date,
+    /// Amount in minor units, negative for money out.
+    signed_amount_minor: i64,
+    /// Description after [`normalize_description`].
+    description: String,
+}
+
+/// The movements a row is compared with: the active entries of the ledger,
+/// and the rows that came before it.
+#[derive(Debug, Default)]
+struct SeenMovements {
+    /// Every key of every movement recorded.
+    keys: HashSet<DedupeKey>,
+}
+
+impl SeenMovements {
+    /// Returns whether `movement` duplicates one recorded before.
+    fn contains(&self, movement: &Movement) -> bool {
+        movement.keys().any(|key| self.keys.contains(&key))
+    }
+
+    /// Adds `movement` to what later ones are compared with.
+    fn record(&mut self, movement: &Movement) {
+        self.keys.extend(movement.keys());
     }
 }
 
@@ -223,7 +350,7 @@ fn preview_statement(
 
     let exponent = currency_minor_exponent(entity.base_currency);
     let parsed = parse_bank_csv(statement.csv_text, exponent, statement.mapping)?;
-    let mut seen = load_active_keys(conn, entity_id)?;
+    let mut seen = load_active_movements(conn, entity_id)?;
     let mut rows = Vec::with_capacity(parsed.rows.len());
 
     for outcome in parsed.rows {
@@ -238,14 +365,14 @@ fn preview_statement(
     })
 }
 
-/// Turns one parse outcome into a preview row, recording its key in `seen`.
+/// Turns one parse outcome into a preview row, recording it in `seen`.
 ///
-/// A parsed row is a duplicate when its key was already in `seen`: from the
-/// ledger, or from an earlier row of this file.
+/// A parsed row is a duplicate when `seen` already held its movement: from
+/// the ledger, or from an earlier row of this file.
 fn preview_row(
     entity_id: EntityId,
     accounts: CsvImportAccounts,
-    seen: &mut HashSet<DedupeKey>,
+    seen: &mut SeenMovements,
     outcome: CsvRowOutcome,
 ) -> CsvImportPreviewRow {
     match outcome {
@@ -257,8 +384,14 @@ fn preview_row(
             signed_amount_minor: None,
         },
         CsvRowOutcome::Parsed(row) => {
-            let key = DedupeKey::new(row.entry_date, row.amount_minor, &row.description);
-            let duplicate = !seen.insert(key);
+            let movement = Movement::new(
+                row.entry_date,
+                row.amount_minor,
+                Flow::of_signed(row.signed_amount_minor),
+                &row.description,
+            );
+            let duplicate = seen.contains(&movement);
+            seen.record(&movement);
             CsvImportPreviewRow {
                 source_row: row.source_row,
                 duplicate,
@@ -286,60 +419,129 @@ fn check_role_account(conn: &Connection, entity_id: EntityId, id: Option<Account
     Ok(())
 }
 
-/// Loads the key of every active entry of `entity_id`: posted, not voided,
-/// and not itself the reversal of a voided entry.
+/// Loads the movement of every active entry of `entity_id`: posted, not
+/// voided, and not itself the reversal of a voided entry.
 ///
 /// An entry's amount is the sum of its debit lines, which for a balanced
-/// entry is its total. Every entry of the book is read on each call; there
-/// is no index on the key.
+/// entry is its total, and its flow follows what its lines on income and
+/// expense accounts add to the result ([`Flow::of_result`]). Every entry of
+/// the book is read on each call; there is no index on the key.
 ///
 /// # Errors
 ///
 /// - [`Error::VaultCorrupt`] naming the column when a stored entry date does
 ///   not parse, or a date, a description or an amount has the wrong storage
 ///   class.
-/// - [`Error::Database`] on database errors.
-fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<DedupeKey>> {
+/// - [`Error::Database`] on database errors, which include a total that
+///   overflows `i64` inside `SQLite`'s `SUM`.
+fn load_active_movements(conn: &Connection, entity_id: EntityId) -> Result<SeenMovements> {
+    let sql = format!(
+        "
+        SELECT je.entry_date, je.description,
+               COALESCE(SUM(jl.debit_minor), 0) AS amount_minor,
+               COALESCE(SUM(
+                   CASE WHEN a.account_type IN ('income', 'expense')
+                        THEN jl.credit_minor - jl.debit_minor
+                        ELSE 0
+                   END
+               ), 0) AS result_minor
+        FROM journal_entries je
+        JOIN journal_lines jl ON jl.entry_id = je.id
+        JOIN accounts a ON a.id = jl.account_id
+        WHERE je.entity_id = ?1
+          AND {ACTIVE_ENTRY_PREDICATE}
+        GROUP BY je.id, je.entry_date, je.description
+        "
+    );
     let mut statement = conn
-        .prepare(
-            "
-            SELECT je.entry_date, je.description,
-                   COALESCE(SUM(jl.debit_minor), 0) AS amount_minor
-            FROM journal_entries je
-            JOIN journal_lines jl ON jl.entry_id = je.id
-            WHERE je.entity_id = ?1
-              AND je.status = 'posted'
-              AND je.voided_by_entry_id IS NULL
-              AND NOT EXISTS (
-                  SELECT 1 FROM journal_entries je_void
-                  WHERE je_void.voided_by_entry_id = je.id
-              )
-            GROUP BY je.id, je.entry_date, je.description
-            ",
-        )
+        .prepare(&sql)
         .database("read entries for duplicate check")?;
 
     let mapped = statement
-        .query_map([entity_id.to_string()], |row| Ok(map_active_key(row)))
+        .query_map([entity_id.to_string()], |row| Ok(map_active_movement(row)))
         .database("read entries for duplicate check")?;
 
-    let keys = collect_rows("read entries for duplicate check", mapped)?;
-    Ok(keys.into_iter().collect())
+    let mut seen = SeenMovements::default();
+    for movement in collect_rows("read entries for duplicate check", mapped)? {
+        seen.record(&movement);
+    }
+    Ok(seen)
 }
 
-/// Maps a row selected as `entry_date, description, amount_minor` to its
-/// key.
+/// Maps a row selected as `entry_date, description, amount_minor,
+/// result_minor` to its movement.
 ///
 /// # Errors
 ///
 /// [`Error::VaultCorrupt`] naming the column when the date does not parse or
 /// a column has the wrong storage class.
-fn map_active_key(row: &rusqlite::Row<'_>) -> Result<DedupeKey> {
+fn map_active_movement(row: &rusqlite::Row<'_>) -> Result<Movement> {
     let date = stored_date(
         "journal_entries.entry_date",
         &read_column::<String>(row, 0)?,
     )?;
     let description: String = read_column(row, 1)?;
+    let amount_minor = read_column(row, 2)?;
+    let flow = Flow::of_result(read_column(row, 3)?);
 
-    Ok(DedupeKey::new(date, read_column(row, 2)?, &description))
+    Ok(Movement::new(date, amount_minor, flow, &description))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A movement of `amount_minor` on 15 March 2026 described as "Shop".
+    fn movement(amount_minor: i64, flow: Flow) -> Movement {
+        Movement::new(
+            time::macros::date!(2026 - 03 - 15),
+            amount_minor,
+            flow,
+            "Shop",
+        )
+    }
+
+    /// The signed amounts of the keys of a movement.
+    fn signed_amounts(amount_minor: i64, flow: Flow) -> Vec<i64> {
+        movement(amount_minor, flow)
+            .keys()
+            .map(|key| key.signed_amount_minor)
+            .collect()
+    }
+
+    #[test]
+    fn a_key_is_signed_by_the_flow_and_an_internal_movement_has_both_signs() {
+        assert_eq!(signed_amounts(2_500, Flow::In), [2_500]);
+        assert_eq!(signed_amounts(2_500, Flow::Out), [-2_500]);
+        assert_eq!(signed_amounts(2_500, Flow::Internal), [2_500, -2_500]);
+        assert_eq!(signed_amounts(i64::MAX, Flow::Out), [-i64::MAX]);
+    }
+
+    #[test]
+    fn an_amount_that_is_not_positive_has_no_key_and_so_duplicates_nothing() {
+        for amount_minor in [0, -2_500, i64::MIN] {
+            for flow in [Flow::In, Flow::Out, Flow::Internal] {
+                assert_eq!(
+                    signed_amounts(amount_minor, flow),
+                    [0_i64; 0],
+                    "{amount_minor}"
+                );
+            }
+        }
+
+        let mut seen = SeenMovements::default();
+        seen.record(&movement(2_500, Flow::Out));
+        assert!(!seen.contains(&movement(-2_500, Flow::In)));
+    }
+
+    #[test]
+    fn opposite_flows_are_not_duplicates_and_an_internal_one_matches_both() {
+        let mut seen = SeenMovements::default();
+        seen.record(&movement(2_500, Flow::Out));
+
+        assert!(seen.contains(&movement(2_500, Flow::Out)));
+        assert!(!seen.contains(&movement(2_500, Flow::In)));
+        assert!(seen.contains(&movement(2_500, Flow::Internal)));
+        assert!(!seen.contains(&movement(2_501, Flow::Out)));
+    }
 }

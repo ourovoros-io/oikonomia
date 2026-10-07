@@ -61,13 +61,23 @@
 //! A row matches an existing **active** journal entry (posted, not voided,
 //! not a void-reversal) when all three are equal:
 //! - booking date (`YYYY-MM-DD`)
-//! - amount in minor units (absolute value of the signed CSV amount; for
-//!   ledger entries, `Σ debit_minor`)
+//! - signed amount in minor units, negative for money out
 //! - description after [`normalize_description`]
+//!
+//! The sign is part of the rule, so a purchase and its refund (the same
+//! size, day and text, in opposite directions) are two entries. A row's
+//! signed amount is the one the CSV gave it. A ledger entry's size is
+//! `Σ debit_minor`, and its sign follows what it adds to the result, the
+//! credits minus the debits of its lines on income and expense accounts:
+//! positive is money in, negative is money out. An entry that adds nothing
+//! to the result (a transfer between the book's own accounts, the payment of
+//! a bill recorded earlier) matches a row of either sign, because the
+//! statement of the account the money left shows it negative and the
+//! statement of the account it reached shows it positive.
 //!
 //! Preview sets `duplicate: true` on matches, including later rows in the
 //! same file that repeat an earlier parsed row. [`post_import_rows`] **skips**
-//! those keys unless `include_duplicates` is true. Skipped duplicates are
+//! those rows unless `include_duplicates` is true. Skipped duplicates are
 //! not an error.
 //!
 //! # Export amounts
@@ -263,8 +273,8 @@ pub struct CsvImportPreview {
 pub struct CsvImportPreviewRow {
     /// 1-based CSV record number (the header is record 1).
     pub source_row: u32,
-    /// True when date + amount + normalized description matches an active
-    /// entry or an earlier parsed row in this file.
+    /// True when date + signed amount + normalized description matches an
+    /// active entry or an earlier parsed row in this file.
     pub duplicate: bool,
     /// Set when this row cannot be posted as-is: a code the UI words, never
     /// a sentence.

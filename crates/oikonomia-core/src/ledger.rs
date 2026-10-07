@@ -131,6 +131,7 @@ pub use accounts::{
     CreateAccount, UpdateAccount, archive_account, create_account, get_account, list_accounts,
     update_account,
 };
+pub(crate) use balance::ACTIVE_ENTRY_PREDICATE;
 pub use balance::{account_balance, account_balance_as_of, normal_balance};
 pub use cash_flow::{
     CashFlowBucket, CashFlowGranularity, CashFlowSeries, DAILY_BUCKET_MAX_DAYS, activity_window,
