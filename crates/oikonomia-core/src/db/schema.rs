@@ -32,6 +32,10 @@
 //!   `posted` and nothing else. The entry list and every report select
 //!   `status = 'posted'`, so a row that holds another status is in no list
 //!   and no balance; read by its id, it is reported as a corrupt vault.
+//! - `accounts.parent_id` is a nullable reference to another account. The
+//!   column is reserved: no statement of the application names it, so every
+//!   row written from now on holds NULL, and whatever an older row holds
+//!   there is not read.
 
 use crate::db::{collect_rows, read_column};
 use crate::error::{DatabaseContext, Error, Result, VaultCorruption};

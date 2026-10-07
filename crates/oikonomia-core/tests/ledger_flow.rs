@@ -79,6 +79,35 @@ fn personal_books_expense_and_reports() {
     );
 }
 
+/// `accounts.parent_id` is reserved: the chart a template seeds leaves it
+/// NULL, and a parent that a vault already holds changes nothing that is read.
+#[test]
+fn the_parent_column_is_left_null_and_a_stored_parent_is_ignored() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().unwrap();
+    let entity_id = common::book(conn, "Personal", ChartTemplate::Personal);
+
+    let with_parent: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM accounts WHERE parent_id IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(with_parent, 0);
+
+    let before = list_accounts(conn, entity_id).unwrap();
+    let nested = conn
+        .execute(
+            "UPDATE accounts SET parent_id = ?1 WHERE id <> ?1",
+            [before[0].id.to_string()],
+        )
+        .unwrap();
+    assert_eq!(nested, before.len() - 1);
+
+    assert_eq!(list_accounts(conn, entity_id).unwrap(), before);
+}
+
 #[test]
 fn a_vault_holds_any_number_of_entities() {
     let (_dir, vault) = common::vault();

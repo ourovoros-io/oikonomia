@@ -20,7 +20,6 @@ export type Account = {
   code: string
   name: string
   account_type: AccountType
-  parent_id: string | null
   is_active: boolean
   is_system: boolean
   sort_order: number

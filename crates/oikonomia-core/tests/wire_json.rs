@@ -71,7 +71,7 @@ fn account() {
     assert_json_is_pinned::<Account>(concat!(
         r#"{"id":"22222222-2222-4222-8222-222222222222","entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","code":"1000","name":"Cash","account_type":"#,
-        r#""asset","parent_id":null,"is_active":true,"is_system":false,"sort_order":10}"#,
+        r#""asset","is_active":true,"is_system":false,"sort_order":10}"#,
     ));
 }
 

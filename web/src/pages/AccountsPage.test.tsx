@@ -57,7 +57,6 @@ describe('AccountsPage account type colours', () => {
     return {
       entity_id: 'e1',
       code: '1000',
-      parent_id: null,
       is_active: true,
       is_system: false,
       sort_order: 0,
@@ -113,7 +112,6 @@ describe('AccountsPage register drill-in', () => {
     code: '1000',
     name: 'Checking',
     account_type: 'asset',
-    parent_id: null,
     is_active: true,
     is_system: false,
     sort_order: 0,

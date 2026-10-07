@@ -39,7 +39,6 @@ function account(over: Partial<Account> & Pick<Account, 'id' | 'name' | 'account
   return {
     entity_id: 'e1',
     code: '1000',
-    parent_id: null,
     is_active: true,
     is_system: false,
     sort_order: 0,
