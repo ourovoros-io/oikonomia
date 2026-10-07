@@ -94,6 +94,13 @@
 //! those rows unless `include_duplicates` is true. Skipped duplicates are
 //! not an error.
 //!
+//! Oikonomia 0.1.0 read a negative debit or credit cell without its sign, so
+//! a row it imported from such a cell is in the ledger the other way round.
+//! The preview also flags such a row when the amount 0.1.0 read for it
+//! ([`ParsedBankRow::legacy_signed_amount_minor`]) matches an active
+//! entry. That is only a flag for the user: [`post_import_rows`] does not
+//! know the amount 0.1.0 read and does not skip the row for it.
+//!
 //! # Export amounts
 //!
 //! Journal export writes **integer minor units** in `debit_minor` and
@@ -198,6 +205,11 @@ pub struct ParsedBankRow {
     pub reference: Option<String>,
     /// Signed minor units: negative = money leaving = Expense.
     pub signed_amount_minor: i64,
+    /// The signed amount Oikonomia 0.1.0 read for this row, when it differs
+    /// from [`Self::signed_amount_minor`]: only for a debit or a credit cell
+    /// written negative, which 0.1.0 took without its sign. Used only to flag
+    /// the row as a possible duplicate of an entry 0.1.0 imported from it.
+    pub legacy_signed_amount_minor: Option<i64>,
     /// Absolute amount for [`PostSimpleEntryRequest::amount_minor`].
     pub amount_minor: i64,
     /// Expense or Income from the sign.
@@ -290,7 +302,8 @@ pub struct CsvImportPreviewRow {
     /// 1-based CSV record number (the header is record 1).
     pub source_row: u32,
     /// True when date + signed amount + normalized description matches an
-    /// active entry or an earlier parsed row in this file.
+    /// active entry or an earlier parsed row in this file, or when the amount
+    /// Oikonomia 0.1.0 read for the row matches an active entry.
     pub duplicate: bool,
     /// Set when this row cannot be posted as-is: a code the UI words, never
     /// a sentence.
