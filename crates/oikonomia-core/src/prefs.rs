@@ -1432,6 +1432,36 @@ mod tests {
     }
 
     #[test]
+    fn remembering_quick_add_keeps_an_unrecognised_locale_as_stored() {
+        let dir = tempdir().unwrap();
+        let book: EntityId = BOOK.parse().unwrap();
+
+        // Written by a newer build with a language this one does not have.
+        let json = r#"{ "locale": "xx-YY", "last_entity_id": "ent-1" }"#;
+        assert!(fs::write(ui_prefs_path(dir.path()), json).is_ok());
+
+        remember_quick_add(
+            dir.path(),
+            book,
+            SimpleEntryKind::Expense,
+            expense_accounts("wal-1"),
+        )
+        .unwrap();
+
+        assert_eq!(stored_locale_json(dir.path()), "xx-YY");
+        let prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs.locale(), Locale::En);
+        assert_eq!(prefs.last_entity_id.as_deref(), Some(BOOK));
+        assert_eq!(
+            prefs.last_accounts_by_entity_kind,
+            BTreeMap::from([(
+                last_accounts_key(book, SimpleEntryKind::Expense),
+                expense_accounts("wal-1"),
+            )])
+        );
+    }
+
+    #[test]
     fn remembering_quick_add_reports_a_file_it_cannot_write() {
         let dir = tempdir().unwrap();
         // A directory at the target makes the rename fail after the write.
