@@ -699,16 +699,25 @@ fn unread_suggestion(note: UiText, accounts: SuggestedAccounts) -> DocumentSugge
     }
 }
 
-/// Fewest characters of PDF text that count as a text layer. With less, the
-/// PDF is taken to be a scan and its embedded images are read with OCR.
+/// Fewest characters, once trimmed, of text that counts as the text of a
+/// PDF. One rule, applied by [`is_enough_pdf_text`] in two places:
 ///
-/// The two places that use it do not agree at the boundary. A text layer
-/// counts from 8 characters ([`should_ocr_pdf_images`]); an OCR reading of
-/// an embedded image counts from 9 ([`ocr_pdf_images`]).
+/// - a text layer with fewer is not a text layer: the PDF is taken to be a
+///   scan and its embedded images are read with OCR
+///   ([`should_ocr_pdf_images`]);
+/// - an OCR reading of an embedded image with fewer is not a reading, and
+///   the next image is tried ([`pdf_image_outcome`]).
 ///
-/// The unit test `short_or_missing_pdf_text_triggers_image_ocr` pins the
-/// first boundary. The reason for 8 in particular is not recorded.
+/// The unit tests `short_or_missing_pdf_text_triggers_image_ocr` and
+/// `an_image_reading_counts_from_the_same_length_as_a_text_layer` pin the
+/// boundary on both sides. The reason for 8 in particular is not recorded.
 const MIN_PDF_TEXT_CHARS: usize = 8;
+
+/// Whether `text` has at least [`MIN_PDF_TEXT_CHARS`] characters, not
+/// counting whitespace at its ends.
+fn is_enough_pdf_text(text: &str) -> bool {
+    text.trim().chars().count() >= MIN_PDF_TEXT_CHARS
+}
 
 /// Most embedded JPEG images of one PDF that are tried with OCR. Each try
 /// runs the OCR models once, so this bounds how long a scanned PDF takes.
@@ -717,10 +726,10 @@ const MIN_PDF_TEXT_CHARS: usize = 8;
 /// `at_most_two_page_images_are_taken` pins it.
 const MAX_PDF_OCR_IMAGES: usize = 2;
 
-/// Whether a PDF with this trimmed text layer is taken as a scan: no text,
-/// or fewer than [`MIN_PDF_TEXT_CHARS`] characters.
+/// Whether a PDF with this text layer is taken as a scan: no text, or not
+/// enough of it ([`is_enough_pdf_text`]).
 fn should_ocr_pdf_images(text: Option<&str>) -> bool {
-    text.is_none_or(|text| text.chars().count() < MIN_PDF_TEXT_CHARS)
+    !text.is_some_and(is_enough_pdf_text)
 }
 
 /// Reads a PDF: its text layer, or failing that its embedded images.
@@ -770,7 +779,7 @@ fn pdf_text_or_image_text(
 }
 
 /// Reads the embedded images of a scanned PDF in turn, up to
-/// [`MAX_PDF_OCR_IMAGES`] of them, until one has more than
+/// [`MAX_PDF_OCR_IMAGES`] of them, until one has at least
 /// [`MIN_PDF_TEXT_CHARS`] characters of text.
 ///
 /// Returns `None` for a PDF without images. When no image yields text, the
@@ -779,16 +788,23 @@ fn ocr_pdf_images(jpegs: &[Vec<u8>], model_dir: Option<&Path>) -> Option<OcrOutc
     let mut first_failure = None;
 
     for jpeg in jpegs.iter().take(MAX_PDF_OCR_IMAGES) {
-        let outcome = match ocr_image(jpeg, model_dir) {
-            OcrOutcome::Read(text) if text.chars().count() > MIN_PDF_TEXT_CHARS => {
-                return Some(OcrOutcome::Read(text));
-            }
-            OcrOutcome::Read(_) => OcrOutcome::LittleText,
-            other => other,
+        match pdf_image_outcome(ocr_image(jpeg, model_dir)) {
+            OcrOutcome::Read(text) => return Some(OcrOutcome::Read(text)),
+            failure => first_failure.get_or_insert(failure),
         };
-        first_failure.get_or_insert(outcome);
     }
     first_failure
+}
+
+/// The outcome of reading one embedded image, with a reading that is not
+/// enough text ([`is_enough_pdf_text`]) turned into
+/// [`OcrOutcome::LittleText`].
+fn pdf_image_outcome(outcome: OcrOutcome) -> OcrOutcome {
+    match outcome {
+        OcrOutcome::Read(text) if is_enough_pdf_text(&text) => OcrOutcome::Read(text),
+        OcrOutcome::Read(_) => OcrOutcome::LittleText,
+        other => other,
+    }
 }
 
 /// A PDF after loading: the document if lopdf could parse it, and its text
@@ -1359,6 +1375,30 @@ mod tests {
         assert!(should_ocr_pdf_images(Some("abc")));
         assert!(should_ocr_pdf_images(Some("1234567")));
         assert!(!should_ocr_pdf_images(Some("12345678")));
+    }
+
+    #[test]
+    fn an_image_reading_counts_from_the_same_length_as_a_text_layer() {
+        let read = |text: &str| pdf_image_outcome(OcrOutcome::Read(text.into()));
+
+        assert_eq!(read("1234567"), OcrOutcome::LittleText);
+        assert_eq!(read("12345678"), OcrOutcome::Read("12345678".into()));
+        assert_eq!(read("  1234567 \n"), OcrOutcome::LittleText);
+        // The two rules meet at one length: what is too short to be a text
+        // layer is too short to be a reading, and the reverse.
+        for text in ["", "1234567", "12345678", "123456789"] {
+            assert_eq!(
+                should_ocr_pdf_images(Some(text)),
+                read(text) == OcrOutcome::LittleText,
+                "{text:?}"
+            );
+        }
+        // Outcomes that are not readings pass through.
+        assert_eq!(pdf_image_outcome(OcrOutcome::Failed), OcrOutcome::Failed);
+        assert_eq!(
+            pdf_image_outcome(OcrOutcome::ModelsMissing),
+            OcrOutcome::ModelsMissing
+        );
     }
 
     /// The notes of an analysis.
