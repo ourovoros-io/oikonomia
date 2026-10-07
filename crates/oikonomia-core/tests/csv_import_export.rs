@@ -5,7 +5,7 @@
 mod common;
 
 use oikonomia_core::csv::{
-    CsvColumnMapping, CsvImportAccounts, JournalCsvStatus, export_journal_csv,
+    CsvColumnMapping, CsvError, CsvImportAccounts, JournalCsvStatus, export_journal_csv,
     parse_journal_export, post_import_rows, preview_bank_csv, preview_bank_csv_file,
     write_journal_csv_file,
 };
@@ -479,4 +479,41 @@ fn export_file_is_readable_only_by_its_owner() {
         .mode()
         & 0o777;
     assert_eq!(mode, 0o600, "the journal is plaintext financial data");
+}
+
+#[test]
+fn a_row_with_a_malformed_date_fails_the_batch_and_posts_nothing() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+
+    let csv = "Date,Description,Amount\n2026-03-15,Groceries,-25.00\n2026-03-16,Salary,1000.00\n";
+    let preview = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("preview");
+    let mut rows: Vec<PostSimpleEntryRequest> = preview
+        .rows
+        .iter()
+        .filter_map(|row| row.suggested.clone())
+        .collect();
+    rows.last_mut().expect("two rows").entry_date = "16/03/2026".into();
+
+    assert_eq!(
+        post_import_rows(conn, &rows, false).map(|result| result.posted.len()),
+        Err(Error::Validation(ValidationError::InvalidDate {
+            value: "16/03/2026".into()
+        }))
+    );
+    // The first row was valid; the failure of the second rolled it back.
+    assert_eq!(count_entries(conn, entity_id), 0);
+}
+
+#[test]
+fn a_journal_export_with_a_malformed_date_cell_is_refused() {
+    let csv = "date,description,reference,account_code,account_name,\
+               debit_minor,credit_minor,status\n\
+               15/03/2026,Rent,,5100,Food,100,0,posted\n";
+
+    assert_eq!(
+        parse_journal_export(csv),
+        Err(Error::Csv(CsvError::InvalidDate("15/03/2026".into())))
+    );
 }

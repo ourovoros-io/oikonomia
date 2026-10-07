@@ -192,7 +192,7 @@ impl SimpleEntryAccounts {
         bill_status: Option<SimpleBillStatus>,
         roles: SimpleEntryRoleAccounts,
     ) -> Result<Self> {
-        Self::try_from_roles(kind, bill_status, roles).map_err(Error::from)
+        Self::from_roles_or_missing_part(kind, bill_status, roles).map_err(Error::from)
     }
 
     /// Builds the accounts from the flat form, saying which part of it is
@@ -201,7 +201,7 @@ impl SimpleEntryAccounts {
     /// The row mapper of a stored template uses this to name the damaged
     /// column; [`SimpleEntryAccounts::from_roles`] turns the same answer
     /// into a validation error.
-    pub(crate) fn try_from_roles(
+    pub(crate) fn from_roles_or_missing_part(
         kind: SimpleEntryKind,
         bill_status: Option<SimpleBillStatus>,
         roles: SimpleEntryRoleAccounts,
@@ -238,8 +238,12 @@ impl SimpleEntryAccounts {
                 wallet: roles.wallet.ok_or(MissingPart::Wallet(Payment))?,
             }),
             (SimpleEntryKind::Transfer, _) => {
-                let to = roles.to.ok_or(MissingPart::To(TransferDestination))?;
-                let from = roles.from.ok_or(MissingPart::From(TransferSource))?;
+                let to = roles
+                    .to
+                    .ok_or(MissingPart::TransferDestination(TransferDestination))?;
+                let from = roles
+                    .from
+                    .ok_or(MissingPart::TransferSource(TransferSource))?;
                 Ok(Self::Transfer { from, to })
             }
         }
@@ -416,9 +420,9 @@ pub(crate) enum MissingPart {
     /// The payable account is missing.
     Payable(AccountRole),
     /// The source account of a transfer is missing.
-    From(AccountRole),
+    TransferSource(AccountRole),
     /// The destination account of a transfer is missing.
-    To(AccountRole),
+    TransferDestination(AccountRole),
 }
 
 impl From<MissingPart> for Error {
@@ -431,8 +435,10 @@ impl From<MissingPart> for Error {
             MissingPart::Category(role)
             | MissingPart::Wallet(role)
             | MissingPart::Payable(role)
-            | MissingPart::From(role)
-            | MissingPart::To(role) => ValidationError::AccountRequired { role }.into(),
+            | MissingPart::TransferSource(role)
+            | MissingPart::TransferDestination(role) => {
+                ValidationError::AccountRequired { role }.into()
+            }
         }
     }
 }

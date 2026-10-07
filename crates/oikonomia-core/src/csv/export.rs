@@ -252,7 +252,9 @@ pub fn ensure_csv_path(path: PathBuf) -> PathBuf {
 /// [`Error::Csv`] in every case, with the [`CsvError`] that says which: the
 /// text is empty, the header row or a record cannot be read, one of the
 /// eight columns is missing, a `status` cell is neither `posted` nor
-/// `voided`, or a `debit_minor` or `credit_minor` cell is not an integer.
+/// `voided`, a `date` cell is not a `YYYY-MM-DD` date
+/// ([`CsvError::InvalidDate`]), or a `debit_minor` or `credit_minor` cell is
+/// not an integer.
 pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
     let trimmed = text.trim();
     if trimmed.is_empty() {

@@ -6,7 +6,8 @@
 //!
 //! # What an id type is
 //!
-//! - A wrapper around a random (version 4) UUID whose field is private. The
+//! - A wrapper around a UUID whose field is private; `generate` makes a
+//!   random (version 4) one. The
 //!   ways in are `generate` for a new record, [`FromStr`](std::str::FromStr)
 //!   for text from outside, and `From<Uuid>` for a UUID already in hand; the
 //!   way out is `as_uuid` or [`Display`](std::fmt::Display).

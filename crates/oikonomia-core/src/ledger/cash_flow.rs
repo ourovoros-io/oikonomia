@@ -97,7 +97,7 @@ pub struct CashFlowSeries {
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for `from > to`;
+/// [`ValidationError::DateRangeInverted`] for `from > to`;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// bucket, a running total or the net does not fit in `i64`;
 /// [`Error::VaultCorrupt`] for a stored date or account type that does not
@@ -174,7 +174,7 @@ pub fn cash_flow_series(
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for an explicit `from > to`;
+/// [`ValidationError::DateRangeInverted`] for an explicit `from > to`;
 /// [`Error::NotFound`] for an unknown entity; [`Error::VaultCorrupt`] for a
 /// stored entry date that does not parse; database errors as [`Error::Database`].
 pub fn activity_window(

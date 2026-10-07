@@ -51,8 +51,9 @@ use crate::coa::{DocumentTopic, document_topic_codes};
 use crate::db::{read_column, stored_id};
 use crate::default_accounts::{account_by_codes, first_of_type};
 use crate::documents::store::Keyword::{Prefix, Unit, Word};
-use crate::domain::define_id;
-use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId};
+use crate::domain::{
+    Account, AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId, define_id,
+};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::{
     PostSimpleEntry, PostedEntryView, get_entry, list_accounts, post_simple_entry_unchecked,

@@ -374,6 +374,60 @@ mod tests {
         assert_eq!(back.map(|dated| dated.date), Ok(date));
     }
 
+    /// A struct with one month field that goes through [`serde_month`].
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Starting {
+        /// The month under test.
+        #[serde(with = "crate::util::serde_month")]
+        month: Month,
+    }
+
+    #[test]
+    fn serde_month_reads_only_the_numbers_one_to_twelve() {
+        let read = |json: &str| serde_json::from_str::<Starting>(json).map(|value| value.month);
+
+        assert_eq!(read(r#"{"month":1}"#).ok(), Some(Month::January));
+        assert_eq!(read(r#"{"month":12}"#).ok(), Some(Month::December));
+        for json in [
+            r#"{"month":0}"#,
+            r#"{"month":13}"#,
+            r#"{"month":-1}"#,
+            r#"{"month":"4"}"#,
+            r#"{"month":"April"}"#,
+            r#"{"month":null}"#,
+        ] {
+            assert!(read(json).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn date_text_reads_any_json_string_and_nothing_else() {
+        assert!(serde_json::from_str::<DateText>(r#""2026-08-10""#).is_ok());
+        assert!(serde_json::from_str::<DateText>(r#""not a date""#).is_ok());
+        for json in ["20260810", "null", "[]", r#"{"date":"2026-08-10"}"#] {
+            assert!(serde_json::from_str::<DateText>(json).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn date_text_parses_with_the_strict_rule_and_an_absent_one_stays_absent() {
+        let sent: DateText = serde_json::from_str(r#""2026-08-10""#).unwrap();
+        let malformed: DateText = serde_json::from_str(r#""2026-8-10""#).unwrap();
+
+        assert_eq!(sent.parse(), parse_date("2026-08-10"));
+        assert_eq!(
+            DateText::parse_optional(Some(&sent)),
+            parse_date("2026-08-10").map(Some)
+        );
+        assert_eq!(DateText::parse_optional(None), Ok(None));
+        assert_eq!(
+            DateText::parse_optional(Some(&malformed)),
+            Err(Error::Validation(ValidationError::InvalidDate {
+                value: "2026-8-10".to_owned()
+            }))
+        );
+    }
+
     #[test]
     fn only_the_ten_character_form_parses() {
         let rejected = [

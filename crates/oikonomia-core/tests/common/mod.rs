@@ -116,7 +116,7 @@ pub(crate) fn account(conn: &Connection, entity_id: EntityId, code: &str) -> Acc
 pub(crate) fn two_line(
     conn: &Connection,
     entity_id: EntityId,
-    date: &str,
+    entry_date: &str,
     sides: (&str, &str),
     minor: i64,
 ) -> PostJournal {
@@ -125,8 +125,8 @@ pub(crate) fn two_line(
 
     PostJournal {
         entity_id,
-        entry_date: self::date(date),
-        description: format!("{debit_code} from {credit_code}: {minor} on {date}"),
+        entry_date: date(entry_date),
+        description: format!("{debit_code} from {credit_code}: {minor} on {entry_date}"),
         reference: None,
         lines: vec![
             PostJournalLine::debit(account(conn, entity_id, debit_code), amount),
@@ -139,11 +139,11 @@ pub(crate) fn two_line(
 pub(crate) fn post_two_line(
     conn: &Connection,
     entity_id: EntityId,
-    date: &str,
+    entry_date: &str,
     sides: (&str, &str),
     minor: i64,
 ) -> PostedEntryView {
-    post_entry(conn, &two_line(conn, entity_id, date, sides, minor)).expect("post")
+    post_entry(conn, &two_line(conn, entity_id, entry_date, sides, minor)).expect("post")
 }
 
 /// Posts a simple entry from the request the UI sends, converting it first as
@@ -167,13 +167,13 @@ pub(crate) fn simple_expense(
     entity_id: EntityId,
     category: AccountId,
     wallet: AccountId,
-    date: &str,
+    entry_date: &str,
     minor: i64,
 ) -> PostSimpleEntry {
     PostSimpleEntry {
         entity_id,
         accounts: SimpleEntryAccounts::Expense { category, wallet },
-        entry_date: self::date(date),
+        entry_date: date(entry_date),
         description: "groceries".into(),
         reference: None,
         amount_minor: minor,

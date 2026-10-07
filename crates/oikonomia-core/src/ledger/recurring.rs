@@ -750,8 +750,8 @@ fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
     };
     // A template is saved only with the accounts its kind posts to, so a row
     // without one of them was not written by the application.
-    let accounts = SimpleEntryAccounts::try_from_roles(kind, bill_status, roles)
-        .map_err(|missing| missing_part_is_corrupt(kind, missing))?;
+    let accounts = SimpleEntryAccounts::from_roles_or_missing_part(kind, bill_status, roles)
+        .map_err(|missing| missing_part_corruption(kind, missing))?;
 
     Ok(StoredTemplate {
         id,
@@ -770,15 +770,15 @@ fn map_template_row(row: &rusqlite::Row<'_>) -> Result<StoredTemplate> {
 
 /// Returns the error for a stored template of `kind` that lacks what the
 /// kind needs, naming the column that is empty.
-fn missing_part_is_corrupt(kind: SimpleEntryKind, missing: MissingPart) -> Error {
+fn missing_part_corruption(kind: SimpleEntryKind, missing: MissingPart) -> Error {
     let kind = kind.identifier();
     let (column, what) = match missing {
         MissingPart::BillStatus => ("bill_status", "bill status"),
         MissingPart::Category(_) => ("category_account_id", "category account"),
         MissingPart::Wallet(_) => ("wallet_account_id", "wallet account"),
         MissingPart::Payable(_) => ("payable_account_id", "payable account"),
-        MissingPart::From(_) => ("from_account_id", "source account"),
-        MissingPart::To(_) => ("to_account_id", "destination account"),
+        MissingPart::TransferSource(_) => ("from_account_id", "source account"),
+        MissingPart::TransferDestination(_) => ("to_account_id", "destination account"),
     };
 
     corrupt_column(

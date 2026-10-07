@@ -22,8 +22,14 @@
 //! only the strict type.
 //!
 //! A view goes the other way. [`RecurringTemplateView`] is strict in memory
-//! and serializes through a private flat twin, so the UI keeps reading the
-//! kind, the bill status and five optional accounts side by side.
+//! and serializes through a flat twin that stays inside the crate, so the UI
+//! keeps reading the kind, the bill status and five optional accounts side
+//! by side.
+//!
+//! The strict types are strict about what this module converts: dates, the
+//! accounts of a simple entry, and the side of a line. An amount is still an
+//! `i64` that must be positive and a template's day of the month still goes
+//! with its cadence by a check, so the ledger functions check those again.
 //!
 //! The test `tests/wire_json.rs` pins the JSON of every type here.
 //!
@@ -45,13 +51,12 @@
 //! account that does not exist, is reported for the missing one.
 //!
 //! Within a conversion the order is the one the ledger had when it checked
-//! everything itself: the amount, then what else the values alone decide (a
-//! template's name and day of the month), then the accounts the kind needs,
-//! debited one first. The date is read last for a simple entry, before the
-//! accounts for a template, and before the lines for a journal entry.
+//! everything itself. A simple entry: the amount, the accounts its kind
+//! needs with the debited one first, then the date. A template: the name,
+//! the amount, the day of the month, the date, then the accounts. A journal
+//! entry: the date, then its lines.
 
-use crate::domain::Side;
-use crate::domain::{AccountId, EntityId, RecurringTemplateId};
+use crate::domain::{AccountId, EntityId, RecurringTemplateId, Side};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::journals::{PostJournal, PostJournalLine, PostSimpleEntry};
 use crate::ledger::recurring::{
@@ -144,17 +149,31 @@ impl TryFrom<PostJournalRequest> for PostJournal {
         // A negative amount anywhere is reported before the number of lines,
         // and the number of lines before a line with both sides or neither:
         // the order these had when one function checked them all.
-        for line in &request.lines {
-            Money::from_minor(line.debit_minor)?;
-            Money::from_minor(line.credit_minor)?;
-        }
-        if request.lines.len() < 2 {
+        let columns = request
+            .lines
+            .iter()
+            .map(|line| {
+                let debit = Money::from_minor(line.debit_minor)?;
+                let credit = Money::from_minor(line.credit_minor)?;
+                Ok((debit, credit))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if columns.len() < 2 {
             return Err(Error::TooFewLines);
         }
         let lines = request
             .lines
             .into_iter()
-            .map(PostJournalLine::try_from)
+            .zip(columns)
+            .map(|(line, (debit, credit))| {
+                let (side, amount) = Side::from_columns(debit, credit)?;
+                Ok(PostJournalLine {
+                    account_id: line.account_id,
+                    amount,
+                    side,
+                    memo: line.memo,
+                })
+            })
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
@@ -415,7 +434,7 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
 /// The JSON shape of a [`RecurringTemplateView`].
 ///
 /// The view converts into this to be serialized and out of it when read
-/// back, so the type itself never appears in a signature.
+/// back, so no function outside those two conversions names the type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RecurringTemplateViewWire {
     /// Id of the template.
@@ -872,6 +891,63 @@ mod tests {
                 ..request()
             }),
             Some(ValidationError::BillStatusRequired.into())
+        );
+    }
+
+    #[test]
+    fn a_template_request_with_several_faults_reports_them_in_one_order() {
+        // Name, amount, day of the month, date, accounts.
+        let everything_wrong = CreateRecurringTemplateRequest {
+            name: String::new(),
+            amount_minor: 0,
+            day_of_month: Some(3),
+            next_date: "soon".to_owned(),
+            wallet_account_id: None,
+            ..template_request()
+        };
+        let named = CreateRecurringTemplateRequest {
+            name: "Rent".to_owned(),
+            ..everything_wrong.clone()
+        };
+        let with_amount = CreateRecurringTemplateRequest {
+            amount_minor: 1,
+            ..named.clone()
+        };
+        let with_schedule = CreateRecurringTemplateRequest {
+            day_of_month: None,
+            ..with_amount.clone()
+        };
+        let with_date = CreateRecurringTemplateRequest {
+            next_date: "2026-09-01".to_owned(),
+            ..with_schedule.clone()
+        };
+
+        assert_eq!(
+            template_error(everything_wrong),
+            Some(
+                ValidationError::NameRequired {
+                    field: NameField::TemplateName
+                }
+                .into()
+            )
+        );
+        assert_eq!(
+            template_error(named),
+            Some(ValidationError::AmountNotPositive.into())
+        );
+        assert_eq!(
+            template_error(with_amount),
+            Some(ValidationError::DayOfMonthInvalid.into())
+        );
+        assert_eq!(template_error(with_schedule), Some(invalid_date("soon")));
+        assert_eq!(
+            template_error(with_date),
+            Some(
+                ValidationError::AccountRequired {
+                    role: AccountRole::Payment
+                }
+                .into()
+            )
         );
     }
 

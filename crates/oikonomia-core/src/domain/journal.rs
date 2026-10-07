@@ -343,7 +343,7 @@ mod tests {
     use super::*;
 
     /// A line with fresh ids, read from the two columns `debit` and `credit`.
-    fn journal_line(debit: i64, credit: i64) -> Result<JournalLine> {
+    pub(super) fn journal_line(debit: i64, credit: i64) -> Result<JournalLine> {
         let debit = Money::from_minor(debit)?;
         let credit = Money::from_minor(credit)?;
         let (side, amount) = Side::from_columns(debit, credit)?;
@@ -456,6 +456,7 @@ mod properties {
     use oikonomia_test_support::PROPERTY_CASES;
     use proptest::prelude::*;
 
+    use super::tests::journal_line;
     use super::*;
 
     /// The debit and credit of one line as it is written in two columns:
@@ -468,21 +469,6 @@ mod properties {
             1 => Just((0, 0)),
             1 => (1_i64..4, 1_i64..4),
         ]
-    }
-
-    /// The line the two columns `debit` and `credit` describe, with fresh ids.
-    fn journal_line(debit: i64, credit: i64) -> Result<JournalLine> {
-        let (side, amount) =
-            Side::from_columns(Money::from_minor(debit)?, Money::from_minor(credit)?)?;
-
-        Ok(JournalLine {
-            id: JournalLineId::generate(),
-            entry_id: JournalEntryId::generate(),
-            account_id: AccountId::generate(),
-            amount,
-            side,
-            memo: None,
-        })
     }
 
     proptest! {
@@ -536,7 +522,8 @@ mod properties {
             prop_assert_eq!(line.credit().amount_minor(), credit);
         }
 
-        // Typed to two columns to typed.
+        // A typed line, written in two columns and read back, is the same
+        // line.
         #[test]
         fn a_line_survives_its_two_column_form(
             amount in 1_i64..,

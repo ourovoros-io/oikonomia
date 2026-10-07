@@ -1,4 +1,5 @@
-//! The JSON form of every type that crosses IPC, pinned as literal text.
+//! The JSON form of the ledger, report, CSV and preference types that cross
+//! IPC, pinned as literal text.
 //!
 //! The web UI mirrors these shapes by hand in `web/src/lib/api.ts`, so a
 //! change to a field name, to nesting or to the type of a value breaks the
@@ -16,7 +17,9 @@
     reason = "a test helper states why each step cannot fail"
 )]
 
-use oikonomia_core::csv::{CsvImportPostInput, CsvImportPreviewRow, JournalCsvLine};
+use oikonomia_core::csv::{
+    CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewRow, JournalCsvLine,
+};
 use oikonomia_core::documents::DocumentMeta;
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
@@ -38,13 +41,9 @@ fn assert_json_is_pinned<T: Serialize + DeserializeOwned>(json: &str) {
     assert_eq!(written, json);
 }
 
-/// Returns the error text of reading `json` as a `T`, which must fail.
-#[track_caller]
-fn rejection<T: DeserializeOwned>(json: &str) -> String {
-    match serde_json::from_str::<T>(json) {
-        Ok(_) => String::from("accepted"),
-        Err(error) => error.to_string(),
-    }
+/// Returns whether the JSON layer refuses to read `json` as a `T`.
+fn is_refused<T: DeserializeOwned>(json: &str) -> bool {
+    serde_json::from_str::<T>(json).is_err()
 }
 
 #[test]
@@ -344,6 +343,16 @@ fn csv_import_rows_carry_the_simple_entry_request() {
 }
 
 #[test]
+fn csv_import_preview_and_result() {
+    assert_json_is_pinned::<CsvImportPreview>(concat!(
+        r#"{"source":"bank.csv","headers":["Date","Amount"],"detected_mapping":{"date":"Date","#,
+        r#""description":null,"amount":"Amount","debit":null,"credit":null,"reference":null,"#,
+        r#""direction":null},"rows":[]}"#,
+    ));
+    assert_json_is_pinned::<CsvImportPostResult>(r#"{"posted":[],"skipped_duplicate_count":2}"#);
+}
+
+#[test]
 fn journal_csv_line() {
     assert_json_is_pinned::<JournalCsvLine>(concat!(
         r#"{"date":"2026-08-10","description":"Groceries","reference":null,"account_code":"#,
@@ -376,16 +385,16 @@ fn ui_prefs() {
 
 #[test]
 fn an_id_that_is_not_a_uuid_is_refused_by_the_json_layer() {
-    assert_ne!(
-        rejection::<VoidResult>(r#"{"original_id":"nope","reverse_id":"nope"}"#),
+    assert!(
+        is_refused::<VoidResult>(r#"{"original_id":"nope","reverse_id":"nope"}"#),
         "accepted"
     );
 }
 
 #[test]
 fn a_view_with_a_malformed_date_is_refused_by_the_json_layer() {
-    assert_ne!(
-        rejection::<RegisterLine>(concat!(
+    assert!(
+        is_refused::<RegisterLine>(concat!(
             r#"{"entry_id":"33333333-3333-4333-8333-333333333333","entry_date":"2026-8-1","#,
             r#""description":"","debit_minor":0,"credit_minor":1,"balance_minor":0,"hidden":"#,
             r#"false}"#,

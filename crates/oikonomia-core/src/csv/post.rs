@@ -105,9 +105,17 @@ pub fn preview_bank_csv_file(
 /// - [`Error::Validation`] with [`ValidationError::Internal`] when the rows
 ///   do not all carry the same `entity_id`.
 /// - [`Error::NotFound`] when that entity does not exist.
+/// - [`ValidationError::InvalidDate`] for a row whose `entry_date` is not a
+///   `YYYY-MM-DD` date. The date is read before the duplicate rule is
+///   applied, so this is reported for any row.
+/// - [`ValidationError::AmountNotPositive`],
+///   [`ValidationError::BillStatusRequired`] or
+///   [`ValidationError::AccountRequired`] for a row that is to be posted and
+///   does not convert into a
+///   [`PostSimpleEntry`]. A row skipped as a duplicate is not converted.
 /// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry)
-///   for a row the ledger refuses: a non-positive amount, a missing or
-///   mistyped role account.
+///   for a row the ledger refuses, such as an account of the wrong type.
+/// - [`Error::VaultCorrupt`] for a stored entry date that does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn post_import_rows(
     conn: &Connection,

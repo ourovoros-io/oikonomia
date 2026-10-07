@@ -22,7 +22,7 @@
 //! Every record has its own id type ([`EntityId`], [`AccountId`],
 //! [`JournalEntryId`], [`JournalLineId`], [`RecurringTemplateId`], and
 //! [`DocumentId`](crate::documents::DocumentId) beside the document store),
-//! a wrapper around a random UUID, so an account id cannot be passed where an
+//! a wrapper around a UUID, so an account id cannot be passed where an
 //! entry id is expected. All of them are written by one macro and so have the
 //! same surface: `generate()` for a new record, `as_uuid()`, `Display` and
 //! `FromStr` for the hyphenated text, and serde as the bare UUID string. None

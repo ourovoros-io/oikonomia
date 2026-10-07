@@ -31,7 +31,7 @@ use tauri_plugin_dialog::FilePath;
 /// parameter itself is not a key of the payload.
 ///
 /// What crosses IPC is the same either way, and so is a missing optional
-/// key, which reads as `None` when `T` marks the field `#[serde(default)]`.
+/// key: serde reads a missing `Option` field of `T` as `None`.
 ///
 /// The wrapper is needed because Tauri already takes every type that
 /// implements `Deserialize` as an argument read from its own key, so `T`

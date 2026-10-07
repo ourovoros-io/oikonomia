@@ -78,16 +78,12 @@ pub(crate) struct EntryListArguments {
     /// Entity whose entries are listed.
     entity_id: EntityId,
     /// Inclusive lower bound on the entry date.
-    #[serde(default)]
     from: Option<DateText>,
     /// Inclusive upper bound on the entry date.
-    #[serde(default)]
     to: Option<DateText>,
     /// Text to look for in descriptions, references and memos.
-    #[serde(default)]
     search: Option<String>,
     /// Only entries with a line on this account.
-    #[serde(default)]
     account_id: Option<AccountId>,
 }
 
@@ -332,8 +328,9 @@ pub(crate) async fn entry_void(
 mod tests {
     use super::*;
 
-    /// An entity id and an account id as the webview sends them.
+    /// An entity id as the webview sends it.
     const ENTITY: &str = "11111111-1111-4111-8111-111111111111";
+    /// An account id as the webview sends it.
     const ACCOUNT: &str = "22222222-2222-4222-8222-222222222222";
 
     #[test]

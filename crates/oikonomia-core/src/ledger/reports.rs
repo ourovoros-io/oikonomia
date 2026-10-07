@@ -279,7 +279,7 @@ pub fn trial_balance(conn: &Connection, entity_id: EntityId, as_of: Date) -> Res
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for an inverted range;
+/// [`ValidationError::DateRangeInverted`] for an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Database`].
@@ -300,7 +300,7 @@ pub fn profit_and_loss(
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for an inverted range;
+/// [`ValidationError::DateRangeInverted`] for an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Database`].
@@ -383,7 +383,7 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: Date) -> Res
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for an inverted range;
+/// [`ValidationError::DateRangeInverted`] for an inverted range;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// total does not fit in `i64`; [`Error::VaultCorrupt`] for a stored value
 /// that does not parse; database errors as [`Error::Database`].
@@ -613,8 +613,8 @@ struct LineQuery {
 }
 
 impl LineQuery {
-    /// The accounts of `account_type` with everything posted through `as_of`,
-    /// hidden entries included.
+    /// Returns the query for the accounts of `account_type` with everything
+    /// posted through `as_of`, hidden entries included.
     ///
     /// Asset, liability and equity lines are read this way.
     const fn as_of(entity_id: EntityId, account_type: AccountType, as_of: Date) -> Self {
@@ -627,8 +627,8 @@ impl LineQuery {
         }
     }
 
-    /// The accounts of `account_type` with what was posted from `from`
-    /// through `to`, hidden entries included.
+    /// Returns the query for the accounts of `account_type` with what was
+    /// posted from `from` through `to`, hidden entries included.
     ///
     /// Income and expense lines are read this way.
     const fn in_period(
@@ -646,8 +646,8 @@ impl LineQuery {
         }
     }
 
-    /// The same query with hidden entries left out when `omit_hidden` is
-    /// true.
+    /// Returns the same query with hidden entries left out when
+    /// `omit_hidden` is true.
     const fn omitting_hidden(self, omit_hidden: bool) -> Self {
         Self {
             omit_hidden,

@@ -42,7 +42,10 @@ fn no_type_of_the_crate_is_marked_non_exhaustive() {
             let text = fs::read_to_string(path).unwrap();
             text.lines()
                 .enumerate()
-                .filter(|(_, line)| line.trim_start().starts_with("#[non_exhaustive"))
+                .filter(|(_, line)| {
+                    // Also the attribute behind a `cfg_attr`.
+                    line.trim_start().starts_with("#[") && line.contains("non_exhaustive")
+                })
                 .map(|(index, _)| format!("{}:{}", path.display(), index + 1))
                 .collect::<Vec<_>>()
         })

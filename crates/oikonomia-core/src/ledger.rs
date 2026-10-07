@@ -59,6 +59,9 @@
 //! report a malformed date as
 //! [`ValidationError::InvalidDate`](crate::error::ValidationError::InvalidDate).
 //!
+//! [`CreateEntity`] is the one input without a twin: it is the wire shape
+//! itself, and [`create_entity`] parses its currency text and month number.
+//!
 //! # Active entries and voids
 //!
 //! A posted entry is never changed or deleted to take it back. Voiding it

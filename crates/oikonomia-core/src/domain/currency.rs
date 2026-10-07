@@ -99,19 +99,6 @@ impl FromStr for CurrencyCode {
     }
 }
 
-impl TryFrom<&str> for CurrencyCode {
-    type Error = Error;
-
-    /// Parses a code as [`FromStr`] does.
-    ///
-    /// # Errors
-    ///
-    /// Those of [`CurrencyCode::from_str`].
-    fn try_from(text: &str) -> Result<Self> {
-        text.parse()
-    }
-}
-
 impl Serialize for CurrencyCode {
     /// Serializes the code as the string of its three letters.
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
@@ -162,12 +149,6 @@ mod tests {
         assert_eq!(serde_json::from_str::<CurrencyCode>(&json).unwrap(), code);
         assert!(serde_json::from_str::<CurrencyCode>(r#""yen!""#).is_err());
         assert!(serde_json::from_str::<CurrencyCode>("392").is_err());
-    }
-
-    #[test]
-    fn try_from_agrees_with_from_str() {
-        assert_eq!(CurrencyCode::try_from("usd"), "USD".parse());
-        assert_eq!(CurrencyCode::try_from("us"), "us".parse());
     }
 }
 
