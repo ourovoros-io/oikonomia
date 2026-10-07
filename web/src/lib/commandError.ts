@@ -31,8 +31,6 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   csv_too_large: 'error.csvTooLarge',
   csv_parse: 'error.csvParse',
   csv_missing_header: 'error.csvMissingHeader',
-  csv_missing_date_column: 'error.csvMissingDateColumn',
-  csv_missing_amount_column: 'error.csvMissingAmountColumn',
   csv_missing_column: 'error.csvMissingColumn',
   // A problem with one cell is worded by the sentence the import preview
   // shows for a row with the same problem (NOTE_CODE_KEYS in uiText.ts), so
@@ -122,7 +120,6 @@ export const VARIANT_KEYS: Record<string, { param: string; keys: Record<string, 
     param: 'problem',
     keys: {
       missing_date: 'error.csvMapping.missingDate',
-      missing_description: 'error.csvMapping.missingDescription',
       missing_amount: 'error.csvMapping.missingAmount',
       amount_and_debit_or_credit: 'error.csvMapping.amountAndDebitOrCredit',
       unknown_column: 'error.csvMapping.unknownColumn',

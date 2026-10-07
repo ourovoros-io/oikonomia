@@ -1,0 +1,100 @@
+[
+  {
+    "mapping": { "date": "Date", "description": "Memo", "amount": "Amount" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": {
+      "date": "Date",
+      "description": "Memo",
+      "amount": "Amount",
+      "debit": null,
+      "credit": null,
+      "reference": "Ref",
+      "direction": "Type"
+    },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "debit": "Debit", "credit": "Credit" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "debit": "Debit" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "credit": "Credit" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "amount": "", "debit": "Debit", "credit": " " },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "credit": "Credit", "direction": "Type" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "description": "Memo", "amount": "Amount" },
+    "verdict": "missing_date"
+  },
+  {
+    "mapping": { "date": "  ", "description": "Memo", "amount": "Amount" },
+    "verdict": "missing_date"
+  },
+  {
+    "mapping": { "date": null, "description": "Memo" },
+    "verdict": "missing_date"
+  },
+  {
+    "mapping": { "date": "Date", "amount": "Amount" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": " ", "debit": "Debit", "reference": "Ref" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": null, "credit": "Credit" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date" },
+    "verdict": "missing_amount"
+  },
+  {
+    "mapping": { "amount": "Amount" },
+    "verdict": "missing_date"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo" },
+    "verdict": "missing_amount"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "amount": " ", "debit": "", "credit": null },
+    "verdict": "missing_amount"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "reference": "Ref", "direction": "Type" },
+    "verdict": "missing_amount"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "amount": "Amount", "debit": "Debit" },
+    "verdict": "amount_and_debit_or_credit"
+  },
+  {
+    "mapping": { "date": "Date", "description": "Memo", "amount": "Amount", "credit": "Credit" },
+    "verdict": "amount_and_debit_or_credit"
+  },
+  {
+    "mapping": {
+      "date": "Date",
+      "description": "Memo",
+      "amount": "Amount",
+      "debit": "Debit",
+      "credit": "Credit"
+    },
+    "verdict": "amount_and_debit_or_credit"
+  }
+]

@@ -865,15 +865,18 @@
       "export": "Exporter en CSV",
       "exportTitle": "CSV comptable non chiffré",
       "mapTitle": "Associer les colonnes CSV",
-      "mapDescription": "Faites correspondre votre fichier bancaire à une date, un montant (ou débit/crédit) et une description. La référence est facultative.",
+      "mapDescription": "Faites correspondre votre fichier bancaire à une date et à un montant (ou débit/crédit). La description et la référence sont facultatives.",
       "field": {
         "date": "Date",
         "amount": "Montant",
         "description": "Description",
+        "descriptionOptional": "Description (facultatif)",
         "reference": "Référence",
         "referenceOptional": "Référence (facultatif)",
         "debit": "Débit",
-        "credit": "Crédit"
+        "credit": "Crédit",
+        "direction": "Sens",
+        "directionOptional": "Sens (facultatif)"
       },
       "sourceAria": "Colonne source {label}",
       "targetAria": "Champ cible {label}",
@@ -882,6 +885,11 @@
       "useAmount": "Utiliser une seule colonne de montant",
       "autoDetected": "Détecté automatiquement",
       "mapFooter": "Les colonnes non associées sont ignorées. Débit/crédit peut remplacer Montant.",
+      "mapNeeded": {
+        "date": "La colonne de date n’a pas été trouvée automatiquement : choisissez-la ci-dessous.",
+        "amount": "La colonne de montant n’a pas été trouvée automatiquement : choisissez-la ci-dessous.",
+        "dateAndAmount": "Les colonnes de date et de montant n’ont pas été trouvées automatiquement : choisissez-les ci-dessous."
+      },
       "continuePreview": "Continuer vers l’aperçu",
       "previewTitle": "Aperçu de l’import",
       "previewSubtitle": "{rows} · {dupes} · rien n’est enregistré avant votre confirmation",
@@ -1003,16 +1011,13 @@
     "csvNotUtf8": "Ce fichier CSV n’est pas du texte UTF-8. Enregistrez-le ou exportez-le à nouveau en CSV avec l’encodage UTF-8.",
     "csvTooLarge": "Ce fichier CSV dépasse 8 Mo. Exportez une période plus courte ou scindez le fichier.",
     "csvMissingHeader": "Ce fichier CSV n’a pas de ligne d’en-tête. La première ligne doit nommer les colonnes.",
-    "csvMissingDateColumn": "Aucune colonne de date n’a été trouvée dans ce fichier CSV. Vérifiez que la première ligne nomme les colonnes et que l’une d’elles est la date.",
-    "csvMissingAmountColumn": "Aucune colonne de montant n’a été trouvée dans ce fichier CSV. Vérifiez que la première ligne nomme les colonnes et qu’il y a une colonne de montant, ou des colonnes débit et crédit.",
     "csvMissingColumn": "Ce CSV du journal n’a pas de colonne « {column} ». Utilisez un fichier exporté depuis Oikonomia avec toutes ses colonnes.",
     "csvInvalidStatus": "« {value} » n’est pas un état du journal. L’état doit être posted ou voided.",
     "csvInvalidInteger": "« {value} » n’est pas un nombre entier. Un CSV du journal contient les montants en unités mineures entières, par exemple 1250 pour 12,50.",
     "csvInvalidMapping": "Ces choix de colonnes n’ont pas pu être utilisés. Vérifiez les colonnes, puis réessayez.",
     "csvMapping": {
       "missingDate": "Choisissez la colonne qui contient la date.",
-      "missingDescription": "Choisissez la colonne qui contient la description.",
-      "missingAmount": "Choisissez une colonne de montant, ou à la fois une colonne débit et une colonne crédit.",
+      "missingAmount": "Choisissez une colonne de montant, ou une colonne débit ou crédit.",
       "amountAndDebitOrCredit": "Choisissez soit une colonne de montant, soit les colonnes débit et crédit, pas les deux.",
       "unknownColumn": "Le fichier n’a pas de colonne nommée « {column} ». Choisissez l’une des colonnes du fichier."
     },

@@ -5,9 +5,9 @@
 mod common;
 
 use oikonomia_core::csv::{
-    CsvColumnMapping, CsvError, CsvImportAccounts, JournalCsvStatus, export_journal_csv,
-    parse_journal_export, post_import_rows, preview_bank_csv, preview_bank_csv_file,
-    write_journal_csv_file,
+    CsvColumnMapping, CsvError, CsvImportAccounts, CsvImportPreview, CsvRequiredColumn,
+    JournalCsvStatus, export_journal_csv, parse_journal_export, post_import_rows, preview_bank_csv,
+    preview_bank_csv_file, write_journal_csv_file,
 };
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_for_post};
 use oikonomia_core::error::Error;
@@ -938,4 +938,185 @@ fn a_journal_export_with_a_malformed_date_cell_is_refused() {
         parse_journal_export(csv),
         Err(Error::Csv(CsvError::InvalidDate("15/03/2026".into())))
     );
+}
+
+/// A statement whose date and amount headers are not ones detection knows.
+const UNDETECTED_CSV: &str = "When,Memo,Paid\n2026-03-15,Rent,-800.00\n";
+
+/// Previews `csv` for a new book, with or without a mapping.
+fn preview_in_a_new_book(csv: &str, mapping: Option<&CsvColumnMapping>) -> CsvImportPreview {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+
+    preview_bank_csv(conn, entity_id, roles(&acc), csv, mapping).expect("preview")
+}
+
+#[test]
+fn a_file_with_no_detectable_date_column_previews_as_needing_a_mapping() {
+    let preview = preview_in_a_new_book("When,Memo,Amount\n2026-03-15,Rent,-800.00\n", None);
+
+    assert_eq!(preview.missing_columns, [CsvRequiredColumn::Date]);
+    assert_eq!(preview.headers, ["When", "Memo", "Amount"]);
+    assert_eq!(preview.detected_mapping.date, None);
+    assert_eq!(preview.detected_mapping.amount.as_deref(), Some("Amount"));
+    assert_eq!(
+        preview.detected_mapping.description.as_deref(),
+        Some("Memo")
+    );
+    assert!(preview.rows.is_empty(), "no row is read before the mapping");
+}
+
+#[test]
+fn a_file_with_no_detectable_amount_column_previews_as_needing_a_mapping() {
+    let preview = preview_in_a_new_book("Date,Memo,Paid\n2026-03-15,Rent,-800.00\n", None);
+
+    assert_eq!(preview.missing_columns, [CsvRequiredColumn::Amount]);
+    assert_eq!(preview.headers, ["Date", "Memo", "Paid"]);
+    assert_eq!(preview.detected_mapping.date.as_deref(), Some("Date"));
+    assert_eq!(preview.detected_mapping.amount, None);
+    assert_eq!(preview.detected_mapping.debit, None);
+    assert_eq!(preview.detected_mapping.credit, None);
+    assert!(preview.rows.is_empty());
+}
+
+#[test]
+fn a_file_with_neither_column_detectable_names_both_date_first() {
+    let preview = preview_in_a_new_book(UNDETECTED_CSV, None);
+
+    assert_eq!(
+        preview.missing_columns,
+        [CsvRequiredColumn::Date, CsvRequiredColumn::Amount]
+    );
+    assert_eq!(preview.headers, ["When", "Memo", "Paid"]);
+    assert_eq!(
+        preview.detected_mapping.description.as_deref(),
+        Some("Memo")
+    );
+    assert!(preview.rows.is_empty());
+}
+
+#[test]
+fn a_complete_mapping_previews_the_file_detection_could_not_read() {
+    let mapping = CsvColumnMapping {
+        date: Some("When".into()),
+        description: Some("Memo".into()),
+        amount: Some("Paid".into()),
+        ..CsvColumnMapping::default()
+    };
+    let preview = preview_in_a_new_book(UNDETECTED_CSV, Some(&mapping));
+
+    assert_eq!(preview.missing_columns, []);
+    assert_eq!(preview.rows.len(), 1);
+    assert_eq!(preview.rows[0].signed_amount_minor, Some(-80_000));
+    assert_eq!(preview.rows[0].error, None);
+}
+
+#[test]
+fn a_file_detection_reads_in_full_has_no_missing_column() {
+    let preview = preview_in_a_new_book(grocery_csv(), None);
+
+    assert_eq!(preview.missing_columns, []);
+    assert_eq!(preview.rows.len(), 1);
+}
+
+#[test]
+fn a_file_no_mapping_can_read_is_still_an_error() {
+    let (dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let preview = |csv: &str| preview_bank_csv(conn, entity_id, roles(&acc), csv, None);
+
+    assert_eq!(preview("").err(), Some(Error::Csv(CsvError::Empty)));
+    assert_eq!(
+        preview(",,\n1,2,3\n").err(),
+        Some(Error::Csv(CsvError::MissingHeader))
+    );
+
+    let path = dir.path().join("latin1.csv");
+    std::fs::write(&path, b"Date,Memo,Amount\n2026-03-15,Caf\xe9,-3.50\n").expect("write csv");
+    assert_eq!(
+        preview_bank_csv_file(conn, entity_id, roles(&acc), &path, None).err(),
+        Some(Error::Csv(CsvError::NotUtf8))
+    );
+}
+
+#[test]
+fn a_type_column_of_transaction_kinds_does_not_refuse_the_rows() {
+    let csv = "Date,Payee,Amount,Type\n\
+        2026-03-15,Shop,-8.00,POS\n\
+        2026-03-16,Salary,2500.00,TRANSFER\n";
+    let preview = preview_in_a_new_book(csv, None);
+
+    assert_eq!(preview.detected_mapping.direction, None);
+    let amounts: Vec<_> = preview
+        .rows
+        .iter()
+        .map(|row| (row.error.clone(), row.signed_amount_minor))
+        .collect();
+    assert_eq!(amounts, [(None, Some(-800)), (None, Some(250_000))]);
+}
+
+#[test]
+fn a_type_column_of_directions_signs_the_unsigned_amounts() {
+    let csv = "Date,Payee,Amount,Type\n\
+        2026-03-15,Rent,800.00,Debit\n\
+        2026-03-16,Salary,2500.00,Credit\n";
+    let preview = preview_in_a_new_book(csv, None);
+
+    assert_eq!(preview.detected_mapping.direction.as_deref(), Some("Type"));
+    let amounts: Vec<_> = preview
+        .rows
+        .iter()
+        .map(|row| (row.error.clone(), row.signed_amount_minor))
+        .collect();
+    assert_eq!(amounts, [(None, Some(-80_000)), (None, Some(250_000))]);
+}
+
+#[test]
+fn a_file_with_one_debit_column_previews_the_same_detected_or_mapped() {
+    let csv = "Date,Memo,Debit\n2026-03-15,Rent,800.00\n";
+    let detected = preview_in_a_new_book(csv, None);
+    assert_eq!(detected.missing_columns, []);
+
+    // What the Map columns step sends back when nothing is edited.
+    let mapped = preview_in_a_new_book(csv, Some(&detected.detected_mapping));
+
+    assert_eq!(detected.rows.len(), 1);
+    assert_eq!(mapped.rows.len(), 1);
+    assert_eq!(mapped.rows[0].error, None);
+    assert_eq!(mapped.rows[0].signed_amount_minor, Some(-80_000));
+    assert_eq!(
+        mapped.rows[0].signed_amount_minor,
+        detected.rows[0].signed_amount_minor
+    );
+}
+
+#[test]
+fn a_file_without_a_description_column_is_mapped_previewed_and_posted() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let csv = "When,Paid\n2026-03-15,-800.00\n";
+    let mapping = CsvColumnMapping {
+        date: Some("When".into()),
+        amount: Some("Paid".into()),
+        ..CsvColumnMapping::default()
+    };
+
+    let preview =
+        preview_bank_csv(conn, entity_id, roles(&acc), csv, Some(&mapping)).expect("preview");
+    let rows: Vec<PostSimpleEntryRequest> = preview
+        .rows
+        .iter()
+        .filter_map(|row| row.suggested.clone())
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].description, "");
+
+    // The ledger takes an entry without a description, as it does from the
+    // quick-add form, so the column does not have to be mapped.
+    let result = post_import_rows(conn, &rows, false).expect("post");
+    assert_eq!(result.posted.len(), 1);
+    assert_eq!(result.posted[0].entry.description, "");
 }
