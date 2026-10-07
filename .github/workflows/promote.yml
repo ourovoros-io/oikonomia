@@ -47,6 +47,12 @@ on:
 permissions:
   contents: read
 
+# One promotion per tag. A second run of the same tag waits until the first
+# finishes, so a publish in progress always runs through to the end.
+concurrency:
+  group: promote-${{ inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   promote:
     runs-on: ubuntu-latest
@@ -99,11 +105,12 @@ jobs:
           fi
 
       # rust-toolchain.toml names the exact toolchain; with no toolchain
-      # argument rustup installs that one.
+      # argument rustup installs that one. This job holds the updater
+      # signing key, so cargo and npm build from scratch. A shared cache
+      # written by any other workflow could run code next to that key.
+      # assemble_feed is small; a cold build is fine.
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install --profile minimal --no-self-update
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

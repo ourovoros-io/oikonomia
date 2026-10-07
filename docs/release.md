@@ -38,11 +38,11 @@ The updater keypair is generated offline; its private half never touches the rep
 
 Tauri app updates are signed with minisign.
 
-1. On a machine with `@tauri-apps/cli` installed (or via `npx @tauri-apps/cli signer generate`):
+1. On a machine with the Tauri CLI at `2.12.1`, the exact version locked in `web/package.json` (the same pin `npm ci` installs for the CI builds, the release jobs, and promotion):
    ```
-   npx @tauri-apps/cli signer generate
+   npx @tauri-apps/cli@2.12.1 signer generate
    ```
-   This prompts for a password (optional) and outputs `skey.txt` (private) and `pubkey.txt` (public).
+   This prompts for a password (optional) and outputs `skey.txt` (private) and `pubkey.txt` (public). When that dependency is bumped, update this command to the new exact version.
 
 2. The private key `skey.txt` becomes the GitHub Environment `release` secret `TAURI_SIGNING_PRIVATE_KEY` (and optionally `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`).
 
@@ -75,7 +75,7 @@ Optional: Actions → Release → Run workflow with `dry_run` still requires Env
 A tag push builds a **draft** release in this repo. A draft is visible only to people with write access, and the updater cannot see it: the app reads `releases/latest`, which GitHub resolves to published releases only. Test the signed build from the draft, then promote it:
 
 1. Dry run first: `gh workflow run promote.yml -f tag=vX.Y.Z -f dry_run=true`. This assembles, signs, and verifies the feed and every artifact without changing the release.
-2. Promote: `gh workflow run promote.yml -f tag=vX.Y.Z` (uses Environment `release`). Windows is published by default and that needs `WINDOWS_SIGNING=none`; add `-f publish_windows=false` only to withhold Windows on purpose.
+2. Promote: `gh workflow run promote.yml -f tag=vX.Y.Z` (uses Environment `release`). Windows is published by default and that needs `WINDOWS_SIGNING=none`; add `-f publish_windows=false` only to withhold Windows on purpose. A second promotion of the same tag waits until the one already running finishes.
 3. The workflow refuses anything that is not a draft, downloads the draft's artifacts, assembles `latest.json`, refuses the release when any file the feed names is larger than the update client's download cap, signs `latest.json` with the updater minisign key, verifies the signature with the app's baked public key, and checks every artifact the feed names against its sha256 and its minisign signature with that same key, as the app does before installing.
 4. It then deletes every asset the release set does not publish, uploads the signed feed, and publishes the draft as the latest release. Publishing is the last step, so a failure leaves a draft to fix, never a half-published release.
 5. The published release holds the `.dmg`, `.app.tar.gz`, `.AppImage`, `.deb` and `-setup.exe` with their signatures, plus `latest.json` and its signature, the version-free copies below, and a `SHA256SUMS` file listing every one of them (`sha256sum --check SHA256SUMS`). The feed has a `darwin-aarch64`, a `linux-x86_64` and a `windows-x86_64` entry. With `-f publish_windows=false` the `-setup.exe`, its copy and the `windows-x86_64` entry are left out.
