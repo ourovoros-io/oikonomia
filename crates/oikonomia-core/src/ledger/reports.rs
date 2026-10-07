@@ -672,12 +672,36 @@ impl LineQuery {
 /// - [`Error::Database`] on database errors, which include a total that overflows
 ///   `i64` inside `SQLite`'s `SUM`.
 fn active_lines(conn: &Connection, query: LineQuery) -> Result<Vec<ReportLine>> {
-    let hidden_predicate = if query.omit_hidden {
+    let mut stmt = conn
+        .prepare(&active_lines_sql(query.omit_hidden))
+        .database("read account activity")?;
+
+    let rows = stmt
+        .query_map(
+            rusqlite::params![
+                query.entity_id.to_string(),
+                query.from.map(format_date),
+                format_date(query.to),
+                account_type_str(query.account_type),
+            ],
+            |row| Ok(map_report_line(row)),
+        )
+        .database("read account activity")?;
+
+    let lines = collect_rows(rows)?;
+    Ok(lines.into_iter().filter(has_activity).collect())
+}
+
+/// The query of [`active_lines`]: the accounts of entity `?1` and type `?4`,
+/// each with its debits and credits on active entries dated from `?2` (open
+/// when `NULL`) through `?3`, hidden entries left out with `omit_hidden`.
+fn active_lines_sql(omit_hidden: bool) -> String {
+    let hidden_predicate = if omit_hidden {
         "AND (je.hidden = 0 OR je.hidden IS NULL)"
     } else {
         ""
     };
-    let sql = format!(
+    format!(
         "
         SELECT a.code, a.name, a.account_type,
                COALESCE(t.debits, 0),
@@ -699,24 +723,7 @@ fn active_lines(conn: &Connection, query: LineQuery) -> Result<Vec<ReportLine>> 
           AND a.account_type = ?4
         ORDER BY a.sort_order, a.code
         "
-    );
-
-    let mut stmt = conn.prepare(&sql).database("read account activity")?;
-
-    let rows = stmt
-        .query_map(
-            rusqlite::params![
-                query.entity_id.to_string(),
-                query.from.map(format_date),
-                format_date(query.to),
-                account_type_str(query.account_type),
-            ],
-            |row| Ok(map_report_line(row)),
-        )
-        .database("read account activity")?;
-
-    let lines = collect_rows(rows)?;
-    Ok(lines.into_iter().filter(has_activity).collect())
+    )
 }
 
 /// Returns whether any debit or credit was posted to the line's account in
@@ -931,6 +938,23 @@ mod tests {
                 .map(listed_lines::position)
                 .collect(),
         );
+    }
+
+    #[test]
+    fn a_report_tests_for_a_void_through_the_index() {
+        let conn = crate::db::migrated_connection();
+        let entity = EntityId::generate().to_string();
+        let from: Option<String> = None;
+
+        for omit_hidden in [false, true] {
+            let plan = crate::db::query_plan(
+                &conn,
+                &active_lines_sql(omit_hidden),
+                &[&entity, &from, &"2026-12-31", &"expense"],
+            );
+
+            assert!(plan.contains("idx_entries_voided_by"), "{plan}");
+        }
     }
 
     #[test]

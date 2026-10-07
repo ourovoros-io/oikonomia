@@ -577,20 +577,9 @@ pub fn account_register(
         0
     };
 
-    let list_sql = format!(
-        "
-        SELECT je.id, je.entry_date, je.description,
-               jl.debit_minor, jl.credit_minor, je.hidden
-        FROM journal_lines jl
-        JOIN journal_entries je ON je.id = jl.entry_id
-        WHERE jl.account_id = ?1
-          AND {ACTIVE_ENTRY_PREDICATE}
-          AND (?2 IS NULL OR je.entry_date >= ?2)
-          AND (?3 IS NULL OR je.entry_date <= ?3)
-        ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
-        "
-    );
-    let mut stmt = conn.prepare(&list_sql).database("read account register")?;
+    let mut stmt = conn
+        .prepare(&register_sql())
+        .database("read account register")?;
 
     let rows = stmt
         .query_map(rusqlite::params![account_id.to_string(), from, to], |row| {
@@ -799,7 +788,29 @@ fn load_listed_headers(
     conn: &Connection,
     listed: &ListedEntries,
 ) -> Result<Vec<(JournalEntry, bool)>> {
-    let sql = format!(
+    let mut stmt = conn
+        .prepare(&listed_headers_sql())
+        .database("list journal entries")?;
+
+    let rows = stmt
+        .query_map(listed.bound(), |row| {
+            let is_voided: i64 = row.get(8)?;
+            Ok(map_entry_row(row).map(|entry| (entry, is_voided != 0)))
+        })
+        .database("list journal entries")?;
+
+    collect_rows(rows)
+}
+
+/// The query of [`load_listed_headers`]: the entries
+/// [`LISTED_ENTRIES_PREDICATE`] selects, each with whether it is voided.
+///
+/// The voided test looks, once per listed entry, for an entry that names it
+/// in `voided_by_entry_id`. The index `idx_entries_voided_by` answers that
+/// lookup; without it each one reads the whole table, and the listing takes
+/// time with the square of the number of entries.
+fn listed_headers_sql() -> String {
+    format!(
         "
         SELECT je.id, je.entity_id, je.entry_date, je.description, je.reference,
                je.status, je.hidden, je.voided_by_entry_id,
@@ -812,17 +823,25 @@ fn load_listed_headers(
         WHERE {LISTED_ENTRIES_PREDICATE}
         ORDER BY je.entry_date DESC, je.created_at DESC
         "
-    );
-    let mut stmt = conn.prepare(&sql).database("list journal entries")?;
+    )
+}
 
-    let rows = stmt
-        .query_map(listed.bound(), |row| {
-            let is_voided: i64 = row.get(8)?;
-            Ok(map_entry_row(row).map(|entry| (entry, is_voided != 0)))
-        })
-        .database("list journal entries")?;
-
-    collect_rows(rows)
+/// The query of [`account_register`]: the lines of active entries on account
+/// `?1` dated from `?2` through `?3`, where a `NULL` bound is open.
+fn register_sql() -> String {
+    format!(
+        "
+        SELECT je.id, je.entry_date, je.description,
+               jl.debit_minor, jl.credit_minor, je.hidden
+        FROM journal_lines jl
+        JOIN journal_entries je ON je.id = jl.entry_id
+        WHERE jl.account_id = ?1
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND (?2 IS NULL OR je.entry_date >= ?2)
+          AND (?3 IS NULL OR je.entry_date <= ?3)
+        ORDER BY je.entry_date ASC, je.created_at ASC, jl.line_order ASC
+        "
+    )
 }
 
 /// Loads the lines of every entry [`list_entries`] returns, grouped by entry
@@ -1252,4 +1271,48 @@ fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
         status,
         hidden: read_column::<i64>(row, 6)? != 0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{migrated_connection, query_plan};
+
+    /// The index a lookup by `voided_by_entry_id` must go through.
+    const VOID_LINK_INDEX: &str = "idx_entries_voided_by";
+
+    #[test]
+    fn listing_entries_finds_the_void_link_through_its_index() {
+        let conn = migrated_connection();
+        let listed = ListedEntries::new(EntityId::generate(), &EntryFilter::default());
+
+        let plan = query_plan(&conn, &listed_headers_sql(), &listed.bound());
+
+        assert!(plan.contains(VOID_LINK_INDEX), "{plan}");
+    }
+
+    #[test]
+    fn the_account_filter_of_a_listing_reads_only_the_lines_of_each_entry() {
+        let conn = migrated_connection();
+        let filter = EntryFilter {
+            account_id: Some(AccountId::generate()),
+            ..EntryFilter::default()
+        };
+        let listed = ListedEntries::new(EntityId::generate(), &filter);
+
+        let plan = query_plan(&conn, &listed_headers_sql(), &listed.bound());
+
+        assert!(plan.contains("idx_lines_entry_account"), "{plan}");
+    }
+
+    #[test]
+    fn the_register_tests_for_a_void_through_the_index() {
+        let conn = migrated_connection();
+        let account = AccountId::generate().to_string();
+        let open: Option<String> = None;
+
+        let plan = query_plan(&conn, &register_sql(), &[&account, &open, &open]);
+
+        assert!(plan.contains(VOID_LINK_INDEX), "{plan}");
+    }
 }

@@ -27,7 +27,7 @@ use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
 /// The schema version [`migrate`] brings a vault to.
-pub const CURRENT_SCHEMA_VERSION: i64 = 7;
+pub const CURRENT_SCHEMA_VERSION: i64 = 8;
 
 /// One schema change, made through the transaction the runner opened for it.
 type Migration = fn(&Transaction<'_>) -> Result<()>;
@@ -43,6 +43,7 @@ const MIGRATIONS: &[(i64, Migration)] = &[
     (5, migrate_v5),
     (6, migrate_v6),
     (7, migrate_v7),
+    (8, migrate_v8),
 ];
 
 /// Applies the migrations a vault has not run yet.
@@ -350,6 +351,36 @@ fn migrate_v7(tx: &Transaction<'_>) -> Result<()> {
         ",
     )
     .database("create recurring templates table")
+}
+
+/// v8: two indexes for lookups that were made once per listed entry.
+///
+/// Nothing stored changes. Both lookups read a whole table, or a whole
+/// account, for each entry of a listing, so the time grew with the square of
+/// the book:
+///
+/// - `idx_entries_voided_by` finds the entry that names a given one in
+///   `voided_by_entry_id`. Every query that asks whether an entry is voided
+///   or active makes that lookup. The index is partial because most entries
+///   are never voided; `SQLite` uses an `IS NOT NULL` partial index for an
+///   equality on the same column
+///   (<https://www.sqlite.org/partialindex.html#queries_using_partial_indexes>).
+/// - `idx_lines_entry_account` finds the lines of one entry on one account,
+///   which the account filter of the entry list asks for. It starts with
+///   `entry_id`, so it also serves every lookup `idx_lines_entry` served, and
+///   that index is dropped.
+fn migrate_v8(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_entries_voided_by
+            ON journal_entries(voided_by_entry_id)
+            WHERE voided_by_entry_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_lines_entry_account
+            ON journal_lines(entry_id, account_id);
+        DROP INDEX IF EXISTS idx_lines_entry;
+        ",
+    )
+    .database("index void links and entry lines")
 }
 
 /// Renames documents so that no two in one book share a filename.
