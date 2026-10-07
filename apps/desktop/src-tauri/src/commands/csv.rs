@@ -327,6 +327,30 @@ mod ipc_tests {
     }
 
     #[test]
+    fn a_mapping_with_no_description_column_previews_rows_without_one() {
+        let (app, entity) = mock_book("csv-no-description");
+        let path = picked_statement(&app, UNDETECTED_CSV);
+        // The Map columns step with Description set to "Not mapped".
+        let mapping = serde_json::json!({
+            "date": "When",
+            "description": null,
+            "amount": "Paid",
+            "debit": null,
+            "credit": null,
+            "reference": null,
+            "direction": null,
+        });
+
+        let preview = app
+            .invoke("csv_import_preview", payload(&entity, &path, Some(mapping)))
+            .unwrap();
+
+        assert_eq!(preview["rows"][0]["error"], serde_json::Value::Null);
+        assert_eq!(preview["rows"][0]["suggested"]["description"], "");
+        assert_eq!(preview["rows"][0]["signed_amount_minor"], -80_000);
+    }
+
+    #[test]
     fn an_incomplete_mapping_is_still_refused_with_its_problem() {
         let (app, entity) = mock_book("csv-incomplete-mapping");
         let path = picked_statement(&app, UNDETECTED_CSV);

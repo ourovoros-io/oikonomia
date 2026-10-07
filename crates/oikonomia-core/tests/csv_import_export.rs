@@ -1091,3 +1091,32 @@ fn a_file_with_one_debit_column_previews_the_same_detected_or_mapped() {
         detected.rows[0].signed_amount_minor
     );
 }
+
+#[test]
+fn a_file_without_a_description_column_is_mapped_previewed_and_posted() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let csv = "When,Paid\n2026-03-15,-800.00\n";
+    let mapping = CsvColumnMapping {
+        date: Some("When".into()),
+        amount: Some("Paid".into()),
+        ..CsvColumnMapping::default()
+    };
+
+    let preview =
+        preview_bank_csv(conn, entity_id, roles(&acc), csv, Some(&mapping)).expect("preview");
+    let rows: Vec<PostSimpleEntryRequest> = preview
+        .rows
+        .iter()
+        .filter_map(|row| row.suggested.clone())
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].description, "");
+
+    // The ledger takes an entry without a description, as it does from the
+    // quick-add form, so the column does not have to be mapped.
+    let result = post_import_rows(conn, &rows, false).expect("post");
+    assert_eq!(result.posted.len(), 1);
+    assert_eq!(result.posted[0].entry.description, "");
+}

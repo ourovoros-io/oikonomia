@@ -843,11 +843,12 @@
       "export": "CSV exportieren",
       "exportTitle": "Unverschlüsseltes Buchhaltungs-CSV",
       "mapTitle": "CSV-Spalten zuordnen",
-      "mapDescription": "Ordnen Sie Ihrer Bankdatei Datum, Betrag (oder Soll/Haben) und Beschreibung zu. Die Referenz ist freiwillig.",
+      "mapDescription": "Ordnen Sie Ihrer Bankdatei Datum und Betrag (oder Soll/Haben) zu. Beschreibung und Referenz sind freiwillig.",
       "field": {
         "date": "Datum",
         "amount": "Betrag",
         "description": "Beschreibung",
+        "descriptionOptional": "Beschreibung (optional)",
         "reference": "Referenz",
         "referenceOptional": "Referenz (optional)",
         "debit": "Soll",
@@ -994,7 +995,6 @@
     "csvInvalidMapping": "Diese Spaltenauswahl konnte nicht verwendet werden. Prüfen Sie die Spalten und versuchen Sie es erneut.",
     "csvMapping": {
       "missingDate": "Wählen Sie die Spalte mit dem Datum.",
-      "missingDescription": "Wählen Sie die Spalte mit der Beschreibung.",
       "missingAmount": "Wählen Sie eine Betragsspalte oder eine Soll- oder eine Haben-Spalte.",
       "amountAndDebitOrCredit": "Wählen Sie entweder eine Betragsspalte oder die Soll- und Haben-Spalten, nicht beides.",
       "unknownColumn": "Die Datei hat keine Spalte namens „{column}“. Wählen Sie eine der Spalten der Datei."

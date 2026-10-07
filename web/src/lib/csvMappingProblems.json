@@ -1,6 +1,5 @@
 [
   "missing_date",
-  "missing_description",
   "missing_amount",
   "amount_and_debit_or_credit",
   "unknown_column"

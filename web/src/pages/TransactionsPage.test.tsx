@@ -812,6 +812,71 @@ describe('TransactionsPage CSV import of a file with one debit column', () => {
   })
 })
 
+describe('TransactionsPage CSV import of a file without a description column', () => {
+  /** What Rust returns for `Date,Amount`: read in full, with no description detected. */
+  const noDescription: CsvImportPreview = {
+    ...preview,
+    headers: ['Date', 'Amount'],
+    detected_mapping: {
+      date: 'Date',
+      description: null,
+      amount: 'Amount',
+      debit: null,
+      credit: null,
+      reference: null,
+      direction: null,
+    },
+    missing_columns: [],
+  }
+
+  test('the description is optional, and Continue shows the rows Rust already read', async () => {
+    vi.mocked(api.csvImportPreview).mockResolvedValue(noDescription)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Description source column' })).toHaveValue('')
+    })
+    expect(screen.getByText('Description (optional)')).toBeTruthy()
+    expect(screen.queryByRole('status')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Preview import' })).toBeTruthy()
+    })
+    expect(api.csvImportPreview).toHaveBeenCalledTimes(1)
+  })
+
+  test('a detected description can be set to not mapped, which sends none', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Description source column' })).toHaveValue(
+        'Payee',
+      )
+    })
+
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Description source column' }),
+      'Not mapped',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
+    })
+    expect(vi.mocked(api.csvImportPreview).mock.calls[1]?.[0].mapping).toEqual({
+      date: 'Date',
+      description: null,
+      amount: 'Amount',
+      debit: null,
+      credit: null,
+      reference: null,
+      direction: null,
+    })
+  })
+})
+
 describe('TransactionsPage CSV direction column', () => {
   /** A statement with unsigned amounts and a column that says which way each went. */
   const withDirection: CsvImportPreview = {

@@ -118,7 +118,6 @@ export const VARIANT_KEYS: Record<string, { param: string; keys: Record<string, 
     param: 'problem',
     keys: {
       missing_date: 'error.csvMapping.missingDate',
-      missing_description: 'error.csvMapping.missingDescription',
       missing_amount: 'error.csvMapping.missingAmount',
       amount_and_debit_or_credit: 'error.csvMapping.amountAndDebitOrCredit',
       unknown_column: 'error.csvMapping.unknownColumn',

@@ -246,9 +246,9 @@ pub enum CsvRowOutcome {
 /// Values are **header names** as they appear in the first row, matched
 /// case-insensitively (ASCII). 0-based indexes are not accepted.
 ///
-/// When this struct is provided (`Some`), `date` and `description` are
-/// required, and the amount side must be **either** `amount` **or** at
-/// least one of `debit` and `credit` — not both forms, and not neither.
+/// When this struct is provided (`Some`), `date` is required, and the
+/// amount side must be **either** `amount` **or** at least one of `debit`
+/// and `credit` — not both forms, and not neither. `description`,
 /// `reference` and `direction` are optional. Auto-detect is not used for any
 /// field, so a column left out here is not read.
 ///
@@ -260,7 +260,8 @@ pub struct CsvColumnMapping {
     /// Date column header.
     #[serde(default)]
     pub date: Option<String>,
-    /// Description / payee / memo column header.
+    /// Optional description / payee / memo column header. Without one,
+    /// every row has an empty description.
     #[serde(default)]
     pub description: Option<String>,
     /// Signed amount column. Mutually exclusive with [`Self::debit`] / [`Self::credit`].

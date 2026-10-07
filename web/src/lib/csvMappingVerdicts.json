@@ -49,7 +49,23 @@
   },
   {
     "mapping": { "date": "Date", "amount": "Amount" },
-    "verdict": "missing_description"
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": " ", "debit": "Debit", "reference": "Ref" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date", "description": null, "credit": "Credit" },
+    "verdict": "ready"
+  },
+  {
+    "mapping": { "date": "Date" },
+    "verdict": "missing_amount"
+  },
+  {
+    "mapping": { "amount": "Amount" },
+    "verdict": "missing_date"
   },
   {
     "mapping": { "date": "Date", "description": "Memo" },

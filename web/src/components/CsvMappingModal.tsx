@@ -26,7 +26,7 @@ type Props = {
 const PLACEHOLDER_FIELDS = [
   { labelKey: 'tx.csv.field.date', targetKey: 'tx.csv.field.date' },
   { labelKey: 'tx.csv.field.amount', targetKey: 'tx.csv.field.amount' },
-  { labelKey: 'tx.csv.field.description', targetKey: 'tx.csv.field.description' },
+  { labelKey: 'tx.csv.field.description', targetKey: 'tx.csv.field.descriptionOptional' },
   { labelKey: 'tx.csv.field.reference', targetKey: 'tx.csv.field.referenceOptional' },
 ] as const
 
@@ -210,9 +210,10 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
             )}
             <HeaderSelect
               label={t('tx.csv.field.description')}
-              target={t('tx.csv.field.description')}
+              target={t('tx.csv.field.descriptionOptional')}
               value={draft.description}
               headers={headers}
+              optional
               onChange={(description) => patch({ description })}
             />
             <HeaderSelect

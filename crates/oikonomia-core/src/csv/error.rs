@@ -20,8 +20,6 @@ use std::fmt;
 pub enum CsvMappingProblem {
     /// The mapping names no date column.
     MissingDate,
-    /// The mapping names no description column.
-    MissingDescription,
     /// The mapping names no amount column, no debit column and no credit
     /// column.
     MissingAmount,
@@ -46,7 +44,6 @@ impl CsvMappingProblem {
     pub fn identifier(&self) -> &'static str {
         match self {
             Self::MissingDate => "missing_date",
-            Self::MissingDescription => "missing_description",
             Self::MissingAmount => "missing_amount",
             Self::AmountAndDebitOrCredit => "amount_and_debit_or_credit",
             Self::UnknownColumn { .. } => "unknown_column",
@@ -58,9 +55,6 @@ impl fmt::Display for CsvMappingProblem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingDate => formatter.write_str("the mapping has no date column"),
-            Self::MissingDescription => {
-                formatter.write_str("the mapping has no description column")
-            }
             Self::MissingAmount => {
                 formatter.write_str("the mapping has no amount, debit or credit column")
             }
@@ -392,7 +386,6 @@ mod tests {
     listed_variants! {
         patterns listed_problems for CsvMappingProblem {
             CsvMappingProblem::MissingDate,
-            CsvMappingProblem::MissingDescription,
             CsvMappingProblem::MissingAmount,
             CsvMappingProblem::AmountAndDebitOrCredit,
             CsvMappingProblem::UnknownColumn { .. },
@@ -403,7 +396,6 @@ mod tests {
     fn every_problem() -> Vec<CsvMappingProblem> {
         vec![
             CsvMappingProblem::MissingDate,
-            CsvMappingProblem::MissingDescription,
             CsvMappingProblem::MissingAmount,
             CsvMappingProblem::AmountAndDebitOrCredit,
             CsvMappingProblem::UnknownColumn { name: "x".into() },

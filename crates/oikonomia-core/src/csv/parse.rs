@@ -87,7 +87,8 @@
 //! whole, without regard to ASCII case, and a column it leaves out is not
 //! read. It needs what detection needs: a date column, and an amount column
 //! or at least one of debit and credit, never an amount column beside one of
-//! those.
+//! those. The description column is optional either way: a row of a file
+//! without one gets an empty description, which the ledger accepts.
 //!
 //! # Debit and credit columns
 //!
@@ -572,9 +573,8 @@ fn header_index(headers: &StringRecord, name: &str) -> CsvResult<usize> {
 /// # Errors
 ///
 /// [`Error::Csv`] with [`CsvError::InvalidMapping`] when the mapping
-/// has no date or no description, sets both an amount and a debit or credit
-/// column, sets none of amount, debit and credit, or names a header the
-/// file does not have.
+/// has no date, sets both an amount and a debit or credit column, sets none
+/// of amount, debit and credit, or names a header the file does not have.
 fn resolve_user_mapping(
     headers: &StringRecord,
     mapping: &CsvColumnMapping,
@@ -582,9 +582,9 @@ fn resolve_user_mapping(
     let Some(date) = trimmed_nonempty(mapping.date.as_deref()) else {
         return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingDate).into());
     };
-    let Some(description) = trimmed_nonempty(mapping.description.as_deref()) else {
-        return Err(CsvError::InvalidMapping(CsvMappingProblem::MissingDescription).into());
-    };
+    // Optional, as it is for detection: a row without one gets an empty
+    // description, which the ledger accepts.
+    let description = trimmed_nonempty(mapping.description.as_deref());
     let amount = trimmed_nonempty(mapping.amount.as_deref());
     let debit = trimmed_nonempty(mapping.debit.as_deref());
     let credit = trimmed_nonempty(mapping.credit.as_deref());
@@ -607,7 +607,7 @@ fn resolve_user_mapping(
 
     Ok(ColumnMap {
         date: Some(header_index(headers, date)?),
-        description: Some(header_index(headers, description)?),
+        description: optional_index(description)?,
         amount: optional_index(amount)?,
         debit: optional_index(debit)?,
         credit: optional_index(credit)?,
@@ -1926,6 +1926,40 @@ mod tests {
     }
 
     #[test]
+    fn a_mapping_without_a_description_reads_rows_with_an_empty_one() {
+        let csv = "Date,Payee,Amount\n2026-03-15,Coffee,-3.50\n";
+
+        for description in [None, Some(String::new()), Some("  ".to_owned())] {
+            let mapping = CsvColumnMapping {
+                date: Some("Date".into()),
+                description: description.clone(),
+                amount: Some("Amount".into()),
+                ..CsvColumnMapping::default()
+            };
+            let parsed = parse_bank_csv(csv, eur(), Some(&mapping)).expect("no description");
+
+            let CsvRowOutcome::Parsed(row) = &parsed.rows[0] else {
+                panic!("{description:?}: {:?}", parsed.rows);
+            };
+            assert_eq!(row.description, "", "{description:?}");
+            assert_eq!(row.signed_amount_minor, -350, "{description:?}");
+        }
+    }
+
+    #[test]
+    fn a_file_without_a_description_column_reads_the_same_detected_or_mapped() {
+        let csv = "Date,Amount\n2026-03-15,-3.50\n";
+        let detected = parse_bank_csv(csv, eur(), None).expect("detected");
+        assert_eq!(detected.missing_columns, []);
+        assert_eq!(detected.detected_mapping.description, None);
+
+        let mapped = parse_bank_csv(csv, eur(), Some(&detected.detected_mapping)).expect("mapped");
+
+        assert_eq!(mapped.rows, detected.rows);
+        assert_eq!(mapped.rows.len(), 1);
+    }
+
+    #[test]
     fn invalid_mapping_is_rejected() {
         let csv = "Date,Description,Amount,Debit,Credit\n2026-03-15,X,-1.00,,\n";
 
@@ -1936,14 +1970,6 @@ mod tests {
         };
         let err = parse_bank_csv(csv, eur(), Some(&missing_date)).expect_err("date");
         assert_eq!(err, invalid_mapping(CsvMappingProblem::MissingDate));
-
-        let missing_desc = CsvColumnMapping {
-            date: Some("Date".into()),
-            amount: Some("Amount".into()),
-            ..CsvColumnMapping::default()
-        };
-        let err = parse_bank_csv(csv, eur(), Some(&missing_desc)).expect_err("desc");
-        assert_eq!(err, invalid_mapping(CsvMappingProblem::MissingDescription));
 
         let missing_amount = column_mapping("Date", "Description", None, None, None);
         let err = parse_bank_csv(csv, eur(), Some(&missing_amount)).expect_err("amount");

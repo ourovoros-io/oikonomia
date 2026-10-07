@@ -843,11 +843,12 @@
       "export": "Exporter en CSV",
       "exportTitle": "CSV comptable non chiffré",
       "mapTitle": "Associer les colonnes CSV",
-      "mapDescription": "Faites correspondre votre fichier bancaire à une date, un montant (ou débit/crédit) et une description. La référence est facultative.",
+      "mapDescription": "Faites correspondre votre fichier bancaire à une date et à un montant (ou débit/crédit). La description et la référence sont facultatives.",
       "field": {
         "date": "Date",
         "amount": "Montant",
         "description": "Description",
+        "descriptionOptional": "Description (facultatif)",
         "reference": "Référence",
         "referenceOptional": "Référence (facultatif)",
         "debit": "Débit",
@@ -994,7 +995,6 @@
     "csvInvalidMapping": "Ces choix de colonnes n’ont pas pu être utilisés. Vérifiez les colonnes, puis réessayez.",
     "csvMapping": {
       "missingDate": "Choisissez la colonne qui contient la date.",
-      "missingDescription": "Choisissez la colonne qui contient la description.",
       "missingAmount": "Choisissez une colonne de montant, ou une colonne débit ou crédit.",
       "amountAndDebitOrCredit": "Choisissez soit une colonne de montant, soit les colonnes débit et crédit, pas les deux.",
       "unknownColumn": "Le fichier n’a pas de colonne nommée « {column} ». Choisissez l’une des colonnes du fichier."
