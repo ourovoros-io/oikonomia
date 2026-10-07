@@ -22,7 +22,7 @@
 //! run it again, so the change would reach new vaults only.
 
 use crate::db::{collect_rows, read_column};
-use crate::error::{DatabaseContext, Error, Result, VaultCorruption};
+use crate::error::{DatabaseContext, Error, PrivateDetail, Result, VaultCorruption};
 use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
@@ -419,7 +419,11 @@ fn dedup_document_names(conn: &Connection) -> Result<()> {
             suffix += 1;
         }
         if name != filename {
-            log::info!("v4 migration: renamed duplicate document to {name}");
+            // A document's name is the user's.
+            log::info!(
+                "v4 migration: renamed duplicate document to {}",
+                PrivateDetail(&name)
+            );
             conn.execute(
                 "UPDATE documents SET filename = ?1 WHERE id = ?2",
                 rusqlite::params![name, id],

@@ -291,8 +291,11 @@ impl Vault {
         }
         let staged = match VaultHeader::load(&staged_path) {
             Ok(staged) => staged,
-            Err(Error::VaultCorrupt(reason)) => {
-                log::warn!("ignoring unusable staged vault header: {reason}");
+            Err(unusable @ Error::VaultCorrupt(_)) => {
+                log::warn!(
+                    "ignoring unusable staged vault header: {}",
+                    unusable.log_text()
+                );
                 return Err(Error::InvalidPassword);
             }
             Err(other) => return Err(other),
@@ -442,7 +445,10 @@ impl Vault {
     fn reopen_after_failed_rekey(&mut self, db_path: &Path, old_key: &VaultKey) {
         match open_sqlcipher(db_path, old_key, false) {
             Ok(conn) => self.conn = Some(conn),
-            Err(err) => log::warn!("vault left locked after a failed password change: {err}"),
+            Err(err) => log::warn!(
+                "vault left locked after a failed password change: {}",
+                err.log_text()
+            ),
         }
     }
 
