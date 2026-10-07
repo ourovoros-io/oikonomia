@@ -8,8 +8,9 @@
 //!    an unlock with its key derivation, a rekey).
 //! 2. `WatchdogGate::state`, whether the idle watchdog polls or parks. Held
 //!    for a field update, or handed to a condition-variable wait.
-//! 3. `PathGrants::paths`, the paths the user handed over. Held for one
-//!    lookup or insert.
+//! 3. `PathGrants::paths`, the paths the user handed over, each under the
+//!    purpose it was handed over for ([`GrantPurpose`]). Held for one lookup
+//!    or insert.
 //! 4. `AppState::prefs_lock`, which serializes a load-change-save of the
 //!    plaintext preferences file. Held across that file I/O.
 //! 5. `AppState::update`, the update machine. Held for a status change, and
@@ -69,7 +70,8 @@ pub(crate) struct AppState {
     /// Seconds since `UNIX_EPOCH` of the last command touching the vault.
     last_activity: Arc<AtomicU64>,
     /// The paths the user handed over through a native drop or a native file
-    /// dialog; path-taking IPC commands accept only these.
+    /// dialog; a path-taking IPC command accepts only those handed over for
+    /// its own purpose.
     path_grants: PathGrants,
     /// Serializes a load-change-save of the plaintext preferences file.
     prefs_lock: Mutex<()>,
@@ -143,9 +145,14 @@ impl AppState {
     }
 
     /// Records paths the user chose through a native drop or dialog, so a
-    /// later path-taking command may accept them ([`PathGrants::grant`]).
-    pub(crate) fn grant_paths(&self, paths: impl IntoIterator<Item = PathBuf>) {
-        self.path_grants.grant(paths);
+    /// later command that takes a path for `purpose` may accept them
+    /// ([`PathGrants::grant`]).
+    pub(crate) fn grant_paths(
+        &self,
+        purpose: GrantPurpose,
+        paths: impl IntoIterator<Item = PathBuf>,
+    ) {
+        self.path_grants.grant(purpose, paths);
     }
 
     /// Returns a handle to the granted paths that a blocking task can own.
@@ -169,8 +176,31 @@ impl AppState {
     }
 }
 
+/// What the user handed a path over for.
+///
+/// Each place that grants a path names one purpose, and each command that
+/// takes a path asks for its own, so a file the user picked for one thing is
+/// not accepted for another: a statement picked for a CSV import, or a file
+/// dropped on a window, never reaches the restore that replaces the vault.
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum GrantPurpose {
+    /// A backup archive to restore the vault from. Granted by the open
+    /// dialog of `vault_pick_backup` and `vault_restore`; accepted by
+    /// `vault_restore`.
+    Backup,
+    /// A bank statement to preview for import. Granted by the open dialog of
+    /// `csv_import_preview`, and accepted by that command when the webview
+    /// passes the path back with a column mapping.
+    Csv,
+    /// A document to analyze or to store with an entry. Granted by a file
+    /// drop on a window; accepted by `document_analyze_path` and
+    /// `entry_post_simple_with_document_path`.
+    Document,
+}
+
 /// The paths the user handed over through a native drop or a native file
-/// dialog.
+/// dialog, each with the purpose it was handed over for.
 ///
 /// A handle: clones share one set. The Tauri state is borrowed for the length
 /// of a command, so a task on the blocking pool cannot hold it; it holds a
@@ -181,29 +211,32 @@ impl AppState {
 /// not on an async worker.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PathGrants {
-    /// The granted paths, each with its links resolved.
-    paths: Arc<Mutex<HashSet<PathBuf>>>,
+    /// The granted paths, each with its links resolved, under the purpose
+    /// each was granted for. One path may be held under several purposes.
+    paths: Arc<Mutex<HashSet<(GrantPurpose, PathBuf)>>>,
 }
 
 impl PathGrants {
-    /// Records `paths` as handed over, so a later path-taking command may
-    /// accept them.
+    /// Records `paths` as handed over for `purpose`, so a later command that
+    /// takes a path for that purpose may accept them.
     ///
     /// A path that cannot be resolved, such as one that no longer exists, is
     /// skipped: there is nothing a command could open under it.
-    pub(crate) fn grant(&self, paths: impl IntoIterator<Item = PathBuf>) {
+    pub(crate) fn grant(&self, purpose: GrantPurpose, paths: impl IntoIterator<Item = PathBuf>) {
         // Resolved before the set is locked, so the lock is never held across
         // file I/O.
-        let resolved: Vec<PathBuf> = paths
+        let resolved: Vec<(GrantPurpose, PathBuf)> = paths
             .into_iter()
             .filter_map(|path| path.canonicalize().ok())
+            .map(|path| (purpose, path))
             .collect();
 
         self.lock().extend(resolved);
     }
 
-    /// Returns the granted path that `path` resolves to, or `None` if it
-    /// resolves to nothing the user handed over.
+    /// Returns the path granted for `purpose` that `path` resolves to, or
+    /// `None` if it resolves to nothing the user handed over for that
+    /// purpose. A grant for another purpose does not count.
     ///
     /// The result is the resolved path that was compared, and it is the one
     /// to open. Opening `path` itself would resolve its links a second time,
@@ -211,16 +244,16 @@ impl PathGrants {
     /// checked. The resolved path is still opened by name, so this does not
     /// cover a directory on it being replaced after the check.
     #[must_use]
-    pub(crate) fn resolve(&self, path: &Path) -> Option<PathBuf> {
-        let canonical = path.canonicalize().ok()?;
+    pub(crate) fn resolve(&self, purpose: GrantPurpose, path: &Path) -> Option<PathBuf> {
+        let wanted = (purpose, path.canonicalize().ok()?);
         let granted = self.lock();
 
-        granted.contains(&canonical).then_some(canonical)
+        granted.contains(&wanted).then_some(wanted.1)
     }
 
     /// Locks the set, recovering from poisoning: it holds plain paths that
     /// are valid whichever statement a panic interrupted.
-    fn lock(&self) -> MutexGuard<'_, HashSet<PathBuf>> {
+    fn lock(&self) -> MutexGuard<'_, HashSet<(GrantPurpose, PathBuf)>> {
         match self.paths.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -872,8 +905,8 @@ fn first_dir_with_models(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, idle_secs, now_secs, resolve_ocr_model_dir,
-        run_auto_lock_loop, should_auto_lock,
+        AUTO_LOCK_POLL_INTERVAL, AppState, GatedVault, GrantPurpose, idle_secs, now_secs,
+        resolve_ocr_model_dir, run_auto_lock_loop, should_auto_lock,
     };
     use oikonomia_core::ledger::set_lock_timeout_secs;
     use oikonomia_core::vault::VaultStatus;
@@ -993,22 +1026,81 @@ mod tests {
         fs::create_dir_all(dir.join("sub")).expect("subdir");
         let indirect = dir.join("sub").join("..").join("picked.csv");
 
-        assert_eq!(
-            state.path_grants().resolve(&picked),
-            None,
-            "nothing granted yet"
-        );
+        let grants = state.path_grants();
+        let csv = GrantPurpose::Csv;
+        assert_eq!(grants.resolve(csv, &picked), None, "nothing granted yet");
 
-        state.grant_paths([picked.clone()]);
+        state.grant_paths(csv, [picked.clone()]);
 
         let resolved = picked.canonicalize().expect("canonical");
-        assert_eq!(state.path_grants().resolve(&picked), Some(resolved.clone()));
+        assert_eq!(grants.resolve(csv, &picked), Some(resolved.clone()));
         assert_eq!(
-            state.path_grants().resolve(&indirect),
+            grants.resolve(csv, &indirect),
             Some(resolved),
             "same file through .."
         );
-        assert_eq!(state.path_grants().resolve(&dir.join("other.csv")), None);
+        assert_eq!(grants.resolve(csv, &dir.join("other.csv")), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Every purpose, so that a purpose added later is tested as well: the
+    /// `match` stops compiling until it is listed.
+    fn every_purpose() -> [GrantPurpose; 3] {
+        let all = [
+            GrantPurpose::Backup,
+            GrantPurpose::Csv,
+            GrantPurpose::Document,
+        ];
+        for purpose in all {
+            match purpose {
+                GrantPurpose::Backup | GrantPurpose::Csv | GrantPurpose::Document => {}
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn a_path_granted_for_one_purpose_is_accepted_for_that_purpose_only() {
+        for granted_for in every_purpose() {
+            let (state, dir) = test_state("grant-purpose");
+            let picked = dir.join("picked.bin");
+            fs::write(&picked, b"bytes").expect("write");
+            let resolved = picked.canonicalize().expect("canonical");
+
+            state.grant_paths(granted_for, [picked.clone()]);
+
+            for asked_for in every_purpose() {
+                let expected = (asked_for == granted_for).then(|| resolved.clone());
+                assert_eq!(
+                    state.path_grants().resolve(asked_for, &picked),
+                    expected,
+                    "granted for {granted_for:?}, asked for {asked_for:?}"
+                );
+            }
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn a_path_may_be_granted_for_two_purposes_and_each_grant_stands_alone() {
+        let (state, dir) = test_state("grant-twice");
+        let picked = dir.join("picked.csv");
+        fs::write(&picked, b"date,amount\n").expect("write");
+        let resolved = picked.canonicalize().expect("canonical");
+        let grants = state.path_grants();
+
+        state.grant_paths(GrantPurpose::Csv, [picked.clone()]);
+        state.grant_paths(GrantPurpose::Document, [picked.clone()]);
+
+        assert_eq!(
+            grants.resolve(GrantPurpose::Csv, &picked),
+            Some(resolved.clone())
+        );
+        assert_eq!(
+            grants.resolve(GrantPurpose::Document, &picked),
+            Some(resolved)
+        );
+        assert_eq!(grants.resolve(GrantPurpose::Backup, &picked), None);
         let _ = fs::remove_dir_all(&dir);
     }
 

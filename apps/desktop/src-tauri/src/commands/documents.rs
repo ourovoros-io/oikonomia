@@ -16,7 +16,7 @@ use crate::commands::support::{
     run_blocking, save_with_dialog, stored_text_locale, with_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
-use crate::state::{AppState, GatedVault};
+use crate::state::{AppState, GatedVault, GrantPurpose};
 use base64::Engine;
 use oikonomia_core::documents::{
     AnalyzeContext, AnalyzerStatus, DocumentId, DocumentMeta, DocumentSuggestion, NewDocument,
@@ -198,7 +198,7 @@ pub(crate) struct AnalyzeArguments {
 ///
 /// # Errors
 ///
-/// Returns `path_not_granted` for a path the user never handed over;
+/// Returns `path_not_granted` for a path the user did not drop on a window;
 /// `file_unreadable` when the file cannot be read; `file_too_large` (with the
 /// cap as `max_mb`), `file_empty`, `file_type_unsupported` and
 /// `name_required` when the document is refused; `not_found` when the entity
@@ -212,7 +212,8 @@ pub(crate) async fn document_analyze_path(
 ) -> CommandResult<DocumentSuggestion> {
     let filename = dropped_file_name(&path);
     let grants = state.path_grants();
-    let path = run_blocking(move || require_granted_path(&grants, &path)).await?;
+    let path =
+        run_blocking(move || require_granted_path(&grants, GrantPurpose::Document, &path)).await?;
 
     let vault = state.vault();
     let model_dir = state.ocr_model_dir().clone();

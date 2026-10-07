@@ -48,7 +48,9 @@ cargo tauri dev
 - Network exists ONLY on the click-driven update path (`oikonomia-update`, which uses `ureq`). `oikonomia-core` stays fully offline (`scripts/assert-core-offline.sh`); `deny.toml` wrappers confine every socket-capable crate to that path.
 - An update is installed the way the running copy was installed (`update_exec.rs` `InstallKind`). A package-managed copy (`.deb`) never writes over itself.
 - Path-taking IPC commands accept only paths the user handed over through a
-  native drop or a native dialog (`AppState::grant_paths`).
+  native drop or a native dialog, and only for the purpose each was handed
+  over for (`AppState::grant_paths`, `GrantPurpose`): a dropped file or a CSV
+  pick is never accepted by `vault_restore`.
 - Journal CSV export neutralizes formula-leading cells; `parse_journal_export`
   reverses it.
 - Idle auto-lock is enforced by the Rust watchdog (`spawn_auto_lock`), not the UI timer.

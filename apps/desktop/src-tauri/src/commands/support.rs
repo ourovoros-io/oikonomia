@@ -11,7 +11,7 @@
 //! the [module above](crate::commands).
 
 use crate::error::{CommandError, CommandResult, DesktopError};
-use crate::state::{AppState, PathGrants, VaultGuard};
+use crate::state::{AppState, GrantPurpose, PathGrants, VaultGuard};
 use base64::Engine;
 use oikonomia_core::error::{Error as CoreError, ValidationError};
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
@@ -194,8 +194,8 @@ pub(super) fn stored_text_locale(data_dir: &Path) -> Locale {
     load_ui_prefs(data_dir).locale
 }
 
-/// Accepts a webview-supplied path only if the user handed it to the app
-/// through a native drop or dialog ([`AppState::grant_paths`]).
+/// Accepts a webview-supplied path only if the user handed it to the app for
+/// `purpose`, through a native drop or dialog ([`AppState::grant_paths`]).
 ///
 /// Returns the resolved path that was checked, which is the one to open
 /// ([`PathGrants::resolve`]). Resolving reads the filesystem, so this runs on
@@ -204,12 +204,17 @@ pub(super) fn stored_text_locale(data_dir: &Path) -> Locale {
 /// # Errors
 ///
 /// Returns `path_not_granted` when the path resolves to nothing the user
-/// handed over, which includes a path that does not exist.
-pub(super) fn require_granted_path(grants: &PathGrants, path: &str) -> CommandResult<PathBuf> {
-    grants.resolve(Path::new(path)).ok_or_else(|| {
+/// handed over for `purpose`. That includes a path that does not exist, and
+/// one handed over for another purpose only.
+pub(super) fn require_granted_path(
+    grants: &PathGrants,
+    purpose: GrantPurpose,
+    path: &str,
+) -> CommandResult<PathBuf> {
+    grants.resolve(purpose, Path::new(path)).ok_or_else(|| {
         CommandError::desktop(
             DesktopError::PathNotGranted,
-            "file path was not chosen through the app",
+            "file path was not chosen through the app for this use",
         )
     })
 }
@@ -389,14 +394,37 @@ mod tests {
         std::fs::write(&archive, b"OIKOBACK").expect("write");
         let text = archive.to_str().expect("utf-8 path");
 
-        let refused = require_granted_path(&state.path_grants(), text).expect_err("ungranted path");
+        let grants = state.path_grants();
+        let backup = GrantPurpose::Backup;
+
+        let refused = require_granted_path(&grants, backup, text).expect_err("ungranted path");
         assert_eq!(refused.code, "path_not_granted");
 
-        state.grant_paths([archive.clone()]);
+        state.grant_paths(backup, [archive.clone()]);
         assert_eq!(
-            require_granted_path(&state.path_grants(), text).expect("granted path"),
+            require_granted_path(&grants, backup, text).expect("granted path"),
             archive.canonicalize().expect("canonical")
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_path_handed_over_for_another_purpose_is_refused_as_not_granted() {
+        let dir = temp_dir("path-purpose");
+        let state = AppState::open_path(dir.clone(), dir.clone()).expect("state");
+        let statement = dir.join("statement.csv");
+        std::fs::write(&statement, b"date,amount\n").expect("write");
+        let text = statement.to_str().expect("utf-8 path");
+        let grants = state.path_grants();
+
+        // What a CSV pick and a file drop record.
+        state.grant_paths(GrantPurpose::Csv, [statement.clone()]);
+        state.grant_paths(GrantPurpose::Document, [statement.clone()]);
+
+        let refused =
+            require_granted_path(&grants, GrantPurpose::Backup, text).expect_err("other purpose");
+        assert_eq!(refused.code, "path_not_granted");
+        assert_eq!(refused.params, std::collections::BTreeMap::new());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -409,10 +437,11 @@ mod tests {
         std::fs::write(&real, b"date,amount\n").expect("write");
         let link = dir.join("link.csv");
         std::os::unix::fs::symlink(&real, &link).expect("link");
-        state.grant_paths([link.clone()]);
+        state.grant_paths(GrantPurpose::Document, [link.clone()]);
         let named = link.to_str().expect("utf-8 path");
 
-        let accepted = require_granted_path(&state.path_grants(), named).expect("granted");
+        let accepted = require_granted_path(&state.path_grants(), GrantPurpose::Document, named)
+            .expect("granted");
 
         assert_eq!(accepted, real.canonicalize().expect("canonical"));
         // The document keeps the name it was dropped under.
@@ -573,9 +602,10 @@ mod tests {
 #[cfg(test)]
 #[cfg(not(windows))]
 pub(crate) mod ipc_test_support {
-    use crate::state::AppState;
+    use crate::state::{AppState, GrantPurpose};
     use oikonomia_core::vault::Connection;
     use std::path::PathBuf;
+    use tauri::Manager;
     use tauri::ipc::{CallbackFn, Invoke, InvokeBody};
     use tauri::test::{
         INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets,
@@ -591,7 +621,7 @@ pub(crate) mod ipc_test_support {
     /// The directory is removed when the value is dropped.
     pub(crate) struct MockApp {
         /// The app; it owns the [`AppState`] the commands read.
-        _app: tauri::App<MockRuntime>,
+        app: tauri::App<MockRuntime>,
         /// The webview the IPC calls are made from.
         webview: tauri::WebviewWindow<MockRuntime>,
         /// The vault's directory.
@@ -644,11 +674,31 @@ pub(crate) mod ipc_test_support {
                     .unwrap();
 
             let app = Self {
-                _app: app,
+                app,
                 webview,
                 data_dir,
             };
             (app, seeded)
+        }
+
+        /// Writes `bytes` to a new file named `name` in the app's temporary
+        /// directory and returns its path as the webview would name it.
+        ///
+        /// # Panics
+        ///
+        /// Panics when the file cannot be written or its path is not UTF-8.
+        pub(crate) fn write_file(&self, name: &str, bytes: &[u8]) -> String {
+            let path = self.data_dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path.to_str().unwrap().to_owned()
+        }
+
+        /// Grants `path` for `purpose`, as the native dialog or drop that
+        /// stands behind that purpose does.
+        pub(crate) fn grant(&self, purpose: GrantPurpose, path: &str) {
+            self.app
+                .state::<AppState>()
+                .grant_paths(purpose, [PathBuf::from(path)]);
         }
 
         /// Invokes `command` with `arguments` as the JSON payload, as

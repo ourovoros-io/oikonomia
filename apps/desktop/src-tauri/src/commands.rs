@@ -41,10 +41,14 @@
 //! [`CommandError::desktop`](crate::error::CommandError::desktop). The UI words
 //! the error from its code and never shows the English message.
 //!
-//! **A path from the webview is accepted only if the user handed it over.**
-//! A command that takes a path checks it against the paths recorded from
-//! native drops and native dialogs ([`support::require_granted_path`]) and
-//! opens the resolved path that check returns, not the text it was given.
+//! **A path from the webview is accepted only if the user handed it over for
+//! that use.** A command that takes a path checks it against the paths
+//! recorded from native drops and native dialogs
+//! ([`support::require_granted_path`]) and opens the resolved path that check
+//! returns, not the text it was given. Each grant carries a purpose
+//! ([`GrantPurpose`](crate::state::GrantPurpose)) and each command asks for
+//! its own, so a dropped document or a picked statement is never accepted as
+//! the backup to restore.
 //!
 //! **Ledger text is written in the stored language.** A command whose core
 //! call writes text into the books reads the language from the preferences
@@ -71,6 +75,9 @@ mod csv;
 mod documents;
 mod entities;
 mod journal;
+#[cfg(test)]
+#[cfg(not(windows))]
+mod path_grant_tests;
 mod recurring;
 mod reports;
 mod settings;
