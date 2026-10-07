@@ -1,15 +1,22 @@
 .PHONY: app bundle test check doc smoke
 
+# The Tauri CLI pinned in web/package-lock.json, the copy the CI workflows
+# run. A globally installed `cargo tauri` may be another version.
+TAURI_CLI := web/node_modules/@tauri-apps/cli/tauri.js
+
+$(TAURI_CLI): web/package-lock.json
+	cd web && npm ci
+
 # Run the desktop app in dev mode (vite + tauri, live reload).
-app:
-	cargo tauri dev
+app: $(TAURI_CLI)
+	node $(TAURI_CLI) dev -- --locked
 
 # Build the distributable bundle (target/release/bundle/).
-bundle:
-	cargo tauri build -- --locked
+bundle: $(TAURI_CLI)
+	node $(TAURI_CLI) build -- --locked
 
 # Build the .app bundle and verify it renders (never smoke the bare binary).
-smoke:
+smoke: $(TAURI_CLI)
 	./scripts/smoke-macos.sh
 
 # Core library tests.

@@ -440,6 +440,18 @@ describe('UnlockScreen check for update', () => {
     })
   })
 
+  test('a check refused during an install shows the install in flight', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'installing' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+    })
+    expect(screen.getByText('Oikonomia will restart when this finishes.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+  })
+
   test('stub upToDate shows Writer copy and Close', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'upToDate' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)

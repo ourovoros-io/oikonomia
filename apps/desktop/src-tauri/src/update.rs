@@ -16,8 +16,8 @@ use crate::state::AppState;
 use crate::update_exec::{InstallKind, VerifiedPathInstaller};
 use crate::update_key::UPDATER_PUBLIC_KEY;
 use oikonomia_update::{
-    ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, UpdateMachine,
-    UpdateStatus, perform_check,
+    ArtifactInstaller, CheckOutcome, CheckStart, ClientConfig, InstallHandoff, InstallOutcome,
+    UpdateMachine, UpdateStatus, VerifiedOffer, install_offer, perform_check,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -83,15 +83,19 @@ pub(crate) async fn update_check(
 
 /// Runs `check` on the blocking pool and applies its outcome to `machine`.
 ///
+/// While an install is in flight the check is not run and the status stays
+/// [`UpdateStatus::Installing`], which is what this returns.
+///
 /// The machine is locked only on the blocking pool, never by the task that
-/// polls this future: an install holds the same mutex through its download,
-/// and an async worker waiting behind it would stall every other command.
+/// polls this future, so an async worker never waits on the mutex.
 async fn run_check(
     machine: Arc<Mutex<UpdateMachine>>,
     check: impl FnOnce() -> CheckOutcome + Send + 'static,
 ) -> CommandResult<UpdateStatus> {
     let joined = tauri::async_runtime::spawn_blocking(move || {
-        let pending = PendingCheck::begin(&machine);
+        let Some(pending) = PendingCheck::begin(&machine) else {
+            return crate::state::lock_update(&machine).status();
+        };
         let outcome = check();
         pending.finish(outcome)
     })
@@ -118,13 +122,15 @@ struct PendingCheck<'a> {
 }
 
 impl<'a> PendingCheck<'a> {
-    /// Marks `machine` as checking.
-    fn begin(machine: &'a Mutex<UpdateMachine>) -> Self {
-        crate::state::lock_update(machine).begin_check();
-
-        Self {
-            machine,
-            finished: false,
+    /// Marks `machine` as checking, or returns `None` when it refuses a
+    /// check because an install is in flight.
+    fn begin(machine: &'a Mutex<UpdateMachine>) -> Option<Self> {
+        match crate::state::lock_update(machine).begin_check() {
+            CheckStart::Started => Some(Self {
+                machine,
+                finished: false,
+            }),
+            CheckStart::InstallInProgress => None,
         }
     }
 
@@ -141,18 +147,71 @@ impl<'a> PendingCheck<'a> {
 impl Drop for PendingCheck<'_> {
     fn drop(&mut self) {
         if !self.finished {
-            crate::state::lock_update(self.machine).fail();
+            crate::state::lock_update(self.machine).finish_check(CheckOutcome::Failed);
         }
     }
 }
 
-/// Install is only legal from [`UpdateStatus::Available`]. Downloads outside the
-/// vault data dir, verifies hash and signature, then execs that verified path.
+/// An install that has begun on the machine and has to end on it.
+///
+/// The machine is locked to begin and again to finish, and not in between:
+/// the download can take minutes, and a check that arrives meanwhile must be
+/// answered, not left waiting on the mutex.
+///
+/// Dropped unfinished, which happens when the install panics, it moves the
+/// machine to failed. Otherwise the status would stay `Installing` for the
+/// rest of the session and refuse every further check.
+struct PendingInstall<'a> {
+    /// The machine the install was begun on.
+    machine: &'a Mutex<UpdateMachine>,
+    /// The offer the machine handed out for this install.
+    offer: VerifiedOffer,
+    /// Whether [`Self::finish`] has applied an outcome.
+    finished: bool,
+}
+
+impl<'a> PendingInstall<'a> {
+    /// Marks `machine` as installing and takes its offer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`oikonomia_update::UpdateError::InstallNotAvailable`] unless
+    /// the machine holds an offer this copy may install.
+    fn begin(machine: &'a Mutex<UpdateMachine>) -> oikonomia_update::Result<Self> {
+        let offer = crate::state::lock_update(machine).begin_install()?;
+
+        Ok(Self {
+            machine,
+            offer,
+            finished: false,
+        })
+    }
+
+    /// Applies `outcome` to the machine.
+    fn finish(mut self, outcome: InstallOutcome) {
+        crate::state::lock_update(self.machine).finish_install(outcome);
+        self.finished = true;
+    }
+}
+
+impl Drop for PendingInstall<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            crate::state::lock_update(self.machine).finish_install(InstallOutcome::Failed);
+        }
+    }
+}
+
+/// Installs the update the last check offered.
+///
+/// Downloads into the updater cache, outside the vault data dir, verifies hash
+/// and signature in memory, writes the verified file, then execs that path.
 /// A copy replaced in place restarts into the new version. On Windows the
 /// installer process replaces the files, so the app exits and the installer
 /// starts the new version.
 ///
-/// From Idle / Failed / Checking this is a typed hard error, not a silent no-op.
+/// From any state but [`UpdateStatus::Available`] this is a typed hard error,
+/// not a silent no-op.
 #[tauri::command]
 pub(crate) async fn update_install(
     app: tauri::AppHandle,
@@ -165,7 +224,7 @@ pub(crate) async fn update_install(
     let outcome = match tauri::async_runtime::spawn_blocking(move || {
         let kind = InstallKind::detect();
         let config = ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, kind.route())?;
-        install_available_update(&machine, config, &VerifiedPathInstaller::new(kind))
+        install_available_update(&machine, &config, &VerifiedPathInstaller::new(kind))
     })
     .await
     {
@@ -189,25 +248,29 @@ pub(crate) async fn update_install(
     }
 }
 
-/// Shared install path used by IPC. Download → verify on disk → exec that path.
+/// Runs the install for the IPC command: downloads, verifies in memory,
+/// writes the verified file, then execs that path.
 ///
 /// Does not call a plugin check and does not read an unsigned feed URL.
 ///
-/// The machine stays locked for the whole download. It has no installing
-/// state, so releasing it in between would let a second install, or a check
-/// that replaces the offer, run against the same cache file. The caller runs
-/// this on the blocking pool, and [`run_check`] waits there too.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the blocking task hands its configuration over; tracked for the API pass"
-)]
+/// The machine is not locked during the download: [`PendingInstall`] puts
+/// it in its installing state, in which it refuses a second install and a
+/// check, so neither can run against the same cache file.
+///
+/// # Errors
+///
+/// Returns [`oikonomia_update::UpdateError::InstallNotAvailable`] unless the
+/// machine holds an offer this copy may install.
 fn install_available_update(
     machine: &Mutex<UpdateMachine>,
-    config: ClientConfig,
+    config: &ClientConfig,
     installer: &impl ArtifactInstaller,
 ) -> oikonomia_update::Result<InstallOutcome> {
-    let mut guard = crate::state::lock_update(machine);
-    guard.install(&config, installer)
+    let pending = PendingInstall::begin(machine)?;
+    let outcome = install_offer(config, &pending.offer, installer);
+    pending.finish(outcome);
+
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -216,7 +279,7 @@ mod tests {
     use crate::update_key::UPDATER_PUBLIC_KEY;
     use oikonomia_update::{
         ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallRoute, UpdateError,
-        UpdateMachine, UpdateStatus, parse_public_key,
+        UpdateMachine, UpdateStatus,
     };
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -238,7 +301,13 @@ mod tests {
     #[test]
     fn baked_key_is_a_nonempty_minisign_key() {
         assert!(UPDATER_PUBLIC_KEY.len() > 32);
-        parse_public_key(UPDATER_PUBLIC_KEY).expect("ops minisign public key must decode");
+        ClientConfig::production(
+            UPDATER_PUBLIC_KEY,
+            env!("CARGO_PKG_VERSION"),
+            std::env::temp_dir().join("oiko-update-never-written"),
+            InstallRoute::InApp,
+        )
+        .expect("ops minisign public key must decode");
     }
 
     #[test]
@@ -324,7 +393,7 @@ mod tests {
         let installer = SpyInstaller {
             calls: AtomicUsize::new(0),
         };
-        let err = install_available_update(&machine, config, &installer).expect_err("idle");
+        let err = install_available_update(&machine, &config, &installer).expect_err("idle");
         assert_eq!(err.code(), "update_install_not_allowed");
         assert_eq!(installer.calls.load(Ordering::SeqCst), 0);
         assert_eq!(machine.lock().expect("lock").status(), UpdateStatus::Idle);

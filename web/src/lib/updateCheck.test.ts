@@ -57,6 +57,12 @@ describe('parseUpdateCheckResult', () => {
     })
   })
 
+  test('installing stays installing and carries no version', () => {
+    expect(parseUpdateCheckResult({ kind: 'installing', version: '9.9.9' })).toEqual({
+      kind: 'installing',
+    })
+  })
+
   test('drops feed fields the webview must not render', () => {
     const parsed = parseUpdateCheckResult({
       kind: 'available',
@@ -78,7 +84,7 @@ describe('parseUpdateCheckResult', () => {
     expect(parseUpdateCheckResult({ kind: 'available', version: '   ' })).toEqual({
       kind: 'failed',
     })
-    expect(parseUpdateCheckResult({ kind: 'installing' })).toEqual({ kind: 'failed' })
+    expect(parseUpdateCheckResult({ kind: 'downloading' })).toEqual({ kind: 'failed' })
   })
 })
 
