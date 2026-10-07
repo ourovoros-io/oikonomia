@@ -22,6 +22,14 @@ use oikonomia_core::ledger::get_entity;
 use std::path::PathBuf;
 use tauri::{Runtime, State};
 
+/// The file extensions the open dialog offers for a statement.
+///
+/// The importer reads comma-, semicolon- and tab-separated text
+/// (`oikonomia_core::csv`), and banks export the last two as `.tsv` and
+/// `.txt` as well as `.csv`. The filter only decides what the dialog shows;
+/// the importer goes by the content, not the name.
+const STATEMENT_EXTENSIONS: &[&str] = &["csv", "tsv", "txt"];
+
 /// Parses a bank CSV file into suggested simple-entry rows. Posts nothing.
 ///
 /// Requires the unlocked vault. When `input.path` is absent, a native open
@@ -131,7 +139,7 @@ pub(crate) async fn csv_export_journal(
     save_with_dialog(&app, target, csv_text.into_bytes()).await
 }
 
-/// Asks for a `.csv` file with a native open dialog.
+/// Asks for a statement file ([`STATEMENT_EXTENSIONS`]) with a native open dialog.
 ///
 /// The chosen path is granted for a CSV import and nothing else, so that a
 /// second preview with a column mapping may pass it back. Returns `None` if
@@ -151,7 +159,7 @@ async fn pick_csv_path<R: Runtime>(
     run_blocking(move || {
         use tauri_plugin_dialog::DialogExt;
 
-        let dialog = app.dialog().file().add_filter("CSV", &["csv"]);
+        let dialog = app.dialog().file().add_filter("CSV", STATEMENT_EXTENSIONS);
         let Some(picked) = dialog.blocking_pick_file() else {
             return Ok(None);
         };
@@ -161,4 +169,30 @@ async fn pick_csv_path<R: Runtime>(
         Ok(Some(path))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::STATEMENT_EXTENSIONS;
+    use oikonomia_core::csv::parse_bank_csv;
+
+    #[test]
+    fn the_open_dialog_offers_the_extensions_of_every_delimiter_the_importer_reads() {
+        assert_eq!(STATEMENT_EXTENSIONS, ["csv", "tsv", "txt"]);
+    }
+
+    /// The reason the filter is wider than `.csv`: a statement that is not
+    /// comma-separated is read, so the dialog must not hide it.
+    #[test]
+    fn the_importer_reads_the_tab_and_semicolon_statements_the_dialog_now_shows() {
+        for statement in [
+            "Date\tAmount\tDescription\n2026-08-05\t-25.00\tGroceries\n",
+            "Date;Amount;Description\n2026-08-05;-25.00;Groceries\n",
+        ] {
+            let euro = "EUR".parse().expect("a currency code");
+            let parsed = parse_bank_csv(statement, euro, None).expect("a statement");
+
+            assert_eq!(parsed.rows.len(), 1, "{statement:?}");
+        }
+    }
 }
