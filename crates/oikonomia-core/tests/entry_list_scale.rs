@@ -57,8 +57,8 @@ fn a_listing_of_more_entries_than_the_variable_limit_returns_every_entry_with_it
 
     let every_filter_bound = EntryFilter {
         text: Some("LUNCH".into()),
-        date_from: Some("2026-03-01".into()),
-        date_to: Some("2026-03-31".into()),
+        date_from: Some(common::date("2026-03-01")),
+        date_to: Some(common::date("2026-03-31")),
         account_id: Some(food),
     };
     for filter in [EntryFilter::default(), every_filter_bound] {

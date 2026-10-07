@@ -8,9 +8,10 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    CreateEntity, EntryFilter, PostSimpleEntry, UpdateAccount, account_balance, archive_account,
-    create_entity, list_accounts, list_entries, post_simple_entry, replace_simple_entry,
-    set_account_opening_balance, trial_balance, update_account, void_entry,
+    CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryAccounts, UpdateAccount,
+    account_balance, archive_account, create_entity, list_accounts, list_entries,
+    post_simple_entry, replace_simple_entry, set_account_opening_balance, trial_balance,
+    update_account, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -68,10 +69,10 @@ fn replace_updates_amount_and_hides_original() {
     assert_eq!(visible[0].entry.description, "groceries (corrected)");
 
     // The books only carry the corrected amount: original + reverse cancel out.
-    let tb = trial_balance(conn, entity_id, "2026-12-31").expect("trial balance");
+    let tb = trial_balance(conn, entity_id, common::date("2026-12-31")).expect("trial balance");
     assert_eq!(tb.total_debits, tb.total_credits);
     assert_eq!(
-        account_balance(conn, acc.checking, "2026-12-31").expect("balance"),
+        account_balance(conn, acc.checking, common::date("2026-12-31")).expect("balance"),
         -3_100
     );
 }
@@ -150,22 +151,34 @@ fn opening_balance_converges_on_the_stated_target() {
     let conn = vault.connection().expect("conn");
     let (entity_id, acc) = entity_with_accounts(conn);
 
-    set_account_opening_balance(conn, acc.checking, 250_000, "2026-01-01", Locale::En)
-        .expect("set");
+    set_account_opening_balance(
+        conn,
+        acc.checking,
+        250_000,
+        common::date("2026-01-01"),
+        Locale::En,
+    )
+    .expect("set");
     assert_eq!(
-        account_balance(conn, acc.checking, "2026-01-01").expect("balance"),
+        account_balance(conn, acc.checking, common::date("2026-01-01")).expect("balance"),
         250_000
     );
 
     // Restating the balance posts only the delta, not another full amount.
-    set_account_opening_balance(conn, acc.checking, 300_000, "2026-01-02", Locale::En)
-        .expect("restate");
+    set_account_opening_balance(
+        conn,
+        acc.checking,
+        300_000,
+        common::date("2026-01-02"),
+        Locale::En,
+    )
+    .expect("restate");
     assert_eq!(
-        account_balance(conn, acc.checking, "2026-01-02").expect("balance"),
+        account_balance(conn, acc.checking, common::date("2026-01-02")).expect("balance"),
         300_000
     );
 
-    let tb = trial_balance(conn, entity_id, "2026-12-31").expect("trial balance");
+    let tb = trial_balance(conn, entity_id, common::date("2026-12-31")).expect("trial balance");
     assert_eq!(tb.total_debits, tb.total_credits);
 }
 
@@ -176,24 +189,42 @@ fn opening_balance_handles_liability_negative_and_no_op_targets() {
     let (_entity_id, acc) = entity_with_accounts(conn);
 
     // Liability: "I owe 500" is a credit-normal balance.
-    set_account_opening_balance(conn, acc.bills_payable, 50_000, "2026-01-01", Locale::En)
-        .expect("owe");
+    set_account_opening_balance(
+        conn,
+        acc.bills_payable,
+        50_000,
+        common::date("2026-01-01"),
+        Locale::En,
+    )
+    .expect("owe");
     assert_eq!(
-        account_balance(conn, acc.bills_payable, "2026-01-01").expect("balance"),
+        account_balance(conn, acc.bills_payable, common::date("2026-01-01")).expect("balance"),
         50_000
     );
 
     // An overdrawn asset target flips the entry sides.
-    set_account_opening_balance(conn, acc.checking, -10_000, "2026-01-01", Locale::En)
-        .expect("overdrawn");
+    set_account_opening_balance(
+        conn,
+        acc.checking,
+        -10_000,
+        common::date("2026-01-01"),
+        Locale::En,
+    )
+    .expect("overdrawn");
     assert_eq!(
-        account_balance(conn, acc.checking, "2026-01-01").expect("balance"),
+        account_balance(conn, acc.checking, common::date("2026-01-01")).expect("balance"),
         -10_000
     );
 
     // Stating the balance it already has is refused, not silently duplicated.
     assert!(matches!(
-        set_account_opening_balance(conn, acc.bills_payable, 50_000, "2026-01-01", Locale::En),
+        set_account_opening_balance(
+            conn,
+            acc.bills_payable,
+            50_000,
+            common::date("2026-01-01"),
+            Locale::En
+        ),
         Err(Error::Validation(ValidationError::OpeningBalanceUnchanged))
     ));
 }
@@ -242,8 +273,14 @@ fn an_entry_on_an_archived_account_can_still_be_voided() {
     let voided = void_entry(conn, posted.entry.id, Locale::En).expect("void");
 
     assert_eq!(voided.original_id, posted.entry.id);
-    assert_eq!(account_balance(conn, acc.food, "2026-12-31"), Ok(0));
-    assert_eq!(account_balance(conn, acc.checking, "2026-12-31"), Ok(0));
+    assert_eq!(
+        account_balance(conn, acc.food, common::date("2026-12-31")),
+        Ok(0)
+    );
+    assert_eq!(
+        account_balance(conn, acc.checking, common::date("2026-12-31")),
+        Ok(0)
+    );
 }
 
 #[test]
@@ -256,12 +293,18 @@ fn an_entry_on_an_archived_account_can_be_moved_to_an_active_one() {
     archive_account(conn, acc.food).expect("archive");
 
     let mut moved = expense(entity_id, &acc, 4_200);
-    moved.category_account_id = Some(other_expenses);
+    moved.accounts = SimpleEntryAccounts::Expense {
+        category: other_expenses,
+        wallet: acc.checking,
+    };
     replace_simple_entry(conn, posted.entry.id, &moved, Locale::En).expect("replace");
 
-    assert_eq!(account_balance(conn, acc.food, "2026-12-31"), Ok(0));
     assert_eq!(
-        account_balance(conn, other_expenses, "2026-12-31"),
+        account_balance(conn, acc.food, common::date("2026-12-31")),
+        Ok(0)
+    );
+    assert_eq!(
+        account_balance(conn, other_expenses, common::date("2026-12-31")),
         Ok(4_200)
     );
 }
@@ -286,5 +329,8 @@ fn a_replacement_cannot_post_to_an_archived_account_and_leaves_the_original() {
     let entries = list_entries(conn, entity_id, &EntryFilter::default()).expect("list");
     assert_eq!(entries.len(), 1, "the void was rolled back with the post");
     assert!(!entries[0].is_voided);
-    assert_eq!(account_balance(conn, acc.food, "2026-12-31"), Ok(4_200));
+    assert_eq!(
+        account_balance(conn, acc.food, common::date("2026-12-31")),
+        Ok(4_200)
+    );
 }

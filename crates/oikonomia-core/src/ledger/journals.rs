@@ -3,17 +3,22 @@
 //!
 //! # Posting
 //!
-//! An entry is a header and at least two lines. Each line debits or credits
-//! one account by a positive amount, never both, and the debits of an entry
-//! equal its credits. Every entry is written by the private
+//! An entry is a header and at least two lines. Each line puts a positive
+//! amount on one [`Side`] of one account, and the debits of an entry equal
+//! its credits. A line cannot be on both sides: [`PostJournalLine`] and
+//! [`JournalLine`] hold one amount and one side. Every entry is written by the private
 //! `post_entry_in_tx`, which checks those rules
 //! ([`validate_lines_for_post`]) and that each account belongs to the entry's
 //! entity; no other code inserts into the journal. The schema repeats the
 //! rule for a single line as a `CHECK`.
 //!
 //! The simple entry form posts through [`post_simple_entry`]. Its input names
-//! accounts by role and the mapping from an entry kind to a debit and a
-//! credit is here, so the UI holds no accounting rule.
+//! accounts by the part they play, as a [`SimpleEntryAccounts`], and that
+//! type holds the mapping from a kind of entry to a debit and a credit, so
+//! the UI holds no accounting rule. What needs the database is checked here:
+//! that each account exists, has a type its part accepts, belongs to the
+//! entry's entity, is not archived, and is not the account on the other
+//! side.
 //!
 //! # Entries are not edited
 //!
@@ -39,48 +44,79 @@
 //! `_unchecked` when it is `pub(crate)` for another module to compose with
 //! writes of its own.
 
-use crate::db::{collect_rows, corrupt_column, fold_case, read_column, stored_date, stored_uuid};
+use crate::db::{collect_rows, corrupt_column, fold_case, read_column, stored_date, stored_id};
 use crate::domain::{
     Account, AccountId, AccountType, EntityId, EntryStatus, JournalEntry, JournalEntryId,
-    JournalLine, JournalLineId, validate_lines_for_post,
+    JournalLine, JournalLineId, Side, validate_lines_for_post,
 };
-use crate::error::{AccountRole, DatabaseContext, Error, Resource, Result, ValidationError};
+use crate::error::{DatabaseContext, Error, Resource, Result, ValidationError};
 use crate::ledger::accounts::{get_account, list_accounts};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
+use crate::ledger::simple_entry::{RoleAccount, SimpleEntryAccounts};
 use crate::money::Money;
 use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
-use crate::util::{format_date, now_utc_string, parse_date};
+use crate::util::{format_date, now_utc_string};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use time::Date;
 
-/// One line of a [`PostJournal`].
+/// One line of a [`PostJournal`]: an amount on one side of one account.
 ///
-/// Exactly one of the two amounts is positive and the other is 0.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateJournalLine {
+/// The UI sends it in two columns, as a
+/// [`JournalLineRequest`](crate::ledger::JournalLineRequest), which converts
+/// into this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostJournalLine {
     /// Account the line posts to. It must belong to the entry's entity and
     /// not be archived.
     pub account_id: AccountId,
-    /// Amount debited to the account, in minor units; 0 on a credit line.
-    pub debit_minor: i64,
-    /// Amount credited to the account, in minor units; 0 on a debit line.
-    pub credit_minor: i64,
+    /// Amount debited or credited; it must be greater than zero.
+    pub amount: Money,
+    /// Whether the amount is debited or credited.
+    pub side: Side,
     /// Note on the line, stored as given. `None` stores none.
     pub memo: Option<String>,
 }
 
+impl PostJournalLine {
+    /// Returns a line that debits `account_id` by `amount`, with no memo.
+    #[must_use]
+    pub const fn debit(account_id: AccountId, amount: Money) -> Self {
+        Self {
+            account_id,
+            amount,
+            side: Side::Debit,
+            memo: None,
+        }
+    }
+
+    /// Returns a line that credits `account_id` by `amount`, with no memo.
+    #[must_use]
+    pub const fn credit(account_id: AccountId, amount: Money) -> Self {
+        Self {
+            account_id,
+            amount,
+            side: Side::Credit,
+            memo: None,
+        }
+    }
+}
+
 /// Input for [`post_entry`]: a whole entry, with its lines spelled out.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The UI sends it as a
+/// [`PostJournalRequest`](crate::ledger::PostJournalRequest), which converts
+/// into this.
+#[derive(Debug, Clone)]
 pub struct PostJournal {
     /// Entity whose books the entry goes into.
     pub entity_id: EntityId,
-    /// Accounting date as `YYYY-MM-DD`.
-    pub entry_date: String,
+    /// Accounting date.
+    pub entry_date: Date,
     /// What the entry is for. Surrounding whitespace is trimmed; it may be
     /// empty.
     pub description: String,
@@ -88,7 +124,7 @@ pub struct PostJournal {
     /// Surrounding whitespace is trimmed and a blank one is stored as none.
     pub reference: Option<String>,
     /// At least two lines, whose debits add up to their credits.
-    pub lines: Vec<CreateJournalLine>,
+    pub lines: Vec<PostJournalLine>,
 }
 
 /// An entry as the UI shows it: its header, its lines and whether it counts.
@@ -127,57 +163,24 @@ pub struct RegisterLine {
     pub hidden: bool,
 }
 
-/// High-level kind for the simple entry form (no debit/credit knowledge in the UI).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SimpleEntryKind {
-    /// Money spent now.
-    Expense,
-    /// Money received.
-    Income,
-    /// A bill: paid, owed, or a payment against an owed bill.
-    Bill,
-    /// Move money between own accounts.
-    Transfer,
-}
-
-/// Payment state for [`SimpleEntryKind::Bill`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SimpleBillStatus {
-    /// Paid immediately from a wallet account.
-    Paid,
-    /// Recorded as owed against a payable account.
-    Unpaid,
-    /// Settle a previously recorded payable from a wallet account.
-    PayExisting,
-}
-
-/// Input for [`post_simple_entry`]: one amount plus role accounts per kind.
+/// Input for [`post_simple_entry`]: one amount and the two accounts it moves
+/// between.
 ///
-/// The kind decides which two roles are read, which account types each may
-/// hold, and which is debited:
+/// [`SimpleEntryAccounts`] says which accounts those are and which is
+/// debited, so this cannot describe an entry with an account missing or with
+/// a bill that does not say whether it is paid.
 ///
-/// | Kind | Debit | Credit |
-/// |------|-------|--------|
-/// | expense | category (expense) | wallet (asset or liability) |
-/// | income | wallet (asset) | category (income) |
-/// | bill, paid | category (expense) | wallet (asset or liability) |
-/// | bill, unpaid | category (expense) | payable (liability) |
-/// | bill, pay existing | payable (liability) | wallet (asset or liability) |
-/// | transfer | to (asset or liability) | from (asset or liability) |
-///
-/// A role the kind does not read is ignored, whatever it holds.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The UI sends it as a
+/// [`PostSimpleEntryRequest`](crate::ledger::PostSimpleEntryRequest), which
+/// converts into this.
+#[derive(Debug, Clone)]
 pub struct PostSimpleEntry {
     /// Entity whose books the entry goes into.
     pub entity_id: EntityId,
-    /// What kind of entry this is; it selects the row of the table above.
-    pub kind: SimpleEntryKind,
-    /// Required when `kind` is [`SimpleEntryKind::Bill`].
-    pub bill_status: Option<SimpleBillStatus>,
-    /// Accounting date `YYYY-MM-DD`.
-    pub entry_date: String,
+    /// The kind of entry and the accounts it debits and credits.
+    pub accounts: SimpleEntryAccounts,
+    /// Accounting date.
+    pub entry_date: Date,
     /// What the entry is for. Surrounding whitespace is trimmed; it may be
     /// empty.
     pub description: String,
@@ -186,16 +189,6 @@ pub struct PostSimpleEntry {
     pub reference: Option<String>,
     /// Positive amount in minor units.
     pub amount_minor: i64,
-    /// Expense or income category account.
-    pub category_account_id: Option<AccountId>,
-    /// Bank / cash / card account.
-    pub wallet_account_id: Option<AccountId>,
-    /// Bills payable / AP liability account.
-    pub payable_account_id: Option<AccountId>,
-    /// Transfer source.
-    pub from_account_id: Option<AccountId>,
-    /// Transfer destination.
-    pub to_account_id: Option<AccountId>,
 }
 
 /// Result of [`void_entry`]: the two entries the void linked.
@@ -208,15 +201,15 @@ pub struct VoidResult {
 }
 
 /// Optional predicates for [`list_entries`]; every `None` means "no filter".
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct EntryFilter {
     /// Case-insensitive substring over description, reference, and line
     /// memos. Text that is blank after trimming is no filter.
     pub text: Option<String>,
-    /// Inclusive ISO lower bound (`YYYY-MM-DD`).
-    pub date_from: Option<String>,
-    /// Inclusive ISO upper bound (`YYYY-MM-DD`).
-    pub date_to: Option<String>,
+    /// Only entries dated on or after this day.
+    pub date_from: Option<Date>,
+    /// Only entries dated on or before this day.
+    pub date_to: Option<Date>,
     /// Only entries with at least one line on this account.
     pub account_id: Option<AccountId>,
 }
@@ -231,7 +224,6 @@ pub struct EntryFilter {
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date in `filter`;
 /// [`Error::VaultCorrupt`] for a stored id, date, status or amount that does
 /// not parse; database errors as [`Error::Database`].
 pub fn list_entries(
@@ -239,7 +231,7 @@ pub fn list_entries(
     entity_id: EntityId,
     filter: &EntryFilter,
 ) -> Result<Vec<PostedEntryView>> {
-    let listed = ListedEntries::new(entity_id, filter)?;
+    let listed = ListedEntries::new(entity_id, filter);
     let headers = load_listed_headers(conn, &listed)?;
     let mut lines_by_entry = load_listed_lines(conn, &listed)?;
 
@@ -269,7 +261,7 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
                    voided_by_entry_id
             FROM journal_entries WHERE id = ?1
             ",
-            [id.0.to_string()],
+            [id.to_string()],
             |row| {
                 let voided_by: Option<String> = row.get(7)?;
                 Ok((map_entry_row(row), voided_by.is_some()))
@@ -315,7 +307,7 @@ pub fn set_entry_hidden(
     let updated = conn
         .execute(
             "UPDATE journal_entries SET hidden = ?1 WHERE id = ?2",
-            rusqlite::params![i64::from(hidden), id.0.to_string()],
+            rusqlite::params![i64::from(hidden), id.to_string()],
         )
         .database("set journal entry visibility")?;
     if updated == 0 {
@@ -328,13 +320,11 @@ pub fn set_entry_hidden(
 ///
 /// # Errors
 ///
-/// - [`ValidationError::InvalidDate`] for a malformed entry date.
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`Error::AccountWrongEntity`] for an account of another entity.
 /// - [`ValidationError::AccountInactive`] for an archived account.
-/// - [`Error::NegativeMoney`] for a negative debit or credit.
 /// - [`Error::TooFewLines`] for fewer than two lines.
-/// - [`Error::InvalidLineAmounts`] for a line that is not debit XOR credit.
+/// - [`Error::InvalidLineAmounts`] for a line whose amount is zero.
 /// - [`Error::MoneyOverflow`] when the debits or the credits do not fit in
 ///   `i64`.
 /// - [`Error::UnbalancedEntry`] when debits and credits differ.
@@ -351,23 +341,19 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 
 /// Builds and posts the journal entry for a simple-form input, atomically.
 ///
-/// The kind → debit/credit mapping lives here so the UI never carries
-/// accounting rules; each role account's type is checked before posting.
-/// [`PostSimpleEntry`] has the mapping.
+/// The kind → debit/credit mapping lives in [`SimpleEntryAccounts`] so the
+/// UI never carries accounting rules; each account's type is checked here
+/// before posting.
 ///
 /// # Errors
 ///
 /// - [`ValidationError::AmountNotPositive`] for an amount of zero or less.
-/// - [`ValidationError::BillStatusRequired`] for a bill without a status.
-/// - [`ValidationError::AccountRequired`] when a role the kind reads is
-///   empty.
 /// - [`ValidationError::AccountWrongType`] when a role holds an account of a
 ///   type the kind does not allow there.
 /// - [`ValidationError::SameAccount`] when both sides are one account.
 /// - [`Error::NotFound`] for an unknown account.
 /// - [`Error::AccountWrongEntity`] for an account of another entity.
 /// - [`ValidationError::AccountInactive`] for an archived account.
-/// - [`ValidationError::InvalidDate`] for a malformed entry date.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
@@ -450,10 +436,7 @@ pub fn replace_simple_entry(
 
     tx.execute(
         "UPDATE documents SET entry_id = ?1 WHERE entry_id = ?2",
-        rusqlite::params![
-            replacement.entry.id.0.to_string(),
-            original_id.0.to_string(),
-        ],
+        rusqlite::params![replacement.entry.id.to_string(), original_id.to_string(),],
     )
     .database("move documents to replacement entry")?;
 
@@ -479,7 +462,6 @@ pub fn replace_simple_entry(
 /// - [`ValidationError::OpeningBalanceAccountType`] unless the account is an
 ///   asset or a liability.
 /// - [`ValidationError::AccountInactive`] for an archived account.
-/// - [`ValidationError::InvalidDate`] when `as_of` is not a date.
 /// - [`ValidationError::OpeningBalanceUnchanged`] when the account already
 ///   has that balance on that date.
 /// - [`ValidationError::NoEquityAccount`] when the entity has no active
@@ -492,7 +474,7 @@ pub fn set_account_opening_balance(
     conn: &Connection,
     account_id: AccountId,
     target_minor: i64,
-    as_of: &str,
+    as_of: Date,
     locale: Locale,
 ) -> Result<PostedEntryView> {
     let account = get_account(conn, account_id)?;
@@ -502,7 +484,6 @@ pub fn set_account_opening_balance(
     }
     ensure_active(&account)?;
 
-    let as_of = parse_date(as_of)?;
     let current = account_balance_as_of(conn, account_id, account.account_type, as_of)?;
     let delta = target_minor
         .checked_sub(current)
@@ -524,7 +505,7 @@ pub fn set_account_opening_balance(
 
     // A debit-normal account grows by debiting: a positive delta debits the
     // account and credits equity; every other combination flips the sides.
-    let amount = delta.checked_abs().ok_or(Error::MoneyOverflow)?;
+    let amount = Money::from_minor(delta.checked_abs().ok_or(Error::MoneyOverflow)?)?;
     let account_on_debit_side = account.account_type.is_debit_normal() == (delta > 0);
     let (debit_id, credit_id) = if account_on_debit_side {
         (account.id, equity.id)
@@ -536,29 +517,19 @@ pub fn set_account_opening_balance(
         conn,
         &PostJournal {
             entity_id: account.entity_id,
-            entry_date: format_date(as_of),
+            entry_date: as_of,
             description: opening_balance_description(locale, &account.name),
             reference: None,
             lines: vec![
-                CreateJournalLine {
-                    account_id: debit_id,
-                    debit_minor: amount,
-                    credit_minor: 0,
-                    memo: None,
-                },
-                CreateJournalLine {
-                    account_id: credit_id,
-                    debit_minor: 0,
-                    credit_minor: amount,
-                    memo: None,
-                },
+                PostJournalLine::debit(debit_id, amount),
+                PostJournalLine::credit(credit_id, amount),
             ],
         },
     )
 }
 
 /// Lists the lines of active entries on an account between `from` and `to`
-/// inclusive (`YYYY-MM-DD`), oldest first, each with the running balance.
+/// inclusive, oldest first, each with the running balance.
 ///
 /// `None` leaves that end of the range open. Lines of one date are ordered by
 /// when their entries were created, to the second, and lines of one entry by
@@ -569,19 +540,19 @@ pub fn set_account_opening_balance(
 ///
 /// # Errors
 ///
-/// [`Error::NotFound`] for an unknown account; [`Error::Validation`] for a
-/// malformed date; [`Error::MoneyOverflow`] when the running balance does not
-/// fit in `i64`; [`Error::VaultCorrupt`] for a stored id or date that does not
+/// [`Error::NotFound`] for an unknown account; [`Error::MoneyOverflow`] when
+/// the running balance does not fit in `i64`; [`Error::VaultCorrupt`] for a
+/// stored id or date that does not
 /// parse; database errors as [`Error::Database`].
 pub fn account_register(
     conn: &Connection,
     account_id: AccountId,
-    from: Option<&str>,
-    to: Option<&str>,
+    from: Option<Date>,
+    to: Option<Date>,
 ) -> Result<Vec<RegisterLine>> {
     let account = get_account(conn, account_id)?;
-    let from = from.map(parse_date).transpose()?.map(format_date);
-    let to = to.map(parse_date).transpose()?.map(format_date);
+    let from = from.map(format_date);
+    let to = to.map(format_date);
 
     let mut running = if let Some(from) = from.as_deref() {
         let prior_sql = format!(
@@ -597,7 +568,7 @@ pub fn account_register(
         let (prior_debits, prior_credits): (i64, i64) = conn
             .query_row(
                 &prior_sql,
-                rusqlite::params![account_id.0.to_string(), from],
+                rusqlite::params![account_id.to_string(), from],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .database("sum account activity before period")?;
@@ -622,26 +593,23 @@ pub fn account_register(
     let mut stmt = conn.prepare(&list_sql).database("read account register")?;
 
     let rows = stmt
-        .query_map(
-            rusqlite::params![account_id.0.to_string(), from, to],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
-                ))
-            },
-        )
+        .query_map(rusqlite::params![account_id.to_string(), from, to], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })
         .database("read account register")?;
 
     let mut register = Vec::new();
     for (entry_id, entry_date, description, debit_minor, credit_minor, hidden) in
         collect_rows(rows.map(|row| row.map(Ok)))?
     {
-        let entry_id = JournalEntryId(stored_uuid("journal_entries.id", &entry_id)?);
+        let entry_id: JournalEntryId = stored_id("journal_entries.id", &entry_id)?;
         let entry_date = stored_date("journal_entries.entry_date", &entry_date)?;
         let change = normal_balance(account.account_type, debit_minor, credit_minor)?;
         running = add_minor(running, change)?;
@@ -694,28 +662,20 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
         return Err(ValidationError::AmountNotPositive.into());
     }
 
-    let (debit_account, credit_account) = simple_entry_sides(conn, input)?;
+    let (debit_account, credit_account) =
+        simple_entry_sides(conn, input.entity_id, input.accounts)?;
 
+    let amount = Money::from_minor(input.amount_minor)?;
     let lines = vec![
-        CreateJournalLine {
-            account_id: debit_account,
-            debit_minor: input.amount_minor,
-            credit_minor: 0,
-            memo: None,
-        },
-        CreateJournalLine {
-            account_id: credit_account,
-            debit_minor: 0,
-            credit_minor: input.amount_minor,
-            memo: None,
-        },
+        PostJournalLine::debit(debit_account, amount),
+        PostJournalLine::credit(credit_account, amount),
     ];
 
     post_entry_in_tx(
         conn,
         &PostJournal {
             entity_id: input.entity_id,
-            entry_date: input.entry_date.clone(),
+            entry_date: input.entry_date,
             description: input.description.clone(),
             reference: input.reference.clone(),
             lines,
@@ -725,17 +685,22 @@ pub(crate) fn post_simple_entry_unchecked_hidden(
     )
 }
 
-/// Checks the role accounts of `input` exactly as [`post_simple_entry`] does.
+/// Checks `accounts` for an entry in the book of `entity_id` exactly as
+/// [`post_simple_entry`] does.
 ///
 /// Posting resolves its accounts through the same [`simple_entry_sides`], so
-/// an input that passes here cannot be refused for its accounts at post time
-/// unless an account changes in between.
+/// accounts that pass here cannot be refused at post time unless one of them
+/// changes in between.
 ///
 /// # Errors
 ///
 /// Those [`simple_entry_sides`] returns.
-pub(crate) fn ensure_simple_entry_roles(conn: &Connection, input: &PostSimpleEntry) -> Result<()> {
-    simple_entry_sides(conn, input).map(|_| ())
+pub(crate) fn ensure_simple_entry_accounts(
+    conn: &Connection,
+    entity_id: EntityId,
+    accounts: SimpleEntryAccounts,
+) -> Result<()> {
+    simple_entry_sides(conn, entity_id, accounts).map(|_| ())
 }
 
 /// The entries [`list_entries`] returns, as a predicate on `journal_entries je`.
@@ -779,29 +744,21 @@ struct ListedEntries {
 
 impl ListedEntries {
     /// Normalizes `filter` into the values the predicate binds.
-    ///
-    /// # Errors
-    ///
-    /// [`ValidationError::InvalidDate`] when a date bound is not a date.
-    fn new(entity_id: EntityId, filter: &EntryFilter) -> Result<Self> {
-        // Normalize before binding: SQL compares date TEXT lexicographically, so a
-        // lenient input like `2026-3-5` must become `2026-03-05` first.
-        let normalized = |date: Option<&str>| -> Result<Option<String>> {
-            Ok(date.map(parse_date).transpose()?.map(format_date))
-        };
-
-        Ok(Self {
-            entity_id: entity_id.0.to_string(),
-            date_from: normalized(filter.date_from.as_deref())?,
-            date_to: normalized(filter.date_to.as_deref())?,
+    fn new(entity_id: EntityId, filter: &EntryFilter) -> Self {
+        // SQL compares the date column as text, which agrees with date order
+        // because `format_date` writes every date in the same fixed width.
+        Self {
+            entity_id: entity_id.to_string(),
+            date_from: filter.date_from.map(format_date),
+            date_to: filter.date_to.map(format_date),
             pattern: filter
                 .text
                 .as_deref()
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
                 .map(like_pattern),
-            account_id: filter.account_id.map(|id| id.0.to_string()),
-        })
+            account_id: filter.account_id.map(|id| id.to_string()),
+        }
     }
 
     /// The bound values, `?1` to `?5`.
@@ -926,7 +883,7 @@ fn load_lines(conn: &Connection, entry_id: JournalEntryId) -> Result<Vec<Journal
         .database("read journal lines")?;
 
     let rows = stmt
-        .query_map([entry_id.0.to_string()], |row| Ok(map_line_row(row)))
+        .query_map([entry_id.to_string()], |row| Ok(map_line_row(row)))
         .database("read journal lines")?;
 
     collect_rows(rows)
@@ -947,7 +904,7 @@ fn entry_is_void_reverse(conn: &Connection, id: JournalEntryId) -> Result<bool> 
             SELECT COUNT(1) FROM journal_entries
             WHERE voided_by_entry_id = ?1
             ",
-            [id.0.to_string()],
+            [id.to_string()],
             |row| row.get(0),
         )
         .database("check journal entry is a reversal")?;
@@ -985,8 +942,8 @@ fn post_entry_in_tx(
     // An empty description is accepted: the quick-add form leaves it optional.
     let description = input.description.trim();
 
-    let entry_date = parse_date(&input.entry_date)?;
-    let entry_id = JournalEntryId::new();
+    let entry_date = input.entry_date;
+    let entry_id = JournalEntryId::generate();
 
     let mut lines = Vec::with_capacity(input.lines.len());
     for line_input in &input.lines {
@@ -997,14 +954,12 @@ fn post_entry_in_tx(
             ArchivedAccounts::Accept => {}
         }
 
-        let debit = Money::from_minor(line_input.debit_minor)?;
-        let credit = Money::from_minor(line_input.credit_minor)?;
         lines.push(JournalLine {
-            id: JournalLineId::new(),
+            id: JournalLineId::generate(),
             entry_id,
             account_id: line_input.account_id,
-            debit,
-            credit,
+            amount: line_input.amount,
+            side: line_input.side,
             memo: line_input.memo.clone(),
         });
     }
@@ -1026,8 +981,8 @@ fn post_entry_in_tx(
         ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7)
         ",
         rusqlite::params![
-            entry_id.0.to_string(),
-            input.entity_id.0.to_string(),
+            entry_id.to_string(),
+            input.entity_id.to_string(),
             format_date(entry_date),
             description,
             reference,
@@ -1045,11 +1000,11 @@ fn post_entry_in_tx(
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             ",
             rusqlite::params![
-                line.id.0.to_string(),
-                entry_id.0.to_string(),
-                line.account_id.0.to_string(),
-                line.debit.amount_minor(),
-                line.credit.amount_minor(),
+                line.id.to_string(),
+                entry_id.to_string(),
+                line.account_id.to_string(),
+                line.debit().amount_minor(),
+                line.credit().amount_minor(),
                 line.memo,
                 i32::try_from(order).unwrap_or(i32::MAX),
             ],
@@ -1060,33 +1015,64 @@ fn post_entry_in_tx(
     get_entry(conn, entry_id)
 }
 
-/// Resolves the (debit, credit) account pair for a simple entry.
+/// Resolves the (debit, credit) account pair for a simple entry, checking
+/// each account as posting does.
+///
+/// The debited account is looked up and checked for its type first, then the
+/// credited one; the remaining checks follow for both.
 ///
 /// # Errors
 ///
-/// - [`ValidationError::AccountRequired`], [`ValidationError::AccountWrongType`]
-///   or [`ValidationError::BillStatusRequired`] when a role the kind needs is
-///   empty or filled with an account of the wrong type.
+/// - [`Error::NotFound`] for an unknown account id.
+/// - [`ValidationError::AccountWrongType`] when an account has a type its
+///   part does not accept.
 /// - [`ValidationError::SameAccount`] when both sides are one account.
 /// - [`Error::AccountWrongEntity`] or [`ValidationError::AccountInactive`]
 ///   when an account belongs to another book or is archived.
-/// - [`Error::NotFound`] for an unknown account id.
 /// - [`Error::VaultCorrupt`] for a stored account that does not parse.
 /// - [`Error::Database`] on database errors.
 fn simple_entry_sides(
     conn: &Connection,
-    input: &PostSimpleEntry,
+    entity_id: EntityId,
+    accounts: SimpleEntryAccounts,
 ) -> Result<(AccountId, AccountId)> {
-    let (debit, credit) = simple_entry_role_accounts(conn, input)?;
+    let (debit, credit) = accounts.sides();
+    let debit = role_account(conn, debit)?;
+    let credit = role_account(conn, credit)?;
+
+    // Two parts that accept different types cannot hold one account, so this
+    // is reached only where both accept the same types, as in a transfer.
     if debit.id == credit.id {
         return Err(ValidationError::SameAccount.into());
     }
 
     for account in [&debit, &credit] {
-        ensure_in_book(account, input.entity_id)?;
+        ensure_in_book(account, entity_id)?;
         ensure_active(account)?;
     }
     Ok((debit.id, credit.id))
+}
+
+/// Loads the account on one side of a simple entry and checks that its type
+/// is one the part accepts.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown account id.
+/// - [`ValidationError::AccountWrongType`], naming the part and the
+///   account's code, for an account of a type the part does not accept.
+/// - [`Error::VaultCorrupt`] for a stored account that does not parse.
+/// - [`Error::Database`] on database errors.
+fn role_account(conn: &Connection, side: RoleAccount) -> Result<Account> {
+    let account = get_account(conn, side.id)?;
+    if !side.allowed.contains(&account.account_type) {
+        return Err(ValidationError::AccountWrongType {
+            role: side.role,
+            code: account.code,
+        }
+        .into());
+    }
+    Ok(account)
 }
 
 /// Checks that `account` belongs to the book of `entity_id`.
@@ -1117,105 +1103,6 @@ fn ensure_active(account: &Account) -> Result<()> {
     Ok(())
 }
 
-/// Loads the (debit, credit) accounts the kind of `input` maps its roles to,
-/// checking only that each role is filled with an account of an allowed type.
-///
-/// # Errors
-///
-/// - [`ValidationError::BillStatusRequired`] for a bill without a status.
-/// - [`ValidationError::AccountRequired`] for an empty role.
-/// - [`ValidationError::AccountWrongType`] for an account of a type the role
-///   does not allow.
-/// - [`Error::NotFound`] for an unknown account id.
-/// - [`Error::VaultCorrupt`] for a stored account that does not parse.
-/// - [`Error::Database`] on database errors.
-fn simple_entry_role_accounts(
-    conn: &Connection,
-    input: &PostSimpleEntry,
-) -> Result<(Account, Account)> {
-    use AccountType::{Asset, Expense, Income, Liability};
-
-    let account_in =
-        |id: Option<AccountId>, role: AccountRole, allowed: &[AccountType]| -> Result<Account> {
-            let id = id.ok_or(ValidationError::AccountRequired { role })?;
-            let account = get_account(conn, id)?;
-            if !allowed.contains(&account.account_type) {
-                return Err(ValidationError::AccountWrongType {
-                    role,
-                    code: account.code.clone(),
-                }
-                .into());
-            }
-            Ok(account)
-        };
-
-    match input.kind {
-        SimpleEntryKind::Expense => Ok((
-            account_in(input.category_account_id, AccountRole::Category, &[Expense])?,
-            account_in(
-                input.wallet_account_id,
-                AccountRole::Payment,
-                &[Asset, Liability],
-            )?,
-        )),
-        SimpleEntryKind::Income => Ok((
-            account_in(input.wallet_account_id, AccountRole::Deposit, &[Asset])?,
-            account_in(input.category_account_id, AccountRole::Income, &[Income])?,
-        )),
-        SimpleEntryKind::Bill => match input.bill_status {
-            Some(SimpleBillStatus::Paid) => Ok((
-                account_in(
-                    input.category_account_id,
-                    AccountRole::BillCategory,
-                    &[Expense],
-                )?,
-                account_in(
-                    input.wallet_account_id,
-                    AccountRole::Payment,
-                    &[Asset, Liability],
-                )?,
-            )),
-            Some(SimpleBillStatus::Unpaid) => Ok((
-                account_in(
-                    input.category_account_id,
-                    AccountRole::BillCategory,
-                    &[Expense],
-                )?,
-                account_in(
-                    input.payable_account_id,
-                    AccountRole::BillsPayable,
-                    &[Liability],
-                )?,
-            )),
-            Some(SimpleBillStatus::PayExisting) => Ok((
-                account_in(
-                    input.payable_account_id,
-                    AccountRole::BillsPayable,
-                    &[Liability],
-                )?,
-                account_in(
-                    input.wallet_account_id,
-                    AccountRole::Payment,
-                    &[Asset, Liability],
-                )?,
-            )),
-            None => Err(ValidationError::BillStatusRequired.into()),
-        },
-        SimpleEntryKind::Transfer => Ok((
-            account_in(
-                input.to_account_id,
-                AccountRole::TransferDestination,
-                &[Asset, Liability],
-            )?,
-            account_in(
-                input.from_account_id,
-                AccountRole::TransferSource,
-                &[Asset, Liability],
-            )?,
-        )),
-    }
-}
-
 /// Posts the reversing entry of `id` and links the two, without transaction
 /// management.
 ///
@@ -1235,20 +1122,20 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         return Err(ValidationError::EntryNotPosted.into());
     }
 
-    let reverse_lines: Vec<CreateJournalLine> = view
+    let reverse_lines: Vec<PostJournalLine> = view
         .lines
         .iter()
-        .map(|line| CreateJournalLine {
+        .map(|line| PostJournalLine {
             account_id: line.account_id,
-            debit_minor: line.credit.amount_minor(),
-            credit_minor: line.debit.amount_minor(),
+            amount: line.amount,
+            side: line.side.opposite(),
             memo: Some(void_memo(locale).into()),
         })
         .collect();
 
     let reverse_input = PostJournal {
         entity_id: view.entry.entity_id,
-        entry_date: format_date(view.entry.entry_date),
+        entry_date: view.entry.entry_date,
         description: void_description(locale, &view.entry.description),
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
@@ -1262,7 +1149,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
 
     conn.execute(
         "UPDATE journal_entries SET voided_by_entry_id = ?1 WHERE id = ?2",
-        rusqlite::params![reverse.entry.id.0.to_string(), id.0.to_string()],
+        rusqlite::params![reverse.entry.id.to_string(), id.to_string()],
     )
     .database("link voided entry to its reversal")?;
 
@@ -1272,7 +1159,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     // also looks for an entry that points at the one it is reading.
     conn.execute(
         "UPDATE journal_entries SET voided_by_entry_id = ?1 WHERE id = ?2",
-        rusqlite::params![id.0.to_string(), reverse.entry.id.0.to_string()],
+        rusqlite::params![id.to_string(), reverse.entry.id.to_string()],
     )
     .database("link reversal to voided entry")?;
 
@@ -1288,18 +1175,34 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
 /// # Errors
 ///
 /// [`Error::VaultCorrupt`] naming the column when an id does not parse, an
-/// amount is negative, or a column has the wrong storage class.
+/// amount is negative, both amounts are zero or both are greater than zero,
+/// or a column has the wrong storage class.
 fn map_line_row(row: &rusqlite::Row<'_>) -> Result<JournalLine> {
-    let id = stored_uuid("journal_lines.id", &read_column::<String>(row, 0)?)?;
-    let entry_id = stored_uuid("journal_lines.entry_id", &read_column::<String>(row, 1)?)?;
-    let account_id = stored_uuid("journal_lines.account_id", &read_column::<String>(row, 2)?)?;
+    let id = stored_id("journal_lines.id", &read_column::<String>(row, 0)?)?;
+    let entry_id = stored_id("journal_lines.entry_id", &read_column::<String>(row, 1)?)?;
+    let account_id = stored_id("journal_lines.account_id", &read_column::<String>(row, 2)?)?;
+
+    let debit = stored_amount("journal_lines.debit_minor", read_column(row, 3)?)?;
+    let credit = stored_amount("journal_lines.credit_minor", read_column(row, 4)?)?;
+    // The schema's `CHECK` allows a line one side only, so a row with both
+    // or neither was not written by the application.
+    let (side, amount) = Side::from_columns(debit, credit).map_err(|_| {
+        corrupt_column(
+            "journal_lines.debit_minor",
+            format_args!(
+                "a line with a debit of {} and a credit of {}",
+                debit.amount_minor(),
+                credit.amount_minor()
+            ),
+        )
+    })?;
 
     Ok(JournalLine {
-        id: JournalLineId(id),
-        entry_id: JournalEntryId(entry_id),
-        account_id: AccountId(account_id),
-        debit: stored_amount("journal_lines.debit_minor", read_column(row, 3)?)?,
-        credit: stored_amount("journal_lines.credit_minor", read_column(row, 4)?)?,
+        id,
+        entry_id,
+        account_id,
+        amount,
+        side,
         memo: read_column(row, 5)?,
     })
 }
@@ -1323,8 +1226,8 @@ fn stored_amount(column: &str, minor: i64) -> Result<Money> {
 /// [`Error::VaultCorrupt`] naming the column when an id, the date or the
 /// status does not parse, or a column has the wrong storage class.
 fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
-    let id = stored_uuid("journal_entries.id", &read_column::<String>(row, 0)?)?;
-    let entity_id = stored_uuid("journal_entries.entity_id", &read_column::<String>(row, 1)?)?;
+    let id = stored_id("journal_entries.id", &read_column::<String>(row, 0)?)?;
+    let entity_id = stored_id("journal_entries.entity_id", &read_column::<String>(row, 1)?)?;
     let entry_date = stored_date(
         "journal_entries.entry_date",
         &read_column::<String>(row, 2)?,
@@ -1341,8 +1244,8 @@ fn map_entry_row(row: &rusqlite::Row<'_>) -> Result<JournalEntry> {
     };
 
     Ok(JournalEntry {
-        id: JournalEntryId(id),
-        entity_id: EntityId(entity_id),
+        id,
+        entity_id,
         entry_date,
         description: read_column(row, 3)?,
         reference: read_column(row, 4)?,

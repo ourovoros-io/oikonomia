@@ -14,28 +14,14 @@
 //! default are found by the template's codes (see [`crate::coa`] and
 //! [`crate::default_accounts`]).
 
+use crate::domain::currency::CurrencyCode;
+use crate::domain::define_id;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use time::Month;
 
-/// Identifies one [`Entity`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct EntityId(pub Uuid);
-
-impl EntityId {
-    /// Returns a new random (version 4) id.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for EntityId {
-    /// Returns a new random id, the same as [`EntityId::new`], not a fixed
-    /// value.
-    fn default() -> Self {
-        Self::new()
-    }
+define_id! {
+    /// Identifies one [`Entity`].
+    EntityId
 }
 
 /// The starter chart of accounts an entity is created with.
@@ -62,12 +48,13 @@ pub struct Entity {
     pub id: EntityId,
     /// The name shown to the user, such as "Personal" or "Acme Ltd".
     pub name: String,
-    /// The currency of every amount in these books, as three capital
-    /// letters such as `EUR`. It is meant to be an ISO 4217 code; only the
-    /// shape is checked when the entity is created.
-    pub base_currency: String,
-    /// The month the fiscal year starts in, from 1 (January) to 12.
-    pub fiscal_year_start_month: u8,
+    /// The currency of every amount in these books, serialized as its three
+    /// capital letters such as `EUR`.
+    pub base_currency: CurrencyCode,
+    /// The month the fiscal year starts in, serialized as its number from 1
+    /// (January) to 12.
+    #[serde(with = "crate::util::serde_month")]
+    pub fiscal_year_start_month: Month,
     /// The template the chart was seeded from, which also decides the
     /// seeded accounts that are defaults for each role.
     pub chart_template: ChartTemplate,

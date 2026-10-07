@@ -29,14 +29,15 @@
 //!   is accepted as well.
 
 use crate::coa::template_accounts;
-use crate::db::{collect_rows, corrupt_column, read_column, stored_uuid};
-use crate::domain::{Account, AccountId, ChartTemplate, Entity, EntityId};
+use crate::db::{collect_rows, corrupt_column, read_column, stored_id};
+use crate::domain::{Account, AccountId, ChartTemplate, CurrencyCode, Entity, EntityId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
 use crate::ledger::balance::account_type_str;
 use crate::prefs::Locale;
 use crate::util::now_utc_string;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use time::Month;
 
 /// Input for [`create_entity`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +101,7 @@ pub fn get_entity(conn: &Connection, id: EntityId) -> Result<Entity> {
         SELECT id, name, base_currency, fiscal_year_start_month, chart_template
         FROM entities WHERE id = ?1
         ",
-        [id.0.to_string()],
+        [id.to_string()],
         |row| Ok(map_entity(row)),
     )
     .map_err(|err| match err {
@@ -174,7 +175,7 @@ pub fn update_entity(conn: &Connection, id: EntityId, name: &str) -> Result<Enti
     let renamed = conn
         .execute(
             "UPDATE entities SET name = ?1 WHERE id = ?2 AND archived_at IS NULL",
-            rusqlite::params![name, id.0.to_string()],
+            rusqlite::params![name, id.to_string()],
         )
         .database("rename entity")?;
 
@@ -199,7 +200,7 @@ pub fn archive_entity(conn: &Connection, id: EntityId) -> Result<()> {
     let archived = conn
         .execute(
             "UPDATE entities SET archived_at = ?1 WHERE id = ?2 AND archived_at IS NULL",
-            rusqlite::params![now_utc_string(), id.0.to_string()],
+            rusqlite::params![now_utc_string(), id.to_string()],
         )
         .database("archive entity")?;
 
@@ -244,25 +245,18 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
         .into());
     }
 
-    // An ISO 4217 code is three ASCII letters. Checking the letters makes the
-    // byte length a character count too, so "12$" and "€" are both refused.
-    let currency = input.base_currency.trim();
-    if currency.len() != 3 || !currency.bytes().all(|byte| byte.is_ascii_alphabetic()) {
-        return Err(ValidationError::CurrencyInvalid.into());
-    }
-    let currency = currency.to_ascii_uppercase();
+    let currency: CurrencyCode = input.base_currency.parse()?;
 
-    let month = input.fiscal_year_start_month.unwrap_or(1);
-    if !(1..=12).contains(&month) {
-        return Err(ValidationError::Internal {
+    let month = match input.fiscal_year_start_month {
+        None => Month::January,
+        Some(number) => Month::try_from(number).map_err(|_| ValidationError::Internal {
             detail: "fiscal_year_start_month must be 1-12".into(),
-        }
-        .into());
-    }
+        })?,
+    };
 
     ensure_unique_name(conn, name, None)?;
 
-    let id = EntityId::new();
+    let id = EntityId::generate();
 
     conn.execute(
         "
@@ -271,10 +265,10 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
         ",
         rusqlite::params![
-            id.0.to_string(),
+            id.to_string(),
             name,
-            currency,
-            month,
+            currency.as_str(),
+            u8::from(month),
             chart_template_str(input.chart_template),
             now_utc_string(),
         ],
@@ -283,7 +277,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 
     for template_account in template_accounts(input.chart_template, locale) {
         let account = Account {
-            id: AccountId::new(),
+            id: AccountId::generate(),
             entity_id: id,
             code: template_account.code.to_owned(),
             name: template_account.name.to_owned(),
@@ -308,7 +302,7 @@ fn create_entity_in_tx(conn: &Connection, input: &CreateEntity, locale: Locale) 
 ///
 /// Those of [`delete_entity`].
 fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
-    let entity_id = id.0.to_string();
+    let entity_id = id.to_string();
 
     // No `archived_at` test: an archived entity is deleted like any other.
     let exists: i64 = conn
@@ -395,7 +389,7 @@ fn ensure_unique_name(conn: &Connection, name: &str, exclude: Option<EntityId>) 
                   AND fold(name) = fold(?1)
                   AND id != ?2
                 ",
-                rusqlite::params![name, id.0.to_string()],
+                rusqlite::params![name, id.to_string()],
                 |row| row.get(0),
             )
             .database("check entity name is free")?,
@@ -440,12 +434,12 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
         ",
         rusqlite::params![
-            account.id.0.to_string(),
-            account.entity_id.0.to_string(),
+            account.id.to_string(),
+            account.entity_id.to_string(),
             account.code,
             account.name,
             account_type_str(account.account_type),
-            account.parent_id.map(|parent| parent.0.to_string()),
+            account.parent_id.map(|parent| parent.to_string()),
             i32::from(account.is_active),
             i32::from(account.is_system),
             account.sort_order,
@@ -460,11 +454,11 @@ fn insert_account_row(conn: &Connection, account: &Account) -> Result<()> {
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] naming the column when the id, the chart template
-/// or the fiscal year start month does not parse, or a column has the wrong
-/// storage class.
+/// [`Error::VaultCorrupt`] naming the column when the id, the base currency,
+/// the chart template or the fiscal year start month does not parse, or a
+/// column has the wrong storage class.
 fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
-    let id = stored_uuid("entities.id", &read_column::<String>(row, 0)?)?;
+    let id = stored_id("entities.id", &read_column::<String>(row, 0)?)?;
     let chart_template = parse_chart_template(&read_column::<String>(row, 4)?)?;
 
     // Reports derive the fiscal year from this number, so one outside the
@@ -472,7 +466,7 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
     let stored_month: i64 = read_column(row, 3)?;
     let fiscal_year_start_month = u8::try_from(stored_month)
         .ok()
-        .filter(|month| (1..=12).contains(month))
+        .and_then(|number| Month::try_from(number).ok())
         .ok_or_else(|| {
             corrupt_column(
                 "entities.fiscal_year_start_month",
@@ -480,10 +474,21 @@ fn map_entity(row: &rusqlite::Row<'_>) -> Result<Entity> {
             )
         })?;
 
+    // The code is a key into the table of decimal digits and is handed to
+    // the UI's number formatter, so text that is not a code is refused here
+    // instead of being formatted with a guessed number of decimals.
+    let stored_currency: String = read_column(row, 2)?;
+    let base_currency = stored_currency.parse().map_err(|_| {
+        corrupt_column(
+            "entities.base_currency",
+            format_args!("not a currency code: {stored_currency}"),
+        )
+    })?;
+
     Ok(Entity {
-        id: EntityId(id),
+        id,
         name: read_column(row, 1)?,
-        base_currency: read_column(row, 2)?,
+        base_currency,
         fiscal_year_start_month,
         chart_template,
     })

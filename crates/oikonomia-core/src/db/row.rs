@@ -81,13 +81,19 @@ pub(crate) fn collect_rows<T>(
     rows.map(|row| row.database("read query rows")?).collect()
 }
 
-/// Parses an id stored as text in `column`.
+/// Parses an id stored as text in `column` into the id type `T`.
+///
+/// `T` is one of the record id types of [`crate::domain`]. This is how an id
+/// leaves a stored row: their `FromStr` would report bad text as a caller
+/// mistake, and here the application wrote the text itself.
 ///
 /// # Errors
 ///
 /// [`Error::VaultCorrupt`] naming `column` when `text` is not a UUID.
-pub(crate) fn stored_uuid(column: &str, text: &str) -> Result<Uuid> {
-    parse_uuid(text).map_err(|_| corrupt_column(column, format_args!("not an id: {text}")))
+pub(crate) fn stored_id<T: From<Uuid>>(column: &str, text: &str) -> Result<T> {
+    parse_uuid(text)
+        .map(T::from)
+        .map_err(|_| corrupt_column(column, format_args!("not an id: {text}")))
 }
 
 /// Parses a `YYYY-MM-DD` date stored as text in `column`.
@@ -102,11 +108,12 @@ pub(crate) fn stored_date(column: &str, text: &str) -> Result<Date> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::AccountId;
 
     #[test]
     fn a_damaged_value_is_reported_as_a_corrupt_vault_naming_the_column() {
         assert_eq!(
-            stored_uuid("accounts.id", "nope"),
+            stored_id::<AccountId>("accounts.id", "nope"),
             Err(corrupt_column("accounts.id", "not an id: nope"))
         );
         assert_eq!(
@@ -130,7 +137,7 @@ mod tests {
     fn a_sound_value_parses() {
         let id = "22222222-2222-4222-8222-222222222222";
         assert_eq!(
-            stored_uuid("accounts.id", id).map(|uuid| uuid.to_string()),
+            stored_id::<AccountId>("accounts.id", id).map(|account| account.to_string()),
             Ok(id.to_owned())
         );
         assert_eq!(

@@ -71,7 +71,12 @@ fn profit_and_loss_refuses_a_total_income_that_overflows() {
     post(conn, entity_id, "2026-03-10", (CHECKING, SALARY), HALF);
     post(conn, entity_id, "2026-03-20", (SAVINGS, FREELANCE), HALF);
 
-    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31");
+    let pnl = profit_and_loss(
+        conn,
+        entity_id,
+        common::date("2026-01-01"),
+        common::date("2026-12-31"),
+    );
 
     assert_eq!(pnl.map(|pnl| pnl.total_income), Err(Error::MoneyOverflow));
 }
@@ -82,7 +87,12 @@ fn profit_and_loss_refuses_a_net_income_that_overflows() {
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_net_overflows(conn);
 
-    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31");
+    let pnl = profit_and_loss(
+        conn,
+        entity_id,
+        common::date("2026-01-01"),
+        common::date("2026-12-31"),
+    );
 
     assert_eq!(pnl.map(|pnl| pnl.net_income), Err(Error::MoneyOverflow));
 }
@@ -93,7 +103,7 @@ fn balance_sheet_refuses_a_section_total_that_overflows() {
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_asset_total_overflows(conn);
 
-    let sheet = balance_sheet(conn, entity_id, "2026-12-31");
+    let sheet = balance_sheet(conn, entity_id, common::date("2026-12-31"));
 
     assert_eq!(
         sheet.map(|sheet| sheet.total_assets),
@@ -107,7 +117,7 @@ fn trial_balance_refuses_column_totals_that_overflow() {
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_asset_total_overflows(conn);
 
-    let trial = trial_balance(conn, entity_id, "2026-12-31");
+    let trial = trial_balance(conn, entity_id, common::date("2026-12-31"));
 
     assert_eq!(
         trial.map(|trial| trial.total_debits),
@@ -121,7 +131,7 @@ fn trial_balance_refuses_an_unclosed_net_income_that_overflows() {
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_net_overflows(conn);
 
-    let trial = trial_balance(conn, entity_id, "2026-12-31");
+    let trial = trial_balance(conn, entity_id, common::date("2026-12-31"));
 
     assert_eq!(
         trial.map(|trial| trial.total_debits),
@@ -135,7 +145,13 @@ fn dashboard_refuses_a_net_income_that_overflows() {
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_net_overflows(conn);
 
-    let summary = dashboard_summary(conn, entity_id, "2026-03-01", "2026-03-31", "2026-03-31");
+    let summary = dashboard_summary(
+        conn,
+        entity_id,
+        common::date("2026-03-01"),
+        common::date("2026-03-31"),
+        common::date("2026-03-31"),
+    );
 
     assert_eq!(
         summary.map(|summary| summary.net_income),
@@ -151,7 +167,12 @@ fn cash_flow_refuses_a_running_total_that_overflows() {
     post(conn, entity_id, "2026-03-10", (CHECKING, SALARY), HALF);
     post(conn, entity_id, "2026-03-20", (SAVINGS, FREELANCE), HALF);
 
-    let series = cash_flow_series(conn, entity_id, "2026-03-01", "2026-03-31");
+    let series = cash_flow_series(
+        conn,
+        entity_id,
+        common::date("2026-03-01"),
+        common::date("2026-03-31"),
+    );
 
     assert_eq!(
         series.map(|series| series.total_income_minor),
@@ -165,7 +186,12 @@ fn cash_flow_refuses_a_net_that_overflows() {
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_net_overflows(conn);
 
-    let series = cash_flow_series(conn, entity_id, "2026-03-01", "2026-03-31");
+    let series = cash_flow_series(
+        conn,
+        entity_id,
+        common::date("2026-03-01"),
+        common::date("2026-03-31"),
+    );
 
     assert_eq!(
         series.map(|series| series.net_minor),
@@ -197,7 +223,13 @@ fn a_total_sqlite_adds_up_fails_the_query_instead_of_wrapping() {
     let conn = vault.connection().expect("conn");
     let entity_id = book_whose_asset_total_overflows(conn);
 
-    let summary = dashboard_summary(conn, entity_id, "2026-03-01", "2026-03-31", "2026-03-31");
+    let summary = dashboard_summary(
+        conn,
+        entity_id,
+        common::date("2026-03-01"),
+        common::date("2026-03-31"),
+        common::date("2026-03-31"),
+    );
 
     assert!(
         matches!(
@@ -215,10 +247,16 @@ fn amounts_at_the_limit_still_report() {
     let entity_id = common::book(conn, "Large", ChartTemplate::Personal);
     post(conn, entity_id, "2026-03-10", (CHECKING, SALARY), i64::MAX);
 
-    let pnl = profit_and_loss(conn, entity_id, "2026-01-01", "2026-12-31").expect("pnl");
+    let pnl = profit_and_loss(
+        conn,
+        entity_id,
+        common::date("2026-01-01"),
+        common::date("2026-12-31"),
+    )
+    .expect("pnl");
     assert_eq!(pnl.net_income, i64::MAX);
 
-    let sheet = balance_sheet(conn, entity_id, "2026-12-31").expect("sheet");
+    let sheet = balance_sheet(conn, entity_id, common::date("2026-12-31")).expect("sheet");
     assert_eq!(sheet.total_assets, i64::MAX);
     assert_eq!(sheet.total_liabilities_equity, i64::MAX);
 }

@@ -21,29 +21,13 @@
 //! `false` and the account's entries stay in the book. Accounts are removed
 //! only together with their whole entity.
 
+use crate::domain::define_id;
 use crate::domain::entity::EntityId;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-/// Identifies one [`Account`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct AccountId(pub Uuid);
-
-impl AccountId {
-    /// Returns a new random (version 4) id.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
-impl Default for AccountId {
-    /// Returns a new random id, the same as [`AccountId::new`], not a fixed
-    /// value.
-    fn default() -> Self {
-        Self::new()
-    }
+define_id! {
+    /// Identifies one [`Account`].
+    AccountId
 }
 
 /// The five classes of account in double-entry bookkeeping.

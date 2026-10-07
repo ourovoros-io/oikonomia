@@ -27,7 +27,7 @@ use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, add_minor, normal_balance, parse_account_type, subtract_minor,
 };
 use crate::ledger::entities::get_entity;
-use crate::util::{format_date, parse_date};
+use crate::util::format_date;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use time::Date;
@@ -97,7 +97,7 @@ pub struct CashFlowSeries {
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date or `from > to`;
+/// [`ValidationError::DateRangeInverted`] for `from > to`;
 /// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
 /// bucket, a running total or the net does not fit in `i64`;
 /// [`Error::VaultCorrupt`] for a stored date or account type that does not
@@ -105,11 +105,9 @@ pub struct CashFlowSeries {
 pub fn cash_flow_series(
     conn: &Connection,
     entity_id: EntityId,
-    from: &str,
-    to: &str,
+    from: Date,
+    to: Date,
 ) -> Result<CashFlowSeries> {
-    let from = parse_date(from)?;
-    let to = parse_date(to)?;
     if from > to {
         return Err(ValidationError::DateRangeInverted.into());
     }
@@ -176,20 +174,18 @@ pub fn cash_flow_series(
 ///
 /// # Errors
 ///
-/// [`Error::Validation`] for a malformed date or an explicit `from > to`;
+/// [`ValidationError::DateRangeInverted`] for an explicit `from > to`;
 /// [`Error::NotFound`] for an unknown entity; [`Error::VaultCorrupt`] for a
 /// stored entry date that does not parse; database errors as [`Error::Database`].
 pub fn activity_window(
     conn: &Connection,
     entity_id: EntityId,
-    from: Option<&str>,
-    to: Option<&str>,
+    from: Option<Date>,
+    to: Option<Date>,
     today: Date,
 ) -> Result<(Date, Date)> {
     // Only checks that the entity exists; an archived one passes.
     get_entity(conn, entity_id)?;
-    let from = from.map(parse_date).transpose()?;
-    let to = to.map(parse_date).transpose()?;
     if let (Some(start), Some(end)) = (from, to) {
         if start > end {
             return Err(ValidationError::DateRangeInverted.into());
@@ -295,7 +291,7 @@ fn daily_activity(
     let mut stmt = conn.prepare(&sql).database("read daily activity")?;
     let rows = stmt
         .query_map(
-            rusqlite::params![entity_id.0.to_string(), format_date(from), format_date(to)],
+            rusqlite::params![entity_id.to_string(), format_date(from), format_date(to)],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -355,7 +351,7 @@ fn active_entry_bounds(
         "
     );
     let (earliest, latest): (Option<String>, Option<String>) = conn
-        .query_row(&sql, rusqlite::params![entity_id.0.to_string()], |row| {
+        .query_row(&sql, rusqlite::params![entity_id.to_string()], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })
         .database("read entry date bounds")?;

@@ -28,12 +28,14 @@ use std::path::{Path, PathBuf};
 use csv::{ReaderBuilder, StringRecord, Trim, Writer};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use time::Date;
 
 use crate::csv::CsvError;
 use crate::db::read_column;
 use crate::domain::EntityId;
 use crate::error::{DatabaseContext, Error, Result, SerializationContext};
 use crate::ledger::get_entity;
+use crate::util::parse_date;
 use crate::vault::files::{local_iso_date, replace_private_file};
 
 /// Export column header for integer debit minor units.
@@ -59,8 +61,9 @@ pub enum JournalCsvStatus {
 /// One journal line as written by [`export_journal_csv`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalCsvLine {
-    /// ISO date.
-    pub date: String,
+    /// Date of the entry, serialized as `YYYY-MM-DD`.
+    #[serde(with = "crate::util::serde_date")]
+    pub date: Date,
     /// Entry description.
     pub description: String,
     /// Optional reference.
@@ -137,7 +140,7 @@ pub fn export_journal_csv(conn: &Connection, entity_id: EntityId) -> Result<Stri
         .database("read journal for export")?;
 
     let mut rows = statement
-        .query([entity_id.0.to_string()])
+        .query([entity_id.to_string()])
         .database("read journal for export")?;
 
     let mut csv_bytes = Vec::new();
@@ -249,7 +252,9 @@ pub fn ensure_csv_path(path: PathBuf) -> PathBuf {
 /// [`Error::Csv`] in every case, with the [`CsvError`] that says which: the
 /// text is empty, the header row or a record cannot be read, one of the
 /// eight columns is missing, a `status` cell is neither `posted` nor
-/// `voided`, or a `debit_minor` or `credit_minor` cell is not an integer.
+/// `voided`, a `date` cell is not a `YYYY-MM-DD` date
+/// ([`CsvError::InvalidDate`]), or a `debit_minor` or `credit_minor` cell is
+/// not an integer.
 pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -292,7 +297,8 @@ pub fn parse_journal_export(text: &str) -> Result<Vec<JournalCsvLine>> {
             }
         };
         lines.push(JournalCsvLine {
-            date: cell(date_column).to_owned(),
+            date: parse_date(cell(date_column))
+                .map_err(|_| CsvError::InvalidDate(cell(date_column).to_owned()))?,
             description: restore_formula(cell(description_column)).to_owned(),
             // The export writes a missing reference as an empty cell.
             reference: (!reference.is_empty()).then(|| reference.to_owned()),
@@ -509,8 +515,9 @@ mod properties {
     use super::*;
     use crate::domain::ChartTemplate;
     use crate::ledger::{
-        CreateEntity, CreateJournalLine, PostJournal, create_entity, list_accounts, post_entry,
+        CreateEntity, PostJournal, PostJournalLine, create_entity, list_accounts, post_entry,
     };
+    use crate::money::Money;
     use crate::prefs::Locale;
     use crate::vault::Vault;
 
@@ -536,19 +543,17 @@ mod properties {
         };
         let entity = create_entity(conn, &book, Locale::En).unwrap();
         let accounts = list_accounts(conn, entity.id).unwrap();
-        let line = |index: usize, debit_minor: i64, credit_minor: i64| CreateJournalLine {
-            account_id: accounts[index].id,
-            debit_minor,
-            credit_minor,
-            memo: None,
-        };
+        let amount = Money::from_minor(100).unwrap();
 
         let entry = PostJournal {
             entity_id: entity.id,
-            entry_date: "2026-03-15".into(),
+            entry_date: parse_date("2026-03-15").unwrap(),
             description: description.into(),
             reference: None,
-            lines: vec![line(0, 100, 0), line(1, 0, 100)],
+            lines: vec![
+                PostJournalLine::debit(accounts[0].id, amount),
+                PostJournalLine::credit(accounts[1].id, amount),
+            ],
         };
         let posted = post_entry(conn, &entry).unwrap();
 

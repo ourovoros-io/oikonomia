@@ -23,18 +23,20 @@
 //! - `not_found` when an account does not exist.
 
 use crate::commands::support::{
-    decode_document_base64, dropped_file_name, require_granted_path, run_blocking, with_connection,
-    with_localized_connection,
+    Arguments, decode_document_base64, dropped_file_name, require_granted_path, run_blocking,
+    with_connection, with_localized_connection,
 };
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
 use oikonomia_core::documents::post_simple_entry_with_document;
 use oikonomia_core::domain::{AccountId, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
-    EntryFilter, PostJournal, PostSimpleEntry, PostedEntryView, VoidResult, get_entry,
-    list_entries, post_entry, post_simple_entry, replace_simple_entry, set_entry_hidden,
-    void_entry,
+    EntryFilter, PostJournal, PostJournalRequest, PostSimpleEntry, PostSimpleEntryRequest,
+    PostedEntryView, VoidResult, get_entry, list_entries, post_entry, post_simple_entry,
+    replace_simple_entry, set_entry_hidden, void_entry,
 };
+use oikonomia_core::util::DateText;
+use serde::Deserialize;
 use tauri::State;
 
 /// Lists an entity's posted entries, voided ones included, optionally
@@ -48,28 +50,41 @@ use tauri::State;
 /// Returns `invalid_date` when `from` or `to` is not a date, and the
 /// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "each argument is one field of the IPC payload; tracked for the API pass"
-)]
 pub(crate) async fn entry_list(
     state: State<'_, AppState>,
-    entity_id: EntityId,
-    from: Option<String>,
-    to: Option<String>,
-    search: Option<String>,
-    account_id: Option<AccountId>,
+    arguments: Arguments<EntryListArguments>,
 ) -> CommandResult<Vec<PostedEntryView>> {
+    let Arguments(arguments) = arguments;
+
     with_connection(&state, move |conn| {
         let filter = EntryFilter {
-            text: search,
-            date_from: from,
-            date_to: to,
-            account_id,
+            text: arguments.search,
+            date_from: DateText::parse_optional(arguments.from.as_ref())?,
+            date_to: DateText::parse_optional(arguments.to.as_ref())?,
+            account_id: arguments.account_id,
         };
-        list_entries(conn, entity_id, &filter)
+        list_entries(conn, arguments.entity_id, &filter)
     })
     .await
+}
+
+/// The arguments of [`entry_list`], as the webview names them: `entityId`,
+/// `from`, `to`, `search` and `accountId`.
+///
+/// Every argument but the entity may be left out or sent as `null`.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct EntryListArguments {
+    /// Entity whose entries are listed.
+    entity_id: EntityId,
+    /// Inclusive lower bound on the entry date.
+    from: Option<DateText>,
+    /// Inclusive upper bound on the entry date.
+    to: Option<DateText>,
+    /// Text to look for in descriptions, references and memos.
+    search: Option<String>,
+    /// Only entries with a line on this account.
+    account_id: Option<AccountId>,
 }
 
 /// Returns one posted entry with its lines.
@@ -105,9 +120,13 @@ pub(crate) async fn entry_get(
 #[tauri::command]
 pub(crate) async fn entry_post(
     state: State<'_, AppState>,
-    input: PostJournal,
+    input: PostJournalRequest,
 ) -> CommandResult<PostedEntryView> {
-    with_connection(&state, move |conn| post_entry(conn, &input)).await
+    with_connection(&state, move |conn| {
+        let input = PostJournal::try_from(input)?;
+        post_entry(conn, &input)
+    })
+    .await
 }
 
 /// Posts an entry from the simple form: a kind, an amount and the accounts
@@ -122,9 +141,13 @@ pub(crate) async fn entry_post(
 #[tauri::command]
 pub(crate) async fn entry_post_simple(
     state: State<'_, AppState>,
-    input: PostSimpleEntry,
+    input: PostSimpleEntryRequest,
 ) -> CommandResult<PostedEntryView> {
-    with_connection(&state, move |conn| post_simple_entry(conn, &input)).await
+    with_connection(&state, move |conn| {
+        let input = PostSimpleEntry::try_from(input)?;
+        post_simple_entry(conn, &input)
+    })
+    .await
 }
 
 /// Posts a simple entry and stores the document it was drafted from, in one
@@ -149,7 +172,7 @@ pub(crate) async fn entry_post_simple(
 )]
 pub(crate) async fn entry_post_simple_with_document(
     state: State<'_, AppState>,
-    input: PostSimpleEntry,
+    input: PostSimpleEntryRequest,
     filename: String,
     mime_type: String,
     data_base64: String,
@@ -158,6 +181,7 @@ pub(crate) async fn entry_post_simple_with_document(
     let data = decode_document_base64(&data_base64)?;
 
     with_connection(&state, move |conn| {
+        let input = PostSimpleEntry::try_from(input)?;
         let (view, _document) = post_simple_entry_with_document(
             conn,
             &input,
@@ -191,7 +215,7 @@ pub(crate) async fn entry_post_simple_with_document(
 #[tauri::command]
 pub(crate) async fn entry_post_simple_with_document_path(
     state: State<'_, AppState>,
-    input: PostSimpleEntry,
+    input: PostSimpleEntryRequest,
     path: String,
     analysis_json: Option<String>,
 ) -> CommandResult<PostedEntryView> {
@@ -222,6 +246,7 @@ pub(crate) async fn entry_post_simple_with_document_path(
 
         let guard = vault.acquire();
         let conn = guard.connection()?;
+        let input = PostSimpleEntry::try_from(input)?;
         let (view, _document) = post_simple_entry_with_document(
             conn,
             &input,
@@ -253,9 +278,10 @@ pub(crate) async fn entry_post_simple_with_document_path(
 pub(crate) async fn entry_replace_simple(
     state: State<'_, AppState>,
     original_id: JournalEntryId,
-    input: PostSimpleEntry,
+    input: PostSimpleEntryRequest,
 ) -> CommandResult<PostedEntryView> {
     with_localized_connection(&state, move |conn, locale| {
+        let input = PostSimpleEntry::try_from(input)?;
         replace_simple_entry(conn, original_id, &input, locale)
     })
     .await
@@ -296,4 +322,246 @@ pub(crate) async fn entry_void(
     id: JournalEntryId,
 ) -> CommandResult<VoidResult> {
     with_localized_connection(&state, move |conn, locale| void_entry(conn, id, locale)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An entity id as the webview sends it.
+    const ENTITY: &str = "11111111-1111-4111-8111-111111111111";
+    /// An account id as the webview sends it.
+    const ACCOUNT: &str = "22222222-2222-4222-8222-222222222222";
+
+    #[test]
+    fn the_entry_list_arguments_are_read_from_the_camel_case_payload() {
+        let payload = serde_json::json!({
+            "entityId": ENTITY,
+            "from": "2026-08-01",
+            "to": "2026-08-31",
+            "search": "rent",
+            "accountId": ACCOUNT,
+        });
+        let arguments: EntryListArguments = serde_json::from_value(payload).unwrap();
+
+        assert_eq!(arguments.entity_id.to_string(), ENTITY);
+        assert_eq!(
+            arguments.account_id.map(|id| id.to_string()).as_deref(),
+            Some(ACCOUNT)
+        );
+        assert_eq!(arguments.search.as_deref(), Some("rent"));
+        assert!(arguments.from.is_some_and(|from| from.parse().is_ok()));
+        assert!(arguments.to.is_some_and(|to| to.parse().is_ok()));
+    }
+
+    #[test]
+    fn an_optional_entry_list_argument_may_be_left_out_or_null() {
+        let left_out = serde_json::json!({ "entityId": ENTITY });
+        let null = serde_json::json!({
+            "entityId": ENTITY,
+            "from": null,
+            "to": null,
+            "search": null,
+            "accountId": null,
+        });
+
+        for payload in [left_out, null] {
+            let arguments: EntryListArguments = serde_json::from_value(payload).unwrap();
+
+            assert!(arguments.from.is_none() && arguments.to.is_none());
+            assert!(arguments.search.is_none() && arguments.account_id.is_none());
+        }
+    }
+
+    #[test]
+    fn a_malformed_date_is_read_and_left_for_core_to_refuse_with_its_code() {
+        let payload = serde_json::json!({ "entityId": ENTITY, "from": "1/8/2026" });
+        let arguments: EntryListArguments = serde_json::from_value(payload).unwrap();
+
+        assert_eq!(
+            arguments
+                .from
+                .map(|from| from.parse().map_err(|error| error.code())),
+            Some(Err("invalid_date"))
+        );
+    }
+
+    #[test]
+    fn the_entry_list_arguments_need_an_entity() {
+        let payload = serde_json::json!({ "search": "rent" });
+
+        assert!(serde_json::from_value::<EntryListArguments>(payload).is_err());
+    }
+}
+
+/// `entry_list` invoked through the mock IPC, the way the webview invokes it.
+///
+/// Not built on Windows, where the mock runtime keeps a test executable from
+/// starting; `commands::support::ipc_test_support` says why.
+#[cfg(test)]
+#[cfg(not(windows))]
+mod ipc_tests {
+    use crate::commands::journal::entry_list;
+    use crate::commands::support::ipc_test_support::MockApp;
+    use oikonomia_core::domain::ChartTemplate;
+    use oikonomia_core::ledger::{
+        CreateEntity, PostSimpleEntry, PostSimpleEntryRequest, SimpleEntryKind, create_entity,
+        list_accounts, post_simple_entry,
+    };
+    use oikonomia_core::prefs::Locale;
+    use oikonomia_core::vault::Connection;
+
+    /// The ids of the seeded book and of its food account, as the frontend
+    /// holds them.
+    struct BookIds {
+        /// The book's id.
+        entity: String,
+        /// The id of the book's food account.
+        food_account: String,
+    }
+
+    /// Starts the mock app with `entry_list` registered, over a vault that
+    /// holds groceries on 5 August, rent on 20 August and a salary on
+    /// 1 September 2026.
+    fn mock_book(label: &str) -> (MockApp, BookIds) {
+        MockApp::start(label, tauri::generate_handler![entry_list], seed_book)
+    }
+
+    /// Creates the book and its three entries.
+    fn seed_book(conn: &Connection) -> BookIds {
+        let book = CreateEntity {
+            name: "Home".into(),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Personal,
+            fiscal_year_start_month: None,
+        };
+        let entity = create_entity(conn, &book, Locale::En).unwrap();
+        let accounts = list_accounts(conn, entity.id).unwrap();
+        let account = |code: &str| {
+            accounts
+                .iter()
+                .find(|account| account.code == code)
+                .map(|account| account.id)
+                .unwrap()
+        };
+        let (food, checking, salary) = (account("5100"), account("1010"), account("4000"));
+
+        for (kind, category, entry_date, description) in [
+            (SimpleEntryKind::Expense, food, "2026-08-05", "Groceries"),
+            (SimpleEntryKind::Expense, food, "2026-08-20", "Rent"),
+            (SimpleEntryKind::Income, salary, "2026-09-01", "Salary"),
+        ] {
+            let request = PostSimpleEntryRequest {
+                entity_id: entity.id,
+                kind,
+                bill_status: None,
+                entry_date: entry_date.into(),
+                description: description.into(),
+                reference: None,
+                amount_minor: 2_500,
+                category_account_id: Some(category),
+                wallet_account_id: Some(checking),
+                payable_account_id: None,
+                from_account_id: None,
+                to_account_id: None,
+            };
+            post_simple_entry(conn, &PostSimpleEntry::try_from(request).unwrap()).unwrap();
+        }
+
+        BookIds {
+            entity: entity.id.to_string(),
+            food_account: food.to_string(),
+        }
+    }
+
+    /// The descriptions of the entries in a response, in its order.
+    fn descriptions(entries: &serde_json::Value) -> Vec<&str> {
+        entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|view| view["entry"]["description"].as_str().unwrap())
+            .collect()
+    }
+
+    // The payloads below are the object `entryList` in `web/src/lib/api.ts`
+    // passes to `invoke`: camelCase keys, and `null` for a filter not set.
+
+    #[test]
+    fn the_ipc_call_the_frontend_makes_without_filters_lists_every_entry() {
+        let (app, book) = mock_book("no-filters");
+
+        let listed = app
+            .invoke(
+                "entry_list",
+                serde_json::json!({
+                    "entityId": book.entity,
+                    "from": null,
+                    "to": null,
+                    "search": null,
+                    "accountId": null,
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(descriptions(&listed), ["Salary", "Rent", "Groceries"]);
+    }
+
+    #[test]
+    fn the_ipc_call_the_frontend_makes_with_every_filter_applies_each_of_them() {
+        let (app, book) = mock_book("all-filters");
+        let august = |search: &str, account_id: &str| {
+            serde_json::json!({
+                "entityId": book.entity,
+                "from": "2026-08-01",
+                "to": "2026-08-31",
+                "search": search,
+                "accountId": account_id,
+            })
+        };
+
+        let rent = app
+            .invoke("entry_list", august("rent", &book.food_account))
+            .unwrap();
+        assert_eq!(descriptions(&rent), ["Rent"]);
+
+        // The date range alone keeps both August entries, so the single
+        // result above is the search at work.
+        let both = app
+            .invoke("entry_list", august("", &book.food_account))
+            .unwrap();
+        assert_eq!(descriptions(&both), ["Rent", "Groceries"]);
+
+        // The entity id stands in for an account no entry has a line on.
+        let none = app
+            .invoke("entry_list", august("rent", &book.entity))
+            .unwrap();
+        assert_eq!(descriptions(&none), [] as [&str; 0]);
+    }
+
+    #[test]
+    fn a_malformed_date_sent_over_ipc_comes_back_with_the_invalid_date_code() {
+        let (app, book) = mock_book("bad-date");
+
+        let refused = app
+            .invoke(
+                "entry_list",
+                serde_json::json!({ "entityId": book.entity, "from": "1/8/2026" }),
+            )
+            .unwrap_err();
+
+        assert_eq!(refused["code"], "invalid_date");
+    }
+
+    #[test]
+    fn an_ipc_call_without_the_entity_is_refused_by_the_argument_layer() {
+        let (app, _book) = mock_book("no-entity");
+
+        let refused = app
+            .invoke("entry_list", serde_json::json!({ "search": "rent" }))
+            .unwrap_err();
+
+        // Tauri's own refusal is text, not a coded error.
+        assert!(refused.is_string(), "{refused}");
+    }
 }

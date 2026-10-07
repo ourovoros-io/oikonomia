@@ -13,7 +13,7 @@ use oikonomia_core::ledger::{
     set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
-use oikonomia_core::util::parse_date;
+use oikonomia_core::util::{DateText, parse_date};
 use rusqlite::Connection;
 use time::Date;
 
@@ -45,7 +45,7 @@ fn date(s: &str) -> Date {
 }
 
 fn series(conn: &Connection, entity_id: EntityId, from: &str, to: &str) -> CashFlowSeries {
-    cash_flow_series(conn, entity_id, from, to).expect("series")
+    cash_flow_series(conn, entity_id, date(from), date(to)).expect("series")
 }
 
 fn assert_contiguous(s: &CashFlowSeries) {
@@ -94,7 +94,7 @@ fn totals_match_the_dashboard_for_the_same_window() {
         ("2025-06-01", "2027-05-31"),
     ] {
         let s = series(conn, e, from, to);
-        let dash = dashboard_summary(conn, e, from, to, to).expect("dashboard");
+        let dash = dashboard_summary(conn, e, date(from), date(to), date(to)).expect("dashboard");
         let last = s.buckets.last().expect("bucket");
         assert_eq!(
             last.cumulative_income_minor, dash.income,
@@ -285,11 +285,25 @@ fn inverted_and_malformed_windows_are_validation_errors() {
     let e = common::book(conn, "Probe", ChartTemplate::Personal);
 
     assert!(matches!(
-        cash_flow_series(conn, e, "2026-08-31", "2026-08-01"),
+        cash_flow_series(
+            conn,
+            e,
+            common::date("2026-08-31"),
+            common::date("2026-08-01")
+        ),
         Err(Error::Validation(ValidationError::DateRangeInverted))
     ));
+
+    // The window arrives as text and is parsed before the series is asked
+    // for, so a malformed bound never reaches it.
+    let malformed: DateText = serde_json::from_str(r#""2026-13-01""#).expect("a JSON string");
     assert!(matches!(
-        cash_flow_series(conn, e, "2026-13-01", "2026-12-31"),
+        malformed.parse().and_then(|from| cash_flow_series(
+            conn,
+            e,
+            from,
+            common::date("2026-12-31")
+        )),
         Err(Error::Validation(ValidationError::InvalidDate { .. }))
     ));
 }
@@ -300,7 +314,13 @@ fn an_unknown_book_is_not_found() {
     let conn = vault.connection().expect("conn");
 
     assert_eq!(
-        cash_flow_series(conn, EntityId::new(), "2026-08-01", "2026-08-31").expect_err("unknown"),
+        cash_flow_series(
+            conn,
+            EntityId::generate(),
+            common::date("2026-08-01"),
+            common::date("2026-08-31")
+        )
+        .expect_err("unknown"),
         Error::NotFound(Resource::Entity)
     );
 }
@@ -366,11 +386,11 @@ fn an_open_window_spans_the_books_active_entries() {
         (date("2026-03-05"), date("2026-08-20"))
     );
     assert_eq!(
-        activity_window(conn, e, Some("2026-04-01"), None, today).expect("from only"),
+        activity_window(conn, e, Some(common::date("2026-04-01")), None, today).expect("from only"),
         (date("2026-04-01"), date("2026-08-20"))
     );
     assert_eq!(
-        activity_window(conn, e, None, Some("2026-05-01"), today).expect("to only"),
+        activity_window(conn, e, None, Some(common::date("2026-05-01")), today).expect("to only"),
         (date("2026-03-05"), date("2026-05-01"))
     );
 }
@@ -385,11 +405,13 @@ fn a_one_sided_window_never_runs_backwards() {
     income(conn, e, "2026-08-20", 100);
 
     assert_eq!(
-        activity_window(conn, e, Some("2026-10-01"), None, today).expect("after the last entry"),
+        activity_window(conn, e, Some(common::date("2026-10-01")), None, today)
+            .expect("after the last entry"),
         (date("2026-10-01"), date("2026-10-01"))
     );
     assert_eq!(
-        activity_window(conn, e, None, Some("2026-01-01"), today).expect("before the first entry"),
+        activity_window(conn, e, None, Some(common::date("2026-01-01")), today)
+            .expect("before the first entry"),
         (date("2026-01-01"), date("2026-01-01"))
     );
 }
@@ -402,11 +424,11 @@ fn an_empty_book_falls_back_to_today_for_the_open_side() {
     let today = date("2026-09-15");
 
     assert_eq!(
-        activity_window(conn, e, Some("2026-02-01"), None, today).expect("from only"),
+        activity_window(conn, e, Some(common::date("2026-02-01")), None, today).expect("from only"),
         (date("2026-02-01"), today)
     );
     assert_eq!(
-        activity_window(conn, e, None, Some("2026-02-01"), today).expect("to only"),
+        activity_window(conn, e, None, Some(common::date("2026-02-01")), today).expect("to only"),
         (date("2026-02-01"), date("2026-02-01"))
     );
 }
@@ -419,11 +441,17 @@ fn an_explicit_inverted_window_is_a_validation_error() {
     let today = date("2026-09-15");
 
     assert!(matches!(
-        activity_window(conn, e, Some("2026-05-01"), Some("2026-04-01"), today),
+        activity_window(
+            conn,
+            e,
+            Some(common::date("2026-05-01")),
+            Some(common::date("2026-04-01")),
+            today
+        ),
         Err(Error::Validation(ValidationError::DateRangeInverted))
     ));
     assert_eq!(
-        activity_window(conn, EntityId::new(), None, None, today).expect_err("unknown"),
+        activity_window(conn, EntityId::generate(), None, None, today).expect_err("unknown"),
         Error::NotFound(Resource::Entity)
     );
 }

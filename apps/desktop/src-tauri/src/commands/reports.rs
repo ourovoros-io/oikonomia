@@ -16,7 +16,7 @@ use oikonomia_core::ledger::{
     balance_sheet, cash_flow_series, dashboard_summary, profit_and_loss, profit_and_loss_export,
     trial_balance,
 };
-use oikonomia_core::util::{format_date, utc_today};
+use oikonomia_core::util::{DateText, utc_today};
 use tauri::State;
 
 /// The largest decoded PDF [`report_export_pdf`] accepts.
@@ -36,9 +36,12 @@ const MAX_PDF_EXPORT_BYTES: usize = 32 * 1024 * 1024;
 pub(crate) async fn report_trial_balance(
     state: State<'_, AppState>,
     entity_id: EntityId,
-    as_of: String,
+    as_of: DateText,
 ) -> CommandResult<TrialBalance> {
-    with_connection(&state, move |conn| trial_balance(conn, entity_id, &as_of)).await
+    with_connection(&state, move |conn| {
+        trial_balance(conn, entity_id, as_of.parse()?)
+    })
+    .await
 }
 
 /// Returns an entity's profit and loss for the dates `from` through `to`.
@@ -55,11 +58,11 @@ pub(crate) async fn report_trial_balance(
 pub(crate) async fn report_pnl(
     state: State<'_, AppState>,
     entity_id: EntityId,
-    from: String,
-    to: String,
+    from: DateText,
+    to: DateText,
 ) -> CommandResult<PnL> {
     with_connection(&state, move |conn| {
-        profit_and_loss(conn, entity_id, &from, &to)
+        profit_and_loss(conn, entity_id, from.parse()?, to.parse()?)
     })
     .await
 }
@@ -76,11 +79,11 @@ pub(crate) async fn report_pnl(
 pub(crate) async fn report_pnl_export(
     state: State<'_, AppState>,
     entity_id: EntityId,
-    from: String,
-    to: String,
+    from: DateText,
+    to: DateText,
 ) -> CommandResult<PnL> {
     with_connection(&state, move |conn| {
-        profit_and_loss_export(conn, entity_id, &from, &to)
+        profit_and_loss_export(conn, entity_id, from.parse()?, to.parse()?)
     })
     .await
 }
@@ -99,9 +102,12 @@ pub(crate) async fn report_pnl_export(
 pub(crate) async fn report_balance_sheet(
     state: State<'_, AppState>,
     entity_id: EntityId,
-    as_of: String,
+    as_of: DateText,
 ) -> CommandResult<BalanceSheet> {
-    with_connection(&state, move |conn| balance_sheet(conn, entity_id, &as_of)).await
+    with_connection(&state, move |conn| {
+        balance_sheet(conn, entity_id, as_of.parse()?)
+    })
+    .await
 }
 
 /// Returns the dashboard figures of an entity: income and expenses for the
@@ -119,12 +125,18 @@ pub(crate) async fn report_balance_sheet(
 pub(crate) async fn dashboard_summary_cmd(
     state: State<'_, AppState>,
     entity_id: EntityId,
-    from: String,
-    to: String,
-    assets_as_of: String,
+    from: DateText,
+    to: DateText,
+    assets_as_of: DateText,
 ) -> CommandResult<DashboardSummary> {
     with_connection(&state, move |conn| {
-        dashboard_summary(conn, entity_id, &from, &to, &assets_as_of)
+        dashboard_summary(
+            conn,
+            entity_id,
+            from.parse()?,
+            to.parse()?,
+            assets_as_of.parse()?,
+        )
     })
     .await
 }
@@ -146,13 +158,14 @@ pub(crate) async fn dashboard_summary_cmd(
 pub(crate) async fn cash_flow_series_cmd(
     state: State<'_, AppState>,
     entity_id: EntityId,
-    from: Option<String>,
-    to: Option<String>,
+    from: Option<DateText>,
+    to: Option<DateText>,
 ) -> CommandResult<CashFlowSeries> {
     with_connection(&state, move |conn| {
-        let (start, end) =
-            activity_window(conn, entity_id, from.as_deref(), to.as_deref(), utc_today())?;
-        cash_flow_series(conn, entity_id, &format_date(start), &format_date(end))
+        let from = DateText::parse_optional(from.as_ref())?;
+        let to = DateText::parse_optional(to.as_ref())?;
+        let (start, end) = activity_window(conn, entity_id, from, to, utc_today())?;
+        cash_flow_series(conn, entity_id, start, end)
     })
     .await
 }

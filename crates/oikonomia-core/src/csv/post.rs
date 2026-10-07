@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use rusqlite::Connection;
+use time::Date;
 
 use crate::csv::parse::{parse_bank_csv, read_csv_text};
 use crate::csv::{
@@ -22,11 +23,14 @@ use crate::csv::{
     CsvImportPreviewRow, CsvRowOutcome, currency_minor_exponent, normalize_description,
     suggested_entry,
 };
+use crate::db::stored_date;
 use crate::domain::{AccountId, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
-    PostSimpleEntry, PostedEntryView, get_account, get_entity, post_simple_entry_unchecked,
+    PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView, get_account, get_entity,
+    post_simple_entry_unchecked,
 };
+use crate::util::parse_date;
 
 /// Parses a bank CSV into suggested entries and flags duplicates. **Does
 /// not post.**
@@ -52,7 +56,12 @@ pub fn preview_bank_csv(
     csv_text: &str,
     mapping: Option<&CsvColumnMapping>,
 ) -> Result<CsvImportPreview> {
-    preview_bank_csv_named(conn, entity_id, accounts, csv_text, mapping, String::new())
+    let statement = Statement {
+        csv_text,
+        mapping,
+        source: String::new(),
+    };
+    preview_statement(conn, entity_id, accounts, statement)
 }
 
 /// Reads the CSV file at `path` and previews it as [`preview_bank_csv`]
@@ -74,14 +83,12 @@ pub fn preview_bank_csv_file(
     mapping: Option<&CsvColumnMapping>,
 ) -> Result<CsvImportPreview> {
     let text = read_csv_text(path)?;
-    preview_bank_csv_named(
-        conn,
-        entity_id,
-        accounts,
-        &text,
+    let statement = Statement {
+        csv_text: &text,
         mapping,
-        path.display().to_string(),
-    )
+        source: path.display().to_string(),
+    };
+    preview_statement(conn, entity_id, accounts, statement)
 }
 
 /// Posts the selected suggested rows as simple entries, in one transaction.
@@ -98,13 +105,21 @@ pub fn preview_bank_csv_file(
 /// - [`Error::Validation`] with [`ValidationError::Internal`] when the rows
 ///   do not all carry the same `entity_id`.
 /// - [`Error::NotFound`] when that entity does not exist.
+/// - [`ValidationError::InvalidDate`] for a row whose `entry_date` is not a
+///   `YYYY-MM-DD` date. The date is read before the duplicate rule is
+///   applied, so this is reported for any row.
+/// - [`ValidationError::AmountNotPositive`],
+///   [`ValidationError::BillStatusRequired`] or
+///   [`ValidationError::AccountRequired`] for a row that is to be posted and
+///   does not convert into a
+///   [`PostSimpleEntry`]. A row skipped as a duplicate is not converted.
 /// - Every error of [`post_simple_entry`](crate::ledger::post_simple_entry)
-///   for a row the ledger refuses: a non-positive amount, a missing or
-///   mistyped role account.
+///   for a row the ledger refuses, such as an account of the wrong type.
+/// - [`Error::VaultCorrupt`] for a stored entry date that does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn post_import_rows(
     conn: &Connection,
-    rows: &[PostSimpleEntry],
+    rows: &[PostSimpleEntryRequest],
     include_duplicates: bool,
 ) -> Result<CsvImportPostResult> {
     let Some(first) = rows.first() else {
@@ -130,12 +145,17 @@ pub fn post_import_rows(
     let mut skipped_duplicate_count = 0u32;
 
     for row in rows {
-        let key = DedupeKey::new(&row.entry_date, row.amount_minor, &row.description);
+        // The date is read first because the duplicate rule needs it. The
+        // rest of the row is checked only once it is known to be posted, so
+        // a skipped duplicate is never refused for what else it holds.
+        let entry_date = parse_date(&row.entry_date)?;
+        let key = DedupeKey::new(entry_date, row.amount_minor, &row.description);
         if !include_duplicates && seen.contains(&key) {
             skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
             continue;
         }
-        let view = post_simple_entry_unchecked(&transaction, row)?;
+        let entry = PostSimpleEntry::try_from(row.clone())?;
+        let view = post_simple_entry_unchecked(&transaction, &entry)?;
         seen.insert(key);
         posted.push(view);
     }
@@ -154,8 +174,8 @@ pub fn post_import_rows(
 /// its normalized form and two keys compare the way the rule says.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct DedupeKey {
-    /// Booking date, `YYYY-MM-DD`.
-    date: String,
+    /// Booking date.
+    date: Date,
     /// Unsigned amount in minor units: an expense and an income of the same
     /// size on the same day with the same text are one key.
     amount_minor: i64,
@@ -165,36 +185,44 @@ struct DedupeKey {
 
 impl DedupeKey {
     /// Returns the key of an entry, normalizing `description`.
-    fn new(date: &str, amount_minor: i64, description: &str) -> Self {
+    fn new(date: Date, amount_minor: i64, description: &str) -> Self {
         Self {
-            date: date.to_owned(),
+            date,
             amount_minor,
             description: normalize_description(description),
         }
     }
 }
 
-/// The shared body of the two previews; `source` is what the preview
-/// reports the text came from, empty for in-memory text.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the import source is passed beside the five inputs of the public preview"
-)]
-fn preview_bank_csv_named(
+/// A bank statement to preview.
+struct Statement<'a> {
+    /// The statement as CSV text.
+    csv_text: &'a str,
+    /// The columns to read, or `None` to detect them from the header row.
+    mapping: Option<&'a CsvColumnMapping>,
+    /// What the preview reports the text came from; empty for in-memory
+    /// text.
+    source: String,
+}
+
+/// The shared body of the two previews.
+///
+/// # Errors
+///
+/// Those of [`preview_bank_csv`].
+fn preview_statement(
     conn: &Connection,
     entity_id: EntityId,
     accounts: CsvImportAccounts,
-    csv_text: &str,
-    mapping: Option<&CsvColumnMapping>,
-    source: String,
+    statement: Statement<'_>,
 ) -> Result<CsvImportPreview> {
     let entity = get_entity(conn, entity_id)?;
     check_role_account(conn, entity_id, accounts.wallet_account_id)?;
     check_role_account(conn, entity_id, accounts.expense_account_id)?;
     check_role_account(conn, entity_id, accounts.income_account_id)?;
 
-    let exponent = currency_minor_exponent(&entity.base_currency);
-    let parsed = parse_bank_csv(csv_text, exponent, mapping)?;
+    let exponent = currency_minor_exponent(entity.base_currency);
+    let parsed = parse_bank_csv(statement.csv_text, exponent, statement.mapping)?;
     let mut seen = load_active_keys(conn, entity_id)?;
     let mut rows = Vec::with_capacity(parsed.rows.len());
 
@@ -203,7 +231,7 @@ fn preview_bank_csv_named(
     }
 
     Ok(CsvImportPreview {
-        source,
+        source: statement.source,
         headers: parsed.headers,
         detected_mapping: parsed.detected_mapping,
         rows,
@@ -229,7 +257,7 @@ fn preview_row(
             signed_amount_minor: None,
         },
         CsvRowOutcome::Parsed(row) => {
-            let key = DedupeKey::new(&row.entry_date, row.amount_minor, &row.description);
+            let key = DedupeKey::new(row.entry_date, row.amount_minor, &row.description);
             let duplicate = !seen.insert(key);
             CsvImportPreviewRow {
                 source_row: row.source_row,
@@ -284,7 +312,7 @@ fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<De
         .database("read entries for duplicate check")?;
 
     let mapped = statement
-        .query_map([entity_id.0.to_string()], |row| {
+        .query_map([entity_id.to_string()], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
@@ -296,7 +324,8 @@ fn load_active_keys(conn: &Connection, entity_id: EntityId) -> Result<HashSet<De
     let mut keys = HashSet::new();
     for row in mapped {
         let (date, description, amount) = row.database("read entries for duplicate check")?;
-        keys.insert(DedupeKey::new(&date, amount, &description));
+        let date = stored_date("journal_entries.entry_date", &date)?;
+        keys.insert(DedupeKey::new(date, amount, &description));
     }
     Ok(keys)
 }
