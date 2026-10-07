@@ -11,7 +11,7 @@
 //! removed. Every label and marker constant of the reader is written in that
 //! form.
 
-use crate::documents::invoice::{mask_date_tokens, mask_time_tokens};
+use crate::documents::invoice::dates::{mask_date_tokens, mask_time_tokens};
 
 /// Cleans up extracted text before anything reads it, by the four steps in
 /// the module documentation ("Normalizing").
