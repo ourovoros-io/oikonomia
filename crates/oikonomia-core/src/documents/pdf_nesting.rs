@@ -10,10 +10,39 @@
 //! the process; `catch_unwind` cannot catch it, so these documents must be
 //! refused before pdf-extract sees them.
 //!
-//! [`nesting_within_limits`] walks the graph pdf-extract would walk, resolving
-//! names the way it does, without running any of it. A third bound is about
-//! time, not the stack: forms that each invoke the next one twice do end, but
-//! a chain of them runs its last form an exponential number of times.
+//! # The walk
+//!
+//! [`nesting_within_limits`] walks the graph pdf-extract would walk,
+//! resolving names the way it does, without running any of it. For every
+//! page it follows the `Parent` chain to the page's resources, reads the
+//! names the page content invokes with `Do`, and descends into each form
+//! those names resolve to, and into the forms that form invokes. It refuses
+//! the document when:
+//!
+//! - a form is reached while it is still open, which is a cycle;
+//! - a form is nested deeper than [`MAX_FORM_DEPTH`];
+//! - a `Parent` chain loops or is longer than [`MAX_PARENT_CHAIN`];
+//! - the forms run more than [`MAX_FORM_RUNS`] times, or over more than
+//!   [`MAX_FORM_CONTENT_BYTES`] of content, all pages together.
+//!
+//! The first three bound the stack. The last bounds time: forms that each
+//! invoke the next one twice do end, but a chain of them runs its last form
+//! an exponential number of times.
+//!
+//! Where pdf-extract would panic instead of recursing (a page that is not a
+//! dictionary, content that does not parse, a `Do` without resources), the
+//! walk has nothing to follow and lets the document through: that panic is
+//! contained by the caller.
+//!
+//! # Cost of the walk itself
+//!
+//! A form's content is decoded once and reduced to the names it invokes and
+//! its length, so a form that runs many times is counted, not decoded again.
+//! The walk recurses once per nesting level and stops past
+//! [`MAX_FORM_DEPTH`], and it follows a `Parent` chain in a loop, not by
+//! recursion. It runs last in
+//! [`within_budget`](crate::documents::pdf_budget::within_budget), so every
+//! stream it decodes has already been measured against the size budget.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -25,16 +54,33 @@ use pdf_extract as lopdf;
 /// Deepest a form may be nested below its page. Real statements nest a
 /// logo or a stamp one or two levels deep; each level is a pdf-extract
 /// stack frame on the extraction thread.
+///
+/// A test in `analyze` reads a document nested this deep on a quarter of
+/// the extraction thread's stack, in a debug build. The reason for 16 in
+/// particular is not recorded.
 pub(super) const MAX_FORM_DEPTH: usize = 16;
 
 /// Most form runs a whole document may expand to, every page together.
+///
+/// This bounds time, not the stack. The reason for 20 000 in particular is
+/// not recorded; `forms_that_fan_out_past_the_run_limit_are_refused` pins
+/// that 2^15 runs are too many.
 pub(super) const MAX_FORM_RUNS: usize = 20_000;
 
 /// Most form content pdf-extract may parse, every run together. A form is
 /// decoded and parsed again each time it runs.
+///
+/// The same figure as the budget on decoded streams
+/// (`MAX_PDF_DECODED_BYTES`), which counts each stream once; this one counts
+/// a form once per run. No test reaches it.
 pub(super) const MAX_FORM_CONTENT_BYTES: usize = 32 * 1024 * 1024;
 
-/// Longest `Parent` chain from a page to the root of the page tree.
+/// Most dictionaries on the way from a page to the root of the page tree,
+/// the page included.
+///
+/// pdf-extract recurses once per link, so this bounds stack as well. A real
+/// page tree is a few levels deep. The reason for 64 in particular is not
+/// recorded, and no test reaches it: the fixture's chain loops.
 const MAX_PARENT_CHAIN: usize = 64;
 
 /// The walk found a cycle, or a chain or expansion past its limit.
@@ -65,6 +111,7 @@ pub(super) fn nesting_within_limits(document: &lopdf::Document) -> bool {
 
 /// State of one walk over a document.
 struct Walk<'a> {
+    /// The document being walked.
     document: &'a lopdf::Document,
     /// What each form holds, decoded once.
     forms: HashMap<*const lopdf::Stream, Rc<Form>>,
@@ -87,6 +134,10 @@ struct Form {
 }
 
 impl<'a> Walk<'a> {
+    /// Walks one page: its `Parent` chain, then every form its content invokes.
+    ///
+    /// A page pdf-extract cannot run at all (not a dictionary, no readable
+    /// content, no resources) is accepted without a walk.
     fn page(&mut self, page_id: lopdf::ObjectId) -> Result<(), Unbounded> {
         // pdf-extract panics on a page that is not a dictionary; that panic
         // is contained, so there is nothing to walk.
@@ -116,18 +167,18 @@ impl<'a> Walk<'a> {
         let mut seen = HashSet::new();
         let mut resources = None;
         let mut node = Some(page);
-        while let Some(dict) = node {
-            if seen.len() == MAX_PARENT_CHAIN || !seen.insert(std::ptr::from_ref(dict)) {
+        while let Some(dictionary) = node {
+            if seen.len() == MAX_PARENT_CHAIN || !seen.insert(std::ptr::from_ref(dictionary)) {
                 return Err(Unbounded);
             }
             if resources.is_none() {
-                resources = dict
+                resources = dictionary
                     .get(b"Resources")
                     .ok()
                     .and_then(|object| self.resolve(object))
                     .and_then(|object| object.as_dict().ok());
             }
-            node = dict
+            node = dictionary
                 .get(b"Parent")
                 .and_then(lopdf::Object::as_reference)
                 .and_then(|id| self.document.get_dictionary(id))
@@ -192,6 +243,8 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// What `form` invokes and how long its content is, decoded on first use
+    /// and remembered by the stream's address.
     fn form(&mut self, form: &'a lopdf::Stream) -> Rc<Form> {
         let entry = self
             .forms
@@ -209,6 +262,9 @@ impl<'a> Walk<'a> {
 
 /// The content of a form as pdf-extract reads it: decoded when lopdf can
 /// decode it, as stored otherwise.
+///
+/// The decode is not capped here. The caller has already measured every
+/// stream of the document against the size budget.
 fn stream_content(stream: &lopdf::Stream) -> Cow<'_, [u8]> {
     if stream.filters().is_ok()
         && let Ok(decoded) = stream.decompressed_content()
@@ -253,6 +309,7 @@ pub(super) mod tests {
     pub(in crate::documents) fn pdf_with_forms(page: &[usize], forms: &[Vec<usize>]) -> Vec<u8> {
         use lopdf::{Dictionary, Document, Object, Stream, dictionary};
 
+        /// Content that runs each of `forms` once.
         fn invoking(forms: &[usize]) -> Vec<u8> {
             let mut content = Vec::new();
             for form in forms {
@@ -261,6 +318,8 @@ pub(super) mod tests {
             content
         }
 
+        /// The content of a form that runs `forms`, or draws the leaf text
+        /// when it runs none.
         fn form_content(forms: &[usize]) -> Vec<u8> {
             if forms.is_empty() {
                 format!("BT /Helv 12 Tf 10 10 Td ({LEAF_TEXT}) Tj ET\n").into_bytes()
@@ -324,6 +383,7 @@ pub(super) mod tests {
         bytes
     }
 
+    /// Whether the PDF in `data` passes the nesting check.
     fn within_limits(data: &[u8]) -> bool {
         nesting_within_limits(&lopdf::Document::load_mem(data).expect("load test pdf"))
     }
