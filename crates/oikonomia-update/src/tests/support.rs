@@ -80,8 +80,16 @@ pub(super) fn install(
 ) -> crate::Result<InstallOutcome> {
     let offer = machine.begin_install()?;
     let outcome = install_offer(config, &offer, installer);
-    machine.finish_install(outcome);
+    machine.finish_install(&outcome);
     Ok(outcome)
+}
+
+/// Returns the status of a check or an install that failed with the error
+/// whose code is `code`.
+pub(super) fn failed_with(code: &str) -> UpdateStatus {
+    UpdateStatus::Failed {
+        code: Some(code.to_owned()),
+    }
 }
 
 /// Serves a signed manifest offering `payload` at `artifact_path` as 0.2.0

@@ -3,12 +3,14 @@
 
 use crate::artifact_limit::MAX_ARTIFACT_BYTES;
 use crate::client::{InstallHandoff, InstallOutcome, InstallRoute, download_and_verify};
+use crate::error::UpdateError;
 use crate::machine::{CheckStart, UpdateMachine};
 use crate::status::UpdateStatus;
 use crate::tests::support::{
-    available_offer, cache_dir, config, config_for_artifact_at, install, leftover_files,
-    machine_with_an_offer, serve_newer_release, serve_signed_manifest, serve_signed_manifest_once,
-    serve_zero_bytes, server_url, sign, spy, static_manifest, test_keys,
+    available_offer, cache_dir, config, config_for_artifact_at, failed_with, install,
+    leftover_files, machine_with_an_offer, serve_newer_release, serve_signed_manifest,
+    serve_signed_manifest_once, serve_zero_bytes, server_url, sign, spy, static_manifest,
+    test_keys,
 };
 use crate::verify::sha256_hex;
 use httptest::matchers::request;
@@ -54,8 +56,14 @@ fn artifact_hash_mismatch_leaves_no_file_and_does_not_exec() {
         UpdateStatus::Available { .. }
     ));
     let outcome = install(&mut machine, &config, &installer).expect("legal");
-    assert_eq!(outcome, InstallOutcome::Failed);
-    assert_eq!(machine.status(), UpdateStatus::Failed);
+    assert!(
+        matches!(
+            outcome,
+            InstallOutcome::Failed(UpdateError::ArtifactIntegrity)
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(machine.status(), failed_with("update_artifact_integrity"));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
@@ -97,8 +105,14 @@ fn artifact_sig_mismatch_leaves_no_file_and_does_not_exec() {
         UpdateStatus::Available { .. }
     ));
     let outcome = install(&mut machine, &config, &installer).expect("legal");
-    assert_eq!(outcome, InstallOutcome::Failed);
-    assert_eq!(machine.status(), UpdateStatus::Failed);
+    assert!(
+        matches!(
+            outcome,
+            InstallOutcome::Failed(UpdateError::ArtifactIntegrity)
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(machine.status(), failed_with("update_artifact_integrity"));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
 }
@@ -141,7 +155,7 @@ fn install_from_failed_is_hard_error() {
         Duration::from_secs(2),
     );
     let mut machine = UpdateMachine::new();
-    assert_eq!(machine.check(&config), UpdateStatus::Failed);
+    assert_eq!(machine.check(&config), failed_with("update_network"));
     let (installer, _calls) = spy(false);
     let err = install(&mut machine, &config, &installer).expect_err("failed");
     assert_eq!(err.code(), "update_install_not_allowed");
@@ -200,7 +214,10 @@ fn successful_install_calls_exec_once() {
     let mut machine = UpdateMachine::new();
     machine.check(&config);
     let outcome = install(&mut machine, &config, &installer).expect("legal");
-    assert_eq!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced));
+    assert!(
+        matches!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced)),
+        "{outcome:?}"
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let exec_path = installer
         .last_path
@@ -426,18 +443,21 @@ fn an_install_that_dies_leaves_a_usable_machine() {
         machine_with_an_offer(&server, &public_key, &secret_key, cache.path());
     let offer = machine.begin_install().expect("available");
 
-    // What the caller's drop guard reports when the install never returns.
+    // What the caller's drop guard does when the install never returns.
     drop(offer);
-    machine.finish_install(InstallOutcome::Failed);
+    machine.abandon_install();
 
-    assert_eq!(machine.status(), UpdateStatus::Failed);
+    assert_eq!(machine.status(), UpdateStatus::Failed { code: None });
     assert!(matches!(
         machine.check(&config),
         UpdateStatus::Available { .. }
     ));
     let (installer, calls) = spy(false);
     let outcome = install(&mut machine, &config, &installer).expect("available again");
-    assert_eq!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced));
+    assert!(
+        matches!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced)),
+        "{outcome:?}"
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
@@ -445,9 +465,75 @@ fn an_install_that_dies_leaves_a_usable_machine() {
 fn a_finished_install_is_ignored_by_a_machine_that_is_not_installing() {
     let mut machine = UpdateMachine::new();
 
-    machine.finish_install(InstallOutcome::Failed);
+    machine.finish_install(&InstallOutcome::Failed(UpdateError::Network));
+    machine.abandon_install();
 
     assert_eq!(machine.status(), UpdateStatus::Idle);
+}
+
+#[test]
+fn an_installer_that_fails_reaches_the_status_as_its_own_code() {
+    let (public_key, secret_key) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (mut machine, config) =
+        machine_with_an_offer(&server, &public_key, &secret_key, cache.path());
+    // The spy fails with `ArtifactIntegrity`, as the desktop's installer does.
+    let (installer, calls) = spy(true);
+
+    let outcome = install(&mut machine, &config, &installer).expect("available");
+
+    assert!(
+        matches!(
+            outcome,
+            InstallOutcome::Failed(UpdateError::ArtifactIntegrity)
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(machine.status(), failed_with("update_artifact_integrity"));
+    assert_eq!(leftover_files(cache.path()), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn a_download_that_cannot_be_fetched_reaches_the_status_as_a_network_failure() {
+    let (public_key, secret_key) = test_keys();
+    let server = Server::run();
+    let payload = b"never-served";
+    let body = static_manifest(
+        "0.2.0",
+        "n",
+        server_url(&server, "/Oikonomia.AppImage").as_str(),
+        &sign(&secret_key, payload),
+        &sha256_hex(payload),
+    );
+    let signature = sign(&secret_key, body.as_bytes());
+    serve_signed_manifest(&server, &body, &signature);
+    server.expect(
+        Expectation::matching(request::method_path("GET", "/Oikonomia.AppImage"))
+            .respond_with(status_code(503)),
+    );
+    let cache = cache_dir();
+    let config = config(
+        &server,
+        "/latest.json",
+        &public_key,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+    let (installer, calls) = spy(false);
+    let mut machine = UpdateMachine::new();
+    machine.check(&config);
+
+    let outcome = install(&mut machine, &config, &installer).expect("available");
+
+    assert!(
+        matches!(outcome, InstallOutcome::Failed(UpdateError::Network)),
+        "{outcome:?}"
+    );
+    assert_eq!(machine.status(), failed_with("update_network"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -461,7 +547,10 @@ fn a_machine_stays_installing_after_a_successful_install() {
 
     let outcome = install(&mut machine, &config, &installer).expect("available");
 
-    assert_eq!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced));
+    assert!(
+        matches!(outcome, InstallOutcome::Installed(InstallHandoff::Replaced)),
+        "{outcome:?}"
+    );
     assert_eq!(machine.status(), UpdateStatus::Installing);
     assert_eq!(machine.begin_check(), CheckStart::InstallInProgress);
 }
