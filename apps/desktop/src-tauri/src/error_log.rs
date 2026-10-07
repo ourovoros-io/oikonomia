@@ -33,8 +33,10 @@
 //! | Platform | Directory |
 //! |----------|-----------|
 //! | macOS | `~/Library/Logs/io.ourovoros.oikonomia` |
-//! | Linux | `$XDG_DATA_HOME/io.ourovoros.oikonomia/logs`, by default `~/.local/share/io.ourovoros.oikonomia/logs` |
+//! | Linux | `$XDG_DATA_HOME/io.ourovoros.oikonomia/logs` |
 //! | Windows | `%LOCALAPPDATA%\io.ourovoros.oikonomia\logs` |
+//!
+//! On Linux `$XDG_DATA_HOME` is `~/.local/share` unless the user set it.
 //!
 //! The file is capped at [`MAX_FILE_BYTES`]. A line that would take it past
 //! the cap first renames it to [`PREVIOUS_FILE_NAME`], replacing the file of
