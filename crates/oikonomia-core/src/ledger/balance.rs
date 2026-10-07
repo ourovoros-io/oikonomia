@@ -23,9 +23,9 @@
 //! and [`sum_minor`], which return [`Error::MoneyOverflow`] where plain `i64`
 //! arithmetic would wrap or panic.
 //!
-//! The module also owns the text an account type is stored as
-//! ([`account_type_str`], [`parse_account_type`]), because the queries here
-//! filter on it.
+//! The module also reads back the text an account type is stored as
+//! ([`parse_account_type`]; [`AccountType::identifier`] writes it), because
+//! the queries here filter on it.
 
 use crate::db::corrupt_column;
 use crate::domain::{AccountId, AccountType, EntityId};
@@ -196,7 +196,7 @@ pub(crate) fn sum_type_as_of(
             &sql,
             rusqlite::params![
                 entity_id.to_string(),
-                account_type_str(account_type),
+                account_type.identifier(),
                 format_date(as_of),
             ],
             |row| Ok((row.get(0)?, row.get(1)?)),
@@ -246,7 +246,7 @@ pub(crate) fn sum_type_in_range(
             &sql,
             rusqlite::params![
                 entity_id.to_string(),
-                account_type_str(account_type),
+                account_type.identifier(),
                 format_date(from),
                 format_date(to),
             ],
@@ -257,21 +257,8 @@ pub(crate) fn sum_type_in_range(
     normal_balance(account_type, debits, credits)
 }
 
-/// Returns the text `account_type` is stored as in `accounts.account_type`.
-///
-/// The five strings are part of the vault format: changing one would make
-/// every existing vault unreadable by [`parse_account_type`].
-pub(crate) fn account_type_str(account_type: AccountType) -> &'static str {
-    match account_type {
-        AccountType::Asset => "asset",
-        AccountType::Liability => "liability",
-        AccountType::Equity => "equity",
-        AccountType::Income => "income",
-        AccountType::Expense => "expense",
-    }
-}
-
-/// Parses the text [`account_type_str`] writes.
+/// Parses the text [`AccountType::identifier`] writes into
+/// `accounts.account_type`.
 ///
 /// # Errors
 ///
@@ -294,6 +281,26 @@ pub(crate) fn parse_account_type(stored: &str) -> Result<AccountType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_account_type_is_read_back_from_the_text_it_is_stored_as() {
+        for account_type in [
+            AccountType::Asset,
+            AccountType::Liability,
+            AccountType::Equity,
+            AccountType::Income,
+            AccountType::Expense,
+        ] {
+            assert_eq!(
+                parse_account_type(account_type.identifier()),
+                Ok(account_type)
+            );
+        }
+        assert_eq!(
+            parse_account_type("Asset").map_err(|error| error.code()),
+            Err("vault_corrupt")
+        );
+    }
 
     #[test]
     fn normal_balance_follows_the_normal_side_of_the_account_type() {

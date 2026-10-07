@@ -41,6 +41,30 @@ pub enum ChartTemplate {
     Blank,
 }
 
+impl ChartTemplate {
+    /// Returns the template as the UI and the vault write it: `personal`,
+    /// `company` or `blank`.
+    ///
+    /// This is the text serde writes and the text stored in
+    /// `entities.chart_template`, so it is part of the vault format.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::domain::ChartTemplate;
+    ///
+    /// assert_eq!(ChartTemplate::Company.identifier(), "company");
+    /// ```
+    #[must_use]
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::Personal => "personal",
+            Self::Company => "company",
+            Self::Blank => "blank",
+        }
+    }
+}
+
 /// One set of books with a single base currency.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entity {
@@ -58,4 +82,23 @@ pub struct Entity {
     /// The template the chart was seeded from, which also decides the
     /// seeded accounts that are defaults for each role.
     pub chart_template: ChartTemplate,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChartTemplate;
+
+    #[test]
+    fn the_identifier_of_a_chart_template_is_the_text_serde_writes() {
+        for template in [
+            ChartTemplate::Personal,
+            ChartTemplate::Company,
+            ChartTemplate::Blank,
+        ] {
+            assert_eq!(
+                serde_json::to_value(template).unwrap(),
+                serde_json::Value::from(template.identifier())
+            );
+        }
+    }
 }

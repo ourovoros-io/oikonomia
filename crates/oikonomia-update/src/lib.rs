@@ -203,7 +203,7 @@ pub use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
     VerifiedOffer, check_feed_as_client, install_offer, perform_check,
 };
-pub use crate::error::{FeedRefusal, Result, UpdateError};
+pub use crate::error::{FeedRefusal, InstallStep, Result, UpdateError};
 pub use crate::feed::{FeedArtifact, assemble_manifest};
 pub use crate::machine::{CheckStart, UpdateMachine};
 pub use crate::release_set::{

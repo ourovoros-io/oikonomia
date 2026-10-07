@@ -12,8 +12,8 @@ use crate::error::CommandResult;
 use crate::state::AppState;
 use oikonomia_core::domain::EntityId;
 use oikonomia_core::ledger::{
-    BalanceSheet, CashFlowSeries, DashboardSummary, PnL, TrialBalance, activity_window,
-    balance_sheet, cash_flow_series, dashboard_summary, profit_and_loss, profit_and_loss_export,
+    BalanceSheet, CashFlowSeries, DashboardSummary, PnL, TrialBalance, balance_sheet,
+    cash_flow_series_for_window, dashboard_summary, profit_and_loss, profit_and_loss_export,
     trial_balance,
 };
 use oikonomia_core::util::{DateText, utc_today};
@@ -146,7 +146,9 @@ pub(crate) async fn dashboard_summary_cmd(
 /// Requires the unlocked vault. An absent bound resolves to the entity's
 /// first or last active entry, which is how the transactions page asks with
 /// no date filter; with both bounds given the range is the dashboard's
-/// period.
+/// period. Core settles the window ([`cash_flow_series_for_window`]); the
+/// command supplies only the current date in UTC, which stands in for a
+/// bound of a book that has no active entry.
 ///
 /// # Errors
 ///
@@ -164,8 +166,8 @@ pub(crate) async fn cash_flow_series_cmd(
     with_connection(&state, move |conn| {
         let from = DateText::parse_optional(from.as_ref())?;
         let to = DateText::parse_optional(to.as_ref())?;
-        let (start, end) = activity_window(conn, entity_id, from, to, utc_today())?;
-        cash_flow_series(conn, entity_id, start, end)
+
+        cash_flow_series_for_window(conn, entity_id, from, to, utc_today())
     })
     .await
 }
@@ -287,5 +289,151 @@ mod tests {
             ensure_pdf_path(std::path::PathBuf::from("/tmp/report")),
             std::path::PathBuf::from("/tmp/report.pdf")
         );
+    }
+}
+
+/// `cash_flow_series_cmd` invoked through the mock IPC, the way the webview
+/// invokes it.
+///
+/// Not built on Windows, where the mock runtime keeps a test executable from
+/// starting; `commands::support::ipc_test_support` says why.
+#[cfg(test)]
+#[cfg(not(windows))]
+mod ipc_tests {
+    use crate::commands::reports::cash_flow_series_cmd;
+    use crate::commands::support::ipc_test_support::MockApp;
+    use oikonomia_core::domain::ChartTemplate;
+    use oikonomia_core::ledger::{
+        CreateEntity, PostSimpleEntry, PostSimpleEntryRequest, SimpleEntryKind, create_entity,
+        list_accounts, post_simple_entry,
+    };
+    use oikonomia_core::prefs::Locale;
+    use oikonomia_core::vault::Connection;
+
+    /// Starts the mock app over a book that spent 25.00 on 5 August and
+    /// earned 40.00 on 20 September 2026. Returns the book's id as the
+    /// frontend holds it.
+    fn mock_book(label: &str) -> (MockApp, String) {
+        MockApp::start(
+            label,
+            tauri::generate_handler![cash_flow_series_cmd],
+            seed_book,
+        )
+    }
+
+    /// Creates the book and its two entries.
+    fn seed_book(conn: &Connection) -> String {
+        let book = CreateEntity {
+            name: "Home".into(),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Personal,
+            fiscal_year_start_month: None,
+        };
+        let entity = create_entity(conn, &book, Locale::En).unwrap();
+        let accounts = list_accounts(conn, entity.id).unwrap();
+        let account = |code: &str| {
+            accounts
+                .iter()
+                .find(|account| account.code == code)
+                .map(|account| account.id)
+                .unwrap()
+        };
+
+        for (kind, category, entry_date, amount_minor) in [
+            (SimpleEntryKind::Expense, "5100", "2026-08-05", 2_500),
+            (SimpleEntryKind::Income, "4000", "2026-09-20", 4_000),
+        ] {
+            let request = PostSimpleEntryRequest {
+                entity_id: entity.id,
+                kind,
+                bill_status: None,
+                entry_date: entry_date.into(),
+                description: "seeded".into(),
+                reference: None,
+                amount_minor,
+                category_account_id: Some(account(category)),
+                wallet_account_id: Some(account("1010")),
+                payable_account_id: None,
+                from_account_id: None,
+                to_account_id: None,
+            };
+            post_simple_entry(conn, &PostSimpleEntry::try_from(request).unwrap()).unwrap();
+        }
+
+        entity.id.to_string()
+    }
+
+    /// Invokes the command with the object `cashFlowSeries` in
+    /// `web/src/lib/api.ts` passes to `invoke`: camelCase keys, and `null`
+    /// for a bound the page leaves open.
+    fn cash_flow(
+        app: &MockApp,
+        entity: &str,
+        from: Option<&str>,
+        to: Option<&str>,
+    ) -> Result<serde_json::Value, serde_json::Value> {
+        app.invoke(
+            "cash_flow_series_cmd",
+            serde_json::json!({ "entityId": entity, "from": from, "to": to }),
+        )
+    }
+
+    #[test]
+    fn the_ipc_call_without_bounds_spans_the_first_to_the_last_active_entry() {
+        let (app, entity) = mock_book("cash-flow-open");
+
+        let series = cash_flow(&app, &entity, None, None).unwrap();
+
+        assert_eq!(series["entity_id"], entity.as_str());
+        assert_eq!(series["from"], "2026-08-05");
+        assert_eq!(series["to"], "2026-09-20");
+        assert_eq!(series["granularity"], "day");
+        assert_eq!(series["total_income_minor"], 4_000);
+        assert_eq!(series["total_expenses_minor"], 2_500);
+        assert_eq!(series["net_minor"], 1_500);
+        // 27 days of August and 20 of September.
+        assert_eq!(series["buckets"].as_array().unwrap().len(), 47);
+    }
+
+    #[test]
+    fn the_ipc_call_with_both_bounds_uses_them_as_given() {
+        let (app, entity) = mock_book("cash-flow-bounded");
+
+        let series = cash_flow(&app, &entity, Some("2026-08-01"), Some("2026-08-31")).unwrap();
+
+        assert_eq!(series["from"], "2026-08-01");
+        assert_eq!(series["to"], "2026-08-31");
+        assert_eq!(series["total_income_minor"], 0);
+        assert_eq!(series["total_expenses_minor"], 2_500);
+        assert_eq!(series["buckets"].as_array().unwrap().len(), 31);
+    }
+
+    #[test]
+    fn the_ipc_call_with_one_bound_fills_the_other_from_the_entries() {
+        let (app, entity) = mock_book("cash-flow-half-open");
+
+        let from_only = cash_flow(&app, &entity, Some("2026-09-01"), None).unwrap();
+        let to_only = cash_flow(&app, &entity, None, Some("2026-08-31")).unwrap();
+
+        assert_eq!(from_only["from"], "2026-09-01");
+        assert_eq!(from_only["to"], "2026-09-20");
+        assert_eq!(to_only["from"], "2026-08-05");
+        assert_eq!(to_only["to"], "2026-08-31");
+    }
+
+    #[test]
+    fn the_ipc_call_reports_a_refused_window_as_a_code() {
+        let (app, entity) = mock_book("cash-flow-refused");
+
+        let inverted =
+            cash_flow(&app, &entity, Some("2026-09-01"), Some("2026-08-01")).unwrap_err();
+        let malformed = cash_flow(&app, &entity, Some("1/8/2026"), None).unwrap_err();
+        let unknown =
+            cash_flow(&app, "99999999-9999-4999-8999-999999999999", None, None).unwrap_err();
+
+        assert_eq!(inverted["code"], "date_range_inverted");
+        assert_eq!(malformed["code"], "invalid_date");
+        assert_eq!(unknown["code"], "not_found");
+        assert_eq!(unknown["params"]["resource"], "entity");
     }
 }

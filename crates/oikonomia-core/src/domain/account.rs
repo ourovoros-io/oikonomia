@@ -50,6 +50,31 @@ pub enum AccountType {
 }
 
 impl AccountType {
+    /// Returns the type as the UI and the vault write it: `asset`,
+    /// `liability`, `equity`, `income` or `expense`.
+    ///
+    /// This is the text serde writes and the text stored in
+    /// `accounts.account_type`, so it is part of the vault format: changing
+    /// one of the five would make every existing vault unreadable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use oikonomia_core::domain::AccountType;
+    ///
+    /// assert_eq!(AccountType::Liability.identifier(), "liability");
+    /// ```
+    #[must_use]
+    pub const fn identifier(self) -> &'static str {
+        match self {
+            Self::Asset => "asset",
+            Self::Liability => "liability",
+            Self::Equity => "equity",
+            Self::Income => "income",
+            Self::Expense => "expense",
+        }
+    }
+
     /// Returns `true` for the types whose balance a debit raises: assets and
     /// expenses.
     ///
@@ -97,4 +122,25 @@ pub struct Account {
     pub is_system: bool,
     /// Position in the chart, ascending; ties are ordered by code.
     pub sort_order: i32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AccountType;
+
+    #[test]
+    fn the_identifier_of_an_account_type_is_the_text_serde_writes() {
+        for account_type in [
+            AccountType::Asset,
+            AccountType::Liability,
+            AccountType::Equity,
+            AccountType::Income,
+            AccountType::Expense,
+        ] {
+            assert_eq!(
+                serde_json::to_value(account_type).unwrap(),
+                serde_json::Value::from(account_type.identifier())
+            );
+        }
+    }
 }

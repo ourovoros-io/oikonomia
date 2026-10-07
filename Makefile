@@ -25,7 +25,7 @@ test:
 
 # API docs with rustdoc warnings as errors, as the CI `docs` job runs them.
 doc:
-	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
+	RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --locked
 
 # Local quality gate (a subset of CI).
 check:

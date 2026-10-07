@@ -73,10 +73,10 @@ describe('updateCheck / updateInstall wrappers', () => {
     invoke.mockResolvedValue({ kind: 'failed', code: 'update_network' })
     await expect(updateCheck()).resolves.toEqual({ kind: 'failed', code: 'update_network' })
 
-    invoke.mockResolvedValue({ kind: 'failed', code: 'update_artifact_integrity' })
+    invoke.mockResolvedValue({ kind: 'failed', code: 'update_install_failed' })
     await expect(updateInstall({ kind: 'available', version: '0.1.1' })).resolves.toEqual({
       kind: 'failed',
-      code: 'update_artifact_integrity',
+      code: 'update_install_failed',
     })
   })
 })
