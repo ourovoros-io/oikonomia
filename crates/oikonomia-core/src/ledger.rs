@@ -135,7 +135,7 @@ pub(crate) use balance::ACTIVE_ENTRY_PREDICATE;
 pub use balance::{account_balance, account_balance_as_of, normal_balance};
 pub use cash_flow::{
     CashFlowBucket, CashFlowGranularity, CashFlowSeries, DAILY_BUCKET_MAX_DAYS, activity_window,
-    cash_flow_series,
+    cash_flow_series, cash_flow_series_for_window,
 };
 pub use entities::{
     CreateEntity, archive_entity, count_entities, create_entity, delete_entity, get_entity,

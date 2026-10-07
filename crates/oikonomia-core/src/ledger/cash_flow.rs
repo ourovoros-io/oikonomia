@@ -13,6 +13,10 @@
 //! the window. The buckets are contiguous and cover the whole window, empty
 //! ones included, so a chart can draw them without filling gaps.
 //!
+//! A caller whose date filter may be empty on either side asks through
+//! [`cash_flow_series_for_window`], which first settles the window from the
+//! book's entries ([`activity_window`]).
+//!
 //! The ledger is read once, grouped by day and account type. Each day is then
 //! placed in its bucket by binary search, and the running totals are added in
 //! a second pass over the buckets.
@@ -199,6 +203,35 @@ pub fn activity_window(
         (None, Some(end)) => Ok((earliest.unwrap_or(end).min(end), end)),
         _ => Ok((earliest.unwrap_or(today), latest.unwrap_or(today))),
     }
+}
+
+/// Computes the cash flow series for a date filter that may leave one or
+/// both bounds empty.
+///
+/// This is [`cash_flow_series`] over the window [`activity_window`] draws
+/// for `from` and `to`: an empty bound is filled from the book's first or
+/// last active entry, or from `today` for a book without entries. The
+/// buckets are per day or per month by the length of that window, as in
+/// [`cash_flow_series`]. `today` is the caller's to pass so that the result
+/// does not depend on the clock; the app passes the current date in UTC.
+///
+/// # Errors
+///
+/// [`ValidationError::DateRangeInverted`] for an explicit `from > to`;
+/// [`Error::NotFound`] for an unknown entity; [`Error::MoneyOverflow`] when a
+/// bucket, a running total or the net does not fit in `i64`;
+/// [`Error::VaultCorrupt`] for a stored date or account type that does not
+/// parse; database errors as [`Error::Database`].
+pub fn cash_flow_series_for_window(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: Option<Date>,
+    to: Option<Date>,
+    today: Date,
+) -> Result<CashFlowSeries> {
+    let (start, end) = activity_window(conn, entity_id, from, to, today)?;
+
+    cash_flow_series(conn, entity_id, start, end)
 }
 
 /// Chooses day buckets for a window of at most [`DAILY_BUCKET_MAX_DAYS`] days,
