@@ -140,4 +140,9 @@ mod store;
 pub use backup::{BACKUP_EXTENSION, backup_to_path, default_backup_file_name, restore_from_path};
 pub use header::VaultHeader;
 pub use paths::{default_data_dir, vault_db_path, vault_header_path};
+/// The open database handle that [`Vault::connection`] lends out.
+///
+/// Re-exported so a caller can name the type without depending on `rusqlite`
+/// itself.
+pub use rusqlite::Connection;
 pub use store::{Vault, VaultStatus};

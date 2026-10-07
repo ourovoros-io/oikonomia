@@ -1,4 +1,27 @@
-//! Tauri application entry: thin IPC over `oikonomia-core`.
+//! The Tauri desktop shell: the windows, the tray and the IPC layer over
+//! `oikonomia-core`.
+//!
+//! The shell owns what only a desktop process can do: the windows and the
+//! tray (`tray`), native dialogs, the idle watchdog thread (`state`),
+//! installing an update (`update`, `update_exec`), and the commands the
+//! webview invokes (`commands`). It holds no ledger rules. Those are in core,
+//! and a command is a thin wrapper over a core call.
+//!
+//! # What the shell guarantees
+//!
+//! - The webview reaches the backend only through the commands listed in
+//!   `ipc_commands`, and cannot navigate away from the app's own origin
+//!   (`nav_guard`).
+//! - A path named by the webview is used only if the user handed it over in
+//!   a native drop or a native dialog (`state::PathGrants`).
+//! - The vault locks after the idle timeout whatever the webview is doing
+//!   (`state::spawn_auto_lock`).
+//! - An update is installed the way the running copy was installed, and
+//!   never over a copy the system package manager owns (`update_exec`).
+//! - An error crosses IPC as a code plus parameters; the UI never shows text
+//!   written here (`error`).
+//! - One process per user: a second launch on Windows or Linux shows the
+//!   running app's window and exits (`with_single_instance`).
 
 mod commands;
 #[cfg(test)]
@@ -17,7 +40,7 @@ use startup::StartupError;
 use state::{AppState, resolve_ocr_model_dir};
 use tauri::Manager;
 
-/// Start the desktop application.
+/// Starts the desktop application and runs it until it exits.
 ///
 /// A start that fails once the runtime is up (a damaged vault header, an
 /// unreadable data directory) is reported in a native message and ends with a
@@ -54,7 +77,16 @@ pub fn run() {
     app.run(on_run_event);
 }
 
-/// Sets up the state, the tray and the idle watchdog.
+/// Sets up the logger, the state, the tray and the idle watchdog, in that
+/// order.
+///
+/// The state is handed to Tauri last, after the watchdog has started, so no
+/// command can reach the vault without the watchdog running.
+///
+/// # Errors
+///
+/// Returns the first step's failure as a [`StartupError`]; the caller shows
+/// it to the user and exits.
 fn start(app: &mut tauri::App) -> Result<(), StartupError> {
     // The bundled .app gets its Dock icon from icon.icns; dev mode runs
     // the bare binary, so set the icon at runtime as well.
@@ -116,6 +148,8 @@ fn register_debug_logger(app: &tauri::App) -> Result<(), StartupError> {
         .map_err(StartupError::Shell)
 }
 
+/// Handles an event of the app's run loop: on macOS, a click on the Dock
+/// icon while the window is hidden brings the window back.
 // Only macOS inspects the event without consuming it; elsewhere it is moved
 // into the unused-arguments tuple and the lint has nothing to report.
 #[cfg_attr(
@@ -136,7 +170,8 @@ fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
     let _ = (app, event);
 }
 
-/// A second launch surfaces the running app's main window and exits.
+/// Returns `builder` with the plugin that makes a second launch show the
+/// running app's main window and exit.
 ///
 /// Registered before every other plugin so the second process stops before
 /// it creates a window or touches the vault directory. Without it, closing
@@ -150,13 +185,17 @@ fn with_single_instance(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<t
     ))
 }
 
-/// macOS routes a second launch to the running app itself (`RunEvent::Reopen`).
+/// Returns `builder` unchanged: macOS routes a second launch to the running
+/// app itself (`RunEvent::Reopen`).
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn with_single_instance(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder
 }
 
-/// Dialog, window-state, and opener. Updates are installed by `update_exec`.
+/// Returns `builder` with the dialog, window-state and opener plugins.
+///
+/// There is no updater plugin: updates are checked by `oikonomia-update` and
+/// installed by `update_exec`.
 fn with_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder
         .plugin(tauri_plugin_dialog::init())
@@ -175,7 +214,11 @@ fn with_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<t
         .plugin(tauri_plugin_opener::init())
 }
 
-/// Every IPC command the webview may invoke; nothing else is reachable.
+/// Returns the handler for every IPC command the webview may invoke; nothing
+/// else is reachable.
+///
+/// The names here are the names the frontend invokes, so the list is part of
+/// the contract with it.
 fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         commands::vault_status,
@@ -250,6 +293,11 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
     ]
 }
 
+/// Handles a window event: a close request hides the window to the tray, and
+/// a file drop is recorded as a grant.
+///
+/// Closing does not quit; Quit is in the tray menu and on the system's quit
+/// shortcut.
 fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     // Closing the window hides it to the tray instead of quitting;
     // Quit lives in the tray menu (or Cmd+Q).
@@ -264,6 +312,10 @@ fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     record_native_drops(window, event);
 }
 
+/// Grants the paths of files the user dropped on a window, so that the
+/// path-taking commands accept them.
+///
+/// Does nothing before the state exists.
 fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
     if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event
         && let Some(state) = window.try_state::<AppState>()
