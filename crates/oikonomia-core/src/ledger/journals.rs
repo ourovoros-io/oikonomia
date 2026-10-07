@@ -44,8 +44,15 @@
 //! the order on their own. `journal_entries` has a text primary key and so
 //! keeps `SQLite`'s own `rowid`, which for a new row is one more than the
 //! largest in the table (<https://www.sqlite.org/autoinc.html>): among the
-//! entries of a book it rises in the order they were posted. `VACUUM` is the
-//! one statement that renumbers such rowids, and nothing here runs it.
+//! entries of a book it rises in the order they were posted.
+//!
+//! One thing can renumber such rowids: `VACUUM`
+//! (<https://www.sqlite.org/lang_vacuum.html>), and a backup is written with
+//! `VACUUM INTO`, so a restored vault may hold other numbers. The order here
+//! needs only that they still rise in the same order. `SQLite` does not
+//! document that; the test `tests/entry_order.rs` restores a backup and
+//! checks it.
+//!
 //! [`list_entries`] reads that order backwards, the register and the journal
 //! export forwards.
 //!

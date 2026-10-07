@@ -517,6 +517,14 @@ fn a_series_for_an_open_filter_on_an_empty_book_is_the_one_day_passed_as_today()
     let from_only = cash_flow_series_for_window(conn, e, Some(date("2026-09-01")), None, today)
         .expect("series");
     assert_eq!((from_only.from, from_only.to), (date("2026-09-01"), today));
+
+    // Only the end given: the window is that one day, and today plays no part.
+    let to_only = cash_flow_series_for_window(conn, e, None, Some(date("2026-02-01")), today)
+        .expect("series");
+    assert_eq!(
+        (to_only.from, to_only.to),
+        (date("2026-02-01"), date("2026-02-01"))
+    );
 }
 
 #[test]

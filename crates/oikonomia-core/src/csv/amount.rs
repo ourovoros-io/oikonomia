@@ -178,11 +178,11 @@ pub fn currency_minor_exponent(code: CurrencyCode) -> u8 {
 /// - `-25` → `-2500`
 ///
 /// Whitespace anywhere else and the currency signs `€$£¥₹₺₩` are ignored. So
-/// are three
-/// ASCII letters directly before or after the number: this function is given
-/// no book to compare them with and does not check them against the ISO 4217
-/// list, so `1.00 abc` parses like `1.00 EUR`. A statement is read through
-/// `parse_book_amount`, which accepts only the code of the book's currency.
+/// are three ASCII letters directly before or after the number: this
+/// function is given no book to compare them with and does not check them
+/// against the ISO 4217 list, so `1.00 abc` parses like `1.00 EUR`. A
+/// statement is read through `parse_book_amount`, which accepts only the
+/// code of the book's currency.
 /// Parentheses mean negative (`(25,00)`), as does one minus, written as `-`
 /// or U+2212 MINUS SIGN, before the number or after it (`25-`). A second
 /// sign makes the cell invalid.

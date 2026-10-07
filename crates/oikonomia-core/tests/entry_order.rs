@@ -13,9 +13,12 @@ mod common;
 use oikonomia_core::csv::{export_journal_csv, parse_journal_export, post_import_rows};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::ledger::{
-    EntryFilter, PostSimpleEntryRequest, SimpleEntryKind, account_register, list_entries,
+    EntryFilter, PostSimpleEntryRequest, SimpleEntryKind, account_register, delete_entity,
+    list_entries,
 };
+use oikonomia_core::vault::{Vault, restore_from_path};
 use rusqlite::Connection;
+use tempfile::TempDir;
 
 /// How many entries each test posts on the one date.
 const BATCH: usize = 6;
@@ -107,6 +110,44 @@ fn the_register_shows_entries_of_one_second_in_the_order_posted() {
     conn.execute_batch("DROP INDEX idx_lines_account")
         .expect("drop the index");
     assert_eq!(register(conn), posted_order());
+}
+
+/// A backup is written with `VACUUM INTO`, which may renumber the rowids the
+/// order ends on. `SQLite` documents that the numbers can change and says
+/// nothing of their order, so this pins what the ledger relies on: a restored
+/// vault lists a batch in the order the original did.
+#[test]
+fn a_restored_backup_keeps_the_order_of_entries_of_one_second() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    // Entries of an earlier book are deleted first, so that the batch does
+    // not sit on rowids that already count from one.
+    let (earlier, _) = book_with_a_batch(conn);
+    delete_entity(conn, earlier).expect("delete the earlier book");
+    let (entity_id, checking) = book_with_a_batch(conn);
+
+    let archive_dir = TempDir::new().expect("archive dir");
+    let archive = archive_dir.path().join("books.oikonomia-backup");
+    vault.backup_to(&archive).expect("backup");
+    let restore_dir = TempDir::new().expect("restore dir");
+    restore_from_path(&archive, restore_dir.path(), false).expect("restore");
+    let mut restored = Vault::open_path(restore_dir.path()).expect("open restored");
+    restored.unlock(common::PASSWORD).expect("unlock restored");
+    let restored = restored.connection().expect("restored conn");
+
+    let listed: Vec<String> = list_entries(restored, entity_id, &EntryFilter::default())
+        .expect("list")
+        .into_iter()
+        .map(|view| view.entry.description)
+        .collect();
+    let register: Vec<String> = account_register(restored, checking, None, None)
+        .expect("register")
+        .into_iter()
+        .map(|line| line.description)
+        .collect();
+
+    assert_eq!(register, posted_order());
+    assert_eq!(listed, posted_order().into_iter().rev().collect::<Vec<_>>());
 }
 
 #[test]

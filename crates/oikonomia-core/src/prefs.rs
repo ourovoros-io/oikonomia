@@ -418,8 +418,11 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
 ///
 /// The accounts are stored under [`last_accounts_key`] for the book and the
 /// kind, replacing what was remembered for that pair; every other
-/// preference this build can read is kept. The ids in `accounts` are stored
-/// as given and are not checked against the vault, which may be locked.
+/// preference this build can read is kept. A file that cannot be read or
+/// decoded loads as the defaults ([`load_ui_prefs`]), so this call then
+/// saves the defaults with the two values and what the file held is gone.
+/// The ids in `accounts` are stored as given and are not checked against the
+/// vault, which may be locked.
 ///
 /// This loads the file, changes the two values and saves the result with
 /// [`save_ui_prefs`], which replaces the file by renaming a temporary one
@@ -1204,10 +1207,11 @@ mod tests {
             LastRoleAccounts::default(),
         );
 
-        assert!(
-            matches!(&failed, Err(Error::Io { operation, .. }) if *operation == "write preferences file"),
-            "{failed:?}"
-        );
+        let operation = match &failed {
+            Err(Error::Io { operation, .. }) => Some(*operation),
+            _ => None,
+        };
+        assert_eq!(operation, Some("write preferences file"), "{failed:?}");
         assert!(!ui_prefs_temporary_path(dir.path()).exists());
     }
 }

@@ -4,12 +4,13 @@
 
 mod common;
 
-use oikonomia_core::db::migrate;
+use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::ledger::{EntryFilter, list_entries, void_entry};
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
 
+/// The schema version the vault records.
 fn schema_version(conn: &Connection) -> i64 {
     conn.query_row(
         "SELECT schema_version FROM vault_meta WHERE id = 1",
@@ -66,7 +67,7 @@ fn a_v7_vault_gains_the_indexes_and_keeps_its_entries() {
 
     migrate(conn).expect("v7 -> v8");
 
-    assert_eq!(schema_version(conn), 8);
+    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
     assert_eq!(
         indexes_on(conn, "journal_entries"),
         ["idx_entries_entity_date", "idx_entries_voided_by"]
@@ -102,7 +103,7 @@ fn running_the_v8_step_again_changes_nothing() {
     migrate(conn).expect("the step runs again");
     migrate(conn).expect("and a current vault is left alone");
 
-    assert_eq!(schema_version(conn), 8);
+    assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
     let after_second = (
         indexes_on(conn, "journal_entries"),
         indexes_on(conn, "journal_lines"),

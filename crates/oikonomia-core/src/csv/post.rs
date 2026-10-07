@@ -47,6 +47,9 @@ use crate::util::parse_date;
 /// - [`Error::Csv`] for a problem with the file as a whole, as
 ///   [`parse_bank_csv`] lists them. A bad row is not an error; it is a row
 ///   of the preview with `error` set.
+/// - [`Error::VaultCorrupt`] for a stored entry the duplicate rule cannot
+///   read: a date that does not parse, or a date, a description or an amount
+///   of the wrong storage class.
 /// - [`Error::Database`] on database errors.
 pub fn preview_bank_csv(
     conn: &Connection,

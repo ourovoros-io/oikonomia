@@ -345,7 +345,7 @@ fn calendar_date(year: &str, month: &str, day: &str, raw: &str) -> CsvResult<Dat
     let invalid = || CsvError::InvalidDate(raw.to_owned());
 
     // `str::parse` takes a leading sign, so `+5/+3/2026` would be a date and
-    // `-123/01/02` a year before the common era.
+    // `5.3.-026` a year before the common era.
     let all_digits = |segment: &str| segment.bytes().all(|byte| byte.is_ascii_digit());
     if ![year, month, day].into_iter().all(all_digits) {
         return Err(invalid());

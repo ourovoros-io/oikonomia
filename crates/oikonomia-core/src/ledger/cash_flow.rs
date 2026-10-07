@@ -209,8 +209,8 @@ pub fn activity_window(
 /// both bounds empty.
 ///
 /// This is [`cash_flow_series`] over the window [`activity_window`] draws
-/// for `from` and `to`: an empty bound is filled from the book's first or
-/// last active entry, or from `today` for a book without entries. The
+/// for `from` and `to`; its documentation says how each empty bound is
+/// filled, from the book's active entries or from `today`. The
 /// buckets are per day or per month by the length of that window, as in
 /// [`cash_flow_series`]. `today` is the caller's to pass so that the result
 /// does not depend on the clock; the app passes the current date in UTC.

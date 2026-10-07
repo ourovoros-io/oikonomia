@@ -845,9 +845,10 @@ fn missing_part_corruption(kind: SimpleEntryKind, missing: MissingPart) -> Error
 /// Builds the schedule of a stored template from its cadence and its
 /// `day_of_month` column.
 ///
-/// The column is read for a monthly template only. A day stored beside
-/// another cadence is ignored, as an account stored for a part the kind
-/// lacks is: nothing is computed from it.
+/// The day is used for a monthly template only. A day stored beside another
+/// cadence is ignored, as an account stored for a part the kind lacks is:
+/// nothing is computed from it. The caller has read the column either way,
+/// so a value of the wrong storage class is corrupt for every cadence.
 ///
 /// # Errors
 ///

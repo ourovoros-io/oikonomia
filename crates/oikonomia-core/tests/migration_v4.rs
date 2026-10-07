@@ -26,11 +26,19 @@ fn downgrade_to_v3_with_bad_data(conn: &Connection) {
             created_at TEXT NOT NULL,
             analysis_json TEXT
         );
-        INSERT INTO entities (id, name, base_currency, fiscal_year_start_month, chart_template, created_at)
+        INSERT INTO entities (
+            id, name, base_currency, fiscal_year_start_month, chart_template, created_at
+        )
         VALUES ('e1', 'Book', 'EUR', 1, 'blank', 'unix:1');
-        INSERT INTO journal_entries (id, entity_id, entry_date, description, reference, status, created_at, posted_at, voided_by_entry_id)
+        INSERT INTO journal_entries (
+            id, entity_id, entry_date, description, reference, status, created_at, posted_at,
+            voided_by_entry_id
+        )
         VALUES ('j1', 'e1', '2026-01-01', 'Entry', NULL, 'posted', 'unix:1', 'unix:1', NULL);
-        INSERT INTO documents (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json)
+        INSERT INTO documents (
+            id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+            analysis_json
+        )
         VALUES ('d1', 'e1', NULL, 'orphan.pdf', 'application/pdf', 1, x'00', 'unix:1', NULL),
                ('d2', 'e1', 'j1', 'invoice.pdf', 'application/pdf', 1, x'00', 'unix:2', NULL),
                ('d3', 'e1', 'j1', 'invoice.pdf', 'application/pdf', 1, x'00', 'unix:3', NULL),
@@ -93,7 +101,10 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
 
     // The constraints now actively reject violations.
     let orphan_insert = conn.execute(
-        "INSERT INTO documents (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json)
+        "INSERT INTO documents (
+             id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+             analysis_json
+         )
          VALUES ('dx', 'e1', NULL, 'x.pdf', 'application/pdf', 1, x'00', 'unix:9', NULL)",
         [],
     );
@@ -103,7 +114,10 @@ fn v4_migration_cleans_orphans_and_suffixes_duplicates() {
     );
 
     let dup_insert = conn.execute(
-        "INSERT INTO documents (id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at, analysis_json)
+        "INSERT INTO documents (
+             id, entity_id, entry_id, filename, mime_type, size_bytes, data, created_at,
+             analysis_json
+         )
          VALUES ('dy', 'e1', 'j1', 'invoice.pdf', 'application/pdf', 1, x'00', 'unix:9', NULL)",
         [],
     );
