@@ -91,7 +91,7 @@ pub(crate) async fn vault_init(
 /// Returns `vault_uninitialized` when no vault exists, `invalid_password`
 /// when the password is rejected, `vault_corrupt` when the header or the
 /// database cannot be used, `vault_too_new` (with the versions as `found` and
-/// `supported`) for a database written by a newer version, `crypto` when the
+/// `supported`) for a header or database written by a newer version, `crypto` when the
 /// key cannot be derived, `io` when a file cannot be read, and `database`
 /// when the database cannot be read or migrated. Returns `task_failed` when
 /// the blocking task panics.
@@ -179,11 +179,11 @@ pub(crate) async fn vault_lock(
 ///
 /// Returns `save_location_invalid` when the dialog's answer is not a path,
 /// `vault_uninitialized` when there is no vault to back up, `vault_corrupt`
-/// when the vault files are incomplete, `io` when the archive cannot be
-/// written, `database` when the open vault cannot be snapshotted, `crypto`
-/// when that snapshot is not encrypted, and `backup_invalid` when a vault
-/// file becomes shorter while it is copied. Returns `task_failed` when a
-/// blocking task panics.
+/// when the vault files are incomplete or a password change did not finish,
+/// `io` when the archive cannot be written or a vault file becomes shorter
+/// while it is copied, `database` when the open vault cannot be snapshotted,
+/// and `crypto` when that snapshot is not encrypted. Returns `task_failed`
+/// when a blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_backup(
     app: tauri::AppHandle,
