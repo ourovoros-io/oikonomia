@@ -23,6 +23,38 @@ function initialFocusTarget(panel: HTMLElement): HTMLElement {
 }
 
 /**
+ * Keeps Tab and Shift+Tab inside `root`: from the last control Tab wraps to
+ * the first, and from the first (or the root itself) Shift+Tab wraps to the
+ * last. Also used by the Quick add window, where Tab past the last control
+ * would otherwise leave the webview.
+ */
+export function trapTab(e: KeyboardEvent, root: HTMLElement) {
+  // offsetParent is null for display:none subtrees (e.g. hidden file inputs).
+  const items = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.offsetParent !== null,
+  )
+  if (items.length === 0) {
+    e.preventDefault()
+    return
+  }
+
+  const first = items[0]
+  const last = items[items.length - 1]
+  const current = document.activeElement
+
+  if (!(current instanceof HTMLElement) || !root.contains(current)) {
+    e.preventDefault()
+    first.focus()
+  } else if (e.shiftKey && (current === first || current === root)) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && current === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+/**
  * Stack of open dialogs, innermost last. Only the top-most dialog reacts to
  * keyboard events, so a nested ConfirmDialog consumes Escape without closing
  * the modal underneath it.
@@ -64,31 +96,7 @@ export function useDialogFocus(
         onEscapeRef.current()
         return
       }
-      if (e.key !== 'Tab') return
-
-      // offsetParent is null for display:none subtrees (e.g. hidden file inputs).
-      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (el) => el.offsetParent !== null,
-      )
-      if (items.length === 0) {
-        e.preventDefault()
-        return
-      }
-
-      const first = items[0]
-      const last = items[items.length - 1]
-      const current = document.activeElement
-
-      if (!(current instanceof HTMLElement) || !panel.contains(current)) {
-        e.preventDefault()
-        first.focus()
-      } else if (e.shiftKey && (current === first || current === panel)) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && current === last) {
-        e.preventDefault()
-        first.focus()
-      }
+      if (e.key === 'Tab') trapTab(e, panel)
     }
 
     document.addEventListener('keydown', onKeyDown)

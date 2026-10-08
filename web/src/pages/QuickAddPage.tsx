@@ -21,7 +21,13 @@ import {
   type PendingDocSource,
   type UiPrefs,
 } from '../lib/api'
-import { bookCurrency, minorToInputText, parseMajorToMinor, type Currency } from '../lib/money'
+import {
+  amountProblemKey,
+  bookCurrency,
+  minorToInputText,
+  parseMajorToMinor,
+  type Currency,
+} from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import {
   QUICK_ADD_COMPACT_HEIGHT,
@@ -559,10 +565,13 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     if (!entity || analyzing) return
     if (!beginExclusive(busyRef)) return
     const minor = parseMajorToMinor(amount, bookCurrency(entity))
-    if (minor === null || minor <= 0) {
+    const amountKey = amountProblemKey(minor, 'quickAdd.invalidAmount')
+    // minor is only null alongside a problem; the check narrows its type.
+    if (amountKey || minor === null) {
       busyRef.current = false
-      setError(t('quickAdd.invalidAmount'))
       if (step !== 'amount') rollTo('amount', -1)
+      // After the roll, which clears the error of the step it leaves.
+      setError(t(amountKey ?? 'quickAdd.invalidAmount'))
       return
     }
     const accountErr = validateTrayAccounts({
@@ -661,9 +670,12 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   function advanceFromAmount() {
     if (!entity) return
-    const minor = parseMajorToMinor(amount, bookCurrency(entity))
-    if (minor === null || minor <= 0) {
-      setError(t('quickAdd.invalidAmount'))
+    const amountKey = amountProblemKey(
+      parseMajorToMinor(amount, bookCurrency(entity)),
+      'quickAdd.invalidAmount',
+    )
+    if (amountKey) {
+      setError(t(amountKey))
       amountRef.current?.focus()
       return
     }
@@ -816,6 +828,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'amount':
         return (
           <form
+            noValidate
             className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
             onSubmit={(e) => {
               e.preventDefault()
@@ -828,12 +841,17 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               inputMode="decimal"
               placeholder="0.00"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                setAmount(e.target.value)
+                setError(null)
+              }}
               className={cn(
                 ctlH,
-                'min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[17px] font-semibold leading-none tracking-tight text-[var(--color-fg)] tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50',
+                'min-w-0 flex-1 border-0 bg-transparent px-0.5 text-[17px] font-semibold leading-none tracking-tight tabular-nums outline-none placeholder:text-[var(--color-muted)]/55 disabled:opacity-50',
+                error ? 'text-[var(--color-danger)]' : 'text-[var(--color-fg)]',
               )}
               required
+              aria-invalid={error ? true : undefined}
               disabled={formDisabled}
               aria-label={t('quickAdd.amount', { ccy })}
               autoComplete="off"
@@ -846,6 +864,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'accounts':
         return (
           <form
+            noValidate
             className="flex h-full min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
             onSubmit={(e) => {
               e.preventDefault()
@@ -921,6 +940,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       case 'save':
         return (
           <form
+            noValidate
             className="flex h-full min-w-0 flex-1 flex-col justify-center gap-1 overflow-hidden"
             onSubmit={(e) => void onSubmit(e)}
           >
