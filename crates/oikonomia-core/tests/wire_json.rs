@@ -25,9 +25,9 @@ use oikonomia_core::documents::{AnalyzerStatus, DocumentMeta, DocumentSuggestion
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplateRequest,
-    DashboardSummary, JournalLineRequest, PnL, PostJournalRequest, PostSimpleEntryRequest,
-    PostedEntryView, RecurringPostResult, RecurringTemplateView, RegisterLine, TrialBalance,
-    UpdateAccount, UpdateRecurringTemplateRequest, VoidResult,
+    DashboardSummary, EntryHistoryItem, JournalLineRequest, PnL, PostJournalRequest,
+    PostSimpleEntryRequest, PostedEntryView, RecurringPostResult, RecurringTemplateView,
+    RegisterLine, TrialBalance, UpdateAccount, UpdateRecurringTemplateRequest, VoidResult,
 };
 use oikonomia_core::prefs::{UiPrefs, load_ui_prefs_view, ui_prefs_path};
 use serde::Serialize;
@@ -166,6 +166,14 @@ fn void_result() {
     assert_json_is_pinned::<VoidResult>(concat!(
         r#"{"original_id":"33333333-3333-4333-8333-333333333333","reverse_id":"#,
         r#""77777777-7777-4777-8777-777777777777"}"#,
+    ));
+}
+
+#[test]
+fn entry_history_item() {
+    assert_json_is_pinned::<EntryHistoryItem>(concat!(
+        r#"{"entry_id":"33333333-3333-4333-8333-333333333333","entry_date":"2026-08-10","#,
+        r#""description":"VOID: Groceries","change":"reversal"}"#,
     ));
 }
 

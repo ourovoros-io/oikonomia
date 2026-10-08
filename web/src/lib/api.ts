@@ -74,6 +74,18 @@ export type PostedEntryView = {
   is_voided: boolean
 }
 
+/** How an entry of a history relates to the edit that replaced it. */
+export type EntryChange = 'original' | 'reversal' | 'replacement'
+
+/** An earlier version of an edited entry, or the reversal core posted for it. */
+export type EntryHistoryItem = {
+  entry_id: string
+  entry_date: string
+  /** The text core stored; shown as written, in the language it was written in. */
+  description: string
+  change: EntryChange
+}
+
 /** Which computed row a report line is; the UI shows the translated label. */
 export type SyntheticLine = 'retained_earnings' | 'net_income'
 
@@ -424,6 +436,8 @@ export const api = {
       analysisJson: analysisJson ?? null,
     }),
   entryVoid: (id: string) => call<{ original_id: string; reverse_id: string }>('entry_void', { id }),
+  /** Earlier versions of an edited entry and their reversals, oldest first; empty if never edited. */
+  entryHistory: (id: string) => call<EntryHistoryItem[]>('entry_history', { id }),
   /** Owner-only hidden flag. Hidden rows stay in list/get; CSV export omits them. */
   entrySetHidden: (id: string, hidden: boolean) =>
     call<PostedEntryView>('entry_set_hidden', { id, hidden }),

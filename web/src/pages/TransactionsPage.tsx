@@ -58,6 +58,7 @@ import {
   Panel,
   Segmented,
   Select,
+  ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { asCommandError, commandErrorMessage } from '../lib/commandError'
@@ -791,7 +792,9 @@ export function TransactionsPage({
     <div className="space-y-4">
       <TopBar title={t('tx.title')} subtitle={`${entity.name} · ${ccy}`} actions={newEntryButton} />
 
-      <ErrorBanner message={openDialog ? null : error} onDismiss={dismissError} />
+      <ToastStack>
+        <ErrorBanner className="" message={openDialog ? null : error} onDismiss={dismissError} />
+      </ToastStack>
 
       <CsvMappingModal
         open={csvStep === 'mapping'}

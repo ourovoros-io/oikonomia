@@ -42,9 +42,10 @@ import {
   IconBadge,
   Input,
   MetricCard,
-  NoticeBanner,
+  Notice,
   Panel,
   Select,
+  ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
@@ -344,7 +345,9 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
           }
         />
 
-        <ErrorBanner message={registerError} onDismiss={() => setRegisterError(null)} />
+        <ToastStack>
+          <ErrorBanner className="" message={registerError} onDismiss={() => setRegisterError(null)} />
+        </ToastStack>
 
         <Panel title={registerAccount.name} icon={<Receipt className="size-4" />}>
           {registerBusy ? (
@@ -420,8 +423,10 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         }
       />
 
-      <ErrorBanner message={error} onDismiss={() => setError(null)} />
-      <NoticeBanner message={notice} />
+      <ToastStack>
+        <ErrorBanner className="" message={error} onDismiss={() => setError(null)} />
+        <Notice message={notice} onDismiss={() => setNotice(null)} />
+      </ToastStack>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard

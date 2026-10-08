@@ -468,6 +468,14 @@ pub fn replace_simple_entry(
     )
     .database("move documents to replacement entry")?;
 
+    // The only record of which entry this one took the place of; the entry
+    // history reads it back.
+    tx.execute(
+        "UPDATE journal_entries SET replaces_entry_id = ?1 WHERE id = ?2",
+        rusqlite::params![original_id.to_string(), replacement.entry.id.to_string()],
+    )
+    .database("link replacement to the entry it replaces")?;
+
     tx.commit().database("commit journal entry replacement")?;
     Ok(replacement)
 }

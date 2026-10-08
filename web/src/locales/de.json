@@ -608,6 +608,14 @@
       "noFiles": "An dieser Buchung hängt keine Datei.",
       "edit": "Buchung bearbeiten",
       "ref": " · Ref. {reference}",
+      "history": {
+        "title": "Verlauf",
+        "note": "Beim Bearbeiten dieser Buchung für den Prüfpfad aufbewahrt.",
+        "original": "Ursprüngliche Buchung",
+        "reversal": "Storno",
+        "replacement": "Frühere Fassung",
+        "error": "Der Verlauf konnte nicht geladen werden"
+      },
       "attachError": "Die Datei konnte nicht angehängt werden",
       "updateError": "Die Buchung konnte nicht aktualisiert werden"
     }

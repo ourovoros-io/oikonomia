@@ -6,7 +6,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { formatBytes } from '../lib/files'
 import { TopBar } from '../components/TopBar'
-import { Button, EmptyState, ErrorBanner, IconBadge, Panel } from '../components/ui'
+import { Button, EmptyState, ErrorBanner, IconBadge, Panel, ToastStack } from '../components/ui'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
@@ -96,7 +96,9 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
     <div className="space-y-4">
       <TopBar title={t('docs.title')} subtitle={`${entity.name} · ${entity.base_currency}`} />
 
-      <ErrorBanner message={error} onDismiss={() => setError(null)} />
+      <ToastStack>
+        <ErrorBanner className="" message={error} onDismiss={() => setError(null)} />
+      </ToastStack>
 
       <ConfirmDialog
         open={deleteId !== null}

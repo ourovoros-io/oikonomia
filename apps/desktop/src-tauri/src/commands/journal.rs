@@ -32,9 +32,9 @@ use crate::state::{AppState, GrantPurpose};
 use oikonomia_core::documents::post_simple_entry_with_document;
 use oikonomia_core::domain::{AccountId, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
-    EntryFilter, PostJournal, PostJournalRequest, PostSimpleEntry, PostSimpleEntryRequest,
-    PostedEntryView, VoidResult, get_entry, list_entries, post_entry, post_simple_entry,
-    replace_simple_entry, set_entry_hidden, void_entry,
+    EntryFilter, EntryHistoryItem, PostJournal, PostJournalRequest, PostSimpleEntry,
+    PostSimpleEntryRequest, PostedEntryView, VoidResult, get_entry, list_entries, post_entry,
+    post_simple_entry, replace_simple_entry, set_entry_hidden, void_entry,
 };
 use oikonomia_core::util::DateText;
 use serde::Deserialize;
@@ -102,6 +102,27 @@ pub(crate) async fn entry_get(
     id: JournalEntryId,
 ) -> CommandResult<PostedEntryView> {
     with_connection(&state, move |conn| get_entry(conn, id)).await
+}
+
+/// Returns the earlier versions of a corrected entry and the reversals that
+/// cancelled them, oldest first. An entry that replaced nothing has none.
+///
+/// Requires the unlocked vault. The descriptions are the text core stored
+/// when the correction was made.
+///
+/// # Errors
+///
+/// Returns `not_found` when the entry does not exist, and the
+/// [common vault errors](crate::commands#common-vault-errors).
+#[tauri::command]
+pub(crate) async fn entry_history(
+    state: State<'_, AppState>,
+    id: JournalEntryId,
+) -> CommandResult<Vec<EntryHistoryItem>> {
+    with_connection(&state, move |conn| {
+        oikonomia_core::ledger::entry_history(conn, id)
+    })
+    .await
 }
 
 /// Posts a journal entry given as explicit debit and credit lines.

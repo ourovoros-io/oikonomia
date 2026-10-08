@@ -123,6 +123,7 @@ mod balance;
 mod calendar;
 mod cash_flow;
 mod entities;
+mod history;
 mod journals;
 mod recurring;
 mod reports;
@@ -145,6 +146,7 @@ pub use entities::{
     CreateEntity, archive_entity, count_entities, create_entity, delete_entity, get_entity,
     list_archived_entities, list_entities, unarchive_entity, update_entity,
 };
+pub use history::{EntryChange, EntryHistoryItem, entry_history};
 pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{
     EntryFilter, PostJournal, PostJournalLine, PostSimpleEntry, PostedEntryView, RegisterLine,

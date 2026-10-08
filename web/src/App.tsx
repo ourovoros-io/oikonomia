@@ -14,7 +14,7 @@ import { Aurora } from './components/Aurora'
 import { Logo } from './components/Logo'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
 import { UnlockScreen } from './components/UnlockScreen'
-import { Button, ErrorBanner } from './components/ui'
+import { Button, ErrorBanner, ToastStack } from './components/ui'
 import { bookDotColour } from './lib/bookColour'
 import { cn } from './lib/cn'
 import { TopBarContext, type TopBarSlots } from './lib/topBar'
@@ -427,13 +427,15 @@ export default function App() {
 
             <main key={active} className="flex-1 overflow-auto [scrollbar-gutter:stable]">
               <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
-                <ErrorBanner message={error} className="mb-5" onDismiss={() => setError(null)} />
-                {prefsNotice && active !== 'settings' ? (
-                  <DamagedPrefsNotice
-                    onOpenSettings={() => navigate('settings')}
-                    onDismiss={() => setPrefsNotice(false)}
-                  />
-                ) : null}
+                <ToastStack>
+                  <ErrorBanner message={error} className="" onDismiss={() => setError(null)} />
+                  {prefsNotice && active !== 'settings' ? (
+                    <DamagedPrefsNotice
+                      onOpenSettings={() => navigate('settings')}
+                      onDismiss={() => setPrefsNotice(false)}
+                    />
+                  ) : null}
+                </ToastStack>
 
                 <PageErrorBoundary page={active} resetKey={`${active}:${entity?.id ?? 'none'}`}>
                   {active === 'dashboard' ? (

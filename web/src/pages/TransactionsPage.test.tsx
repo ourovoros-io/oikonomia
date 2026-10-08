@@ -53,6 +53,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       csvImportPost: vi.fn(),
       csvExportJournal: vi.fn(),
       entrySetHidden: vi.fn(),
+      entryHistory: vi.fn(),
       entryPostSimple: vi.fn(),
       entryPostSimpleWithDocumentPath: vi.fn(),
       recurringList: vi.fn(),
@@ -286,6 +287,7 @@ beforeEach(() => {
     ...postedEntry,
     entry: { ...postedEntry.entry, id, hidden },
   }))
+  vi.mocked(api.entryHistory).mockReset().mockResolvedValue([])
   vi.mocked(api.entryPostSimple).mockReset()
   vi.mocked(api.entryPostSimpleWithDocumentPath).mockReset()
   vi.mocked(api.recurringList).mockReset().mockResolvedValue([])

@@ -55,6 +55,7 @@ import {
   Panel,
   Segmented,
   Select,
+  ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
@@ -403,7 +404,9 @@ export function RecurringPage({ entity, onBack }: Props) {
         }
       />
 
-      <ErrorBanner message={openDialog ? null : error} onDismiss={dismissError} />
+      <ToastStack>
+        <ErrorBanner className="" message={openDialog ? null : error} onDismiss={dismissError} />
+      </ToastStack>
 
       <Modal
         open={showForm}

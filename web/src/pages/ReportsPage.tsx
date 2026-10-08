@@ -34,6 +34,7 @@ import {
   Field,
   Panel,
   Segmented,
+  ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
@@ -231,7 +232,9 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
         </div>
       </Card>
 
-      <ErrorBanner message={error} onDismiss={() => setError(null)} />
+      <ToastStack>
+        <ErrorBanner className="" message={error} onDismiss={() => setError(null)} />
+      </ToastStack>
 
       {tab === 'trial' && tb && queryMatches ? (
         <TrialView tb={tb} entityName={entity.name} ccy={ccy} />

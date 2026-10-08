@@ -1,5 +1,5 @@
 import { ChevronDown, CircleAlert, Loader2, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Children, isValidElement, useEffect, useRef, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
   ComponentProps,
@@ -482,6 +482,7 @@ export function Notice({
     <div
       ref={ref}
       role="status"
+      aria-live="polite"
       className={cn(
         'flex items-start gap-2 rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]',
         className,
@@ -500,25 +501,21 @@ export function Notice({
   )
 }
 
-/** A short, polite confirmation that something the user asked for happened. */
-export function NoticeBanner({
-  message,
-  className = '',
-}: {
-  message: string | null
-  className?: string
-}) {
-  if (!message) return null
-
+/**
+ * Floats page-level banners over the top of the main pane instead of pushing
+ * the page down when one appears. The stack is a zero-height sticky strip, so
+ * it takes no room in the layout and stays in view while the pane scrolls.
+ * Each child gets a solid surface behind it (the banners are translucent
+ * tints); a child that renders nothing leaves an empty, hidden wrapper.
+ */
+export function ToastStack({ children }: { children: ReactNode }) {
   return (
-    <div
-      role="status"
-      className={cn(
-        'rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]',
-        className,
-      )}
-    >
-      {message}
+    <div className="oik-toast-stack">
+      {Children.toArray(children).map((child) => (
+        <div key={isValidElement(child) ? child.key : undefined} className="oik-toast">
+          {child}
+        </div>
+      ))}
     </div>
   )
 }
