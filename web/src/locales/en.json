@@ -300,7 +300,7 @@
   "tx.form.hidden.label": "Hide",
   "tx.form.hidden.hint": "Hidden from export",
   "tx.list.meta.counts": "{posted} posted · {hidden} hidden",
-  "tx.export.whisper": "Export omits hidden rows.",
+  "tx.export.whisper": "Export omits hidden rows. Deleted entries are included, marked voided.",
   "tx.csv.import": "Import CSV",
   "tx.csv.export": "Export CSV",
   "tx.csv.exportTitle": "Unencrypted accountant CSV",

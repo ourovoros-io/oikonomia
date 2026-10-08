@@ -834,7 +834,7 @@
       "badge": "Masquée"
     },
     "export": {
-      "whisper": "L’export laisse de côté les lignes masquées."
+      "whisper": "L’export laisse de côté les lignes masquées. Les écritures supprimées sont incluses, avec l’état voided."
     },
     "void": {
       "title": "Supprimer l’écriture ?",

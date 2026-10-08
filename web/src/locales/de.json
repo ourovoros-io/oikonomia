@@ -834,7 +834,7 @@
       "badge": "Ausgeblendet"
     },
     "export": {
-      "whisper": "Der Export lässt ausgeblendete Zeilen weg."
+      "whisper": "Der Export lässt ausgeblendete Zeilen weg. Gelöschte Buchungen sind enthalten, mit dem Status voided."
     },
     "void": {
       "title": "Buchung löschen?",
