@@ -116,6 +116,7 @@
 //! in-app).
 
 mod amount;
+mod currency_marker;
 mod error;
 mod export;
 mod parse;
@@ -321,6 +322,10 @@ pub struct CsvImportPreview {
     /// them. No row of such a file has been read, so [`Self::rows`] is empty
     /// and the user has to map the columns before anything can be previewed.
     pub missing_columns: Vec<CsvRequiredColumn>,
+    /// The first currency marker in the amount cells that is not the book's
+    /// currency (`HUF`, `£`, `Ft`), as written. The UI warns that the file
+    /// may be in another currency; the rows are still previewed.
+    pub other_currency: Option<String>,
     /// Data rows in file order.
     pub rows: Vec<CsvImportPreviewRow>,
 }

@@ -892,6 +892,7 @@
       },
       "continuePreview": "Weiter zur Vorschau",
       "previewTitle": "Importvorschau",
+      "otherCurrency": "Einige Beträge sind mit „{marker}“ gekennzeichnet, dieses Buch führt aber {currency}. Prüfen Sie vor dem Buchen, ob die Datei in {currency} ist.",
       "previewSubtitle": "{rows} · {dupes} · es wird nichts gebucht, bevor Sie bestätigen",
       "rowOne": "{n} Zeile",
       "rowMany": "{n} Zeilen",

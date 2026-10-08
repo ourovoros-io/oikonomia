@@ -328,6 +328,7 @@
   "tx.csv.mapNeeded.dateAndAmount": "The date and amount columns could not be found automatically, so choose them below.",
   "tx.csv.continuePreview": "Continue to preview",
   "tx.csv.previewTitle": "Preview import",
+  "tx.csv.otherCurrency": "Some amounts are marked “{marker}”, but this book is in {currency}. Check that the file is in {currency} before you post.",
   "tx.csv.previewSubtitle": "{rows} · {dupes} · nothing posts until you confirm",
   "tx.csv.rowOne": "{n} row",
   "tx.csv.rowMany": "{n} rows",

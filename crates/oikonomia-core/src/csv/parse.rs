@@ -163,6 +163,7 @@ use csv::{ReaderBuilder, StringRecord, Trim};
 use time::{Date, Month};
 
 use crate::csv::amount::parse_book_amount;
+use crate::csv::currency_marker::first_other_currency;
 use crate::csv::export::{CREDIT_MINOR_COLUMN, DEBIT_MINOR_COLUMN};
 use crate::csv::{
     CsvColumnMapping, CsvError, CsvMappingProblem, CsvRequiredColumn, CsvRowOutcome, MAX_CSV_BYTES,
@@ -189,6 +190,10 @@ pub struct ParsedBankCsv {
     /// Not empty only when the caller gave no mapping and the headers do not
     /// name them; `rows` is then empty, because no row was read.
     pub missing_columns: Vec<CsvRequiredColumn>,
+    /// The first currency marker in the amount cells that is not the book's
+    /// currency (`HUF`, `£`, `Ft`), as written; `None` when the cells carry
+    /// none. A hint that the file may be in another currency, not a refusal.
+    pub other_currency: Option<String>,
     /// Data rows in file order.
     pub rows: Vec<CsvRowOutcome>,
 }
@@ -326,23 +331,44 @@ pub fn parse_bank_csv(
     let records: Vec<csv::Result<StringRecord>> = reader.records().collect();
 
     let detected = auto_map_headers(&headers, &records);
-    let (missing_columns, rows) = match mapping {
-        Some(user) => {
-            let columns = resolve_user_mapping(&headers, user)?;
-            (Vec::new(), parse_records(records, columns, currency))
+    let (missing_columns, columns) = match mapping {
+        Some(user) => (Vec::new(), Some(resolve_user_mapping(&headers, user)?)),
+        None => {
+            let missing = missing_required_columns(detected);
+            let columns = missing.is_empty().then_some(detected);
+            (missing, columns)
         }
-        None => match missing_required_columns(detected) {
-            missing if missing.is_empty() => (missing, parse_records(records, detected, currency)),
-            missing => (missing, Vec::new()),
-        },
     };
+    let other_currency = columns.and_then(|columns| other_currency(&records, columns, currency));
+    let rows = columns.map_or_else(Vec::new, |columns| {
+        parse_records(records, columns, currency)
+    });
 
     Ok(ParsedBankCsv {
         headers: headers.iter().map(str::to_owned).collect(),
         detected_mapping: mapping_from_headers(&headers, detected),
         missing_columns,
+        other_currency,
         rows,
     })
+}
+
+/// The first currency marker in the amount, debit and credit cells that is
+/// not the book's, as written.
+fn other_currency(
+    records: &[csv::Result<StringRecord>],
+    columns: ColumnMap,
+    book: CurrencyCode,
+) -> Option<String> {
+    let indexes: Vec<usize> = [columns.amount, columns.debit, columns.credit]
+        .into_iter()
+        .flatten()
+        .collect();
+    let cells = records
+        .iter()
+        .filter_map(|record| record.as_ref().ok())
+        .flat_map(|record| indexes.iter().map(|index| record_cell(record, *index)));
+    first_other_currency(cells, book)
 }
 
 /// Returns whether `headers` are those of [`export_journal_csv`]: the two
@@ -1452,6 +1478,37 @@ mod tests {
 
         assert_eq!(detected, Error::Csv(CsvError::JournalExport));
         assert_eq!(mapped, Error::Csv(CsvError::JournalExport));
+    }
+
+    #[test]
+    fn a_statement_with_another_currencys_marker_is_reported_beside_its_rows() {
+        let csv = "Date;Description;Amount\n05.03.2026;Rent;-485.000,00\n\
+            06.03.2026;Shop;-3 990 HUF\n";
+
+        let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+        assert_eq!(parsed.other_currency.as_deref(), Some("HUF"));
+        assert_eq!(parsed.rows.len(), 2);
+    }
+
+    #[test]
+    fn plain_amounts_and_the_books_own_marker_report_no_other_currency() {
+        let csv = "Date,Description,Debit,Credit\n2026-03-05,Rent,800.00 EUR,\n\
+            2026-03-06,Pay,,€2500.00\n";
+
+        let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+        assert_eq!(parsed.other_currency, None);
+    }
+
+    #[test]
+    fn a_marker_in_a_cell_that_is_not_an_amount_is_not_reported() {
+        let csv = "Date,Description,Amount\n2026-03-05,Pay USD invoice,-8.00\n";
+
+        assert_eq!(
+            parse_bank_csv(csv, eur(), None).unwrap().other_currency,
+            None
+        );
     }
 
     #[test]

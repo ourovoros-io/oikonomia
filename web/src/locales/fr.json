@@ -892,6 +892,7 @@
       },
       "continuePreview": "Continuer vers l’aperçu",
       "previewTitle": "Aperçu de l’import",
+      "otherCurrency": "Certains montants portent la mention « {marker} », alors que ce livre est en {currency}. Vérifiez que le fichier est en {currency} avant de comptabiliser.",
       "previewSubtitle": "{rows} · {dupes} · rien n’est enregistré avant votre confirmation",
       "rowOne": "{n} ligne",
       "rowMany": "{n} lignes",

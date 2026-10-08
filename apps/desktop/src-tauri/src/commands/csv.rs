@@ -288,6 +288,7 @@ mod ipc_tests {
                     "direction": null,
                 },
                 "missing_columns": ["date", "amount"],
+                "other_currency": null,
                 "rows": [],
             })
         );

@@ -128,6 +128,18 @@ export function CsvPreviewModal({
       maxWidth="max-w-4xl"
       onClose={onClose}
     >
+      {preview?.other_currency ? (
+        <p
+          role="alert"
+          className="mb-4 rounded-xl border border-[var(--color-warning)] px-3 py-2 text-sm text-[var(--color-warning)]"
+        >
+          {t('tx.csv.otherCurrency', {
+            marker: preview.other_currency,
+            currency: currency.code,
+          })}
+        </p>
+      ) : null}
+
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <Field label={t('tx.csv.wallet')} className="min-w-[12rem] flex-1">
           <Select
