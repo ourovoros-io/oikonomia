@@ -82,7 +82,7 @@
         "confirm": "Installer et redémarrer"
       },
       "availableManually": {
-        "note": "Cette copie a été installée à partir d’un paquet système ; elle ne peut donc pas se mettre à jour elle-même. Téléchargez le nouveau paquet depuis la page des versions d’Oikonomia et installez-le de la même façon."
+        "note": "Cette copie a été installée à partir d’un paquet système ; elle ne peut donc pas se mettre à jour elle-même. Téléchargez le nouveau paquet depuis la page des versions d’Oikonomia et installez-le de la même façon."
       },
       "failed": {
         "title": "Vérification impossible",
@@ -211,7 +211,7 @@
       "error": "Impossible de changer la langue."
     },
     "prefs": {
-      "unreadable": "Le fichier des préférences est endommagé : la langue et les choix de la Saisie rapide ne peuvent pas être enregistrés. Rien n’est modifié dans votre coffre. Vous pouvez réinitialiser les préférences dans les Paramètres.",
+      "unreadable": "Le fichier des préférences est endommagé : la langue et les choix de la Saisie rapide ne peuvent pas être enregistrés. Rien n’est modifié dans votre coffre. Vous pouvez réinitialiser les préférences dans Paramètres.",
       "reset": "Réinitialiser les préférences",
       "resetDone": "Préférences réinitialisées. Le fichier endommagé a été conservé à côté du coffre sous le nom ui-prefs.damaged.json.",
       "resetFailed": "Impossible de réinitialiser les préférences."
@@ -321,19 +321,19 @@
       "archiveAria": "Archiver {name}",
       "archiveTitle": "Archiver",
       "archiveConfirm": {
-        "title": "Archiver l’entité ?",
-        "body": "« {name} » passe en lecture seule et quitte la liste des livres. Rien n’est supprimé, et vous pouvez le restaurer ici à tout moment."
+        "title": "Archiver le livre ?",
+        "body": "« {name} » passe en lecture seule et disparaît de la liste des livres. Rien n’est supprimé, et vous pouvez le restaurer ici à tout moment."
       },
-      "archiveError": "Impossible d’archiver l’entité",
+      "archiveError": "Impossible d’archiver le livre.",
       "archived": {
         "title": "Archivés",
         "hint": "Les livres archivés sont conservés tels quels et ne peuvent être ni ouverts ni modifiés. Restaurez-en un pour l’utiliser de nouveau.",
-        "loadError": "Impossible de charger les livres archivés"
+        "loadError": "Impossible de charger les livres archivés."
       },
       "restore": "Restaurer",
       "restoreAria": "Restaurer {name}",
-      "restoreError": "Impossible de restaurer l’entité",
-      "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez ce livre avant de restaurer celui-ci."
+      "restoreError": "Impossible de restaurer le livre.",
+      "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez cet autre livre avant de restaurer celui-ci."
     },
     "entityCreate": {
       "title": "Nouvelle entité",
@@ -498,7 +498,7 @@
       "savings": { "label": "Taux d’épargne", "hint": "Net ÷ revenus" },
       "spend": { "label": "Taux de dépense", "hint": "Sorties ÷ entrées" },
       "previous": {
-        "label": "Net vs période précédente",
+        "label": "Net par rapport à la période précédente",
         "hint": {
           "month": "Par rapport au mois dernier",
           "quarter": "Par rapport au trimestre précédent",
@@ -703,7 +703,7 @@
       "title": "Dépenses du mois",
       "meta": "Catégories de dépenses · montants en {currency} · Les lignes masquées sont omises",
       "totalExpenses": "Total des dépenses",
-      "sliceNote": "Les 6 plus grandes catégories ; le reste va dans Autres…",
+      "sliceNote": "Les 6 plus grandes catégories ; le reste va dans Autres…",
       "emptyTitle": "Aucune dépense sur cette période",
       "emptyBody": "Rien à tracer pour {period}. Changez les dates du rapport, ou ajoutez des dépenses dans Mouvements.",
       "footerPrivacy": "Vos livres ne quittent jamais cet ordinateur",
@@ -1022,7 +1022,7 @@
     "csvMissingHeader": "Ce fichier CSV n’a pas de ligne d’en-tête. La première ligne doit nommer les colonnes.",
     "csvMissingColumn": "Ce CSV du journal n’a pas de colonne « {column} ». Utilisez un fichier exporté depuis Oikonomia avec toutes ses colonnes.",
     "csvInvalidStatus": "« {value} » n’est pas un état du journal. L’état doit être posted ou voided.",
-    "csvInvalidInteger": "« {value} » n’est pas un nombre entier. Un CSV du journal contient les montants en unités mineures entières, par exemple 1250 pour 12,50.",
+    "csvInvalidInteger": "« {value} » n’est pas un nombre entier. Un CSV du journal contient les montants en nombre entier d’unités divisionnaires (centimes, par exemple), soit 1250 pour 12,50.",
     "csvInvalidMapping": "Ces choix de colonnes n’ont pas pu être utilisés. Vérifiez les colonnes, puis réessayez.",
     "csvMapping": {
       "missingDate": "Choisissez la colonne qui contient la date.",

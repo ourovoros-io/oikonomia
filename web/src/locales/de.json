@@ -324,16 +324,16 @@
         "title": "Buch archivieren?",
         "body": "„{name}“ wird schreibgeschützt und verschwindet aus der Liste der Bücher. Nichts wird gelöscht, und Sie können es hier jederzeit wiederherstellen."
       },
-      "archiveError": "Das Buch konnte nicht archiviert werden",
+      "archiveError": "Das Buch konnte nicht archiviert werden.",
       "archived": {
         "title": "Archiviert",
-        "hint": "Archivierte Bücher bleiben unverändert erhalten und lassen sich weder öffnen noch ändern. Stellen Sie eines wieder her, um es wieder zu nutzen.",
-        "loadError": "Die archivierten Bücher konnten nicht geladen werden"
+        "hint": "Archivierte Bücher bleiben unverändert erhalten und lassen sich weder öffnen noch ändern. Stellen Sie eines wieder her, um es erneut zu nutzen.",
+        "loadError": "Die archivierten Bücher konnten nicht geladen werden."
       },
       "restore": "Wiederherstellen",
       "restoreAria": "{name} wiederherstellen",
-      "restoreError": "Das Buch konnte nicht wiederhergestellt werden",
-      "restoreNameTaken": "Ein anderes Buch heißt inzwischen „{name}“. Archivieren oder löschen Sie jenes Buch, bevor Sie dieses wiederherstellen."
+      "restoreError": "Das Buch konnte nicht wiederhergestellt werden.",
+      "restoreNameTaken": "Ein anderes Buch heißt inzwischen „{name}“. Archivieren oder löschen Sie das andere Buch, bevor Sie dieses wiederherstellen."
     },
     "entityCreate": {
       "title": "Neues Buch",
@@ -705,7 +705,7 @@
       "totalExpenses": "Summe Ausgaben",
       "sliceNote": "Die 6 größten Kategorien; der Rest in Sonstiges…",
       "emptyTitle": "Keine Ausgaben in diesem Zeitraum",
-      "emptyBody": "Für {period} gibt es nichts zu zeigen. Ändern Sie den Zeitraum oder erfassen Sie Ausgaben unter Bewegungen.",
+      "emptyBody": "Für {period} gibt es nichts zu zeigen. Ändern Sie den Zeitraum oder erfassen Sie Ausgaben unter Buchungen.",
       "footerPrivacy": "Ihre Bücher verlassen diesen Computer nie",
       "footerLocal": "Oikonomia · lokaler Bericht",
       "other": "Sonstiges ({n} Kategorien)",
@@ -758,7 +758,7 @@
   "tx": {
     "recurring": "Wiederkehrend",
     "header": {
-      "title": "Bewegungen"
+      "title": "Buchungen"
     },
     "search": {
       "label": "Suchen",
@@ -853,7 +853,7 @@
       }
     },
     "empty": {
-      "title": "Noch keine Bewegungen",
+      "title": "Noch keine Buchungen",
       "body": "Mit Ausgabe erfassen Sie Zahlungen, mit Einnahme das, was reinkommt, und mit Rechnung Strom, Nebenkosten oder offene Rechnungen.",
       "filtered": {
         "title": "Keine passenden Buchungen",
@@ -868,7 +868,7 @@
       "export": "CSV exportieren",
       "exportTitle": "Unverschlüsseltes Buchhaltungs-CSV",
       "mapTitle": "CSV-Spalten zuordnen",
-      "mapDescription": "Ordnen Sie Ihrer Bankdatei Datum und Betrag (oder Soll/Haben) zu. Beschreibung und Referenz sind freiwillig.",
+      "mapDescription": "Ordnen Sie den Spalten Ihrer Bankdatei Datum und Betrag (oder Soll/Haben) zu. Beschreibung und Referenz sind optional.",
       "field": {
         "date": "Datum",
         "amount": "Betrag",
@@ -878,8 +878,8 @@
         "referenceOptional": "Referenz (optional)",
         "debit": "Soll",
         "credit": "Haben",
-        "direction": "Richtung",
-        "directionOptional": "Richtung (optional)"
+        "direction": "Soll/Haben-Kennzeichen",
+        "directionOptional": "Soll/Haben-Kennzeichen (optional)"
       },
       "sourceAria": "Quellspalte {label}",
       "targetAria": "Zielfeld {label}",
@@ -1020,9 +1020,9 @@
     "csvNotUtf8": "Diese CSV-Datei ist kein UTF-8-Text. Speichern oder exportieren Sie sie erneut als CSV mit UTF-8-Kodierung.",
     "csvTooLarge": "Diese CSV-Datei ist größer als 8 MB. Exportieren Sie einen kürzeren Zeitraum oder teilen Sie die Datei auf.",
     "csvMissingHeader": "Diese CSV-Datei hat keine Kopfzeile. Die erste Zeile muss die Spalten benennen.",
-    "csvMissingColumn": "Diese Journal-CSV hat keine Spalte „{column}“. Verwenden Sie eine aus Oikonomia exportierte Datei mit allen ihren Spalten.",
+    "csvMissingColumn": "Diese Journal-CSV-Datei hat keine Spalte „{column}“. Verwenden Sie eine aus Oikonomia exportierte Datei mit allen ihren Spalten.",
     "csvInvalidStatus": "„{value}“ ist kein Journalstatus. Der Status muss posted oder voided sein.",
-    "csvInvalidInteger": "„{value}“ ist keine ganze Zahl. Eine Journal-CSV enthält Beträge als ganze Untereinheiten, zum Beispiel 1250 für 12,50.",
+    "csvInvalidInteger": "„{value}“ ist keine ganze Zahl. Eine Journal-CSV-Datei enthält Beträge als ganze Zahlen in der kleinsten Währungseinheit (etwa Cent), zum Beispiel 1250 für 12,50.",
     "csvInvalidMapping": "Diese Spaltenauswahl konnte nicht verwendet werden. Prüfen Sie die Spalten und versuchen Sie es erneut.",
     "csvMapping": {
       "missingDate": "Wählen Sie die Spalte mit dem Datum.",

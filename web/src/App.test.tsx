@@ -384,7 +384,7 @@ describe('App after archiving the current book', () => {
     await userEvent.click(screen.getByRole('button', { name: /^entities/i }))
     await userEvent.click(screen.getByRole('button', { name: `Archive ${name}` }))
     await userEvent.click(
-      within(screen.getByRole('dialog', { name: 'Archive entity?' })).getByRole('button', {
+      within(screen.getByRole('dialog', { name: 'Archive book?' })).getByRole('button', {
         name: 'Archive',
       }),
     )
