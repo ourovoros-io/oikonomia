@@ -19,6 +19,7 @@ import {
   User,
 } from 'lucide-react'
 import { DonationAddresses } from '../components/DonationAddresses'
+import { SupportMailFallback } from '../components/SupportMailFallback'
 import { api, type ChartTemplate, type DonationAddress, type Entity } from '../lib/api'
 import {
   vaultBackup,
@@ -123,6 +124,8 @@ export function SettingsPage({
   const [error, setError] = useState<string | null>(null)
   const errorBannerId = useId()
   const [notice, setNotice] = useState<string | null>(null)
+  /** Set once "Email support" was clicked: the opener cannot confirm a mail app opened. */
+  const [mailTried, setMailTried] = useState(false)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState('EUR')
   const [template, setTemplate] = useState<ChartTemplate>('personal')
@@ -397,6 +400,7 @@ export function SettingsPage({
 
   async function onEmailSupport() {
     if (!appInfo) return
+    setMailTried(true)
     try {
       await api.openSupportEmail()
     } catch {
@@ -582,6 +586,7 @@ export function SettingsPage({
               <Mail className="size-3.5" />
               {t('settings.support.contact')}
             </Button>
+            {mailTried ? <SupportMailFallback email={appInfo.support_email} /> : null}
           </div>
         </CollapsibleSection>
       ) : null}

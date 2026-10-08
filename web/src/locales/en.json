@@ -99,6 +99,8 @@
   "settings.support.body": "Write to {email} with the app version ({version}) and what you were doing when the problem appeared. Never attach your vault or backup file.",
   "settings.support.contact": "Email support",
   "settings.support.openFailed": "Could not open your mail app. Write to {email} instead.",
+  "settings.support.noMailApp": "No mail app opened? Write to",
+  "settings.support.copy": "Copy address",
   "settings.donate.title": "Donate",
   "settings.donate.description": "Oikonomia is free and open source. Donations are optional.",
   "settings.donate.warning": "Check the coin and network before sending. Crypto transfers cannot be reversed.",
