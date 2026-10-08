@@ -40,7 +40,7 @@ import { DateInput } from '../components/DateInput'
 import { DocumentDropZone } from '../components/DocumentDropZone'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { EntryDetailModal } from '../components/EntryDetailModal'
-import { HiddenBadge } from '../components/hiddenUi'
+import { HiddenBadge, HideFromExportControl } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
 import { TopBar } from '../components/TopBar'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
@@ -83,10 +83,20 @@ function accountsOf(accounts: Account[], types: Account['account_type'][]): Acco
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
 
+type ListedKind = 'expense' | 'income' | 'bill' | 'transfer' | 'other'
+
+/**
+ * The kind a listed entry is shown as. The journal keeps no kind, so a bill
+ * is recognised by the bills payable account on one of its lines: an unpaid
+ * bill and the payment of one. A bill paid at once has the lines of an
+ * expense and is listed as one.
+ */
 function inferKind(
   view: PostedEntryView,
   accountMap: Map<string, Account>,
-): 'expense' | 'income' | 'transfer' | 'other' {
+  billsPayableId: string | null,
+): ListedKind {
+  if (billsPayableId && view.lines.some((l) => l.account_id === billsPayableId)) return 'bill'
   const types = view.lines.map((l) => accountMap.get(l.account_id)?.account_type)
   if (types.includes('expense')) return 'expense'
   if (types.includes('income')) return 'income'
@@ -111,12 +121,16 @@ export function TransactionsPage({
 
   const [kind, setKind] = useState<EntryKind>('expense')
   const [billStatus, setBillStatus] = useState<BillStatus>('paid')
+  // An income invoiced and not yet received, owed on the receivable account.
+  const [incomeUnpaid, setIncomeUnpaid] = useState(false)
+  // Whether the new entry is left out of exports (New entry only; an edit keeps the entry's flag).
+  const [hideNew, setHideNew] = useState(false)
   const [date, setDate] = useState(todayISO())
   const [description, setDescription] = useState('')
   const [reference, setReference] = useState('')
   const [categoryId, setCategoryId] = useState('') // expense or income account
   const [walletId, setWalletId] = useState('') // bank / cash / card
-  const [payableId, setPayableId] = useState('') // bills payable / AP
+  const [payableId, setPayableId] = useState('') // bills payable / AP, or the receivable of an unpaid income
   const [fromId, setFromId] = useState('') // transfer
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
@@ -198,6 +212,7 @@ export function TransactionsPage({
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
   const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
   const payableAccounts = useMemo(() => accountsOf(accounts, ['liability']), [accounts])
+  const assetAccounts = useMemo(() => accountsOf(accounts, ['asset']), [accounts])
 
   function applyKindDefaults(nextKind: EntryKind, roles: AccountDefaults | null) {
     const picked = kindDefaultAccounts(nextKind, roles)
@@ -213,6 +228,10 @@ export function TransactionsPage({
     if (nextKind === 'bill') {
       setPayableId(picked.payableId)
       setBillStatus('paid')
+    }
+    if (nextKind === 'income') {
+      setPayableId(picked.payableId)
+      setIncomeUnpaid(false)
     }
   }
 
@@ -395,6 +414,8 @@ export function TransactionsPage({
   function resetDraft() {
     setKind('expense')
     setBillStatus('paid')
+    setIncomeUnpaid(false)
+    setHideNew(false)
     setDate(todayISO())
     setDescription('')
     setReference('')
@@ -481,6 +502,7 @@ export function TransactionsPage({
     } else if (s.kind === 'income') {
       setKind('income')
       applyKindDefaults('income', defaults)
+      setIncomeUnpaid(s.bill_unpaid)
     } else {
       setKind('expense')
       applyKindDefaults('expense', defaults)
@@ -498,6 +520,44 @@ export function TransactionsPage({
     if (s.category_account_id) setCategoryId(s.category_account_id)
     if (s.wallet_account_id) setWalletId(s.wallet_account_id)
     if (s.payable_account_id) setPayableId(s.payable_account_id)
+  }
+
+  /** Posts a new entry, with the document the form is reviewing when there is one. */
+  async function postNew(input: SimpleEntryInput): Promise<PostedEntryView> {
+    if (pendingDoc?.kind === 'file') {
+      const dataBase64 = await fileToBase64(pendingDoc.file)
+      return api.entryPostSimpleWithDocument(
+        input,
+        {
+          filename: pendingDoc.file.name,
+          mimeType: pendingDoc.file.type || mimeFromName(pendingDoc.file.name),
+          dataBase64,
+        },
+        pendingAnalysis ?? undefined,
+      )
+    }
+    if (pendingDoc?.kind === 'path') {
+      return api.entryPostSimpleWithDocumentPath(input, pendingDoc.path, pendingAnalysis ?? undefined)
+    }
+    return api.entryPostSimple(input)
+  }
+
+  /**
+   * Hides an entry that is already posted. A failure is shown, not thrown:
+   * the entry is in the books, and failing the save would invite a second one.
+   */
+  async function hidePosted(entryId: string) {
+    try {
+      await api.entrySetHidden(entryId, true)
+    } catch (err) {
+      setError(commandErrorMessage(err))
+    }
+  }
+
+  /** What the form tells Rust about payment state; only a bill or an unpaid income has one. */
+  function postedBillStatus(): BillStatus | null {
+    if (kind === 'bill') return billStatus
+    return kind === 'income' && incomeUnpaid ? 'unpaid' : null
   }
 
   async function onPost(ev: FormEvent) {
@@ -526,7 +586,7 @@ export function TransactionsPage({
       const input = {
         entity_id: entity.id,
         kind,
-        bill_status: kind === 'bill' ? billStatus : null,
+        bill_status: postedBillStatus(),
         entry_date: date,
         description: description.trim(),
         reference: reference.trim() || null,
@@ -540,21 +600,9 @@ export function TransactionsPage({
 
       if (editId) {
         await api.entryReplaceSimple(editId, input)
-      } else if (pendingDoc?.kind === 'file') {
-        const dataBase64 = await fileToBase64(pendingDoc.file)
-        await api.entryPostSimpleWithDocument(
-          input,
-          {
-            filename: pendingDoc.file.name,
-            mimeType: pendingDoc.file.type || mimeFromName(pendingDoc.file.name),
-            dataBase64,
-          },
-          pendingAnalysis ?? undefined,
-        )
-      } else if (pendingDoc?.kind === 'path') {
-        await api.entryPostSimpleWithDocumentPath(input, pendingDoc.path, pendingAnalysis ?? undefined)
       } else {
-        await api.entryPostSimple(input)
+        const posted = await postNew(input)
+        if (hideNew) await hidePosted(posted.entry.id)
       }
       resetDraft()
       setShowForm(false)
@@ -605,7 +653,14 @@ export function TransactionsPage({
 
   if (subview === 'recurring') {
     return (
-      <RecurringPage entity={entity} onBack={() => setSubview('journal')} />
+      <RecurringPage
+        entity={entity}
+        onBack={() => {
+          setSubview('journal')
+          // A template posted over there is an entry here.
+          void reload().catch((err) => setError(commandErrorMessage(err)))
+        }}
+      />
     )
   }
 
@@ -661,10 +716,27 @@ export function TransactionsPage({
 
     const debitType = accountMap.get(debit.account_id)?.account_type
     const creditType = accountMap.get(credit.account_id)?.account_type
-    if (debitType === 'expense') {
+    const billsPayableId = defaults?.bills_payable ?? null
+    if (debitType === 'expense' && credit.account_id === billsPayableId) {
+      setKind('bill')
+      setBillStatus('unpaid')
+      setCategoryId(debit.account_id)
+      setPayableId(credit.account_id)
+    } else if (debit.account_id === billsPayableId) {
+      setKind('bill')
+      setBillStatus('pay_existing')
+      setPayableId(debit.account_id)
+      setWalletId(credit.account_id)
+    } else if (debitType === 'expense') {
       setKind('expense')
       setCategoryId(debit.account_id)
       setWalletId(credit.account_id)
+    } else if (creditType === 'income' && debit.account_id === (defaults?.receivable ?? null)) {
+      // Lines alone cannot tell a receivable from an asset, so the seeded one stands for it.
+      setKind('income')
+      setIncomeUnpaid(true)
+      setCategoryId(credit.account_id)
+      setPayableId(debit.account_id)
     } else if (creditType === 'income') {
       setKind('income')
       setCategoryId(credit.account_id)
@@ -968,17 +1040,36 @@ export function TransactionsPage({
                   ))}
                 </Select>
               </Field>
-              <Field label={t('tx.receivedInto')}>
-                <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
-                  {walletAccounts
-                    .filter((a) => a.account_type === 'asset')
-                    .map((a) => (
+              <Field label={t('tx.incomeStatus')} className="sm:col-span-2 lg:col-span-3">
+                <Select
+                  value={incomeUnpaid ? 'unpaid' : 'received'}
+                  onChange={(e) => setIncomeUnpaid(e.target.value === 'unpaid')}
+                >
+                  <option value="received">{t('tx.incomeReceivedNow')}</option>
+                  <option value="unpaid">{t('tx.incomeUnpaid')}</option>
+                </Select>
+              </Field>
+              {incomeUnpaid ? (
+                <Field label={t('tx.receivableAccount')}>
+                  <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
+                    {assetAccounts.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.code} · {a.name}
                       </option>
                     ))}
-                </Select>
-              </Field>
+                  </Select>
+                </Field>
+              ) : (
+                <Field label={t('tx.receivedInto')}>
+                  <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
+                    {assetAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} · {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
             </>
           ) : null}
 
@@ -1065,6 +1156,12 @@ export function TransactionsPage({
             </>
           ) : null}
 
+          {editId ? null : (
+            <div className="sm:col-span-2 lg:col-span-3">
+              <HideFromExportControl checked={hideNew} onChange={setHideNew} disabled={busy} />
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2 lg:col-span-3">
             <Button
               type="button"
@@ -1107,11 +1204,19 @@ export function TransactionsPage({
       />
 
       {visibleEntries.length === 0 && filtersActive ? (
-        <EmptyState
-          icon={<FileText className="size-5" />}
-          title={t('tx.noMatchTitle')}
-          body={t('tx.noMatchBody')}
-        />
+        // The header buttons stay: Recurring, Import and Export do not depend on the search.
+        <Panel
+          title={t('tx.allEntries')}
+          description={`${t('tx.list.meta.counts', { posted: postedCount, hidden: hiddenCount })} · ${ccy}`}
+          whisper={t('tx.export.whisper')}
+          actions={csvActions}
+        >
+          <EmptyState
+            icon={<FileText className="size-5" />}
+            title={t('tx.noMatchTitle')}
+            body={t('tx.noMatchBody')}
+          />
+        </Panel>
       ) : visibleEntries.length === 0 ? (
         <EmptyState
           icon={<ArrowLeftRight className="size-5" />}
@@ -1129,7 +1234,7 @@ export function TransactionsPage({
           <ul className="divide-y divide-[var(--color-border)]">
             {visibleEntries.map((view) => {
               const amountMinor = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
-              const kindLabel = inferKind(view, accountMap)
+              const kindLabel = inferKind(view, accountMap, defaults?.bills_payable ?? null)
               const parts = view.lines
                 .map((l) => {
                   const acc = accountMap.get(l.account_id)
@@ -1137,14 +1242,10 @@ export function TransactionsPage({
                   return `${side} ${acc?.name ?? '?'}`
                 })
                 .join('  ')
-              const signed =
-                kindLabel === 'expense'
-                  ? -amountMinor
-                  : kindLabel === 'income'
-                    ? amountMinor
-                    : amountMinor
-              const tone =
-                kindLabel === 'income' ? 'money-in' : kindLabel === 'expense' ? 'money-out' : 'muted'
+              // A bill is money going out whether it is owed or being paid.
+              const moneyOut = kindLabel === 'expense' || kindLabel === 'bill'
+              const signed = moneyOut ? -amountMinor : amountMinor
+              const tone = kindLabel === 'income' ? 'money-in' : moneyOut ? 'money-out' : 'muted'
 
               return (
                 <li
@@ -1155,6 +1256,8 @@ export function TransactionsPage({
                   <IconBadge tone={tone}>
                     {kindLabel === 'income' ? (
                       <ArrowDownLeft className="size-4" />
+                    ) : kindLabel === 'bill' ? (
+                      <FileText className="size-4" />
                     ) : kindLabel === 'expense' ? (
                       <ArrowUpRight className="size-4" />
                     ) : (
@@ -1191,9 +1294,9 @@ export function TransactionsPage({
                   {/* Amount and its delete slot sit as one group, 8px apart. */}
                   <span className="flex shrink-0 items-center gap-2">
                     <span className="flex min-w-32 justify-end">
-                      <AmountPill tone={kindLabel === 'income' ? 'in' : kindLabel === 'expense' ? 'out' : 'neutral'}>
+                      <AmountPill tone={kindLabel === 'income' ? 'in' : moneyOut ? 'out' : 'neutral'}>
                         {formatMoney(signed, currency, undefined, {
-                          signed: kindLabel === 'expense' || kindLabel === 'income',
+                          signed: moneyOut || kindLabel === 'income',
                         })}
                       </AmountPill>
                     </span>

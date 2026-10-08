@@ -277,6 +277,10 @@
   "tx.billStatus": "Bill status",
   "tx.billPaidNow": "Paid now (from bank/card)",
   "tx.billUnpaid": "Unpaid — I owe this (bills payable)",
+  "tx.incomeStatus": "Income status",
+  "tx.incomeReceivedNow": "Received now",
+  "tx.incomeUnpaid": "Unpaid — owed to me (receivable)",
+  "tx.receivableAccount": "Receivable account",
   "tx.billPayExisting": "Pay an existing unpaid bill",
   "tx.billCategory": "Bill category",
   "tx.payFrom": "Pay from",
@@ -706,6 +710,7 @@
   "error.role.income": "Income type",
   "error.role.bill_category": "Bill category",
   "error.role.bills_payable": "Bills payable account",
+  "error.role.receivable": "Receivable account",
   "error.role.transfer_source": "Transfer from",
   "error.role.transfer_destination": "Transfer to"
 }

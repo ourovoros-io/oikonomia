@@ -932,7 +932,11 @@
       },
       "duplicate": "Möglicherweise doppelt",
       "postSelected": "{n} ausgewählte buchen"
-    }
+    },
+    "incomeStatus": "Status der Einnahme",
+    "incomeReceivedNow": "Jetzt erhalten",
+    "incomeUnpaid": "Offen — mir geschuldet (Forderung)",
+    "receivableAccount": "Forderungskonto"
   },
   "recurring": {
     "title": "Wiederkehrend",
@@ -1079,7 +1083,8 @@
       "bill_category": "Kategorie der Rechnung",
       "bills_payable": "Konto für offene Rechnungen",
       "transfer_source": "Umbuchung von",
-      "transfer_destination": "Umbuchung auf"
+      "transfer_destination": "Umbuchung auf",
+      "receivable": "Forderungskonto"
     }
   },
   "analyze": {
