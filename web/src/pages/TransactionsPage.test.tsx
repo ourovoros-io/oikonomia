@@ -311,6 +311,20 @@ describe('TransactionsPage entry kind colours', () => {
   })
 })
 
+describe('TransactionsPage row meta', () => {
+  test('a row shows its reference beside the kind', async () => {
+    const withReference = {
+      ...postedEntry,
+      entry: { ...postedEntry.entry, reference: 'R-1' },
+    }
+    vi.mocked(api.entryList).mockReset().mockResolvedValue([withReference])
+    await renderReady()
+
+    const meta = (await screen.findByText('Alpha supermarket')).closest('li')
+    expect(meta).toHaveTextContent('Ref R-1')
+  })
+})
+
 describe('TransactionsPage CSV toolbar', () => {
   test('the list header carries Recurring, Import CSV and Export CSV; New Entry sits in the top bar', async () => {
     await renderReady()

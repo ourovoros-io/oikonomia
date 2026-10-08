@@ -1169,6 +1169,9 @@ export function TransactionsPage({
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       <span>{t(`kind.${kindLabel}`)}</span>
+                      {view.entry.reference ? (
+                        <span>{t('entry.ref', { reference: view.entry.reference })}</span>
+                      ) : null}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       {parts}
                     </div>
