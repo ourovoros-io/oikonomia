@@ -664,15 +664,15 @@
       "aria": "Fixer le solde de {name}",
       "saved": "Solde de {name} fixé à {amount}.",
       "owedLabel": "Montant dû ({ccy})",
-      "owedToday": "Montant dû aujourd'hui :",
-      "owedDescription": "Indiquez le montant que vous devez sur ce compte ; l'écart est comptabilisé face aux Soldes d'ouverture.",
-      "owedHelp": "Saisissez ce que vous devez comme nombre positif : 350 pour une carte avec 350 à payer. Un nombre négatif signifie que le compte est en votre faveur.",
-      "owedNegative": "Un montant négatif signifie que ce compte contient de l'argent en votre faveur, pas une dette. Si vous devez de l'argent, saisissez-le comme nombre positif."
+      "owedToday": "Montant dû aujourd’hui :",
+      "owedDescription": "Indiquez le montant que vous devez sur ce compte ; l’écart est comptabilisé face aux Soldes d’ouverture.",
+      "owedHelp": "Saisissez ce que vous devez comme nombre positif : 350 pour une carte avec 350 à payer. Un nombre négatif signifie que le compte est en votre faveur.",
+      "owedNegative": "Un montant négatif signifie que ce compte contient de l’argent en votre faveur, pas une dette. Si vous devez de l’argent, saisissez-le comme nombre positif."
     },
     "deactivate": {
       "aria": "Désactiver le compte",
       "title": "Désactiver",
-      "confirmTitle": "Désactiver {name} ?",
+      "confirmTitle": "Désactiver {name} ?",
       "confirmBody": "Les nouvelles écritures ne peuvent plus utiliser ce compte. Ses écritures et son solde restent dans les livres, et vous pouvez le réactiver à tout moment.",
       "done": "{name} désactivé."
     },
@@ -1012,7 +1012,7 @@
       "cadenceYearly": "Annuel",
       "dayOfWeek": "Jour de la semaine",
       "month": "Mois",
-      "nextDate": "Prochaine date : {date}"
+      "nextDate": "Prochaine date : {date}"
     },
     "delete": {
       "title": "Supprimer le modèle ?",
