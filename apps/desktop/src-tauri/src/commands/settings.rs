@@ -29,8 +29,8 @@ use crate::state::AppState;
 use oikonomia_core::domain::EntityId;
 use oikonomia_core::ledger::{SimpleEntryKind, get_lock_timeout_secs, set_lock_timeout_secs};
 use oikonomia_core::prefs::{
-    LastRoleAccounts, Locale, UiPrefsView, load_ui_prefs, load_ui_prefs_view, remember_quick_add,
-    reset_unreadable_ui_prefs, resolve_locale, store_locale,
+    LastRoleAccounts, Locale, UiPrefsView, load_ui_prefs, load_ui_prefs_view, remember_last_entity,
+    remember_quick_add, reset_unreadable_ui_prefs, resolve_locale, store_locale,
 };
 use tauri::{Manager, Runtime, State};
 
@@ -245,6 +245,32 @@ pub(crate) async fn settings_remember_quick_add<R: Runtime>(
     .await
 }
 
+/// Remembers the book that is open, so the next unlock selects it again.
+///
+/// Works in every vault state. The value goes to the plaintext preferences
+/// file; it is an identifier, with no name among it.
+///
+/// # Errors
+///
+/// Returns the [preferences save errors](self#preferences-save-errors),
+/// `app_state_unavailable` when the application state was never set up, and
+/// `task_failed` when the blocking task panics.
+#[tauri::command]
+pub(crate) async fn settings_remember_last_entity<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    entity_id: EntityId,
+) -> CommandResult<()> {
+    with_prefs_blocking(app, move |_app, state| {
+        // A load-change-save, so it runs under the lock that keeps a
+        // language change from being written over.
+        let _prefs_guard = state.lock_prefs();
+
+        remember_last_entity(state.data_dir(), entity_id)?;
+        Ok(())
+    })
+    .await
+}
+
 /// Runs preferences work on the blocking pool with the shared state.
 ///
 /// The plaintext preferences file is read and written with blocking I/O, and
@@ -288,8 +314,8 @@ where
 #[cfg(not(windows))]
 mod ipc_tests {
     use crate::commands::settings::{
-        settings_get_ui_prefs, settings_remember_quick_add, settings_reset_ui_prefs,
-        with_prefs_blocking,
+        settings_get_ui_prefs, settings_remember_last_entity, settings_remember_quick_add,
+        settings_reset_ui_prefs, with_prefs_blocking,
     };
     use crate::commands::support::ipc_test_support::MockApp;
 
@@ -311,6 +337,7 @@ mod ipc_tests {
             label,
             tauri::generate_handler![
                 settings_remember_quick_add,
+                settings_remember_last_entity,
                 settings_get_ui_prefs,
                 settings_reset_ui_prefs
             ],
@@ -386,6 +413,24 @@ mod ipc_tests {
                 format!("{OTHER_ENTITY}:expense"): first,
             })
         );
+    }
+
+    #[test]
+    fn the_last_book_is_remembered_through_the_ipc_call() {
+        let app = mock_app("remember-last-entity");
+
+        let answer = app
+            .invoke(
+                "settings_remember_last_entity",
+                serde_json::json!({ "entityId": OTHER_ENTITY }),
+            )
+            .unwrap();
+
+        assert_eq!(answer, serde_json::Value::Null);
+        let prefs = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(prefs["last_entity_id"], OTHER_ENTITY);
     }
 
     /// After a failed start the hidden webview still runs and calls the

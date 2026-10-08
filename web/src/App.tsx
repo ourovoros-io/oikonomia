@@ -48,13 +48,27 @@ const NAV = [
 
 type NavId = (typeof NAV)[number]['id']
 
+const BOOK_COLOUR_SLOTS = 8
+
 /**
- * A book's identity colour: the validated categorical palette in order, never
- * cycled, so no two of the first eight books share a colour; any further books
- * fold into the neutral slot, as the charts do.
+ * A book's identity colour, one of the validated categorical palette slots,
+ * derived from the book's id so it does not move when another book is added
+ * or the list is reordered. Two books can share a slot; the name beside the
+ * dot is what tells them apart.
  */
-function bookDotColour(index: number): string {
-  return index < 8 ? `var(--viz-${index + 1})` : 'var(--viz-other)'
+export function bookDotColour(bookId: string): string {
+  let hash = 0
+  for (const char of bookId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
+  return `var(--viz-${(hash % BOOK_COLOUR_SLOTS) + 1})`
+}
+
+/** The book last open, or null when the preferences cannot be read. */
+async function rememberedEntityId(): Promise<string | null> {
+  try {
+    return (await api.getUiPrefs()).last_entity_id
+  } catch {
+    return null
+  }
 }
 
 export default function App() {
@@ -110,13 +124,23 @@ export default function App() {
     [titleSlot, actionsSlot, claimTitle],
   )
 
+  // The book last open comes from the preferences file; it is only a
+  // preference, so a missing or unreadable file falls back to the first book.
   const loadEntities = useCallback(async () => {
     const list = await api.entityList()
+    const remembered = await rememberedEntityId()
     setEntities(list)
     setEntityId((prev) => {
       if (prev && list.some((e) => e.id === prev)) return prev
+      if (remembered && list.some((e) => e.id === remembered)) return remembered
       return list[0]?.id ?? null
     })
+  }, [])
+
+  const selectEntity = useCallback((id: string) => {
+    setEntityId(id)
+    // Losing this write only costs the next unlock its book choice.
+    void api.rememberLastEntity(id).catch(() => undefined)
   }, [])
 
   const refresh = useCallback(async () => {
@@ -227,7 +251,7 @@ export default function App() {
     ) : (
       <TopBarContext.Provider value={topBar}>
         <div className="flex h-full min-h-0 text-[var(--color-fg)]">
-          <aside className="glass-pane my-3 ml-3 flex w-[var(--sidebar-w)] shrink-0 flex-col gap-5 rounded-[20px] px-3 py-4">
+          <aside className="glass-pane my-3 ml-3 flex w-[var(--sidebar-w)] shrink-0 flex-col gap-5 overflow-y-auto rounded-[20px] px-3 py-4 [@media(max-height:700px)]:gap-3">
             <div className="flex items-center gap-3 px-3">
               <Logo className="size-8 shrink-0" />
               <div className="min-w-0 leading-tight">
@@ -248,7 +272,7 @@ export default function App() {
                     onClick={() => setActive(item.id)}
                     aria-current={isActive ? 'page' : undefined}
                     className={cn(
-                      'flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium transition',
+                      'flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium transition [@media(max-height:700px)]:h-8',
                       isActive
                         ? 'bg-[linear-gradient(90deg,rgba(46,230,166,0.2),rgba(55,213,255,0.08))] text-[var(--color-fg)] shadow-[inset_0_0_0_1px_rgba(46,230,166,0.35),0_0_24px_rgba(46,230,166,0.12)]'
                         : 'text-[var(--color-fg-secondary)] hover:bg-white/[0.05] hover:text-[var(--color-fg)]',
@@ -278,20 +302,20 @@ export default function App() {
               {entities.length === 0 ? (
                 <p className="px-3 text-sm text-[var(--color-muted)]">{t('app.noEntitiesYet')}</p>
               ) : (
-                <ul className="flex min-h-0 flex-col gap-0.5 overflow-y-auto">
-                  {entities.map((book, index) => {
+                <ul className="flex min-h-[6.5rem] flex-col gap-0.5 overflow-y-auto">
+                  {entities.map((book) => {
                     const selected = book.id === entity?.id
-                    const dot = bookDotColour(index)
+                    const dot = bookDotColour(book.id)
 
                     return (
                       <li key={book.id}>
                         <button
                           type="button"
-                          onClick={() => setEntityId(book.id)}
+                          onClick={() => selectEntity(book.id)}
                           aria-current={selected ? 'true' : undefined}
                           title={`${book.name}, ${book.base_currency}`}
                           className={cn(
-                            'flex h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm transition',
+                            'flex h-10 w-full items-center gap-3 rounded-xl px-3 text-left text-sm transition [@media(max-height:700px)]:h-8',
                             selected
                               ? 'bg-white/[0.06] text-[var(--color-fg)]'
                               : 'text-[var(--color-fg-secondary)] hover:text-[var(--color-fg)]',

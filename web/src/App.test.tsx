@@ -43,6 +43,7 @@ vi.mock('./lib/api', () => ({
     getLocale: vi.fn(),
     setLocale: vi.fn(),
     getUiPrefs: vi.fn(),
+    rememberLastEntity: vi.fn(async () => undefined),
   },
 }))
 
@@ -81,7 +82,7 @@ import { listen } from '@tauri-apps/api/event'
 import { appInfo, vaultPickBackup, vaultRestore, vaultStatus, vaultTouch } from './lib/tauri'
 import { api } from './lib/api'
 import { resetI18nForTests } from './lib/i18n'
-import App from './App'
+import App, { bookDotColour } from './App'
 
 const entity: Entity = {
   id: 'e1',
@@ -302,19 +303,22 @@ describe('App shell', () => {
     expect(document.querySelectorAll('.aurora')).toHaveLength(1)
   })
 
-  test('gives each book its own categorical colour', async () => {
-    vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
+  test('a book keeps its colour when another book is added before it', async () => {
+    const dotOf = (button: HTMLElement) =>
+      button.querySelector('span[style]')?.getAttribute('style') ?? ''
+    vi.mocked(api.entityList).mockResolvedValue([entity])
+    const first = render(<App />)
+    const alone = dotOf(await screen.findByRole('button', { name: 'Personal, EUR' }))
+    first.unmount()
+
+    vi.mocked(api.entityList).mockResolvedValue([
+      { ...entity, id: 'a-new-book', name: 'Household' },
+      entity,
+    ])
     render(<App />)
+    const withAnother = dotOf(await screen.findByRole('button', { name: 'Personal, EUR' }))
 
-    const personal = await screen.findByRole('button', { name: 'Personal, EUR' })
-    const household = await screen.findByRole('button', { name: 'Household, EUR' })
-
-    expect(personal.querySelector('span[style]')?.getAttribute('style')).toContain(
-      'var(--viz-1)',
-    )
-    expect(household.querySelector('span[style]')?.getAttribute('style')).toContain(
-      'var(--viz-2)',
-    )
+    expect(withAnother).toBe(alone)
   })
 })
 
@@ -411,5 +415,60 @@ describe('App after archiving the current book', () => {
     expect(screen.getByRole('button', { name: 'Quick add' })).toBeDisabled()
     expect(await screen.findByRole('button', { name: 'Restore Personal' })).toBeEnabled()
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+describe('App book selection', () => {
+  const second: Entity = { ...entity, id: 'e2', name: 'Company' }
+
+  test('selects the book remembered in the preferences', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([entity, second])
+    vi.mocked(api.getUiPrefs)
+      .mockReset()
+      .mockResolvedValue({
+        last_entity_id: 'e2',
+        last_accounts_by_entity_kind: {},
+        unreadable: false,
+      })
+    render(<App />)
+
+    const remembered = await screen.findByRole('button', { name: 'Company, EUR' })
+    await waitFor(() => {
+      expect(remembered.getAttribute('aria-current')).toBe('true')
+    })
+  })
+
+  test('falls back to the first book when the remembered one is gone', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([entity, second])
+    vi.mocked(api.getUiPrefs)
+      .mockReset()
+      .mockResolvedValue({
+        last_entity_id: 'deleted',
+        last_accounts_by_entity_kind: {},
+        unreadable: false,
+      })
+    render(<App />)
+
+    const first = await screen.findByRole('button', { name: 'Personal, EUR' })
+    await waitFor(() => {
+      expect(first.getAttribute('aria-current')).toBe('true')
+    })
+  })
+
+  test('remembers a book the user picks', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([entity, second])
+    vi.mocked(api.getUiPrefs).mockReset().mockRejectedValue(new Error('unreadable'))
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Company, EUR' }))
+
+    expect(api.rememberLastEntity).toHaveBeenCalledWith('e2')
+  })
+})
+
+describe('bookDotColour', () => {
+  test('depends on the id alone and stays within the palette', () => {
+    expect(bookDotColour('0b7c1c6e')).toBe(bookDotColour('0b7c1c6e'))
+    expect(bookDotColour('0b7c1c6e')).toMatch(/^var\(--viz-[1-8]\)$/)
   })
 })

@@ -26,7 +26,7 @@
 //!   serialise themselves with a lock of their own.
 //! - [`store_locale`] is that load, edit and save for the language, and
 //!   [`remember_quick_add`] for the book and accounts last used in quick
-//!   add.
+//!   add, and [`remember_last_entity`] for the book last open.
 //!
 //! # A file that gives no preferences is never replaced
 //!
@@ -853,6 +853,23 @@ pub fn remember_quick_add(
     prefs
         .last_accounts_by_entity_kind
         .insert(last_accounts_key(entity_id, kind), accounts);
+    prefs.last_entity_id = Some(entity_id.to_string());
+
+    save_ui_prefs(data_dir, &prefs)
+}
+
+/// Remembers `entity_id` as the book last open, so the next unlock selects
+/// it again.
+///
+/// Every other preference is kept. This is a load, a change and a save with
+/// the same locking rule as [`remember_quick_add`]: nothing here locks.
+///
+/// # Errors
+///
+/// Those of [`save_ui_prefs`]: a preferences file that is there and cannot
+/// be read or decoded is not replaced.
+pub fn remember_last_entity(data_dir: &Path, entity_id: EntityId) -> Result<()> {
+    let mut prefs = load_ui_prefs(data_dir);
     prefs.last_entity_id = Some(entity_id.to_string());
 
     save_ui_prefs(data_dir, &prefs)
@@ -1715,6 +1732,30 @@ mod tests {
     }
 
     #[test]
+    fn remembering_the_last_book_keeps_the_quick_add_accounts() {
+        let dir = tempdir().unwrap();
+        let book: EntityId = BOOK.parse().unwrap();
+        remember_quick_add(
+            dir.path(),
+            book,
+            SimpleEntryKind::Expense,
+            expense_accounts("wal-1"),
+        )
+        .unwrap();
+
+        let other: EntityId = "33333333-3333-4333-8333-333333333333".parse().unwrap();
+        remember_last_entity(dir.path(), other).unwrap();
+
+        let prefs = load_ui_prefs(dir.path());
+        assert_eq!(prefs.last_entity_id, Some(other.to_string()));
+        assert!(
+            prefs
+                .last_accounts_by_entity_kind
+                .contains_key(&last_accounts_key(book, SimpleEntryKind::Expense))
+        );
+    }
+
+    #[test]
     fn remembering_quick_add_replaces_one_pair_and_keeps_every_other_preference() {
         let dir = tempdir().unwrap();
         let book: EntityId = BOOK.parse().unwrap();
@@ -1818,7 +1859,7 @@ mod tests {
     /// The three functions that save the preferences, each under its name.
     /// [`resolve_locale`] saves through `store_locale`; the tests that need
     /// it call it themselves, because it writes on a first run only.
-    const SAVE_PATHS: [(&str, SavePath); 3] = [
+    const SAVE_PATHS: [(&str, SavePath); 4] = [
         ("save_ui_prefs", |data_dir| {
             let mut prefs = load_ui_prefs(data_dir);
             prefs.last_entity_id = Some("ent-2".into());
@@ -1835,10 +1876,13 @@ mod tests {
                 expense_accounts("wal-1"),
             )
         }),
+        ("remember_last_entity", |data_dir| {
+            remember_last_entity(data_dir, BOOK.parse().unwrap())
+        }),
     ];
 
     /// Runs every save path on `data_dir`, in the order of [`SAVE_PATHS`].
-    fn every_save_path(data_dir: &Path) -> [(&'static str, Result<()>); 3] {
+    fn every_save_path(data_dir: &Path) -> [(&'static str, Result<()>); 4] {
         SAVE_PATHS.map(|(name, save)| (name, save(data_dir)))
     }
 
