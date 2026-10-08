@@ -1010,7 +1010,10 @@
       "error": "Δεν ολοκληρώθηκε η αποθήκευση του προτύπου.",
       "cadenceMonthly": "Μηνιαία",
       "cadenceWeekly": "Εβδομαδιαία",
-      "cadenceYearly": "Ετήσια"
+      "cadenceYearly": "Ετήσια",
+      "dayOfWeek": "Ημέρα της εβδομάδας",
+      "month": "Μήνας",
+      "nextDate": "Επόμενη ημερομηνία: {date}"
     },
     "delete": {
       "title": "Διαγραφή προτύπου;",

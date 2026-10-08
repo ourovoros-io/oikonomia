@@ -1010,7 +1010,10 @@
       "error": "L’enregistrement du modèle n’a pas abouti.",
       "cadenceMonthly": "Mensuel",
       "cadenceWeekly": "Hebdomadaire",
-      "cadenceYearly": "Annuel"
+      "cadenceYearly": "Annuel",
+      "dayOfWeek": "Jour de la semaine",
+      "month": "Mois",
+      "nextDate": "Prochaine date : {date}"
     },
     "delete": {
       "title": "Supprimer le modèle ?",

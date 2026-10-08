@@ -117,3 +117,67 @@ export function formCadenceLabelKey(
       return 'recurring.form.cadenceMonthly'
   }
 }
+
+const MS_PER_DAY = 86_400_000
+
+function pad(value: number): string {
+  return String(value).padStart(2, '0')
+}
+
+function toIso(date: Date): string {
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
+}
+
+function parseIso(iso: string): Date {
+  const [year, month, day] = iso.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+/** Weekday of an ISO date, 0 for Sunday to 6 for Saturday. */
+export function weekdayOfIso(iso: string): number {
+  return parseIso(iso).getUTCDay()
+}
+
+/** Month (1 to 12) and day of an ISO date. */
+export function monthAndDayOfIso(iso: string): { month: number; day: number } {
+  const date = parseIso(iso)
+  return { month: date.getUTCMonth() + 1, day: date.getUTCDate() }
+}
+
+/**
+ * The first date on or after `from` that falls on `weekday` (0 for Sunday).
+ *
+ * A weekly template recurs on the weekday of its next date, so this is how
+ * the form turns "every Friday" into the date the template starts on.
+ */
+export function firstOnOrAfterWeekday(from: string, weekday: number): string {
+  const start = parseIso(from)
+  const ahead = (weekday - start.getUTCDay() + 7) % 7
+
+  return toIso(new Date(start.getTime() + ahead * MS_PER_DAY))
+}
+
+/** The most days `month` can have, counting February as a leap year has it. */
+export function maxDayOfMonth(month: number): number {
+  return new Date(Date.UTC(2024, month, 0)).getUTCDate()
+}
+
+/**
+ * The first date on or after `from` that falls on `day` of `month`.
+ *
+ * A yearly template recurs on the month and day of its next date. February
+ * 29 is offered, and lands on the next leap year, so it never starts on the
+ * 1st of March by overflow.
+ */
+export function firstOnOrAfterMonthDay(from: string, month: number, day: number): string {
+  const start = parseIso(from)
+  const lastYear = start.getUTCFullYear() + 8
+
+  for (let year = start.getUTCFullYear(); year <= lastYear; year += 1) {
+    const candidate = new Date(Date.UTC(year, month - 1, day))
+    const exists = candidate.getUTCMonth() === month - 1 && candidate.getUTCDate() === day
+    if (exists && candidate >= start) return toIso(candidate)
+  }
+
+  return from
+}

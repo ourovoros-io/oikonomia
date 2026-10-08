@@ -28,15 +28,21 @@ import {
   billStatusForKind,
   cadenceLabelKey,
   dayOfMonthForCadence,
+  firstOnOrAfterMonthDay,
+  firstOnOrAfterWeekday,
   formCadenceLabelKey,
   isRecurringCadence,
   kindBadgeTone,
   kindLabelKey,
+  maxDayOfMonth,
+  monthAndDayOfIso,
   recurringAccountIds,
+  weekdayOfIso,
 } from '../lib/recurring'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DateInput } from '../components/DateInput'
 import { Modal } from '../components/Modal'
+import { RecurringCadenceFields } from '../components/RecurringCadenceFields'
 import { TopBar } from '../components/TopBar'
 import {
   Button,
@@ -121,6 +127,11 @@ export function RecurringPage({ entity, onBack }: Props) {
   const [amount, setAmount] = useState('')
   const [cadence, setCadence] = useState<RecurringCadence>('monthly')
   const [dayOfMonth, setDayOfMonth] = useState('1')
+  // Where a weekly or yearly template recurs. Core keeps only `next_date` and
+  // steps from it, so these pickers decide the date the template starts on.
+  const [weekday, setWeekday] = useState(String(weekdayOfIso(todayISO())))
+  const [yearMonth, setYearMonth] = useState(String(monthAndDayOfIso(todayISO()).month))
+  const [yearDay, setYearDay] = useState(String(monthAndDayOfIso(todayISO()).day))
   const [categoryId, setCategoryId] = useState('')
   const [walletId, setWalletId] = useState('')
   const [fromId, setFromId] = useState('')
@@ -178,6 +189,32 @@ export function RecurringPage({ entity, onBack }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.id])
 
+  /** Points the weekday and yearly pickers at `iso`, without moving the start date. */
+  function syncPickers(iso: string) {
+    const { month, day } = monthAndDayOfIso(iso)
+    setWeekday(String(weekdayOfIso(iso)))
+    setYearMonth(String(month))
+    setYearDay(String(day))
+  }
+
+  function pickWeekday(value: string) {
+    setWeekday(value)
+    setNextDate(firstOnOrAfterWeekday(todayISO(), Number(value)))
+  }
+
+  function pickYearly(month: string, day: string) {
+    // Moving to a shorter month pulls the day back to the month's last.
+    const clamped = Math.min(Number(day), maxDayOfMonth(Number(month)))
+    setYearMonth(month)
+    setYearDay(String(clamped))
+    setNextDate(firstOnOrAfterMonthDay(todayISO(), Number(month), clamped))
+  }
+
+  function pickCadence(next: RecurringCadence) {
+    setCadence(next)
+    syncPickers(nextDate)
+  }
+
   function resetForm() {
     setEditId(null)
     setKind('expense')
@@ -187,6 +224,7 @@ export function RecurringPage({ entity, onBack }: Props) {
     setDayOfMonth('1')
     setMemo('')
     setNextDate(todayISO())
+    syncPickers(todayISO())
     applyKindDefaults('expense', defaults)
   }
 
@@ -208,6 +246,7 @@ export function RecurringPage({ entity, onBack }: Props) {
     setToId(row.to_account_id ?? '')
     setMemo(row.memo ?? '')
     setNextDate(row.next_date)
+    syncPickers(row.next_date)
     setShowForm(true)
   }
 
@@ -421,7 +460,7 @@ export function RecurringPage({ entity, onBack }: Props) {
             <Select
               value={cadence}
               onChange={(e) => {
-                if (isRecurringCadence(e.target.value)) setCadence(e.target.value)
+                if (isRecurringCadence(e.target.value)) pickCadence(e.target.value)
               }}
               aria-label={t('recurring.form.cadence')}
             >
@@ -432,29 +471,17 @@ export function RecurringPage({ entity, onBack }: Props) {
               ))}
             </Select>
           </Field>
-          {cadence === 'monthly' ? (
-            <>
-              <Field label={t('recurring.form.dayOfMonth')}>
-                <Select
-                  value={dayOfMonth}
-                  onChange={(e) => setDayOfMonth(e.target.value)}
-                  aria-label={t('recurring.form.dayOfMonth')}
-                >
-                  {Array.from({ length: 31 }, (_, i) => String(i + 1)).map((day) => (
-                    <option key={day} value={day}>
-                      {day}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              {/* col-span-2: this used to sit inside the Field's own grid
-                  cell; as a sibling now, without the span it would take the
-                  next column instead of running under it. */}
-              <p className="-mt-2 text-xs text-[var(--color-muted)] sm:col-span-2">
-                {t('recurring.form.dayOfMonthHint')}
-              </p>
-            </>
-          ) : null}
+          <RecurringCadenceFields
+            cadence={cadence}
+            dayOfMonth={dayOfMonth}
+            weekday={weekday}
+            yearMonth={yearMonth}
+            yearDay={yearDay}
+            nextDate={nextDate}
+            onDayOfMonth={setDayOfMonth}
+            onWeekday={pickWeekday}
+            onYearly={pickYearly}
+          />
           {kind === 'transfer' ? (
             <>
               <Field label={t('recurring.form.fromAccount')}>

@@ -93,6 +93,7 @@ const DEFAULTS: AccountDefaults = {
   income: 'inc1',
   bill_category: 'exp1',
   bills_payable: null,
+  receivable: null,
   transfer_source: 'w1',
   transfer_destination: 'w1',
 }
@@ -372,5 +373,83 @@ describe('RecurringPage template type colours', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
     expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('data-tone', 'neutral')
+  })
+})
+
+describe('RecurringPage weekly and yearly start dates', () => {
+  beforeEach(() => {
+    // Thursday 8 October 2026. Only Date is faked, so user-event keeps its timers.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 8, 12, 0, 0))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function openNewTemplate() {
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await userEvent.type(await screen.findByPlaceholderText('e.g. Rent'), 'Cleaner')
+    await userEvent.type(screen.getByRole('textbox', { name: /amount/i }), '40')
+  }
+
+  test('Weekly offers a weekday and starts on the next such day', async () => {
+    await openNewTemplate()
+    await userEvent.selectOptions(screen.getByLabelText('Cadence'), 'weekly')
+
+    await userEvent.selectOptions(screen.getByLabelText('Day of the week'), 'Friday')
+
+    expect(screen.getByText('Next date: 09/10/2026')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Save template' }))
+    await waitFor(() => {
+      expect(api.recurringCreate).toHaveBeenCalledTimes(1)
+    })
+    expect(api.recurringCreate.mock.calls[0]?.[0]).toMatchObject({
+      cadence: 'weekly',
+      day_of_month: null,
+      next_date: '2026-10-09',
+    })
+  })
+
+  test('Yearly offers a month and day and starts on the next such date', async () => {
+    await openNewTemplate()
+    await userEvent.selectOptions(screen.getByLabelText('Cadence'), 'yearly')
+
+    await userEvent.selectOptions(screen.getByLabelText('Month'), 'March')
+    await userEvent.selectOptions(screen.getByLabelText('Day of month'), '15')
+
+    expect(screen.getByText('Next date: 15/03/2027')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Save template' }))
+    await waitFor(() => {
+      expect(api.recurringCreate).toHaveBeenCalledTimes(1)
+    })
+    expect(api.recurringCreate.mock.calls[0]?.[0]).toMatchObject({
+      cadence: 'yearly',
+      day_of_month: null,
+      next_date: '2027-03-15',
+    })
+  })
+
+  test('Yearly pulls the day back when the month is shorter', async () => {
+    await openNewTemplate()
+    await userEvent.selectOptions(screen.getByLabelText('Cadence'), 'yearly')
+    await userEvent.selectOptions(screen.getByLabelText('Day of month'), '31')
+
+    await userEvent.selectOptions(screen.getByLabelText('Month'), 'April')
+
+    expect(screen.getByLabelText('Day of month')).toHaveValue('30')
+    expect(screen.getByText('Next date: 30/04/2027')).toBeTruthy()
+  })
+
+  test('editing a weekly template shows its date and weekday without moving them', async () => {
+    vi.mocked(api.recurringList).mockResolvedValue([
+      template({ cadence: 'weekly', day_of_month: null, next_date: '2026-10-14', due: false }),
+    ])
+    await renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit template' }))
+
+    expect(await screen.findByLabelText('Day of the week')).toHaveValue('3')
+    expect(screen.getByText('Next date: 14/10/2026')).toBeTruthy()
   })
 })

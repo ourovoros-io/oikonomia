@@ -1010,7 +1010,10 @@
       "error": "Die Vorlage konnte nicht gespeichert werden.",
       "cadenceMonthly": "Monatlich",
       "cadenceWeekly": "Wöchentlich",
-      "cadenceYearly": "Jährlich"
+      "cadenceYearly": "Jährlich",
+      "dayOfWeek": "Wochentag",
+      "month": "Monat",
+      "nextDate": "Nächstes Datum: {date}"
     },
     "delete": {
       "title": "Vorlage löschen?",
