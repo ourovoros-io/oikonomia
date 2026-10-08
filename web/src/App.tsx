@@ -34,6 +34,7 @@ import { DocumentsPage } from './pages/DocumentsPage'
 import { AccountsPage } from './pages/AccountsPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { DamagedPrefsNotice } from './components/DamagedPrefsNotice'
 import { useI18n } from './lib/I18nProvider'
 
 const NAV = [
@@ -63,6 +64,8 @@ export default function App() {
   const [info, setInfo] = useState<AppInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [locking, setLocking] = useState(false)
+  /** The preferences file is damaged and the notice has not been dismissed. */
+  const [prefsNotice, setPrefsNotice] = useState(false)
   const [entities, setEntities] = useState<Entity[]>([])
   const [entityId, setEntityId] = useState<string | null>(null)
   const [lockTimeoutSecs, setLockTimeoutSecs] = useState(15 * 60)
@@ -118,6 +121,17 @@ export default function App() {
     })
   }, [])
 
+  // Said once per unlock, wherever the user lands: the damage used to show
+  // only on the Settings page, where nobody looks after a restore or a lock.
+  const noteDamagedPrefs = useCallback(async () => {
+    try {
+      const prefs = await api.getUiPrefs()
+      setPrefsNotice(prefs?.unreadable === true)
+    } catch {
+      /* optional: the notice is a courtesy */
+    }
+  }, [])
+
   const refresh = useCallback(async () => {
     try {
       const [nextStatus, nextInfo] = await Promise.all([vaultStatus(), appInfo()])
@@ -131,15 +145,21 @@ export default function App() {
         } catch {
           /* optional */
         }
+        await noteDamagedPrefs()
       }
     } catch (err) {
       setError(commandErrorMessage(err, 'app.failedBackend'))
     }
-  }, [loadEntities])
+  }, [loadEntities, noteDamagedPrefs])
 
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  // A reset in Settings repairs the file; the notice must not outlive it.
+  useEffect(() => {
+    if (prefsNotice && active !== 'settings') void noteDamagedPrefs()
+  }, [active, prefsNotice, noteDamagedPrefs])
 
   // The Rust watchdog is the authority on idle locking; it emits this event
   // when it closes the vault so the UI drops to the unlock screen.
@@ -380,6 +400,12 @@ export default function App() {
             <main key={active} className="flex-1 overflow-auto">
               <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
                 <ErrorBanner message={error} className="mb-5" />
+                {prefsNotice && active !== 'settings' ? (
+                  <DamagedPrefsNotice
+                    onOpenSettings={() => setActive('settings')}
+                    onDismiss={() => setPrefsNotice(false)}
+                  />
+                ) : null}
 
                 {active === 'dashboard' ? (
                   <DashboardPage

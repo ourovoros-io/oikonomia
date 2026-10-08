@@ -39,6 +39,8 @@
   "nav.accounts": "Accounts",
   "nav.reports": "Reports",
   "nav.settings": "Settings",
+  "app.prefsDamaged.open": "Open Settings",
+  "app.prefsDamaged.dismiss": "Dismiss",
   "app.localLedger": "Local ledger",
   "app.book": "Book",
   "app.noEntitiesYet": "No entities yet",

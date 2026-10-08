@@ -1,5 +1,9 @@
 {
   "app": {
+    "prefsDamaged": {
+      "open": "Einstellungen öffnen",
+      "dismiss": "Ausblenden"
+    },
     "nav": {
       "dashboard": "Übersicht",
       "transactions": "Buchungen",

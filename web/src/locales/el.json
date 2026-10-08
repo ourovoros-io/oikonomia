@@ -1,5 +1,9 @@
 {
   "app": {
+    "prefsDamaged": {
+      "open": "Άνοιγμα Ρυθμίσεων",
+      "dismiss": "Απόκρυψη"
+    },
     "nav": {
       "dashboard": "Επισκόπηση",
       "transactions": "Κινήσεις",

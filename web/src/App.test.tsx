@@ -431,3 +431,42 @@ describe('App after archiving the current book', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })
+
+describe('App damaged preferences notice', () => {
+  const damaged = {
+    locale: 'en' as const,
+    last_entity_id: null,
+    last_accounts_by_entity_kind: {},
+    unreadable: true,
+  }
+
+  test('says so on the page the user lands on, and can be dismissed', async () => {
+    vi.mocked(api.getUiPrefs).mockReset().mockResolvedValue(damaged)
+    render(<App />)
+
+    expect(await screen.findByText(/preferences file is damaged/)).toBeTruthy()
+    expect(screen.getByText('Dashboard stub')).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText(/preferences file is damaged/)).toBeNull()
+  })
+
+  test('points to Settings, where the reset is', async () => {
+    vi.mocked(api.getUiPrefs).mockReset().mockResolvedValue(damaged)
+    render(<App />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Open Settings' }))
+
+    expect(await screen.findByRole('heading', { name: 'Settings' })).toBeTruthy()
+  })
+
+  test('says nothing when the preferences read fine', async () => {
+    vi.mocked(api.getUiPrefs)
+      .mockReset()
+      .mockResolvedValue({ ...damaged, unreadable: false })
+    render(<App />)
+
+    await screen.findByText('Dashboard stub')
+    expect(screen.queryByText(/preferences file is damaged/)).toBeNull()
+  })
+})

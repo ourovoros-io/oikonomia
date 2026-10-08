@@ -1,5 +1,9 @@
 {
   "app": {
+    "prefsDamaged": {
+      "open": "Ouvrir les paramètres",
+      "dismiss": "Ignorer"
+    },
     "nav": {
       "dashboard": "Tableau de bord",
       "transactions": "Mouvements",
