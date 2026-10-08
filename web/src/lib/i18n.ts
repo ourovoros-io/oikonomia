@@ -126,6 +126,7 @@ export const KEY_ALIASES: Record<string, string> = {
   'settings.lock.30min': 'settings.lock.preset.30min',
   'settings.lock.1hour': 'settings.lock.preset.1hour',
   'settings.lockTimeoutMin': 'settings.lock.error.min',
+  'settings.lock.saved': 'settings.lock.notice.saved',
   'settings.masterPassword.title': 'settings.password.title',
   'settings.masterPassword.description': 'settings.password.description',
   'settings.currentPassword': 'settings.password.current',

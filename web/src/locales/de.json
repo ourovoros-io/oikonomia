@@ -30,7 +30,8 @@
     },
     "sidebar": {
       "versionEncrypted": "v{version} · verschlüsselt",
-      "quickAdd": "Schnell erfassen"
+      "quickAdd": "Schnell erfassen",
+      "quickAddNeedsBook": "Legen Sie zuerst ein Buch an."
     },
     "header": {
       "noBook": "Kein Buch ausgewählt",
@@ -249,10 +250,13 @@
         "5min": "5 Minuten",
         "15min": "15 Minuten",
         "30min": "30 Minuten",
-        "1hour": "1 Stunde"
+        "1hour": "60 Minuten"
       },
       "error": {
         "min": "Die Sperrzeit muss mindestens 1 Minute betragen"
+      },
+      "notice": {
+        "saved": "Automatische Sperre gespeichert."
       }
     },
     "password": {

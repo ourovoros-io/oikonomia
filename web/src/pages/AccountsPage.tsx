@@ -92,7 +92,11 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   const [formError, setFormError] = useState<string | null>(null)
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
-  const [accountType, setAccountType] = useState<AccountType>('expense')
+  // The Type pick belongs to the book it was made in: another book starts
+  // from the default again instead of inheriting it.
+  const [typePick, setTypePick] = useState<{ bookId: string; type: AccountType } | null>(null)
+  const accountType: AccountType =
+    typePick && typePick.bookId === entity?.id ? typePick.type : 'expense'
   const [busy, setBusy] = useState(false)
   const [balanceAccount, setBalanceAccount] = useState<Account | null>(null)
   const [balanceAmount, setBalanceAmount] = useState('')
@@ -390,7 +394,9 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
             <Field label={t('acct.type')}>
               <Select
                 value={accountType}
-                onChange={(e) => setAccountType(e.target.value as AccountType)}
+                onChange={(e) => {
+                  if (entity) setTypePick({ bookId: entity.id, type: e.target.value as AccountType })
+                }}
               >
                 {TYPES.map((opt) => (
                   <option key={opt.id} value={opt.id}>

@@ -56,6 +56,7 @@ import {
 } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
 import { LanguagePill } from '../components/LanguagePill'
+import { rememberBookCurrency, rememberedBookCurrency } from '../lib/sessionDefaults'
 import { useDialogError } from '../lib/useDialogError'
 
 type Props = {
@@ -134,12 +135,12 @@ export function SettingsPage({
   const errorBannerId = useId()
   // Which confirmation to show, by catalog key, so it follows a language change.
   const [noticeKey, setNoticeKey] = useState<
-    'settings.prefs.resetDone' | 'settings.passwordChanged' | null
+    'settings.prefs.resetDone' | 'settings.passwordChanged' | 'settings.lock.saved' | null
   >(null)
   /** Set once "Email support" was clicked: the opener cannot confirm a mail app opened. */
   const [mailTried, setMailTried] = useState(false)
   const [name, setName] = useState('')
-  const [currency, setCurrency] = useState('EUR')
+  const [currency, setCurrency] = useState(rememberedBookCurrency)
   const [template, setTemplate] = useState<ChartTemplate>('personal')
   const [busy, setBusy] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
@@ -187,6 +188,8 @@ export function SettingsPage({
   const backupBanner = vaultBackupBanner(backupAvailability)
   const backupEnabled = canBackupVault(backupAvailability)
   const replaceConfirm = restoreConfirm('replace')
+  const lockPreset = LOCK_PRESETS.find((p) => p.mins === lockMins)
+  const lockSummary = lockPreset ? t(lockPreset.labelKey) : undefined
 
   useEffect(() => {
     void api
@@ -370,6 +373,7 @@ export function SettingsPage({
       const secs = Math.round(mins * 60)
       await api.setLockTimeout(secs)
       setLockMins(mins)
+      setNoticeKey('settings.lock.saved')
       onLockTimeoutChange?.(secs)
     } catch (err) {
       setPageError(commandErrorMessage(err))
@@ -623,6 +627,7 @@ export function SettingsPage({
         description={t('settings.autoLock.description')}
         icon={<Timer className="size-4" />}
         tone="warning"
+        summary={lockSummary}
       >
         <div className="flex flex-wrap items-center gap-2">
           {LOCK_PRESETS.map((p) => (
@@ -763,7 +768,14 @@ export function SettingsPage({
               />
             </Field>
             <Field label={t('settings.newEntity.currency')}>
-              <Select value={currency} onChange={(e) => setCurrency(e.target.value)} required>
+              <Select
+                value={currency}
+                onChange={(e) => {
+                  setCurrency(e.target.value)
+                  rememberBookCurrency(e.target.value)
+                }}
+                required
+              >
                 {CURRENCIES.map((c) => (
                   <option key={c.code} value={c.code}>
                     {c.code} — {t(`currency.${c.code}`)}

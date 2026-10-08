@@ -460,3 +460,13 @@ describe('App damaged preferences notice', () => {
     expect(screen.queryByText(/preferences file is damaged/)).toBeNull()
   })
 })
+
+describe('App Quick add without a book', () => {
+  test('says why Quick add is off', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([])
+    render(<App />)
+
+    const button = await screen.findByRole('button', { name: 'Quick add' })
+    expect(button).toHaveAccessibleDescription('Create a book to add entries.')
+  })
+})

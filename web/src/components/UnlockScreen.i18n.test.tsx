@@ -101,3 +101,15 @@ describe('UnlockScreen language control', () => {
     },
   )
 })
+
+describe('UnlockScreen language switch focus', () => {
+  test('the pill keeps focus after the language changes', async () => {
+    setLocalePersist(vi.fn())
+    const user = userEvent.setup()
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+
+    await user.click(screen.getByRole('radio', { name: 'Ελληνικά' }))
+
+    expect(screen.getByRole('radio', { name: 'Ελληνικά' })).toHaveFocus()
+  })
+})

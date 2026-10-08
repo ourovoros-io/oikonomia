@@ -241,7 +241,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-canvas)]">
       <div className="flex min-h-0 flex-1 overflow-y-auto px-4">
-        <div className="m-auto w-full max-w-md py-8">
+        <div className="m-auto w-full max-w-md pt-8 pb-24">
           <div className="mb-8 flex flex-col items-center text-center">
             <Logo
               animateIn
@@ -250,14 +250,18 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
                 unlocking && 'oik-logo-pulse',
               )}
             />
-            <h1 className="text-2xl font-semibold tracking-tight">
+            {/* Sofia Sans for every language: Barlow has no Greek, so the title would
+                change typeface when the language switches. */}
+            <h1 className="font-[family-name:var(--font-display)] text-2xl font-semibold tracking-tight">
               {isSetup ? t('unlock.titleCreate') : t('unlock.titleWelcome')}
             </h1>
-            <p className="mt-2 max-w-sm text-sm text-[var(--color-muted)]">
+            {/* Two lines tall in every language, so a longer translation cannot move the card. */}
+            <p className="mt-2 min-h-10 max-w-sm text-sm leading-5 text-[var(--color-muted)]">
               {isSetup ? t('unlock.bodyCreate') : t('unlock.bodyWelcome')}
             </p>
           </div>
 
+          <div className="relative">
           <form
             noValidate
             className={cn(
@@ -317,8 +321,6 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
                 </Field>
               ) : null}
 
-              <ErrorBanner id={errorId} message={error} className="text-center" onDismiss={() => setError(null)} />
-
               <Button type="submit" size="lg" busy={busy || unlocking} className="w-full">
                 {busy || unlocking
                   ? t('common.working')
@@ -328,6 +330,13 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
               </Button>
             </div>
           </form>
+
+          {/* Below the card, out of flow: an error must not push the fields
+              and the Unlock button down. */}
+          <div className="absolute inset-x-0 top-full mt-3">
+            <ErrorBanner id={errorId} message={error} className="text-center" onDismiss={() => setError(null)} />
+          </div>
+          </div>
         </div>
       </div>
 

@@ -100,3 +100,17 @@ describe('AccountsPage form errors', () => {
     )
   })
 })
+
+describe('AccountsPage form defaults', () => {
+  test('the Add account Type goes back to the default in another book', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([])
+    const { rerender } = render(<AccountsPage entity={entity} />)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Add account' }))
+    await userEvent.selectOptions(screen.getByLabelText('Type'), 'asset')
+    expect(screen.getByLabelText('Type')).toHaveValue('asset')
+
+    rerender(<AccountsPage entity={{ ...entity, id: 'e2', name: 'Company' }} />)
+    expect(screen.getByLabelText('Type')).toHaveValue('expense')
+  })
+})

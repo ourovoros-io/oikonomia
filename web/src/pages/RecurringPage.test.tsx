@@ -374,3 +374,18 @@ describe('RecurringPage template type colours', () => {
     expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('data-tone', 'neutral')
   })
 })
+
+describe('RecurringPage post dialog keyboard', () => {
+  test('Enter in the amount field posts the template', async () => {
+    vi.mocked(api.recurringList).mockResolvedValue([rent])
+    await renderPage()
+    await userEvent.click(screen.getByRole('button', { name: 'Post' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Post Rent?' })
+
+    await userEvent.type(within(dialog).getByLabelText('Amount (EUR)'), '{Enter}')
+
+    await waitFor(() => {
+      expect(api.recurringPost).toHaveBeenCalledTimes(1)
+    })
+  })
+})

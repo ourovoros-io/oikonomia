@@ -28,7 +28,12 @@ export function LanguagePill({
             type="button"
             role="radio"
             aria-checked={active}
-            onClick={() => onChange(id)}
+            onClick={(event) => {
+              onChange(id)
+              // WebKit does not focus a clicked button, and the language
+              // change re-renders the row; keep the keyboard place explicit.
+              event.currentTarget.focus()
+            }}
             className={cn(
               // Same look as the shared Segmented control.
               // The ring is drawn inside the segment: outside it would overflow the group.

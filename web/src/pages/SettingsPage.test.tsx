@@ -28,6 +28,7 @@ vi.mock('../lib/api', () => ({
 import { api } from '../lib/api'
 import { vaultBackup, vaultChangePassword, vaultPickBackup, vaultRestore } from '../lib/tauri'
 import { SettingsPage } from './SettingsPage'
+import { resetSessionDefaults } from '../lib/sessionDefaults'
 import { resetI18nForTests } from '../lib/i18n'
 
 const entity: Entity = {
@@ -842,5 +843,47 @@ describe('SettingsPage createBookIntent', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: /new entity/i })).toBeTruthy()
     })
+  })
+})
+
+describe('SettingsPage Auto-lock feedback', () => {
+  test('the collapsed row shows the value, and a change says it was saved', async () => {
+    vi.mocked(api.setLockTimeout).mockResolvedValue(undefined)
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+
+    const header = screen.getByRole('button', { name: /auto-lock/i })
+    await waitFor(() => expect(header).toHaveTextContent('15 min'))
+
+    await userEvent.click(header)
+    await userEvent.click(await screen.findByRole('button', { name: '60 min' }))
+
+    expect(await screen.findByText('Auto-lock saved.')).toBeInTheDocument()
+    expect(header).toHaveTextContent('60 min')
+  })
+})
+
+describe('SettingsPage New entity currency', () => {
+  afterEach(resetSessionDefaults)
+
+  test('the next New entity form starts from the last currency picked', async () => {
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    let dialog = await screen.findByRole('dialog', { name: 'New entity' })
+    await userEvent.selectOptions(within(dialog).getByLabelText('Currency'), 'USD')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    cleanup()
+
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    dialog = await screen.findByRole('dialog', { name: 'New entity' })
+    expect(within(dialog).getByLabelText('Currency')).toHaveValue('USD')
   })
 })
