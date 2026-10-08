@@ -20,7 +20,8 @@ import {
   type RecurringKind,
   type RecurringTemplate,
 } from '../lib/api'
-import { bookCurrency, minorToInputText, parseMajorToMinor } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { bookCurrency, minorToInputText } from '../lib/money'
 import { beginExclusive } from '../lib/guards'
 import { kindDefaultAccounts } from '../lib/simpleEntry'
 import {

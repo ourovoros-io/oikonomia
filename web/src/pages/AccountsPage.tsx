@@ -22,7 +22,8 @@ import {
   type Entity,
   type RegisterLine,
 } from '../lib/api'
-import { bookCurrency, parseMajorToMinor } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { bookCurrency } from '../lib/money'
 import { DateInput } from '../components/DateInput'
 import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'

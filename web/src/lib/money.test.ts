@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
+import { parseMajorToMinor } from './amountParse'
 import {
   bookCurrency,
   formatDate,
@@ -6,9 +7,10 @@ import {
   isoDate,
   minorToInputText,
   parseEuropeanDateToISO,
-  parseMajorToMinor,
   type Currency,
 } from './money'
+import { applyLocale, resetI18nForTests, type Locale } from './i18n'
+import { formatPercent } from './arc'
 
 const EUR: Currency = { code: 'EUR', decimals: 2 }
 const JPY: Currency = { code: 'JPY', decimals: 0 }
@@ -36,7 +38,7 @@ describe('parseMajorToMinor', () => {
   test('rejects garbage and over-precise fractions', () => {
     expect(parseMajorToMinor('', EUR)).toBeNull()
     expect(parseMajorToMinor('abc', EUR)).toBeNull()
-    expect(parseMajorToMinor('25.505', EUR)).toBeNull()
+    expect(parseMajorToMinor('25.5055', EUR)).toBeNull()
   })
 
   test('zero-decimal currency', () => {
@@ -102,7 +104,7 @@ describe('the number of decimals is the one core sent', () => {
 
   test('a fraction longer than core allows is refused, whatever the runtime allows', () => {
     expect(parseMajorToMinor('12.5', { code: 'HUF', decimals: 0 })).toBeNull()
-    expect(parseMajorToMinor('12.345', { code: 'JPY', decimals: 2 })).toBeNull()
+    expect(parseMajorToMinor('12.3456', { code: 'JPY', decimals: 2 })).toBeNull()
   })
 
   test('the sign is written once, beside the scaled number', () => {
@@ -187,5 +189,55 @@ describe('parseEuropeanDateToISO', () => {
 
   test('accepts ISO as a fallback', () => {
     expect(parseEuropeanDateToISO('2026-03-15')).toBe('2026-03-15')
+  })
+})
+
+describe('one format for the app language', () => {
+  const HUF: Currency = { code: 'HUF', decimals: 2 }
+  const USD: Currency = { code: 'USD', decimals: 2 }
+  const norm = (text: string) => text.replace(/[\s  ]/gu, ' ')
+
+  afterEach(() => resetI18nForTests())
+
+  test.each<[Locale, string]>([
+    ['en', '€2,450.00'],
+    ['el', '2.450,00 €'],
+    ['fr', '2 450,00 €'],
+    ['de', '2.450,00 €'],
+  ])('%s writes a euro amount as %s, whatever the system locale is', (locale, expected) => {
+    applyLocale(locale)
+
+    expect(norm(formatMoney(245000, EUR))).toBe(expected)
+  })
+
+  test('HUF and JPY are grouped like every other currency', () => {
+    applyLocale('en')
+
+    expect(formatMoney(42983050, HUF)).toContain('429,830.50')
+    expect(formatMoney(-1280, JPY)).toBe('-¥1,280')
+    applyLocale('el')
+    expect(norm(formatMoney(1234567, JPY))).toBe('1.234.567 JP¥')
+  })
+
+  test('USD is not forced to US formatting in another language', () => {
+    applyLocale('de')
+
+    expect(norm(formatMoney(123456, USD))).toBe('1.234,56 $')
+  })
+
+  test('the edit form is prefilled with the same decimal mark the list shows', () => {
+    applyLocale('el')
+
+    expect(minorToInputText(2550, EUR)).toBe('25,50')
+    expect(parseMajorToMinor(minorToInputText(2550, EUR), EUR)).toBe(2550)
+    expect(minorToInputText(1280, JPY)).toBe('1280')
+  })
+
+  test('percentages use the language of the money beside them', () => {
+    applyLocale('en')
+    expect(formatPercent(8210)).toBe('82.1%')
+    expect(formatPercent(184480)).toBe('1,844.8%')
+    applyLocale('fr')
+    expect(norm(formatPercent(8210))).toBe('82,1 %')
   })
 })

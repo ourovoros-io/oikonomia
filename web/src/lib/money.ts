@@ -1,3 +1,5 @@
+import { getLocale } from './i18n'
+
 /**
  * A currency as core describes it: its code, and how many decimals one minor
  * unit is.
@@ -43,151 +45,77 @@ export function bookCurrency(entity: {
 }
 
 /**
- * The amount as plain text for an amount input: digits and a `.` decimal
- * mark, with exactly the currency's decimals and no grouping (`1234.50`).
+ * The amount as plain text for an amount input: digits and the decimal mark
+ * of the app language (`1234.50`, `1234,50`), with exactly the currency's
+ * decimals and no grouping, so the form shows what the list shows.
  * Built from the digits of the integer, so no rounding is involved.
  */
-export function minorToInputText(minor: number, currency: Currency): string {
+export function minorToInputText(
+  minor: number,
+  currency: Currency,
+  locale: string = getLocale(),
+): string {
   const digits = String(Math.abs(Math.trunc(minor))).padStart(currency.decimals + 1, '0')
   const whole = digits.slice(0, digits.length - currency.decimals)
   const fraction = digits.slice(digits.length - currency.decimals)
   const sign = minor < 0 ? '-' : ''
 
-  return fraction ? `${sign}${whole}.${fraction}` : `${sign}${whole}`
+  return fraction ? `${sign}${whole}${decimalMark(locale)}${fraction}` : `${sign}${whole}`
 }
 
 /**
- * Parse a user-entered amount into minor units of `currency`.
- * Accepts:
- * - `25` / `25.50` (dot decimal)
- * - `25,50` (comma decimal, common in Europe)
- * - `1,234.56` / `1.234,56` (thousands separators)
- *
- * Null when the text is not an amount or has more decimals than the currency.
+ * The decimal mark of `locale`, which is what the app language writes: `.` in
+ * English, `,` in Greek, French and German.
  */
-export function parseMajorToMinor(input: string, currency: Currency): number | null {
-  let s = input.trim()
-  if (!s) return null
+function decimalMark(locale: string): string {
+  const mark = new Intl.NumberFormat(locale)
+    .formatToParts(1.1)
+    .find((part) => part.type === 'decimal')
 
-  const neg = s.startsWith('-')
-  if (neg) s = s.slice(1).trim()
-  // Strip currency symbols and spaces
-  s = s.replace(/[^\d.,]/g, '')
-  if (!s) return null
-
-  const lastComma = s.lastIndexOf(',')
-  const lastDot = s.lastIndexOf('.')
-
-  let normalized: string
-  if (lastComma >= 0 && lastDot >= 0) {
-    // Both present: the last separator is the decimal mark
-    if (lastComma > lastDot) {
-      // 1.234,56
-      normalized = s.replace(/\./g, '').replace(',', '.')
-    } else {
-      // 1,234.56
-      normalized = s.replace(/,/g, '')
-    }
-  } else if (lastComma >= 0) {
-    // Only commas: if exactly one comma and 1–3 digits after → decimal
-    const parts = s.split(',')
-    if (parts.length === 2 && parts[1].length > 0 && parts[1].length <= 3) {
-      normalized = `${parts[0].replace(/\./g, '')}.${parts[1]}`
-    } else {
-      // Thousands separators only
-      normalized = s.replace(/,/g, '')
-    }
-  } else if (lastDot >= 0) {
-    const parts = s.split('.')
-    if (parts.length === 2 && parts[1].length > 0 && parts[1].length <= 3) {
-      normalized = s
-    } else if (parts.length > 2) {
-      // 1.234.567 unlikely as decimals — treat dots as thousands
-      normalized = s.replace(/\./g, '')
-    } else {
-      normalized = s
-    }
-  } else {
-    normalized = s
-  }
-
-  if (!/^\d+(\.\d+)?$/.test(normalized)) return null
-
-  const digits = currency.decimals
-  const [whole, frac = ''] = normalized.split('.')
-  if (frac.length > digits) return null
-
-  const fracPad = (frac + '0'.repeat(digits)).slice(0, digits)
-  const factor = 10 ** digits
-  const minor = Number(whole) * factor + (fracPad ? Number(fracPad) : 0)
-  if (!Number.isFinite(minor)) return null
-  return neg ? -minor : minor
-}
-
-/** Prefer a locale that matches the currency for readable dashboards. */
-export function localeForCurrency(currency: string): string {
-  const c = (currency || 'EUR').toUpperCase()
-  if (typeof navigator !== 'undefined') {
-    // Keep user locale if it already matches the currency area reasonably.
-    const nav = navigator.language || 'en'
-    if (c === 'EUR' && (nav.startsWith('el') || nav.startsWith('de') || nav.startsWith('fr'))) {
-      return nav
-    }
-    if (c === 'USD' && nav.startsWith('en')) return nav
-    if (c === 'GBP' && nav.startsWith('en')) return 'en-GB'
-  }
-  switch (c) {
-    case 'EUR':
-      return 'el-GR'
-    case 'GBP':
-      return 'en-GB'
-    case 'USD':
-      return 'en-US'
-    default:
-      return typeof navigator !== 'undefined' ? navigator.language : 'en'
-  }
+  return mark?.value ?? '.'
 }
 
 /**
- * Format minor units as currency for display.
+ * Format minor units as currency for display, in the app language.
  *
  * `Intl.NumberFormat` supplies the grouping, the decimal mark and the
- * currency sign of the locale. The number of decimals is always
- * `currency.decimals`, set as both the minimum and the maximum so the
- * locale data's own figure for the currency is never used.
+ * currency sign of the locale; `locale` defaults to the app language, so one
+ * book reads the same on every screen and in the report PDF. The number of
+ * decimals is always `currency.decimals`, set as both the minimum and the
+ * maximum so the locale data's own figure for the currency is never used.
  */
 export function formatMoney(
   minor: number,
   currency: Currency,
-  locale?: string,
+  locale: string = getLocale(),
   opts?: { signed?: boolean },
 ): string {
-  const ccy = currency.code
-  const loc = locale || localeForCurrency(ccy)
+  const absolute = Math.abs(minor) / 10 ** currency.decimals
+  const formatted = formatAbsolute(absolute, currency, locale)
+
+  if (minor < 0) return `-${formatted}`
+  if (opts?.signed && minor > 0) return `+${formatted}`
+  return formatted
+}
+
+/** The magnitude as currency text; a code Intl rejects is written as grouped digits plus the code. */
+function formatAbsolute(absolute: number, currency: Currency, locale: string): string {
   const digits = currency.decimals
-  const factor = 10 ** digits
-  const major = minor / factor
+
   try {
-    const formatted = new Intl.NumberFormat(loc, {
+    return new Intl.NumberFormat(locale, {
       style: 'currency',
-      currency: ccy,
+      currency: currency.code,
       minimumFractionDigits: digits,
       maximumFractionDigits: digits,
-    }).format(Math.abs(major))
-
-    // Avoid double signs (some locales already produce a minus).
-    if (opts?.signed) {
-      if (minor > 0) return `+${formatted}`
-      if (minor < 0) return `-${formatted}`
-      return formatted
-    }
-    if (minor < 0) return `-${formatted}`
-    return formatted
+    }).format(absolute)
   } catch {
-    const abs = Math.abs(major).toFixed(digits)
-    if (opts?.signed && minor > 0) return `+${abs} ${ccy}`
-    if (minor < 0) return `-${abs} ${ccy}`
-    return `${abs} ${ccy}`
+    const plain = new Intl.NumberFormat(locale, {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })
+
+    return `${plain.format(absolute)} ${currency.code}`
   }
 }
 

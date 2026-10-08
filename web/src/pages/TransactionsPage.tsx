@@ -27,7 +27,8 @@ import {
   type PostedEntryView,
   type SimpleEntryInput,
 } from '../lib/api'
-import { bookCurrency, minorToInputText, parseMajorToMinor } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { bookCurrency, minorToInputText } from '../lib/money'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'

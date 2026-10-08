@@ -5,7 +5,6 @@ import {
   formatDate,
   bookCurrency,
   formatMoney,
-  localeForCurrency,
   monthEndISO,
   monthStartISO,
   quarterEndISO,
@@ -174,8 +173,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
   }
 
   const ccy = bookCurrency(entity)
-  const loc = localeForCurrency(ccy.code)
-  const money = (n: number, signed = false) => formatMoney(n, ccy, loc, { signed })
+  const money = (n: number, signed = false) => formatMoney(n, ccy, locale, { signed })
 
   const pending = loading && !data
   const income = data?.income ?? 0
