@@ -19,6 +19,8 @@ type Props = {
   documentId: string | null
   onClose: () => void
   onError: (message: string) => void
+  /** The last failure of an action in this dialog, drawn at the top of it. */
+  error?: string | null
 }
 
 /**
@@ -29,7 +31,7 @@ type Props = {
  * Linux, where the frame stayed blank, and a bundled renderer would be a new
  * dependency for a document the user can open elsewhere after Save a copy.
  */
-export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
+export function DocumentViewerModal({ documentId, onClose, onError, error = null }: Props) {
   const { t } = useI18n()
   const [meta, setMeta] = useState<DocumentMeta | null>(null)
   const [bytes, setBytes] = useState<Uint8Array | null>(null)
@@ -97,6 +99,7 @@ export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
       title={meta?.filename ?? t('viewer.document')}
       description={meta ? `${meta.mime_type} · ${formatBytes(meta.size_bytes)}` : undefined}
       maxWidth="max-w-4xl"
+      error={error}
       onClose={onClose}
     >
       {!meta || !bytes ? (

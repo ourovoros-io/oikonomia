@@ -9,6 +9,51 @@ const FOCUSABLE = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ')
 
+// Fields a person types into. Checkboxes, radios and file pickers are not a
+// natural place to start, so a dialog that opens on one of those keeps the panel.
+const FIRST_FIELD = [
+  'input:not([disabled]):not([type="hidden"]):not([type="file"]):not([type="checkbox"]):not([type="radio"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+].join(', ')
+
+/** The first field of a form dialog, else the panel itself, so typing can start at once. */
+function initialFocusTarget(panel: HTMLElement): HTMLElement {
+  return panel.querySelector<HTMLElement>(FIRST_FIELD) ?? panel
+}
+
+/**
+ * Keeps Tab and Shift+Tab inside `root`: from the last control Tab wraps to
+ * the first, and from the first (or the root itself) Shift+Tab wraps to the
+ * last. Also used by the Quick add window, where Tab past the last control
+ * would otherwise leave the webview.
+ */
+export function trapTab(e: KeyboardEvent, root: HTMLElement) {
+  // offsetParent is null for display:none subtrees (e.g. hidden file inputs).
+  const items = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.offsetParent !== null,
+  )
+  if (items.length === 0) {
+    e.preventDefault()
+    return
+  }
+
+  const first = items[0]
+  const last = items[items.length - 1]
+  const current = document.activeElement
+
+  if (!(current instanceof HTMLElement) || !root.contains(current)) {
+    e.preventDefault()
+    first.focus()
+  } else if (e.shiftKey && (current === first || current === root)) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && current === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
 /**
  * Stack of open dialogs, innermost last. Only the top-most dialog reacts to
  * keyboard events, so a nested ConfirmDialog consumes Escape without closing
@@ -17,7 +62,7 @@ const FOCUSABLE = [
 const openDialogs: symbol[] = []
 
 /**
- * Dialog keyboard behavior: focus the panel on open, keep Tab cycling inside
+ * Dialog keyboard behavior: focus the first field (or the panel) on open, keep Tab cycling inside
  * it, close the top-most dialog on Escape, and restore focus to the
  * previously focused element on close.
  *
@@ -40,7 +85,7 @@ export function useDialogFocus(
     openDialogs.push(id)
 
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    panelRef.current?.focus()
+    if (panelRef.current) initialFocusTarget(panelRef.current).focus()
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (openDialogs[openDialogs.length - 1] !== id) return
@@ -51,31 +96,7 @@ export function useDialogFocus(
         onEscapeRef.current()
         return
       }
-      if (e.key !== 'Tab') return
-
-      // offsetParent is null for display:none subtrees (e.g. hidden file inputs).
-      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-        (el) => el.offsetParent !== null,
-      )
-      if (items.length === 0) {
-        e.preventDefault()
-        return
-      }
-
-      const first = items[0]
-      const last = items[items.length - 1]
-      const current = document.activeElement
-
-      if (!(current instanceof HTMLElement) || !panel.contains(current)) {
-        e.preventDefault()
-        first.focus()
-      } else if (e.shiftKey && (current === first || current === panel)) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && current === last) {
-        e.preventDefault()
-        first.focus()
-      }
+      if (e.key === 'Tab') trapTab(e, panel)
     }
 
     document.addEventListener('keydown', onKeyDown)

@@ -96,7 +96,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
     <div className="space-y-4">
       <TopBar title={t('docs.title')} subtitle={`${entity.name} · ${entity.base_currency}`} />
 
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       <ConfirmDialog
         open={deleteId !== null}

@@ -58,7 +58,7 @@
   "unlock.bodyWelcome": "Enter your password to decrypt this device’s books.",
   "unlock.password": "Password",
   "unlock.confirmPassword": "Confirm password",
-  "unlock.passwordsMismatch": "Passwords do not match",
+  "unlock.passwordsMismatch": "Passwords do not match.",
   "unlock.incorrectPassword": "Incorrect password — please try again.",
   "unlock.unlockFailed": "Could not unlock the vault.",
   "unlock.createVault": "Create encrypted vault",
@@ -110,7 +110,7 @@
   "settings.deleteEntityBody": "“{name}” and all of its accounts and transactions will be permanently removed. This cannot be undone.",
   "settings.deleteFailed": "Could not delete the entity.",
   "settings.lockTimeoutMin": "Lock timeout must be at least 1 minute",
-  "settings.passwordsMismatch": "New passwords do not match",
+  "settings.passwordsMismatch": "New passwords do not match.",
   "settings.passwordChanged": "Password changed. The vault is re-encrypted under the new password.",
   "settings.currentPasswordIncorrect": "Current password is incorrect.",
   "settings.changePasswordFailed": "Could not change the password.",
@@ -472,7 +472,6 @@
   "acct.chartTitle": "Chart of accounts",
   "acct.chartDesc": "Active and archived accounts",
   "acct.setBalanceAria": "Set balance for {name}",
-  "acct.deactivate": "Deactivate",
   "acct.deactivateAria": "Deactivate account",
   "accounts.register.title": "{name} register",
   "accounts.register.back": "All accounts",
@@ -710,5 +709,8 @@
   "error.role.bill_category": "Bill category",
   "error.role.bills_payable": "Bills payable account",
   "error.role.transfer_source": "Transfer from",
-  "error.role.transfer_destination": "Transfer to"
+  "error.role.transfer_destination": "Transfer to",
+  "form.dismiss": "Dismiss",
+  "form.fieldRequired": "A required field is empty. Fill it in and try again.",
+  "form.passwordRequired": "Enter your password."
 }

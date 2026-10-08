@@ -9,6 +9,7 @@ import {
   draftToMapping,
   initialBulkAccounts,
   mapNeededKey,
+  mappingProblemKey,
   mappingsEqual,
   mappingReady,
   matchHeader,
@@ -218,6 +219,18 @@ describe('column mapping helpers', () => {
 
   // Core's rule (`resolve_user_mapping`) reads the same fixture in a Rust test,
   // so Continue is enabled exactly for the mappings core accepts.
+  test.each(mappingVerdicts)('mappingProblemKey names a problem exactly when not ready: $mapping', (item) => {
+    expect(mappingProblemKey(item.mapping) === null).toBe(item.verdict === 'ready')
+  })
+
+  test('mappingProblemKey says which column to choose', () => {
+    expect(mappingProblemKey({})).toBe('error.csvMapping.missingDate')
+    expect(mappingProblemKey({ date: 'Date' })).toBe('error.csvMapping.missingAmount')
+    expect(mappingProblemKey({ date: 'Date', amount: 'A', debit: 'D' })).toBe(
+      'error.csvMapping.amountAndDebitOrCredit',
+    )
+  })
+
   test.each(mappingVerdicts)('mappingReady agrees with core: $verdict for $mapping', (item) => {
     expect(mappingReady(item.mapping)).toBe(item.verdict === 'ready')
   })

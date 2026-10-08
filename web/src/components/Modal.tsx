@@ -1,7 +1,7 @@
 import { useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
-import { Button } from './ui'
+import { Button, ErrorBanner } from './ui'
 import { cn } from '../lib/cn'
 import { useDialogFocus } from './useDialogFocus'
 import { useI18n } from '../lib/I18nProvider'
@@ -13,6 +13,11 @@ type Props = {
   /** Tailwind max-width class for the panel. */
   maxWidth?: string
   onClose: () => void
+  /** What went wrong with this dialog's action, shown at the top of its body. */
+  error?: string | null
+  /** Lets a field point `aria-describedby` at the banner. */
+  errorId?: string
+  onDismissError?: () => void
   children: ReactNode
 }
 
@@ -23,6 +28,9 @@ export function Modal({
   description,
   maxWidth = 'max-w-3xl',
   onClose,
+  error,
+  errorId,
+  onDismissError,
   children,
 }: Props) {
   const { t } = useI18n()
@@ -37,9 +45,13 @@ export function Modal({
   // descendants in WebKit, so a Modal rendered inside another glass surface
   // (a pane, or another dialog) would otherwise be sized to and clipped by
   // it instead of the viewport. Porting to document.body sidesteps that.
+  //
+  // Anchored near the top, not centred: a centred dialog re-centres whenever
+  // its content changes height (an error appears, the entry type changes), so
+  // the controls move under the pointer. Anchored, only the bottom edge moves.
   return createPortal(
     <div
-      className="glass-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="glass-scrim fixed inset-0 z-50 flex items-start justify-center p-4 pt-[7vh]"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -49,7 +61,7 @@ export function Modal({
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          'glass-dialog flex max-h-[88vh] w-full flex-col overflow-hidden rounded-[24px] outline-none',
+          'glass-dialog flex max-h-[calc(93vh-2rem)] w-full flex-col overflow-hidden rounded-[24px] outline-none',
           maxWidth,
         )}
         onClick={(e) => e.stopPropagation()}
@@ -76,7 +88,11 @@ export function Modal({
           </Button>
         </div>
 
-        <div className="overflow-y-auto p-6">{children}</div>
+        <div className="overflow-y-auto p-6">
+          {/* Inside the dialog: a banner on the page would sit behind the scrim. */}
+          <ErrorBanner message={error ?? null} id={errorId} onDismiss={onDismissError} />
+          {children}
+        </div>
       </div>
     </div>,
     document.body,
