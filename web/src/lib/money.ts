@@ -124,12 +124,28 @@ export function parseMajorToMinor(input: string, currency: Currency): number | n
   return neg ? -minor : minor
 }
 
+/**
+ * The webview's language when `Intl` accepts it, else `en`. Some Linux
+ * webviews report tags such as `en-US@posix`, and `Intl.NumberFormat` throws
+ * a RangeError on those, which blanked every view that formats a number.
+ */
+function usableNavigatorLanguage(): string {
+  const nav = typeof navigator !== 'undefined' ? navigator.language : ''
+  if (!nav) return 'en'
+
+  try {
+    return Intl.NumberFormat.supportedLocalesOf(nav).length > 0 ? nav : 'en'
+  } catch {
+    return 'en'
+  }
+}
+
 /** Prefer a locale that matches the currency for readable dashboards. */
 export function localeForCurrency(currency: string): string {
   const c = (currency || 'EUR').toUpperCase()
   if (typeof navigator !== 'undefined') {
     // Keep user locale if it already matches the currency area reasonably.
-    const nav = navigator.language || 'en'
+    const nav = usableNavigatorLanguage()
     if (c === 'EUR' && (nav.startsWith('el') || nav.startsWith('de') || nav.startsWith('fr'))) {
       return nav
     }
@@ -144,7 +160,7 @@ export function localeForCurrency(currency: string): string {
     case 'USD':
       return 'en-US'
     default:
-      return typeof navigator !== 'undefined' ? navigator.language : 'en'
+      return usableNavigatorLanguage()
   }
 }
 

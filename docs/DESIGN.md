@@ -259,7 +259,7 @@ each lives in one place:
     and account type (`default_accounts.rs`), never by name, because names are
     free text.
 - **Design language.** The interface is dark only and is called "Aurora glass":
-  an animated colored backdrop (`components/Aurora.tsx`) under translucent panes
+  a static colored backdrop (`components/Aurora.tsx`) under translucent panes
   with a hairline edge. Brand color marks chrome and never money; money in and
   out have their own pair of colors. The design tokens are the `@theme` block
   and the glass and aurora variables in `web/src/index.css`; fonts are bundled

@@ -635,6 +635,8 @@
   "error.moneyOverflow": "That amount is too large.",
   "error.negativeMoney": "That amount cannot be negative.",
   "error.io": "A file operation failed.",
+  "error.pageRender": "This page could not be shown. Your data is safe. Try again or open another page.",
+  "error.pageRenderRetry": "Try again",
   "error.crypto": "A security operation failed.",
   "error.vaultCorrupt": "The vault file is corrupt.",
   "error.vaultTooNew": "This vault was saved by a newer version of Oikonomia. Update the app to open it; nothing has been lost.",
