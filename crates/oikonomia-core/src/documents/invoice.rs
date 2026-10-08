@@ -227,6 +227,7 @@ mod kind;
 mod merchant;
 mod money;
 mod normalization;
+mod ocr_noise;
 mod reference;
 mod total;
 mod transfer;

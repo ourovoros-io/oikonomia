@@ -586,6 +586,7 @@
   "analyze.notes.ocrPathMissing": "OCR model path not configured.",
   "analyze.notes.ocrModelsMissing": "Bundled OCR models not found. Use a text PDF or enter fields manually.",
   "analyze.notes.ocrRead": "Read with built-in offline OCR. Review before saving.",
+  "analyze.notes.ocrUnreadable": "Most of this scan could not be read, so the amount is left empty. Check the amount and every other field against the document.",
   "analyze.notes.ocrLittleText": "OCR ran but found little text — fill the form manually if needed.",
   "analyze.notes.ocrError": "OCR failed. You can still enter the fields.",
   "analyze.notes.ocrPdfImage": "Read embedded PDF image with built-in OCR. Review before saving.",

@@ -12,6 +12,7 @@
     "ocr_little_text",
     "ocr_failed",
     "ocr_pdf_image",
+    "ocr_unreadable",
     "invoice_parsed",
     "invoice_no_total",
     "invoice_income",

@@ -1088,6 +1088,7 @@
       "ocrPathMissing": "Der Pfad zu den OCR-Modellen ist nicht gesetzt.",
       "ocrModelsMissing": "Die mitgelieferten OCR-Modelle fehlen. Nutzen Sie ein Text-PDF oder füllen Sie die Felder selbst aus.",
       "ocrRead": "Mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern.",
+      "ocrUnreadable": "Der größte Teil dieses Scans konnte nicht gelesen werden, daher bleibt der Betrag leer. Prüfen Sie den Betrag und alle anderen Felder anhand des Dokuments.",
       "ocrLittleText": "Die OCR ist durchgelaufen, hat aber wenig Text gefunden — füllen Sie das Formular bei Bedarf selbst aus.",
       "ocrError": "Die OCR ist fehlgeschlagen. Sie können die Felder trotzdem selbst ausfüllen.",
       "ocrPdfImage": "Eingebettetes PDF-Bild mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern."

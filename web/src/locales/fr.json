@@ -1088,6 +1088,7 @@
       "ocrPathMissing": "Le chemin des modèles OCR n’est pas défini.",
       "ocrModelsMissing": "Les modèles OCR intégrés sont introuvables. Utilisez un PDF texte ou remplissez les champs à la main.",
       "ocrRead": "Lu avec l’OCR hors ligne intégré. Vérifiez avant d’enregistrer.",
+      "ocrUnreadable": "La plus grande partie de ce scan n’a pas pu être lue, le montant est donc laissé vide. Vérifiez le montant et tous les autres champs avec le document.",
       "ocrLittleText": "L’OCR s’est exécuté mais a trouvé peu de texte — remplissez le formulaire à la main si besoin.",
       "ocrError": "L’OCR a échoué. Vous pouvez tout de même remplir les champs.",
       "ocrPdfImage": "Image PDF lue avec l’OCR intégré. Vérifiez avant d’enregistrer."

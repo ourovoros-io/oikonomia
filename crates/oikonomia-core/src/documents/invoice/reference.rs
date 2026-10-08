@@ -186,7 +186,9 @@ fn long_digit_token(line: &str) -> Option<String> {
     let mut run = String::new();
 
     let end_run = |run: &mut String, longest: &mut Option<String>| {
+        // A run of zeros is a blank field or a misread, never a reference.
         if REFERENCE_DIGITS.contains(&run.len())
+            && run.bytes().any(|digit| digit != b'0')
             && longest
                 .as_ref()
                 .is_none_or(|longest| run.len() >= longest.len())
@@ -402,6 +404,17 @@ mod tests {
         }
         // Five digits is too short to be a reference.
         assert_eq!(reference("Invoice 12345"), None);
+    }
+
+    #[test]
+    fn reference_never_takes_a_run_of_zeros() {
+        assert_eq!(reference("Invoice 0000000000"), None);
+        assert_eq!(reference("a 0000000000"), None);
+        // A longer run with a real digit in it still counts.
+        assert_eq!(
+            reference("a 0000000000\nb 0000000042"),
+            Some("0000000042".into())
+        );
     }
 
     #[test]
