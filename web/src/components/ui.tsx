@@ -563,7 +563,7 @@ export function Segmented<T extends string>({
             data-tone={active ? (opt.tone ?? 'neutral') : undefined}
             onClick={() => onChange(opt.id)}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition',
+              'inline-flex items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition focus-visible:outline-offset-[-2px]',
               active
                 ? opt.tone
                   ? toned[opt.tone]

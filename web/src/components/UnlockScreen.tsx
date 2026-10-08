@@ -42,6 +42,10 @@ const IDLE: UpdateUiState = { kind: 'idle' }
 // that unlocking never feels slower.
 const SUCCESS_BEAT_MS = 420
 
+// Rounded, so the shared focus ring hugs the text instead of drawing a tight square.
+const footerLink =
+  'h-6 rounded-md px-1.5 text-[13px] font-medium text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)] disabled:opacity-50'
+
 export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props) {
   const { t, locale, setLocale, languageChangeFailed } = useI18n()
   const [password, setPassword] = useState('')
@@ -306,14 +310,14 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
         ) : null}
         <button
           type="button"
-          className="h-6 text-[13px] font-medium text-[var(--color-muted)] outline-none hover:text-[var(--color-fg-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"
+          className={footerLink}
           onClick={() => void beginUpdateCheck()}
         >
           {t('unlock.update.button')}
         </button>
         <button
           type="button"
-          className="h-6 text-[13px] font-medium text-[var(--color-muted)] outline-none hover:text-[var(--color-fg-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"
+          className={footerLink}
           onClick={() => void beginRestore()}
           disabled={busy || restoreBusy || restorePicking}
         >

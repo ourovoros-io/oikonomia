@@ -9,6 +9,19 @@ const FOCUSABLE = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ')
 
+// Fields a person types into. Checkboxes, radios and file pickers are not a
+// natural place to start, so a dialog that opens on one of those keeps the panel.
+const FIRST_FIELD = [
+  'input:not([disabled]):not([type="hidden"]):not([type="file"]):not([type="checkbox"]):not([type="radio"])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+].join(', ')
+
+/** The first field of a form dialog, else the panel itself, so typing can start at once. */
+function initialFocusTarget(panel: HTMLElement): HTMLElement {
+  return panel.querySelector<HTMLElement>(FIRST_FIELD) ?? panel
+}
+
 /**
  * Stack of open dialogs, innermost last. Only the top-most dialog reacts to
  * keyboard events, so a nested ConfirmDialog consumes Escape without closing
@@ -17,7 +30,7 @@ const FOCUSABLE = [
 const openDialogs: symbol[] = []
 
 /**
- * Dialog keyboard behavior: focus the panel on open, keep Tab cycling inside
+ * Dialog keyboard behavior: focus the first field (or the panel) on open, keep Tab cycling inside
  * it, close the top-most dialog on Escape, and restore focus to the
  * previously focused element on close.
  *
@@ -40,7 +53,7 @@ export function useDialogFocus(
     openDialogs.push(id)
 
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    panelRef.current?.focus()
+    if (panelRef.current) initialFocusTarget(panelRef.current).focus()
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (openDialogs[openDialogs.length - 1] !== id) return

@@ -37,9 +37,13 @@ export function Modal({
   // descendants in WebKit, so a Modal rendered inside another glass surface
   // (a pane, or another dialog) would otherwise be sized to and clipped by
   // it instead of the viewport. Porting to document.body sidesteps that.
+  //
+  // Anchored near the top, not centred: a centred dialog re-centres whenever
+  // its content changes height (an error appears, the entry type changes), so
+  // the controls move under the pointer. Anchored, only the bottom edge moves.
   return createPortal(
     <div
-      className="glass-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="glass-scrim fixed inset-0 z-50 flex items-start justify-center p-4 pt-[7vh]"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
@@ -49,7 +53,7 @@ export function Modal({
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          'glass-dialog flex max-h-[88vh] w-full flex-col overflow-hidden rounded-[24px] outline-none',
+          'glass-dialog flex max-h-[calc(93vh-2rem)] w-full flex-col overflow-hidden rounded-[24px] outline-none',
           maxWidth,
         )}
         onClick={(e) => e.stopPropagation()}

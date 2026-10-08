@@ -189,7 +189,8 @@
   /* Dialogs float above a scrim, so they sit on a darker backdrop than panes
      and can afford a stronger, lifted edge. */
   .glass-dialog {
-    background: rgba(20, 22, 30, 0.66);
+    /* Nearly opaque: list rows behind a translucent dialog read through it. */
+    background: rgba(20, 22, 30, 0.97);
     -webkit-backdrop-filter: blur(32px) saturate(170%);
     backdrop-filter: blur(32px) saturate(170%);
     box-shadow:
@@ -201,7 +202,7 @@
 
   /* Behind a dialog: the page stays visible, softly, so nobody loses their place. */
   .glass-scrim {
-    background: rgba(4, 5, 8, 0.42);
+    background: rgba(4, 5, 8, 0.6);
     -webkit-backdrop-filter: blur(10px) saturate(120%);
     backdrop-filter: blur(10px) saturate(120%);
   }
@@ -245,6 +246,19 @@
   .glass-pane :focus-visible,
   .glass-dialog :focus-visible {
     outline-offset: -2px;
+  }
+
+  /* The brand cyan disappears on the cyan end of the primary gradient, so the
+     filled buttons carry their own ring, drawn inside the edge in the ink the
+     label already uses. After the glass rule so it wins inside panes. */
+  [data-variant="primary"]:focus-visible {
+    outline-color: var(--color-on-accent);
+    outline-offset: -4px;
+  }
+
+  [data-variant="danger"]:focus-visible {
+    outline-color: #fff;
+    outline-offset: -4px;
   }
 }
 

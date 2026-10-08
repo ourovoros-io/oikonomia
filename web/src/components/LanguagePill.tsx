@@ -31,7 +31,8 @@ export function LanguagePill({
             onClick={() => onChange(id)}
             className={cn(
               // Same look as the shared Segmented control.
-              'inline-flex h-8 w-full items-center justify-center rounded-full px-3 text-[13px] font-medium transition',
+              // The ring is drawn inside the segment: outside it would overflow the group.
+              'inline-flex h-8 w-full items-center justify-center rounded-full px-3 text-[13px] font-medium transition focus-visible:outline-offset-[-2px]',
               active
                 ? 'bg-white/10 text-[var(--color-fg)] shadow-[inset_0_1px_0_rgba(255,255,255,0.12)]'
                 : 'text-[var(--color-muted)] hover:text-[var(--color-fg)]',
