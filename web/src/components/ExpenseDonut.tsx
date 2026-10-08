@@ -68,7 +68,7 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: Currenc
           </g>
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-9 text-center">
-          <span className="w-full truncate font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+          <span className="line-clamp-2 w-full font-mono text-[10px] leading-tight font-medium tracking-[0.08em] text-[var(--color-muted)] uppercase">
             {active ? active.name : t('reports.pdf.totalExpenses')}
           </span>
           <span className="mt-1 w-full truncate text-xl font-semibold tabular-nums text-[var(--color-fg)]">

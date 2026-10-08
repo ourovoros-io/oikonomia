@@ -331,7 +331,7 @@ export default function App() {
               {t('app.sidebar.quickAdd')}
             </Button>
 
-            <div className="px-3 font-mono text-[11px] tracking-[0.08em] text-[var(--color-muted)]">
+            <div className="px-3 font-mono text-[10px] leading-tight tracking-[0.04em] text-[var(--color-muted)]">
               {info ? t('app.versionEncrypted', { version: info.version }) : 'Oikonomia'}
             </div>
           </aside>

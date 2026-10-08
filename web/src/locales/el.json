@@ -799,7 +799,7 @@
       "amount": "Ποσό ({currency})",
       "amountPlaceholder": "25,50 ή 25.50",
       "reference": "Αναφορά (προαιρετικό)",
-      "referencePlaceholder": "Αρ. τιμολογίου, αρ. λογαριασμού…",
+      "referencePlaceholder": "Αρ. τιμολογίου…",
       "description": "Περιγραφή",
       "descPlaceholder": {
         "expense": "π.χ. Τρόφιμα",
