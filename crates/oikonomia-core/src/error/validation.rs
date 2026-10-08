@@ -53,6 +53,8 @@ pub enum AccountRole {
     BillCategory,
     /// The liability account that holds an unpaid bill.
     BillsPayable,
+    /// The asset account that holds an income not yet received.
+    Receivable,
     /// The account a transfer takes money from.
     TransferSource,
     /// The account a transfer puts money into.
@@ -71,6 +73,7 @@ impl AccountRole {
         Self::Income,
         Self::BillCategory,
         Self::BillsPayable,
+        Self::Receivable,
         Self::TransferSource,
         Self::TransferDestination,
     ];
@@ -86,6 +89,7 @@ impl AccountRole {
             Self::Income => "income",
             Self::BillCategory => "bill_category",
             Self::BillsPayable => "bills_payable",
+            Self::Receivable => "receivable",
             Self::TransferSource => "transfer_source",
             Self::TransferDestination => "transfer_destination",
         }
@@ -552,6 +556,7 @@ mod tests {
             AccountRole::Income,
             AccountRole::BillCategory,
             AccountRole::BillsPayable,
+            AccountRole::Receivable,
             AccountRole::TransferSource,
             AccountRole::TransferDestination,
         }

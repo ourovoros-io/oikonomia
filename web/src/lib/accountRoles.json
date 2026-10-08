@@ -5,6 +5,7 @@
   "income",
   "bill_category",
   "bills_payable",
+  "receivable",
   "transfer_source",
   "transfer_destination"
 ]

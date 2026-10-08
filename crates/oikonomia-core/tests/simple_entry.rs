@@ -6,7 +6,9 @@ mod common;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId};
 use oikonomia_core::error::Error;
 use oikonomia_core::error::{AccountRole, ValidationError};
-use oikonomia_core::ledger::{PostSimpleEntryRequest, SimpleBillStatus, SimpleEntryKind};
+use oikonomia_core::ledger::{
+    PostSimpleEntryRequest, SimpleBillStatus, SimpleEntryKind, account_balance,
+};
 use rusqlite::Connection;
 
 fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
@@ -251,4 +253,90 @@ fn wrong_role_types_and_bad_amounts_are_rejected() {
             role: AccountRole::Category
         }))
     ));
+}
+#[test]
+fn unpaid_income_debits_the_receivable_and_credits_the_category() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let receivable = common::account(conn, entity_id, "1200");
+
+    let mut invoice = base_input(entity_id, SimpleEntryKind::Income);
+    invoice.bill_status = Some(SimpleBillStatus::Unpaid);
+    invoice.category_account_id = Some(acc.salary);
+    invoice.payable_account_id = Some(receivable);
+
+    let view = common::post_simple_request(conn, &invoice).expect("post unpaid income");
+    let debit = view
+        .lines
+        .iter()
+        .find(|l| l.debit().amount_minor() > 0)
+        .expect("debit line");
+    let credit = view
+        .lines
+        .iter()
+        .find(|l| l.credit().amount_minor() > 0)
+        .expect("credit line");
+    assert_eq!(debit.account_id, receivable);
+    assert_eq!(credit.account_id, acc.salary);
+
+    // Income is recognised, but no money has reached the bank.
+    let on = common::date("2026-12-31");
+    assert_eq!(
+        account_balance(conn, receivable, on).expect("receivable"),
+        2_500
+    );
+    assert_eq!(
+        account_balance(conn, acc.checking, on).expect("checking"),
+        0
+    );
+}
+
+#[test]
+fn unpaid_income_needs_a_receivable_asset_account() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+
+    let mut invoice = base_input(entity_id, SimpleEntryKind::Income);
+    invoice.bill_status = Some(SimpleBillStatus::Unpaid);
+    invoice.category_account_id = Some(acc.salary);
+    assert!(matches!(
+        common::post_simple_request(conn, &invoice),
+        Err(Error::Validation(ValidationError::AccountRequired {
+            role: AccountRole::Receivable
+        }))
+    ));
+
+    // A liability cannot hold money owed to the book.
+    invoice.payable_account_id = Some(acc.bills_payable);
+    assert!(matches!(
+        common::post_simple_request(conn, &invoice),
+        Err(Error::Validation(ValidationError::AccountWrongType {
+            role: AccountRole::Receivable,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn income_received_ignores_a_paid_status_and_a_stray_receivable() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let receivable = common::account(conn, entity_id, "1200");
+
+    let mut income = base_input(entity_id, SimpleEntryKind::Income);
+    income.bill_status = Some(SimpleBillStatus::Paid);
+    income.category_account_id = Some(acc.salary);
+    income.wallet_account_id = Some(acc.checking);
+    income.payable_account_id = Some(receivable);
+
+    let view = common::post_simple_request(conn, &income).expect("post received income");
+    let debit = view
+        .lines
+        .iter()
+        .find(|l| l.debit().amount_minor() > 0)
+        .expect("debit line");
+    assert_eq!(debit.account_id, acc.checking);
 }

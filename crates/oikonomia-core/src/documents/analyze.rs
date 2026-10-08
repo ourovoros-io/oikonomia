@@ -178,7 +178,8 @@ pub struct DocumentSuggestion {
     pub category_account_id: Option<AccountId>,
     /// Suggested bank/cash/card.
     pub wallet_account_id: Option<AccountId>,
-    /// Suggested bills payable.
+    /// Suggested bills payable account, or for an income the receivable
+    /// account an unpaid invoice is owed on.
     pub payable_account_id: Option<AccountId>,
     /// 0.0–1.0 rough confidence.
     pub confidence: f32,
@@ -462,7 +463,8 @@ struct SuggestedAccounts {
     category: Option<AccountId>,
     /// The bank, cash or card account that pays or receives.
     wallet: Option<AccountId>,
-    /// The account an unpaid bill is owed on.
+    /// The account an unpaid bill is owed on, or for an income the account an
+    /// unpaid invoice is owed on.
     payable: Option<AccountId>,
 }
 
@@ -480,17 +482,21 @@ fn suggest_accounts(
         template, accounts, ..
     } = *context;
 
-    let category = match kind {
-        EntryKindSuggestion::Income => match_income_account(template, accounts, category_hint),
-        EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => {
-            match_expense_account(template, accounts, category_hint)
-        }
+    let (category, open_item_role) = match kind {
+        EntryKindSuggestion::Income => (
+            match_income_account(template, accounts, category_hint),
+            AccountRole::Receivable,
+        ),
+        EntryKindSuggestion::Expense | EntryKindSuggestion::Bill => (
+            match_expense_account(template, accounts, category_hint),
+            AccountRole::BillsPayable,
+        ),
     };
 
     SuggestedAccounts {
         category,
         wallet: default_account_for_role(template, accounts, AccountRole::Payment),
-        payable: default_account_for_role(template, accounts, AccountRole::BillsPayable),
+        payable: default_account_for_role(template, accounts, open_item_role),
     }
 }
 
@@ -1921,6 +1927,52 @@ mod tests {
             [UiText::new(UiTextCode::NoTextExtracted)],
             "a page of spaces is within budget and has no text"
         );
+    }
+
+    /// The Greek sales invoice of the corpus: income on credit terms.
+    const SALES_INVOICE: &str =
+        include_str!("../../testdata/documents/synthetic/text/greek_sales_invoice.txt");
+
+    fn analyze_sales_invoice(template: ChartTemplate, accounts: &[Account]) -> DocumentSuggestion {
+        analyze_document_bytes(
+            &NewDocument {
+                filename: "invoice.txt",
+                mime_type: "text/plain",
+                data: SALES_INVOICE.as_bytes(),
+            },
+            &AnalyzeContext {
+                template,
+                accounts,
+                default_currency: "EUR".parse().unwrap(),
+                locale: crate::prefs::Locale::En,
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn an_unpaid_sales_invoice_suggests_the_receivable_account() {
+        let accounts = seeded_chart_for_tests(ChartTemplate::Company, true);
+
+        let suggestion = analyze_sales_invoice(ChartTemplate::Company, &accounts);
+
+        assert_eq!(suggestion.kind, EntryKindSuggestion::Income);
+        assert!(suggestion.bill_unpaid);
+        assert_eq!(
+            code_of_for_tests(&accounts, suggestion.payable_account_id).as_deref(),
+            Some("1100"),
+        );
+    }
+
+    #[test]
+    fn a_book_without_a_receivable_account_suggests_none_for_a_sales_invoice() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        deactivate_code(&mut accounts, "1200");
+
+        let suggestion = analyze_sales_invoice(ChartTemplate::Personal, &accounts);
+
+        assert!(suggestion.bill_unpaid);
+        assert_eq!(suggestion.payable_account_id, None);
     }
 
     #[test]

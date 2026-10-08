@@ -5,7 +5,7 @@
 //! its kind and by accounts named for the part they play, not by debit and
 //! credit. This module is the one place that knows what each kind needs.
 //!
-//! # The six cases
+//! # The seven cases
 //!
 //! [`SimpleEntryAccounts`] has one variant per valid combination, so a value
 //! of it always names exactly the two accounts its kind posts to. Its
@@ -22,7 +22,9 @@
 //!
 //! Converting reads only the accounts the kind needs. An account the flat
 //! form holds for a part the kind does not have is dropped, and so is a bill
-//! status on an entry that is not a bill.
+//! status on an entry that is neither a bill nor an income. An income is the
+//! one other kind that reads the status, and only for `unpaid`: income not yet
+//! received.
 //!
 //! # One part, three vocabularies
 //!
@@ -40,7 +42,7 @@ use serde::{Deserialize, Serialize};
 pub enum SimpleEntryKind {
     /// Money spent now.
     Expense,
-    /// Money received.
+    /// Money received, or invoiced and still to be received.
     Income,
     /// A bill: paid, owed, or a payment against an owed bill.
     Bill,
@@ -66,13 +68,16 @@ impl SimpleEntryKind {
     }
 }
 
-/// Payment state for [`SimpleEntryKind::Bill`].
+/// Payment state for [`SimpleEntryKind::Bill`], and for
+/// [`SimpleEntryKind::Income`], where only [`Unpaid`](Self::Unpaid) has a
+/// meaning: the income is invoiced and not yet received.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SimpleBillStatus {
     /// Paid immediately from a wallet account.
     Paid,
-    /// Recorded as owed against a payable account.
+    /// Recorded as owed against a payable account. For an income: recorded as
+    /// owed to the book against a receivable account.
     Unpaid,
     /// Settle a previously recorded payable from a wallet account.
     PayExisting,
@@ -104,6 +109,7 @@ impl SimpleBillStatus {
 /// |---------|-------------------|-------|--------|
 /// | `Expense` | expense | category (expense) | wallet (asset or liability) |
 /// | `Income` | income | wallet (asset) | category (income) |
+/// | `IncomeReceivable` | income, unpaid | receivable (asset) | category (income) |
 /// | `BillPaid` | bill, paid | category (expense) | wallet (asset or liability) |
 /// | `BillUnpaid` | bill, unpaid | category (expense) | payable (liability) |
 /// | `BillPayment` | bill, pay existing | payable (liability) | wallet (asset or liability) |
@@ -156,6 +162,15 @@ pub enum SimpleEntryAccounts {
         category: AccountId,
         /// The asset account the money was paid into.
         wallet: AccountId,
+    },
+    /// Income invoiced and not yet received: the receivable account is debited
+    /// and the category credited. Its flat form holds the receivable account
+    /// in the `payable` part, the one part of the open item a kind has.
+    IncomeReceivable {
+        /// The income account the invoice is for.
+        category: AccountId,
+        /// The asset account the money is owed on.
+        receivable: AccountId,
     },
     /// A bill paid at once: the category is debited and the wallet credited.
     BillPaid {
@@ -223,8 +238,8 @@ impl SimpleEntryAccounts {
         roles: SimpleEntryRoleAccounts,
     ) -> std::result::Result<Self, MissingPart> {
         use AccountRole::{
-            BillCategory, BillsPayable, Category, Deposit, Income, Payment, TransferDestination,
-            TransferSource,
+            BillCategory, BillsPayable, Category, Deposit, Income, Payment, Receivable,
+            TransferDestination, TransferSource,
         };
 
         // In every arm the debited account is required before the credited
@@ -235,6 +250,14 @@ impl SimpleEntryAccounts {
                 category: roles.category.ok_or(MissingPart::Category(Category))?,
                 wallet: roles.wallet.ok_or(MissingPart::Wallet(Payment))?,
             }),
+            (SimpleEntryKind::Income, Some(SimpleBillStatus::Unpaid)) => {
+                let receivable = roles.payable.ok_or(MissingPart::Payable(Receivable))?;
+                let category = roles.category.ok_or(MissingPart::Category(Income))?;
+                Ok(Self::IncomeReceivable {
+                    category,
+                    receivable,
+                })
+            }
             (SimpleEntryKind::Income, _) => {
                 let wallet = roles.wallet.ok_or(MissingPart::Wallet(Deposit))?;
                 let category = roles.category.ok_or(MissingPart::Category(Income))?;
@@ -270,7 +293,7 @@ impl SimpleEntryAccounts {
     pub const fn kind(&self) -> SimpleEntryKind {
         match self {
             Self::Expense { .. } => SimpleEntryKind::Expense,
-            Self::Income { .. } => SimpleEntryKind::Income,
+            Self::Income { .. } | Self::IncomeReceivable { .. } => SimpleEntryKind::Income,
             Self::BillPaid { .. } | Self::BillUnpaid { .. } | Self::BillPayment { .. } => {
                 SimpleEntryKind::Bill
             }
@@ -278,12 +301,15 @@ impl SimpleEntryAccounts {
         }
     }
 
-    /// Returns the payment state of a bill, and `None` for any other kind.
+    /// Returns the payment state of a bill or of an income not yet received,
+    /// and `None` for any other entry.
     #[must_use]
     pub const fn bill_status(&self) -> Option<SimpleBillStatus> {
         match self {
             Self::BillPaid { .. } => Some(SimpleBillStatus::Paid),
-            Self::BillUnpaid { .. } => Some(SimpleBillStatus::Unpaid),
+            Self::BillUnpaid { .. } | Self::IncomeReceivable { .. } => {
+                Some(SimpleBillStatus::Unpaid)
+            }
             Self::BillPayment { .. } => Some(SimpleBillStatus::PayExisting),
             Self::Expense { .. } | Self::Income { .. } | Self::Transfer { .. } => None,
         }
@@ -320,6 +346,14 @@ impl SimpleEntryAccounts {
                 payable: Some(payable),
                 ..none
             },
+            Self::IncomeReceivable {
+                category,
+                receivable,
+            } => SimpleEntryRoleAccounts {
+                category: Some(category),
+                payable: Some(receivable),
+                ..none
+            },
             Self::BillPayment { payable, wallet } => SimpleEntryRoleAccounts {
                 payable: Some(payable),
                 wallet: Some(wallet),
@@ -351,6 +385,13 @@ impl SimpleEntryAccounts {
             ),
             Self::Income { category, wallet } => (
                 side(wallet, AccountRole::Deposit, &[Asset]),
+                side(category, AccountRole::Income, &[Income]),
+            ),
+            Self::IncomeReceivable {
+                category,
+                receivable,
+            } => (
+                side(receivable, AccountRole::Receivable, &[Asset]),
                 side(category, AccountRole::Income, &[Income]),
             ),
             Self::BillPaid { category, wallet } => (
@@ -393,7 +434,7 @@ impl SimpleEntryAccounts {
 /// |------------|---------------------------------|-----------------------------|
 /// | `category` | `category_account_id` | `category`, `income` or `bill_category`, by kind |
 /// | `wallet` | `wallet_account_id` | `payment`, or `deposit` for income |
-/// | `payable` | `payable_account_id` | `bills_payable` |
+/// | `payable` | `payable_account_id` | `bills_payable`, or `receivable` for an unpaid income |
 /// | `from` | `from_account_id` | `transfer_source` |
 /// | `to` | `to_account_id` | `transfer_destination` |
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -402,7 +443,8 @@ pub struct SimpleEntryRoleAccounts {
     pub category: Option<AccountId>,
     /// Bank, cash or card account (`wallet_account_id`).
     pub wallet: Option<AccountId>,
-    /// Bills payable liability account (`payable_account_id`).
+    /// Bills payable liability account, or the receivable asset account of an
+    /// unpaid income (`payable_account_id`).
     pub payable: Option<AccountId>,
     /// Account a transfer takes from (`from_account_id`).
     pub from: Option<AccountId>,
@@ -704,11 +746,15 @@ mod properties {
     /// without a status.
     fn needed(kind: SimpleEntryKind, status: Option<SimpleBillStatus>) -> Option<[bool; 5]> {
         match (kind, status) {
-            (SimpleEntryKind::Expense | SimpleEntryKind::Income, _)
+            (SimpleEntryKind::Expense, _)
+            | (
+                SimpleEntryKind::Income,
+                None | Some(SimpleBillStatus::Paid | SimpleBillStatus::PayExisting),
+            )
             | (SimpleEntryKind::Bill, Some(SimpleBillStatus::Paid)) => {
                 Some([true, true, false, false, false])
             }
-            (SimpleEntryKind::Bill, Some(SimpleBillStatus::Unpaid)) => {
+            (SimpleEntryKind::Income | SimpleEntryKind::Bill, Some(SimpleBillStatus::Unpaid)) => {
                 Some([true, false, true, false, false])
             }
             (SimpleEntryKind::Bill, Some(SimpleBillStatus::PayExisting)) => {
