@@ -178,6 +178,11 @@
       "due": "Offen",
       "paid": "Bezahlt"
     },
+    "incomeStatus": {
+      "aria": "Status der Einnahme",
+      "received": "Erhalten",
+      "unpaid": "Offen"
+    },
     "memo": {
       "placeholder": "Notiz"
     },

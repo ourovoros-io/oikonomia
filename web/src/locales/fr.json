@@ -178,6 +178,11 @@
       "due": "À payer",
       "paid": "Payée"
     },
+    "incomeStatus": {
+      "aria": "Statut du revenu",
+      "received": "Reçu",
+      "unpaid": "Impayé"
+    },
     "memo": {
       "placeholder": "Note"
     },
