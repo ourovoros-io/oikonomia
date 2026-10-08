@@ -314,7 +314,7 @@ describe('command error localization', () => {
       'settings.deleteFailed',
     )
 
-    expect(shown).toBe('Could not delete the entity.')
+    expect(shown).toBe('Could not delete the book.')
     expect(shown).not.toContain('sqlcipher')
     // The raw text is kept for diagnosis.
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('sqlcipher: disk image is malformed'))

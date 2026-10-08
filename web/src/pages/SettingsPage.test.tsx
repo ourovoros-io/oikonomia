@@ -129,7 +129,7 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('heading', { name: 'Donate' })).toBeNull()
   })
 
-  test('New entity is enabled when the vault already has a book', async () => {
+  test('New book is enabled when the vault already has a book', async () => {
     render(
       <SettingsPage
         entities={[entity]}
@@ -137,16 +137,16 @@ describe('SettingsPage', () => {
         onSelectEntity={() => {}}
       />,
     )
-    expect(screen.queryByRole('button', { name: /new entity/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^new book$/i })).not.toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
 
-    const newEntity = await screen.findByRole('button', { name: /new entity/i })
+    const newEntity = await screen.findByRole('button', { name: /^new book$/i })
     expect(newEntity).toBeEnabled()
     expect(newEntity).not.toHaveAttribute('title')
   })
 
-  test('creating an entity sends the form payload and stays on Settings', async () => {
+  test('creating a book sends the form payload and stays on Settings', async () => {
     vi.mocked(api.entityCreate).mockResolvedValue({
       id: 'e2',
       name: 'Work',
@@ -165,10 +165,10 @@ describe('SettingsPage', () => {
       />,
     )
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
     await userEvent.type(screen.getByLabelText('Name'), 'Work')
-    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /create book/i }))
 
     expect(await screen.findByText('Book Work created.')).toBeTruthy()
     expect(api.entityCreate).toHaveBeenCalledTimes(1)
@@ -198,10 +198,10 @@ describe('SettingsPage', () => {
       />,
     )
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
     await userEvent.type(screen.getByLabelText('Name'), 'Personal')
-    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /create book/i }))
 
     expect(
       await screen.findByText('The name \u201cPersonal\u201d is already in use. Choose a different name.'),
@@ -222,11 +222,11 @@ describe('SettingsPage', () => {
       <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
     )
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
-    const dialog = await screen.findByRole('dialog', { name: 'New entity' })
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
+    const dialog = await screen.findByRole('dialog', { name: 'New book' })
     await userEvent.type(within(dialog).getByLabelText('Name'), 'Personal')
-    await userEvent.click(within(dialog).getByRole('button', { name: /create entity/i }))
+    await userEvent.click(within(dialog).getByRole('button', { name: /create book/i }))
 
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('already in use')
 
@@ -239,10 +239,10 @@ describe('SettingsPage', () => {
       <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
     )
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
-    const dialog = await screen.findByRole('dialog', { name: 'New entity' })
-    await userEvent.click(within(dialog).getByRole('button', { name: /create entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
+    const dialog = await screen.findByRole('dialog', { name: 'New book' })
+    await userEvent.click(within(dialog).getByRole('button', { name: /create book/i }))
 
     expect(within(dialog).getByRole('alert')).toHaveTextContent(
       'A required name or code is empty. Fill it in and try again.',
@@ -260,10 +260,10 @@ describe('SettingsPage', () => {
       <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
     )
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
     await userEvent.type(screen.getByLabelText('Name'), 'Personal')
-    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /create book/i }))
 
     expect(await screen.findByText('Something went wrong.')).toBeInTheDocument()
     expect(screen.queryByText(/UNIQUE constraint/)).toBeNull()
@@ -758,7 +758,7 @@ describe('SettingsPage createBookIntent', () => {
         createBookIntent={0}
       />,
     )
-    expect(screen.queryByRole('dialog', { name: /new entity/i })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: /^new book$/i })).toBeNull()
 
     rerender(
       <SettingsPage
@@ -770,7 +770,7 @@ describe('SettingsPage createBookIntent', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: /new entity/i })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: /^new book$/i })).toBeTruthy()
     })
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth' })
   })
@@ -779,7 +779,7 @@ describe('SettingsPage createBookIntent', () => {
     render(
       <SettingsPage entities={[]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
     )
-    expect(screen.queryByRole('dialog', { name: /new entity/i })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: /^new book$/i })).toBeNull()
   })
 
   test('calls onCreateBookIntentHandled once the intent is consumed', async () => {
@@ -806,7 +806,7 @@ describe('SettingsPage createBookIntent', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: /new entity/i })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: /^new book$/i })).toBeTruthy()
     })
     expect(onCreateBookIntentHandled).toHaveBeenCalledTimes(1)
 
@@ -842,7 +842,7 @@ describe('SettingsPage createBookIntent', () => {
       />,
     )
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: /new entity/i })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: /^new book$/i })).toBeTruthy()
     })
   })
 })
@@ -865,16 +865,16 @@ describe('SettingsPage Auto-lock feedback', () => {
   })
 })
 
-describe('SettingsPage New entity currency', () => {
+describe('SettingsPage New book currency', () => {
   afterEach(resetSessionDefaults)
 
-  test('the next New entity form starts from the last currency picked', async () => {
+  test('the next New book form starts from the last currency picked', async () => {
     render(
       <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
     )
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
-    let dialog = await screen.findByRole('dialog', { name: 'New entity' })
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
+    let dialog = await screen.findByRole('dialog', { name: 'New book' })
     await userEvent.selectOptions(within(dialog).getByLabelText('Currency'), 'USD')
     await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     cleanup()
@@ -882,9 +882,9 @@ describe('SettingsPage New entity currency', () => {
     render(
       <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
     )
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
-    dialog = await screen.findByRole('dialog', { name: 'New entity' })
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
+    dialog = await screen.findByRole('dialog', { name: 'New book' })
     expect(within(dialog).getByLabelText('Currency')).toHaveValue('USD')
   })
 })
@@ -907,10 +907,10 @@ describe('SettingsPage books', () => {
     }
     render(<Harness />)
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
     await userEvent.type(screen.getByLabelText('Name'), 'Household')
-    await userEvent.click(screen.getByRole('button', { name: 'Create entity' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Create book' }))
 
     expect(await screen.findByText('Book Household created.')).toBeTruthy()
     // Still on Settings, with the list open and the new book marked.
@@ -930,7 +930,7 @@ describe('SettingsPage books', () => {
       />,
     )
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
     await userEvent.click(await screen.findByRole('button', { name: 'Rename Personal' }))
     const dialog = screen.getByRole('dialog', { name: 'Rename book' })
     const name = within(dialog).getByRole('textbox')
@@ -950,7 +950,7 @@ describe('SettingsPage books', () => {
       <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
     )
 
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
     await userEvent.click(await screen.findByRole('button', { name: 'Rename Personal' }))
     const dialog = screen.getByRole('dialog', { name: 'Rename book' })
     const name = within(dialog).getByRole('textbox')
