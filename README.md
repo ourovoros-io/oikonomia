@@ -14,7 +14,7 @@ It keeps **double-entry** books for several entities, **encrypted at rest**,
 with a dark "Aurora glass" interface. It needs no account, no cloud, and sends
 no telemetry.
 
-Status: 0.1.0 pre-release.
+Status: 0.1.x, early releases.
 
 Stack: **Rust** (`oikonomia-core`) + **Tauri 2** + **React / Vite / Tailwind**.
 
@@ -47,7 +47,7 @@ Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 
 ## Install
 
-No release has been published yet. Releases appear on this repository's
+Releases appear on this repository's
 Releases page, each with a `SHA256SUMS` file so you can check what you
 downloaded.
 
