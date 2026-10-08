@@ -199,11 +199,11 @@
   }
 
   /* Every panel. The fill is measured: text on it keeps 4.5:1 wherever the
-     aurora drifts. */
+     aurora sits. There is no backdrop-filter: the aurora behind is already
+     blurred, and re-blurring it on every repaint pinned the CPU on machines
+     without GPU acceleration. */
   .glass-pane {
     background: var(--glass-fill);
-    -webkit-backdrop-filter: blur(28px) saturate(170%);
-    backdrop-filter: blur(28px) saturate(170%);
     border: 1px solid var(--glass-edge);
     box-shadow:
       inset 0 1px 0 var(--glass-highlight),
@@ -215,8 +215,6 @@
   .glass-dialog {
     /* Nearly opaque: list rows behind a translucent dialog read through it. */
     background: rgba(20, 22, 30, 0.97);
-    -webkit-backdrop-filter: blur(32px) saturate(170%);
-    backdrop-filter: blur(32px) saturate(170%);
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.12),
       0 0 0 1px rgba(255, 255, 255, 0.1),
@@ -226,9 +224,7 @@
 
   /* Behind a dialog: the page stays visible, softly, so nobody loses their place. */
   .glass-scrim {
-    background: rgba(4, 5, 8, 0.6);
-    -webkit-backdrop-filter: blur(10px) saturate(120%);
-    backdrop-filter: blur(10px) saturate(120%);
+    background: rgba(4, 5, 8, 0.72);
   }
 
   /* Pulse bars grow out of the zero line once, when the chart first paints:
@@ -290,14 +286,10 @@
 @media (prefers-reduced-transparency: reduce) {
   .glass-pane,
   .glass-dialog {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
     background: var(--color-surface);
   }
 
   .glass-scrim {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
     background: rgba(4, 5, 8, 0.78);
   }
 }
@@ -312,9 +304,9 @@
     background: var(--color-canvas);
   }
 
-  /* One blur over all five blobs. The blobs are static: drifting them under
-     the panes' backdrop-filter re-blurred every frame and pinned several CPU
-     cores on machines without GPU acceleration. */
+  /* One blur over all five blobs. The blobs are static and the panes above
+     them do not blur: drifting blobs under blurred panes re-blurred every
+     frame and pinned several CPU cores on machines without GPU acceleration. */
   .aurora-blobs {
     position: absolute;
     inset: -80px;
