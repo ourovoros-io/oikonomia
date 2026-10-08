@@ -230,9 +230,9 @@ pub const fn role_account_type(role: AccountRole) -> AccountType {
         AccountRole::Payment
         | AccountRole::Deposit
         | AccountRole::TransferSource
-        | AccountRole::TransferDestination => AccountType::Asset,
+        | AccountRole::TransferDestination
+        | AccountRole::Receivable => AccountType::Asset,
         AccountRole::BillsPayable => AccountType::Liability,
-        AccountRole::Receivable => AccountType::Asset,
     }
 }
 
