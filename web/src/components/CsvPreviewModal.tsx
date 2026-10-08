@@ -23,6 +23,8 @@ type Props = {
   expenseAccounts: Account[]
   incomeAccounts: Account[]
   busy?: boolean
+  /** The last failure of an action in this dialog, drawn at the top of it. */
+  error?: string | null
   onClose: () => void
   onConfirm: (input: { rows: SimpleEntryInput[]; include_duplicates: boolean }) => void
 }
@@ -43,6 +45,7 @@ export function CsvPreviewModal({
   expenseAccounts,
   incomeAccounts,
   busy = false,
+  error = null,
   onClose,
   onConfirm,
 }: Props) {
@@ -121,6 +124,7 @@ export function CsvPreviewModal({
       title={t('tx.csv.previewTitle')}
       description={preview ? previewSubtitle(preview.rows.length, duplicateCount) : undefined}
       maxWidth="max-w-4xl"
+      error={error}
       onClose={onClose}
     >
       <div className="mb-4 flex flex-wrap items-end gap-3">

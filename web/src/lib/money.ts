@@ -76,6 +76,20 @@ function decimalMark(locale: string): string {
 }
 
 /**
+ * The catalog key that says why parsed text cannot be an entry's amount, or
+ * null when it can. Zero and negative amounts get their own sentence: "enter
+ * a valid amount" would send someone who typed `0` looking for a typo.
+ *
+ * `unreadableKey` is the screen's own wording for text that is not a number.
+ */
+export function amountProblemKey(minor: number | null, unreadableKey: string): string | null {
+  if (minor === null) return unreadableKey
+  if (minor <= 0) return 'error.amountNotPositive'
+
+  return null
+}
+
+/**
  * Format minor units as currency for display, in the app language.
  *
  * `Intl.NumberFormat` supplies the grouping, the decimal mark and the

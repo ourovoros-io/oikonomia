@@ -96,7 +96,7 @@
       "close": "Fermer"
     },
     "error": {
-      "mismatch": "Les mots de passe ne correspondent pas",
+      "mismatch": "Les mots de passe ne correspondent pas.",
       "badPassword": "Mot de passe incorrect — veuillez réessayer.",
       "generic": "Impossible de déverrouiller le coffre."
     }
@@ -254,7 +254,7 @@
       "submit": "Changer le mot de passe",
       "busy": "Rechiffrement…",
       "error": {
-        "mismatch": "Les nouveaux mots de passe ne correspondent pas",
+        "mismatch": "Les nouveaux mots de passe ne correspondent pas.",
         "badCurrent": "Le mot de passe actuel est incorrect.",
         "generic": "Impossible de changer le mot de passe"
       },
@@ -656,8 +656,7 @@
       "aria": "Fixer le solde de {name}"
     },
     "deactivate": {
-      "aria": "Désactiver le compte",
-      "title": "Désactiver"
+      "aria": "Désactiver le compte"
     },
     "badge": {
       "system": "système"
@@ -1115,5 +1114,10 @@
         "transferFeeUnstated": "Des frais de virement figurent sur le reçu et ne sont pas le montant enregistré."
       }
     }
+  },
+  "form": {
+    "dismiss": "Fermer le message",
+    "fieldRequired": "Un champ obligatoire est vide. Remplissez-le et réessayez.",
+    "passwordRequired": "Saisissez votre mot de passe."
   }
 }

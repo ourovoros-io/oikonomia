@@ -105,6 +105,15 @@ export function DateInput({
     }
   }
 
+  // A date typed in full counts at once, so a From after To is reported while
+  // the person is still in the field, not only after they leave it. A partial
+  // date waits for blur: "01/10/20" must not be taken as the year 2020.
+  function commitWhenComplete(draft: string) {
+    if (!/^\d{1,2}[./-]\d{1,2}[./-]\d{4}$/.test(draft.trim())) return
+    const iso = parseEuropeanDateToISO(draft)
+    if (iso && iso !== value) onChange(iso)
+  }
+
   function pick(day: number) {
     const iso = toIso(view.y, view.m, day)
     setInvalid(false)
@@ -141,6 +150,7 @@ export function DateInput({
           onChange={(e) => {
             setText(e.target.value)
             setInvalid(false)
+            commitWhenComplete(e.target.value)
           }}
           onBlur={commit}
           onKeyDown={(e) => {

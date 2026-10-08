@@ -87,7 +87,8 @@ describe('SettingsPage archiving a book', () => {
   test('every book row offers Archive beside Open and Delete', async () => {
     await openBooks([home, shop])
 
-    expect(screen.getByRole('button', { name: 'Archive Home' })).toHaveAttribute('title', 'Archive')
+    // Named by aria-label; a native title would linger over the dialog it opens.
+    expect(screen.getByRole('button', { name: 'Archive Home' })).not.toHaveAttribute('title')
     expect(screen.getByRole('button', { name: 'Archive Shop' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Delete Home' })).toBeEnabled()
   })

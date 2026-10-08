@@ -70,7 +70,7 @@ describe('UnlockScreen submit', () => {
     await userEvent.type(screen.getByLabelText('Password'), 'alpha')
     await userEvent.type(screen.getByLabelText('Confirm password'), 'beta')
     await userEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
-    expect(screen.getByText('Passwords do not match')).toBeTruthy()
+    expect(screen.getByText('Passwords do not match.')).toBeTruthy()
     expect(vaultInit).not.toHaveBeenCalled()
     expect(vaultUnlock).not.toHaveBeenCalled()
   })
@@ -173,8 +173,8 @@ describe('UnlockScreen aria wiring', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
     expect(password).toHaveAttribute('aria-invalid', 'true')
     expect(confirm).toHaveAttribute('aria-invalid', 'true')
-    expect(password).toHaveAccessibleDescription('Passwords do not match')
-    expect(confirm).toHaveAccessibleDescription('Passwords do not match')
+    expect(password).toHaveAccessibleDescription('Passwords do not match.')
+    expect(confirm).toHaveAccessibleDescription('Passwords do not match.')
   })
 
   test('a failed restore never marks the password field invalid', async () => {

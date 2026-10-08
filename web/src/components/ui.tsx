@@ -1,13 +1,14 @@
-import { ChevronDown, CircleAlert, Loader2 } from 'lucide-react'
-import { useState } from 'react'
+import { ChevronDown, CircleAlert, Loader2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
-  InputHTMLAttributes,
+  ComponentProps,
   ReactNode,
   SelectHTMLAttributes,
 } from 'react'
 
 import { cn } from '../lib/cn'
+import { useI18n } from '../lib/I18nProvider'
 
 /**
  * The shared control look. `ui-control` is a styling hook, not decoration:
@@ -324,7 +325,8 @@ export function Button({
   )
 }
 
-export function Input({ className = '', ...props }: InputHTMLAttributes<HTMLInputElement>) {
+// ComponentProps, not InputHTMLAttributes: in React 19 it is what carries `ref`.
+export function Input({ className = '', ...props }: ComponentProps<'input'>) {
   return <input className={cn(controlBase, className)} {...props} />
 }
 
@@ -373,21 +375,38 @@ export function Field({
   )
 }
 
+/**
+ * An error or notice that stays until the problem is fixed. With `onDismiss`
+ * it can also be closed; without it, the owner clears it. It scrolls itself
+ * into view when it appears, so a failure above the fold is never silent.
+ */
 export function ErrorBanner({
   message,
   title,
   className = 'mb-4',
   id,
+  onDismiss,
 }: {
   message: string | null
   title?: string
   className?: string
   id?: string
+  onDismiss?: () => void
 }) {
-  if (!message && !title) return null
+  const { t } = useI18n()
+  const ref = useRef<HTMLDivElement>(null)
+  const visible = Boolean(message || title)
+
+  useEffect(() => {
+    // Undefined in jsdom.
+    if (visible) ref.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [visible, message])
+
+  if (!visible) return null
 
   return (
     <div
+      ref={ref}
       id={id}
       role="alert"
       aria-live="assertive"
@@ -403,6 +422,72 @@ export function ErrorBanner({
         {title ? <p className="font-semibold">{title}</p> : null}
         {message ? <p className={title ? 'mt-0.5' : undefined}>{message}</p> : null}
       </div>
+      {onDismiss ? (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label={t('form.dismiss')}
+          className="-m-1 shrink-0 rounded-md p-1 hover:bg-white/10"
+        >
+          <X className="size-4" aria-hidden />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * A confirmation that something worked. It goes away by itself after
+ * `autoDismissMs`, and can be closed sooner: unlike an error it asks nothing
+ * of the reader, so it must not stay on the page for good.
+ */
+export function Notice({
+  message,
+  onDismiss,
+  autoDismissMs = 8000,
+  className = '',
+}: {
+  message: string | null
+  onDismiss: () => void
+  autoDismissMs?: number
+  className?: string
+}) {
+  const { t } = useI18n()
+  const ref = useRef<HTMLDivElement>(null)
+  // Held in a ref so a new closure on each render does not restart the timer.
+  const dismissRef = useRef(onDismiss)
+  useEffect(() => {
+    dismissRef.current = onDismiss
+  }, [onDismiss])
+
+  useEffect(() => {
+    if (!message) return
+    ref.current?.scrollIntoView?.({ block: 'nearest' })
+    const timer = window.setTimeout(() => dismissRef.current(), autoDismissMs)
+
+    return () => window.clearTimeout(timer)
+  }, [message, autoDismissMs])
+
+  if (!message) return null
+
+  return (
+    <div
+      ref={ref}
+      role="status"
+      className={cn(
+        'flex items-start gap-2 rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]',
+        className,
+      )}
+    >
+      <p className="min-w-0 flex-1">{message}</p>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label={t('form.dismiss')}
+        className="-m-1 shrink-0 rounded-md p-1 hover:bg-white/10"
+      >
+        <X className="size-4" aria-hidden />
+      </button>
     </div>
   )
 }
@@ -563,7 +648,7 @@ export function Segmented<T extends string>({
             data-tone={active ? (opt.tone ?? 'neutral') : undefined}
             onClick={() => onChange(opt.id)}
             className={cn(
-              'inline-flex items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition',
+              'inline-flex items-center gap-1.5 rounded-full px-3.5 text-[13px] font-medium transition focus-visible:outline-offset-[-2px]',
               active
                 ? opt.tone
                   ? toned[opt.tone]
