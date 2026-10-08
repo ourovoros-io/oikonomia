@@ -247,8 +247,9 @@ pub(crate) async fn settings_remember_quick_add<R: Runtime>(
 
 /// Remembers the book that is open, so the next unlock selects it again.
 ///
-/// Works in every vault state. The value goes to the plaintext preferences
-/// file; it is an identifier, with no name among it.
+/// Works in every vault state. Only the book's identifier goes to the
+/// plaintext preferences file, never its name. The id is not checked against
+/// the vault; a book that no longer exists is ignored when it is read back.
 ///
 /// # Errors
 ///

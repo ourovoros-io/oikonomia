@@ -31,7 +31,7 @@
 //! in another language, so no choice here reads one. The mapping from role to
 //! code lives next to the chart templates in [`crate::coa`].
 
-use crate::coa::{default_role_codes, role_account_type};
+use crate::coa::{default_role_codes, has_type_fallback, role_account_type};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId};
 use crate::error::{AccountRole, Result};
 use crate::ledger::{get_entity, list_accounts};
@@ -95,7 +95,7 @@ pub fn default_account_for_role(
     role: AccountRole,
 ) -> Option<AccountId> {
     let seeded = seeded_account_for_role(template, accounts, role);
-    if role == AccountRole::Receivable {
+    if !has_type_fallback(role) {
         return seeded;
     }
 
@@ -557,6 +557,17 @@ mod tests {
                 "{template:?}",
             );
         }
+    }
+
+    #[test]
+    fn a_personal_chart_from_before_receivables_has_no_receivable_default() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        accounts.retain(|account| account.code != "1200");
+
+        assert_eq!(
+            default_account_for_role(ChartTemplate::Personal, &accounts, AccountRole::Receivable),
+            None,
+        );
     }
 
     #[test]

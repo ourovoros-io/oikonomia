@@ -236,6 +236,26 @@ pub const fn role_account_type(role: AccountRole) -> AccountType {
     }
 }
 
+/// Returns whether a book without the template's account for `role` may
+/// fall back to its first active account of the role's type.
+///
+/// Every role does except the receivable: money owed to the owner is one
+/// kind of asset, and the first asset of a book is usually its cash.
+#[must_use]
+pub const fn has_type_fallback(role: AccountRole) -> bool {
+    match role {
+        AccountRole::Category
+        | AccountRole::Payment
+        | AccountRole::Deposit
+        | AccountRole::Income
+        | AccountRole::BillCategory
+        | AccountRole::BillsPayable
+        | AccountRole::TransferSource
+        | AccountRole::TransferDestination => true,
+        AccountRole::Receivable => false,
+    }
+}
+
 /// Returns the template account codes that play `role` by default, best
 /// first.
 ///

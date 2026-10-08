@@ -258,7 +258,10 @@ impl SimpleEntryAccounts {
                     receivable,
                 })
             }
-            (SimpleEntryKind::Income, _) => {
+            (
+                SimpleEntryKind::Income,
+                None | Some(SimpleBillStatus::Paid | SimpleBillStatus::PayExisting),
+            ) => {
                 let wallet = roles.wallet.ok_or(MissingPart::Wallet(Deposit))?;
                 let category = roles.category.ok_or(MissingPart::Category(Income))?;
                 Ok(Self::Income { category, wallet })
