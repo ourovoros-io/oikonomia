@@ -90,6 +90,11 @@ pub enum CsvError {
     /// First row could not be used as headers.
     #[error("the CSV has no header row")]
     MissingHeader,
+    /// The file is Oikonomia's own journal export, which the bank importer
+    /// cannot read: it holds journal lines, not the movements of one
+    /// account.
+    #[error("the file is a journal export, not a bank statement")]
+    JournalExport,
     /// A journal CSV lacks one of the columns the export writes.
     #[error("the journal CSV has no {column} column")]
     MissingColumn {
@@ -140,6 +145,7 @@ impl CsvError {
         "csv_too_large",
         "csv_parse",
         "csv_missing_header",
+        "csv_journal_export",
         "csv_missing_column",
         "csv_invalid_date",
         "csv_invalid_amount",
@@ -168,6 +174,7 @@ impl CsvError {
             Self::TooLarge => "csv_too_large",
             Self::Malformed { .. } => "csv_parse",
             Self::MissingHeader => "csv_missing_header",
+            Self::JournalExport => "csv_journal_export",
             Self::MissingColumn { .. } => "csv_missing_column",
             Self::InvalidDate(_) => "csv_invalid_date",
             Self::InvalidAmount(_) => "csv_invalid_amount",
@@ -214,6 +221,7 @@ impl CsvError {
             | Self::TooLarge
             | Self::Malformed { .. }
             | Self::MissingHeader
+            | Self::JournalExport
             | Self::MissingDate
             | Self::MissingAmount
             | Self::AmountOverflow
@@ -238,6 +246,7 @@ mod tests {
             CsvError::TooLarge,
             CsvError::Malformed { .. },
             CsvError::MissingHeader,
+            CsvError::JournalExport,
             CsvError::MissingColumn { .. },
             CsvError::InvalidDate(_),
             CsvError::InvalidAmount(_),
@@ -263,6 +272,7 @@ mod tests {
             CsvError::TooLarge,
             CsvError::Malformed { detail: "x".into() },
             CsvError::MissingHeader,
+            CsvError::JournalExport,
             CsvError::MissingColumn { column: "date" },
             CsvError::InvalidDate("x".into()),
             CsvError::InvalidAmount("x".into()),

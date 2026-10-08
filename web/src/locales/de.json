@@ -1,5 +1,13 @@
 {
+  "hiddenNote": {
+    "one": "Enthält 1 ausgeblendete Buchung, die beim Export weggelassen wird.",
+    "other": "Enthält {count} ausgeblendete Buchungen, die beim Export weggelassen werden."
+  },
   "app": {
+    "prefsDamaged": {
+      "open": "Einstellungen öffnen",
+      "dismiss": "Ausblenden"
+    },
     "nav": {
       "dashboard": "Übersicht",
       "transactions": "Buchungen",
@@ -221,7 +229,9 @@
       "description": "Fragen und Fehlerberichte: {email}",
       "body": "Schreiben Sie an {email} und nennen Sie die App-Version ({version}) und was Sie gerade getan haben, als das Problem auftrat. Hängen Sie niemals Ihren Tresor oder Ihre Sicherungsdatei an.",
       "contact": "Support per E-Mail",
-      "openFailed": "Ihr E-Mail-Programm ließ sich nicht öffnen. Schreiben Sie an {email}."
+      "openFailed": "Ihr E-Mail-Programm ließ sich nicht öffnen. Schreiben Sie an {email}.",
+      "noMailApp": "Kein E-Mail-Programm hat sich geöffnet? Schreiben Sie an",
+      "copy": "Adresse kopieren"
     },
     "donate": {
       "title": "Spenden",
@@ -864,7 +874,7 @@
       "badge": "Ausgeblendet"
     },
     "export": {
-      "whisper": "Der Export lässt ausgeblendete Zeilen weg."
+      "whisper": "Der Export lässt ausgeblendete Zeilen weg. Gelöschte Buchungen sind enthalten, mit dem Status voided."
     },
     "void": {
       "title": "Buchung löschen?",
@@ -921,6 +931,7 @@
       },
       "continuePreview": "Weiter zur Vorschau",
       "previewTitle": "Importvorschau",
+      "otherCurrency": "Einige Beträge sind mit „{marker}“ gekennzeichnet, dieses Buch führt aber {currency}. Prüfen Sie vor dem Buchen, ob die Datei in {currency} ist.",
       "previewSubtitle": "{rows} · {dupes} · es wird nichts gebucht, bevor Sie bestätigen",
       "rowOne": "{n} Zeile",
       "rowMany": "{n} Zeilen",
@@ -1055,6 +1066,7 @@
     "csvNotUtf8": "Diese CSV-Datei ist kein UTF-8-Text. Speichern oder exportieren Sie sie erneut als CSV mit UTF-8-Kodierung.",
     "csvTooLarge": "Diese CSV-Datei ist größer als 8 MB. Exportieren Sie einen kürzeren Zeitraum oder teilen Sie die Datei auf.",
     "csvMissingHeader": "Diese CSV-Datei hat keine Kopfzeile. Die erste Zeile muss die Spalten benennen.",
+    "csvJournalExport": "Diese Datei ist ein Journal-Export von Oikonomia. Sie enthält Journalzeilen statt der Umsätze eines Kontos und lässt sich nicht als Kontoauszug importieren. Importieren Sie stattdessen eine CSV-Datei Ihrer Bank.",
     "csvMissingColumn": "Diese Journal-CSV-Datei hat keine Spalte „{column}“. Verwenden Sie eine aus Oikonomia exportierte Datei mit allen ihren Spalten.",
     "csvInvalidStatus": "„{value}“ ist kein Journalstatus. Der Status muss posted oder voided sein.",
     "csvInvalidInteger": "„{value}“ ist keine ganze Zahl. Eine Journal-CSV-Datei enthält Beträge als ganze Zahlen in der kleinsten Währungseinheit (etwa Cent), zum Beispiel 1250 für 12,50.",
@@ -1131,6 +1143,7 @@
       "ocrPathMissing": "Der Pfad zu den OCR-Modellen ist nicht gesetzt.",
       "ocrModelsMissing": "Die mitgelieferten OCR-Modelle fehlen. Nutzen Sie ein Text-PDF oder füllen Sie die Felder selbst aus.",
       "ocrRead": "Mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern.",
+      "ocrUnreadable": "Der größte Teil dieses Scans konnte nicht gelesen werden, daher bleibt der Betrag leer. Prüfen Sie den Betrag und alle anderen Felder anhand des Dokuments.",
       "ocrLittleText": "Die OCR ist durchgelaufen, hat aber wenig Text gefunden — füllen Sie das Formular bei Bedarf selbst aus.",
       "ocrError": "Die OCR ist fehlgeschlagen. Sie können die Felder trotzdem selbst ausfüllen.",
       "ocrPdfImage": "Eingebettetes PDF-Bild mit integrierter Offline-OCR gelesen. Prüfen Sie die Angaben, bevor Sie speichern."

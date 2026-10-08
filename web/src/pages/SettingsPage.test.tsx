@@ -286,6 +286,9 @@ describe('SettingsPage', () => {
     expect(screen.getByText(/Write to info@ourovoros\.io with the app version \(0\.1\.0-dev\)/)).toBeTruthy()
     await userEvent.click(screen.getByRole('button', { name: /email support/i }))
     expect(api.openSupportEmail).toHaveBeenCalledTimes(1)
+    // The opener cannot confirm a mail app opened, so the address stays in reach.
+    expect(screen.getByText(/No mail app opened/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Copy address' })).toBeTruthy()
   })
 
   test('Support button failure falls back to the on-screen address', async () => {

@@ -77,10 +77,11 @@
 //! and gave no preferences, so the UI can say so without attempting a save.
 //!
 //! [`reset_unreadable_ui_prefs`] ends the refusal. It renames the file to
-//! `ui-prefs.damaged.json` beside it ([`damaged_ui_prefs_path`]) and leaves
-//! no preferences file, so the next save writes a new one. The file is moved
-//! and not deleted, because its owner may still want what is in it; only one
-//! such file is kept, so the one an earlier reset left is replaced.
+//! `ui-prefs.damaged.json` beside it ([`damaged_ui_prefs_path`]) and writes
+//! a fresh `{}` in its place, which holds every default and stores no
+//! preference. The file is moved and not deleted, because its owner may
+//! still want what is in it; only one such file is kept, so the one an
+//! earlier reset left is replaced.
 //!
 //! The reset moves a file only when what the file holds is the problem:
 //!
@@ -121,12 +122,14 @@
 //! user's choice with its own default.
 
 use crate::domain::EntityId;
-use crate::error::{Error, IoContext, PrivateDetail, Result, SerializationContext};
+use crate::error::{Error, IoContext, Result, SerializationContext};
 use crate::ledger::SimpleEntryKind;
+use crate::vault::permissions::{create_private_dir, create_private_file};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// The language of the app.
 ///
@@ -522,8 +525,8 @@ pub fn load_ui_prefs_view(data_dir: &Path) -> UiPrefsView {
 /// A file is damaged when what it holds is the problem: it is not UTF-8, or
 /// its text is not a [`UiPrefs`]. It is renamed to
 /// [`damaged_ui_prefs_path`], where it replaces the file an earlier reset
-/// left, and no preferences file is left behind. Nothing is stored: the app
-/// runs on the defaults until the next save.
+/// left, and a fresh preferences file that holds only `{}` takes its place.
+/// No preference is stored: the app runs on the defaults until the next save.
 ///
 /// A file that is missing, blank or decodes is left as it is and the call
 /// succeeds.
@@ -563,8 +566,17 @@ pub fn reset_unreadable_ui_prefs(data_dir: &Path) -> Result<()> {
     // One rename, so a crash leaves the file under one name or the other and
     // never under neither.
     fs::rename(ui_prefs_path(data_dir), damaged_ui_prefs_path(data_dir))
-        .io("move the damaged preferences file aside")
+        .io("move the damaged preferences file aside")?;
+
+    // An empty object stores no preference, so the language is still chosen
+    // from the system on the next start, yet the folder does not look as if
+    // the reset had lost the file.
+    write_prefs_text(data_dir, EMPTY_PREFS)
 }
+
+/// The text of a preferences file that holds nothing: every field has its
+/// default.
+const EMPTY_PREFS: &str = "{}\n";
 
 /// Why a preferences file that is there gave no preferences.
 ///
@@ -581,6 +593,33 @@ enum UnusablePrefs {
 }
 
 impl UnusablePrefs {
+    /// Returns why the file gave no preferences, in words that hold nothing
+    /// from the file: the kind of failure and, for text, where the decoder
+    /// stopped. Support can tell a syntax error from a permissions problem
+    /// by it, while the decoder's own message, which can quote a value,
+    /// stays out of the log.
+    fn cause(&self) -> String {
+        match self {
+            Self::Read(err) => format!("cannot read the file ({})", err.kind()),
+            Self::Decode(err) => {
+                let kind = match err.classify() {
+                    serde_json::error::Category::Syntax => "not valid JSON",
+                    serde_json::error::Category::Eof => "JSON ends too early",
+                    serde_json::error::Category::Data => "not a preferences object",
+                    serde_json::error::Category::Io => "text could not be read",
+                };
+
+                // A value of the wrong shape is found after parsing, so the
+                // decoder has no position for it.
+                if err.line() == 0 {
+                    kind.to_owned()
+                } else {
+                    format!("{kind} at line {} column {}", err.line(), err.column())
+                }
+            }
+        }
+    }
+
     /// Returns the error of a save that would have replaced the file.
     ///
     /// Both reasons give [`Error::PrefsUnreadable`]. The operation says
@@ -647,20 +686,60 @@ fn decode_ui_prefs(text: &str) -> std::result::Result<Option<UiPrefs>, UnusableP
 
 /// Returns what was read from the preferences file at `path`, or the
 /// defaults (logging why) when nothing was stored or it could not be read.
+///
+/// A damaged file is reported once per cause, not once per load: the shell
+/// loads the preferences several times at start-up, and the same line three
+/// times reads as three problems.
 fn or_defaults(read: std::result::Result<Option<UiPrefs>, UnusablePrefs>, path: &Path) -> UiPrefs {
     match read {
-        Ok(stored) => stored.unwrap_or_default(),
+        Ok(stored) => {
+            forget_reported_damage();
+            stored.unwrap_or_default()
+        }
         Err(err) => {
-            // The decode error can quote a value from the file, so a release
-            // build writes that it happened and withholds the text.
-            log::warn!(
-                "using default preferences and leaving {} as it is: {}",
-                path.display(),
-                PrivateDetail(&err)
-            );
+            warn_damaged_once(path, &err);
             UiPrefs::default()
         }
     }
+}
+
+/// The last damage [`warn_damaged_once`] logged, so that a repeat is silent.
+static REPORTED_DAMAGE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Logs that the preferences file is unusable, unless that same damage was
+/// the last one logged.
+fn warn_damaged_once(path: &Path, err: &UnusablePrefs) {
+    let line = format!(
+        "using default preferences and leaving {} as it is: {}",
+        path.display(),
+        err.cause()
+    );
+
+    if remember_damage(&REPORTED_DAMAGE, &line) {
+        log::warn!("{line}");
+    }
+}
+
+/// Lets the next damage be logged, once the file reads again.
+fn forget_reported_damage() {
+    if let Ok(mut reported) = REPORTED_DAMAGE.lock() {
+        *reported = None;
+    }
+}
+
+/// Stores `line` as the last damage logged and returns whether it differs
+/// from the one before. A poisoned lock says yes: a repeated line is better
+/// than a lost one.
+fn remember_damage(reported: &Mutex<Option<String>>, line: &str) -> bool {
+    let Ok(mut reported) = reported.lock() else {
+        return true;
+    };
+    if reported.as_deref() == Some(line) {
+        return false;
+    }
+
+    *reported = Some(line.to_owned());
+    true
 }
 
 /// Returns the locale stored on disk, or `None` when none was ever stored.
@@ -761,6 +840,19 @@ pub fn resolve_locale<S: AsRef<str>>(
     })
 }
 
+/// Returns the app language as [`resolve_locale`] would, without storing a
+/// language that was only picked from the system.
+///
+/// For a launch with no vault yet: the first thing the app does must not
+/// leave files behind. A language chosen by the user is already stored and is
+/// returned as it is; the system's is looked at again on every launch until
+/// [`resolve_locale`] stores it, which the caller does once a vault exists.
+/// Nothing here writes, so it cannot fail.
+#[must_use]
+pub fn peek_locale<S: AsRef<str>>(data_dir: &Path, system_languages: &[S]) -> Locale {
+    stored_locale(data_dir).unwrap_or_else(|| Locale::from_system_languages(system_languages))
+}
+
 /// Writes `prefs` as the preferences file, replacing the one that is there
 /// unless that one cannot be read or decoded.
 ///
@@ -777,8 +869,8 @@ pub fn resolve_locale<S: AsRef<str>>(
 /// earlier crash is removed first, and after a failed write the temporary
 /// file is removed again; a removal that fails is only logged.
 ///
-/// The file gets the process's default permissions, not the owner-only mode
-/// of vault files: it is not part of the vault.
+/// The file and the data directory are created owner-only (`0600` and
+/// `0700` on Unix), like the vault's own files.
 ///
 /// # Errors
 ///
@@ -808,18 +900,45 @@ pub fn save_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
 /// file cannot be written or renamed into place, and
 /// [`Error::Serialization`] when the preferences cannot be encoded as JSON.
 fn write_ui_prefs(data_dir: &Path, prefs: &UiPrefs) -> Result<()> {
-    fs::create_dir_all(data_dir).io("create data directory")?;
-
     let json = serde_json::to_string_pretty(prefs).serialization("encode preferences")?;
+
+    write_prefs_text(data_dir, &json)
+}
+
+/// Replaces the preferences file with `text` through a temporary sibling.
+///
+/// The data directory and the file are created owner-only, as the vault's
+/// files are: the file holds only a language and ids, but a world-readable
+/// file in a private folder is a mode nobody chose.
+///
+/// # Errors
+///
+/// [`Error::Io`] when the data directory cannot be created or the temporary
+/// file cannot be written or renamed into place.
+fn write_prefs_text(data_dir: &Path, text: &str) -> Result<()> {
+    create_private_dir(data_dir)?;
 
     let temporary = ui_prefs_temporary_path(data_dir);
     remove_stale_temporary(&temporary);
 
-    let staged = write_synced(&temporary, json.as_bytes())
-        .and_then(|()| fs::rename(&temporary, ui_prefs_path(data_dir)));
+    stage_private_file(&temporary, text.as_bytes())?;
 
-    staged.map_err(|err| {
+    fs::rename(&temporary, ui_prefs_path(data_dir)).map_err(|err| {
         remove_stale_temporary(&temporary);
+        Error::io("write preferences file", err)
+    })
+}
+
+/// Writes `bytes` to a new owner-only file at `path` and flushes them to
+/// disk, removing the file again when that fails.
+fn stage_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+
+    let mut file = create_private_file(path)?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+
+    written.map_err(|err| {
+        remove_stale_temporary(path);
         Error::io("write preferences file", err)
     })
 }
@@ -879,16 +998,6 @@ pub fn remember_last_entity(data_dir: &Path, entity_id: EntityId) -> Result<()> 
 /// replaces the preferences file.
 fn ui_prefs_temporary_path(data_dir: &Path) -> PathBuf {
     data_dir.join("ui-prefs.json.tmp")
-}
-
-/// Writes `bytes` to a new file at `path`, truncating one that exists, and
-/// flushes them to disk.
-fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let mut file = fs::File::create(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 /// Removes a leftover temporary file, logging a failure other than the file
@@ -1846,7 +1955,7 @@ mod tests {
 
         assert_eq!(
             failed_operation(&failed),
-            Some("write preferences file"),
+            Some("create private file"),
             "{failed:?}"
         );
         assert!(!ui_prefs_path(dir.path()).exists());
@@ -2109,18 +2218,76 @@ mod tests {
         assert_eq!(view.last_entity_id.as_deref(), Some("ent-1"));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn a_reset_moves_an_unusable_file_aside_byte_for_byte_and_leaves_none() {
+    fn a_saved_preferences_file_and_its_folder_are_owner_only() {
+        use crate::vault::permissions::mode_of;
+
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().join("fresh");
+
+        assert_eq!(store_locale(&data_dir, Locale::El), Ok(()));
+
+        assert_eq!(mode_of(&ui_prefs_path(&data_dir)), 0o600, "file");
+        assert_eq!(mode_of(&data_dir), 0o700, "folder");
+    }
+
+    #[test]
+    fn peeking_at_the_language_writes_nothing_and_a_chosen_one_wins() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().join("fresh");
+
+        assert_eq!(peek_locale(&data_dir, &["el-GR"]), Locale::El);
+        assert!(!data_dir.exists(), "peeking must not create the folder");
+
+        assert_eq!(store_locale(&data_dir, Locale::Fr), Ok(()));
+        assert_eq!(peek_locale(&data_dir, &["el-GR"]), Locale::Fr);
+    }
+
+    #[test]
+    fn the_same_damage_is_logged_once_and_a_different_one_again() {
+        let reported = Mutex::new(None);
+
+        assert!(remember_damage(&reported, "not valid JSON at line 1"));
+        assert!(!remember_damage(&reported, "not valid JSON at line 1"));
+        assert!(remember_damage(&reported, "cannot read the file"));
+    }
+
+    #[test]
+    fn the_cause_of_damage_names_the_failure_and_none_of_the_text() {
+        let secret = r#"{ "locale": "en", "last_entity_id": "SECRET" "#;
+        let cut_off = decode_ui_prefs(secret).unwrap_err();
+        let wrong_shape = decode_ui_prefs(r#"{ "last_entity_id": 7 }"#).unwrap_err();
+        let unreadable = UnusablePrefs::Read(std::io::ErrorKind::PermissionDenied.into());
+
+        assert_eq!(cut_off.cause(), "JSON ends too early at line 1 column 45");
+        assert_eq!(wrong_shape.cause(), "not a preferences object");
+        assert_eq!(
+            unreadable.cause(),
+            "cannot read the file (permission denied)"
+        );
+        assert!(!cut_off.cause().contains("SECRET"));
+    }
+
+    #[test]
+    fn a_reset_moves_an_unusable_file_aside_byte_for_byte_and_writes_a_fresh_empty_one() {
         for content in [CUT_OFF, NOT_UTF8] {
             let dir = tempdir().unwrap();
             fs::write(ui_prefs_path(dir.path()), content).unwrap();
 
             assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
 
-            assert_eq!(file_names(dir.path()), ["ui-prefs.damaged.json"]);
+            assert_eq!(
+                file_names(dir.path()),
+                ["ui-prefs.damaged.json", "ui-prefs.json"]
+            );
             assert_eq!(
                 fs::read(damaged_ui_prefs_path(dir.path())).unwrap(),
                 content
+            );
+            assert_eq!(
+                fs::read_to_string(ui_prefs_path(dir.path())).unwrap(),
+                EMPTY_PREFS
             );
             assert!(!load_ui_prefs_view(dir.path()).unreadable);
         }
@@ -2193,7 +2360,10 @@ mod tests {
         fs::write(ui_prefs_path(dir.path()), NOT_UTF8).unwrap();
         assert_eq!(reset_unreadable_ui_prefs(dir.path()), Ok(()));
 
-        assert_eq!(file_names(dir.path()), ["ui-prefs.damaged.json"]);
+        assert_eq!(
+            file_names(dir.path()),
+            ["ui-prefs.damaged.json", "ui-prefs.json"]
+        );
         assert_eq!(
             fs::read(damaged_ui_prefs_path(dir.path())).unwrap(),
             NOT_UTF8

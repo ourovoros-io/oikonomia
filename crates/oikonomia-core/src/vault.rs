@@ -136,7 +136,7 @@ mod crypto;
 pub(crate) mod files;
 mod header;
 mod paths;
-mod permissions;
+pub(crate) mod permissions;
 mod store;
 
 pub use backup::{

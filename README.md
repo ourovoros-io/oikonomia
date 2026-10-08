@@ -14,7 +14,7 @@ It keeps **double-entry** books for several entities, **encrypted at rest**,
 with a dark "Aurora glass" interface. It needs no account, no cloud, and sends
 no telemetry.
 
-Status: 0.1.0 pre-release.
+Status: 0.1.x, early releases.
 
 Stack: **Rust** (`oikonomia-core`) + **Tauri 2** + **React / Vite / Tailwind**.
 
@@ -37,7 +37,7 @@ Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 - Dashboard: month, quarter, or year income, expenses, and assets, with savings and spending arcs and a cash-flow chart; every empty page offers a first-run "create a book" CTA
 - Cash-flow chart on the Transactions page
 - Documents page: every stored file in the book, with an in-app viewer and export
-- Closing the window hides the app to the tray; launching it again brings the window back; window size and position are remembered
+- Closing the window hides the app to the tray (on Linux, where a desktop may show no tray, it minimizes the window); launching it again brings the window back; window size and position are remembered
 - Settings: optional donation addresses with copy buttons
 - Master password must be at least 12 characters
 - Tray quick-add window: left-click the tray (on Linux, choose "Quick add" in the tray menu) to post a simple entry or drop a document without opening the full app
@@ -47,7 +47,7 @@ Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 
 ## Install
 
-No release has been published yet. Releases appear on this repository's
+Releases appear on this repository's
 Releases page, each with a `SHA256SUMS` file so you can check what you
 downloaded.
 

@@ -28,7 +28,8 @@ use crate::error::{DatabaseContext, Result, ValidationError};
 #[cfg(doc)]
 use crate::error::Error;
 use crate::ledger::balance::{
-    ACTIVE_ENTRY_PREDICATE, add_minor, normal_balance, parse_account_type, subtract_minor,
+    ACTIVE_ENTRY_PREDICATE, add_minor, count_hidden_pnl_entries, normal_balance,
+    parse_account_type, subtract_minor,
 };
 use crate::ledger::entities::get_entity;
 use crate::util::format_date;
@@ -90,6 +91,9 @@ pub struct CashFlowSeries {
     pub net_minor: i64,
     /// Contiguous buckets covering `from..=to`, oldest first.
     pub buckets: Vec<CashFlowBucket>,
+    /// Hidden entries in the window that the totals count, which an export
+    /// leaves out.
+    pub hidden_entry_count: usize,
 }
 
 /// Computes income and expenses per day or per month between `from` and `to`
@@ -160,6 +164,7 @@ pub fn cash_flow_series(
         total_expenses_minor: expenses,
         net_minor: subtract_minor(income, expenses)?,
         buckets,
+        hidden_entry_count: count_hidden_pnl_entries(conn, entity_id, Some(from), Some(to))?,
     })
 }
 

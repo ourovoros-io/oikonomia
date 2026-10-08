@@ -49,8 +49,8 @@ use crate::db::{collect_rows, read_column};
 use crate::domain::{AccountType, CurrencyCode, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::balance::{
-    ACTIVE_ENTRY_PREDICATE, add_minor, normal_balance, parse_account_type, subtract_minor,
-    sum_minor, sum_type_as_of, sum_type_in_range,
+    ACTIVE_ENTRY_PREDICATE, add_minor, count_hidden_pnl_entries, normal_balance,
+    parse_account_type, subtract_minor, sum_minor, sum_type_as_of, sum_type_in_range,
 };
 use crate::ledger::calendar::{add_months, months_between};
 use crate::ledger::entities::get_entity;
@@ -141,6 +141,9 @@ pub struct PnL {
     pub total_expenses: i64,
     /// `total_income - total_expenses`; negative for a loss.
     pub net_income: i64,
+    /// Hidden entries the figures above include, for a screen to say so; the
+    /// export leaves them out and reports 0.
+    pub hidden_entry_count: usize,
 }
 
 /// One of the three sections of a [`BalanceSheet`].
@@ -173,6 +176,10 @@ pub struct BalanceSheet {
     /// The totals of `liabilities` and `equity` added, in minor units. Equal
     /// to `total_assets` whenever every entry balances.
     pub total_liabilities_equity: i64,
+    /// Hidden entries, dated through `as_of`, that move income or expenses and
+    /// so the equity rows `RE` and `NI`. The balance sheet counts them although
+    /// the P&L export leaves them out.
+    pub hidden_entry_count: usize,
 }
 
 /// Result of [`dashboard_summary`]. Amounts are in minor units.
@@ -206,6 +213,9 @@ pub struct DashboardSummary {
     /// previous net's size; `None` when the previous net is zero, when there
     /// is no previous window, or when the change does not fit in `i64`.
     pub net_vs_previous_bps: Option<i64>,
+    /// Hidden entries in the window that the income and expense figures
+    /// count, which an export leaves out.
+    pub hidden_entry_count: usize,
 }
 
 /// The Expense account with the most spending in a dashboard window.
@@ -371,6 +381,7 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: Date) -> Res
         },
         total_assets,
         total_liabilities_equity,
+        hidden_entry_count: count_hidden_pnl_entries(conn, entity_id, None, Some(as_of))?,
     })
 }
 
@@ -449,6 +460,7 @@ pub fn dashboard_summary(
         spend_ratio_bps,
         top_expense: top_expense(conn, entity_id, from, to, expenses)?,
         net_vs_previous_bps,
+        hidden_entry_count: count_hidden_pnl_entries(conn, entity_id, Some(from), Some(to))?,
     })
 }
 
@@ -507,6 +519,11 @@ fn profit_and_loss_filtered(
     let total_income = sum_minor(income.iter().map(|line| line.balance_minor))?;
     let total_expenses = sum_minor(expenses.iter().map(|line| line.balance_minor))?;
     let net_income = subtract_minor(total_income, total_expenses)?;
+    let hidden_entry_count = if omit_hidden {
+        0
+    } else {
+        count_hidden_pnl_entries(conn, entity_id, Some(from), Some(to))?
+    };
 
     Ok(PnL {
         entity_id,
@@ -517,6 +534,7 @@ fn profit_and_loss_filtered(
         total_income,
         total_expenses,
         net_income,
+        hidden_entry_count,
     })
 }
 

@@ -80,7 +80,11 @@ pub struct Vault {
 
 impl Vault {
     /// Opens the vault handle of `data_dir` without opening the database,
-    /// creating the directory and restricting it to its owner.
+    /// restricting the directory to its owner when it exists.
+    ///
+    /// A directory that does not exist is not created here: [`Vault::init`],
+    /// a restore and a saved preference create it, so opening an app that has
+    /// no vault yet writes nothing.
     ///
     /// On Unix the directory is set to `0700` and an existing header and
     /// database to `0600`, whatever their modes were.
@@ -97,7 +101,7 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// [`Error::Io`] when the directory cannot be created, an interrupted
+    /// [`Error::Io`] when the directory cannot be restricted, an interrupted
     /// restore cannot be settled, a leftover snapshot cannot be removed, or
     /// the header cannot be read;
     /// [`Error::VaultTooNew`] when the header's format version is above the
@@ -106,7 +110,12 @@ impl Vault {
     /// version 0, or is missing while a database exists.
     pub fn open_path(data_dir: impl Into<PathBuf>) -> Result<Self> {
         let data_dir = data_dir.into();
-        create_private_dir(&data_dir)?;
+        // A first launch leaves no trace: the folder is made by the first thing
+        // that has something to keep in it (`init`, a restore, a saved
+        // preference), not by merely looking.
+        if data_dir.exists() {
+            create_private_dir(&data_dir)?;
+        }
         recover_interrupted_restore(&data_dir)?;
         remove_stale_snapshot(&data_dir)?;
 
@@ -202,6 +211,8 @@ impl Vault {
 
         let header = VaultHeader::new_with_salt(&salt);
         let key = crypto::derive_key(password, &header)?;
+
+        create_private_dir(&self.data_dir)?;
 
         match create_vault_files(&self.data_dir, &header, &key) {
             Ok(conn) => {
@@ -611,10 +622,7 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
         .map_err(|err| key_check_error("set database key", &err))?;
 
     // The key pragma only stores the key; the first read is what proves it.
-    conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
-        row.get::<_, i64>(0)
-    })
-    .map_err(|err| key_check_error("verify database key", &err))?;
+    verify_key(&conn)?;
 
     // WAL keeps readers and the writer from blocking each other. Its pages
     // are encrypted with the database key
@@ -631,6 +639,31 @@ fn open_sqlcipher(path: &Path, key: &VaultKey, create: bool) -> Result<Connectio
     register_fold(&conn).database("register fold function")?;
 
     Ok(conn)
+}
+
+/// Reads the database once, which proves the key set on `conn`.
+///
+/// A wrong password is ordinary input, and `SQLCipher` logs three `ERROR`
+/// lines about the failed HMAC for it. Its log is off for this one read so
+/// that a typo does not look like a fault; the level is the default again
+/// afterwards, where [`silence_sqlcipher_log`] has not turned it off for good.
+fn verify_key(conn: &Connection) -> Result<()> {
+    set_sqlcipher_log_level(conn, "NONE")?;
+    let read = conn.query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+        row.get::<_, i64>(0)
+    });
+    if cfg!(not(windows)) {
+        set_sqlcipher_log_level(conn, "ERROR")?;
+    }
+
+    read.map(drop)
+        .map_err(|err| key_check_error("verify database key", &err))
+}
+
+/// Sets the process-wide level `SQLCipher` logs at.
+fn set_sqlcipher_log_level(conn: &Connection, level: &str) -> Result<()> {
+    conn.pragma_update(None, "cipher_log_level", level)
+        .crypto("set cipher log level")
 }
 
 /// Turns off `SQLCipher`'s own log on Windows, before memory security is on.
@@ -952,6 +985,18 @@ mod tests {
         assert_eq!(mode_of(&data_dir), 0o700, "data directory");
         assert_eq!(mode_of(&vault_header_path(&data_dir)), 0o600, "header");
         assert_eq!(mode_of(&vault_db_path(&data_dir)), 0o600, "database");
+    }
+
+    #[test]
+    fn opening_leaves_a_missing_data_folder_missing_until_a_vault_is_made() {
+        let dir = tempdir().expect("tempdir");
+        let data_dir = dir.path().join("vault");
+
+        let mut vault = Vault::open_path(&data_dir).expect("open");
+        assert!(!data_dir.exists(), "opening must write nothing");
+
+        vault.init("a-long-enough-pass").expect("init");
+        assert!(vault_db_path(&data_dir).exists());
     }
 
     #[cfg(unix)]

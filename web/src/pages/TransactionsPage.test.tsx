@@ -86,6 +86,7 @@ const series: CashFlowSeries = {
   total_income_minor: 120000,
   total_expenses_minor: 4250,
   net_minor: 115750,
+  hidden_entry_count: 0,
   buckets: [],
 }
 
@@ -316,6 +317,19 @@ describe('TransactionsPage entry kind colours', () => {
   })
 })
 
+describe('TransactionsPage hidden entries in the summary', () => {
+  test('says how many hidden entries the in-view totals include, using the count from core', async () => {
+    vi.mocked(api.cashFlowSeries)
+      .mockReset()
+      .mockResolvedValue({ ...series, hidden_entry_count: 1 })
+    await renderReady()
+
+    expect(
+      await screen.findByText('Includes 1 hidden entry, which is omitted from exports.'),
+    ).toBeInTheDocument()
+  })
+})
+
 describe('TransactionsPage row meta', () => {
   test('a row shows its reference beside the kind', async () => {
     const withReference = {
@@ -515,7 +529,7 @@ describe('TransactionsPage hidden paint', () => {
     vi.mocked(api.entryList).mockResolvedValue([postedEntry, hiddenEntry])
     await renderReady()
     expect(screen.getByText('1 posted · 1 hidden · EUR')).toBeTruthy()
-    expect(screen.getByText('Export omits hidden rows.')).toBeTruthy()
+    expect(screen.getByText('Export omits hidden rows. Deleted entries are included, marked voided.')).toBeTruthy()
     expect(screen.getByText('Hidden')).toBeTruthy()
     expect(screen.getByText('ATM cash')).toBeTruthy()
     expect(screen.queryByRole('checkbox', { name: /include hidden/i })).toBeNull()
@@ -531,7 +545,7 @@ describe('TransactionsPage hidden paint', () => {
       expect(screen.getByText('Κρυφή')).toBeTruthy()
     })
     expect(screen.getByText('0 καταχωρισμένα · 1 κρυφά · EUR')).toBeTruthy()
-    expect(screen.getByText('Η εξαγωγή παραλείπει τις κρυφές γραμμές.')).toBeTruthy()
+    expect(screen.getByText('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την ένδειξη voided.')).toBeTruthy()
   })
 
   test('detail Hide checkbox calls entry_set_hidden', async () => {

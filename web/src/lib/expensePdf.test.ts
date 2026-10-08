@@ -1,18 +1,19 @@
 import { readFile } from 'node:fs/promises'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ReportLine } from './api'
-import { PDFDocument, PDFDict, PDFName } from 'pdf-lib'
+import { PDFDocument, PDFArray, PDFDict, PDFName, PDFPage, PDFRawStream, decodePDFRawStream } from 'pdf-lib'
 import {
   A4_HEIGHT,
   A4_WIDTH,
   BRAND_MARK,
+  annularPath,
   buildExpensePdfBytes,
   buildExpensePdfModel,
   buildExpenseReportSvg,
   bytesToBase64,
-  flipSvgPathY,
   formatPdfPeriod,
   pdfExportErrorMessage,
+  roundedRectPath,
   suggestedExpensePdfName,
 } from './expensePdf'
 import { LOCALES, resetI18nForTests, setLocale, t, type Locale } from './i18n'
@@ -51,6 +52,17 @@ async function embeddedFontNames(bytes: Uint8Array): Promise<string[]> {
     if (base instanceof PDFName) names.push(base.decodeText())
   }
   return names
+}
+
+/** The page content of the first page, inflated. */
+async function decodedContent(doc: PDFDocument): Promise<string> {
+  const contents = doc.getPage(0).node.Contents()
+  const streams = contents instanceof PDFArray ? contents.asArray() : [contents]
+  const parts = streams.map((ref) => {
+    const stream = doc.context.lookup(ref)
+    return stream instanceof PDFRawStream ? decodePDFRawStream(stream).decode() : new Uint8Array()
+  })
+  return parts.map((bytes) => new TextDecoder().decode(bytes)).join('\n')
 }
 
 function expense(
@@ -93,11 +105,82 @@ describe('suggestedExpensePdfName', () => {
   })
 })
 
-describe('flipSvgPathY', () => {
-  test('flips 24-unit y-down house paths so pdf-lib matches svgShield', () => {
-    expect(flipSvgPathY(BRAND_MARK.house)).toContain('v -5.2')
-    expect(flipSvgPathY(BRAND_MARK.pediment)).toContain('L 12 15.6')
-    expect(flipSvgPathY(BRAND_MARK.shield)).toMatch(/^M 20 11/)
+/** The numbers of an SVG path made of absolute commands, as (x, y) pairs. */
+function pathPoints(path: string): Array<{ x: number; y: number }> {
+  const numbers = path.match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/g)?.map(Number) ?? []
+  const points: Array<{ x: number; y: number }> = []
+  for (let i = 0; i + 1 < numbers.length; i += 2) points.push({ x: numbers[i], y: numbers[i + 1] })
+  return points
+}
+
+describe('shapes in page-top coordinates', () => {
+  test('a ring segment stays inside its circle and starts at the top', () => {
+    const path = annularPath(200, 380, 82, 58, -Math.PI / 2, 0)
+    const [start] = pathPoints(path)
+
+    expect(start.x).toBeCloseTo(200, 3)
+    expect(start.y).toBeCloseTo(380 - 82, 3)
+    // Arc commands carry radii and flags, which are not points; the end
+    // points of the two lines are.
+    expect(path).toContain('A 82 82 0 0 1 282 380')
+    expect(path).toMatch(/A 58 58 0 0 0 200(\.\d+)? 322/)
+  })
+
+  test('a ring of one slice is cut short of a whole turn so it still draws', () => {
+    const path = annularPath(200, 380, 82, 58, -Math.PI / 2, (3 * Math.PI) / 2)
+    const [outerStart] = pathPoints(path)
+    const outerEnd = path.match(/A 82 82 0 1 1 (\S+) (\S+)/)
+
+    expect(outerEnd).not.toBeNull()
+    expect(Number(outerEnd?.[2])).not.toBeCloseTo(outerStart.y, 6)
+  })
+
+  test('a rounded rectangle spans exactly its box', () => {
+    expect(roundedRectPath(44, 248, 507, 268, 14)).toBe(
+      'M 58 248 H 537 Q 551 248 551 262 V 502 Q 551 516 537 516 H 58 Q 44 516 44 502 V 262 Q 44 248 58 248 Z',
+    )
+  })
+})
+
+describe('the report is drawn on the page', () => {
+  test('every shape is anchored at the top-left corner, not below the page', async () => {
+    const drawn: Array<{ path: string; y: number | undefined }> = []
+    const original = PDFPage.prototype.drawSvgPath
+    vi.spyOn(PDFPage.prototype, 'drawSvgPath').mockImplementation(function (this: PDFPage, path, options) {
+      drawn.push({ path, y: options?.y })
+      return original.call(this, path, options)
+    })
+
+    await buildExpensePdfBytes(filled)
+
+    const shapes = drawn.filter((call) => !Object.values(BRAND_MARK).includes(call.path as never))
+    // Cards, legend dots and the ring segments.
+    expect(shapes.length).toBeGreaterThan(filled.expenses.length)
+    for (const shape of shapes) expect(shape.y, shape.path).toBe(A4_HEIGHT)
+  })
+
+  test('the brand mark sits inside the logo tile, not a tile below it', async () => {
+    const marks: number[] = []
+    const original = PDFPage.prototype.drawSvgPath
+    vi.spyOn(PDFPage.prototype, 'drawSvgPath').mockImplementation(function (this: PDFPage, path, options) {
+      if (path === BRAND_MARK.shield) marks.push(options?.y ?? Number.NaN)
+      return original.call(this, path, options)
+    })
+
+    await buildExpensePdfBytes(filled)
+
+    // The header mark: its top edge is the tile's top edge (44 + 2 from the page top).
+    expect(marks[0]).toBeCloseTo(A4_HEIGHT - 46, 3)
+  })
+
+  test('the page is white, for printing', async () => {
+    const bytes = await buildExpensePdfBytes(filled)
+    const doc = await PDFDocument.load(bytes)
+    const content = await decodedContent(doc)
+
+    // The first fill is the page: white, full page.
+    expect(content).toMatch(/1 1 1 rg/)
+    expect(content).not.toMatch(/0\.0392 0\.0549 0\.0431 rg/)
   })
 })
 
@@ -108,13 +191,13 @@ describe('formatPdfPeriod', () => {
 })
 
 describe('buildExpenseReportSvg', () => {
-  test('paints the dark A4 filled mock tokens', () => {
+  test('paints the light A4 filled report tokens', () => {
     const svg = buildExpenseReportSvg(filled)
     expect(svg).toContain('viewBox="0 0 595.28 841.89"')
-    expect(svg).toContain('#0a0e0b')
-    expect(svg).toContain('#101511')
-    expect(svg).toContain('#151b16')
-    expect(svg).toContain('#35b06b')
+    expect(svg).toContain('fill="#ffffff"')
+    expect(svg).toContain('#eef2ef')
+    expect(svg).toContain('#f6f8f6')
+    expect(svg).toContain('#1f8a4c')
     expect(svg).toContain('#3987e5')
     expect(svg).toContain('#4a554c')
     expect(svg).toContain('Monthly expenses')

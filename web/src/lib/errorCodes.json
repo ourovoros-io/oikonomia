@@ -25,6 +25,7 @@
   "csv_too_large",
   "csv_parse",
   "csv_missing_header",
+  "csv_journal_export",
   "csv_missing_column",
   "csv_invalid_date",
   "csv_invalid_amount",

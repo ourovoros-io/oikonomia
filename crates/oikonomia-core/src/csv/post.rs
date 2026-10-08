@@ -374,6 +374,7 @@ fn preview_statement(
         headers: parsed.headers,
         detected_mapping: parsed.detected_mapping,
         missing_columns: parsed.missing_columns,
+        other_currency: parsed.other_currency,
         rows,
     })
 }

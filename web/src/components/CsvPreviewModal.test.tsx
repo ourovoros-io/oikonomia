@@ -44,6 +44,22 @@ function renderPreview(preview: CsvImportPreview) {
   )
 }
 
+describe('CsvPreviewModal currency warning', () => {
+  test('warns when the amounts carry another currency than the book', () => {
+    renderPreview({ ...previewWith({ code: 'csv_zero_amount' }), other_currency: 'HUF' })
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Some amounts are marked “HUF”, but this book is in EUR.',
+    )
+  })
+
+  test('says nothing when no amount carries another currency', () => {
+    renderPreview({ ...previewWith({ code: 'csv_zero_amount' }), other_currency: null })
+
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
 describe('CsvPreviewModal row problems', () => {
   const cases: Array<[Locale, string]> = [
     ['en', '"not-a-date" is not a valid date.'],

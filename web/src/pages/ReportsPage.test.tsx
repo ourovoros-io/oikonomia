@@ -75,6 +75,7 @@ function pnl(over: Partial<PnL> = {}): PnL {
     total_income: 0,
     total_expenses: 850_00,
     net_income: -850_00,
+    hidden_entry_count: 0,
     ...over,
   }
 }
@@ -91,6 +92,7 @@ beforeEach(() => {
     equity: { lines: [], total: 0 },
     total_assets: 0,
     total_liabilities_equity: 0,
+    hidden_entry_count: 0,
   })
   vi.mocked(api.reportTrialBalance).mockReset().mockResolvedValue({
     entity_id: 'e1',
@@ -208,6 +210,24 @@ describe('ReportsPage Export PDF', () => {
       }),
     )
     expect(screen.getAllByText('Secret trip').length).toBeGreaterThan(0)
+  })
+
+  test('the on-screen P&L says it includes hidden entries that the PDF omits', async () => {
+    vi.mocked(api.reportPnl).mockResolvedValue(pnl({ hidden_entry_count: 3 }))
+    render(<ReportsPage entity={entity} />)
+
+    expect(
+      await screen.findByText('Includes 3 hidden entries, which are omitted from exports.'),
+    ).toBeTruthy()
+  })
+
+  test('the on-screen P&L says nothing when it includes no hidden entry', async () => {
+    render(<ReportsPage entity={entity} />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Rent').length).toBeGreaterThan(0)
+    })
+    expect(screen.queryByText(/hidden entr/)).toBeNull()
   })
 
   test('empty period still builds and exports', async () => {

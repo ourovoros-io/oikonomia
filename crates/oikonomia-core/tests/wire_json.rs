@@ -313,14 +313,14 @@ fn reports() {
     assert_json_is_pinned::<PnL>(concat!(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","from":"2026-01-01","to":"#,
         r#""2026-12-31","income":[],"expenses":[],"total_income":0,"total_expenses":0,"#,
-        r#""net_income":0}"#,
+        r#""net_income":0,"hidden_entry_count":0}"#,
     ));
     assert_json_is_pinned::<BalanceSheet>(concat!(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","as_of":"2026-12-31","assets":"#,
         r#"{"lines":[],"total":0},"liabilities":{"lines":[],"total":0},"equity":{"lines":[{"#,
         r#""code":"","name":"","account_type":"equity","debit_minor":0,"credit_minor":7,"#,
         r#""balance_minor":7,"synthetic":"net_income"}],"total":7},"total_assets":0,"#,
-        r#""total_liabilities_equity":7}"#,
+        r#""total_liabilities_equity":7,"hidden_entry_count":2}"#,
     ));
 }
 
@@ -331,7 +331,7 @@ fn dashboard_summary() {
         r#""cash_like_assets":100,"income":50,"expenses":20,"net_income":30,"#,
         r#""recent_entry_count":3,"savings_rate_bps":6000,"spend_ratio_bps":4000,"#,
         r#""top_expense":{"code":"6100","name":"Rent","amount_minor":20,"share_bps":10000},"#,
-        r#""net_vs_previous_bps":null}"#,
+        r#""net_vs_previous_bps":null,"hidden_entry_count":1}"#,
     ));
 }
 
@@ -342,7 +342,7 @@ fn cash_flow_series() {
         r#""2026-08-31","granularity":"day","total_income_minor":50,"total_expenses_minor":"#,
         r#"20,"net_minor":30,"buckets":[{"start":"2026-08-01","end":"2026-08-01","#,
         r#""income_minor":50,"expenses_minor":20,"cumulative_income_minor":50,"#,
-        r#""cumulative_expenses_minor":20}]}"#,
+        r#""cumulative_expenses_minor":20}],"hidden_entry_count":1}"#,
     ));
 }
 
@@ -371,7 +371,7 @@ fn csv_import_preview_and_result() {
     assert_json_is_pinned::<CsvImportPreview>(concat!(
         r#"{"source":"bank.csv","headers":["Date","Amount"],"detected_mapping":{"date":"Date","#,
         r#""description":null,"amount":"Amount","debit":null,"credit":null,"reference":null,"#,
-        r#""direction":null},"missing_columns":[],"rows":[]}"#,
+        r#""direction":null},"missing_columns":[],"other_currency":null,"rows":[]}"#,
     ));
     assert_json_is_pinned::<CsvImportPostResult>(r#"{"posted":[],"skipped_duplicate_count":2}"#);
 }
@@ -383,7 +383,7 @@ fn csv_import_preview_of_a_file_that_needs_a_mapping() {
     assert_json_is_pinned::<CsvImportPreview>(concat!(
         r#"{"source":"bank.csv","headers":["When","Paid"],"detected_mapping":{"date":null,"#,
         r#""description":null,"amount":null,"debit":null,"credit":null,"reference":null,"#,
-        r#""direction":null},"missing_columns":["date","amount"],"rows":[]}"#,
+        r#""direction":null},"missing_columns":["date","amount"],"other_currency":null,"rows":[]}"#,
     ));
     assert_json_is_pinned::<Vec<CsvRequiredColumn>>(r#"["date","amount"]"#);
     assert!(is_refused::<CsvRequiredColumn>(r#""description""#));

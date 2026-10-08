@@ -105,6 +105,8 @@ export type PnL = {
   total_income: number
   total_expenses: number
   net_income: number
+  /** Hidden entries these figures include; an export leaves them out. From core. */
+  hidden_entry_count: number
 }
 
 export type BalanceSheetSection = {
@@ -120,6 +122,8 @@ export type BalanceSheet = {
   equity: BalanceSheetSection
   total_assets: number
   total_liabilities_equity: number
+  /** Hidden entries behind the net income and retained earnings rows. From core. */
+  hidden_entry_count: number
 }
 
 /** The Expense account with the most spending in a dashboard window. */
@@ -147,6 +151,8 @@ export type DashboardSummary = {
   top_expense: TopExpense | null
   /** Net against the previous period, in basis points of its size; null when that net is zero. */
   net_vs_previous_bps: number | null
+  /** Hidden entries in the window that the income and expenses include. From core. */
+  hidden_entry_count: number
 }
 
 export type CashFlowGranularity = 'day' | 'month'
@@ -170,6 +176,8 @@ export type CashFlowSeries = {
   total_expenses_minor: number
   net_minor: number
   buckets: CashFlowBucket[]
+  /** Hidden entries in the window that the totals include. From core. */
+  hidden_entry_count: number
 }
 
 export type CreateJournalLine = {
@@ -654,6 +662,12 @@ export type CsvImportPreview = {
    * columns have to be mapped before the file can be previewed.
    */
   missing_columns?: CsvRequiredColumn[]
+  /**
+   * The first currency marker in the amount cells that is not the book's
+   * (`HUF`, `£`, `Ft`), as written; the preview warns that the file may be
+   * in another currency.
+   */
+  other_currency?: string | null
   rows: CsvImportPreviewRow[]
 }
 

@@ -384,28 +384,10 @@ pub fn analyze_document_bytes(
     context: &AnalyzeContext<'_>,
     model_dir: Option<&Path>,
 ) -> DocumentSuggestion {
-    let AnalyzeContext {
-        default_currency,
-        locale,
-        ..
-    } = *context;
+    let default_currency = context.default_currency;
 
     let mut suggestion = match read_document_text(document, model_dir) {
-        ExtractedText::Read { text, origin } => {
-            let reading = read_invoice_text(&text);
-            let kind = EntryKindSuggestion::from(reading.class);
-            let accounts = suggest_accounts(context, kind, &reading.category_hint());
-            let fee_minor = reading.transfer_fee_minor;
-
-            let mut suggestion = suggestion_from_reading(reading, origin, locale, accounts);
-            suggestion.notes.insert(0, UiText::new(origin.note()));
-            if let Some(fee_minor) = fee_minor {
-                suggestion
-                    .notes
-                    .push(transfer_fee_note(fee_minor, default_currency));
-            }
-            suggestion
-        }
+        ExtractedText::Read { text, origin } => suggest_from_text(&text, origin, context),
         ExtractedText::Unread(reason) => {
             let accounts = suggest_accounts(context, EntryKindSuggestion::Expense, "");
 
@@ -440,6 +422,47 @@ pub fn analyze_document_bytes(
 
     suggestion
 }
+
+/// The suggestion for text that was read from a file: the reader's fields
+/// with the accounts of the book, the origin note first, and the transfer
+/// fee note when the receipt shows a fee.
+///
+/// OCR text is checked for unknown glyphs first
+/// ([`InvoiceReading::drop_unreadable_ocr_fields`]). When most of it is
+/// unread, the suggestion says so and its confidence is capped at
+/// [`UNREADABLE_CONFIDENCE`].
+fn suggest_from_text(
+    text: &str,
+    origin: TextOrigin,
+    context: &AnalyzeContext<'_>,
+) -> DocumentSuggestion {
+    let mut reading = read_invoice_text(text);
+    let unreadable = origin.is_ocr() && reading.drop_unreadable_ocr_fields(text);
+    let kind = EntryKindSuggestion::from(reading.class);
+    let accounts = suggest_accounts(context, kind, &reading.category_hint());
+    let fee_minor = reading.transfer_fee_minor;
+
+    let mut suggestion = suggestion_from_reading(reading, origin, context.locale, accounts);
+    suggestion.notes.insert(0, UiText::new(origin.note()));
+    if unreadable {
+        suggestion
+            .notes
+            .insert(1, UiText::new(UiTextCode::OcrUnreadable));
+        suggestion.confidence = suggestion.confidence.min(UNREADABLE_CONFIDENCE);
+    }
+    if let Some(fee_minor) = fee_minor {
+        suggestion
+            .notes
+            .push(transfer_fee_note(fee_minor, context.default_currency));
+    }
+    suggestion
+}
+
+/// The most confidence a suggestion read from mostly unread OCR text gets.
+///
+/// Below the 0.5 that a reading with an amount and a date reaches, so the
+/// UI never presents it like one that read its fields.
+const UNREADABLE_CONFIDENCE: f32 = 0.3;
 
 /// The note for a transfer fee the receipt shows.
 ///
@@ -607,6 +630,11 @@ impl TextOrigin {
             Self::DocumentText => READER_MODEL_LABEL,
             Self::ImageOcr | Self::PdfImageOcr => OCR_MODEL_LABEL,
         }
+    }
+
+    /// Whether the text was produced by OCR, and so may hold unknown glyphs.
+    const fn is_ocr(self) -> bool {
+        matches!(self, Self::ImageOcr | Self::PdfImageOcr)
     }
 
     /// The note that says where the text came from, shown before the reader's.
@@ -1448,6 +1476,66 @@ mod tests {
     /// The codes of `notes`, without their parameters.
     fn codes_of(notes: &[UiText]) -> Vec<UiTextCode> {
         notes.iter().map(|note| note.code).collect()
+    }
+
+    /// The context of a blank euro book worded in English.
+    fn blank_euro_book() -> AnalyzeContext<'static> {
+        AnalyzeContext {
+            template: ChartTemplate::Blank,
+            accounts: &[],
+            default_currency: "EUR".parse().unwrap(),
+            locale: crate::prefs::Locale::En,
+        }
+    }
+
+    /// What a Latin-only model makes of a Greek receipt: the labels are
+    /// question marks, so the fee is the only amount with a label it knows.
+    const LATIN_ONLY_OCR_OF_GREEK_RECEIPT: &str = "A?O?EI?H ?YNA?AATHZ\n\
+        ?O?O ?O?OY 1,40\n\
+        ?E?A?O? ?EI?O?H 310,00\n\
+        Invoice 0000000000\n\
+        20/08/2026\n";
+
+    #[test]
+    fn mostly_unread_ocr_leaves_the_amount_empty_and_says_so() {
+        let suggestion = suggest_from_text(
+            LATIN_ONLY_OCR_OF_GREEK_RECEIPT,
+            TextOrigin::ImageOcr,
+            &blank_euro_book(),
+        );
+
+        assert_eq!(suggestion.amount_minor, None);
+        assert_eq!(suggestion.reference, None);
+        assert!(suggestion.confidence <= UNREADABLE_CONFIDENCE);
+        assert!(!suggestion.description.unwrap_or_default().contains('?'));
+        assert!(!suggestion.merchant.unwrap_or_default().contains('?'));
+        assert_eq!(
+            codes_of(&suggestion.notes)[..2],
+            [UiTextCode::OcrRead, UiTextCode::OcrUnreadable]
+        );
+    }
+
+    #[test]
+    fn the_same_text_in_a_file_of_its_own_is_not_distrusted() {
+        let suggestion = suggest_from_text(
+            LATIN_ONLY_OCR_OF_GREEK_RECEIPT,
+            TextOrigin::DocumentText,
+            &blank_euro_book(),
+        );
+
+        assert!(!codes_of(&suggestion.notes).contains(&UiTextCode::OcrUnreadable));
+    }
+
+    #[test]
+    fn clean_ocr_text_is_read_as_before() {
+        let suggestion = suggest_from_text(
+            "ACME Ltd\nInvoice 2026-0042\nTOTAL 45,90\n20/08/2026\n",
+            TextOrigin::ImageOcr,
+            &blank_euro_book(),
+        );
+
+        assert_eq!(suggestion.amount_minor, Some(4_590));
+        assert!(!codes_of(&suggestion.notes).contains(&UiTextCode::OcrUnreadable));
     }
 
     #[test]

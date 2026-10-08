@@ -26,6 +26,7 @@ export const NOTE_CODE_KEYS: Record<string, string> = {
   ocr_models_missing: 'analyze.notes.ocrModelsMissing',
   ocr_read: 'analyze.notes.ocrRead',
   ocr_little_text: 'analyze.notes.ocrLittleText',
+  ocr_unreadable: 'analyze.notes.ocrUnreadable',
   ocr_failed: 'analyze.notes.ocrError',
   ocr_pdf_image: 'analyze.notes.ocrPdfImage',
   invoice_parsed: 'analyze.invoice.notes.parsed',

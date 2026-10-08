@@ -5,9 +5,10 @@
 //! A left click on the tray icon opens the quick-add window: a small,
 //! always-on-top companion for posting one entry without opening the main
 //! window. The tray menu, which the platform shows on a right click, offers
-//! "Open Oikonomia" and "Quit Oikonomia". Closing the main window only hides
-//! it (`on_window_event` in `lib.rs`), so the menu is how it comes back and,
-//! with the system's own quit shortcut, how the app exits.
+//! "Open Oikonomia" and "Quit Oikonomia". Closing the main window hides
+//! it (on Linux, minimizes it; `on_window_event` in `lib.rs`), so the menu is
+//! how it comes back and, with the system's own quit shortcut, how the app
+//! exits.
 //!
 //! # Linux
 //!
@@ -67,6 +68,24 @@ const _: () = assert!(
         && QUICK_ADD_SAVE_HEIGHT >= QUICK_ADD_COMPACT_HEIGHT,
     "the save row must be the tallest quick-add state"
 );
+
+/// Whether the quick-add window asks for a transparent surface, which the web
+/// UI uses for rounded corners. Not on Linux: a transparent window needs a
+/// compositor, and on a desktop without one (a bare window manager, a VM) the
+/// window was seen going blank after its first paint. The window is opaque
+/// there and the page paints its own ground ([`QUICK_ADD_OPAQUE_SCRIPT`]).
+const QUICK_ADD_TRANSPARENT: bool = !cfg!(target_os = "linux");
+
+/// Whether the quick-add window may be resized after it is created. The
+/// frontend resizes it between the heights above. On Linux the window came up
+/// 200 pixels high instead of 64; GTK holds a window that is not resizable to
+/// the size its content asks for, which is the likely cause (not confirmed on
+/// a Linux desktop). The minimum and maximum size keep it to the heights it
+/// may have.
+const QUICK_ADD_RESIZABLE: bool = cfg!(target_os = "linux");
+
+/// Tells the page that its window is opaque; `main.tsx` reads the flag.
+const QUICK_ADD_OPAQUE_SCRIPT: &str = "window.__oikonomiaOpaqueQuickAdd = true;";
 
 /// Gap between the quick-add window and the tray click or screen edge.
 const QUICK_ADD_GAP: f64 = 8.0;
@@ -264,23 +283,31 @@ fn ensure_quick_add_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindo
     }
 
     // Transparent + undecorated so the web UI can draw rounded corners
-    // (native chrome is rectangular).
-    let window =
+    // (native chrome is rectangular), except where transparency is not
+    // trusted ([`QUICK_ADD_TRANSPARENT`]).
+    let builder =
         WebviewWindowBuilder::new(app, QUICK_ADD_LABEL, WebviewUrl::App("index.html".into()))
             .title(quick_add_title(locale_from_app(app)))
             .inner_size(QUICK_ADD_WIDTH, QUICK_ADD_STEPPER_HEIGHT)
-            .resizable(false)
+            .min_inner_size(QUICK_ADD_WIDTH, QUICK_ADD_COMPACT_HEIGHT)
+            .max_inner_size(QUICK_ADD_WIDTH, QUICK_ADD_SAVE_HEIGHT)
+            .resizable(QUICK_ADD_RESIZABLE)
             .maximizable(false)
             .minimizable(false)
             .always_on_top(true)
             .skip_taskbar(true)
             .visible(false)
             .decorations(false)
-            .transparent(true)
-            .shadow(true)
-            .build()?;
+            .transparent(QUICK_ADD_TRANSPARENT)
+            .shadow(true);
 
-    Ok(window)
+    let builder = if QUICK_ADD_TRANSPARENT {
+        builder
+    } else {
+        builder.initialization_script(QUICK_ADD_OPAQUE_SCRIPT)
+    };
+
+    builder.build()
 }
 
 /// Returns the stored language, or the default when the app has no state.
