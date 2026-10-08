@@ -6,6 +6,7 @@ import App from './App.tsx'
 import QuickAddApp from './QuickAddApp.tsx'
 import { I18nProvider } from './lib/I18nProvider.tsx'
 import { isTauri } from './lib/tauri'
+import { reportUncaughtErrors } from './lib/uncaughtErrors'
 
 /** Set by the desktop shell (`tray.rs`) in a quick-add window that is not transparent. */
 const QUICK_ADD_OPAQUE_FLAG = '__oikonomiaOpaqueQuickAdd'
@@ -15,6 +16,8 @@ if (!rootEl) {
   throw new Error('root element missing')
 }
 const root: HTMLElement = rootEl
+
+reportUncaughtErrors()
 
 async function mount() {
   let isQuickAdd = false
