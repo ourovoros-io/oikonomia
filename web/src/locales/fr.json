@@ -1,4 +1,8 @@
 {
+  "hiddenNote": {
+    "one": "Inclut 1 écriture masquée, qui est omise des exports.",
+    "other": "Inclut {count} écritures masquées, qui sont omises des exports."
+  },
   "app": {
     "prefsDamaged": {
       "open": "Ouvrir les paramètres",

@@ -1,4 +1,8 @@
 {
+  "hiddenNote": {
+    "one": "Enthält 1 ausgeblendete Buchung, die beim Export weggelassen wird.",
+    "other": "Enthält {count} ausgeblendete Buchungen, die beim Export weggelassen werden."
+  },
   "app": {
     "prefsDamaged": {
       "open": "Einstellungen öffnen",

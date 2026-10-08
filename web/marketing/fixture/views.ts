@@ -85,6 +85,7 @@ export function pnl(l: DemoLedger, from: string, to: string): PnL {
     total_income,
     total_expenses,
     net_income: total_income - total_expenses,
+    hidden_entry_count: 0,
   }
 }
 
@@ -132,6 +133,7 @@ export function balanceSheet(l: DemoLedger, asOf: string): BalanceSheet {
     equity: { lines: equity, total: total_equity },
     total_assets,
     total_liabilities_equity: total_liabilities + total_equity,
+    hidden_entry_count: 0,
   }
 }
 
@@ -255,6 +257,7 @@ export function dashboardSummary(
         }
       : null,
     net_vs_previous_bps: prevNet !== 0 ? bps(p.net_income - prevNet, Math.abs(prevNet)) : null,
+    hidden_entry_count: 0,
   }
 }
 
@@ -315,6 +318,7 @@ export function cashFlowSeries(l: DemoLedger, from: string | null, to: string | 
     total_income_minor: cumIn,
     total_expenses_minor: cumOut,
     net_minor: cumIn - cumOut,
+    hidden_entry_count: 0,
     buckets,
   }
 }

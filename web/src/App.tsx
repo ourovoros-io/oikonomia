@@ -156,10 +156,12 @@ export default function App() {
     void refresh()
   }, [refresh])
 
-  // A reset in Settings repairs the file; the notice must not outlive it.
-  useEffect(() => {
-    if (prefsNotice && active !== 'settings') void noteDamagedPrefs()
-  }, [active, prefsNotice, noteDamagedPrefs])
+  // A reset in Settings repairs the file, so leaving a page asks again and the
+  // notice does not outlive the damage.
+  function navigate(id: NavId) {
+    setActive(id)
+    if (prefsNotice) void noteDamagedPrefs()
+  }
 
   // The Rust watchdog is the authority on idle locking; it emits this event
   // when it closes the vault so the UI drops to the unlock screen.
@@ -264,7 +266,7 @@ export default function App() {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setActive(item.id)}
+                    onClick={() => navigate(item.id)}
                     aria-current={isActive ? 'page' : undefined}
                     className={cn(
                       'flex h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium transition',
@@ -402,7 +404,7 @@ export default function App() {
                 <ErrorBanner message={error} className="mb-5" />
                 {prefsNotice && active !== 'settings' ? (
                   <DamagedPrefsNotice
-                    onOpenSettings={() => setActive('settings')}
+                    onOpenSettings={() => navigate('settings')}
                     onDismiss={() => setPrefsNotice(false)}
                   />
                 ) : null}

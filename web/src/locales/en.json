@@ -1,4 +1,6 @@
 {
+  "hiddenNote.one": "Includes 1 hidden entry, which is omitted from exports.",
+  "hiddenNote.other": "Includes {count} hidden entries, which are omitted from exports.",
   "common.loading": "Loading…",
   "common.cancel": "Cancel",
   "common.confirm": "Confirm",

@@ -39,7 +39,7 @@ import { DateInput } from '../components/DateInput'
 import { DocumentDropZone } from '../components/DocumentDropZone'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { EntryDetailModal } from '../components/EntryDetailModal'
-import { HiddenBadge } from '../components/hiddenUi'
+import { HiddenBadge, HiddenIncludedNote } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
 import { TopBar } from '../components/TopBar'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
@@ -750,6 +750,7 @@ export function TransactionsPage({
               ) : filtersNarrowList ? (
                 <p className="mt-1.5 text-xs text-[var(--color-muted)]">{t('tx.summary.wholeBook')}</p>
               ) : null}
+              <HiddenIncludedNote count={series?.hidden_entry_count ?? 0} className="mt-1.5" />
             </div>
             <div className="flex flex-wrap gap-2">
               <MoneyPill

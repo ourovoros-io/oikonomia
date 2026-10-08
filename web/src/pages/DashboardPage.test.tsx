@@ -75,6 +75,7 @@ const summary: DashboardSummary = {
   spend_ratio_bps: 354,
   top_expense: { code: '5100', name: 'Groceries', amount_minor: 4250, share_bps: 10000 },
   net_vs_previous_bps: null,
+  hidden_entry_count: 0,
 }
 
 const series: CashFlowSeries = {
@@ -155,6 +156,24 @@ describe('DashboardPage activity row colours', () => {
 
     expect(screen.getByText('Alpha supermarket').closest('li')?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'out')
     expect(screen.getByText('Client invoice').closest('li')?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'in')
+  })
+})
+
+describe('DashboardPage hidden entries', () => {
+  test('says how many hidden entries the net includes, using the count from core', async () => {
+    vi.mocked(api.dashboardSummary).mockResolvedValue({ ...summary, hidden_entry_count: 2 })
+    render(<DashboardPage entity={entity} />)
+
+    expect(
+      await screen.findByText('Includes 2 hidden entries, which are omitted from exports.'),
+    ).toBeInTheDocument()
+  })
+
+  test('says nothing when no hidden entry is included', async () => {
+    render(<DashboardPage entity={entity} />)
+
+    await screen.findByRole('heading', { level: 1, name: 'Personal' })
+    expect(screen.queryByText(/hidden entr/)).toBeNull()
   })
 })
 

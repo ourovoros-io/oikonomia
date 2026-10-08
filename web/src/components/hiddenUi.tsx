@@ -16,6 +16,28 @@ export function HiddenBadge({ className = '' }: { className?: string }) {
   )
 }
 
+/**
+ * Says that on-screen totals include hidden entries, which an export leaves
+ * out, so the screen and the PDF do not look like they disagree. `count` is
+ * core's; the UI never counts. Renders nothing for zero.
+ */
+export function HiddenIncludedNote({
+  count,
+  className = '',
+}: {
+  count: number
+  className?: string
+}) {
+  const { t } = useI18n()
+  if (count <= 0) return null
+
+  return (
+    <p className={cn('text-xs leading-snug text-[var(--color-muted)]', className)}>
+      {count === 1 ? t('hiddenNote.one') : t('hiddenNote.other', { count })}
+    </p>
+  )
+}
+
 /** Per-entry Hide checkbox. Label/hint are Writer form keys, not Due/Paid. */
 export function HideFromExportControl({
   checked,
