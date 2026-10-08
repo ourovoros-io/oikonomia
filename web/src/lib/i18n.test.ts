@@ -14,6 +14,7 @@ import {
   setLocaleMessagesForTests,
   setLocalePersist,
   t,
+  tn,
 } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
@@ -106,7 +107,7 @@ describe('Writer el catalog', () => {
     expect(flat['tx.form.hidden.hint']).toBe('Απόκρυψη από την εξαγωγή')
     expect(flat['tx.list.meta.counts']).toBe('{posted} καταχωρισμένα · {hidden} κρυφά')
     expect(flat['tx.export.whisper']).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την ένδειξη voided.')
-    expect(flat['quickAdd.kind.billShort']).toBe('Λογαρ.')
+    expect(flat['quickAdd.kind.billShort']).toBe('Τιμ.')
     expect(flat['quickAdd.kind.transferShort']).toBe('Μεταφ.')
     expect(flat['settings.language.title']).toBe('Γλώσσα')
     expect(flat['settings.language.option.en']).toBe('English')
@@ -129,7 +130,7 @@ describe('Writer el catalog', () => {
     expect(t('settings.vaultBackup.restore')).toBe('Επαναφορά')
     expect(t('settings.vaultBackup.backupVault')).toBe('Αντίγραφο θυρίδας')
     expect(t('settings.reencrypting')).toBe('Επανακρυπτογράφηση…')
-    expect(t('kind.billShort')).toBe('Λογαρ.')
+    expect(t('kind.billShort')).toBe('Τιμ.')
     expect(t('kind.transferShort')).toBe('Μεταφ.')
     expect(t('quickAdd.due')).toBe('Οφειλή')
     expect(t('quickAdd.paid')).toBe('Εξοφλημένο')
@@ -178,8 +179,6 @@ describe('Writer recurring catalog', () => {
     'recurring.backToEntries',
     'recurring.emptyTitle',
     'recurring.emptyBody',
-    'recurring.templatesCount',
-    'recurring.dueCount',
     'recurring.due',
     'recurring.post',
     'recurring.postConfirm.title',
@@ -247,18 +246,28 @@ describe('Writer recurring catalog', () => {
     expect(elFlat['recurring.form.cadenceMonthly']).toBe('Μηνιαία')
     expect(enFlat['tx.form.kind.expense']).toBe('Expense')
     expect(elFlat['tx.form.kind.expense']).toBe('Έξοδο')
-    expect(elFlat['recurring.templatesCount']).toContain('{n}')
-    expect(elFlat['recurring.dueCount']).toContain('{n}')
+    expect(elFlat['recurring.templatesCount.other']).toContain('{n}')
+    expect(elFlat['recurring.dueCount.other']).toContain('{n}')
     expect(elFlat['recurring.title']).not.toMatch(/Oikonomia/i)
     expect(enFlat['recurring.title']).toBe('Recurring')
   })
 
+  test('tn() picks the singular and the plural form by the language rules', () => {
+    expect(tn('recurring.templatesCount', 0)).toBe('0 templates')
+    expect(tn('recurring.templatesCount', 1)).toBe('1 template')
+    expect(tn('recurring.dueCount', 2)).toBe('2 due')
+    expect(tn('dash.entriesThis', 1, { period: 'month' })).toBe('1 entry this month')
+    expect(tn('dash.entriesThis', 5, { period: 'month' })).toBe('5 entries this month')
+    setLocale('fr')
+    expect(tn('recurring.templatesCount', 0)).toBe('0 modèle')
+    expect(tn('recurring.templatesCount', 2)).toBe('2 modèles')
+  })
+
   test('t() interpolates template and due counts', () => {
-    expect(t('recurring.templatesCount', { n: 0 })).toBe('0 templates')
-    expect(t('recurring.dueCount', { n: 2 })).toBe('2 due')
     setLocale('el')
     expect(t('tx.recurring')).toBe('Επαναλαμβανόμενα')
-    expect(t('recurring.templatesCount', { n: 0 })).toBe('0 πρότυπα')
+    expect(tn('recurring.templatesCount', 3)).toBe('3 πρότυπα')
+    expect(tn('recurring.templatesCount', 1)).toBe('1 πρότυπο')
     expect(t('recurring.postConfirm.title', { name: 'Rent' })).toBe(
       'Καταχώριση του «Rent»;',
     )

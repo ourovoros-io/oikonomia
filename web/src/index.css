@@ -174,6 +174,30 @@
 }
 
 @layer components {
+  /* A checkbox that shows its box: the native one nearly vanishes on the dark
+     panes. The border is --color-fg-secondary on the dialog fill, above the 3:1
+     a control outline needs. */
+  .check-box {
+    appearance: none;
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    border: 1.5px solid var(--color-fg-secondary);
+    border-radius: 4px;
+    background: var(--color-control) center / 0.75rem no-repeat;
+  }
+
+  .check-box:checked {
+    border-color: var(--color-accent);
+    background-color: var(--color-accent);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.5l2.5 2.5 4.5-5.5' fill='none' stroke='%2306110d' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+
+  .check-box:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
   /* Every panel. The fill is measured: text on it keeps 4.5:1 wherever the
      aurora drifts. */
   .glass-pane {
@@ -274,8 +298,9 @@
     background: var(--color-canvas);
   }
 
-  /* One blur over all five blobs; each blob only ever animates transform, so
-     the drift stays on the compositor. */
+  /* One blur over all five blobs. The blobs are static: drifting them under
+     the panes' backdrop-filter re-blurred every frame and pinned several CPU
+     cores on machines without GPU acceleration. */
   .aurora-blobs {
     position: absolute;
     inset: -80px;
@@ -286,7 +311,6 @@
     position: absolute;
     border-radius: 50%;
     mix-blend-mode: screen;
-    will-change: transform;
   }
 
   .aurora-blobs i:nth-child(1) {
@@ -295,7 +319,6 @@
     width: 48%;
     height: 52%;
     background: radial-gradient(closest-side, rgba(46, 230, 166, 0.55), transparent);
-    animation: aurora-drift-a 22s ease-in-out infinite alternate;
   }
 
   .aurora-blobs i:nth-child(2) {
@@ -304,7 +327,6 @@
     width: 55%;
     height: 57%;
     background: radial-gradient(closest-side, rgba(55, 213, 255, 0.42), transparent);
-    animation: aurora-drift-b 26s ease-in-out infinite alternate;
   }
 
   .aurora-blobs i:nth-child(3) {
@@ -313,7 +335,6 @@
     width: 44%;
     height: 57%;
     background: radial-gradient(closest-side, rgba(122, 140, 255, 0.5), transparent);
-    animation: aurora-drift-a 30s ease-in-out infinite alternate-reverse;
   }
 
   .aurora-blobs i:nth-child(4) {
@@ -322,7 +343,6 @@
     width: 48%;
     height: 48%;
     background: radial-gradient(closest-side, rgba(255, 79, 163, 0.34), transparent);
-    animation: aurora-drift-b 24s ease-in-out infinite alternate-reverse;
   }
 
   .aurora-blobs i:nth-child(5) {
@@ -331,11 +351,6 @@
     width: 33%;
     height: 52%;
     background: radial-gradient(closest-side, rgba(255, 176, 46, 0.22), transparent);
-    animation: aurora-drift-a 28s ease-in-out infinite alternate;
-  }
-
-  .aurora[data-moving="false"] .aurora-blobs i {
-    animation-play-state: paused;
   }
 
   /* Page titles and descriptions sit directly on the aurora with no pane to
@@ -352,18 +367,6 @@
   }
 }
 
-@keyframes aurora-drift-a {
-  to {
-    transform: translate(90px, 40px) scale(1.12);
-  }
-}
-
-@keyframes aurora-drift-b {
-  to {
-    transform: translate(-80px, 50px) scale(0.92);
-  }
-}
-
 @keyframes pulse-grow {
   from {
     transform: scaleY(0);
@@ -371,7 +374,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .aurora-blobs i,
   .pulse-bar {
     animation: none;
   }

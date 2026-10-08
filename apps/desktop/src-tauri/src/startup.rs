@@ -245,7 +245,7 @@ fn problem_label(locale: Locale, problem: StartupProblem) -> Option<&'static str
 
         (StartupProblem::DataFolderUnreadable, Locale::En) => "Its data folder cannot be read.",
         (StartupProblem::DataFolderUnreadable, Locale::El) => {
-            "Δεν είναι δυνατή η ανάγνωση του φακέλου δεδομένων του."
+            "Ο φάκελος δεδομένων του δεν μπορεί να διαβαστεί."
         }
         (StartupProblem::DataFolderUnreadable, Locale::Fr) => {
             "Son dossier de données est illisible."

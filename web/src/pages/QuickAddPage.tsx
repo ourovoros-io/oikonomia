@@ -21,7 +21,8 @@ import {
   type PendingDocSource,
   type UiPrefs,
 } from '../lib/api'
-import { bookCurrency, minorToInputText, parseMajorToMinor, type Currency } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { bookCurrency, minorToInputText, type Currency } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import {
   QUICK_ADD_COMPACT_HEIGHT,

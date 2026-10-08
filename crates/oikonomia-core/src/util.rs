@@ -115,6 +115,34 @@ pub fn parse_date(text: &str) -> Result<Date> {
     calendar_date(text).ok_or_else(|| invalid_date(text))
 }
 
+/// The first year a user may enter as a date. A mistyped year such as 1890
+/// would otherwise stretch every default date range back by a century.
+pub const MIN_ENTRY_YEAR: i32 = 1900;
+
+/// The last year a user may enter as a date.
+pub const MAX_ENTRY_YEAR: i32 = 2100;
+
+/// Parses a date that the user typed for an entry or a template, with the
+/// rule of [`parse_date`] and the years [`MIN_ENTRY_YEAR`] to
+/// [`MAX_ENTRY_YEAR`] only.
+///
+/// Dates read back from the vault use [`parse_date`], which accepts every
+/// year, so a range change here can never make stored data unreadable.
+///
+/// # Errors
+///
+/// Returns [`Error::Validation`] with [`ValidationError::InvalidDate`], which
+/// carries `text` unchanged, when [`parse_date`] fails or the year is out of
+/// range.
+pub fn parse_entry_date(text: &str) -> Result<Date> {
+    let date = parse_date(text)?;
+    if (MIN_ENTRY_YEAR..=MAX_ENTRY_YEAR).contains(&date.year()) {
+        Ok(date)
+    } else {
+        Err(invalid_date(text))
+    }
+}
+
 /// Returns the date `text` names when it is exactly `YYYY-MM-DD`.
 fn calendar_date(text: &str) -> Option<Date> {
     // A fixed-length byte pattern: any multi-byte character changes the
@@ -500,6 +528,23 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn an_entry_date_outside_the_supported_years_is_refused_but_still_readable() {
+        for text in ["1899-12-31", "2101-01-01", "0000-01-01"] {
+            assert_eq!(
+                parse_entry_date(text),
+                Err(Error::Validation(ValidationError::InvalidDate {
+                    value: text.to_owned()
+                })),
+                "{text}"
+            );
+            assert!(parse_date(text).is_ok(), "{text}");
+        }
+
+        assert!(parse_entry_date("1900-01-01").is_ok());
+        assert!(parse_entry_date("2100-12-31").is_ok());
     }
 
     #[test]
