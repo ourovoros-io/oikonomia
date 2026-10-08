@@ -22,24 +22,30 @@
 //! # Column detection
 //!
 //! Without an explicit [`CsvColumnMapping`], each header is lowercased and
-//! stripped of spaces, `_` and `-`, then tested in this order. The first
+//! stripped of spaces, `_`, `-` and accents (`fold_header`), then tested in
+//! this order. Greek, German and French names are listed beside the English
+//! ones in the table; the aliases themselves are `ROLE_ALIASES`. The first
 //! test that passes names the column:
 //!
 //! | Order | Column      | Header                                               |
 //! |-------|-------------|------------------------------------------------------|
-//! | 1     | Date        | Contains `date` (`Booking date`, `ValueDate`)        |
+//! | 1     | Date        | Contains `date`, `datum`, `ημερομηνια`,              |
+//! |       |             | `buchungstag` or `wertstellung`                      |
+//! |       |             | (`Booking date`, `Buchungsdatum`, `Ημερομηνία`)      |
 //! | 2     | Amount      | `amount`, `value`, `sum`, `transactionamount`,       |
-//! |       |             | `betrag`, `montant`, `importo`                       |
-//! | 3     | Debit       | `debit`, `withdrawal`, `outflow`, `addebito`         |
-//! | 4     | Credit      | `credit`, `deposit`, `inflow`, `accredito`           |
+//! |       |             | `betrag`, `montant`, `importo`, `ποσο`               |
+//! | 3     | Debit       | `debit`, `withdrawal`, `outflow`, `addebito`,        |
+//! |       |             | `soll`, `χρεωση`                                     |
+//! | 4     | Credit      | `credit`, `deposit`, `inflow`, `accredito`,          |
+//! |       |             | `haben`, `πιστωση`                                   |
 //! | 5     | Direction   | `type`, `dc`, `d/c`, `debitcredit`, `drcr`,          |
 //! |       |             | `transactiontype`, and values that are directions    |
 //! | 6     | Reference   | `reference`, `ref`, `check`, `cheque`, `checkno`,    |
-//! |       |             | `chequeno`, `fitid`                                  |
+//! |       |             | `chequeno`, `fitid`, `referenz`, `αναφορα`           |
 //! | 7     | Description | `description`, `memo`, `narration`, `details`,       |
 //! |       |             | `payee`, `particulars`, `narrative`, `libelle`,      |
-//! |       |             | `libellé`, `beschreibung`, `descrizione`,            |
-//! |       |             | `transaction`, `name`                                |
+//! |       |             | `beschreibung`, `verwendungszweck`, `descrizione`,   |
+//! |       |             | `περιγραφη`, `αιτιολογια`, `transaction`, `name`     |
 //!
 //! Rows 2 to 7 match the whole header, not a part of it. When several
 //! headers name the same column, the leftmost wins and the others are not
@@ -623,66 +629,138 @@ fn resolve_user_mapping(
 /// tests run in the order of the table in the module doc; `date` is the only
 /// one that matches a part of the header.
 fn classify_header(raw: &str) -> Option<Column> {
-    let compact: String = raw
-        .to_lowercase()
-        .chars()
-        .filter(|character| !character.is_whitespace() && !matches!(character, '_' | '-'))
-        .collect();
+    let compact = fold_header(raw);
 
-    if compact.contains("date") {
+    if DATE_WORDS.iter().any(|word| compact.contains(word)) {
         return Some(Column::Date);
     }
-    if matches!(
-        compact.as_str(),
-        "amount" | "value" | "sum" | "transactionamount" | "betrag" | "montant" | "importo"
-    ) {
-        return Some(Column::Amount);
-    }
-    if matches!(
-        compact.as_str(),
-        "debit" | "withdrawal" | "outflow" | "addebito"
-    ) {
-        return Some(Column::Debit);
-    }
-    if matches!(
-        compact.as_str(),
-        "credit" | "deposit" | "inflow" | "accredito"
-    ) {
-        return Some(Column::Credit);
-    }
-    if matches!(
-        compact.as_str(),
-        "type" | "dc" | "d/c" | "debitcredit" | "drcr" | "transactiontype"
-    ) {
-        return Some(Column::Direction);
-    }
-    if matches!(
-        compact.as_str(),
-        "reference" | "ref" | "check" | "cheque" | "checkno" | "chequeno" | "fitid"
-    ) {
-        return Some(Column::Reference);
-    }
-    if matches!(
-        compact.as_str(),
-        "description"
-            | "memo"
-            | "narration"
-            | "details"
-            | "payee"
-            | "particulars"
-            | "narrative"
-            | "libelle"
-            | "libellé"
-            | "beschreibung"
-            | "descrizione"
-            | "transaction"
-            | "name"
-    ) {
-        return Some(Column::Description);
-    }
-    None
+    ROLE_ALIASES
+        .iter()
+        .find(|(_, aliases)| aliases.contains(&compact.as_str()))
+        .map(|(column, _)| *column)
 }
 
+/// Words a date header contains: English and French `date`, German `datum`,
+/// Greek `ημερομηνια` (`Ημερομηνία`, folded), and the German `buchungstag` and
+/// `wertstellung`.
+const DATE_WORDS: [&str; 5] = ["date", "datum", "ημερομηνια", "buchungstag", "wertstellung"];
+
+/// The whole-header aliases of each role other than the date, in the order
+/// the module doc lists the tests. Each is in the form [`fold_header`]
+/// leaves a header in.
+const ROLE_ALIASES: [(Column, &[&str]); 6] = [
+    (
+        Column::Amount,
+        &[
+            "amount",
+            "value",
+            "sum",
+            "transactionamount",
+            "betrag",
+            "montant",
+            "importo",
+            "ποσο",
+            "ποσοσυναλλαγησ",
+        ],
+    ),
+    (
+        Column::Debit,
+        &[
+            "debit",
+            "withdrawal",
+            "outflow",
+            "addebito",
+            "soll",
+            "χρεωση",
+        ],
+    ),
+    (
+        Column::Credit,
+        &[
+            "credit",
+            "deposit",
+            "inflow",
+            "accredito",
+            "haben",
+            "πιστωση",
+        ],
+    ),
+    (
+        Column::Direction,
+        &[
+            "type",
+            "dc",
+            "d/c",
+            "debitcredit",
+            "drcr",
+            "transactiontype",
+        ],
+    ),
+    (
+        Column::Reference,
+        &[
+            "reference",
+            "ref",
+            "check",
+            "cheque",
+            "checkno",
+            "chequeno",
+            "fitid",
+            "referenz",
+            "αναφορα",
+            "αριθμοσαναφορασ",
+        ],
+    ),
+    (
+        Column::Description,
+        &[
+            "description",
+            "memo",
+            "narration",
+            "details",
+            "payee",
+            "particulars",
+            "narrative",
+            "libelle",
+            "beschreibung",
+            "descrizione",
+            "transaction",
+            "name",
+            "verwendungszweck",
+            "buchungstext",
+            "intitule",
+            "περιγραφη",
+            "αιτιολογια",
+        ],
+    ),
+];
+
+/// Lowercases a header and drops what banks vary freely: spaces, `_`, `-`,
+/// Greek and common Latin accents, and the final sigma.
+///
+/// Folding the accents lets one alias match `Ποσό` and an upper-case `ΠΟΣΟ`
+/// that carries none, and `Libellé` and `LIBELLE`.
+fn fold_header(raw: &str) -> String {
+    raw.to_lowercase()
+        .chars()
+        .filter(|character| !character.is_whitespace() && !matches!(character, '_' | '-'))
+        .map(|character| match character {
+            'ά' => 'α',
+            'έ' => 'ε',
+            'ή' => 'η',
+            'ί' | 'ϊ' | 'ΐ' => 'ι',
+            'ό' => 'ο',
+            'ύ' | 'ϋ' | 'ΰ' => 'υ',
+            'ώ' => 'ω',
+            'ς' => 'σ',
+            'é' | 'è' | 'ê' => 'e',
+            'ä' => 'a',
+            'ö' => 'o',
+            'ü' => 'u',
+            other => other,
+        })
+        .collect()
+}
 /// Reads every record into its outcome, in file order.
 ///
 /// A record the reader could not split becomes an unreadable row, and its
@@ -1533,6 +1611,62 @@ mod tests {
             reference: None,
             direction: None,
         }
+    }
+
+    #[test]
+    fn greek_headers_are_detected_with_or_without_accents() {
+        let csv = "Ημερομηνία;Περιγραφή;Ποσό\n15/03/2026;Καφές;-3,50\n";
+        let upper = "ΗΜΕΡΟΜΗΝΙΑ;ΑΙΤΙΟΛΟΓΙΑ;ΠΟΣΟ\n15/03/2026;Καφές;-3,50\n";
+
+        for text in [csv, upper] {
+            let parsed = parse_bank_csv(text, eur(), None).unwrap();
+
+            assert_eq!(parsed.missing_columns, vec![]);
+            let CsvRowOutcome::Parsed(row) = &parsed.rows[0] else {
+                panic!("row");
+            };
+            assert_eq!(row.signed_amount_minor, -350);
+            assert_eq!(row.description, "Καφές");
+        }
+    }
+
+    #[test]
+    fn greek_debit_and_credit_columns_are_detected() {
+        let csv = "Ημερομηνία συναλλαγής;Περιγραφή;Χρέωση;Πίστωση;Αριθμός αναφοράς\n\
+            15/03/2026;Ενοίκιο;800,00;;A1\n";
+        let detected = parse_bank_csv(csv, eur(), None).unwrap().detected_mapping;
+
+        assert_eq!(detected.debit.as_deref(), Some("Χρέωση"));
+        assert_eq!(detected.credit.as_deref(), Some("Πίστωση"));
+        assert_eq!(detected.reference.as_deref(), Some("Αριθμός αναφοράς"));
+    }
+
+    #[test]
+    fn german_and_french_headers_are_detected() {
+        let german = "Buchungstag;Verwendungszweck;Soll;Haben;Referenz\n\
+            15.03.2026;Miete;800,00;;R1\n";
+        let french = "Date;Libellé;Débit;Crédit;Référence\n15/03/2026;Loyer;800,00;;R1\n";
+        let datum = "Datum;Beschreibung;Betrag\n15.03.2026;Miete;-800,00\n";
+
+        let german = parse_bank_csv(german, eur(), None)
+            .unwrap()
+            .detected_mapping;
+        let french = parse_bank_csv(french, eur(), None)
+            .unwrap()
+            .detected_mapping;
+        let datum = parse_bank_csv(datum, eur(), None).unwrap().detected_mapping;
+
+        assert_eq!(german.date.as_deref(), Some("Buchungstag"));
+        assert_eq!(german.description.as_deref(), Some("Verwendungszweck"));
+        assert_eq!(german.debit.as_deref(), Some("Soll"));
+        assert_eq!(german.credit.as_deref(), Some("Haben"));
+        assert_eq!(german.reference.as_deref(), Some("Referenz"));
+        assert_eq!(french.description.as_deref(), Some("Libellé"));
+        assert_eq!(french.debit.as_deref(), Some("Débit"));
+        assert_eq!(french.credit.as_deref(), Some("Crédit"));
+        assert_eq!(french.reference.as_deref(), Some("Référence"));
+        assert_eq!(datum.date.as_deref(), Some("Datum"));
+        assert_eq!(datum.amount.as_deref(), Some("Betrag"));
     }
 
     #[test]
