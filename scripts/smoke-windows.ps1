@@ -150,10 +150,6 @@ if ($colours -lt $MinDistinctColours) {
     Fail "the app drew a blank window ($colours colours); see target\smoke\windows.png"
 }
 
-Write-Host '== vault location'
-if (-not (Test-Path $localVault)) { Fail "no vault directory at $localVault" }
-if (Test-Path $roamingVault) { Fail "the vault directory was created in roaming AppData: $roamingVault" }
-
 Write-Host '== create a vault'
 # The real first-run screen: the password field has focus, Tab moves to the
 # confirmation, Enter submits.
@@ -168,6 +164,10 @@ $vaultHeader = Join-Path $localVault 'data\vault.header.json'
 Wait-Until 'the app creates the encrypted vault' {
     (Test-Path $vaultHeader) -and (Test-Path $vaultDb) -and ((Get-Item $vaultDb).Length -gt 0)
 }
+# The app writes nothing before a vault exists, so its location is checked here.
+Write-Host '== vault location'
+if (-not (Test-Path $localVault)) { Fail "no vault directory at $localVault" }
+if (Test-Path $roamingVault) { Fail "the vault directory was created in roaming AppData: $roamingVault" }
 # Let the first pages reach the file before reading its header.
 Start-Sleep -Seconds 5
 # SQLCipher leaves no readable SQLite header; a plaintext database starts with it.

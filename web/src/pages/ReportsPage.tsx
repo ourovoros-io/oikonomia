@@ -39,6 +39,7 @@ import { commandErrorMessage } from '../lib/commandError'
 import { t } from '../lib/i18n'
 import { reportLineName } from '../lib/uiText'
 import { useI18n } from '../lib/I18nProvider'
+import { HiddenIncludedNote } from '../components/hiddenUi'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
 type Tab = 'trial' | 'pnl' | 'bs'
@@ -386,6 +387,7 @@ function PnlView({ pnl, entityName, ccy }: { pnl: PnL; entityName: string; ccy: 
           grand
           tone={net < 0 ? 'danger' : 'success'}
         />
+        <HiddenIncludedNote count={pnl.hidden_entry_count} className="mt-3 text-center" />
       </Statement>
 
       <Panel
@@ -447,6 +449,7 @@ function BsView({ bs, entityName, ccy }: { bs: BalanceSheet; entityName: string;
           ? t('rpt.booksBalance')
           : t('rpt.outOfBalance', { amount: formatMoney(diff, ccy) })}
       </p>
+      <HiddenIncludedNote count={bs.hidden_entry_count} className="mt-1 text-center" />
     </Statement>
   )
 }

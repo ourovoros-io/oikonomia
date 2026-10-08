@@ -85,6 +85,7 @@ const series: CashFlowSeries = {
   total_income_minor: 120000,
   total_expenses_minor: 4250,
   net_minor: 115750,
+  hidden_entry_count: 0,
   buckets: [],
 }
 
@@ -309,6 +310,19 @@ describe('TransactionsPage entry kind colours', () => {
 
     const incomeBadge = screen.getByText('CLIENT INVOICE').closest('li')?.firstElementChild
     expect(incomeBadge?.className).toContain('bg-[var(--color-money-in-soft)]')
+  })
+})
+
+describe('TransactionsPage hidden entries in the summary', () => {
+  test('says how many hidden entries the in-view totals include, using the count from core', async () => {
+    vi.mocked(api.cashFlowSeries)
+      .mockReset()
+      .mockResolvedValue({ ...series, hidden_entry_count: 1 })
+    await renderReady()
+
+    expect(
+      await screen.findByText('Includes 1 hidden entry, which is omitted from exports.'),
+    ).toBeInTheDocument()
   })
 })
 

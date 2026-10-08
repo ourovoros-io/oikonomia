@@ -1,5 +1,13 @@
 {
+  "hiddenNote": {
+    "one": "Inclut 1 écriture masquée, qui est omise des exports.",
+    "other": "Inclut {count} écritures masquées, qui sont omises des exports."
+  },
   "app": {
+    "prefsDamaged": {
+      "open": "Ouvrir les paramètres",
+      "dismiss": "Ignorer"
+    },
     "nav": {
       "dashboard": "Tableau de bord",
       "transactions": "Mouvements",
@@ -221,7 +229,9 @@
       "description": "Questions et rapports de bogue : {email}",
       "body": "Écrivez à {email} en indiquant la version de l’application ({version}) et ce que vous faisiez quand le problème est apparu. Ne joignez jamais votre coffre ni votre fichier de sauvegarde.",
       "contact": "Écrire à l’assistance",
-      "openFailed": "Impossible d’ouvrir votre application de messagerie. Écrivez à {email}."
+      "openFailed": "Impossible d’ouvrir votre application de messagerie. Écrivez à {email}.",
+      "noMailApp": "Aucune messagerie ne s’est ouverte ? Écrivez à",
+      "copy": "Copier l’adresse"
     },
     "donate": {
       "title": "Faire un don",

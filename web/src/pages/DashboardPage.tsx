@@ -21,6 +21,7 @@ import {
 import { formatPercentFromBps } from '../lib/arc'
 import { ArcTile } from '../components/Arc'
 import { CashFlowPulse } from '../components/CashFlowPulse'
+import { HiddenIncludedNote } from '../components/hiddenUi'
 import { TopBar } from '../components/TopBar'
 import {
   AmountPill,
@@ -232,6 +233,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
                 {t('dashboard.hero.kept', { percent: formatPercentFromBps(savings, locale) })}
               </p>
             ) : null}
+            <HiddenIncludedNote count={data?.hidden_entry_count ?? 0} className="mt-3" />
           </div>
           <div className="flex shrink-0 flex-col items-end gap-2">
             <MoneyPill tone="in" label={t('dashboard.pill.in')} value={pending ? '—' : money(income)} />

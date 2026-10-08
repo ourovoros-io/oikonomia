@@ -171,6 +171,14 @@
     /* Kill the full-app canvas fill so corners stay see-through. */
     background: transparent !important;
   }
+
+  /* No transparent window (see tray.rs): without a compositor a transparent
+     window shows what is behind it, or nothing, after its first paint. */
+  html.quick-add.quick-add-opaque,
+  html.quick-add.quick-add-opaque body,
+  html.quick-add.quick-add-opaque #root {
+    background: var(--color-surface) !important;
+  }
 }
 
 @layer components {

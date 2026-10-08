@@ -9,9 +9,9 @@ use oikonomia_core::csv::{export_journal_csv, parse_journal_export};
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::Error;
 use oikonomia_core::ledger::{
-    EntryFilter, PostSimpleEntry, account_register, get_entry, list_accounts, list_entries,
-    post_simple_entry, profit_and_loss, profit_and_loss_export, replace_simple_entry,
-    set_entry_hidden, void_entry,
+    EntryFilter, PostSimpleEntry, SimpleEntryAccounts, account_register, balance_sheet,
+    cash_flow_series, dashboard_summary, get_entry, list_accounts, list_entries, post_simple_entry,
+    profit_and_loss, profit_and_loss_export, replace_simple_entry, set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::vault::Vault;
@@ -197,6 +197,78 @@ fn pnl_includes_hidden_export_omits() {
         !export_mentions(conn, book.entity_id, "Secret"),
         "CSV export also omits the Hidden description"
     );
+}
+
+/// The count a screen says "includes N hidden entries" with comes from core
+/// and agrees with what the on-screen figures include and the export omits.
+#[test]
+fn every_on_screen_figure_says_how_many_hidden_entries_it_includes() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+    let (march_1, march_31) = (common::date("2026-03-01"), common::date("2026-03-31"));
+
+    post_simple_entry(conn, &expense(&book, "2026-03-15", "Groceries", 2_500)).expect("visible");
+    for (date, description) in [
+        ("2026-03-16", "Secret"),
+        ("2026-03-17", "Voided"),
+        ("2026-04-02", "April"),
+    ] {
+        let view =
+            post_simple_entry(conn, &expense(&book, date, description, 1_000)).expect("post");
+        set_entry_hidden(conn, view.entry.id, true).expect("hide");
+
+        if description == "Voided" {
+            void_entry(conn, view.entry.id, Locale::En).expect("void");
+        }
+    }
+
+    let pnl = profit_and_loss(conn, book.entity_id, march_1, march_31).expect("pnl");
+    let export = profit_and_loss_export(conn, book.entity_id, march_1, march_31).expect("export");
+    let summary =
+        dashboard_summary(conn, book.entity_id, march_1, march_31, march_31).expect("dashboard");
+    let series = cash_flow_series(conn, book.entity_id, march_1, march_31).expect("series");
+    let sheet = balance_sheet(conn, book.entity_id, common::date("2026-04-30")).expect("sheet");
+    let before_april = balance_sheet(conn, book.entity_id, march_31).expect("sheet");
+
+    // A voided hidden entry is no longer in any figure, so it is not counted.
+    assert_eq!(pnl.hidden_entry_count, 1, "{pnl:?}");
+    assert_eq!(summary.hidden_entry_count, 1);
+    assert_eq!(series.hidden_entry_count, 1);
+    assert_eq!(export.hidden_entry_count, 0, "the export omits them");
+    assert_eq!(before_april.hidden_entry_count, 1);
+    assert_eq!(sheet.hidden_entry_count, 2, "dated through the as-of day");
+}
+
+#[test]
+fn a_hidden_transfer_moves_no_profit_and_is_not_counted() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+    let savings = common::account(conn, book.entity_id, "1020");
+
+    let transfer = post_simple_entry(
+        conn,
+        &PostSimpleEntry {
+            accounts: SimpleEntryAccounts::Transfer {
+                from: book.wallet,
+                to: savings,
+            },
+            ..expense(&book, "2026-03-15", "Move", 500)
+        },
+    )
+    .expect("transfer");
+    set_entry_hidden(conn, transfer.entry.id, true).expect("hide");
+
+    let pnl = profit_and_loss(
+        conn,
+        book.entity_id,
+        common::date("2026-03-01"),
+        common::date("2026-03-31"),
+    )
+    .expect("pnl");
+
+    assert_eq!(pnl.hidden_entry_count, 0);
 }
 
 #[test]

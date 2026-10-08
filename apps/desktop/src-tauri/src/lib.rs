@@ -319,19 +319,49 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
     ]
 }
 
-/// Handles a window event: a close request hides the window to the tray, and
-/// a file drop is recorded as a grant.
+/// What a close request does to a window instead of closing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseAction {
+    /// Hide the window; the tray menu or a relaunch brings it back.
+    HideToTray,
+    /// Minimize the window, which the taskbar or the window switcher restores.
+    Minimize,
+}
+
+impl CloseAction {
+    /// Returns what closing the window labelled `label` does.
+    ///
+    /// A Linux desktop can show no tray at all (stock GNOME has no
+    /// `AppIndicator` host) and the app cannot tell, so a hidden main window
+    /// could be left running with nothing to bring it back or to quit it.
+    /// There the main window is minimized, which every desktop can undo.
+    fn for_window(label: &str, on_linux: bool) -> Self {
+        if on_linux && label == "main" {
+            Self::Minimize
+        } else {
+            Self::HideToTray
+        }
+    }
+}
+
+/// Handles a window event: a close request keeps the app running (see
+/// [`CloseAction`]), and a file drop is recorded as a grant.
 ///
 /// Closing does not quit; Quit is in the tray menu and on the system's quit
 /// shortcut.
 fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
-    // Closing the window hides it to the tray instead of quitting;
+    // Closing the window keeps the app running instead of quitting;
     // Quit lives in the tray menu (or Cmd+Q).
     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
         api.prevent_close();
 
-        if let Err(err) = window.hide() {
-            log::warn!("failed to hide window on close: {err}");
+        let action = CloseAction::for_window(window.label(), cfg!(target_os = "linux"));
+        let kept = match action {
+            CloseAction::HideToTray => window.hide(),
+            CloseAction::Minimize => window.minimize(),
+        };
+        if let Err(err) = kept {
+            log::warn!("failed to {action:?} the window on close: {err}");
         }
     }
 
@@ -349,5 +379,32 @@ fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
         && let Some(state) = window.try_state::<AppState>()
     {
         state.grant_paths(GrantPurpose::Document, paths.iter().cloned());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closing_the_main_window_minimizes_it_on_linux_and_hides_it_elsewhere() {
+        assert_eq!(CloseAction::for_window("main", true), CloseAction::Minimize);
+        assert_eq!(
+            CloseAction::for_window("main", false),
+            CloseAction::HideToTray
+        );
+    }
+
+    #[test]
+    fn closing_the_quick_add_window_hides_it_everywhere() {
+        // It cannot be minimized, and it has no taskbar entry to restore it.
+        assert_eq!(
+            CloseAction::for_window("quick-add", true),
+            CloseAction::HideToTray
+        );
+        assert_eq!(
+            CloseAction::for_window("quick-add", false),
+            CloseAction::HideToTray
+        );
     }
 }
