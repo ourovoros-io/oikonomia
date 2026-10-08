@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { asCommandError } from './commandError'
+import { asCommandError, errorReport } from './commandError'
 import { isTauri } from './tauri'
 import type { UiText } from './uiText'
 
@@ -323,7 +323,39 @@ export type RecurringPostResult = {
   template: RecurringTemplate
 }
 
+/**
+ * Where a reported webview error happened: a page id, or `window` for an
+ * error outside any page. A closed set, because Rust refuses any other value
+ * (`FrontendLocation`).
+ */
+export type FrontendErrorLocation =
+  | 'dashboard'
+  | 'transactions'
+  | 'documents'
+  | 'accounts'
+  | 'reports'
+  | 'settings'
+  | 'window'
+
+/**
+ * Reports a caught error to the desktop shell's local log. Only the error's
+ * name and message go, never the component stack or the page's data; Rust
+ * filters the message again. Fire and forget: it does nothing outside the
+ * desktop app and never throws, so a failing log cannot cause a second error
+ * inside an error handler.
+ */
+function logFrontendError(location: FrontendErrorLocation, error: unknown): void {
+  if (!isTauri()) return
+  const report = errorReport(error)
+  try {
+    invoke<void>('log_frontend_error', { location, ...report }).catch(() => {})
+  } catch {
+    // The log is best effort; there is nowhere to report its failure.
+  }
+}
+
 export const api = {
+  logFrontendError,
   /** The books that are not archived; an archived one is never the current book. */
   entityList: () => call<Entity[]>('entity_list'),
   /** The archived books, which `entityList` leaves out. They are read-only until restored. */

@@ -26,7 +26,7 @@
     },
     "book": {
       "label": "Livre",
-      "emptyOption": "Aucune entité pour l’instant"
+      "emptyOption": "Aucun livre pour l’instant"
     },
     "sidebar": {
       "versionEncrypted": "v{version} · chiffré",
@@ -36,7 +36,7 @@
     "header": {
       "noBook": "Aucun livre sélectionné",
       "chartMeta": "{currency} · plan comptable {template}",
-      "createHint": "Créez une entité dans Paramètres"
+      "createHint": "Créez un livre dans Paramètres"
     },
     "lock": {
       "aria": "Verrouiller le coffre",
@@ -318,20 +318,20 @@
       }
     },
     "entities": {
-      "title": "Entités",
+      "title": "Livres",
       "emptyCount": "Aucun livre pour l’instant",
       "countOne": "1 livre",
       "countMany": "{n} livres",
-      "new": "Nouvelle entité",
-      "emptyBody": "Utilisez le bouton Nouvelle entité ci-dessus pour créer votre premier livre.",
+      "new": "Nouveau livre",
+      "emptyBody": "Utilisez le bouton Nouveau livre ci-dessus pour créer votre premier livre.",
       "open": "Ouvrir",
       "deleteAria": "Supprimer {name}",
       "deleteTitle": "Supprimer",
       "deleteConfirm": {
-        "title": "Supprimer l’entité ?",
+        "title": "Supprimer le livre ?",
         "body": "« {name} » et tous ses comptes et mouvements seront définitivement supprimés. Cette action est irréversible."
       },
-      "deleteError": "Impossible de supprimer l’entité",
+      "deleteError": "Impossible de supprimer le livre.",
       "archiveAria": "Archiver {name}",
       "archiveTitle": "Archiver",
       "archiveConfirm": {
@@ -355,7 +355,7 @@
       }
     },
     "entityCreate": {
-      "title": "Nouvelle entité",
+      "title": "Nouveau livre",
       "description": "Des livres séparés pour le personnel et l’entreprise",
       "name": "Nom",
       "namePlaceholder": "Personnel",
@@ -375,7 +375,7 @@
           "description": "Commencez avec un plan comptable vide"
         }
       },
-      "submit": "Créer l’entité",
+      "submit": "Créer le livre",
       "busy": "Création…"
     }
   },
@@ -483,7 +483,7 @@
   "dashboard": {
     "empty": {
       "title": "Créez un livre pour commencer",
-      "body": "Ajoutez une entité personnelle ou d’entreprise dans Paramètres. Chaque entité a son propre plan comptable et ses rapports."
+      "body": "Ajoutez un livre personnel ou d’entreprise dans Paramètres. Chaque livre a son propre plan comptable et ses rapports."
     },
     "period": {
       "month": "Mois",
@@ -712,7 +712,7 @@
     },
     "empty": {
       "title": "Aucun compte",
-      "body": "Cette entité a un plan comptable vide."
+      "body": "Ce livre a un plan comptable vide."
     },
     "register": {
       "title": "Relevé de {name}",

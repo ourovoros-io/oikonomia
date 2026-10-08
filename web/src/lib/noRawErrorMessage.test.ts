@@ -43,7 +43,7 @@ import { stripComments } from './stripComments.testutil'
 /** The only production files allowed to touch an error's message. */
 const RAW_MESSAGE_ALLOWED: Record<string, string> = {
   'lib/commandError.ts':
-    'asCommandError normalises what invoke threw and the raw message is logged, never shown; it also matches the IPC "command not found" text to detect an unregistered command',
+    'asCommandError normalises what invoke threw and the raw message is logged, never shown; it also matches the IPC "command not found" text to detect an unregistered command; errorReport hands an Error\'s name and message to the local log, never the UI',
 }
 
 /** Variable names that, by convention, hold a caught error. */

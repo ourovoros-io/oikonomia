@@ -22,8 +22,10 @@
 //! does not write this file. The module `oikonomia_core::error::log_text`
 //! describes the reduced form and tests it.
 //!
-//! The webview cannot write to the file. This logger is not a Tauri plugin
-//! and registers no command, so there is no IPC path to it.
+//! The webview cannot write to the file directly. This logger is not a Tauri
+//! plugin. The one IPC path to it is `log_frontend_error`
+//! (`commands::frontend_log`), which accepts a closed set of locations and a
+//! filtered message, and logs through `log::error!` like any other record.
 //!
 //! # Where, and how much
 //!

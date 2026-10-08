@@ -74,6 +74,7 @@ mod app;
 mod csv;
 mod documents;
 mod entities;
+mod frontend_log;
 mod journal;
 #[cfg(test)]
 #[cfg(not(windows))]
@@ -91,6 +92,7 @@ pub(crate) use crate::commands::app::*;
 pub(crate) use crate::commands::csv::*;
 pub(crate) use crate::commands::documents::*;
 pub(crate) use crate::commands::entities::*;
+pub(crate) use crate::commands::frontend_log::*;
 pub(crate) use crate::commands::journal::*;
 pub(crate) use crate::commands::recurring::*;
 pub(crate) use crate::commands::reports::*;

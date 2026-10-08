@@ -437,7 +437,7 @@ export default function App() {
                   ) : null}
                 </ToastStack>
 
-                <PageErrorBoundary resetKey={`${active}:${entity?.id ?? 'none'}`}>
+                <PageErrorBoundary page={active} resetKey={`${active}:${entity?.id ?? 'none'}`}>
                   {active === 'dashboard' ? (
                     <DashboardPage
                       key={entity?.id ?? 'none'}

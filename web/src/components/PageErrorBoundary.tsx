@@ -1,8 +1,11 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { api, type FrontendErrorLocation } from '../lib/api'
 import { t } from '../lib/i18n'
 import { Button, ErrorBanner } from './ui'
 
 type Props = {
+  /** The page inside, named in the log. A fixed id, never book or ledger data. */
+  page: FrontendErrorLocation
   /** Changes whenever the page or book changes, which clears a caught error. */
   resetKey: string
   children: ReactNode
@@ -27,6 +30,7 @@ export class PageErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('Page failed to render', error, info.componentStack)
+    api.logFrontendError(this.props.page, error)
   }
 
   render() {
