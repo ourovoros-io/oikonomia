@@ -325,6 +325,20 @@ describe('TransactionsPage hidden entries in the summary', () => {
   })
 })
 
+describe('TransactionsPage row meta', () => {
+  test('a row shows its reference beside the kind', async () => {
+    const withReference = {
+      ...postedEntry,
+      entry: { ...postedEntry.entry, reference: 'R-1' },
+    }
+    vi.mocked(api.entryList).mockReset().mockResolvedValue([withReference])
+    await renderReady()
+
+    const meta = (await screen.findByText('Alpha supermarket')).closest('li')
+    expect(meta).toHaveTextContent('Ref R-1')
+  })
+})
+
 describe('TransactionsPage CSV toolbar', () => {
   test('the list header carries Recurring, Import CSV and Export CSV; New Entry sits in the top bar', async () => {
     await renderReady()
@@ -905,13 +919,13 @@ describe('TransactionsPage CSV direction column', () => {
     await renderReady()
     await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
     await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: 'Direction source column' })).toBeTruthy()
+      expect(screen.getByRole('combobox', { name: 'Debit/credit indicator source column' })).toBeTruthy()
     })
   }
 
   test('the detected direction column is preselected and another one is sent when chosen', async () => {
     await openMapping()
-    const direction = screen.getByRole('combobox', { name: 'Direction source column' })
+    const direction = screen.getByRole('combobox', { name: 'Debit/credit indicator source column' })
     expect(direction).toHaveValue('Type')
 
     await userEvent.selectOptions(direction, 'Way')
@@ -935,7 +949,7 @@ describe('TransactionsPage CSV direction column', () => {
     await openMapping()
 
     await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: 'Direction source column' }),
+      screen.getByRole('combobox', { name: 'Debit/credit indicator source column' }),
       'Not mapped',
     )
     await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
@@ -949,9 +963,18 @@ describe('TransactionsPage CSV direction column', () => {
   test('debit and credit columns have no direction control', async () => {
     await openMapping()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Use debit and credit columns' }))
+    const useDebitCredit = screen.getByRole('checkbox', { name: 'Use debit and credit columns' })
+    expect(useDebitCredit).not.toBeChecked()
 
-    expect(screen.queryByRole('combobox', { name: 'Direction source column' })).toBeNull()
+    await userEvent.click(useDebitCredit)
+
+    expect(useDebitCredit).toBeChecked()
+    expect(screen.queryByRole('combobox', { name: 'Debit/credit indicator source column' })).toBeNull()
+
+    await userEvent.click(useDebitCredit)
+
+    expect(useDebitCredit).not.toBeChecked()
+    expect(screen.getByRole('combobox', { name: 'Debit/credit indicator source column' })).toBeTruthy()
   })
 })
 

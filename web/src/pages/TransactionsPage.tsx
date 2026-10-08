@@ -27,7 +27,8 @@ import {
   type PostedEntryView,
   type SimpleEntryInput,
 } from '../lib/api'
-import { bookCurrency, minorToInputText, parseMajorToMinor } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { bookCurrency, minorToInputText } from '../lib/money'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
@@ -503,6 +504,11 @@ export function TransactionsPage({
     ev.preventDefault()
     if (!entity) return
     if (!beginExclusive(busyRef)) return
+    if (!date) {
+      busyRef.current = false
+      setError(t('date.invalid'))
+      return
+    }
     const minor = parseMajorToMinor(amount, bookCurrency(entity))
     if (minor === null || minor <= 0) {
       busyRef.current = false
@@ -1169,6 +1175,9 @@ export function TransactionsPage({
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       <span>{t(`kind.${kindLabel}`)}</span>
+                      {view.entry.reference ? (
+                        <span>{t('entry.ref', { reference: view.entry.reference })}</span>
+                      ) : null}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       {parts}
                     </div>

@@ -139,7 +139,10 @@ mod paths;
 pub(crate) mod permissions;
 mod store;
 
-pub use backup::{BACKUP_EXTENSION, backup_to_path, default_backup_file_name, restore_from_path};
+pub use backup::{
+    BACKUP_EXTENSION, backup_to_path, default_backup_file_name, restore_from_path,
+    verify_backup_archive,
+};
 pub use header::VaultHeader;
 pub use paths::{default_data_dir, vault_db_path, vault_header_path};
 /// The open database handle that [`Vault::connection`] lends out.

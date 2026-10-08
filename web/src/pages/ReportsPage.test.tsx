@@ -706,3 +706,18 @@ describe('ReportsPage synthetic rows', () => {
     expect(screen.getByText('Checking')).toBeTruthy()
   })
 })
+
+describe('ReportsPage in non-EUR books', () => {
+  test.each([
+    ['HUF', 2],
+    ['JPY', 0],
+  ])('renders a %s P&L with expenses', async (code, decimals) => {
+    const book: Entity = { ...entity, base_currency: code, base_currency_decimals: decimals }
+    render(<ReportsPage entity={book} />)
+
+    await waitFor(() => {
+      expect(screen.getByText(new RegExp(`All amounts in ${code}`))).toBeTruthy()
+    })
+    expect(screen.getAllByText('Rent').length).toBeGreaterThan(0)
+  })
+})

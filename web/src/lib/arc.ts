@@ -1,3 +1,5 @@
+import { getLocale } from './i18n'
+
 /** The meter starts at the lower left (135 degrees, SVG angles run clockwise). */
 export const ARC_START_DEG = 135
 /** It sweeps three quarters of a turn, leaving the gap at the bottom. */
@@ -27,6 +29,19 @@ export function arcPath(cx: number, cy: number, radius: number, fromDeg: number,
   const end = arcPoint(cx, cy, radius, toDeg)
   const largeArc = toDeg - fromDeg > 180 ? 1 : 0
   return `M${start.x.toFixed(2)} ${start.y.toFixed(2)}A${radius} ${radius} 0 ${largeArc} 1 ${end.x.toFixed(2)} ${end.y.toFixed(2)}`
+}
+
+/**
+ * A share in basis points as percent text with one decimal and the locale's
+ * own sign and spacing (`82.1%` in English, `82,1 %` in French), in the app
+ * language.
+ */
+export function formatPercent(bps: number, locale: string = getLocale()): string {
+  return new Intl.NumberFormat(locale, {
+    style: 'percent',
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  }).format(bps / 10_000)
 }
 
 /** A basis-point value as a percent with one decimal, in the reader's locale. */

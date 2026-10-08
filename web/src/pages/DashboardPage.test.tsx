@@ -27,13 +27,13 @@ vi.mock('../components/CashFlowPulse', () => ({
 import type { Account, CashFlowSeries, DashboardSummary, Entity, PostedEntryView } from '../lib/api'
 import { api } from '../lib/api'
 import { resetI18nForTests } from '../lib/i18n'
-import { formatMoney, localeForCurrency } from '../lib/money'
+import { formatMoney } from '../lib/money'
 import { DashboardPage } from './DashboardPage'
 
 const EUR = { code: 'EUR', decimals: 2 }
 
 const money = (minor: number, signed = false) =>
-  formatMoney(minor, EUR, localeForCurrency('EUR'), { signed })
+  formatMoney(minor, EUR, 'en', { signed })
 /** Rendered money carries a no-break space; text matchers see a plain one. */
 const plain = (text: string) => text.replace(/\s/g, ' ')
 

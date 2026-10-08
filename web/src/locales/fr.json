@@ -90,7 +90,7 @@
         "confirm": "Installer et redémarrer"
       },
       "availableManually": {
-        "note": "Cette copie a été installée à partir d’un paquet système ; elle ne peut donc pas se mettre à jour elle-même. Téléchargez le nouveau paquet depuis la page des versions d’Oikonomia et installez-le de la même façon."
+        "note": "Cette copie a été installée à partir d’un paquet système ; elle ne peut donc pas se mettre à jour elle-même. Téléchargez le nouveau paquet depuis la page des versions d’Oikonomia et installez-le de la même façon."
       },
       "failed": {
         "title": "Vérification impossible",
@@ -219,7 +219,7 @@
       "error": "Impossible de changer la langue."
     },
     "prefs": {
-      "unreadable": "Le fichier des préférences est endommagé : la langue et les choix de la Saisie rapide ne peuvent pas être enregistrés. Rien n’est modifié dans votre coffre. Vous pouvez réinitialiser les préférences dans les Paramètres.",
+      "unreadable": "Le fichier des préférences est endommagé : la langue et les choix de la Saisie rapide ne peuvent pas être enregistrés. Rien n’est modifié dans votre coffre. Vous pouvez réinitialiser les préférences dans Paramètres.",
       "reset": "Réinitialiser les préférences",
       "resetDone": "Préférences réinitialisées. Le fichier endommagé a été conservé à côté du coffre sous le nom ui-prefs.damaged.json.",
       "resetFailed": "Impossible de réinitialiser les préférences."
@@ -230,7 +230,7 @@
       "body": "Écrivez à {email} en indiquant la version de l’application ({version}) et ce que vous faisiez quand le problème est apparu. Ne joignez jamais votre coffre ni votre fichier de sauvegarde.",
       "contact": "Écrire à l’assistance",
       "openFailed": "Impossible d’ouvrir votre application de messagerie. Écrivez à {email}.",
-      "noMailApp": "Aucune messagerie ne s’est ouverte ? Écrivez à",
+      "noMailApp": "Aucune messagerie ne s’est ouverte ? Écrivez à",
       "copy": "Copier l’adresse"
     },
     "donate": {
@@ -331,19 +331,19 @@
       "archiveAria": "Archiver {name}",
       "archiveTitle": "Archiver",
       "archiveConfirm": {
-        "title": "Archiver l’entité ?",
-        "body": "« {name} » passe en lecture seule et quitte la liste des livres. Rien n’est supprimé, et vous pouvez le restaurer ici à tout moment."
+        "title": "Archiver le livre ?",
+        "body": "« {name} » passe en lecture seule et disparaît de la liste des livres. Rien n’est supprimé, et vous pouvez le restaurer ici à tout moment."
       },
-      "archiveError": "Impossible d’archiver l’entité",
+      "archiveError": "Impossible d’archiver le livre.",
       "archived": {
         "title": "Archivés",
         "hint": "Les livres archivés sont conservés tels quels et ne peuvent être ni ouverts ni modifiés. Restaurez-en un pour l’utiliser de nouveau.",
-        "loadError": "Impossible de charger les livres archivés"
+        "loadError": "Impossible de charger les livres archivés."
       },
       "restore": "Restaurer",
       "restoreAria": "Restaurer {name}",
-      "restoreError": "Impossible de restaurer l’entité",
-      "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez ce livre avant de restaurer celui-ci."
+      "restoreError": "Impossible de restaurer le livre.",
+      "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez cet autre livre avant de restaurer celui-ci."
     },
     "entityCreate": {
       "title": "Nouvelle entité",
@@ -379,7 +379,8 @@
     }
   },
   "date": {
-    "placeholder": "dd/mm/yyyy",
+    "placeholder": "jj/mm/aaaa",
+    "invalid": "Saisissez une date réelle entre 1900 et 2100, par exemple 25/12/2026.",
     "openCalendar": {
       "aria": "Ouvrir le calendrier",
       "title": "Calendrier"
@@ -488,7 +489,10 @@
     },
     "hero": {
       "netLabel": "Résultat net {period}",
-      "entryCount": "{n} écritures {period}",
+      "entryCount": {
+        "one": "{n} écriture {period}",
+        "other": "{n} écritures {period}"
+      },
       "kept": "Vous avez conservé {percent} % de tout ce qui est entré."
     },
     "pill": {
@@ -505,7 +509,7 @@
       "savings": { "label": "Taux d’épargne", "hint": "Net ÷ revenus" },
       "spend": { "label": "Taux de dépense", "hint": "Sorties ÷ entrées" },
       "previous": {
-        "label": "Net vs période précédente",
+        "label": "Net par rapport à la période précédente",
         "hint": {
           "month": "Par rapport au mois dernier",
           "quarter": "Par rapport au trimestre précédent",
@@ -521,7 +525,7 @@
   },
   "entry": {
     "kind": {
-      "other": "autre"
+      "other": "Autre"
     }
   },
   "common": {
@@ -710,7 +714,7 @@
       "title": "Dépenses du mois",
       "meta": "Catégories de dépenses · montants en {currency} · Les lignes masquées sont omises",
       "totalExpenses": "Total des dépenses",
-      "sliceNote": "Les 6 plus grandes catégories ; le reste va dans Autres…",
+      "sliceNote": "Les 6 plus grandes catégories ; le reste va dans Autres…",
       "emptyTitle": "Aucune dépense sur cette période",
       "emptyBody": "Rien à tracer pour {period}. Changez les dates du rapport, ou ajoutez des dépenses dans Mouvements.",
       "footerPrivacy": "Vos livres ne quittent jamais cet ordinateur",
@@ -892,7 +896,6 @@
       "targetAria": "Champ cible {label}",
       "notMapped": "Non associée",
       "useDebitCredit": "Utiliser les colonnes débit et crédit",
-      "useAmount": "Utiliser une seule colonne de montant",
       "autoDetected": "Détecté automatiquement",
       "mapFooter": "Les colonnes non associées sont ignorées. Débit/crédit peut remplacer Montant.",
       "mapNeeded": {
@@ -950,8 +953,14 @@
     "backToEntries": "Retour aux écritures",
     "emptyTitle": "Pas encore de modèles récurrents",
     "emptyBody": "Enregistrez un loyer, une paie, des charges ou un abonnement comme modèle. Vous comptabilisez chaque occurrence le moment venu.",
-    "templatesCount": "{n} modèles",
-    "dueCount": "{n} dus",
+    "templatesCount": {
+      "one": "{n} modèle",
+      "other": "{n} modèles"
+    },
+    "dueCount": {
+      "one": "{n} dû",
+      "other": "{n} dus"
+    },
     "due": "Dû",
     "post": "Comptabiliser",
     "postConfirm": {
@@ -1008,6 +1017,8 @@
     "moneyOverflow": "Ce montant est trop élevé.",
     "negativeMoney": "Ce montant ne peut pas être négatif.",
     "io": "Une opération sur un fichier a échoué.",
+    "pageRender": "Cette page n’a pas pu s’afficher. Vos données sont en sécurité. Réessayez ou ouvrez une autre page.",
+    "pageRenderRetry": "Réessayer",
     "crypto": "Une opération de sécurité a échoué.",
     "vaultCorrupt": "Le fichier du coffre est corrompu.",
     "vaultTooNew": "Ce coffre a été enregistré par une version plus récente d’Oikonomia. Mettez à jour l’application pour l’ouvrir ; rien n’a été perdu.",
@@ -1023,7 +1034,7 @@
     "csvMissingHeader": "Ce fichier CSV n’a pas de ligne d’en-tête. La première ligne doit nommer les colonnes.",
     "csvMissingColumn": "Ce CSV du journal n’a pas de colonne « {column} ». Utilisez un fichier exporté depuis Oikonomia avec toutes ses colonnes.",
     "csvInvalidStatus": "« {value} » n’est pas un état du journal. L’état doit être posted ou voided.",
-    "csvInvalidInteger": "« {value} » n’est pas un nombre entier. Un CSV du journal contient les montants en unités mineures entières, par exemple 1250 pour 12,50.",
+    "csvInvalidInteger": "« {value} » n’est pas un nombre entier. Un CSV du journal contient les montants en nombre entier d’unités divisionnaires (centimes, par exemple), soit 1250 pour 12,50.",
     "csvInvalidMapping": "Ces choix de colonnes n’ont pas pu être utilisés. Vérifiez les colonnes, puis réessayez.",
     "csvMapping": {
       "missingDate": "Choisissez la colonne qui contient la date.",

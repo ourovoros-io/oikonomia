@@ -12,10 +12,12 @@
 use crate::commands::support::{
     FileDialog, dialog_path, require_granted_path, run_blocking, with_vault_blocking,
 };
-use crate::error::CommandResult;
+use crate::error::{CommandError, CommandResult};
 use crate::state::{AppState, GrantPurpose};
 use oikonomia_core::prefs::load_ui_prefs;
-use oikonomia_core::vault::{BACKUP_EXTENSION, VaultStatus, default_backup_file_name};
+use oikonomia_core::vault::{
+    BACKUP_EXTENSION, VaultStatus, default_backup_file_name, verify_backup_archive,
+};
 use std::path::PathBuf;
 use tauri::{Emitter, Runtime, State};
 use zeroize::Zeroizing;
@@ -298,7 +300,8 @@ pub(crate) async fn vault_restore<R: Runtime>(
 /// # Errors
 ///
 /// Returns `open_location_invalid` when the dialog's answer is not a path,
-/// and `task_failed` when the blocking task panics.
+/// `backup_invalid` when the file is not a restorable backup (nothing is
+/// granted then), and `task_failed` when the blocking task panics.
 #[tauri::command]
 pub(crate) async fn vault_pick_backup(
     app: tauri::AppHandle,
@@ -342,6 +345,11 @@ async fn pick_backup_path<R: Runtime>(
         };
 
         let path = dialog_path(picked, FileDialog::OpenBackup)?;
+
+        // Check the file before the caller asks the user to confirm, and
+        // before any session is locked: a restore that fails afterwards
+        // leaves the vault locked with the error nowhere to be shown.
+        verify_backup_archive(&path, &data_dir).map_err(CommandError::from)?;
         grants.grant(GrantPurpose::Backup, [path.clone()]);
         Ok(Some(path))
     })
