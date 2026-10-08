@@ -22,7 +22,9 @@
 //! - An error crosses IPC as a code plus parameters; the UI never shows text
 //!   written here (`error`).
 //! - A release build logs warnings and errors only, never ledger data, to a
-//!   size-capped local file that the webview cannot write to (`error_log`).
+//!   size-capped local file. The webview reaches it through one command only,
+//!   which takes a fixed location and a filtered message
+//!   (`commands::frontend_log`).
 //! - One process per user: a second launch on Windows or Linux shows the
 //!   running app's window and exits (`with_single_instance`).
 
@@ -257,6 +259,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::vault_pick_backup,
         commands::app_info,
         commands::open_support_email,
+        commands::log_frontend_error,
         donations::donation_addresses,
         commands::entity_list,
         commands::entity_list_archived,

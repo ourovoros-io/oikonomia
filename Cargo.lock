@@ -2965,6 +2965,7 @@ dependencies = [
  "oikonomia-core",
  "oikonomia-test-support",
  "oikonomia-update",
+ "proptest",
  "serde",
  "serde_json",
  "tauri",
