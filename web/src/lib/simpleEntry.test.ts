@@ -117,6 +117,31 @@ describe('buildSimpleEntryInput', () => {
   })
 })
 
+describe('buildSimpleEntryInput income status', () => {
+  const income = {
+    entityId: 'ent',
+    kind: 'income' as const,
+    entryDate: '2026-08-11',
+    description: 'Invoice 7',
+    amountMinor: 30000,
+    categoryId: 'i1',
+    walletId: 'a3',
+    payableId: 'r1',
+    fromId: '',
+    toId: '',
+  }
+
+  test('an unpaid income posts the unpaid status and its receivable', () => {
+    const input = buildSimpleEntryInput({ ...income, billStatus: 'unpaid' })
+    expect(input.bill_status).toBe('unpaid')
+    expect(input.payable_account_id).toBe('r1')
+  })
+
+  test('a received income posts no status', () => {
+    expect(buildSimpleEntryInput({ ...income, billStatus: 'paid' }).bill_status).toBeNull()
+  })
+})
+
 describe('validateTrayAccounts', () => {
   const base = {
     billStatus: 'unpaid' as const,
@@ -140,10 +165,16 @@ describe('validateTrayAccounts', () => {
     )
   })
 
-  test('income requires both accounts', () => {
-    expect(validateTrayAccounts({ ...base, kind: 'income', walletId: '' })).toBe(
-      t('quickAdd.pickAccounts'),
-    )
+  test('a received income requires a category and a wallet', () => {
+    const received = { ...base, kind: 'income' as const, billStatus: 'paid' as const }
+    expect(validateTrayAccounts(received)).toBeNull()
+    expect(validateTrayAccounts({ ...received, walletId: '' })).toBe(t('quickAdd.pickAccounts'))
+  })
+
+  test('an unpaid income requires a category and a receivable, not a wallet', () => {
+    const unpaid = { ...base, kind: 'income' as const, billStatus: 'unpaid' as const }
+    expect(validateTrayAccounts({ ...unpaid, walletId: '' })).toBeNull()
+    expect(validateTrayAccounts({ ...unpaid, payableId: '' })).toBe(t('quickAdd.pickAccounts'))
   })
 
   test('bill unpaid needs category + payable', () => {

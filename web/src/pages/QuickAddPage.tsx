@@ -117,10 +117,13 @@ function resolveRoleAccounts(
     const activeIds = new Set(list.filter((a) => a.is_active).map((a) => a.id))
     const ids = roleIdsFromLast(last)
     if (ids.length > 0 && ids.every((id) => activeIds.has(id))) {
+      const fallback = kindDefaultAccounts(kind, defaults)
       return {
         categoryId: last.category_account_id ?? '',
         walletId: last.wallet_account_id ?? '',
-        payableId: last.payable_account_id ?? '',
+        // Remembered before an income could be unpaid, it has no payable id
+        // saved: it falls back to the receivable default.
+        payableId: last.payable_account_id ?? (kind === 'income' ? fallback.payableId : ''),
         fromId: last.from_account_id ?? '',
         toId: last.to_account_id ?? '',
       }
@@ -204,6 +207,9 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   const [kind, setKind] = useState<EntryKind>('expense')
   const [billStatus, setBillStatus] = useState<BillStatusTray>('unpaid')
+  // An income invoiced and not yet received. Off unless the user or a read
+  // document says so, and only offered while a receivable account is set.
+  const [incomeUnpaid, setIncomeUnpaid] = useState(false)
   const [date] = useState(todayISO())
   const [description, setDescription] = useState('')
   const [categoryId, setCategoryId] = useState('')
@@ -236,6 +242,13 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     () => ({ setCategoryId, setWalletId, setPayableId, setFromId, setToId }),
     [],
   )
+
+  // The payable field of an income holds its receivable account. Without one
+  // (a personal book from before receivables) the income stays received.
+  const canOweIncome = kind === 'income' && payableId !== ''
+  // The status Rust reads, one value for the bill and the income variants.
+  const entryStatus: BillStatusTray =
+    kind === 'income' ? (incomeUnpaid && canOweIncome ? 'unpaid' : 'paid') : billStatus
 
   const multiEntity = entities.length > 1
   const firstStep: Step = multiEntity ? 'entity' : 'kind'
@@ -366,6 +379,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     if (rollingRef.current) return
     setKind(next)
     if (next !== 'bill') setBillStatus('unpaid')
+    setIncomeUnpaid(false)
     if (!entity || !prefs) {
       applyRoleState(kindDefaultAccounts(next, defaults), roleSetters)
     } else {
@@ -408,6 +422,9 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     } else if (s.kind === 'income') {
       setKind('income')
       setBillStatus('unpaid')
+      // Core suggests the receivable account only when the book has one.
+      setPayableId(s.payable_account_id ?? '')
+      setIncomeUnpaid(s.bill_unpaid && s.payable_account_id !== null)
     } else {
       setKind('expense')
       setBillStatus('unpaid')
@@ -424,7 +441,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     }
     if (s.category_account_id) setCategoryId(s.category_account_id)
     if (s.wallet_account_id) setWalletId(s.wallet_account_id)
-    if (s.payable_account_id) setPayableId(s.payable_account_id)
+    if (s.kind !== 'income' && s.payable_account_id) setPayableId(s.payable_account_id)
   }
 
   function clearDocumentReview() {
@@ -576,7 +593,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     }
     const accountErr = validateTrayAccounts({
       kind,
-      billStatus,
+      billStatus: entryStatus,
       categoryId,
       walletId,
       payableId,
@@ -595,7 +612,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       const input = buildSimpleEntryInput({
         entityId: entity.id,
         kind,
-        billStatus,
+        billStatus: entryStatus,
         entryDate: date,
         description,
         amountMinor: minor,
@@ -685,7 +702,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   function advanceFromAccounts() {
     const accountErr = validateTrayAccounts({
       kind,
-      billStatus,
+      billStatus: entryStatus,
       categoryId,
       walletId,
       payableId,
@@ -892,7 +909,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               />
             )}
             {(kind === 'expense' ||
-              kind === 'income' ||
+              (kind === 'income' && entryStatus === 'paid') ||
               (kind === 'bill' && billStatus === 'paid')) && (
               <AccountSelect
                 value={walletId}
@@ -946,38 +963,28 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
           >
             <div className="flex h-7 min-w-0 items-center gap-1">
               {kind === 'bill' ? (
-                <div
-                  className="inline-flex h-7 shrink-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5"
-                  role="radiogroup"
-                  aria-label={t('quickAdd.billStatus')}
-                >
-                  {(
-                    [
-                      { id: 'unpaid', labelKey: 'quickAdd.due' as const },
-                      { id: 'paid', labelKey: 'quickAdd.paid' as const },
-                    ] as const
-                  ).map((opt) => {
-                    const active = billStatus === opt.id
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        role="radio"
-                        aria-checked={active}
-                        disabled={formDisabled}
-                        onClick={() => setBillStatus(opt.id)}
-                        className={cn(
-                          'flex h-full items-center rounded-full px-1.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
-                          active
-                            ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
-                            : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
-                        )}
-                      >
-                        {t(opt.labelKey)}
-                      </button>
-                    )
-                  })}
-                </div>
+                <SegmentedChoice
+                  label={t('quickAdd.billStatus')}
+                  value={billStatus}
+                  disabled={formDisabled}
+                  onChange={setBillStatus}
+                  options={[
+                    { id: 'unpaid', label: t('quickAdd.due') },
+                    { id: 'paid', label: t('quickAdd.paid') },
+                  ]}
+                />
+              ) : null}
+              {canOweIncome ? (
+                <SegmentedChoice
+                  label={t('quickAdd.incomeStatus')}
+                  value={entryStatus}
+                  disabled={formDisabled}
+                  onChange={(next) => setIncomeUnpaid(next === 'unpaid')}
+                  options={[
+                    { id: 'paid', label: t('quickAdd.received') },
+                    { id: 'unpaid', label: t('quickAdd.unpaid'), title: t('tx.incomeUnpaid') },
+                  ]}
+                />
               ) : null}
               <input
                 value={description}
@@ -1145,5 +1152,51 @@ function AccountSelect({
         ))}
       </select>
     </label>
+  )
+}
+
+/** The two-way pill of the confirm row: bill due or paid, income received or unpaid. */
+function SegmentedChoice({
+  label,
+  value,
+  disabled,
+  onChange,
+  options,
+}: {
+  label: string
+  value: BillStatusTray
+  disabled: boolean
+  onChange: (next: BillStatusTray) => void
+  options: Array<{ id: BillStatusTray; label: string; title?: string }>
+}) {
+  return (
+    <div
+      className="inline-flex h-7 shrink-0 items-center gap-px rounded-full border border-[var(--color-border-strong)]/70 bg-[var(--color-canvas)]/90 p-0.5"
+      role="radiogroup"
+      aria-label={label}
+    >
+      {options.map((opt) => {
+        const active = value === opt.id
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            disabled={disabled}
+            title={opt.title}
+            onClick={() => onChange(opt.id)}
+            className={cn(
+              'flex h-full items-center rounded-full px-1.5 text-[11px] font-medium leading-none transition disabled:opacity-50',
+              active
+                ? 'bg-[var(--color-accent-soft)] text-[var(--color-fg)] ring-1 ring-inset ring-[var(--color-accent)]/45'
+                : 'text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)]',
+            )}
+          >
+            {opt.label}
+          </button>
+        )
+      })}
+    </div>
   )
 }
