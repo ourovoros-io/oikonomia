@@ -2211,12 +2211,8 @@ mod tests {
     #[test]
     fn the_cause_of_damage_names_the_failure_and_none_of_the_text() {
         let secret = r#"{ "locale": "en", "last_entity_id": "SECRET" "#;
-        let Err(cut_off) = decode_ui_prefs(secret) else {
-            panic!("a cut-off file must not decode");
-        };
-        let Err(wrong_shape) = decode_ui_prefs(r#"{ "last_entity_id": 7 }"#) else {
-            panic!("a number is not an id");
-        };
+        let cut_off = decode_ui_prefs(secret).unwrap_err();
+        let wrong_shape = decode_ui_prefs(r#"{ "last_entity_id": 7 }"#).unwrap_err();
         let unreadable = UnusablePrefs::Read(std::io::ErrorKind::PermissionDenied.into());
 
         assert_eq!(cut_off.cause(), "JSON ends too early at line 1 column 45");

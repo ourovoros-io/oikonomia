@@ -257,6 +257,53 @@ pub(crate) fn sum_type_in_range(
     normal_balance(account_type, debits, credits)
 }
 
+/// Counts the hidden active entries dated in `from..=to` that touch an income
+/// or expense account.
+///
+/// These are the entries that move a profit-and-loss figure on screen and
+/// that an export leaves out, so the count is the "includes N hidden entries"
+/// a screen can say. `None` leaves that end of the window open. An entry with
+/// several such lines counts once.
+///
+/// # Errors
+///
+/// [`Error::Database`] when the query fails.
+pub(crate) fn count_hidden_pnl_entries(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: Option<Date>,
+    to: Option<Date>,
+) -> Result<usize> {
+    let sql = format!(
+        "
+        SELECT COUNT(DISTINCT je.id)
+        FROM journal_entries je
+        JOIN journal_lines jl ON jl.entry_id = je.id
+        JOIN accounts a ON a.id = jl.account_id
+        WHERE je.entity_id = ?1
+          AND je.hidden = 1
+          AND a.account_type IN ('income', 'expense')
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND (?2 IS NULL OR je.entry_date >= ?2)
+          AND (?3 IS NULL OR je.entry_date <= ?3)
+        "
+    );
+
+    let count: i64 = conn
+        .query_row(
+            &sql,
+            rusqlite::params![
+                entity_id.to_string(),
+                from.map(format_date),
+                to.map(format_date),
+            ],
+            |row| row.get(0),
+        )
+        .database("count hidden entries")?;
+
+    Ok(usize::try_from(count).unwrap_or(0))
+}
+
 /// Parses the text [`AccountType::identifier`] writes into
 /// `accounts.account_type`.
 ///
