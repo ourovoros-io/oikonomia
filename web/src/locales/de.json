@@ -1011,6 +1011,7 @@
     "csvNotUtf8": "Diese CSV-Datei ist kein UTF-8-Text. Speichern oder exportieren Sie sie erneut als CSV mit UTF-8-Kodierung.",
     "csvTooLarge": "Diese CSV-Datei ist größer als 8 MB. Exportieren Sie einen kürzeren Zeitraum oder teilen Sie die Datei auf.",
     "csvMissingHeader": "Diese CSV-Datei hat keine Kopfzeile. Die erste Zeile muss die Spalten benennen.",
+    "csvJournalExport": "Diese Datei ist ein Journal-Export von Oikonomia. Sie enthält Journalzeilen statt der Umsätze eines Kontos und lässt sich nicht als Kontoauszug importieren. Importieren Sie stattdessen eine CSV-Datei Ihrer Bank.",
     "csvMissingColumn": "Diese Journal-CSV hat keine Spalte „{column}“. Verwenden Sie eine aus Oikonomia exportierte Datei mit allen ihren Spalten.",
     "csvInvalidStatus": "„{value}“ ist kein Journalstatus. Der Status muss posted oder voided sein.",
     "csvInvalidInteger": "„{value}“ ist keine ganze Zahl. Eine Journal-CSV enthält Beträge als ganze Untereinheiten, zum Beispiel 1250 für 12,50.",

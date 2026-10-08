@@ -1011,6 +1011,7 @@
     "csvNotUtf8": "Ce fichier CSV n’est pas du texte UTF-8. Enregistrez-le ou exportez-le à nouveau en CSV avec l’encodage UTF-8.",
     "csvTooLarge": "Ce fichier CSV dépasse 8 Mo. Exportez une période plus courte ou scindez le fichier.",
     "csvMissingHeader": "Ce fichier CSV n’a pas de ligne d’en-tête. La première ligne doit nommer les colonnes.",
+    "csvJournalExport": "Ce fichier est un export du journal d’Oikonomia. Il contient des lignes de journal et non les mouvements d’un compte, il ne peut donc pas être importé comme relevé bancaire. Importez plutôt un CSV de votre banque.",
     "csvMissingColumn": "Ce CSV du journal n’a pas de colonne « {column} ». Utilisez un fichier exporté depuis Oikonomia avec toutes ses colonnes.",
     "csvInvalidStatus": "« {value} » n’est pas un état du journal. L’état doit être posted ou voided.",
     "csvInvalidInteger": "« {value} » n’est pas un nombre entier. Un CSV du journal contient les montants en unités mineures entières, par exemple 1250 pour 12,50.",

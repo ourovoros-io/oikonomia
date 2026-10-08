@@ -163,6 +163,7 @@ use csv::{ReaderBuilder, StringRecord, Trim};
 use time::{Date, Month};
 
 use crate::csv::amount::parse_book_amount;
+use crate::csv::export::{CREDIT_MINOR_COLUMN, DEBIT_MINOR_COLUMN};
 use crate::csv::{
     CsvColumnMapping, CsvError, CsvMappingProblem, CsvRequiredColumn, CsvRowOutcome, MAX_CSV_BYTES,
     ParsedBankRow,
@@ -283,7 +284,8 @@ const YEAR_DIGITS: usize = 4;
 /// [`Error::Csv`] for a problem with the file as a whole:
 /// [`CsvError::Empty`] when the text is empty, [`CsvError::Malformed`] when
 /// the header row cannot be read, [`CsvError::MissingHeader`] when it has no
-/// name in it, and [`CsvError::InvalidMapping`] when `mapping` is
+/// name in it, [`CsvError::JournalExport`] when it is the header of
+/// Oikonomia's own journal export, and [`CsvError::InvalidMapping`] when `mapping` is
 /// incomplete, contradictory or names a header the file does not have.
 ///
 /// A malformed **row** is not an error. It is returned as
@@ -314,6 +316,9 @@ pub fn parse_bank_csv(
     if headers.is_empty() || headers.iter().all(str::is_empty) {
         return Err(CsvError::MissingHeader.into());
     }
+    if is_journal_export(&headers) {
+        return Err(CsvError::JournalExport.into());
+    }
 
     // Read whole before any column is chosen: the direction column is
     // detected from its values. The text is already in memory, and a file is
@@ -338,6 +343,23 @@ pub fn parse_bank_csv(
         missing_columns,
         rows,
     })
+}
+
+/// Returns whether `headers` are those of [`export_journal_csv`]: the two
+/// integer-minor-unit columns no bank writes.
+///
+/// Such a file is refused instead of mapped. Its rows are journal lines, so
+/// a two-line entry would import as two unrelated movements, and nothing in
+/// the file says which line is the wallet.
+///
+/// [`export_journal_csv`]: crate::csv::export_journal_csv
+fn is_journal_export(headers: &StringRecord) -> bool {
+    let has = |name: &str| {
+        headers
+            .iter()
+            .any(|header| header.eq_ignore_ascii_case(name))
+    };
+    has(DEBIT_MINOR_COLUMN) && has(CREDIT_MINOR_COLUMN)
 }
 
 /// The role a column plays in a bank statement.
@@ -833,6 +855,7 @@ fn row_problem(source_row: u32, err: &CsvError) -> UiText {
         | CsvError::TooLarge
         | CsvError::Malformed { .. }
         | CsvError::MissingHeader
+        | CsvError::JournalExport
         | CsvError::MissingColumn { .. }
         | CsvError::InvalidStatus(_)
         | CsvError::InvalidInteger(_)
@@ -1416,6 +1439,19 @@ mod tests {
         assert_eq!(err, Error::Csv(CsvError::Empty));
         let err = parse_bank_csv(",,\n1,2,3\n", eur(), None).expect_err("no header name");
         assert_eq!(err, Error::Csv(CsvError::MissingHeader));
+    }
+
+    #[test]
+    fn the_apps_own_journal_export_is_refused_by_name_even_with_a_mapping() {
+        let export = "date,description,reference,account_code,account_name,debit_minor,\
+            credit_minor,status\n2026-03-15,Rent,,5100,Rent,80000,0,posted\n";
+        let mapping = column_mapping("date", "description", None, Some("debit_minor"), None);
+
+        let detected = parse_bank_csv(export, eur(), None).expect_err("export");
+        let mapped = parse_bank_csv(export, eur(), Some(&mapping)).expect_err("export, mapped");
+
+        assert_eq!(detected, Error::Csv(CsvError::JournalExport));
+        assert_eq!(mapped, Error::Csv(CsvError::JournalExport));
     }
 
     #[test]

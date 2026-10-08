@@ -180,7 +180,7 @@ describe('command error localization', () => {
     const csvCodes = codes.filter((code) => code.startsWith('csv_'))
     const keys = csvCodes.map((code) => ERROR_CODE_KEYS[code])
 
-    expect(csvCodes).toHaveLength(16)
+    expect(csvCodes).toHaveLength(17)
     expect(new Set(keys).size).toBe(csvCodes.length)
 
     for (const locale of LOCALES) {

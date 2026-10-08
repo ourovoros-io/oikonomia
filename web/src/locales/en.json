@@ -648,6 +648,7 @@
   "error.csvNotUtf8": "That CSV file is not UTF-8 text. Save or export it again as CSV with UTF-8 encoding.",
   "error.csvTooLarge": "That CSV file is larger than 8 MB. Export a shorter period, or split the file.",
   "error.csvMissingHeader": "That CSV file has no header row. The first row must name the columns.",
+  "error.csvJournalExport": "That file is an Oikonomia journal export. It lists journal lines, not one account’s movements, so it cannot be imported as a bank statement. Import a CSV from your bank instead.",
   "error.csvMissingColumn": "That journal CSV has no “{column}” column. Use a file exported from Oikonomia with all its columns.",
   "error.csvInvalidStatus": "“{value}” is not a journal status. The status must be posted or voided.",
   "error.csvInvalidInteger": "“{value}” is not a whole number. A journal CSV holds amounts as whole minor units, such as 1250 for 12.50.",
