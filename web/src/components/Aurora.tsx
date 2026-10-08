@@ -1,8 +1,9 @@
 /**
  * The ambient light behind every glass pane: five static radial blobs and a
  * veil that keeps text sitting directly on the aurora legible. Purely
- * decorative, so it is hidden from assistive technology. It does not animate:
- * motion under the panes' backdrop-filter is too costly without a GPU.
+ * decorative, so it is hidden from assistive technology. It does not animate,
+ * and the panes above it do not blur it again: both cost too much CPU on
+ * machines without a GPU.
  */
 export function Aurora() {
   return (
