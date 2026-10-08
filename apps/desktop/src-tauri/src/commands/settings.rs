@@ -29,9 +29,10 @@ use crate::state::AppState;
 use oikonomia_core::domain::EntityId;
 use oikonomia_core::ledger::{SimpleEntryKind, get_lock_timeout_secs, set_lock_timeout_secs};
 use oikonomia_core::prefs::{
-    LastRoleAccounts, Locale, UiPrefsView, load_ui_prefs, load_ui_prefs_view, remember_quick_add,
-    reset_unreadable_ui_prefs, resolve_locale, store_locale,
+    LastRoleAccounts, Locale, UiPrefsView, load_ui_prefs, load_ui_prefs_view, peek_locale,
+    remember_quick_add, reset_unreadable_ui_prefs, resolve_locale, store_locale,
 };
+use oikonomia_core::vault::vault_header_path;
 use tauri::{Manager, Runtime, State};
 
 /// Returns the idle time, in seconds, after which the vault locks itself.
@@ -126,8 +127,10 @@ pub(crate) async fn settings_set_locale(
 /// language is already stored it is returned unchanged and nothing is
 /// written, so the system is consulted once per installation. Otherwise the
 /// first supported language is stored and the native strings are refreshed
-/// exactly as after a change in Settings. Works in every vault state and
-/// before a vault exists, and is safe to call on every launch.
+/// exactly as after a change in Settings. Works in every vault state and is
+/// safe to call on every launch. Before a vault exists the language is chosen
+/// and the native strings follow it, but nothing is stored: a first launch
+/// writes no file, and the next call after the vault is created stores it.
 ///
 /// # Errors
 ///
@@ -143,17 +146,26 @@ pub(crate) async fn settings_resolve_locale(
 ) -> CommandResult<Locale> {
     with_prefs_blocking(app, move |app, state| {
         let prefs_guard = state.lock_prefs();
-        let resolution = resolve_locale(state.data_dir(), &system_languages)?;
+        let data_dir = state.data_dir();
+
+        // Before the vault exists the app writes nothing of its own accord:
+        // the system language is used, and stored once there is a vault.
+        let (locale, changed) = if vault_header_path(data_dir).exists() {
+            let resolution = resolve_locale(data_dir, &system_languages)?;
+            (resolution.locale, resolution.newly_stored)
+        } else {
+            let locale = peek_locale(data_dir, &system_languages);
+            (locale, locale != load_ui_prefs(data_dir).locale())
+        };
         drop(prefs_guard);
 
         // The tray was built at startup from the stored language, English on
-        // a first run, so it only needs a rebuild when this call stored a new
-        // one.
-        if resolution.newly_stored {
-            crate::tray::apply_locale(app, resolution.locale);
+        // a first run, so it only needs a rebuild when this call changed it.
+        if changed {
+            crate::tray::apply_locale(app, locale);
         }
 
-        Ok(resolution.locale)
+        Ok(locale)
     })
     .await
 }
@@ -483,7 +495,11 @@ mod ipc_tests {
                 "unreadable": false,
             })
         );
-        assert!(!path.exists(), "the preferences file is still there");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{}\n",
+            "a fresh file"
+        );
         assert_eq!(std::fs::read(&aside).unwrap(), CUT_OFF);
 
         remember(
