@@ -38,6 +38,10 @@ const DYNAMIC_KEY_FAMILIES: Record<string, readonly string[]> = {
   ),
   // commandError.ts: t(`error.role.${role}`), the roles Rust names in accountRoles.json
   'error.role.*': accountRoles.map((v) => `error.role.${v}`),
+  // tn(base, count) reads `<base>.one` and `<base>.other`
+  'plural.*': ['recurring.templatesCount', 'recurring.dueCount', 'dash.entriesThis'].flatMap(
+    (base) => [`${base}.one`, `${base}.other`],
+  ),
   // recurring.ts kindLabelKey: `tx.form.kind.${kind}`
   'tx.form.kind.*': ['expense', 'income', 'bill', 'transfer'].map((v) => `tx.form.kind.${v}`),
 }

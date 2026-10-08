@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { formatMoney, type ReportLine } from '../lib/api'
-import { formatPercentFromBps } from '../lib/arc'
+import { formatPercent } from '../lib/arc'
 import { buildSlices, vizVar } from '../lib/expenseSlices'
-import { localeForCurrency, type Currency } from '../lib/money'
+import type { Currency } from '../lib/money'
 import { cn } from '../lib/cn'
 import { t } from '../lib/i18n'
 import { useI18n } from '../lib/I18nProvider'
@@ -18,8 +18,8 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: Currenc
   useI18n()
   const [hover, setHover] = useState<number | null>(null)
   const { slices, total } = buildSlices(lines)
-  // Percentages use the money's locale, so "29,5 %" sits beside "720,00 €".
-  const percent = (share: number) => `${formatPercentFromBps(Math.round(share * 10_000), localeForCurrency(ccy.code))}%`
+  // Percentages follow the app language, as the money does: "29,5 %" beside "720,00 €".
+  const percent = (share: number) => formatPercent(Math.round(share * 10_000))
 
   if (slices.length === 0) {
     return (
@@ -68,7 +68,7 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: Currenc
           </g>
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-9 text-center">
-          <span className="w-full truncate font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
+          <span className="line-clamp-2 w-full font-mono text-[10px] leading-tight font-medium tracking-[0.08em] text-[var(--color-muted)] uppercase">
             {active ? active.name : t('reports.pdf.totalExpenses')}
           </span>
           <span className="mt-1 w-full truncate text-xl font-semibold tabular-nums text-[var(--color-fg)]">

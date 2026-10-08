@@ -116,13 +116,13 @@ describe('renderUiText', () => {
     },
   )
 
-  test('a EUR fee reads the same number in every language', () => {
+  test('a EUR fee is written the way the app language writes money', () => {
     const shown = LOCALES.map((locale) => {
       setLocale(locale)
-      return renderUiText(fee, EUR).match(/1,40\s€/u)?.[0]
+      return renderUiText(fee, EUR).match(/(€\s?1\.40|1,40\s€)/u)?.[0]?.replace(/\s/gu, ' ')
     })
 
-    expect(shown).toEqual(Array(LOCALES.length).fill(formatMoney(140, EUR)))
+    expect(shown).toEqual(['€1.40', '1,40 €', '1,40 €', '1,40 €'])
   })
 
   test.each([

@@ -97,7 +97,7 @@ describe('SettingsPage archiving a book', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Archive Home' }))
 
-    const dialog = screen.getByRole('dialog', { name: 'Archive entity?' })
+    const dialog = screen.getByRole('dialog', { name: 'Archive book?' })
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog).toHaveTextContent(
       '“Home” becomes read-only and leaves the list of books. Nothing is deleted, and you can restore it here at any time.',
@@ -128,7 +128,7 @@ describe('SettingsPage archiving a book', () => {
     const trigger = screen.getByRole('button', { name: 'Archive Home' })
     trigger.focus()
     await userEvent.keyboard('{Enter}')
-    expect(screen.getByRole('dialog', { name: 'Archive entity?' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Archive book?' })).toBeInTheDocument()
 
     await userEvent.keyboard('{Escape}')
 
@@ -171,7 +171,7 @@ describe('SettingsPage archiving a book', () => {
       within(screen.getByRole('dialog')).getByRole('button', { name: 'Archive' }),
     )
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not archive the entity.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not archive the book.')
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.queryByText(/disk I\/O/)).toBeNull()
     expect(onEntitiesChange).not.toHaveBeenCalled()
@@ -307,7 +307,7 @@ describe('SettingsPage archived books', () => {
 
     await userEvent.click(await screen.findByRole('button', { name: 'Restore Home' }))
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Could not restore the entity.')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not restore the book.')
     expect(screen.queryByText(/disk I\/O/)).toBeNull()
   })
 

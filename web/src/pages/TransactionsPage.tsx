@@ -27,7 +27,8 @@ import {
   type PostedEntryView,
   type SimpleEntryInput,
 } from '../lib/api'
-import { bookCurrency, minorToInputText, parseMajorToMinor } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { bookCurrency, minorToInputText } from '../lib/money'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
@@ -1173,6 +1174,9 @@ export function TransactionsPage({
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       <span>{t(`kind.${kindLabel}`)}</span>
+                      {view.entry.reference ? (
+                        <span>{t('entry.ref', { reference: view.entry.reference })}</span>
+                      ) : null}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       {parts}
                     </div>

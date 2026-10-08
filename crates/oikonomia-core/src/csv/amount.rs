@@ -556,6 +556,37 @@ mod tests {
         parse_signed_minor(raw, 2).expect(raw)
     }
 
+    /// One case of `web/src/lib/amountVectors.json`.
+    #[derive(Debug, serde::Deserialize)]
+    struct AmountVector {
+        raw: String,
+        currency: String,
+        /// The amount in minor units, or `null` for a cell that is no amount.
+        minor: Option<i64>,
+    }
+
+    /// The web's amount fields are read by a TypeScript port of this parser
+    /// (`web/src/lib/amountParse.ts`). Both read the same cases, so the same
+    /// text is the same amount in the form and in a CSV file.
+    #[test]
+    fn the_vectors_fixture_gives_what_the_web_port_gives() {
+        let vectors: Vec<AmountVector> =
+            serde_json::from_str(include_str!("../../../../web/src/lib/amountVectors.json"))
+                .expect("amountVectors.json parses");
+
+        assert!(!vectors.is_empty());
+        for vector in vectors {
+            let currency: CurrencyCode = vector.currency.parse().expect("a currency code");
+            let parsed = parse_book_amount(&vector.raw, currency).ok();
+
+            assert_eq!(
+                parsed, vector.minor,
+                "{:?} in {}",
+                vector.raw, vector.currency
+            );
+        }
+    }
+
     #[test]
     fn comma_and_dot_decimals() {
         assert_eq!(parse_eur_minor("1.234,56"), 123_456);
