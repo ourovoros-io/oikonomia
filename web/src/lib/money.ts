@@ -192,6 +192,17 @@ export function daysInMonth(y: number, m: number): number {
  * Returns null when the input is not a real calendar date.
  */
 export function parseEuropeanDateToISO(input: string): string | null {
+  const parsed = parseCalendarDate(input)
+  if (!parsed || parsed.y < MIN_YEAR || parsed.y > MAX_YEAR) return null
+
+  return `${String(parsed.y).padStart(4, '0')}-${pad2(parsed.m)}-${pad2(parsed.d)}`
+}
+
+/** The earliest and latest year a date field accepts; core enforces the same range. */
+export const MIN_YEAR = 1900
+export const MAX_YEAR = 2100
+
+function parseCalendarDate(input: string): { y: number; m: number; d: number } | null {
   const s = input.trim()
   const eu = /^(\d{1,2})[./-](\d{1,2})[./-](\d{2}|\d{4})$/.exec(s)
   const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s)
@@ -212,5 +223,5 @@ export function parseEuropeanDateToISO(input: string): string | null {
   }
 
   if (m < 1 || m > 12 || d < 1 || d > daysInMonth(y, m)) return null
-  return `${String(y).padStart(4, '0')}-${pad2(m)}-${pad2(d)}`
+  return { y, m, d }
 }

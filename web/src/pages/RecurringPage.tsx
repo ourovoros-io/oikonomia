@@ -237,7 +237,7 @@ export function RecurringPage({ entity, onBack }: Props) {
     ev.preventDefault()
     if (!beginExclusive(formBusyRef)) return
     const minor = parseMajorToMinor(amount, currency)
-    if (minor === null || minor <= 0 || !name.trim()) {
+    if (minor === null || minor <= 0 || !name.trim() || !nextDate) {
       formBusyRef.current = false
       setError(t('recurring.form.error'))
       return

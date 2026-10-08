@@ -69,7 +69,7 @@ use crate::ledger::simple_entry::{
     SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
 };
 use crate::money::Money;
-use crate::util::parse_date;
+use crate::util::parse_entry_date;
 use serde::{Deserialize, Serialize};
 use time::Date;
 
@@ -140,13 +140,13 @@ impl TryFrom<PostJournalRequest> for PostJournal {
     /// The first of these that applies:
     ///
     /// - [`ValidationError::InvalidDate`] when `entry_date` is not a
-    ///   `YYYY-MM-DD` date.
+    ///   `YYYY-MM-DD` date from 1900 to 2100.
     /// - [`Error::NegativeMoney`] when an amount of any line is negative.
     /// - [`Error::TooFewLines`] for fewer than two lines.
     /// - [`Error::InvalidLineAmounts`] for a line whose two amounts are both
     ///   zero or both greater than zero.
     fn try_from(request: PostJournalRequest) -> Result<Self> {
-        let entry_date = parse_date(&request.entry_date)?;
+        let entry_date = parse_entry_date(&request.entry_date)?;
 
         // A negative amount anywhere is reported before the number of lines,
         // and the number of lines before a line with both sides or neither:
@@ -240,14 +240,14 @@ impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
     /// - [`ValidationError::AccountRequired`], naming the part, when an
     ///   account the kind needs is missing.
     /// - [`ValidationError::InvalidDate`] when `entry_date` is not a
-    ///   `YYYY-MM-DD` date.
+    ///   `YYYY-MM-DD` date from 1900 to 2100.
     fn try_from(request: PostSimpleEntryRequest) -> Result<Self> {
         let accounts = request.checked_accounts()?;
 
         Ok(Self {
             entity_id: request.entity_id,
             accounts,
-            entry_date: parse_date(&request.entry_date)?,
+            entry_date: parse_entry_date(&request.entry_date)?,
             description: request.description,
             reference: request.reference,
             amount_minor: request.amount_minor,
@@ -355,14 +355,14 @@ impl TryFrom<CreateRecurringTemplateRequest> for CreateRecurringTemplate {
     /// - [`ValidationError::DayOfMonthInvalid`] for a monthly cadence with no
     ///   day or one outside 1 to 31, and for another cadence with a day.
     /// - [`ValidationError::InvalidDate`] when `next_date` is not a
-    ///   `YYYY-MM-DD` date.
+    ///   `YYYY-MM-DD` date from 1900 to 2100.
     /// - [`ValidationError::BillStatusRequired`] for a bill without a status.
     /// - [`ValidationError::AccountRequired`], naming the part, when an
     ///   account the kind needs is missing.
     fn try_from(request: CreateRecurringTemplateRequest) -> Result<Self> {
         check_template_values(&request.name, request.amount_minor)?;
         let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
-        let next_date = parse_date(&request.next_date)?;
+        let next_date = parse_entry_date(&request.next_date)?;
         let accounts = SimpleEntryAccounts::from_roles(
             request.kind,
             request.bill_status,
@@ -435,7 +435,7 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
     fn try_from(request: UpdateRecurringTemplateRequest) -> Result<Self> {
         check_template_values(&request.name, request.amount_minor)?;
         let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
-        let next_date = parse_date(&request.next_date)?;
+        let next_date = parse_entry_date(&request.next_date)?;
         let accounts = SimpleEntryAccounts::from_roles(
             request.kind,
             request.bill_status,
@@ -578,6 +578,7 @@ impl TryFrom<RecurringTemplateViewWire> for RecurringTemplateView {
 mod tests {
     use super::*;
     use crate::error::{AccountRole, NameField};
+    use crate::util::parse_date;
 
     /// A complete expense of 45.00 on 10 August 2026.
     fn expense_request() -> PostSimpleEntryRequest {
@@ -689,6 +690,19 @@ mod tests {
             value: text.to_owned(),
         }
         .into()
+    }
+
+    #[test]
+    fn a_simple_entry_dated_outside_the_supported_years_is_refused() {
+        let mut request = expense_request();
+        request.entry_date = "1890-01-01".to_owned();
+
+        assert_eq!(
+            PostSimpleEntry::try_from(request).err(),
+            Some(Error::Validation(ValidationError::InvalidDate {
+                value: "1890-01-01".to_owned()
+            }))
+        );
     }
 
     #[test]

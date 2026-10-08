@@ -182,9 +182,12 @@ describe('parseEuropeanDateToISO', () => {
     expect(parseEuropeanDateToISO('nope')).toBeNull()
   })
 
-  test('writes a year below 1000 with four digits', () => {
-    expect(parseEuropeanDateToISO('01/01/0999')).toBe('0999-01-01')
-    expect(parseEuropeanDateToISO('0999-1-1')).toBe('0999-01-01')
+  test('rejects years outside 1900 to 2100', () => {
+    expect(parseEuropeanDateToISO('01/01/1890')).toBeNull()
+    expect(parseEuropeanDateToISO('01/01/0999')).toBeNull()
+    expect(parseEuropeanDateToISO('2101-01-01')).toBeNull()
+    expect(parseEuropeanDateToISO('01/01/1900')).toBe('1900-01-01')
+    expect(parseEuropeanDateToISO('31/12/2100')).toBe('2100-12-31')
   })
 
   test('accepts ISO as a fallback', () => {
